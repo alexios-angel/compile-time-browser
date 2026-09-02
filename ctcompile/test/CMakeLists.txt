@@ -865,3 +865,25 @@ if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/check-type-claims.cmake)
   endforeach()
 endif()
+
+# === PHASE 55A: escape analysis ===
+# ============================================================================
+# THE SINKS-AND-CARRIERS TABLE, ONE CELL AT A TIME. Appended as ONE block.
+#
+# The table lives in CTJSOps.td as Arg<..., [CTJS_Sink...]> decorators; this
+# is the row-per-cell test of it: one positive row per NEITHER/CARRY cell (the
+# site stays confined), one negative row per SINK cell (that operand alone
+# flips the site, so a regression names the operand), the kind switch both
+# ways, the loop and handler rows, the dead/unvisited accounting, R1's guard,
+# R4, the closure hole, and the DEFAULT RULE. Every operand role is also read
+# back through the generated interface, so a row can only be wrong by name.
+#
+# Behind the MLIR guard, like every other target that names a dialect.
+if(CTCOMPILE_ENABLE_MLIR)
+  add_executable(ctcompile-test-escape-analysis EscapeAnalysis.cpp)
+  target_link_libraries(ctcompile-test-escape-analysis
+    PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
+            MLIRControlFlowDialect)
+  ctcompile_target(ctcompile-test-escape-analysis)
+  add_test(NAME ctcompile_escape_analysis COMMAND ctcompile-test-escape-analysis)
+endif()

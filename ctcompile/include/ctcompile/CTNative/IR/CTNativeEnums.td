@@ -68,4 +68,55 @@ def CTNative_StrEncoding : I32EnumAttr<"StrEncoding", "How a JS string is repres
   let genSpecializedAttr = 0;
 }
 
+// PHASE 55'S ONE NEW DEF: WHY A SITE IS NOT CONFINED.
+//
+// NOT A LATTICE, and the order carries nothing - which is the opposite of the
+// two enums above and worth saying so nobody static_asserts a chain over it.
+// `Confined` is the only non-escaping case. Every other case is the FIRST
+// reason the analysis found that an object born at a site can outlive its
+// activation, and Phase 55B reads that reason to choose an OWNER: `returned`
+// is a candidate for std::unique_ptr moved out, `stored`/`captured`/`passed`
+// for std::shared_ptr, and `arguments`, `suspended`, `unknown_op`,
+// `unvisited*` and the like are outside the native subset and become a
+// compile-time diagnostic naming the site and the reason. There is no
+// collector on the native target to fall back on, so the reason is
+// load-bearing for the lowering and the analysis keeps the first one it finds
+// rather than the last.
+//
+// The tail of the list is the analysis talking about ITSELF: `unknown_op` is
+// the default rule (an operation with no escape annotation sinks every
+// operand), `unvisited` is a site the solver never reached in a live block,
+// `unvisited_operand` is a sink whose operand it never reached. Both are
+// counted and gated at zero; neither is ever confined.
+//
+// NO ATTRIBUTE, like the two above: this dialect registers none and has no
+// attribute printer/parser, and a generated EscapeReasonAttr would be a class
+// nobody can parse. stringifyEscapeReason is what the claims file, the unit
+// test and the histogram print; symbolizeEscapeReason is how the analysis
+// turns a ctjs escape route's name back into one of these.
+def CTNative_EscapeReason : I32EnumAttr<"EscapeReason", "why a site is not confined", [
+    I32EnumAttrCase<"Confined",          0,  "confined">,
+    I32EnumAttrCase<"Returned",          1,  "returned">,
+    I32EnumAttrCase<"Thrown",            2,  "thrown">,
+    I32EnumAttrCase<"Stored",            3,  "stored">,
+    I32EnumAttrCase<"StoredGlobal",      4,  "stored_global">,
+    I32EnumAttrCase<"Captured",          5,  "captured">,
+    I32EnumAttrCase<"Passed",            6,  "passed">,
+    I32EnumAttrCase<"Converted",         7,  "converted">,
+    I32EnumAttrCase<"ProtoMutated",      8,  "proto_mutated">,
+    I32EnumAttrCase<"AccessorDefined",   9,  "accessor_defined">,
+    I32EnumAttrCase<"Arguments",         10, "arguments">,
+    I32EnumAttrCase<"RuntimeArray",      11, "runtime_array">,
+    I32EnumAttrCase<"Phase59",           12, "phase59">,
+    I32EnumAttrCase<"NotTracked",        13, "not_tracked">,
+    I32EnumAttrCase<"Suspended",         14, "suspended">,
+    I32EnumAttrCase<"ArgumentsLate",     15, "arguments_late">,
+    I32EnumAttrCase<"UnknownOp",         16, "unknown_op">,
+    I32EnumAttrCase<"Unvisited",         17, "unvisited">,
+    I32EnumAttrCase<"UnvisitedOperand",  18, "unvisited_operand">,
+  ]> {
+  let cppNamespace = "::ctcompile::ctnative";
+  let genSpecializedAttr = 0;
+}
+
 #endif // CTCOMPILE_CTNATIVE_ENUMS
