@@ -1163,6 +1163,81 @@ def CTJS_ConstructOp
   let assemblyFormat = "$callee `(` $new_target (`,` $args^)? `)` attr-dict";
 }
 
+def CTJS_CallDirectOp
+    : CTJS_Op<"call_direct", [CallOpInterface, DeclareOpInterfaceMethods<SymbolUserOpInterface>]
+                             # CTJS_GenericEffects # [CTJS_MaySuspend]> {
+  let summary = "Invoke a ctjs.func the closed world has named - Phase 62½-A";
+  let description = [{
+    WHAT --ctjs-resolve-globals REWRITES A ctjs.call INTO when it can prove
+    who is called. The importer's IR names nobody: `add(x, x)` is a
+    ctjs.load_global and a ctjs.call through the dispatcher, and nothing in the
+    module says which ctjs.func that is. This operation says it, as a symbol,
+    and MLIR's CallOpInterface is what makes the statement usable - the
+    dataflow framework, the call graph and the inliner all read it.
+
+    THE OPERANDS ARE THE CALLEE'S ENTRY BLOCK, IN ORDER. ctjs.func's entry
+    block takes the three implicit arguments first - receiver, new.target,
+    callee - and then the declared parameters (BytecodeImport.cpp,
+    `implicit_arguments`), so getArgOperands() returns EVERY operand as it
+    stands: `(receiver, new_target, callee_value, args...)` lines up with
+    `(%arg0, %arg1, %arg2, %arg3...)` with no reordering. The verifier holds
+    the two counts equal, and the resolver pads a short call with
+    `ctjs.constant #ctjs.undefined` the way op::call fills missing parameters
+    (run_loop.cpp, VM_CASE(call): `registers_[new_base + i] = undefined` for
+    i in [argc, param_count)).
+
+    $callee_value IS KEPT, and it is not decoration. The boxed tier lowers
+    this exactly as ctjs.call - through ct_aot_call with the callee VALUE -
+    because that tier does not need the symbol; only the native tier calls
+    the symbol. Dropping the value would leave the boxed tier nothing to
+    dispatch on.
+
+    $new_target IS UNDEFINED FOR A PLAIN CALL, and the resolver materialises
+    that constant rather than leaving the operand implicit: op::call pushes
+    its frame with `entered.new_target = pending_new_target_` and that root is
+    undefined unless a pass_new_target or a construct set it (run_loop.cpp,
+    VM_CASE(call), just before `frames_.push_back(entered)`; call.cpp,
+    context::call, the same two lines). A ctjs.call preceded by
+    ctjs.pass_new_target is therefore NOT resolved.
+
+    NOT A CTJS_RuntimeOp, THOUGH ctjs.call IS ONE, and the reason is the ABI
+    shape trait: $callee is a proof, not an immediate of ct_aot_call, and the
+    trait would count it against that helper's one immediate (argc) - passing
+    by coincidence and failing the day a second attribute is added. The plain
+    form keeps the trait honest; the boxed lowering names ct_aot_call itself.
+  }];
+  // PHASE 55: the same row as ctjs.call - ALL SINK(passed), for ctjs.call's
+  // reasons (call.cpp:82-92 copies every argument into the callee window, the
+  // receiver is call_frame::receiver, a root). Knowing the callee does not
+  // change where its arguments go; a callee summary is a later phase's.
+  let arguments = (ins FlatSymbolRefAttr:$callee,
+                       Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$receiver,
+                       Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$new_target,
+                       Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$callee_value,
+                       Arg<Variadic<CTJS_ValueType>, "", [CTJS_SinkPassed]>:$args,
+                       OptionalAttr<DictArrayAttr>:$arg_attrs,
+                       OptionalAttr<DictArrayAttr>:$res_attrs);
+  let results = (outs CTJS_ValueType:$result);
+  let assemblyFormat = [{
+    $callee `(` $receiver `,` $new_target `,` $callee_value (`,` $args^)? `)` attr-dict
+  }];
+  // THE FOUR CallOpInterface HOOKS, inline as func.call spells them. Every
+  // operand is an argument, in the callee's block-argument order.
+  let extraClassDeclaration = [{
+    ::mlir::Operation::operand_range getArgOperands() { return getOperation()->getOperands(); }
+    ::mlir::MutableOperandRange getArgOperandsMutable() {
+      return ::mlir::MutableOperandRange(getOperation());
+    }
+    ::mlir::CallInterfaceCallable getCallableForCallee() {
+      return ::mlir::SymbolRefAttr(getCalleeAttr());
+    }
+    void setCalleeFromCallable(::mlir::CallInterfaceCallable callee) {
+      setCalleeAttr(::mlir::cast<::mlir::FlatSymbolRefAttr>(
+          ::mlir::cast<::mlir::SymbolRefAttr>(callee)));
+    }
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Control flow and completion
 //

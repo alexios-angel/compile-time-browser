@@ -15,6 +15,10 @@
 // else "is expressible with SameOperandsAndResultType, AllTypesMatch, or the
 // operand type declarations themselves". A verifier written where a constraint
 // would do is a check that runs later and reads worse.
+//
+// PLUS ONE SYMBOL-USE VERIFIER (Phase 62½-A): ctjs.call_direct's arity against
+// the ctjs.func it names is a symbol-table question, which ODS cannot spell
+// and which MLIR routes through SymbolUserOpInterface::verifySymbolUses.
 
 #define GET_OP_CLASSES
 #include "ctcompile/CTJS/IR/CTJSOps.cpp.inc"
@@ -111,6 +115,38 @@ mlir::LogicalResult FuncOp::verify() {
         if (!mlir::isa<ValueType>(argument)) {
             return emitOpError("takes only !ctjs.value parameters, but takes ") << argument;
         }
+    }
+    return mlir::success();
+}
+
+//===----------------------------------------------------------------------===//
+// ctjs.call_direct
+//===----------------------------------------------------------------------===//
+
+mlir::LogicalResult CallDirectOp::verifySymbolUses(mlir::SymbolTableCollection & symbols) {
+    // THE SYMBOL MUST BE A ctjs.func WITH A BODY, and its entry block must
+    // take exactly what this call passes - which is the closed-world claim
+    // checked where MLIR checks symbol uses, through the same interface
+    // func.call uses. A skipped function emits no ctjs.func at all
+    // (ctjs-translate's record_skipped), so "no such symbol" is also what a
+    // call into a refusal looks like.
+    auto callee = symbols.lookupNearestSymbolFrom<FuncOp>(*this, getCalleeAttr());
+    if (!callee) {
+        return emitOpError("'") << getCallee() << "' does not name a ctjs.func in this module";
+    }
+    if (callee.getBody().empty()) {
+        return emitOpError("'") << getCallee() << "' has no body to call";
+    }
+    // THE ENTRY BLOCK'S COUNT, which ctjs.func's own verifier holds equal to
+    // its function type: receiver, new.target, callee, then the parameters.
+    const unsigned expected = callee.getBody().front().getNumArguments();
+    const unsigned passed = static_cast<unsigned>(getArgOperands().size());
+    if (passed != expected) {
+        return emitOpError("passes ")
+               << passed << " operand(s), but the entry block of '" << getCallee() << "' takes "
+               << expected << " (receiver, new.target, callee and " << (expected - 3)
+               << " parameter(s)) - the resolver pads a short call with undefined and refuses "
+                  "a long one";
     }
     return mlir::success();
 }

@@ -39,7 +39,13 @@ llvm_config.add_tool_substitutions(tools, config.ctcompile_tools_dirs)
 # using it failed with "not: command not found" and FileCheck then reported the
 # missing string, which reads like a broken assertion rather than a missing
 # tool.
-llvm_config.add_tool_substitutions(["mlir-translate", "not"], [config.llvm_tools_dir])
+# split-file IS LLVM'S TOO. A lit test that starts from JavaScript is one
+# program per file - ctjs-translate reads the whole file as source - so a test
+# holding a positive program and three negative ones needs to be four files;
+# split-file cuts one file at its `//--- name` markers and drops the preamble
+# where the RUN and CHECK lines live.
+llvm_config.add_tool_substitutions(["mlir-translate", "not", "split-file"],
+                                   [config.llvm_tools_dir])
 
 # %cxx COMPILES THE EMITTED TRANSLATION UNIT AGAINST THE REAL ABI HEADERS.
 #

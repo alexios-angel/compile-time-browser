@@ -586,6 +586,27 @@ int main() {
          .body = "  %r = ctjs.call %p(%q) {check}\n" + R,
          .expected = "{external}",
          .alias = true},
+        // PHASE 62½-A: the resolved form carries ctjs.call's row, all five
+        // positions, and the symbol changes none of them. The callee is @f
+        // itself - the only ctjs.func the harness's module has - so the
+        // symbol-use verifier sees five operands against five block arguments.
+        {.what = "call_direct: $receiver SINK(passed), like call",
+         .body = S + "  %r = ctjs.call_direct @f(%s, %p, %q, %p, %q)\n" + R,
+         .expected = "escapes:passed",
+         .roles = "ctjs.call_direct sink:passed sink:passed sink:passed sink:passed sink:passed"},
+        {.what = "call_direct: $new_target SINK(passed)",
+         .body = S + "  %r = ctjs.call_direct @f(%p, %s, %q, %p, %q)\n" + R,
+         .expected = "escapes:passed"},
+        {.what = "call_direct: $callee_value SINK(passed)",
+         .body = S + "  %r = ctjs.call_direct @f(%p, %q, %s, %p, %q)\n" + R,
+         .expected = "escapes:passed"},
+        {.what = "call_direct: $args SINK(passed) - the callee window (c.cpp:82-92)",
+         .body = S + "  %r = ctjs.call_direct @f(%p, %q, %p, %q, %s)\n" + R,
+         .expected = "escapes:passed"},
+        {.what = "a call_direct's result is external",
+         .body = "  %r = ctjs.call_direct @f(%p, %q, %p, %q, %p) {check}\n" + R,
+         .expected = "{external}",
+         .alias = true},
         {.what = "construct: $callee SINK(passed)",
          .body = S + "  %r = ctjs.construct %s(%p)\n" + R,
          .expected = "escapes:passed",

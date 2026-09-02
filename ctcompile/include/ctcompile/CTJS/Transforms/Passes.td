@@ -116,4 +116,38 @@ def CTJSDropUncompiled : Pass<"ctjs-drop-uncompiled", "mlir::ModuleOp"> {
   }];
 }
 
+def CTJSResolveGlobals : Pass<"ctjs-resolve-globals", "mlir::ModuleOp"> {
+  let summary = "Name the callee of every call through a once-bound global - the closed world";
+  let description = [{
+    PHASE 62½-A. A whole-program compile knows every call site, and nothing in
+    the importer's IR says so: `function add` is a ctjs.create_closure of
+    function index 1 stored into the global "add", and every `add(x, x)` is a
+    ctjs.load_global followed by a ctjs.call through the dispatcher. This pass
+    proves, per global NAME across the whole module, that the name is bound
+    exactly once - in the top level's hoisting prologue, to one closure of
+    function F, before anything else runs - and that nothing in the program
+    can write the globals table dynamically; then every
+    `load_global "g"; call` becomes a ctjs.call_direct @F, and F is made
+    private when every caller it has is one of those.
+
+    A global that fails the proof stays a ctjs.call at every site - the
+    diagnostic `callee unresolved` of part 24 §Phase 62½ - and the module
+    attribute `ctjs.globals` records every name with its store count, what it
+    resolved to and why or why not, so the verdict is in the IR.
+
+    C++ RATHER THAN DRR, and part 23 §1.2 is why: this is a module-wide
+    census - a symbol table, a count of stores per name, an SSA reachability
+    from the global object - and a Pat<> matches one operation's shape; it
+    cannot count across a module.
+  }];
+  let statistics = [
+    Statistic<"resolvedGlobals", "resolved-globals",
+              "globals bound exactly once, in the prologue, to one closure">,
+    Statistic<"rewrittenCalls", "rewritten-calls",
+              "ctjs.call sites rewritten to ctjs.call_direct">,
+    Statistic<"closedFunctions", "closed-functions",
+              "functions made private because every caller is a ctjs.call_direct">
+  ];
+}
+
 #endif // CTCOMPILE_CTJS_PASSES

@@ -462,6 +462,20 @@ bool body_is_supported(FuncOp function, std::string & why) {
             }
             return;
         }
+        // A RESOLVED CALL LOWERS AS ctjs.call - ct_aot_call through the callee
+        // VALUE - and ct_aot_call has no new.target parameter: the runtime
+        // pushes the frame with pending_new_target_, which a plain call leaves
+        // undefined. So the operand must BE that constant, or this tier would
+        // drop a value the resolver put there on purpose.
+        if (auto direct = mlir::dyn_cast<CallDirectOp>(op)) {
+            auto constant = direct.getNewTarget().getDefiningOp<ConstantOp>();
+            if (!constant || !mlir::isa<UndefinedAttr>(constant.getValue())) {
+                supported = false;
+                why = "ctjs.call_direct carries a new.target that is not the undefined constant, "
+                      "and ct_aot_call has no parameter to pass one through";
+            }
+            return;
+        }
         if (mlir::isa<CompareOp, GetPropertyOp, SetPropertyOp, CallOp, CreateClosureOp,
                       CreateCellOp, CellGetOp, CellSetOp, CreateObjectOp, CreateArrayOp, AppendOp,
                       ThrowOp, ConstructOp, IterableOp, HasPropertyOp, InstanceOfOp,
@@ -833,6 +847,10 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             if (auto call = mlir::dyn_cast<CallOp>(inner)) {
                 windows[inner] = parked;
                 parked += static_cast<unsigned>(call.getArgs().size());
+            }
+            if (auto direct = mlir::dyn_cast<CallDirectOp>(inner)) {
+                windows[inner] = parked;
+                parked += static_cast<unsigned>(direct.getArgs().size());
             }
             // A CLOSURE'S UPVALUE ARRAY IS AN ARGV BY ANOTHER NAME: a
             // contiguous run the helper reads, and one that must live in the
@@ -1560,10 +1578,30 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
         // safepoint. Nothing between these stores is a safepoint, so one fetch
         // would do - and hoisting it is a decision this backend has no analysis
         // to justify.
+        //
+        // AND ctjs.call_direct IS THE SAME CALL IN THIS TIER. The resolver's
+        // symbol is for the native backend; here the callee VALUE it kept is
+        // what ct_aot_call dispatches on, exactly as for ctjs.call, and its
+        // new.target operand is the undefined constant body_is_supported
+        // insisted on - which is what the runtime gives a plain call anyway.
+        mlir::Value dispatched_callee;
+        mlir::Value dispatched_receiver;
+        mlir::ValueRange dispatched_arguments;
+        mlir::Value dispatched_result;
         if (auto call = mlir::dyn_cast<CallOp>(op)) {
+            dispatched_callee = call.getCallee();
+            dispatched_receiver = call.getReceiver();
+            dispatched_arguments = call.getArgs();
+            dispatched_result = call.getResult();
+        } else if (auto direct = mlir::dyn_cast<CallDirectOp>(op)) {
+            dispatched_callee = direct.getCalleeValue();
+            dispatched_receiver = direct.getReceiver();
+            dispatched_arguments = direct.getArgs();
+            dispatched_result = direct.getResult();
+        }
+        if (dispatched_result) {
             const unsigned base = scope.argument_windows.lookup(&op);
-            const auto arguments = call.getArgs();
-            for (auto [index, argument] : llvm::enumerate(arguments)) {
+            for (auto [index, argument] : llvm::enumerate(dispatched_arguments)) {
                 park(scope, build, where, mapping.lookup(argument),
                      base + static_cast<unsigned>(index));
             }
@@ -1576,12 +1614,12 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             // backwards scan of bytecode that an AOT frame does not have.
             // Passing undefined and nullptr is honest about having neither
             // rather than inventing one.
-            mapping.map(call.getResult(),
+            mapping.map(dispatched_result,
                         status_call(scope, build, where, callee("ct_aot_call"),
-                                    {scope.frame, mapping.lookup(call.getCallee()),
-                                     mapping.lookup(call.getReceiver()), argv,
+                                    {scope.frame, mapping.lookup(dispatched_callee),
+                                     mapping.lookup(dispatched_receiver), argv,
                                      literal(build, where, opaque(build.getContext(), "uint32_t"),
-                                             std::to_string(arguments.size())),
+                                             std::to_string(dispatched_arguments.size())),
                                      undefined(build, where, value),
                                      literal(build, where,
                                              pointer_to(build.getContext(),
