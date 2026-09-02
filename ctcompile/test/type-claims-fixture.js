@@ -104,6 +104,23 @@ mixed(3);
 mixed("s");
 mixed(2n);
 
+// --- SURPLUS ARGUMENTS, which land in the callee's LOCAL slots at entry -----
+//
+// context::call copies every argument into the callee's window, declared or
+// not, so `callback(value, index, array)` from map puts the index in slot 1
+// and the array in slot 2 of a one-parameter function - on top of `y`. The
+// recorder must not report those as observations of `y`: the compiler
+// initialises `y` explicitly before any read, and the surplus is reachable
+// only through `arguments` and rest parameters, which read the raw window.
+// Six one-parameter callbacks in p5 and phaser found this.
+function surplus(x) {
+    var y;
+    var seen = arguments.length;
+    return [y, seen];
+}
+[10, 20].map(surplus);
+surplus(1, "two", [3]);
+
 // --- a loop, so block arguments and back edges carry types -----------------
 function loop(n, start) {
     var i = 0;

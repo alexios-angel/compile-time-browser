@@ -189,9 +189,19 @@ int main(int argc, char ** argv) {
             if (executable != nullptr && executable->isLive()) { ++liveBlocks; }
         }
     });
-    for (const ctcompile::js::unsupported_opcode & skip : imported.skipped) {
-        std::fprintf(stderr, "type-claims: function %u not imported: %s\n", skip.function_index,
-                     skip.reason.c_str());
+    // FUNCTIONS THE IMPORTER REFUSED get no claim, and the checker counts their
+    // observed registers as "unclaimed" rather than as sound - so the refusals
+    // are reported, by reason, because p5 alone has seventy generators and a
+    // line per function would bury the verdict.
+    {
+        std::map<std::string, std::size_t> reasons;
+        for (const ctcompile::js::unsupported_opcode & skip : imported.skipped) {
+            ++reasons[skip.reason];
+        }
+        for (const auto & [reason, count] : reasons) {
+            std::fprintf(stderr, "type-claims: %zu function(s) not imported: %.80s\n", count,
+                         reason.c_str());
+        }
     }
 
     std::FILE * file = std::fopen(out.c_str(), "w");

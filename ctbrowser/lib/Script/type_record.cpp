@@ -222,10 +222,26 @@ void type_recorder::step(std::size_t depth, const program * owner, const functio
     if (pc == 0) {
         if (function_observation * f = resolve(owner, proto); f != nullptr) {
             ++f->entries;
-            const std::size_t declared = proto->param_count;
-            const std::size_t arrived = argc;
-            const std::size_t n =
-                std::min<std::size_t>(std::max(declared, arrived), f->regs.size());
+            // THE DECLARED PARAMETERS, AND NOT THE ARRIVED ONES. This used to
+            // observe max(declared, argc) registers, and that was the
+            // recorder's own soundness bug in the direction its comment above
+            // warns about: context::call copies EVERY argument into the
+            // callee's window, so a callback declared `function (x)` that
+            // Array.prototype.map invokes with (value, index, array) has the
+            // index sitting in slot 1 and the array in slot 2 at entry - on
+            // top of its locals. Six one-parameter callbacks in p5 and phaser
+            // then read as "claimed {i32}, observed {arr,i32}".
+            //
+            // Those slots are not the register AS THE PROGRAM SEES IT. The
+            // compiler initialises every `var` explicitly before a read - so
+            // `function f(x) { var y; return y; }` called as f(1, 2) returns
+            // undefined, measured - and the surplus is reachable only through
+            // the raw window that make_arguments_object and
+            // gather_rest_values are handed. A dataflow analysis over the
+            // bytecode cannot know argc, and should not have to: the extra
+            // values are the frame layout's business, not the variable's.
+            const std::size_t n = std::min<std::size_t>(proto->param_count, f->regs.size());
+            (void)argc;
             for (std::size_t r = 0; r < n; ++r) {
                 if (base + r < registers.size()) { f->regs[r].observe(registers[base + r]); }
             }

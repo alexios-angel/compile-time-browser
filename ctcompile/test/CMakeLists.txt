@@ -824,7 +824,7 @@ endif()
 # is checking. check-type-claims.cmake runs both over one corpus and the Python
 # checker over their two outputs, and the gate is zero soundness violations.
 #
-# TWO CORPORA. The fixture is small, runs in milliseconds, and calls every
+# FOUR CORPORA. The fixture is small, runs in milliseconds, and calls every
 # guarded operator with BigInts so an unsound claim is OBSERVED rather than
 # merely possible. Bootstrap is the real thing, prepended to the driver that
 # Phase 54B wrote for it - and its precision is stated against the registers
@@ -836,13 +836,21 @@ if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
             MLIRIR MLIRAnalysis ctbrowser::ctbrowser)
   ctcompile_target(ctcompile-test-type-claims)
 
-  foreach(_corpus fixture bootstrap)
+  # FOUR CORPORA, which is the plan's "all three" plus the fixture. p5 and
+  # phaser need no driver: under --script each bundle's top level runs until it
+  # reaches a DOM API this mode does not provide - `performance.now` for p5,
+  # `document.createElement` for phaser - and the recorder has by then seen
+  # 1,911 and 613 registers respectively. Bootstrap's UMD wrapper defines
+  # `bootstrap` and returns, so it gets the driver Phase 54B wrote for it.
+  foreach(_corpus fixture bootstrap p5 phaser)
+    set(_prefix "")
     if(_corpus STREQUAL "fixture")
       set(_js "${CMAKE_CURRENT_SOURCE_DIR}/type-claims-fixture.js")
-      set(_prefix "")
-    else()
+    elseif(_corpus STREQUAL "bootstrap")
       set(_js "${CMAKE_CURRENT_SOURCE_DIR}/type-oracle-bootstrap.js")
       set(_prefix "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js")
+    else()
+      set(_js "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/${_corpus}/${_corpus}.js")
     endif()
     add_test(NAME ctcompile_type_claims_${_corpus}
              COMMAND ${CMAKE_COMMAND}
