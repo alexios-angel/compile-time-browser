@@ -144,8 +144,8 @@ file(WRITE "${work}/deduced-no-pins.cpp" "${stripped_text}\n")
 file(SIZE "${work}/deduced-no-pins.cpp" b_nopins)
 
 # (e) the mutation.
-set(flags -std=c++23 -O2 -Wall -Wextra -Werror -pedantic -ffp-contract=off
-          -Wno-unused-variable -Wno-unused-but-set-variable -fsyntax-only)
+set(flags -std=c++23 -O2 -Wall -Wextra -Werror -pedantic -Wconversion -ffp-contract=off
+          -fsyntax-only)
 execute_process(COMMAND "${CXX}" ${flags} "${work}/mutated.cpp"
                 OUTPUT_VARIABLE out ERROR_VARIABLE err RESULT_VARIABLE r)
 if(r EQUAL 0)

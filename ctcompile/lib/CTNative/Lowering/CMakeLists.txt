@@ -4,7 +4,8 @@
 # ctbrowser library at all.
 add_library(ctcompile-ctnative-lowering
   LowerToEmitC.cpp
-  PrintDeduced.cpp)
+  PrintDeduced.cpp
+  PruneDeadStores.cpp)
 ctcompile_target(ctcompile-ctnative-lowering)
 add_dependencies(ctcompile-ctnative-lowering CTNativeTransformsPassIncGen)
 

@@ -151,16 +151,10 @@ else()
   # NOTHING OF ctbrowser'S ON THIS LINE. No -I, no -l, no library: the whole
   # point. -ffp-contract=off is explained at the top.
   execute_process(
-    # -Wno-unused-variable and -Wno-unused-but-set-variable, ONLY those two: the
-  # lowering's loops come out of upstream's scf-to-emitc with every loop result
-  # materialised, used or not, and a copy of an unused loop result is what a
-  # C++ backend emits, not a defect the gate exists to catch. Everything else
-  # in -Wall -Wextra -Werror -pedantic stays: the gate's teeth are the
-  # interpreter comparison and the nm check, and a real error in emitted C++
-  # (a NAN before its include, a use before a prototype) still fails here.
-  COMMAND "${CXX}" -std=c++23 -O2 -Wall -Wextra -Werror -pedantic -ffp-contract=off
-          -Wno-unused-variable -Wno-unused-but-set-variable
-            -o "${_exe}" "${_src}"
+  # Generated code must be clean under the same flags as the dedicated Phase
+  # 63 gate. A warning here is a ctcompile bug, not something to suppress.
+  COMMAND "${CXX}" -std=c++23 -O2 -Wall -Wextra -Werror -pedantic -Wconversion -ffp-contract=off
+          -o "${_exe}" "${_src}"
     OUTPUT_VARIABLE _out ERROR_VARIABLE _err RESULT_VARIABLE _rc)
   if(NOT _rc EQUAL 0)
     message(FATAL_ERROR "${NAME}: the emitted C++ does not compile standalone (exit ${_rc})\n${_out}${_err}")

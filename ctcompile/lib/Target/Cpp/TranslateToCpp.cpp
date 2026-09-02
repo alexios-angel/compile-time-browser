@@ -1856,6 +1856,12 @@ LogicalResult CppEmitter::emitLabel(Block &block) {
 }
 
 LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
+  // ctcompile Phase 63 Step 7: a provenance comment above every generated
+  // definition, so a C++ diagnostic on generated code names a JavaScript
+  // site. The lowering composes the text; this is its one consumer.
+  if (auto provenance = op.getAttrOfType<StringAttr>("ctnative.provenance"))
+    os << "// ctcompile: " << provenance.getValue() << "\n";
+
   LogicalResult status =
       llvm::TypeSwitch<Operation *, LogicalResult>(&op)
           // Builtin ops.

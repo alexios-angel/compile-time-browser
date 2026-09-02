@@ -97,7 +97,7 @@ module {
   //
   // RECURSION, and an early return: both arms assign the result lvalue and the
   // one `emitc.return` reads it after the `if`.
-  emitc.func @fib(%n: i32) -> i32 {
+  emitc.func @fib(%n: i32) -> i32 attributes {ctnative.provenance = "function fib, native-fixture.js (module written by hand)"} {
     %r = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<i32>
     %two = "emitc.constant"() <{value = 2 : i32}> : () -> i32
     %base = emitc.cmp lt, %n, %two : (i32, i32) -> i1
@@ -119,7 +119,7 @@ module {
   // function sum_to(n) { var s = 0; for (var i = 1; i <= n; i = i + 1) { s = s + i; } return s; }
   //
   // A COUNTED LOOP is `emitc.for`; its test is `<`, so `i <= n` is `i < n + 1`.
-  emitc.func @sum_to(%n: i32) -> i32 {
+  emitc.func @sum_to(%n: i32) -> i32 attributes {ctnative.provenance = "function sum_to, native-fixture.js (module written by hand)"} {
     %s = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<i32>
     %zero = "emitc.constant"() <{value = 0 : i32}> : () -> i32
     emitc.assign %zero : i32 to %s : !emitc.lvalue<i32>
@@ -147,7 +147,7 @@ module {
   // reassigned so it is copied into an lvalue on entry. `n / 2` makes `n` a
   // double even though every value it takes is integral - JavaScript division
   // is not integer division, and the inference must not pretend it is.
-  emitc.func @collatz_steps(%n0: f64) -> i32 {
+  emitc.func @collatz_steps(%n0: f64) -> i32 attributes {ctnative.provenance = "function collatz_steps, native-fixture.js (module written by hand)"} {
     %n = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<f64>
     emitc.assign %n0 : f64 to %n : !emitc.lvalue<f64>
     %steps = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<i32>
@@ -190,19 +190,19 @@ module {
   }
 
   // function ratio(a, b) { return a / b; }
-  emitc.func @ratio(%a: f64, %b: f64) -> f64 {
+  emitc.func @ratio(%a: f64, %b: f64) -> f64 attributes {ctnative.provenance = "function ratio, native-fixture.js (module written by hand)"} {
     %q = emitc.div %a, %b : (f64, f64) -> f64
     emitc.return %q : f64
   }
 
   // function negate(x) { return -x; }
-  emitc.func @negate(%x: f64) -> f64 {
+  emitc.func @negate(%x: f64) -> f64 attributes {ctnative.provenance = "function negate, native-fixture.js (module written by hand)"} {
     %m = emitc.unary_minus %x : (f64) -> f64
     emitc.return %m : f64
   }
 
   // function modulo(a, b) { return a % b; }
-  emitc.func @modulo(%a: f64, %b: f64) -> f64 {
+  emitc.func @modulo(%a: f64, %b: f64) -> f64 attributes {ctnative.provenance = "function modulo, native-fixture.js (module written by hand)"} {
     %m = emitc.call_opaque "std::fmod"(%a, %b) : (f64, f64) -> f64
     emitc.return %m : f64
   }
@@ -210,7 +210,7 @@ module {
   // function is_between(x, lo, hi) { return x >= lo && x < hi; }
   //
   // A BOOLEAN-VALUED FUNCTION: `i1` in, `bool` out in the C++.
-  emitc.func @is_between(%x: f64, %lo: f64, %hi: f64) -> i1 {
+  emitc.func @is_between(%x: f64, %lo: f64, %hi: f64) -> i1 attributes {ctnative.provenance = "function is_between, native-fixture.js (module written by hand)"} {
     %ge = emitc.cmp ge, %x, %lo : (f64, f64) -> i1
     %lt = emitc.cmp lt, %x, %hi : (f64, f64) -> i1
     %both = emitc.logical_and %ge, %lt : i1, i1
@@ -226,7 +226,7 @@ module {
   // THREE RETURNS become three assignments to one lvalue, nested so that every
   // path assigns it exactly once - the C++ compiler's -Wsometimes-uninitialized
   // is part of the gate and a path that skips the assignment would trip it.
-  emitc.func @clamp01(%x: f64) -> f64 {
+  emitc.func @clamp01(%x: f64) -> f64 attributes {ctnative.provenance = "function clamp01, native-fixture.js (module written by hand)"} {
     %r = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<f64>
     %zero = "emitc.constant"() <{value = 0.0 : f64}> : () -> f64
     %one = "emitc.constant"() <{value = 1.0 : f64}> : () -> f64
@@ -247,7 +247,7 @@ module {
 
   // THE TOP LEVEL. Every `var x = ...` is a call and a store to the global; the
   // constants are typed by what the callee's parameter was proved to be.
-  emitc.func @main() -> i32 {
+  emitc.func @main() -> i32 attributes {ctnative.provenance = "the top level, native-fixture.js (module written by hand)"} {
     // var fib20 = fib(20);
     %c20 = "emitc.constant"() <{value = 20 : i32}> : () -> i32
     %v_fib20 = emitc.call @fib(%c20) : (i32) -> i32

@@ -1149,6 +1149,30 @@ endif()
 # the interpreter. One function, one line per program.
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
    AND COMMAND ctcompile_add_native_unit)
+  # PHASE 63 STEP 7: the generated file compiles clean on BOTH toolchains the
+  # plan names, and every definition carries a provenance comment. Two
+  # compilers are required, not "whatever is found": a gate that silently
+  # drops a compiler passes vacuously (check-compile-clean.cmake).
+  find_program(CTCOMPILE_CLEAN_GXX NAMES g++-13 g++)
+  find_program(CTCOMPILE_CLEAN_CLANGXX NAMES clang++-18 clang++)
+  if(NOT CTCOMPILE_CLEAN_GXX OR NOT CTCOMPILE_CLEAN_CLANGXX)
+    message(FATAL_ERROR "Phase 63 Step 7 needs both g++ and clang++ on PATH; found g++='${CTCOMPILE_CLEAN_GXX}' clang++='${CTCOMPILE_CLEAN_CLANGXX}'")
+  endif()
+  function(ctcompile_add_compile_clean name module)
+    add_test(NAME ctcompile_compile_clean_${name}
+             COMMAND ${CMAKE_COMMAND}
+                     -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
+                     -DMODULE=${module}
+                     "-DCOMPILERS=${CTCOMPILE_CLEAN_GXX},${CTCOMPILE_CLEAN_CLANGXX}"
+                     -DWORK=${CMAKE_CURRENT_BINARY_DIR}
+                     -DNAME=${name}
+                     ${ARGN}
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/check-compile-clean.cmake)
+  endfunction()
+  # the hand-written fixture module, and the negative proof
+  ctcompile_add_compile_clean(fixture "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.emitc.mlir")
+  ctcompile_add_compile_clean(fixture_unused_variable "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.emitc.mlir"
+    -DMUTATE=1 "-DEXPECT_FAILURE=refused the generated file")
   function(ctcompile_add_native_pipeline name js)
     set(_module "${CMAKE_CURRENT_BINARY_DIR}/${name}.pipeline.emitc.mlir")
     add_custom_command(
@@ -1182,6 +1206,8 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
       COMMENT "Mutating one pin in ${name}")
     add_custom_target(ctcompile-native-deduced-${name} ALL DEPENDS "${_deduced}" "${_mutated}")
     ctcompile_add_native_unit(pipeline_${name}_deduced "${_deduced}" "${js}")
+    ctcompile_add_compile_clean(pipeline_${name} "${_module}")
+    ctcompile_add_compile_clean(pipeline_${name}_deduced "${_deduced}")
     add_test(NAME ctcompile_print_deduced_${name}
              COMMAND ${CMAKE_COMMAND}
                      -DTRANSLATE=$<TARGET_FILE:ctjs-translate>

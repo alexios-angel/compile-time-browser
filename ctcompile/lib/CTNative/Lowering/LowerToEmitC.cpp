@@ -450,6 +450,36 @@ struct admission {
 // The C identifier a lowered function gets: the importer's `name$index` with
 // the `$` made a `_`, which keeps the index (two nested `helper`s stay apart)
 // and keeps clear of <cmath>'s `nan`, `remainder` and friends.
+// PART 24 PHASE 63 STEP 7: a provenance comment above every generated
+// definition, so a C++ diagnostic on generated code maps back to the
+// JavaScript site. The importer fuses a NameLoc with the FileLineColLoc of
+// the site; the first file location found, at any depth, is the site.
+static std::string siteOf(mlir::Location loc) {
+    std::string site;
+    loc->walk([&](mlir::Location l) {
+        if (auto file = llvm::dyn_cast<mlir::FileLineColLoc>(l)) {
+            site = file.getFilename().str() + ":" + std::to_string(file.getLine()) + ":" +
+                   std::to_string(file.getColumn());
+            return mlir::WalkResult::interrupt();
+        }
+        return mlir::WalkResult::advance();
+    });
+    return site.empty() ? std::string{"<no source location>"} : site;
+}
+// The importer gives a ctjs.func no location of its own; its first located
+// operation is the function's site.
+static std::string siteOfFunction(ctjs::FuncOp fn) {
+    std::string site = siteOf(fn.getLoc());
+    if (site != "<no source location>") { return site; }
+    fn.getBody().walk([&](mlir::Operation * o) {
+        const std::string here = siteOf(o->getLoc());
+        if (here == "<no source location>") { return mlir::WalkResult::advance(); }
+        site = here;
+        return mlir::WalkResult::interrupt();
+    });
+    return site;
+}
+
 std::string cIdentifier(llvm::StringRef symbol) {
     std::string name = symbol.str();
     for (char & ch : name) {
@@ -478,6 +508,7 @@ struct lowering {
     // carrier types, declared at the top of the module by finish().
     struct shape {
         std::string name;
+        std::string site; // the object literal, for the provenance comment
         llvm::SmallVector<std::pair<std::string, mlir::Type>> fields;
     };
     llvm::SmallVector<shape> shapes;
@@ -497,6 +528,7 @@ struct lowering {
     void collectShape(ctjs::CreateObjectOp object) {
         shape sh;
         sh.name = "ctn_shape_" + std::to_string(shapes.size());
+        sh.site = siteOf(object.getLoc());
         llvm::StringMap<mlir::Type> fields;
         for (mlir::Operation * user : object.getResult().getUsers()) {
             mlir::Value key;
@@ -543,6 +575,8 @@ struct lowering {
             // only: emitc.class prints exactly that.
             for (const shape & sh : shapes) {
                 auto cls = ec::ClassOp::create(b, module.getLoc(), sh.name);
+                cls->setAttr("ctnative.provenance",
+                             b.getStringAttr("object literal at " + sh.site));
                 mlir::Block & body = cls.getBody().emplaceBlock();
                 mlir::OpBuilder inside = mlir::OpBuilder::atBlockEnd(&body);
                 for (const auto & [name, type] : sh.fields) {
@@ -857,6 +891,11 @@ struct lowering {
                                                           : cIdentifier(fn.getSymName());
         auto made =
             ec::FuncOp::create(b, fn.getLoc(), symbol, b.getFunctionType(params, {returnType}));
+        // The JavaScript name is the symbol before the importer's `$index`.
+        const llvm::StringRef jsName = fn.getSymName().split('$').first;
+        made->setAttr("ctnative.provenance",
+                      b.getStringAttr((isEntry ? "the top level" : "function " + jsName.str()) +
+                                      ", " + siteOfFunction(fn)));
         made.getBody().takeBody(fn.getBody());
         mlir::Block & body = made.getBody().front();
 
@@ -921,11 +960,12 @@ struct lowering {
         llvm::sort(names);
         for (llvm::StringRef name : names) {
             // Undefined until the first store: NaN.
-            ec::GlobalOp::create(b, module.getLoc(), ("g_" + name).str(),
-                                 mlir::Float64Type::get(context),
-                                 b.getF64FloatAttr(std::numeric_limits<double>::quiet_NaN()),
-                                 /*extern_specifier=*/false, /*static_specifier=*/true,
-                                 /*const_specifier=*/false);
+            auto global = ec::GlobalOp::create(
+                b, module.getLoc(), ("g_" + name).str(), mlir::Float64Type::get(context),
+                b.getF64FloatAttr(std::numeric_limits<double>::quiet_NaN()),
+                /*extern_specifier=*/false, /*static_specifier=*/true,
+                /*const_specifier=*/false);
+            global->setAttr("ctnative.provenance", b.getStringAttr("global " + name.str()));
         }
     }
 };

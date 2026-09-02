@@ -25,7 +25,12 @@ execute_process(
   # folding an scf.if it left there into an arith.select of ctjs.constants
   # read through a null attribute in arith's fold (valgrind: address 0x10).
   # The nested pipeline is what MLIR provides for exactly this scoping.
-  COMMAND "${OPT}" "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc))"
+  #
+  # AFTER THE CONVERSIONS: a canonicalize for the loads nothing uses, the
+  # prune for the variables nothing reads (Phase 63 Step 7 - the file must
+  # compile clean under -Wall -Wextra -Werror), and a canonicalize for what
+  # the prune left dead.
+  COMMAND "${OPT}" "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))"
           --mlir-print-debuginfo
   OUTPUT_VARIABLE module
   ERROR_VARIABLE complaints

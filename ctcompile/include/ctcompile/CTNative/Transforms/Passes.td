@@ -82,4 +82,30 @@ def CTNativePrintDeduced : Pass<"ctnative-print-deduced", "mlir::ModuleOp"> {
   let dependentDialects = ["::mlir::emitc::EmitCDialect"];
 }
 
+def CTNativePruneDeadStores : Pass<"ctnative-prune-dead-stores"> {
+  let summary = "Erase emitc.variables that are only ever assigned, with their assigns, and what then dies";
+  let description = [{
+    Part 24 Phase 63 Step 7: the generated file compiles clean under
+    -Wall -Wextra -Werror, and any diagnostic the C++ compiler emits on
+    generated code is a ctcompile bug. `--convert-scf-to-emitc` gives every
+    loop result an `emitc.variable`, assigns it on every path and loads it
+    after the loop; a result nothing reads is then a load nothing uses (which
+    a canonicalize removes) and a variable that is set but never read (which
+    it does not: an assign has a write effect). This pass erases every
+    variable whose uses are all `emitc.assign` targets - or that has no use
+    at all - together with those assigns, then erases whatever became
+    trivially dead, to a fixpoint. A variable read through `emitc.load`,
+    `emitc.member` or anything else is untouched.
+  }];
+  let statistics = [
+    Statistic<"prunedVariables", "pruned-variables", "emitc.variables erased because nothing ever read them">,
+    Statistic<"prunedOps", "pruned-ops", "operations erased as trivially dead once their store was gone">
+  ];
+  let options = [
+    Option<"report", "report", "bool", /*default=*/"false",
+           "Emit the exact prune counts as a remark (the release LLVM package compiles pass statistics out)">
+  ];
+  let dependentDialects = ["::mlir::emitc::EmitCDialect"];
+}
+
 #endif // CTCOMPILE_CTNATIVE_TRANSFORMS_PASSES_TD
