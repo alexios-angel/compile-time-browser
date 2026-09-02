@@ -50,6 +50,32 @@
 // the result; a `ctbrowser::script::` symbol in it is the failure the whole
 // phase exists to define.
 
+// AS A LIT TEST this file asserts the SHAPE of the emitted C++ and never a
+// value: the values are the interpreter's to judge, in check-native-unit.cmake.
+// The implicit check-not is the gate's rule in one word - nothing of
+// ctbrowser's reaches the translation unit.
+//
+// RUN: ctjs-translate --mlir-to-cpp %s | FileCheck %s --implicit-check-not=ctbrowser
+//
+// CHECK: #include <cstdint>
+// CHECK: int32_t fib20;
+// CHECK: double clamped;
+// CHECK-LABEL: int32_t fib(int32_t
+// CHECK: fib(
+// CHECK-LABEL: int32_t sum_to(int32_t
+// CHECK: for (int32_t
+// CHECK-LABEL: int32_t collatz_steps(double
+// CHECK: do {
+// CHECK: std::fmod(
+// CHECK: } while (
+// CHECK-LABEL: bool is_between(double
+// CHECK: &&
+// CHECK-LABEL: int32_t main() {
+// CHECK: fib20 = {{v[0-9]+}};
+// CHECK: std::printf("%s=%.17g\n", "clamped", {{v[0-9]+}});
+// CHECK: std::printf("%s=%.17g\n", "third", {{v[0-9]+}});
+// CHECK: return {{v[0-9]+}};
+
 module {
   emitc.include <"cstdint">
   emitc.include <"cstdio">
