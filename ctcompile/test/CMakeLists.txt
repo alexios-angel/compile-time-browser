@@ -1055,3 +1055,87 @@ if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/check-escape-claims.cmake)
   endforeach()
 endif()
+
+# === PHASE 62½-D: the native gate ===
+#
+# THE TEST THAT DEFINES "NATIVE" - part 24 §1.2 and Phase 62½-D. One block,
+# appended, per part 23's Appendix A.3. Everything it needs is its own file:
+# native-fixture.js (the program), native-fixture.emitc.mlir (the hand-written
+# EmitC module the Phase 62½-C lowering is expected to produce for it - the
+# specification of that lowering's output shape), NativeReference.cpp (the
+# interpreter's answers, printed the same way), NativeVmLinked.cpp (the
+# negative control for the symbol check) and check-native-unit.cmake (the
+# gate: emit, compile standalone, nm, run, compare).
+#
+# THE REFERENCE NEEDS NO MLIR. It is the interpreter's opinion of a JavaScript
+# file, built wherever the type oracle is: the answer side of the gate should
+# not depend on the compiler side existing, and a lowering author wants it on a
+# box with no LLVM too.
+add_executable(ctcompile-test-native-reference NativeReference.cpp)
+target_link_libraries(ctcompile-test-native-reference PRIVATE ctbrowser::ctbrowser)
+ctcompile_target(ctcompile-test-native-reference)
+
+if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate)
+  # nm, the one CMake found beside the compiler at configure time (llvm-nm for
+  # the pinned clang). A missing one is said out loud rather than skipped: this
+  # gate IS the definition of native, and a suite without it is green on nothing.
+  set(_native_nm "${CMAKE_NM}")
+  if(NOT _native_nm)
+    find_program(_native_nm NAMES llvm-nm nm)
+  endif()
+  if(NOT _native_nm)
+    message(WARNING "ctcompile: no nm found - the Phase 62½-D native gate is NOT registered")
+  else()
+    # ONE FUNCTION, so a second fixture is one line: the module, the program,
+    # and any of the driver's negative-proof switches after them.
+    function(ctcompile_add_native_unit name module js)
+      add_test(NAME ctcompile_native_unit_${name}
+               COMMAND ${CMAKE_COMMAND}
+                       -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
+                       -DMODULE=${module}
+                       -DJS=${js}
+                       -DCXX=${CMAKE_CXX_COMPILER}
+                       -DNM=${_native_nm}
+                       -DREFERENCE=$<TARGET_FILE:ctcompile-test-native-reference>
+                       -DVM_LINKED=$<TARGET_FILE:ctcompile-test-type-oracle>
+                       -DWORK=${CMAKE_CURRENT_BINARY_DIR}
+                       -DNAME=${name}
+                       ${ARGN}
+                       -P ${CMAKE_CURRENT_SOURCE_DIR}/check-native-unit.cmake)
+    endfunction()
+
+    set(_native_module "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.emitc.mlir")
+    set(_native_js "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.js")
+
+    # THE GATE.
+    ctcompile_add_native_unit(fixture "${_native_module}" "${_native_js}")
+
+    # NEGATIVE PROOF 1: one global off by one must FAIL, naming the global. The
+    # driver runs itself and passes only if the child failed with that name in
+    # its output - see EXPECT_FAILURE in the driver for why not WILL_FAIL.
+    ctcompile_add_native_unit(fixture_off_by_one "${_native_module}" "${_native_js}"
+      -DMUTATE=fib20 "-DEXPECT_FAILURE=global 'fib20' differs")
+
+    # NEGATIVE PROOF 2: the same C++, plus one object that reaches the
+    # interpreter, linked against the engine - must FAIL the symbol check. The
+    # C++ is emitted at build time by the same emitter the gate uses, so this
+    # binary is the fixture's program in every respect but the one that matters.
+    set(_native_cpp "${CMAKE_CURRENT_BINARY_DIR}/native-fixture.generated.cpp")
+    add_custom_command(
+      OUTPUT "${_native_cpp}"
+      COMMAND $<TARGET_FILE:ctjs-translate> --mlir-to-cpp "${_native_module}" -o "${_native_cpp}"
+      DEPENDS "${_native_module}" ctjs-translate
+      COMMENT "Emitting native-fixture.emitc.mlir to C++ for the VM-linked control"
+      VERBATIM)
+    add_executable(ctcompile-test-native-vm-linked NativeVmLinked.cpp "${_native_cpp}")
+    target_link_libraries(ctcompile-test-native-vm-linked PRIVATE ctbrowser::ctbrowser)
+    target_compile_features(ctcompile-test-native-vm-linked PRIVATE cxx_std_23)
+    # THE GATE'S OWN FLAGS, not ctcompile_target's: this is the same text under
+    # the same compile the gate performs, plus one object and one library.
+    target_compile_options(ctcompile-test-native-vm-linked PRIVATE
+      -O2 -Wall -Wextra -Werror -pedantic -ffp-contract=off)
+    ctcompile_add_native_unit(fixture_vm_linked "${_native_module}" "${_native_js}"
+      -DPREBUILT=$<TARGET_FILE:ctcompile-test-native-vm-linked>
+      "-DEXPECT_FAILURE=reaches the interpreter")
+  endif()
+endif()
