@@ -1142,54 +1142,34 @@ endif()
 
 # === PHASE 62½-C+D: JavaScript through the native pipeline and the gate ===
 #
-# The first program that goes all the way. native-pipeline.cmake runs the
-# lowering over a JavaScript file and refuses to write a module while any
-# function carries a diagnostic; the gate then compiles it with no ctbrowser
-# library, runs it, and compares every numeric global with the interpreter.
-# One appended block, per Appendix A.3.
+# The programs that go all the way. native-pipeline.cmake runs the closed
+# world, the lift and the lowering over a JavaScript file and refuses to write
+# a module while any function carries a diagnostic; the gate then compiles it
+# with no ctbrowser library, runs it, and compares every numeric global with
+# the interpreter. One function, one line per program.
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
    AND COMMAND ctcompile_add_native_unit)
-  set(_pipeline_js "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline-fixture.js")
-  set(_pipeline_module "${CMAKE_CURRENT_BINARY_DIR}/native-pipeline-fixture.emitc.mlir")
-  add_custom_command(
-    OUTPUT "${_pipeline_module}"
-    COMMAND ${CMAKE_COMMAND}
-            -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
-            -DOPT=$<TARGET_FILE:ctjs-opt>
-            -DSOURCE=${_pipeline_js}
-            -DOUTPUT=${_pipeline_module}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline.cmake"
-    DEPENDS "${_pipeline_js}" "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline.cmake"
-            ctjs-translate ctjs-opt
-    COMMENT "Lowering native-pipeline-fixture.js to a native EmitC module")
-  add_custom_target(ctcompile-native-pipeline-module ALL DEPENDS "${_pipeline_module}")
-  ctcompile_add_native_unit(pipeline "${_pipeline_module}" "${_pipeline_js}")
-endif()
-
-# === PHASE 62½-A+C+D: functions through the native pipeline and the gate ===
-#
-# The gate's own fixture - eight functions, recursion, loops, a boolean
-# return - through --ctjs-resolve-globals and the lowering rather than its
-# hand-written module. The closed world types the parameters; the lowering
-# makes every function an emitc.func; the gate compares the binary's answers
-# with the interpreter's. One appended block, per Appendix A.3.
-if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
-   AND COMMAND ctcompile_add_native_unit)
-  set(_functions_js "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.js")
-  set(_functions_module "${CMAKE_CURRENT_BINARY_DIR}/native-fixture.pipeline.emitc.mlir")
-  add_custom_command(
-    OUTPUT "${_functions_module}"
-    COMMAND ${CMAKE_COMMAND}
-            -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
-            -DOPT=$<TARGET_FILE:ctjs-opt>
-            -DSOURCE=${_functions_js}
-            -DOUTPUT=${_functions_module}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline.cmake"
-    DEPENDS "${_functions_js}" "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline.cmake"
-            ctjs-translate ctjs-opt
-    COMMENT "Lowering native-fixture.js through the native pipeline")
-  add_custom_target(ctcompile-native-functions-module ALL DEPENDS "${_functions_module}")
-  ctcompile_add_native_unit(pipeline_functions "${_functions_module}" "${_functions_js}")
+  function(ctcompile_add_native_pipeline name js)
+    set(_module "${CMAKE_CURRENT_BINARY_DIR}/${name}.pipeline.emitc.mlir")
+    add_custom_command(
+      OUTPUT "${_module}"
+      COMMAND ${CMAKE_COMMAND}
+              -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
+              -DOPT=$<TARGET_FILE:ctjs-opt>
+              -DSOURCE=${js}
+              -DOUTPUT=${_module}
+              -P "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline.cmake"
+      DEPENDS "${js}" "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline.cmake" ctjs-translate ctjs-opt
+      COMMENT "Lowering ${name} through the native pipeline")
+    add_custom_target(ctcompile-native-pipeline-${name} ALL DEPENDS "${_module}")
+    ctcompile_add_native_unit(pipeline_${name} "${_module}" "${js}")
+  endfunction()
+  # numbers and booleans, no functions
+  ctcompile_add_native_pipeline(numeric "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline-fixture.js")
+  # the gate's own eight functions: recursion, loops, a boolean predicate
+  ctcompile_add_native_pipeline(functions "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.js")
+  # Phase 56: object literals with closed shapes, on the stack
+  ctcompile_add_native_pipeline(structs "${CMAKE_CURRENT_SOURCE_DIR}/native-struct-fixture.js")
 endif()
 
 # === PART 24 §3.3: the deduction probe ===

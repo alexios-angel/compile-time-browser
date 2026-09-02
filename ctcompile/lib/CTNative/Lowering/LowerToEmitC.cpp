@@ -72,7 +72,8 @@ namespace ec = mlir::emitc;
 enum class carrier {
     none,
     boolean,
-    number
+    number,
+    structure
 };
 
 // What C++ type carries a value of this ctnative type, per the table above.
@@ -83,6 +84,10 @@ carrier carrierOf(mlir::Type type) {
     if (llvm::isa<NumType>(type)) { return carrier::number; }
     if (auto opt = llvm::dyn_cast<OptType>(type)) {
         if (llvm::isa<BottomType, NumType>(opt.getElementType())) { return carrier::number; }
+        // A boolean-or-undefined, as a bool whose undefined is false: exact
+        // in a branch, under `!` and as truthiness (both are falsy), refused
+        // where the difference shows (equality) - the number rows' shape.
+        if (llvm::isa<BoolType>(opt.getElementType())) { return carrier::boolean; }
     }
     return carrier::none;
 }
@@ -182,9 +187,84 @@ struct admission {
         return true;
     }
 
+    // PHASE 56: A CLOSED SHAPE IS A STRUCT BY VALUE. TypeInference::hasClosedShape
+    // is the proof - every use is a get or set through a constant key, so the
+    // object never reaches anything that could add or remove a field, and never
+    // leaves the frame (a return, a store, a call would all be uses that open
+    // it). Each key must be a C identifier, each field a number or a boolean.
+    static bool isClosedObject(mlir::Value v) { return TypeInference::hasClosedShape(v); }
+    static llvm::StringRef keyOf(mlir::Value key) {
+        auto constant = key.getDefiningOp<ctjs::ConstantOp>();
+        if (!constant) { return {}; }
+        auto str = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
+        return str ? str.getValue() : llvm::StringRef{};
+    }
+    static bool isCIdentifier(llvm::StringRef key) {
+        if (key.empty() || std::isdigit(static_cast<unsigned char>(key.front()))) { return false; }
+        return llvm::all_of(
+            key, [](char ch) { return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_'; });
+    }
+    // A string constant whose every use is a property key of a closed object
+    // lowers to nothing: the key becomes a member name.
+    static bool isKeyOnlyString(mlir::Operation * o) {
+        auto constant = llvm::dyn_cast<ctjs::ConstantOp>(o);
+        if (!constant || !llvm::isa<ctjs::StringAttr>(constant.getValue()) ||
+            constant.getResult().use_empty()) {
+            return false;
+        }
+        for (mlir::OpOperand & use : constant.getResult().getUses()) {
+            mlir::Operation * user = use.getOwner();
+            mlir::Value object;
+            if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
+                object = get.getObject();
+            } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
+                object = set.getObject();
+            }
+            if (!object || use.getOperandNumber() != 1 || !isClosedObject(object)) { return false; }
+        }
+        return true;
+    }
+
     bool op(mlir::Operation * o) {
         using namespace ctjs;
         if (llvm::isa<FrameEnterOp, FrameExitOp, RootOp>(o)) { return true; }
+        if (auto object = llvm::dyn_cast<CreateObjectOp>(o)) {
+            if (!isClosedObject(object.getResult())) {
+                return refuse("an object literal whose shape is not closed - it is stored, "
+                              "passed, returned, or reached through a dynamic key");
+            }
+            for (mlir::Operation * user : object.getResult().getUsers()) {
+                const llvm::StringRef key = llvm::isa<GetPropertyOp>(user)
+                                                ? keyOf(llvm::cast<GetPropertyOp>(user).getKey())
+                                                : keyOf(llvm::cast<SetPropertyOp>(user).getKey());
+                if (!isCIdentifier(key)) {
+                    return refuse(("field `" + key + "` is not a C identifier").str());
+                }
+                if (auto set = llvm::dyn_cast<SetPropertyOp>(user)) {
+                    const carrier c = carrierOf(typeOf(set.getValue()));
+                    if (c != carrier::number && c != carrier::boolean) {
+                        return refuse(("field `" + key + "` is stored a " +
+                                       printed(typeOf(set.getValue())) +
+                                       ", not a number or a boolean")
+                                          .str());
+                    }
+                }
+            }
+            return true;
+        }
+        if (auto get = llvm::dyn_cast<GetPropertyOp>(o)) {
+            if (!isClosedObject(get.getObject())) {
+                return refuse("a property read on an object that is not a closed-shape literal");
+            }
+            return true; // its result's carrier is checked with every other value
+        }
+        if (auto set = llvm::dyn_cast<SetPropertyOp>(o)) {
+            if (!isClosedObject(set.getObject())) {
+                return refuse("a property write on an object that is not a closed-shape literal");
+            }
+            return true; // the value's carrier was checked at the object
+        }
+        if (isKeyOnlyString(o)) { return true; }
         if (auto load = llvm::dyn_cast<LoadGlobalOp>(o);
             load && feedsOnlyDirectCallees(load.getResult())) {
             return true;
@@ -333,6 +413,7 @@ struct admission {
             // neither has a carrier and neither needs one.
             if (isDeclarationClosure(o)) { return; }
             if (o->getName().getStringRef() == "ub.poison") { return; }
+            if (llvm::isa<ctjs::CreateObjectOp>(o) || isKeyOnlyString(o)) { return; }
             if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o);
                 load && feedsOnlyDirectCallees(load.getResult())) {
                 return;
@@ -381,6 +462,8 @@ struct lowering {
     mlir::DataFlowSolver & solver;
     mlir::MLIRContext * context;
     mlir::ModuleOp module;
+    lowering(mlir::DataFlowSolver & s, mlir::MLIRContext * c, mlir::ModuleOp m)
+        : solver(s), context(c), module(m) {}
     llvm::StringSet<> globals; // numeric globals the emitted unit declares
     // ctjs symbol -> emitc symbol, decided for EVERY accepted function before
     // any is lowered, so a call lowered before its callee already names the
@@ -390,6 +473,52 @@ struct lowering {
     llvm::StringMap<std::string> names;
     // The hollowed ctjs.funcs, erased together in finish().
     llvm::SmallVector<ctjs::FuncOp> shells;
+    // ONE CLASS PER CLOSED-SHAPE SITE (Phase 56C's one-definition-per-shape is
+    // the next step): the class name, and its fields in name order with their
+    // carrier types, declared at the top of the module by finish().
+    struct shape {
+        std::string name;
+        llvm::SmallVector<std::pair<std::string, mlir::Type>> fields;
+    };
+    llvm::SmallVector<shape> shapes;
+    llvm::DenseMap<mlir::Value, unsigned> shapeOf; // create_object result -> index into shapes
+    // Decided while the IR is still ctjs: by the time a key constant or an
+    // access is replaced, the object it keys is already an emitc.variable and
+    // no longer reads as a closed create_object.
+    llvm::DenseMap<mlir::Operation *, std::string> accessKey; // get/set -> member name
+    llvm::DenseSet<mlir::Operation *> keyConstants;           // constants that lower to nothing
+
+    mlir::Type classType(const shape & sh) {
+        return ec::LValueType::get(ec::OpaqueType::get(context, sh.name));
+    }
+    // The fields of a closed object: every key read or written, with the
+    // carrier of the field's inferred type (the join of its stores, which
+    // every read carries); a key only ever read is undefined, carried as NaN.
+    void collectShape(ctjs::CreateObjectOp object) {
+        shape sh;
+        sh.name = "ctn_shape_" + std::to_string(shapes.size());
+        llvm::StringMap<mlir::Type> fields;
+        for (mlir::Operation * user : object.getResult().getUsers()) {
+            mlir::Value key;
+            if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
+                key = get.getKey();
+                fields.try_emplace(admission::keyOf(key), get.getResult().getType());
+            } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
+                key = set.getKey();
+                fields.try_emplace(admission::keyOf(key), set.getValue().getType());
+            }
+            if (key) {
+                accessKey[user] = admission::keyOf(key).str();
+                keyConstants.insert(key.getDefiningOp());
+            }
+        }
+        for (const auto & entry : fields) {
+            sh.fields.emplace_back(entry.getKey().str(), entry.getValue());
+        }
+        llvm::sort(sh.fields, [](const auto & a, const auto & b) { return a.first < b.first; });
+        shapeOf[object.getResult()] = static_cast<unsigned>(shapes.size());
+        shapes.push_back(std::move(sh));
+    }
 
     void finish() {
         // PROTOTYPES FIRST. main is the importer's function 0 and is emitted
@@ -408,6 +537,16 @@ struct lowering {
                 if (!llvm::isa<ec::IncludeOp>(op)) {
                     b.setInsertionPoint(&op);
                     break;
+                }
+            }
+            // THE CLASSES FIRST, one per closed-shape site, public fields
+            // only: emitc.class prints exactly that.
+            for (const shape & sh : shapes) {
+                auto cls = ec::ClassOp::create(b, module.getLoc(), sh.name);
+                mlir::Block & body = cls.getBody().emplaceBlock();
+                mlir::OpBuilder inside = mlir::OpBuilder::atBlockEnd(&body);
+                for (const auto & [name, type] : sh.fields) {
+                    ec::FieldOp::create(inside, module.getLoc(), name, type, mlir::Attribute{});
                 }
             }
             for (ec::FuncOp f : lowered) {
@@ -468,6 +607,9 @@ struct lowering {
     void retype(ctjs::FuncOp fn) {
         const auto retypeValue = [&](mlir::Value v) {
             if (!llvm::isa<ctjs::ValueType>(v.getType())) { return; }
+            // A closed object keeps its ctjs type until its shape is known
+            // below; everything else takes its carrier now.
+            if (admission::isClosedObject(v)) { return; }
             v.setType(carrierType(context, carrierOf(typeOf(v))));
         };
         for (mlir::Block & block : fn.getBody()) {
@@ -480,6 +622,12 @@ struct lowering {
                     for (mlir::BlockArgument a : block.getArguments()) { retypeValue(a); }
                 }
             }
+        });
+        // NOW THE SHAPES, from the carriers the fields' values just took, and
+        // the objects' own types last.
+        fn.getBody().walk([&](ctjs::CreateObjectOp object) {
+            collectShape(object);
+            mlir::Value(object.getResult()).setType(classType(shapes[shapeOf[object.getResult()]]));
         });
     }
 
@@ -517,6 +665,41 @@ struct lowering {
             swap(f64Constant(b, where, std::numeric_limits<double>::quiet_NaN()));
             return;
         }
+        if (auto object = llvm::dyn_cast<CreateObjectOp>(o)) {
+            // The struct, by value, in this frame; every field set to its
+            // undefined - NaN for a number, false for a boolean - before the
+            // first store, so a read before a write is exact.
+            const shape & sh = shapes[shapeOf[object.getResult()]];
+            mlir::Value local =
+                ec::VariableOp::create(b, where, classType(sh), ec::OpaqueAttr::get(context, ""));
+            for (const auto & [name, type] : sh.fields) {
+                mlir::Value member =
+                    ec::MemberOp::create(b, where, ec::LValueType::get(type), name, local);
+                mlir::Value init =
+                    llvm::isa<mlir::IntegerType>(type)
+                        ? boolConstant(b, where, false)
+                        : f64Constant(b, where, std::numeric_limits<double>::quiet_NaN());
+                ec::AssignOp::create(b, where, member, init);
+            }
+            swap(local);
+            return;
+        }
+        if (auto get = llvm::dyn_cast<GetPropertyOp>(o)) {
+            const mlir::Type type = get.getResult().getType();
+            mlir::Value member = ec::MemberOp::create(b, where, ec::LValueType::get(type),
+                                                      accessKey.at(o), get.getObject());
+            swap(ec::LoadOp::create(b, where, type, member));
+            return;
+        }
+        if (auto set = llvm::dyn_cast<SetPropertyOp>(o)) {
+            mlir::Value member =
+                ec::MemberOp::create(b, where, ec::LValueType::get(set.getValue().getType()),
+                                     accessKey.at(o), set.getObject());
+            ec::AssignOp::create(b, where, member, set.getValue());
+            eraseIfUnused(o);
+            return;
+        }
+        if (keyConstants.contains(o)) { return; } // dead after its get/set; swept
         if (admission::isDeclarationStore(o)) {
             mlir::Operation * closure = llvm::cast<StoreGlobalOp>(o).getValue().getDefiningOp();
             eraseIfUnused(o);
@@ -693,8 +876,8 @@ struct lowering {
         // constant whose only user was another dead constant goes too.
         llvm::SmallVector<mlir::Operation *> dead;
         made.getBody().walk([&](mlir::Operation * o) {
-            if (llvm::isa<ec::ConstantOp, ec::LiteralOp, ctjs::FrameEnterOp, ctjs::LoadGlobalOp>(
-                    o)) {
+            if (llvm::isa<ec::ConstantOp, ec::LiteralOp, ctjs::FrameEnterOp, ctjs::LoadGlobalOp,
+                          ctjs::ConstantOp>(o)) {
                 dead.push_back(o);
             }
         });
@@ -824,7 +1007,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         llvm::erase_if(accepted,
                        [&](ctjs::FuncOp fn) { return !nativeSet.contains(fn.getOperation()); });
 
-        lowering lower{solver, &getContext(), module, {}, {}, {}};
+        lowering lower{solver, &getContext(), module};
         for (ctjs::FuncOp fn : accepted) {
             lower.names[fn.getSymName()] =
                 fn.getSymName().starts_with("_script_$") ? "main" : cIdentifier(fn.getSymName());
