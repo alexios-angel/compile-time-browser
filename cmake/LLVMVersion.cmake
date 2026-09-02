@@ -13,9 +13,9 @@
 # machine can actually have. Every ODS/PDLL construct the plan spells has to be
 # verified against THIS revision before it is relied on; see
 # ctcompile/docs/LLVMUpgrade.md.
-set(CTCOMPILE_REQUIRED_LLVM_MAJOR 22)
-set(CTCOMPILE_TESTED_LLVM_VERSION "22.1.8")
+set(CTCOMPILE_REQUIRED_LLVM_MAJOR 23)
+set(CTCOMPILE_TESTED_LLVM_VERSION "23.1.0")
 
 # How far ahead of the pin a build may drift before it is refused. A patch
 # release is fine; a major is not.
-set(CTCOMPILE_MAX_LLVM_MAJOR 22)
+set(CTCOMPILE_MAX_LLVM_MAJOR 23)

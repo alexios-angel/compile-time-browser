@@ -106,8 +106,14 @@ emitc.func @f(%ctx: !emitc.ptr<!emitc.opaque<"ctbrowser::aot::ct_aot_ctx">>,
       : (!emitc.opaque<"uint64_t">, !emitc.opaque<"uint64_t">, !emitc.opaque<"uint32_t">)
       -> !emitc.opaque<"uint64_t">
 
-  // CHECK: *{{v[0-9]+}} = {{v[0-9]+}};
-  %slot = emitc.dereference %out : !emitc.ptr<!emitc.opaque<"uint64_t">>
+  // `out[0] = ...`, NOT `*out = ...`: LLVM 23's emitter refuses an assignment
+  // through an emitc.dereference result under --declare-variables-at-top and
+  // accepts the same store through emitc.subscript. Same C++ for a pointer to
+  // one slot; the index is a declared variable under this flag.
+  // CHECK: {{v[0-9]+}}[{{v[0-9]+}}] = {{v[0-9]+}};
+  %zero = "emitc.constant"() {value = 0 : i32} : () -> i32
+  %slot = emitc.subscript %out[%zero]
+      : (!emitc.ptr<!emitc.opaque<"uint64_t">>, i32) -> !emitc.lvalue<!emitc.opaque<"uint64_t">>
   emitc.assign %returned : !emitc.opaque<"uint64_t"> to %slot
       : !emitc.lvalue<!emitc.opaque<"uint64_t">>
 

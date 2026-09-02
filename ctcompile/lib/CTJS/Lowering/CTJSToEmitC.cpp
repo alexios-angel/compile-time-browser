@@ -2176,8 +2176,16 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             auto result = ec::CallOpaqueOp::create(
                 build, where, mlir::TypeRange{value}, callee("ct_aot_return_value"),
                 mlir::ValueRange{produced, receiver, constructing});
-            auto destination =
-                ec::DereferenceOp::create(build, where, ec::LValueType::get(value), out);
+            // `out[0] = ...` AND NOT `*out = ...`. LLVM 23's C++ emitter refuses
+            // an assignment through an `emitc.dereference` result under
+            // --declare-variables-at-top ("result variable for the operation
+            // has not been declared") while accepting the identical store
+            // through `emitc.subscript`, and the two spell the same C++ for a
+            // pointer to one slot. Measured on the 22 -> 23 bump, 2026-09-02.
+            const mlir::Value slot = ec::ConstantOp::create(
+                build, where, build.getI32Type(), build.getI32IntegerAttr(0));
+            auto destination = ec::SubscriptOp::create(build, where, ec::LValueType::get(value),
+                                                       out, mlir::ValueRange{slot});
             ec::AssignOp::create(build, where, destination, result.getResult(0));
             ec::ReturnOp::create(
                 build, where,
