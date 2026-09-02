@@ -225,14 +225,72 @@ struct admission {
         return true;
     }
 
+    // WHY A LITERAL'S SHAPE IS OPEN: the first use that is not a get or a set
+    // through a constant key on the literal itself, named by what it is. A
+    // refusal that lists every route there is tells the reader nothing about
+    // which one this program took; this one names it.
+    //
+    // THE LOOP-CARRIED ROW IS THE ONE OBLIGATION O-3 LEAVES. --ctjs-lift-to-scf
+    // now replaces a loop header's argument for a variable assigned once
+    // before the loop by the variable (a trivial phi), so a literal updated
+    // inside a loop is one SSA value and one stack slot. What still reaches
+    // the scf.while is a REAL phi: the variable is assigned again inside the
+    // loop, or on only one path before it, and two literals - two shapes,
+    // two slots - would have to become one value, which is a pointer.
+    static std::string whyOpen(mlir::Value object) {
+        for (mlir::OpOperand & use : object.getUses()) {
+            mlir::Operation * user = use.getOwner();
+            if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
+                if (use.getOperandNumber() == 0) {
+                    if (!keyOf(get.getKey()).empty()) { continue; }
+                    return "an object literal reached through a dynamic key";
+                }
+            } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
+                if (use.getOperandNumber() == 0) {
+                    if (!keyOf(set.getKey()).empty()) { continue; }
+                    return "an object literal reached through a dynamic key";
+                }
+                if (use.getOperandNumber() == 2) {
+                    return "an object literal that escapes - it is stored into another object";
+                }
+            }
+            if (llvm::isa<mlir::scf::WhileOp, mlir::scf::YieldOp, mlir::scf::ConditionOp>(user)) {
+                return "an object literal that is loop-carried - more than one value reaches "
+                       "the variable that holds it (assigned again inside a loop, or on only "
+                       "one path before it)";
+            }
+            if (llvm::isa<ctjs::ReturnOp>(user)) {
+                return "an object literal that escapes - it is returned";
+            }
+            return ("an object literal that escapes - it reaches `" +
+                    user->getName().getStringRef() + "`")
+                .str();
+        }
+        return "an object literal whose shape is not closed";
+    }
+
+    // A VALUE THAT LOWERS TO NOTHING NEEDS NO CARRIER, and these are the only
+    // ones: the three implicit arguments (erased once their declaration
+    // closures are gone), a declaration closure's result, the lift's poison
+    // (replaced by NaN), a key constant (a member name) and a load_global
+    // that only names a direct call's callee. function() exempts exactly this
+    // list from the carrier check; retype() asks the same question.
+    static bool lowersToNothing(mlir::Value v) {
+        if (auto arg = llvm::dyn_cast<mlir::BlockArgument>(v)) {
+            return arg.getOwner()->isEntryBlock() &&
+                   llvm::isa<ctjs::FuncOp>(arg.getOwner()->getParentOp()) && arg.getArgNumber() < 3;
+        }
+        mlir::Operation * o = v.getDefiningOp();
+        if (isDeclarationClosure(o) || isKeyOnlyString(o)) { return true; }
+        if (o->getName().getStringRef() == "ub.poison") { return true; }
+        return llvm::isa<ctjs::LoadGlobalOp>(o) && feedsOnlyDirectCallees(v);
+    }
+
     bool op(mlir::Operation * o) {
         using namespace ctjs;
         if (llvm::isa<FrameEnterOp, FrameExitOp, RootOp>(o)) { return true; }
         if (auto object = llvm::dyn_cast<CreateObjectOp>(o)) {
-            if (!isClosedObject(object.getResult())) {
-                return refuse("an object literal whose shape is not closed - it is stored, "
-                              "passed, returned, or reached through a dynamic key");
-            }
+            if (!isClosedObject(object.getResult())) { return refuse(whyOpen(object.getResult())); }
             for (mlir::Operation * user : object.getResult().getUsers()) {
                 const llvm::StringRef key = llvm::isa<GetPropertyOp>(user)
                                                 ? keyOf(llvm::cast<GetPropertyOp>(user).getKey())
@@ -644,7 +702,22 @@ struct lowering {
             // A closed object keeps its ctjs type until its shape is known
             // below; everything else takes its carrier now.
             if (admission::isClosedObject(v)) { return; }
-            v.setType(carrierType(context, carrierOf(typeOf(v))));
+            const carrier c = carrierOf(typeOf(v));
+            // NO CARRIER IS FATAL, NOT A DOUBLE. This fell through to f64
+            // for anything that was not a boolean, so a value admission
+            // never looked at - a boxed object threaded through a loop, say
+            // - would have been retyped to a number and lowered as one, and
+            // the miscompile would have surfaced as a wrong answer at the
+            // gate rather than here. Admission refuses every such function;
+            // reaching this line is a bug in admission, and says so.
+            if (c == carrier::none && !admission::lowersToNothing(v)) {
+                llvm::report_fatal_error(llvm::Twine("ctnative lowering: `") + fn.getSymName() +
+                                         "` holds a value of type " + printed(typeOf(v)) +
+                                         " that has no native carrier - admission should "
+                                         "have refused it (a literal that reaches a loop is "
+                                         "obligation O-3, and whyOpen names it)");
+            }
+            v.setType(carrierType(context, c));
         };
         for (mlir::Block & block : fn.getBody()) {
             for (mlir::BlockArgument a : block.getArguments()) { retypeValue(a); }

@@ -18,11 +18,23 @@ function swap_sum() {
     b.v = t.hold;
     return a.v * 100 + b.v;
 }
-// AN OBJECT UPDATED IN A LOOP IS NOT HERE YET - see native-struct.mlir. The
-// lift threads every register live across a loop through the loop's block
-// arguments, so an object used inside a `while` reaches the loop op itself
-// and its shape reads as open. Obligation O-3 (one slot, however many SSA
-// values reach it) is what admits it, and that is Phase 56's next step.
+// AN OBJECT UPDATED IN A LOOP - obligation O-3, one slot however many SSA
+// values reach it. The importer threads every register live across a loop
+// through the loop's block arguments, so `acc` used to reach the loop op
+// itself and its shape read as open; --ctjs-lift-to-scf now drops that
+// argument (it is fed by the literal and by itself - a trivial phi) before
+// structuring, so every access is on the one literal and it is one struct
+// on the stack, updated in place. native-struct.mlir pins the shape of it.
+function accumulate(n) {
+    var acc = { total: 0, count: 0 };
+    var i = 0;
+    while (i < n) {
+        acc.total = acc.total + i * 0.5;
+        acc.count = acc.count + 1;
+        i = i + 1;
+    }
+    return acc.total / acc.count;
+}
 function read_before_write() {
     var o = { seen: 1 };
     var before = o.later;      // undefined, which is NaN as a number
@@ -38,3 +50,4 @@ var area_answer = area();
 var swap_answer = swap_sum();
 var nan_from_undefined = read_before_write();
 var flags = boolean_field(1000) * 10 + boolean_field(5);
+var mean = accumulate(10);
