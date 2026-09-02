@@ -268,13 +268,99 @@ bool TypeInference::hasClosedShape(mlir::Value object) {
     return true;
 }
 
+// A DENSE ARRAY IS AN ARRAY NOTHING CAN MAKE SPARSE, and the default arm below
+// is the whole proof. Three uses keep a `std::vector` a `std::vector`:
+//
+//   * `ctjs.append` onto it - the elements of the literal, in order, which is
+//     how the bytecode builds `[1, 2, 3]` (CTJS_AppendOp's own description);
+//   * a read of `length`, which is `size()` exactly BECAUSE nothing else in
+//     this list can leave a hole;
+//   * a read through any other key, which is an index.
+//
+// EVERYTHING ELSE OPENS IT, and two of those are why part 24 Stage 57A says
+// "prove density, or box" rather than "prove uniformity":
+//
+//   * `a[i] = v`. `a[100] = 1` on a two-element array gives `length` 101 and
+//     three elements, so `.length` stops being `size()` and the C++ has no
+//     representation for the ninety-eight holes. Refused, which is a
+//     DEVIATION FROM THIS STAGE'S WRITTEN DESIGN (it listed an index store as
+//     a vector use); admitting it would also have made the element join below
+//     unsound, because a stored value it does not see is a value a later read
+//     returns.
+//   * `delete a[0]`, which punches a hole in an array that had none.
+//
+// A return, a call, a store into another object, a loop-carried phi: every one
+// of them is some other use and lands in the default arm too.
+//
+// WHAT IT DOES NOT PROVE: that nothing planted a numeric own property on
+// `Array.prototype`, which an index past the end would find. That is the same
+// boundary hasClosedShape draws with namesObjectPrototypeMember, and the same
+// answer: `Array.prototype[7] = x` is not a thing this tier undertakes to
+// survive, and it is recorded here rather than assumed away.
+bool TypeInference::isDenseVectorSite(mlir::Value array) {
+    if (!array.getDefiningOp<ctjs::CreateArrayOp>()) { return false; }
+    for (mlir::OpOperand & use : array.getUses()) {
+        mlir::Operation * user = use.getOwner();
+        if (llvm::isa<ctjs::AppendOp>(user)) {
+            // OPERAND 0 IS THE ARRAY BEING BUILT; operand 1 is the element,
+            // and an array appended INTO another array has escaped into it.
+            if (use.getOperandNumber() != 0) { return false; }
+            continue;
+        }
+        if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
+            if (use.getOperandNumber() != 0) { return false; }
+            const llvm::StringRef key = constantKey(get.getKey());
+            // An empty key is a key that is not a constant string - an index,
+            // computed or literal, which is what `a[0]` imports as.
+            if (key.empty() || key == "length") { continue; }
+            return false;
+        }
+        return false;
+    }
+    return true;
+}
+
+mlir::Type TypeInference::elementTypeOf(mlir::Operation * op, mlir::Value array) {
+    // FROM UNDEFINED, and that start is not decoration: `[1, 2][7]` is
+    // `undefined`, and so is every index no `append` ever wrote. Starting from
+    // `num` would claim a number for a read the interpreter answers
+    // `undefined` for, which is the one direction the lattice cannot undo.
+    mlir::Type element = absentType(op->getContext());
+    const auto appended = appends_.find(array);
+    if (appended == appends_.end()) { return element; }
+    for (mlir::Value value : appended->second) {
+        const TypeLattice * lattice = getLatticeElementFor(getProgramPointAfter(op), value);
+        // Not yet visited contributes nothing NOW and re-visits this read when
+        // it is; never visited is dead code and never executes.
+        if (lattice->getValue().isUninitialized()) { continue; }
+        element = meet(element, lattice->getValue().getType());
+    }
+    return element;
+}
+
 mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     globalStores_.clear();
     globalsAreDynamic_ = false;
     fieldStores_.clear();
+    appends_.clear();
     top->walk([&](ctjs::SetPropertyOp store) {
         if (!hasClosedShape(store.getObject())) { return; }
         fieldStores_[{store.getObject(), constantKey(store.getKey())}].push_back(store.getValue());
+    });
+    // THE APPENDS INDEX, beside fieldStores_ and for the same reason: an
+    // element read has to find every value the array was ever built from, and
+    // walking the uses at each read would be the same walk done once per read.
+    // A literal's own inline elements come first - the importer emits an empty
+    // `create_array` and one `append` per element, but the operation carries
+    // them and a lowering that ignored them would drop values.
+    top->walk([&](ctjs::CreateArrayOp array) {
+        if (!isDenseVectorSite(array.getResult())) { return; }
+        llvm::SmallVector<mlir::Value, 4> & into = appends_[array.getResult()];
+        for (mlir::Value element : array.getElements()) { into.push_back(element); }
+    });
+    top->walk([&](ctjs::AppendOp push) {
+        if (!isDenseVectorSite(push.getArray())) { return; }
+        appends_[push.getArray()].push_back(push.getElement());
     });
     top->walk([&](mlir::Operation * op) {
         if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op)) {
@@ -437,7 +523,42 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         }
     }
 
-    const mlir::Type fromOperation = fieldKnown ? field
+    // THE DENSE ARRAY (part 24 Phase 57A). The literal itself is a
+    // `vec<element>`; a read of `length` is a Number; a read through an index
+    // is the element type. Same mechanism as the two rules above -
+    // getLatticeElementFor subscribes the read to every appended value.
+    mlir::Type vector{};
+    bool vectorKnown = false;
+    if (auto array = llvm::dyn_cast<ctjs::CreateArrayOp>(op)) {
+        if (isDenseVectorSite(array.getResult())) {
+            vectorKnown = true;
+            vector = VecType::get(c, elementTypeOf(op, array.getResult()));
+        }
+    } else if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
+        if (isDenseVectorSite(get.getObject())) {
+            if (constantKey(get.getKey()) == "length") {
+                // NOT AN i32, AND THE BOUND IS THE REASON. An array's length
+                // is a uint32, which does not fit an int32, and nothing here
+                // proves this one is small. `f64` is exact for every length
+                // there is.
+                vectorKnown = true;
+                vector = doubleType(c);
+            } else if (isProvedNumeric(operands[1])) {
+                // THE KEY HAS TO BE PROVED A NUMBER, and not merely "not a
+                // constant string". `a[k]` with a string `k` reads a PROPERTY:
+                // `a["push"]` is a function, and claiming the element type for
+                // it would be unsound on any array whose only other uses are
+                // appends and index reads. A boolean, undefined or null key
+                // names a property nothing wrote, which is `undefined` - and
+                // undefined is where the join below starts.
+                vectorKnown = true;
+                vector = elementTypeOf(op, get.getObject());
+            }
+        }
+    }
+
+    const mlir::Type fromOperation = vectorKnown  ? vector
+                                     : fieldKnown ? field
                                      : globalKnown
                                          ? global
                                          : (numeric != nullptr ? numeric : staticResultType(op));
