@@ -87,6 +87,65 @@ inline constexpr void rx_class_escape(rx_class & out, char e) {
 	}
 }
 
+// `\xHH`, `\uHHHH` and `\u{H..}` AS A NUMBER, which they were not.
+//
+// `rx_escape_char` falls through to "the char itself" for anything it does not
+// know, so `\u` was the letter `u` and the four hex digits after it became four
+// more class members. `[\udc00-\udfff]` therefore parsed as {u,d,c,0,f} plus
+// the RANGE '0'-'u' - which matches most of ASCII, and matched it silently.
+//
+// WPT is what found it, and the damage was not in the tests but in the REPORT:
+// testharness.js sanitises every test NAME and every assertion MESSAGE through
+// `str.replace(/([\ud800-\udbff]+)...|.../g, ...)`, so that bogus range hit
+// nearly every character of every string the harness had to say. 2,343 failing
+// subtests in dom/nodes came back with their names rewritten into runs of
+// `U+61U+73U+73...` - a corpus-wide corruption of the results, from one escape.
+//
+// `i` is positioned just after the escape letter `e`; on success it advances
+// past the digits. A malformed escape returns false and is left to
+// rx_escape_char, which keeps the previous lenient behaviour.
+inline bool rx_code_point_escape(std::string_view src, std::size_t & i, char e,
+                                 std::uint32_t & cp) {
+	const auto digit = [](char d, std::uint32_t & out) {
+		if (d >= '0' && d <= '9') { out = static_cast<std::uint32_t>(d - '0'); return true; }
+		if (d >= 'a' && d <= 'f') { out = static_cast<std::uint32_t>(d - 'a' + 10); return true; }
+		if (d >= 'A' && d <= 'F') { out = static_cast<std::uint32_t>(d - 'A' + 10); return true; }
+		return false;
+	};
+	std::size_t want = 0;
+	if (e == 'x') {
+		want = 2;
+	} else if (e == 'u') {
+		if (i < src.size() && src[i] == '{') {
+			std::uint32_t value = 0;
+			std::size_t j = i + 1;
+			bool any = false;
+			std::uint32_t d = 0;
+			for (; j < src.size() && digit(src[j], d); ++j) {
+				value = value * 16 + d;
+				any = true;
+			}
+			if (!any || j >= src.size() || src[j] != '}') { return false; }
+			cp = value;
+			i = j + 1;
+			return true;
+		}
+		want = 4;
+	} else {
+		return false;
+	}
+	if (i + want > src.size()) { return false; }
+	std::uint32_t value = 0;
+	for (std::size_t k = 0; k < want; ++k) {
+		std::uint32_t d = 0;
+		if (!digit(src[i + k], d)) { return false; }
+		value = value * 16 + d;
+	}
+	cp = value;
+	i += want;
+	return true;
+}
+
 inline char rx_escape_char(char e) {
 	switch (e) {
 	case 'n': return '\n';
@@ -156,7 +215,23 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 					rx_class_escape(pc.cc, e);
 					continue;
 				}
-				lo = static_cast<unsigned char>(rx_escape_char(e));
+				std::uint32_t cp = 0;
+				if (rx_code_point_escape(src, i, e, cp)) {
+					// ABOVE A BYTE IT CANNOT BE REPRESENTED, and this class is a
+					// set of BYTE ranges - so the pattern is REFUSED rather than
+					// approximated. Refusing is what makes the caller correct:
+					// `exec` answers null for a failed program, `replace` then
+					// leaves the subject untouched, and testharness's surrogate
+					// sanitiser becomes the no-op it should always have been on
+					// text that has no surrogates in it.
+					if (cp > 0xFF) {
+						rx_fail(p, src);
+						return pc;
+					}
+					lo = static_cast<unsigned char>(cp);
+				} else {
+					lo = static_cast<unsigned char>(rx_escape_char(e));
+				}
 			} else {
 				lo = static_cast<unsigned char>(src[i++]);
 			}
@@ -164,8 +239,18 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 			if (i + 1 < src.size() && src[i] == '-' && src[i + 1] != ']') {
 				++i;
 				if (src[i] == '\\' && i + 1 < src.size()) {
-					hi = static_cast<unsigned char>(rx_escape_char(src[i + 1]));
+					const char e = src[i + 1];
 					i += 2;
+					std::uint32_t cp = 0;
+					if (rx_code_point_escape(src, i, e, cp)) {
+						if (cp > 0xFF) {
+							rx_fail(p, src);
+							return pc;
+						}
+						hi = static_cast<unsigned char>(cp);
+					} else {
+						hi = static_cast<unsigned char>(rx_escape_char(e));
+					}
 				} else {
 					hi = static_cast<unsigned char>(src[i++]);
 				}
@@ -205,6 +290,19 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 			pc.kind = rx_piece::cls;
 			pc.cc.neg = true;
 			rx_class_escape(pc.cc, static_cast<char>(e + ('a' - 'A')));
+			return pc;
+		}
+		std::uint32_t cp = 0;
+		if (rx_code_point_escape(src, i, e, cp)) {
+			// Same bound and the same reason as in a class above: a literal is
+			// one byte here, so `\u00e9` and beyond is refused rather than
+			// truncated into whichever byte happens to fit.
+			if (cp > 0xFF) {
+				rx_fail(p, src);
+				return pc;
+			}
+			pc.kind = rx_piece::lit;
+			pc.c = static_cast<char>(cp);
 			return pc;
 		}
 		pc.kind = rx_piece::lit;
