@@ -17,6 +17,7 @@ something lives.**
 | [`shell.md`](shell.md) | the application API, form controls, editing, input, navigation, resources — anything a page can do |
 | [`style-layout.md`](style-layout.md) | the cascade and the `style` attribute; tables, generated content, whitespace collapsing |
 | [`raster.md`](raster.md) | fonts, glyph rasterisation, the font8x8 fallback, SVG, PNG/JPEG. **Its last section is marked as describing deleted code** |
+| [`wpt.md`](wpt.md) | **web-platform-tests — the suite every browser is measured against, pointed at this one.** The pinned corpus, the results hook, the per-directory baseline with its date, the expectations file, and the five gaps WPT found in the engine on its way in |
 
 ## Plans — work that is not finished
 
