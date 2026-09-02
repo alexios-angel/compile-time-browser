@@ -94,8 +94,29 @@ namespace ctbrowser::script {
     do {                                                                                           \
         if constexpr (Record) { record_step(in); }                                                 \
     } while (0)
+// THE FRAME POP IN `ret`, WITH THE ESCAPE ORACLE'S HOOK BETWEEN THE POP AND THE
+// RESULT WRITE - ctcompile Phase 55O, FrameEnds.def row `ret`. The hook needs
+// the frame's base and serial from BEFORE the pop and must run AFTER it, so
+// that the ending frame's own per-frame roots are gone and `frames_.back()`
+// is the caller; and it must run before the return value lands in the
+// caller's register, because at that moment the value is in flight in a C++
+// local and the hook roots it itself (through `temporaries_`) - which is how
+// `return {}` reads `escaped via temporaries` rather than as confined. Same
+// `if constexpr (Record)` as VM_RECORD_STEP, so the shipped instantiation is
+// the one line it always was.
+#define VM_POP_FRAME(carried_)                                                                     \
+    do {                                                                                           \
+        if constexpr (Record) {                                                                    \
+            const call_frame popped = *vm_frame;                                                   \
+            frames_.pop_back();                                                                    \
+            record_frame_pop(popped, carried_);                                                    \
+        } else {                                                                                   \
+            frames_.pop_back();                                                                    \
+        }                                                                                          \
+    } while (0)
 #else
 #define VM_RECORD_STEP() ((void)0)
+#define VM_POP_FRAME(carried_) frames_.pop_back()
 #endif
 
 #if VM_COMPUTED_GOTO
@@ -750,7 +771,7 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
                 if (handlers_.size() > vm_frame->handler_base) {
                     handlers_.resize(vm_frame->handler_base);
                 }
-                frames_.pop_back();
+                VM_POP_FRAME(returned);
                 if (frames_.size() <= stop_depth) { return returned; }
                 registers_[frames_.back().base + slot] = returned;
                 break;

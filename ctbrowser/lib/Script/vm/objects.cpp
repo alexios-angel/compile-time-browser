@@ -663,74 +663,19 @@ std::size_t context::collect() {
         }
     }
 
-    // Precise roots: everything reachable is reachable from exactly these.
-    for (const auto & [name, v] : globals_) { mark(v); }
-    for (const value & v : registers_) { mark(v); }
-    // The receiver of a native call in progress. It is held in a C++ local, not
-    // in a register, so nothing else would keep it alive - and collecting the
-    // object a method is running on is about as bad as it gets.
-    mark(current_this_);
-    // The constructor a super() call is in the middle of handing on. It lives
-    // only in this slot between the two instructions, which is exactly the
-    // window a collection can fall in.
-    mark(pending_new_target_);
-    mark(pending_closure_);
-    // And the closure each live frame is executing. A function called from C++
-    // via call() is likewise only referenced from a C++ local; without this its
-    // upvalues can be freed while its body is still running.
-    for (const call_frame & f : frames_) {
-        if (f.closure != nullptr) { mark_object(f.closure); }
-        mark(f.receiver);
-        mark(f.arguments_object);
-        mark(f.async_promise);
-        mark(f.new_target);
-    }
-    // A QUEUED JOB AND ITS ARGUMENTS. Nothing else refers to them between the
-    // moment they are queued and the moment they run, which is precisely the
-    // window a collection can fall in.
-    for (const microtask & job : microtasks_) {
-        mark(job.fn);
-        for (const value & arg : job.args) { mark(arg); }
-    }
-    // EVERY MODULE'S EXPORT CELLS. They live in `modules_` and in no register
-    // once the module has finished evaluating, so without this a collection
-    // between two modules frees the bindings the second one is about to import
-    // - and it frees them while a closure inside the first still refers to the
-    // same cell.
-    for (auto & [specifier, mod] : modules_) {
-        for (auto & [name, cell] : mod.exports) { mark(cell); }
-        mark(mod.namespace_object);
-    }
-    // A thrown value in flight is reachable from nothing else.
-    mark(thrown_);
-    // AND WHAT A C++ SCOPE IS HOLDING ACROSS A CALL. `construct` allocates the
-    // instance and then runs field initialisers and the constructor body with
-    // it in a local; without this the object being constructed is freed by any
-    // collection inside either. See context::rooted.
-    for (const value & v : temporaries_) { mark(v); }
-    // The prototype tables hold every builtin method. Nothing else references
-    // them, so without this the standard library is collected on the first gc.
-    for (object_object * table : prototypes_) {
-        if (table != nullptr) { mark_object(table); }
-    }
-    // The per-function string cache. These are live `value`s held by the
-    // context itself and referenced from nowhere else - a sweep without them
-    // frees a string literal that a running loop is about to read again.
-    for (auto & [proto, cache] : string_cache_) {
-        for (auto & [index, v] : cache) { mark(v); }
-    }
-    // The BigInt literal cache is a root for exactly the same reason: the
-    // context is the only thing holding those values, so a sweep without this
-    // frees a literal a running loop is about to read again.
-    for (auto & [proto, cache] : bigint_cache_) {
-        for (auto & [index, v] : cache) { mark(v); }
-    }
-    // And whatever the embedder holds: every DOM listener, timer callback and
-    // element wrapper lives in the bindings, not in any VM structure.
-    if (external_roots_) {
-        external_roots_([this](value v) { mark(v); });
-    }
+    // Precise roots: everything reachable is reachable from exactly these -
+    // and "these" is ONE inventory, `each_root` in vm.hpp, which the escape
+    // oracle walks too. The whole register file and every frame: a
+    // collection has no dead window.
+    mark_roots(registers_.size());
+    return sweep();
+}
 
+void context::mark_roots(std::size_t register_limit) {
+    each_root(register_limit, frames_.size(), [this](root_label, value v) { mark(v); });
+}
+
+std::size_t context::sweep() {
     std::size_t freed = 0;
     heap_object ** link = &heap_;
     while (*link != nullptr) {
@@ -740,6 +685,10 @@ std::size_t context::collect() {
             link = &o->next;
         } else {
             *link = o->next;
+            // THE ESCAPE ORACLE HEARS ABOUT EVERY FREE, so a record can never
+            // be read through a stale pointer: the recorder flags it dead and
+            // forgets the address before `delete` reuses it.
+            if (recorder_ != nullptr) [[unlikely]] { note_freed(o); }
             delete o;
             ++freed;
             --live_objects_;
@@ -748,9 +697,18 @@ std::size_t context::collect() {
     return freed;
 }
 
+// THE ESCAPE ORACLE'S EXIT. Everything a bounded mark set, cleared again, and
+// nothing freed: the oracle observes and does not collect. collect() itself
+// treats the mark bit as transient (sweep clears it on every survivor), so
+// this leaves the heap exactly as a collection that freed nothing would.
+void context::unmark_all() {
+    for (heap_object * o = heap_; o != nullptr; o = o->next) { o->marked = false; }
+}
+
 void context::sweep_all() {
     while (heap_ != nullptr) {
         heap_object * next = heap_->next;
+        if (recorder_ != nullptr) [[unlikely]] { note_freed(heap_); }
         delete heap_;
         heap_ = next;
     }

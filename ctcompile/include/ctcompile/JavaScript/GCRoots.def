@@ -9,9 +9,16 @@
  *
  * CT_GC_ROOT(name, owner, marked_in, note)
  *
- * VERIFIED against ctbrowser/lib/Script/vm/objects.cpp:435-495 (context::collect)
- * at 9521928. The comment there says it plainly: "Precise roots: everything
- * reachable is reachable from exactly these."
+ * VERIFIED against `context::each_root` (ctbrowser/include/ctbrowser/script/vm.hpp)
+ * - cited by NAME, as check-def-citations.cmake asks, after the line number this
+ * used to carry rotted twice. Since ctcompile Phase 55O that template IS the
+ * inventory: collect() marks through it with the whole register file and every
+ * frame, and the escape oracle's `mark_roots(limit)` / `adjudicate` walk the
+ * SAME inventory with the ending frame's dead register window and per-frame
+ * roots excluded - no new root, no second list. Each row's `name` below is the
+ * `root_label` the walk hands its visitor, and the label an escaped object is
+ * reported `via`. The comment in objects.cpp still says it plainly: "Precise
+ * roots: everything reachable is reachable from exactly these."
  */
 
 CT_GC_ROOT(/* name */ globals, /* owner */ "context::globals_", /* marked_in */ "collect()",

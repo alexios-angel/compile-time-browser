@@ -1,9 +1,12 @@
 #pragma once
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include <ctbrowser/script/bytecode.hpp>
@@ -130,6 +133,168 @@ struct register_observation {
     [[nodiscard]] bool observed() const noexcept { return defs != 0; }
 };
 
+// --- THE ESCAPE HALF - ctcompile Phase 55O -----------------------------------
+//
+// The second question the native backend has to have answered before it can
+// give an allocation an RAII lifetime: is every object born at this site
+// unreachable from every GC root once the activation that made it has
+// returned or unwound? `confined` means a stack object, a `unique_ptr` or a
+// `shared_ptr` is on the table; `escapes` means the site is outside what the
+// native subset can own and is diagnosed. A static escape analysis answers
+// that per site, and this is the witness it is checked against.
+//
+// THE COLLECTOR IS THE REFERENCE SEMANTICS HERE, NOT A RUNTIME. The interpreter
+// knows, at the moment a frame ends, exactly which objects are still reachable
+// from which root - that is what a precise mark phase computes - so the oracle
+// borrows the collector's own root walk, bounded at the popped frame's base,
+// marks, classifies, and unmarks. It never sweeps: it observes and does not
+// collect, and the only VM state it touches is the `marked` bit that collect()
+// itself treats as transient.
+//
+// WHAT IT OBSERVES IS RETENTION AT FRAME EXIT, NOT TRANSIT. An object handed
+// to a callee that drops it before the caller returns reads `confined` here,
+// and that transit is still a real escape for a by-value lowering. So the
+// oracle can MISS an escape and can never invent one; the call-argument rows
+// of the analysis are justified by the VM source and by negative unit rows,
+// and the self-test pins the blind spot as a row (`transit`) so nobody reads
+// retention-at-exit as coverage of the call sink.
+
+// THE ROOT INVENTORY'S LABELS. One per row of ctcompile's GCRoots.def, in the
+// order `context::each_root` visits them - which is the order collect() has
+// always marked them in. An escaped object is reported with the FIRST label
+// that reached it, which turns a soundness violation into a diagnosis: `via
+// globals` and `via temporaries` (the in-flight return value) are different
+// bugs in different places.
+//
+// Duplicated by name in tools/check/escape-oracle.py, on purpose: the checker
+// reads its own definitions rather than the recording's, so a drift shows up
+// as an unknown label rather than as a quietly different answer.
+#define CTBROWSER_ROOT_LABELS(X)                                                                   \
+    X(globals)                                                                                     \
+    X(registers)                                                                                   \
+    X(current_this)                                                                                \
+    X(pending_new_target)                                                                          \
+    X(pending_closure)                                                                             \
+    X(frame_closure)                                                                               \
+    X(frame_receiver)                                                                              \
+    X(frame_arguments)                                                                             \
+    X(frame_async_promise)                                                                         \
+    X(frame_new_target)                                                                            \
+    X(microtasks)                                                                                  \
+    X(module_exports)                                                                              \
+    X(module_namespace)                                                                            \
+    X(thrown)                                                                                      \
+    X(temporaries)                                                                                 \
+    X(prototypes)                                                                                  \
+    X(string_cache)                                                                                \
+    X(bigint_cache)                                                                                \
+    X(external)
+
+enum class root_label : std::uint8_t {
+#define CT_ROOT_LABEL(name_) name_,
+    CTBROWSER_ROOT_LABELS(CT_ROOT_LABEL)
+#undef CT_ROOT_LABEL
+};
+inline constexpr std::string_view root_label_names[] = {
+#define CT_ROOT_LABEL(name_) #name_,
+    CTBROWSER_ROOT_LABELS(CT_ROOT_LABEL)
+#undef CT_ROOT_LABEL
+};
+inline constexpr std::size_t root_label_count = std::size(root_label_names);
+[[nodiscard]] constexpr std::string_view root_label_name(root_label l) noexcept {
+    return root_label_names[static_cast<std::size_t>(l)];
+}
+
+// THE TRACKED KINDS: the four heap kinds a native lowering could give an RAII
+// lifetime to. Strings, symbols, bigints, natives, proxies and coroutines are
+// never claimed and never recorded.
+[[nodiscard]] constexpr bool escape_tracked(heap_kind k) noexcept {
+    return k == heap_kind::object || k == heap_kind::array || k == heap_kind::function ||
+           k == heap_kind::cell;
+}
+[[nodiscard]] constexpr std::string_view site_kind_name(heap_kind k) noexcept {
+    switch (k) {
+    case heap_kind::object: return "obj";
+    case heap_kind::array: return "arr";
+    case heap_kind::function: return "fn";
+    case heap_kind::cell: return "cell";
+    default: return "?";
+    }
+}
+
+// WHICH OPCODES ARE SITES: the ones that allocate a tracked kind AT THEIR OWN
+// PC, every time they run (or, for `iterable`, every time the source is not
+// already an array). This is the recording's DENOMINATOR for the escape half,
+// the way `frame` is for registers: every function's static inventory is
+// written whether or not it ran, so a checker can tell "this site was never
+// reached" from "there is no such site" - and a stub that claims every site
+// confined has something to be UNOBSERVED on.
+//
+// Each of these has allocates=1 in bytecode_opcodes.def, and the static_assert
+// below holds it to that. The list is NOT every allocates=1 row - `call`,
+// `construct`, `add` and the property ops can all allocate on some path, at a
+// pc the analysis never claims - and what they make lands on the calling
+// instruction's pc as an UNCLAIMED site, by design.
+[[nodiscard]] constexpr std::optional<heap_kind> opcode_site_kind(op code) noexcept {
+    switch (code) {
+    case op::new_object: return heap_kind::object;
+    case op::new_array:
+    case op::make_arguments:
+    case op::gather_rest:
+    case op::own_keys:
+    case op::iterable: return heap_kind::array;
+    case op::closure: return heap_kind::function;
+    case op::new_cell: return heap_kind::cell;
+    default: return std::nullopt;
+    }
+}
+namespace detail {
+#define CT_OPCODE(name_, a_kind_, b_kind_, c_kind_, writes_a_, allocates_, ...) (allocates_) != 0,
+inline constexpr bool opcode_allocates_table[] = {
+#include <ctbrowser/script/bytecode_opcodes.def>
+};
+#undef CT_OPCODE
+inline constexpr bool every_site_opcode_allocates = [] {
+    for (std::size_t i = 0; i < opcode_count; ++i) {
+        if (opcode_site_kind(static_cast<op>(i)).has_value() && !opcode_allocates_table[i]) {
+            return false;
+        }
+    }
+    return true;
+}();
+static_assert(every_site_opcode_allocates,
+              "opcode_site_kind names an opcode whose bytecode_opcodes.def row says it does not "
+              "allocate - one of the two tables is wrong");
+} // namespace detail
+
+// THE PC OF AN ALLOCATION MADE BEFORE A FRAME'S FIRST INSTRUCTION - `ip == 0`,
+// so `ip - 1` has no meaning. Written as `prologue` in the file.
+inline constexpr std::uint32_t prologue_pc = 0xFFFF'FFFFu;
+
+struct static_site {
+    std::uint32_t pc = 0;
+    heap_kind kind = heap_kind::object;
+};
+
+// ONE SITE'S TALLY. `made = confined + escaped + unresolved + unchecked`, always:
+//
+//   confined    unreachable from every root when its frame ended
+//   escaped     reachable; `routes` says through which root category first
+//   unresolved  swept before its frame ended - a witness must not guess, so a
+//               store-then-overwrite is never read as confined
+//   unchecked   its frame ended through a path with no hook (FrameEnds.def),
+//               or the per-function budget was spent - never confined
+struct site_observation {
+    std::uint32_t pc = 0;
+    heap_kind kind = heap_kind::object;
+    std::uint64_t made = 0;
+    std::uint64_t confined = 0;
+    std::uint64_t escaped = 0;
+    std::uint64_t unresolved = 0;
+    std::uint64_t unchecked = 0;
+    std::array<std::uint64_t, root_label_count> routes{};
+};
+
 struct function_observation {
     std::uint32_t program = 0;
     std::uint32_t index = 0; // into program::functions
@@ -138,6 +303,12 @@ struct function_observation {
     std::uint16_t frame_size = 0;
     std::uint64_t entries = 0; // times a frame for this body was entered
     std::vector<register_observation> regs;
+    // The escape half: the static inventory (every function, whether it ran or
+    // not), the sites that were actually adjudicated, and how many frame ends
+    // of this body have been checked against the budget.
+    std::vector<static_site> allocs;
+    std::vector<site_observation> sites;
+    std::uint64_t checks = 0;
 };
 
 struct program_observation {
@@ -185,6 +356,69 @@ public:
     // incomplete and says by how much.
     [[nodiscard]] std::uint64_t orphan_frames() const noexcept { return orphans_; }
 
+    // --- the escape half ----------------------------------------------------
+    //
+    // THE BUDGET: how many frame ends of ONE function body are adjudicated
+    // before the rest are reported UNCHECKED. Each check is a bounded mark of
+    // the reachable heap plus one heap walk to unmark, and under `--script`
+    // nothing ever collects, so the heap only grows; a body entered a hundred
+    // thousand times would cost a hundred thousand marks. Over budget is never
+    // confined. 0 means unlimited.
+    void set_escape_budget(std::uint64_t per_function) noexcept { budget_ = per_function; }
+    [[nodiscard]] std::uint64_t escape_budget() const noexcept { return budget_; }
+    // THE DEAD WINDOW INCLUDED, for the A/B the self-test runs: an unbounded
+    // walk marks the popped frame's own registers too, so it must report a
+    // SUPERSET of the bounded walk's escapes. If a future register-allocator
+    // change ever keeps a live value above a call base, that superset stops
+    // being one and this is the number that goes red.
+    void set_unbounded(bool on) noexcept { unbounded_ = on; }
+    [[nodiscard]] bool unbounded() const noexcept { return unbounded_; }
+
+    // ONE ALLOCATION AWAITING ITS FRAME'S END. `object` is a valid pointer
+    // exactly until `dead` is set by `freed`, and is never dereferenced after.
+    struct escape_record {
+        heap_object * object = nullptr;
+        std::size_t function = 0; // index into functions_
+        std::uint32_t pc = 0;
+        heap_kind kind = heap_kind::object;
+        bool dead = false;
+        bool routed = false;
+        root_label route = root_label::globals;
+    };
+
+    // The context's side of the protocol - see context::note_allocation and
+    // context::record_frame_pop in type_record.cpp. A frame's identity is a
+    // serial the context asks for lazily at its first tracked allocation.
+    [[nodiscard]] std::uint64_t fresh_serial() noexcept { return ++next_serial_; }
+    void allocated(heap_object * p, const program * owner, const function_proto * proto,
+                   std::uint32_t pc, std::uint64_t serial);
+    void unframed_allocation() noexcept { ++unframed_; }
+    void freed(heap_object * p);
+    void note_pop() noexcept { ++pops_; }
+    void note_unwind() noexcept { ++unwinds_; }
+    // Hand over a frame's records for adjudication, appended to `out`. Applies
+    // the budget: an over-budget frame's records are folded as UNCHECKED here
+    // and nothing is appended.
+    void begin_check(std::uint64_t serial, std::vector<escape_record> & out);
+    // Fold adjudicated records into their sites. The caller has marked: a
+    // record whose object is `marked` escaped by `route`, a dead one is
+    // UNRESOLVED, anything else is confined.
+    void finish_check(const std::vector<escape_record> & records);
+
+    // Every function's sites as the file reports them, indexed like
+    // functions(): the adjudicated tallies plus every record still pending
+    // folded as UNCHECKED (its frame ended through a hook-less path, or never
+    // ended), sorted by (pc, kind). The writer and the in-memory checker both
+    // read this, so the two cannot disagree about what "pending" means.
+    [[nodiscard]] std::vector<std::vector<site_observation>> all_sites() const;
+
+    [[nodiscard]] std::uint64_t pops() const noexcept { return pops_; }
+    [[nodiscard]] std::uint64_t unwinds() const noexcept { return unwinds_; }
+    [[nodiscard]] std::uint64_t checks() const noexcept { return checks_; }
+    [[nodiscard]] std::uint64_t unframed() const noexcept { return unframed_; }
+    [[nodiscard]] std::uint64_t unresolved() const noexcept { return unresolved_; }
+    [[nodiscard]] std::uint64_t pending_records() const noexcept { return pending_; }
+
 private:
     struct pending {
         const function_proto * proto = nullptr;
@@ -214,6 +448,37 @@ private:
     std::uint64_t dropped_ = 0;
     std::uint64_t recorded_ = 0;
     std::uint64_t orphans_ = 0;
+
+    // --- the escape half's side tables ----------------------------------------
+    //
+    // A SIDE TABLE KEYED BY heap_object*, NOT A FIELD ON heap_object. A field
+    // whose existence depends on a build flag in a public header is the ODR
+    // trap type_record.cpp's record_step comment and vm.hpp's `recorder_`
+    // comment both name; a field present in every build is eight bytes on
+    // every string the engine ever makes. `alloc_` maps a live tracked object
+    // to its record; `by_serial_` holds each frame's records until the frame
+    // ends. `freed` erases the `alloc_` entry and flags the record dead, so a
+    // later allocation at the same address gets a fresh entry and no record is
+    // ever read through a stale pointer.
+    struct alloc_slot {
+        std::uint64_t serial = 0;
+        std::size_t slot = 0;
+    };
+    void fold(const escape_record & r, root_label route, bool escaped, bool unchecked);
+    [[nodiscard]] site_observation & site_for(std::size_t function, std::uint32_t pc,
+                                              heap_kind kind);
+
+    std::unordered_map<const heap_object *, alloc_slot> alloc_;
+    std::unordered_map<std::uint64_t, std::vector<escape_record>> by_serial_;
+    std::uint64_t next_serial_ = 0;
+    std::uint64_t budget_ = 0;
+    bool unbounded_ = false;
+    std::uint64_t pops_ = 0;
+    std::uint64_t unwinds_ = 0;
+    std::uint64_t checks_ = 0;
+    std::uint64_t unframed_ = 0;
+    std::uint64_t unresolved_ = 0;
+    std::uint64_t pending_ = 0; // records currently awaiting a frame end
 };
 
 // THE ACTIVE RECORDER, read by `context` when it is constructed.
