@@ -164,6 +164,14 @@ mlir::Type typeOfConstant(ctjs::ConstantOp constant) {
 mlir::Type staticResultType(mlir::Operation * op) {
     mlir::MLIRContext * c = op->getContext();
 
+    // `ub.poison` IS THE ABSENCE OF A VALUE, and the lattice's identity is
+    // the only honest type for it. The structuring pass yields one for every
+    // loop-carried value on the path that leaves the loop - a path on which
+    // nothing reads them - and a poison typed `boxed` would absorb the
+    // counter's type at the join, refusing every `for` loop the lift builds.
+    // Matched by name so this file needs no dependency on the ub dialect.
+    if (op->getName().getStringRef() == "ub.poison") { return BottomType::get(c); }
+
     if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(op)) { return typeOfConstant(constant); }
 
     // EVERY COMPARISON IS A BOOLEAN, including the relational ones on BigInts:
@@ -264,6 +272,21 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                                                   llvm::ArrayRef<const TypeLattice *> operands,
                                                   llvm::ArrayRef<TypeLattice *> results) {
     mlir::MLIRContext * c = op->getContext();
+
+    // AN UNINITIALIZED OPERAND MEANS "NOT YET", NOT "UNKNOWN". The framework
+    // visits an operation before every value feeding it has an answer - a
+    // loop's back edge, a recursive call's result - and re-visits it when
+    // they do. Answering `boxed` for an operand that has merely not arrived
+    // is wrong in the one direction the lattice cannot undo: boxed absorbs,
+    // so a counter incremented on a back edge, or fib's own result, would
+    // stay boxed forever. Measured: every recursive function and every
+    // `for` loop refused by the native lowering until this line. Bailing
+    // leaves the result uninitialized, which is exactly what its consumers
+    // must wait for; a value that NEVER initializes is dead code and is
+    // boxed by whoever reads the final state.
+    for (const TypeLattice * operand : operands) {
+        if (operand->getValue().isUninitialized()) { return mlir::success(); }
+    }
 
     // The operand-sensitive rows, which exist only because of BigInt. Each one
     // is "the numeric answer, IF neither operand can be a BigInt".

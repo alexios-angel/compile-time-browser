@@ -15,8 +15,12 @@ foreach(required TRANSLATE OPT SOURCE OUTPUT)
 endforeach()
 execute_process(
   COMMAND "${TRANSLATE}" --ctbrowser-js-to-ctjs "${SOURCE}"
-  COMMAND "${OPT}" --ctjs-lift-to-scf --ctnative-lower-to-emitc --canonicalize
-                   --convert-scf-to-emitc --convert-arith-to-emitc
+  # EVERYTHING AFTER THE LOWERING RUNS INSIDE emitc.func ONLY. A refused
+  # function is still a ctjs.func full of ctjs operations, and the canonicalizer
+  # folding an scf.if it left there into an arith.select of ctjs.constants
+  # read through a null attribute in arith's fold (valgrind: address 0x10).
+  # The nested pipeline is what MLIR provides for exactly this scoping.
+  COMMAND "${OPT}" "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc))"
   OUTPUT_VARIABLE module
   ERROR_VARIABLE complaints
   RESULTS_VARIABLE outcomes)

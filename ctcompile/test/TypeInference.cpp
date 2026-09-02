@@ -25,6 +25,8 @@
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/MLIRContext.h"
@@ -137,6 +139,8 @@ int main() {
     mlir::MLIRContext context;
     context.getOrLoadDialect<ctcompile::ctjs::CTJSDialect>();
     context.getOrLoadDialect<mlir::cf::ControlFlowDialect>();
+    context.getOrLoadDialect<mlir::scf::SCFDialect>();
+    context.getOrLoadDialect<mlir::ub::UBDialect>();
     context.getOrLoadDialect<ctcompile::ctnative::CTNativeDialect>();
 
     const std::string five = std::string{"  %a = ctjs.constant "} + kFive + "\n" +
@@ -248,6 +252,22 @@ int main() {
                 "  %w = ctjs.load_global \"globalThis\"\n"
                 "  %r = ctjs.load_global \"g\" {check}\n",
          "!ctnative.boxed"},
+
+        // --- THE LIFT'S POISON IS THE IDENTITY --------------------------------
+        //
+        // --ctjs-lift-to-scf yields ub.poison for a loop-carried value on the
+        // path that leaves the loop. Joined with a number it must stay that
+        // number; typed boxed it would absorb, and every `for` loop would be
+        // refused by the native lowering - which is how this row was found.
+        {"a number joined with the lift's poison is still that number",
+         five + "  %t = ctjs.truthy %p\n"
+                "  %z = ub.poison : !ctjs.value\n"
+                "  %r = scf.if %t -> (!ctjs.value) {\n"
+                "    scf.yield %a : !ctjs.value\n"
+                "  } else {\n"
+                "    scf.yield %z : !ctjs.value\n"
+                "  } {check}\n",
+         "!ctnative.num<i32>"},
 
         // --- and the positive halves of the same operators ------------------
         {"`|` on two numbers is an int32", five + "  %r = ctjs.binary bitor %a, %b {check}\n",

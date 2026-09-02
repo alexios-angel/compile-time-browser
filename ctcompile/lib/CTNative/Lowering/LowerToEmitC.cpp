@@ -49,6 +49,8 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
 
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 
 #include <cctype>
@@ -112,6 +114,10 @@ std::string printed(mlir::Type type) {
 struct admission {
     mlir::DataFlowSolver & solver;
     std::string why;
+    // The carrier every `return` in the function agrees on; `none` until the
+    // first return is seen. A function with no return at all returns NaN -
+    // undefined's carrier - which lower() picks when this stays `none`.
+    carrier returns = carrier::none;
 
     [[nodiscard]] mlir::Type typeOf(mlir::Value v) const {
         const TypeLattice * lattice = solver.lookupState<TypeLattice>(v);
@@ -162,10 +168,42 @@ struct admission {
         return store && isDeclarationClosure(store.getValue().getDefiningOp());
     }
 
+    // THE CALLEE VALUE OF A DIRECT CALL lowers to nothing: the call names its
+    // function by symbol, and the boxed closure the interpreter would have
+    // called through is only carried so the boxed tier can still lower the
+    // same op. A load_global whose every use is that operand is exempt from
+    // the carrier check for exactly that reason.
+    static bool feedsOnlyDirectCallees(mlir::Value v) {
+        if (v.use_empty()) { return false; }
+        for (mlir::OpOperand & use : v.getUses()) {
+            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+            if (!call || use.getOperandNumber() != 2) { return false; }
+        }
+        return true;
+    }
+
     bool op(mlir::Operation * o) {
         using namespace ctjs;
         if (llvm::isa<FrameEnterOp, FrameExitOp, RootOp>(o)) { return true; }
+        if (auto load = llvm::dyn_cast<LoadGlobalOp>(o);
+            load && feedsOnlyDirectCallees(load.getResult())) {
+            return true;
+        }
+        if (auto call = llvm::dyn_cast<CallDirectOp>(o)) {
+            // receiver, new.target and the callee value are dropped; every
+            // argument is a number. Whether the CALLEE is native is the
+            // fixpoint in runOnOperation, not a question for one function.
+            const auto operands = call.getArgOperands();
+            for (unsigned i = 3; i < operands.size(); ++i) {
+                if (!numeric(operands[i], "argument")) { return false; }
+            }
+            return true;
+        }
         if (isDeclarationClosure(o) || isDeclarationStore(o)) { return true; }
+        // THE LIFT'S UNDEFINED VALUE for a block argument no predecessor sets:
+        // never read on any executed path, and carried as NaN - the double
+        // that is also undefined's carrier - so it needs no proof.
+        if (o->getName().getStringRef() == "ub.poison") { return true; }
         // THE STRUCTURING PASS'S MULTIPLEXERS: --ctjs-lift-to-scf encodes which
         // edge a merged block came from as i32 flags, in arith. They carry no
         // JavaScript value and --convert-arith-to-emitc lowers them.
@@ -246,7 +284,15 @@ struct admission {
         if (auto store = llvm::dyn_cast<StoreGlobalOp>(o)) {
             return numeric(store.getValue(), ("store to global `" + store.getName() + "`").str());
         }
-        if (auto ret = llvm::dyn_cast<ReturnOp>(o)) { return numeric(ret.getValue(), "return"); }
+        if (auto ret = llvm::dyn_cast<ReturnOp>(o)) {
+            const carrier c = carrierOf(typeOf(ret.getValue()));
+            if (c == carrier::none) { return refuse("returns " + printed(typeOf(ret.getValue()))); }
+            if (returns == carrier::none) { returns = c; }
+            if (returns != c) {
+                return refuse("returns a number on one path and a boolean on another");
+            }
+            return true;
+        }
         if (llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::ForOp, mlir::scf::ConditionOp,
                       mlir::scf::YieldOp>(o)) {
             return true;
@@ -282,9 +328,15 @@ struct admission {
             if (o == fn.getOperation()) { return; }
             ok = op(o);
             if (!ok) { return; }
-            // A declaration closure's result is dropped with its store; it
-            // has no carrier and needs none.
+            // A declaration closure's result is dropped with its store, and
+            // so is a load_global that only names a direct call's callee;
+            // neither has a carrier and neither needs one.
             if (isDeclarationClosure(o)) { return; }
+            if (o->getName().getStringRef() == "ub.poison") { return; }
+            if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o);
+                load && feedsOnlyDirectCallees(load.getResult())) {
+                return;
+            }
             // EVERY JAVASCRIPT VALUE THIS OPERATION DEFINES OR CARRIES has a
             // carrier - including scf results and region arguments.
             for (mlir::Value r : o->getResults()) {
@@ -314,11 +366,66 @@ struct admission {
 
 // --- the lowering ---------------------------------------------------------------
 
+// The C identifier a lowered function gets: the importer's `name$index` with
+// the `$` made a `_`, which keeps the index (two nested `helper`s stay apart)
+// and keeps clear of <cmath>'s `nan`, `remainder` and friends.
+std::string cIdentifier(llvm::StringRef symbol) {
+    std::string name = symbol.str();
+    for (char & ch : name) {
+        if (!(std::isalnum(static_cast<unsigned char>(ch)) || ch == '_')) { ch = '_'; }
+    }
+    return name;
+}
+
 struct lowering {
     mlir::DataFlowSolver & solver;
     mlir::MLIRContext * context;
     mlir::ModuleOp module;
     llvm::StringSet<> globals; // numeric globals the emitted unit declares
+    // ctjs symbol -> emitc symbol, decided for EVERY accepted function before
+    // any is lowered, so a call lowered before its callee already names the
+    // callee's new symbol and no symbol use is ever rewritten in place. A
+    // rewrite would also reach a call_direct in a REFUSED caller, which must
+    // keep naming a ctjs.func to verify.
+    llvm::StringMap<std::string> names;
+    // The hollowed ctjs.funcs, erased together in finish().
+    llvm::SmallVector<ctjs::FuncOp> shells;
+
+    void finish() {
+        // PROTOTYPES FIRST. main is the importer's function 0 and is emitted
+        // first, and C++ needs a declaration before a use; one
+        // emitc.declare_func per lowered function, at the top of the module
+        // after the includes, is what the emitter prints as a prototype.
+        {
+            mlir::OpBuilder b(context);
+            b.setInsertionPointToStart(module.getBody());
+            llvm::SmallVector<ec::FuncOp> lowered;
+            module.walk([&](ec::FuncOp f) {
+                if (f.getSymName() != "main") { lowered.push_back(f); }
+            });
+            // After the includes, which declareGlobals put first.
+            for (mlir::Operation & op : module.getBody()->getOperations()) {
+                if (!llvm::isa<ec::IncludeOp>(op)) {
+                    b.setInsertionPoint(&op);
+                    break;
+                }
+            }
+            for (ec::FuncOp f : lowered) {
+                ec::DeclareFuncOp::create(b, f.getLoc(),
+                                          mlir::FlatSymbolRefAttr::get(context, f.getSymName()));
+            }
+        }
+        for (ctjs::FuncOp fn : shells) {
+            if (!mlir::SymbolTable::symbolKnownUseEmpty(fn.getOperation(), module)) {
+                llvm::report_fatal_error(llvm::Twine("ctnative lowering: `") + fn.getSymName() +
+                                         "` still has symbol uses after every accepted function "
+                                         "was lowered - the call-graph closure should have "
+                                         "refused its caller");
+            }
+            fn.erase();
+        }
+        shells.clear();
+    }
 
     [[nodiscard]] mlir::Type typeOf(mlir::Value v) const {
         const TypeLattice * lattice = solver.lookupState<TypeLattice>(v);
@@ -406,6 +513,10 @@ struct lowering {
             return;
         }
         if (llvm::isa<FrameEnterOp>(o)) { return; }
+        if (o->getName().getStringRef() == "ub.poison") {
+            swap(f64Constant(b, where, std::numeric_limits<double>::quiet_NaN()));
+            return;
+        }
         if (admission::isDeclarationStore(o)) {
             mlir::Operation * closure = llvm::cast<StoreGlobalOp>(o).getValue().getDefiningOp();
             eraseIfUnused(o);
@@ -473,7 +584,28 @@ struct lowering {
             return;
         }
         if (auto load = llvm::dyn_cast<LoadGlobalOp>(o)) {
+            if (admission::feedsOnlyDirectCallees(load.getResult())) {
+                // Every use is a call_direct's callee-value operand, and the
+                // call is rewritten below without it; by the sweep it is dead.
+                return;
+            }
             swap(ec::LoadOp::create(b, where, f64, lvalueOfGlobal(b, where, load.getName())));
+            return;
+        }
+        if (auto call = llvm::dyn_cast<CallDirectOp>(o)) {
+            // The three implicit operands go; the rest are the parameters,
+            // in the callee's own order. The callee symbol still names the
+            // ctjs.func here; SymbolTable::replaceAllSymbolUses renames it
+            // to the emitc.func when that function is lowered, whichever
+            // order the two are visited in.
+            const auto operands = call.getArgOperands();
+            llvm::SmallVector<mlir::Value> args(operands.begin() + 3, operands.end());
+            const auto named = names.find(call.getCallee());
+            const std::string target =
+                named == names.end() ? cIdentifier(call.getCallee()) : named->second;
+            auto made = ec::CallOp::create(b, where, mlir::SymbolRefAttr::get(context, target),
+                                           mlir::TypeRange{o->getResult(0).getType()}, args);
+            swap(made.getResult(0));
             return;
         }
         if (auto store = llvm::dyn_cast<StoreGlobalOp>(o)) {
@@ -526,31 +658,30 @@ struct lowering {
         }
         const mlir::Type f64 = mlir::Float64Type::get(context);
         const mlir::Type i32 = mlir::IntegerType::get(context, 32);
-        const mlir::Type returnType = isEntry ? i32 : f64;
+        // THE RETURN TYPE IS WHAT THE RETURNS CARRY - retyped already, so any
+        // ctjs.return's operand type is the answer; a function that never
+        // returns a value returns undefined, carried as a NaN double.
+        mlir::Type returnType = isEntry ? i32 : f64;
+        if (!isEntry) {
+            fn.getBody().walk([&](ctjs::ReturnOp ret) { returnType = ret.getValue().getType(); });
+        }
         if (isEntry) { params.clear(); }
 
         mlir::OpBuilder b(fn);
-        auto made = ec::FuncOp::create(b, fn.getLoc(),
-                                       isEntry ? std::string{"main"} : fn.getSymName().str(),
-                                       b.getFunctionType(params, {returnType}));
-        // C identifiers: the importer names functions `name$index`.
-        if (!isEntry) {
-            std::string name = fn.getSymName().str();
-            for (char & ch : name) {
-                if (!(std::isalnum(static_cast<unsigned char>(ch)) || ch == '_')) { ch = '_'; }
-            }
-            made.setSymName(name);
-        }
+        const auto named = names.find(fn.getSymName());
+        const std::string symbol = isEntry                ? std::string{"main"}
+                                   : named != names.end() ? named->second
+                                                          : cIdentifier(fn.getSymName());
+        auto made =
+            ec::FuncOp::create(b, fn.getLoc(), symbol, b.getFunctionType(params, {returnType}));
         made.getBody().takeBody(fn.getBody());
         mlir::Block & body = made.getBody().front();
-        // The three implicit arguments are unused (admission checked); for
-        // main every argument goes.
-        const unsigned drop = isEntry ? body.getNumArguments() : 3u;
-        for (unsigned i = 0; i < drop; ++i) { body.eraseArgument(0); }
 
         llvm::SmallVector<mlir::Operation *> ops;
         made.getBody().walk([&](mlir::Operation * o) {
-            if (o->getDialect() == fn->getDialect()) { ops.push_back(o); }
+            if (o->getDialect() == fn->getDialect() || o->getName().getStringRef() == "ub.poison") {
+                ops.push_back(o);
+            }
         });
         for (mlir::Operation * o : ops) { replace(o, isEntry, returnType); }
 
@@ -562,7 +693,8 @@ struct lowering {
         // constant whose only user was another dead constant goes too.
         llvm::SmallVector<mlir::Operation *> dead;
         made.getBody().walk([&](mlir::Operation * o) {
-            if (llvm::isa<ec::ConstantOp, ec::LiteralOp, ctjs::FrameEnterOp>(o)) {
+            if (llvm::isa<ec::ConstantOp, ec::LiteralOp, ctjs::FrameEnterOp, ctjs::LoadGlobalOp>(
+                    o)) {
                 dead.push_back(o);
             }
         });
@@ -570,12 +702,28 @@ struct lowering {
             if (o->use_empty()) { eraseIfUnused(o); }
         }
 
-        // Every call of the old symbol now names the new one.
-        if (!isEntry) {
-            (void)mlir::SymbolTable::replaceAllSymbolUses(fn.getOperation(), made.getSymNameAttr(),
-                                                          module);
+        // THE IMPLICIT ARGUMENTS GO LAST, once the declaration closures that
+        // named `callee` and `this` have been erased with their stores - not
+        // before, as they once did: erasing a block argument that still has
+        // uses is the same silent use-after-free as erasing an operation
+        // with uses, and it surfaced as a crash three passes later in a fold
+        // of an operation that did not exist. Same invariant, same fatal.
+        const unsigned drop = isEntry ? body.getNumArguments() : 3u;
+        for (unsigned i = 0; i < drop; ++i) {
+            if (!body.getArgument(0).use_empty()) {
+                llvm::report_fatal_error(
+                    llvm::Twine("ctnative lowering: implicit argument of `") + fn.getSymName() +
+                    "` still has uses after lowering - admission should have refused it");
+            }
+            body.eraseArgument(0);
         }
-        fn.erase();
+
+        // THE OLD ctjs.func STAYS FOR NOW, hollow: an accepted caller lowered
+        // after this one still holds a call_direct naming it, and erasing it
+        // here left `is_between` with a live symbol use once - the invariant
+        // in finish() caught it. finish() runs after every accepted function
+        // has been rewritten, when no call_direct names any of them.
+        shells.push_back(fn);
     }
 
     void declareGlobals() {
@@ -633,9 +781,57 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             }
         }
 
-        lowering lower{solver, &getContext(), module, {}};
+        // THE FIXPOINT: a function is native only if every function it calls
+        // directly is. Drop any accepted function that calls a refused one,
+        // name the callee in its diagnostic, and repeat until nothing moves -
+        // a refusal anywhere in a call chain reaches every caller.
+        llvm::DenseSet<mlir::Operation *> nativeSet;
+        for (ctjs::FuncOp fn : accepted) { nativeSet.insert(fn.getOperation()); }
+        mlir::SymbolTable symbols(module);
+        // CLOSED IN BOTH DIRECTIONS. A native caller needs a native callee to
+        // emit an emitc.call to; and a native CALLEE needs every caller native
+        // too, because a refused caller keeps a ctjs.call_direct that must
+        // name a ctjs.func with a body - which a lowered function no longer
+        // is. So a refusal propagates along the call graph both ways, each
+        // step naming the function that caused it, until nothing moves.
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (ctjs::FuncOp fn : functions) {
+                const bool native = nativeSet.contains(fn.getOperation());
+                fn.getBody().walk([&](ctjs::CallDirectOp call) {
+                    mlir::Operation * callee = symbols.lookup(call.getCallee());
+                    const bool calleeNative = callee != nullptr && nativeSet.contains(callee);
+                    if (native && !calleeNative) {
+                        nativeSet.erase(fn.getOperation());
+                        fn->setAttr(
+                            "ctnative.not_native",
+                            mlir::StringAttr::get(
+                                &getContext(),
+                                ("calls `" + call.getCallee() + "`, which is not native").str()));
+                        changed = true;
+                    } else if (!native && calleeNative) {
+                        nativeSet.erase(callee);
+                        callee->setAttr(
+                            "ctnative.not_native",
+                            mlir::StringAttr::get(&getContext(), ("called by `" + fn.getSymName() +
+                                                                  "`, which is not native")
+                                                                     .str()));
+                        changed = true;
+                    }
+                });
+            }
+        }
+        llvm::erase_if(accepted,
+                       [&](ctjs::FuncOp fn) { return !nativeSet.contains(fn.getOperation()); });
+
+        lowering lower{solver, &getContext(), module, {}, {}, {}};
+        for (ctjs::FuncOp fn : accepted) {
+            lower.names[fn.getSymName()] =
+                fn.getSymName().starts_with("_script_$") ? "main" : cIdentifier(fn.getSymName());
+        }
         for (ctjs::FuncOp fn : accepted) { lower.lower(fn); }
         if (!accepted.empty()) { lower.declareGlobals(); }
+        lower.finish();
     }
 };
 

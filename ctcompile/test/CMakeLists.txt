@@ -809,7 +809,7 @@ if(CTCOMPILE_ENABLE_MLIR)
   add_executable(ctcompile-test-type-inference TypeInference.cpp)
   target_link_libraries(ctcompile-test-type-inference
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
-            MLIRControlFlowDialect)
+            MLIRControlFlowDialect MLIRSCFDialect MLIRUBDialect)
   ctcompile_target(ctcompile-test-type-inference)
   add_test(NAME ctcompile_type_inference COMMAND ctcompile-test-type-inference)
 endif()
@@ -1164,4 +1164,30 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
     COMMENT "Lowering native-pipeline-fixture.js to a native EmitC module")
   add_custom_target(ctcompile-native-pipeline-module ALL DEPENDS "${_pipeline_module}")
   ctcompile_add_native_unit(pipeline "${_pipeline_module}" "${_pipeline_js}")
+endif()
+
+# === PHASE 62½-A+C+D: functions through the native pipeline and the gate ===
+#
+# The gate's own fixture - eight functions, recursion, loops, a boolean
+# return - through --ctjs-resolve-globals and the lowering rather than its
+# hand-written module. The closed world types the parameters; the lowering
+# makes every function an emitc.func; the gate compares the binary's answers
+# with the interpreter's. One appended block, per Appendix A.3.
+if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
+   AND COMMAND ctcompile_add_native_unit)
+  set(_functions_js "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.js")
+  set(_functions_module "${CMAKE_CURRENT_BINARY_DIR}/native-fixture.pipeline.emitc.mlir")
+  add_custom_command(
+    OUTPUT "${_functions_module}"
+    COMMAND ${CMAKE_COMMAND}
+            -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
+            -DOPT=$<TARGET_FILE:ctjs-opt>
+            -DSOURCE=${_functions_js}
+            -DOUTPUT=${_functions_module}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline.cmake"
+    DEPENDS "${_functions_js}" "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline.cmake"
+            ctjs-translate ctjs-opt
+    COMMENT "Lowering native-fixture.js through the native pipeline")
+  add_custom_target(ctcompile-native-functions-module ALL DEPENDS "${_functions_module}")
+  ctcompile_add_native_unit(pipeline_functions "${_functions_module}" "${_functions_js}")
 endif()
