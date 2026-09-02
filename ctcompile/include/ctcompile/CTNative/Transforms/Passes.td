@@ -106,7 +106,16 @@ def CTNativePruneDeadStores : Pass<"ctnative-prune-dead-stores"> {
     Option<"report", "report", "bool", /*default=*/"false",
            "Emit the exact prune counts as a remark (the release LLVM package compiles pass statistics out)">
   ];
-  let dependentDialects = ["::mlir::emitc::EmitCDialect"];
+  // THE LAST TWO ARE THE PRICE OF THE PDLL PATTERN. PruneDeadStores.pdll is
+  // compiled to a C++ file that embeds the pattern as PDL *text* and parses it
+  // at run time, and the pattern set then lowers PDL to pdl_interp bytecode -
+  // so both dialects must be loaded in the context before the pass runs, or
+  // the parse fails on an unregistered dialect inside a pass body.
+  let dependentDialects = [
+    "::mlir::emitc::EmitCDialect",
+    "::mlir::pdl::PDLDialect",
+    "::mlir::pdl_interp::PDLInterpDialect"
+  ];
 }
 
 #endif // CTCOMPILE_CTNATIVE_TRANSFORMS_PASSES_TD

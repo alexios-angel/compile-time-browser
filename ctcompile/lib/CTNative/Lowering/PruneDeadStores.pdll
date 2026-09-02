@@ -1,0 +1,86 @@
+//===- PruneDeadStores.pdll - a call nothing reads is a statement ----------===//
+//
+// THE FIRST PDLL PATTERN IN THIS PROJECT. Part 4 of the master plan says
+// "Structural rewrites -> PDLL `Pattern`, via `mlir-pdll`", and this rule is
+// the one place in the native tier that is a structural match and nothing
+// else: an EmitC call whose single result nobody reads gets
+// `ctnative.statement`, which is the attribute the forked C++ emitter keys off
+// to print `f(x);` instead of `double v = f(x);`. The call itself is never
+// erased - a call may do anything - so the rewrite adds an attribute and stops.
+//
+// WHY THE PREDICATES ARE NATIVE, all three of them. PDL matches operation
+// STRUCTURE: names, operands, results, attributes, nesting. It cannot ask how
+// many times a result is used, and `emitc.call` declares `Variadic<EmitCType>`
+// results, so "exactly one result" is not a shape PDL can pin either - a
+// result-count constraint written as `-> (r: Type)` compiles to a `!pdl.range`
+// against a `Value` parameter with no diagnostic from mlir-pdll at all. So
+// what PDLL contributes here is the ODS-checked operation dispatch and the
+// composition of three named predicates; everything else is C++ reached
+// through `apply_native_constraint`.
+//
+// EACH BODY IS ONE CALL into a named function in PruneDeadStores.cpp, which is
+// the policy's rule for native bodies: inline C++ inside a pattern file is not
+// clang-formatted, not covered by -Wall -Wextra -Werror -Wconversion, and not
+// separately testable. `rewriter` is threaded through every one of them
+// because mlir-pdll generates the wrapper with that parameter whether the body
+// wants it or not, and an unused parameter is a build failure here.
+//
+//===----------------------------------------------------------------------===//
+
+// THE OPERATION NAMES ARE CHECKED AGAINST ODS because of this include: without
+// it `op<emitc.call>` is an unchecked string and a typo becomes a pattern that
+// silently never matches. EXTRA_INCLUDES in ../CMakeLists.txt is what makes it
+// resolve.
+#include "mlir/Dialect/EmitC/IR/EmitC.td"
+
+//===- Native constraints -------------------------------------------------===//
+
+Constraint HasExactlyOneResult(op: Op) [{
+  return ::ctcompile::ctnative::pdll::hasExactlyOneResult(rewriter, op);
+}];
+
+Constraint NothingReadsTheResult(op: Op) [{
+  return ::ctcompile::ctnative::pdll::nothingReadsTheResult(rewriter, op);
+}];
+
+// THE TERMINATION CONDITION, and it is load-bearing. The rewrite does not
+// replace or erase the root, so a greedy driver that re-enqueues a modified
+// operation would match it again for ever. Refusing an operation that already
+// carries the attribute is what makes the pattern idempotent.
+Constraint NotAlreadyAStatement(op: Op) [{
+  return ::ctcompile::ctnative::pdll::notAlreadyAStatement(rewriter, op);
+}];
+
+//===- Native rewrites ----------------------------------------------------===//
+
+Rewrite MarkAsStatement(op: Op) [{
+  ::ctcompile::ctnative::pdll::markAsStatement(rewriter, op);
+}];
+
+//===- Patterns -----------------------------------------------------------===//
+
+// TWO PATTERNS AND NOT ONE, because PDL dispatches on an operation NAME and
+// these are two operations. `op<>` with no name would match every operation in
+// the module and push the discrimination back into C++, which is the thing
+// this file exists to avoid. Two three-line records is the honest cost of
+// naming both.
+
+Pattern UnreadCallIsAStatement {
+  let root = op<emitc.call>;
+  HasExactlyOneResult(root);
+  NothingReadsTheResult(root);
+  NotAlreadyAStatement(root);
+  rewrite root with {
+    MarkAsStatement(root);
+  };
+}
+
+Pattern UnreadOpaqueCallIsAStatement {
+  let root = op<emitc.call_opaque>;
+  HasExactlyOneResult(root);
+  NothingReadsTheResult(root);
+  NotAlreadyAStatement(root);
+  rewrite root with {
+    MarkAsStatement(root);
+  };
+}
