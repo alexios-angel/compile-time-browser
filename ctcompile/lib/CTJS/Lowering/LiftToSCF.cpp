@@ -121,7 +121,13 @@ unsigned dropSelfCarriedArguments(mlir::RewriterBase & rewriter, mlir::Region & 
                     }
                     // THE GUARD: two different values reach it. That is a
                     // real phi - a variable assigned inside the loop, or on
-                    // only one path before it - and it stays.
+                    // only one path before it - and it stays. MEASURED, with
+                    // this deleted: `switching` in native-struct.mlir lowers,
+                    // and the `acc = lo` before its loop is silently dropped -
+                    // it returns hi.v for every n, including n = 0, where the
+                    // loop never runs. The dominance test below does NOT
+                    // catch that one: both literals are made before the loop,
+                    // so both dominate the header.
                     if (incoming != common) {
                         trivial = false;
                         break;
@@ -148,6 +154,12 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
     void runOnOperation() override {
         mlir::ControlFlowToSCFTransformation transformation;
         bool changed = false;
+        // COUNTED HERE AS WELL AS IN THE ODS STATISTIC, for the reason
+        // --ctnative-prune-dead-stores gives: Homebrew's release LLVM 23
+        // accepts --mlir-pass-statistics and prints no custom counter at all
+        // (measured - ResolveGlobals' three print nothing either), so a
+        // statistic cannot be asserted on by a test here. The remark can.
+        unsigned droppedHere = 0;
 
         // BY INTERFACE, WHICH IS THE WHOLE POINT OF THIS FILE. Anything that
         // is a function participates - ctjs.func today, func.func if this
@@ -179,6 +191,7 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
                     // still the truth.
                     const unsigned dropped = dropSelfCarriedArguments(rewriter, region, dominance);
                     droppedSelfCarriedArguments += dropped;
+                    droppedHere += dropped;
                     changed |= dropped != 0;
                     // A REFUSAL IS EXPECTED AND MUST NOT BE AN ERROR.
                     //
@@ -214,6 +227,11 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
                 return mlir::WalkResult::advance();
             });
         (void)walked;
+
+        if (report) {
+            getOperation()->emitRemark()
+                << "dropped " << droppedHere << " self-carried block argument(s)";
+        }
 
         // THE ANALYSIS IS INVALIDATED WHOLESALE. transformCFGToSCF rewrites
         // blocks, so a cached DominanceInfo describes a CFG that no longer

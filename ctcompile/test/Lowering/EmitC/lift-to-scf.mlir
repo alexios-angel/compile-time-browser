@@ -26,6 +26,20 @@
 // place by being measurable on its own.
 
 // RUN: ctjs-opt %s --ctjs-lift-to-scf | FileCheck %s
+// RUN: ctjs-opt %s '--ctjs-lift-to-scf=report=true' 2>&1 | FileCheck --check-prefix=REPORT %s
+
+// THE COUNT IS ASSERTED, NOT PRINTED IN A COMMENT. One argument is dropped in
+// this file, %inv in @invariant below, and no other case here has one. It is a
+// remark and not the ODS statistic because Homebrew's release LLVM 23 compiles
+// pass statistics out: --mlir-pass-statistics prints an empty report for every
+// pass in this project, ResolveGlobals' three included. Measured, same knob:
+// native-struct.mlir's program 3 (`acc` in looped and in leaked, and `hi` in
+// switching, which the loop only carries; NOT `acc` in reassigned or in
+// switching, which are real phis, and never `i`, which is assigned inside
+// every one of those loops), native-struct-fixture.js 2 (`acc` and `n` in
+// accumulate), native-fixture.js 1, native-pipeline-fixture.js 0.
+//
+// REPORT: remark: dropped 1 self-carried block argument(s)
 
 // --- A BRANCH BECOMES AN IF -------------------------------------------------
 //
@@ -93,12 +107,6 @@ ctjs.func @counter(%receiver: !ctjs.value, %new_target: !ctjs.value,
 //
 // PROVED LOAD-BEARING: with dropSelfCarriedArguments removed from the pass,
 // this scf.while has four operands and four results, and this line is red.
-//
-// Measured with --mlir-pass-statistics, self-carried-args-dropped: this file 1
-// (only %inv), native-struct.mlir's program 3 (`acc` in looped, leaked - and
-// in reassigned NOTHING, its `acc` is a real phi - plus `i`'s twin in none of
-// them: `i` is assigned inside every loop), native-struct-fixture.js 2 (`acc`
-// and `n` in accumulate), native-fixture.js 0.
 //
 // CHECK-LABEL: ctjs.func @invariant
 // CHECK-NOT: cf.br

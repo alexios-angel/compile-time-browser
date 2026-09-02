@@ -113,6 +113,10 @@ def CTJSLiftToSCF : Pass<"ctjs-lift-to-scf", "mlir::ModuleOp"> {
     Statistic<"droppedSelfCarriedArguments", "self-carried-args-dropped",
               "block arguments fed by themselves and one other value, replaced by that value (O-3)">
   ];
+  let options = [
+    Option<"report", "report", "bool", /*default=*/"false",
+           "Emit the exact count of dropped self-carried arguments as a remark (the release LLVM package compiles pass statistics out)">
+  ];
 }
 
 def CTJSDropUncompiled : Pass<"ctjs-drop-uncompiled", "mlir::ModuleOp"> {

@@ -38,6 +38,14 @@ function leaked() {
   while (i < 3) { acc.total = acc.total + i; i = i + 1; }
   return acc;
 }
+function switching() {
+  var lo = { total: 1 };
+  var hi = { total: 2 };
+  var acc = lo;
+  var i = 0;
+  while (i < 3) { acc = hi; i = i + 1; }
+  return acc.total;
+}
 var a = closed();
 // CALLED, AND IT HAS TO BE. A private function nothing calls is dead code to
 // MLIR's DeadCodeAnalysis, so no value in it is ever visited and every type
@@ -98,20 +106,37 @@ var b = looped();
 // CHECK-NEXT: return
 // CHECK-NOT: ctjs.
 
-// --- AND THE TWO THAT STILL REFUSE, each by its own route --------------------
+// --- AND THE THREE THAT STILL REFUSE, each by its own route ------------------
+//
+// All three are uncalled and parameterless, so the object and not a parameter
+// is what refuses them - and a refused callee refuses its caller, which would
+// take main and the two lowered functions with it.
 //
 // `reassigned` makes a SECOND literal inside the loop and stores it in the
-// same variable, so two values - two shapes, two slots - reach the header:
-// that is a real phi, the trivial-phi rule's guard (`incoming != common`)
-// keeps it, and the literal reaches the scf.while. Delete that guard and the
-// second literal is silently folded into the first - the test goes red on
-// this line. `leaked` returns the literal after the loop; with O-3 that is
-// no longer a loop-carried value but a plain escape, and hasClosedShape's
-// "anything else opens it" arm is what refuses it - delete that arm and the
-// function lowers, and this line goes red. Both are uncalled and
-// parameterless, so the object and not a caller is what refuses them.
+// same variable, so two values - two shapes, two slots - reach the header.
+// MEASURED: deleting the `incoming != common` guard does NOT make this one
+// lower. The literal made inside the loop does not dominate the header, so
+// the dominance test refuses the replacement instead - it is the belt, not
+// the guard, that holds here, and the drop count does not move.
+//
+// `switching` is the case the dominance test CANNOT catch, and so the one
+// that proves the guard: both literals are made before the loop, so both
+// dominate the header, and only "two different values reach it" stands
+// between the pass and a miscompile. MEASURED with the guard deleted: the
+// same program with a parameter and a call lowers to C++ that reads `hi`
+// unconditionally - `acc = lo` before the loop is gone, so it answers 2 even
+// for n = 0, where the loop never runs and the answer is 1. Here, uncalled,
+// deleting the guard flips this line to the `<unvisited>` refusal instead,
+// which is red either way.
+//
+// `leaked` returns the literal after the loop; with O-3 that is no longer a
+// loop-carried value but a plain escape, and hasClosedShape's "anything else
+// opens it" arm is what refuses it - delete that arm and the shape reads as
+// closed, the message changes, and this line goes red.
 //
 // CHECK: ctjs.func private @reassigned$4
 // CHECK-SAME: ctnative.not_native = "an object literal that is loop-carried - more than one value reaches the variable that holds it (assigned again inside a loop, or on only one path before it)"
 // CHECK: ctjs.func private @leaked$5
 // CHECK-SAME: ctnative.not_native = "an object literal that escapes - it is returned"
+// CHECK: ctjs.func private @switching$6
+// CHECK-SAME: ctnative.not_native = "an object literal that is loop-carried - more than one value reaches the variable that holds it (assigned again inside a loop, or on only one path before it)"
