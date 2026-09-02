@@ -953,3 +953,19 @@ if(CTCOMPILE_ENABLE_MLIR)
   ctcompile_target(ctcompile-test-escape-analysis)
   add_test(NAME ctcompile_escape_analysis COMMAND ctcompile-test-escape-analysis)
 endif()
+
+# === PHASE 55A-claims: the escape claims emitter ===
+#
+# The compiler's half of the escape oracle: imports a corpus, runs
+# EscapeAnalysis, and writes one claim per allocation site in the format
+# tools/check/escape-oracle.py reads (25-escape-analysis.md §3.4). The
+# executable alone here; the four corpus tests that run it beside the
+# interpreter's recording are registered with the recorder (55O), which they
+# need and which lands separately.
+if(CTCOMPILE_ENABLE_MLIR)
+  add_executable(ctcompile-test-escape-claims EscapeClaims.cpp)
+  target_link_libraries(ctcompile-test-escape-claims
+    PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect ctcompile::ctjs-import
+            MLIRIR MLIRAnalysis ctbrowser::ctbrowser)
+  ctcompile_target(ctcompile-test-escape-claims)
+endif()
