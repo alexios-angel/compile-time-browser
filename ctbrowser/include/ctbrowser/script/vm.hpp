@@ -544,6 +544,18 @@ public:
 
     [[nodiscard]] bool failed() const noexcept { return failed_; }
     [[nodiscard]] const std::string & error() const noexcept { return error_; }
+    // THE VALUE AN UNCAUGHT THROW LEFT BEHIND, for a host that has to NAME its
+    // constructor rather than print it.
+    //
+    // `error()` is the flattened text - "uncaught TypeError: ..." - and test262
+    // asks a question no string can answer: a `negative: {type: ReferenceError}`
+    // test passes only when the thrown value's own constructor is the
+    // ReferenceError the realm holds, which is why `tools/ct262` reads the value
+    // rather than grepping the message. Undefined when a run failed WITHOUT a
+    // throw (a VM fault - the allocation ceiling, the call-stack ceiling), which
+    // is how a host tells a thrown error from a refused program; stale after a
+    // run that succeeded, so read it only when `run_result::ok` is false.
+    [[nodiscard]] value last_thrown() const noexcept { return thrown_; }
     // Report it and carry on, which is what a browser does: an exception in one
     // callback does not cancel the next one or end the page.
     [[nodiscard]] std::string take_error() {

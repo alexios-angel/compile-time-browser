@@ -111,5 +111,21 @@ with it.
   libjpeg-turbo. PNG and JPEG decode in the SDL-FREE engine, so the Windows
   presets need this run once too. Versions are pinned on purpose; see
   `docs/build.md`.
+- `tools/fetch-test262.sh` — shallow-fetches the OFFICIAL ECMAScript conformance
+  suite at a PINNED commit into `~/.cache/ctbrowser/test262` and verifies the
+  hash. The corpus is 53,580 files and is NEVER vendored; this is the one place
+  the pin lives. See `docs/test262.md`.
+- `tools/check/test262.py` — runs test262 against the engine through
+  `ctbrowser/tools/ct262`, ONE DIRECTORY AT A TIME (`--dir test/language/statements/for-of`
+  prints a table), 4 workers, a 10 s timeout and a 2 GB address-space cap per
+  test. `--self-test` plants eleven answers it must classify correctly and is
+  registered as a ctest, because a harness that says PASS to everything looks
+  exactly like a conforming engine; `--gate` is the regression subset, which
+  fails on an unexpected PASS as well as on a regression. Opt in with
+  `-DCTBROWSER_TEST262=ON`.
+- `tools/check/test262-baseline.sh` — the ten areas `docs/test262.md` records a
+  number for, run one after another with identical flags. Sequential: four
+  workers is the cap the whole devbox shares, and two of these at once is eight.
+
 - `tools/format.sh`, `tools/check/check-package.sh`, `tools/check/check-render.cmake`,
   `tools/remote-build.sh`.

@@ -14,6 +14,7 @@ something lives.**
 | [`platform.md`](platform.md) | **a Linux binary here sees only lavapipe** — real hardware needs the Windows `.exe`. The cross-build and the devbox. Read before drawing conclusions from a Linux run |
 | [`performance.md`](performance.md) | **where the time actually goes, measured** — how to profile on WSL2, what landed, and the three confident hypotheses that measured wrong. **Read before optimising anything** |
 | [`script.md`](script.md) | the JS compiler, the VM, the standard library — what the language supports and what it rejects by name |
+| [`test262.md`](test262.md) | **the official ECMAScript conformance suite, and what it measures**: the harness decision, the pinned corpus, `$262`, the negative proofs, and the baseline per area with its date |
 | [`shell.md`](shell.md) | the application API, form controls, editing, input, navigation, resources — anything a page can do |
 | [`style-layout.md`](style-layout.md) | the cascade and the `style` attribute; tables, generated content, whitespace collapsing |
 | [`raster.md`](raster.md) | fonts, glyph rasterisation, the font8x8 fallback, SVG, PNG/JPEG. **Its last section is marked as describing deleted code** |
