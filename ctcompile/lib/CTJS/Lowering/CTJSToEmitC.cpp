@@ -2182,8 +2182,8 @@ struct CTJSLowerToEmitCPass : impl::CTJSLowerToEmitCBase<CTJSLowerToEmitCPass> {
             // has not been declared") while accepting the identical store
             // through `emitc.subscript`, and the two spell the same C++ for a
             // pointer to one slot. Measured on the 22 -> 23 bump, 2026-09-02.
-            const mlir::Value slot = ec::ConstantOp::create(
-                build, where, build.getI32Type(), build.getI32IntegerAttr(0));
+            const mlir::Value slot = ec::ConstantOp::create(build, where, build.getI32Type(),
+                                                            build.getI32IntegerAttr(0));
             auto destination = ec::SubscriptOp::create(build, where, ec::LValueType::get(value),
                                                        out, mlir::ValueRange{slot});
             ec::AssignOp::create(build, where, destination, result.getResult(0));

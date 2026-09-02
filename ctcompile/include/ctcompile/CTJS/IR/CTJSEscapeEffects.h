@@ -62,7 +62,7 @@ inline bool Effect::classof(const mlir::SideEffects::Effect * effect) {
 /// an operand or result can name. getName() IS the enum case's spelling.
 #define CTJS_ESCAPE_ROUTE(Name, spelling)                                                          \
     struct Name final : public mlir::SideEffects::Resource::Base<Name> {                           \
-        llvm::StringRef getName() const final { return spelling; }                                       \
+        llvm::StringRef getName() const final { return spelling; }                                 \
     };
 CTJS_ESCAPE_ROUTE(Returned, "returned")
 CTJS_ESCAPE_ROUTE(Thrown, "thrown")
