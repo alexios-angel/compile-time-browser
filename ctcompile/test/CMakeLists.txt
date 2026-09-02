@@ -1191,3 +1191,17 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
   add_custom_target(ctcompile-native-functions-module ALL DEPENDS "${_functions_module}")
   ctcompile_add_native_unit(pipeline_functions "${_functions_module}" "${_functions_js}")
 endif()
+
+# === PART 24 §3.3: the deduction probe ===
+#
+# What the two devbox compilers accept, measured every build rather than
+# tabulated once: constrained auto parameters, templated lambdas, aggregate
+# CTAD, a visited variant, static_assert pins over deduced declarations, and
+# the absence of two C++23 library features. Phases 56 to 62½ plan against
+# this file. One appended block, per Appendix A.3.
+add_test(NAME ctcompile_deduction_probe
+         COMMAND ${CMAKE_COMMAND}
+                 -DPROBE=${CMAKE_CURRENT_SOURCE_DIR}/../probes/deduction.cpp
+                 "-DCOMPILERS=/usr/bin/g++;/usr/bin/clang++;${CMAKE_CXX_COMPILER}"
+                 -DWORK=${CMAKE_CURRENT_BINARY_DIR}
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/check-deduction-probe.cmake)
