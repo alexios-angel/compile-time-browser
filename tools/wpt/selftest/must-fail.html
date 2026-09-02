@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset=utf-8>
+<title>selftest: a failing test is reported as failing</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<div id=log></div>
+<script>
+// THE POINT OF THE WHOLE FILE. This assertion is false on purpose, and the run
+// is only trustworthy if the runner says FAIL for this page and names THIS
+// subtest.
+test(function () {
+    assert_equals(1 + 1, 3, "this assertion is false on purpose");
+}, "a test that MUST fail");
+
+// Beside it, one that passes - so that a runner which simply called the whole
+// file bad would be caught too. The required answer is FAIL at the file level
+// with exactly one PASS and one FAIL underneath it, not two FAILs.
+test(function () {
+    assert_true(true);
+}, "and one beside it that passes");
+</script>
