@@ -26,6 +26,7 @@
 #include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Parser/Parser.h"
 
@@ -216,6 +217,24 @@ int main() {
     };
 
     for (const row & r : rows) { check(context, r); }
+
+    // AND ONE MODULE THAT MUST NOT PARSE. `ctjs.binary_static sub` names a
+    // kind context::binary_op_static has no arm for - it answers undefined -
+    // so an inference claiming f64 for it would be wrong, and the fix is not
+    // a narrower claim but a verifier that refuses the IR. This is the
+    // refutation Phase 54A's adversarial review raised, kept as a test.
+    {
+        const std::string text =
+            prologue() + "  %r = ctjs.binary_static sub %p, %q\n" + "  ctjs.return %r\n}\n";
+        mlir::ScopedDiagnosticHandler quiet{&context,
+                                            [](mlir::Diagnostic &) { return mlir::success(); }};
+        mlir::OwningOpRef<mlir::ModuleOp> module =
+            mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        if (module) {
+            std::printf("FAIL ctjs.binary_static sub verified, and the helper has no arm for it\n");
+            ++failures;
+        }
+    }
 
     if (failures != 0) {
         std::printf("\n%d row(s) failed\n", failures);

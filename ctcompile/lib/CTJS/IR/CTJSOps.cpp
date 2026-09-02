@@ -153,6 +153,23 @@ mlir::SuccessorOperands CheckOp::getSuccessorOperands(unsigned index) {
                                               : getHandlerOperandsMutable());
 }
 
+mlir::LogicalResult BinaryStaticOp::verify() {
+    switch (getKind()) {
+    case BinaryKind::Add:
+    case BinaryKind::BitAnd:
+    case BinaryKind::BitOr:
+    case BinaryKind::BitXor:
+    case BinaryKind::Shl:
+    case BinaryKind::Shr:
+    case BinaryKind::UShr: return mlir::success();
+    default:
+        return emitOpError("kind ")
+               << stringifyBinaryKind(getKind())
+               << " has no static form: context::binary_op_static implements add, bitand, "
+                  "bitor, bitxor, shl, shr and ushr and answers undefined for the rest";
+    }
+}
+
 mlir::LogicalResult CheckOp::verify() {
     mlir::Region * here = getOperation()->getParentRegion();
     if (getHandler()->getParent() != here || getCont()->getParent() != here) {

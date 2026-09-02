@@ -250,11 +250,17 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             case ctjs::BinaryKind::Shr: numeric = int32Type(c); break;
             // ARITHMETIC IS A DOUBLE AND NOT AN INT32: `2**31` overflows one
             // and not the other, which is part 24 §1.1's own counterexample.
+            //
+            // THE GENERIC FAMILY ONLY. binary_op_static has no arm for these
+            // and answers undefined; the verifier on ctjs.binary_static
+            // rejects them, and this is the belt to that brace.
             case ctjs::BinaryKind::Sub:
             case ctjs::BinaryKind::Mul:
             case ctjs::BinaryKind::Div:
             case ctjs::BinaryKind::Mod:
-            case ctjs::BinaryKind::Pow: numeric = doubleType(c); break;
+            case ctjs::BinaryKind::Pow:
+                if (llvm::isa<ctjs::BinaryOp>(op)) { numeric = doubleType(c); }
+                break;
             // `+` IS THE ONE THAT STAYS BOXED in the generic family, because
             // it concatenates when either side is a string. The STATIC family
             // reaches it only from `++` and its internal counters, which go

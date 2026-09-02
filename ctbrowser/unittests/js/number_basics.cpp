@@ -15,6 +15,22 @@ int main() {
     // --- the type ------------------------------------------------------------
     js_expect("typeof 1", "number");
     js_expect("typeof NaN", "number"); // NaN is a number, which is the joke
+    // AND A NaN WITH A PAYLOAD IS STILL A NUMBER, after arithmetic. The engine
+    // NaN-boxes: a boxed tag is a NaN with bits 51 AND 50 set. A Float64Array
+    // lets a script write 0x7FF4000000000003 - bit 50 set, bit 51 clear, so it
+    // passes is_number() - and the first `- 1` quiets bit 51 into exactly
+    // tag_true. `typeof (x - 1)` answered "boolean". view_get canonicalises
+    // every NaN it reads, and these four payloads are the four tags.
+    js_expect("(function(){var b=new ArrayBuffer(8),u=new Uint8Array(b),f=new Float64Array(b);"
+              "u[6]=0xF4;u[7]=0x7F;var r=[];for(var p=0;p<4;p++){u[0]=p;r.push(typeof (f[0]-1),"
+              "typeof (f[0]*1),typeof (f[0]/2),f[0]-1===true,Object.is(f[0]-1,NaN));}return "
+              "r.join();})()",
+              "number,number,number,false,true,number,number,number,false,true,"
+              "number,number,number,false,true,number,number,number,false,true");
+    // A Float32Array payload widens bit 21 into bit 50 and takes the same road.
+    js_expect("(function(){var b=new ArrayBuffer(4),u=new Uint8Array(b),f=new Float32Array(b);"
+              "u[3]=0x7F;u[2]=0xA0;u[0]=3;return typeof (f[0]-1)+\",\"+Object.is(f[0]-1,NaN);})()",
+              "number,true");
     js_expect("typeof Infinity", "number");
     js_expect("typeof Number", "function");
     js_expect("typeof (1).toFixed", "function");

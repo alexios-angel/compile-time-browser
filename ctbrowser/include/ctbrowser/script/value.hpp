@@ -53,6 +53,28 @@ inline constexpr std::uint64_t tag_null = qnan_mask | 1;
 inline constexpr std::uint64_t tag_false = qnan_mask | 2;
 inline constexpr std::uint64_t tag_true = qnan_mask | 3;
 
+// THE ONE NaN A NUMBER IS ALLOWED TO BE. The comment above is right that no
+// ARITHMETIC produces a NaN with bit 50 set - hardware default NaNs are
+// 0x7FF8... and 0xFFF8..., both clear of the mask. What it did not account for
+// is a NaN that arrives with its payload already set: a Float64Array (or a
+// Float32Array, whose bit 21 widens to bit 50) lets JavaScript write any bit
+// pattern and read it back as a double. 0x7FF4000000000003 passes is_number(),
+// and the first `- 1` on it quiets bit 51 and yields 0x7FFC000000000003 - which
+// is tag_true. `typeof (x - 1)` was "boolean". Found by ctcompile's Phase 54B
+// oracle, which observed a boolean in a register the inference had proved f64.
+//
+// So every NaN that crosses INTO the engine from raw bits is canonicalised to
+// this one at the boundary (view_get), the way JSC's purifyNaN and
+// SpiderMonkey's CanonicalizeNaN do - on the boundary and not in
+// value::number, because the latter is every arithmetic result and the former
+// is a typed-array read.
+inline constexpr std::uint64_t canonical_nan_bits = 0x7FF8000000000000ull;
+static_assert((canonical_nan_bits & qnan_mask) != qnan_mask,
+              "the canonical NaN must itself be a number under the boxing scheme");
+[[nodiscard]] inline double canonical_nan() noexcept {
+    return std::bit_cast<double>(canonical_nan_bits);
+}
+
 enum class heap_kind : std::uint8_t {
     string,
     object,
@@ -440,8 +462,17 @@ struct array_object final : heap_object {
     const std::size_t width = bytes_per_element(view.elements);
     const std::uint64_t raw = view_raw(view, i, width);
     switch (view.elements) {
-    case element_kind::f32: return std::bit_cast<float>(static_cast<std::uint32_t>(raw));
-    case element_kind::f64: return std::bit_cast<double>(raw);
+    // THE NaN BOUNDARY - see canonical_nan_bits. A payload read out of a typed
+    // array must not reach a register, because arithmetic quiets bit 51 and a
+    // payload with bit 50 set then IS a boxed tag.
+    case element_kind::f32: {
+        const double d = std::bit_cast<float>(static_cast<std::uint32_t>(raw));
+        return std::isnan(d) ? canonical_nan() : d;
+    }
+    case element_kind::f64: {
+        const double d = std::bit_cast<double>(raw);
+        return std::isnan(d) ? canonical_nan() : d;
+    }
     case element_kind::i8: return static_cast<std::int8_t>(raw);
     case element_kind::i16: return static_cast<std::int16_t>(raw);
     case element_kind::i32: return static_cast<std::int32_t>(raw);

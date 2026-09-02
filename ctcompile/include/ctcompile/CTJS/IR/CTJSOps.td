@@ -613,6 +613,14 @@ def CTJS_BinaryStaticOp
   let arguments = (ins CTJS_BinaryKind:$kind, CTJS_ValueType:$lhs, CTJS_ValueType:$rhs);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$kind $lhs `,` $rhs attr-dict";
+  // ONLY THE SEVEN KINDS THE HELPER IMPLEMENTS. context::binary_op_static
+  // switches on add, bit_and, bit_or, bit_xor, shl, shr and ushr and answers
+  // `undefined` for anything else - deliberately, because the AOT entry is
+  // untrusted input. The importer never emits the others here, but hand-written
+  // IR could, and an inference that said `f64` for `binary_static sub` would
+  // be wrong about a value that is really undefined. Invalid IR is the honest
+  // answer, so the verifier says so.
+  let hasVerifier = 1;
 }
 
 def CTJS_UnaryOp : CTJS_Op<"unary", CTJS_GenericEffects> {
