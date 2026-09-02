@@ -14,6 +14,27 @@
 // add_mlir_dialect(CTJSOps ctjs) is the only TableGen invocation the policy's
 // CMakeLists makes for typedefs, and it runs over THIS file.
 //
+// IT IS ALSO PHASE 55'S ESCAPE TABLE. Every `Arg<..., [CTJS_Sink...]>` below
+// is one cell of the sinks-and-carriers table (25-escape-analysis.md §2.2):
+// SINK(reason) hands the operand's object to something that outlives the
+// frame or can run user code with it; CTJS_Carry says the result may BE the
+// operand's object; an operand with no decorator on an operation that has
+// the interface is NEITHER, proved by the VM lines in the comment beside it;
+// CTJS_NoEscapeEffects declares an operation whose every operand is NEITHER;
+// `Res<..., [CTJS_Boxed...]>` claims an untracked allocation `escapes(reason)`.
+// An operation with NO annotation sinks every !ctjs.value operand with reason
+// `unknown_op` (the default rule), so omission is sound. ctjs.unary,
+// ctjs.compare and ctjs.convert carry none on purpose: their role depends on
+// the kind attribute, which a decorator cannot express, and they are the one
+// C++ switch in EscapeAnalysis.cpp.
+//
+// REVIEW RULE: every operation whose bytecode row is `may_reenter 1` (31 of
+// 93, bytecode_opcodes.def) has at least one SINK operand, or a comment
+// naming the re-entering arm and why no object/array site of the enclosing
+// function reaches it. The NEITHER rows are valid for those two tracked kinds
+// ONLY - a closure base breaks them (objects.cpp:590 -> call.cpp:502) - which
+// is why ctjs.create_closure is not a tracked site.
+//
 //===----------------------------------------------------------------------===//
 #ifndef CTCOMPILE_CTJS_OPS
 #define CTCOMPILE_CTJS_OPS
@@ -61,11 +82,14 @@ def CTJS_LoadGlobalOp : CTJS_RuntimeOp<"load_global", "ct_aot_global_get", CTJS_
 
 def CTJS_StoreGlobalOp : CTJS_RuntimeOp<"store_global", "ct_aot_global_set", CTJS_GenericEffects> {
   let summary = "Write a global binding by name";
-  let arguments = (ins StrAttr:$name, CTJS_ValueType:$value);
+  // PHASE 55: SINK(stored_global). op::set_global writes globals_
+  // (run_loop.cpp:252-255), the first root the collector walks
+  // (objects.cpp:667).
+  let arguments = (ins StrAttr:$name, Arg<CTJS_ValueType, "", [CTJS_SinkStoredGlobal]>:$value);
   let assemblyFormat = "$name `,` $value attr-dict";
 }
 
-def CTJS_LoadUpvalueOp : CTJS_Op<"load_upvalue"> {
+def CTJS_LoadUpvalueOp : CTJS_Op<"load_upvalue", [CTJS_NoEscapeEffects]> {
   let summary = "Read a captured binding out of its cell";
   let description = [{
     NOT a CTJS_RuntimeOp, and that is a correction. It named ct_aot_cell_get,
@@ -93,6 +117,9 @@ def CTJS_LoadUpvalueOp : CTJS_Op<"load_upvalue"> {
   // closure, which arrives as an ordinary function argument - and ctjs.func
   // takes only !ctjs.value parameters. A closure is a value at run time; the
   // distinct type is for the one place that BUILDS one.
+  // PHASE 55: $closure NEITHER - a cell read, rows (0,0,0); the closure is
+  // never one of this function's tracked sites anyway (only object/array
+  // literals are). The result is an external object.
   let arguments = (ins CTJS_ValueType:$closure, I32Attr:$index);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$closure `[` $index `]` attr-dict";
@@ -106,7 +133,11 @@ def CTJS_StoreUpvalueOp : CTJS_Op<"store_upvalue"> {
     nowhere, and the write landed on whatever the closure value was - which
     cell_set no-ops on. A captured variable would never have been updated.
   }];
-  let arguments = (ins CTJS_ValueType:$closure, I32Attr:$index, CTJS_ValueType:$value);
+  // PHASE 55: $closure NEITHER (run_loop.cpp:1240-1249 writes a cell slot
+  // and stores nothing else); $value SINK(stored) - the slot is traced from
+  // the cell (objects.cpp:59) through the closure's upvalues (objects.cpp:64).
+  let arguments = (ins CTJS_ValueType:$closure, I32Attr:$index,
+                       Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$value);
   let assemblyFormat = "$closure `[` $index `]` `,` $value attr-dict";
 }
 
@@ -151,9 +182,17 @@ def CTJS_CreateClosureOp
   // ordering problem it is. The ABI's own argument order is different again -
   // (fr, closure, index, upvalues, count, this) - and the lowering maps
   // between them, which is what a lowering is for.
-  let arguments = (ins CTJS_ValueType:$enclosing_closure, CTJS_ValueType:$enclosing_this,
-                       I32Attr:$function, Variadic<CTJS_ValueType>:$upvalues);
-  let results = (outs CTJS_ValueType:$result);
+  // PHASE 55: $enclosing_closure NEITHER - context::make_closure reads its
+  // `owner` (call.cpp:881) and its `upvalues` (910-911) and stores the closure
+  // itself nowhere; $enclosing_this SINK(captured) - written to captured_this
+  // (919), traced (objects.cpp:73); $upvalues SINK(captured) - written (909),
+  // traced (objects.cpp:64). The RESULT is a boxed site, reason phase59: a
+  // closure is not a tracked site (see the file header) and Phase 59 owns it.
+  let arguments = (ins CTJS_ValueType:$enclosing_closure,
+                       Arg<CTJS_ValueType, "", [CTJS_SinkCaptured]>:$enclosing_this,
+                       I32Attr:$function,
+                       Arg<Variadic<CTJS_ValueType>, "", [CTJS_SinkCaptured]>:$upvalues);
+  let results = (outs Res<CTJS_ValueType, "", [CTJS_BoxedPhase59]>:$result);
   let assemblyFormat = "$enclosing_closure `[` $function `]` `this` $enclosing_this"
                        " (`captures` $upvalues^)? attr-dict";
 }
@@ -184,14 +223,36 @@ def CTJS_GetPropertyOp : CTJS_RuntimeOp<"get_property", "ct_aot_get_index", CTJS
     the inline cache Phase 26 attaches to it - needs a SECOND operation carrying
     a name attribute, which is a specialisation rather than a fold.
   }];
-  let arguments = (ins CTJS_ValueType:$object, CTJS_ValueType:$key);
+  // PHASE 55 (may_reenter 1: get_prop/get_index). $object NEITHER, THE STAR
+  // PROOF for a confined base: a fresh object's prototype is null
+  // (value.hpp:569) and its accessor table empty, lookup_property walks the
+  // own chain (objects.cpp:445-461) - a getter runs only if found on THAT
+  // chain - and then consults the shared table with data-only `find`
+  // (462-464; value.hpp:575-580); the proxy arm (425-433) is unreachable for
+  // a site and the array arm (467-511) runs no call(). The two operations
+  // that could give a confined base an accessor, set_proto and
+  // define_accessor, sink the base itself. $key SINK(converted): to_string
+  // (objects.cpp:154) -> to_primitive_string (coerce.cpp:171-179) calls the
+  // key's own toString/valueOf with the key as receiver.
+  let arguments = (ins CTJS_ValueType:$object,
+                       Arg<CTJS_ValueType, "", [CTJS_SinkConverted]>:$key);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$object `[` $key `]` attr-dict";
 }
 
 def CTJS_SetPropertyOp : CTJS_RuntimeOp<"set_property", "ct_aot_set_index", CTJS_GenericEffects> {
   let summary = "Generic property write with full ECMAScript semantics";
-  let arguments = (ins CTJS_ValueType:$object, CTJS_ValueType:$key, CTJS_ValueType:$value);
+  // PHASE 55 (may_reenter 1: set_prop/set_index). $object NEITHER by the
+  // star proof: the object arm (objects.cpp:345-349) goes through
+  // assign_through_accessor (397-419), which walks ONLY obj->prototype - null
+  // for a site - and the array arm (361-378) resizes on `length` only; the
+  // proxy arm (334-344) is unreachable for a site. $key SINK(converted):
+  // to_string (objects.cpp:193) runs the key's own toString. $value
+  // SINK(stored): object_object::set (value.hpp:632-639) / store_index
+  // (objects.cpp:189), traced (objects.cpp:51 / 42).
+  let arguments = (ins CTJS_ValueType:$object,
+                       Arg<CTJS_ValueType, "", [CTJS_SinkConverted]>:$key,
+                       Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$value);
   let assemblyFormat = "$object `[` $key `]` `,` $value attr-dict";
 }
 
@@ -209,14 +270,22 @@ def CTJS_DeletePropertyOp
     yields true in every case this runtime can reach. A front end that wants
     the value materialises it; the call does not carry one.
   }];
-  let arguments = (ins CTJS_ValueType:$object, CTJS_ValueType:$key);
+  // PHASE 55 (may_reenter 1: delete_index). $object NEITHER: delete_index is
+  // an `erase` (objects.cpp:325-329). $key SINK(converted): to_string (327).
+  let arguments = (ins CTJS_ValueType:$object,
+                       Arg<CTJS_ValueType, "", [CTJS_SinkConverted]>:$key);
   let assemblyFormat = "$object `[` $key `]` attr-dict";
 }
 
 def CTJS_HasPropertyOp
     : CTJS_RuntimeOp<"has_property", "ct_aot_has_property", CTJS_GenericEffects> {
   let summary = "`key in obj`";
-  let arguments = (ins CTJS_ValueType:$object, CTJS_ValueType:$key);
+  // PHASE 55 (may_reenter 1: has_property). $object NEITHER: the proxy arm
+  // (objects.cpp:256-264) is unreachable for a site and 266-278 makes no
+  // call. $key SINK(converted): to_string (263/265). The result is a
+  // boolean, not an object.
+  let arguments = (ins CTJS_ValueType:$object,
+                       Arg<CTJS_ValueType, "", [CTJS_SinkConverted]>:$key);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$key `in` $object attr-dict";
 }
@@ -245,7 +314,9 @@ def CTJS_PassNewTargetOp
   let assemblyFormat = "attr-dict";
 }
 
-def CTJS_GetProtoOp : CTJS_RuntimeOp<"get_proto", "ct_aot_get_proto"> {
+// PHASE 55: NEITHER - a field read (objects.cpp:245-248); the result is an
+// external object (a site's prototype is null).
+def CTJS_GetProtoOp : CTJS_RuntimeOp<"get_proto", "ct_aot_get_proto", [CTJS_NoEscapeEffects]> {
   let summary = "The prototype link of an object, or undefined";
   let description = [{
     THE SECOND HALF OF `super`, and the reason lowering `load_home` alone moved
@@ -270,7 +341,13 @@ def CTJS_SetProtoOp : CTJS_RuntimeOp<"set_proto", "ct_aot_set_proto"> {
     What `class D extends B` writes, and a silent no-op on anything that is not
     an object - which is the interpreter's behaviour, not an oversight.
   }];
-  let arguments = (ins CTJS_ValueType:$object, CTJS_ValueType:$proto);
+  // PHASE 55: $object SINK(proto_mutated) - after objects.cpp:250-252 stores
+  // the link, every later load (445-461) and store (400-417) walks the new
+  // chain and can reach a getter or setter with the object as `this`, which
+  // is exactly what the star proof on the property operations rules out.
+  // $proto SINK(stored): the link is traced (objects.cpp:56).
+  let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkProtoMutated]>:$object,
+                       Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$proto);
   let assemblyFormat = "$proto `on` $object attr-dict";
 }
 
@@ -390,7 +467,15 @@ def CTJS_MakeArgumentsOp
 
     RAISE TIER: it answers the array rather than a status.
   }];
-  let results = (outs CTJS_ValueType:$result);
+  // PHASE 55 (R1): a boxed site, reason `arguments`, and the function is
+  // flagged captures_all_arguments. make_arguments_object copies the RAW
+  // register window slots[0..argc) (call.cpp:783-790) - values the IR has no
+  // SSA name for - into a fresh array rooted per frame (794; objects.cpp:684).
+  // Not a whole-function refusal for object/array sites: the array holds
+  // only what the parameter registers held in the prologue, and the analysis
+  // CHECKS that placement (entry block, before every site) rather than
+  // believing it - otherwise `arguments_late`.
+  let results = (outs Res<CTJS_ValueType, "", [CTJS_BoxedArguments]>:$result);
   let assemblyFormat = "attr-dict";
 }
 
@@ -411,12 +496,16 @@ def CTJS_GatherRestOp
     them, and reading the window instead would return the wrong values. Landing
     this without ctjs.make_arguments leaves that path dead in the compiled tier.
   }];
+  // PHASE 55 (R1): a boxed site, reason `arguments`, guarded like
+  // make_arguments (gather_rest_values, call.cpp:799-813, reads the frame's
+  // arguments array back at 806-808).
   let arguments = (ins UI32Attr:$from);
-  let results = (outs CTJS_ValueType:$result);
+  let results = (outs Res<CTJS_ValueType, "", [CTJS_BoxedArguments]>:$result);
   let assemblyFormat = "`from` $from attr-dict";
 }
 
-def CTJS_DeleteNamedOp : CTJS_Op<"delete_named", [CTJS_Safepoint]> {
+// PHASE 55: NEITHER - objects.cpp:200-202 erases a name from the own table.
+def CTJS_DeleteNamedOp : CTJS_Op<"delete_named", [CTJS_Safepoint, CTJS_NoEscapeEffects]> {
   let summary = "`delete o.k` - the NAMED form";
   let description = [{
     NOT ctjs.delete_property, WHICH IS THE COMPUTED ONE. They are separate
@@ -455,8 +544,11 @@ def CTJS_OwnKeysOp : CTJS_RuntimeOp<"own_keys", "ct_aot_own_keys", CTJS_GenericE
     the value is meaningless and a caller polls ct_aot_failed at a back edge. It
     allocates, so it is a safepoint even though it cannot run user code.
   }];
+  // PHASE 55: $source NEITHER - objects.cpp:204-219 reads keys and makes
+  // strings (an untracked kind), no call(). The result is a boxed site,
+  // reason runtime_array: an array the runtime made, not a literal.
   let arguments = (ins CTJS_ValueType:$source);
-  let results = (outs CTJS_ValueType:$result);
+  let results = (outs Res<CTJS_ValueType, "", [CTJS_BoxedRuntimeArray]>:$result);
   let assemblyFormat = "`of` $source attr-dict";
 }
 
@@ -485,12 +577,23 @@ def CTJS_DefineAccessorOp : CTJS_Op<"define_accessor", [CTJS_Safepoint]> {
     STORES the function and never invokes it, which is why the helper's own row
     is all zeros.
   }];
-  let arguments = (ins CTJS_ValueType:$target, StrAttr:$name,
-                       CTJS_ValueType:$getter, CTJS_ValueType:$setter);
+  // PHASE 55: $target SINK(accessor_defined) - objects.cpp:221-228 installs
+  // the pair, and 452-457 / 404-414 then run user code with the target as
+  // `this` on every later load or store, breaking the star proof for it.
+  // $getter and $setter SINK(stored): traced (objects.cpp:52-55).
+  let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkAccessorDefined]>:$target,
+                       StrAttr:$name,
+                       Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$getter,
+                       Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$setter);
   let assemblyFormat = "$name `on` $target `get` $getter `set` $setter attr-dict";
 }
 
-def CTJS_CopyPropsOp : CTJS_RuntimeOp<"copy_props", "ct_aot_copy_props"> {
+// PHASE 55: both NEITHER - objects.cpp:230-243 is a raw `set` of the copied
+// entries, no accessor and no call(); everything ever stored into $source was
+// already sunk at its own store. (Phase 56's "spread means not closed" is a
+// SHAPE fact, not an escape fact.)
+def CTJS_CopyPropsOp
+    : CTJS_RuntimeOp<"copy_props", "ct_aot_copy_props", [CTJS_NoEscapeEffects]> {
   let summary = "Copy a source's own properties onto a target - object spread";
   let description = [{
     `{...o}` in an object literal and `{a, ...rest}` in a destructuring pattern,
@@ -533,8 +636,14 @@ def CTJS_CallSpreadOp
     A NON-ARRAY YIELDS NO ARGUMENTS, not one. `f(...undefined)` calls f with
     nothing.
   }];
-  let arguments = (ins CTJS_ValueType:$callee, CTJS_ValueType:$args,
-                       CTJS_ValueType:$receiver);
+  // PHASE 55 (may_reenter 1: apply). $callee and $receiver SINK(passed);
+  // $args NEITHER: spread_arguments COPIES the items (call.cpp:711-717) and
+  // the array itself is stored nowhere - its elements were sunk at
+  // create_array/append. The re-entering arm is the call, and no site
+  // reaches it except through an element, already sunk.
+  let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$callee,
+                       CTJS_ValueType:$args,
+                       Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$receiver);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$callee `(` $receiver `,` $args `)` attr-dict";
 }
@@ -555,7 +664,10 @@ def CTJS_ConstructSpreadOp
     divergence; repairing it in both is a separate change with its own
     before/after test.
   }];
-  let arguments = (ins CTJS_ValueType:$callee, CTJS_ValueType:$args);
+  // PHASE 55 (may_reenter 1: construct_apply). $callee SINK(passed); $args
+  // NEITHER for call_spread's reason (call.cpp:734-741 -> spread_arguments).
+  let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$callee,
+                       CTJS_ValueType:$args);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$callee `(` $args `)` attr-dict";
 }
@@ -577,8 +689,18 @@ def CTJS_IterableOp
     eagerly under a bound rather than iterated lazily, so an infinite one hangs.
     Both are the interpreter's semantics, reproduced rather than repaired.
   }];
-  let arguments = (ins CTJS_ValueType:$source);
-  let results = (outs CTJS_ValueType:$result);
+  // PHASE 55 (may_reenter 1: iterable). $source CARRY, the one carrier: the
+  // array arm returns THE SAME ARRAY (call.cpp:555), so the result aliases
+  // the source. Every other arm builds a fresh array (559, 579, 595, 603,
+  // 611) - the result's boxed-site claim, reason runtime_array - and reads
+  // the source with `find` (578, 594, 602, 610) or lookup_property (615),
+  // which for an object site is data-only by the star proof on get_property.
+  // The re-entering arm resumes a generator (582): generator_resume reads
+  // the source once, at call.cpp:957 (`find("__co")`), stores it nowhere and
+  // resumes with the coroutine's own saved receiver - no site of this
+  // function is handed to the body.
+  let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_Carry]>:$source);
+  let results = (outs Res<CTJS_ValueType, "", [CTJS_BoxedRuntimeArray]>:$result);
   let assemblyFormat = "`of` $source attr-dict";
 }
 
@@ -590,13 +712,22 @@ def CTJS_BinaryOp : CTJS_RuntimeOp<"binary", "ct_aot_binary_op", CTJS_GenericEff
     runtime keeps the three `+` opcodes distinct, and for its reason - concat
     ToStrings both sides unconditionally and must never reach the BigInt arm.
   }];
-  let arguments = (ins CTJS_BinaryKind:$kind, CTJS_ValueType:$lhs, CTJS_ValueType:$rhs);
+  // PHASE 55 (may_reenter 1: concat, add_generic, sub, mul, div, mod, pow).
+  // Both SINK(converted): ToPrimitive runs valueOf/toString with the operand
+  // as receiver (coerce.cpp:171-179). Those methods come from the shared
+  // Object.prototype table, which a page can replace - so a confined object
+  // IS handed to user code here, and R3 (anything reachable from globalThis)
+  // is why this is a sink and not a NEITHER.
+  let arguments = (ins CTJS_BinaryKind:$kind,
+                       Arg<CTJS_ValueType, "", [CTJS_SinkConverted]>:$lhs,
+                       Arg<CTJS_ValueType, "", [CTJS_SinkConverted]>:$rhs);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$kind $lhs `,` $rhs attr-dict";
 }
 
 def CTJS_BinaryStaticOp
-    : CTJS_RuntimeOp<"binary_static", "ct_aot_binary_op_static", [CTJS_MayThrow, CTJS_Safepoint]> {
+    : CTJS_RuntimeOp<"binary_static", "ct_aot_binary_op_static",
+                     [CTJS_MayThrow, CTJS_Safepoint, CTJS_NoEscapeEffects]> {
   let summary = "Binary operator using the STATIC conversions, which cannot re-enter";
   let description = [{
     A SEPARATE OPERATION RATHER THAN A FLAG, because the policy says to split
@@ -610,6 +741,9 @@ def CTJS_BinaryStaticOp
     aot_helpers.def records as one, and it is the reason `x++` on
     `{valueOf: () => 3}` is NaN here.
   }];
+  // PHASE 55: both NEITHER - the STATIC conversions. coerce.cpp:285-299 is
+  // bigint_binary, then to_number (49-60, no user code) and to_int32; the
+  // bytecode rows say "never runs user code" (bytecode_opcodes.def:211-232).
   let arguments = (ins CTJS_BinaryKind:$kind, CTJS_ValueType:$lhs, CTJS_ValueType:$rhs);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$kind $lhs `,` $rhs attr-dict";
@@ -633,6 +767,11 @@ def CTJS_UnaryOp : CTJS_Op<"unary", CTJS_GenericEffects> {
     exists precisely so that operations which CAN answer are lowered without
     a pattern of their own. Phase 10 lowers this one by kind.
   }];
+  // PHASE 55: NO ANNOTATION, ON PURPOSE - the role depends on $kind, which a
+  // decorator cannot express, so this is one of the three operations in
+  // EscapeAnalysis.cpp's kind switch: not/typeof/void NEITHER (total, no
+  // conversion); neg/plus/bitnot SINK(converted) - negate and to_number are
+  // may_reenter 1 (bytecode_opcodes.def:337-340, 354-356).
   let arguments = (ins CTJS_UnaryKind:$kind, CTJS_ValueType:$operand);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$kind $operand attr-dict";
@@ -650,6 +789,11 @@ def CTJS_CompareOp : CTJS_Op<"compare", CTJS_GenericEffects> {
     returns an ORDERING, and UNORDERED - either operand NaN - makes all four
     of them false. They cannot be lowered as negations of one another.
   }];
+  // PHASE 55: NO ANNOTATION, ON PURPOSE - the kind switch's second
+  // operation: strict_eq NEITHER (value::strict_equals is a bit/content
+  // compare, value.hpp:293-311); eq/lt/le/gt/ge SINK(converted) -
+  // loose_equal and less are may_reenter 1 (bytecode_opcodes.def:394-396,
+  // 411).
   let arguments = (ins CTJS_CompareKind:$kind, CTJS_ValueType:$lhs, CTJS_ValueType:$rhs);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$kind $lhs `,` $rhs attr-dict";
@@ -664,12 +808,17 @@ def CTJS_ConvertOp : CTJS_Op<"convert", CTJS_GenericEffects> {
     querying traits would otherwise be told the wrong thing about five of the
     six. Phase 10 narrows this by splitting to_boolean out if it measures.
   }];
+  // PHASE 55: NO ANNOTATION, ON PURPOSE - the kind switch's third operation:
+  // to_boolean NEITHER (total); every other kind SINK(converted). ToObject is
+  // the identity on an object and a CARRY in principle; SINK in the MVP, no
+  // consumer.
   let arguments = (ins CTJS_ConvertKind:$kind, CTJS_ValueType:$operand);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$kind $operand attr-dict";
 }
 
-def CTJS_TruthyOp : CTJS_RuntimeOp<"truthy", "ct_aot_truthy", [Pure]> {
+// PHASE 55: NEITHER - total, row (0,0,0), and the result is an i1.
+def CTJS_TruthyOp : CTJS_RuntimeOp<"truthy", "ct_aot_truthy", [Pure, CTJS_NoEscapeEffects]> {
   let summary = "ToBoolean, as an i1 - the only bridge from a value to a branch";
   let description = [{
     THE OPERATION THE DIALECT WAS MISSING, and its absence blocked the whole
@@ -696,7 +845,8 @@ def CTJS_TruthyOp : CTJS_RuntimeOp<"truthy", "ct_aot_truthy", [Pure]> {
 }
 
 def CTJS_InstanceOfOp
-    : CTJS_RuntimeOp<"instanceof", "ct_aot_instance_of", CTJS_GenericEffects> {
+    : CTJS_RuntimeOp<"instanceof", "ct_aot_instance_of",
+                     CTJS_GenericEffects # [CTJS_NoEscapeEffects]> {
   let summary = "`object instanceof constructor`";
   let description = [{
     AN i1, NOT A !ctjs.value, AND THAT IS A CORRECTION. ct_aot_instance_of
@@ -709,6 +859,12 @@ def CTJS_InstanceOfOp
     Boxing it is the front end's job, one ctjs.constant away, and keeping the
     raw predicate is what lets `if (x instanceof C)` branch without boxing at
     all.
+
+    PHASE 55: both operands NEITHER. objects.cpp:282-323 walks `prototype`
+    fields and runs no call(); the bytecode row is may_reenter 0
+    (bytecode_opcodes.def:451-452). Line 285's ensure_prototype(ctor) stores a
+    fresh object ON THE CONSTRUCTOR (self-reachable only, call.cpp:495-505),
+    never the $object.
   }];
   let arguments = (ins CTJS_ValueType:$object, CTJS_ValueType:$constructor);
   let results = (outs I1:$result);
@@ -727,12 +883,16 @@ def CTJS_CreateCellOp
     what makes a captured `var` shared rather than copied: two closures over the
     same binding hold the same cell, so one writing it is the other reading it.
   }];
-  let arguments = (ins CTJS_ValueType:$initial);
-  let results = (outs CTJS_ValueType:$result);
+  // PHASE 55: $initial SINK(stored) - run_loop.cpp:1205 boxes it and the
+  // slot is traced (objects.cpp:59). The result is a boxed site, reason
+  // phase59: cells are Phase 59's, not a tracked kind here.
+  let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$initial);
+  let results = (outs Res<CTJS_ValueType, "", [CTJS_BoxedPhase59]>:$result);
   let assemblyFormat = "$initial attr-dict";
 }
 
-def CTJS_CellGetOp : CTJS_RuntimeOp<"cell_get", "ct_aot_cell_get"> {
+// PHASE 55: NEITHER - run_loop.cpp:1210-1214 reads the slot.
+def CTJS_CellGetOp : CTJS_RuntimeOp<"cell_get", "ct_aot_cell_get", [CTJS_NoEscapeEffects]> {
   let summary = "Read a cell's slot";
   let description = [{
     No effects at all, and the runtime row agrees - ct_aot_cell_get is
@@ -745,13 +905,19 @@ def CTJS_CellGetOp : CTJS_RuntimeOp<"cell_get", "ct_aot_cell_get"> {
 
 def CTJS_CellSetOp : CTJS_RuntimeOp<"cell_set", "ct_aot_cell_set"> {
   let summary = "Write a cell's slot";
-  let arguments = (ins CTJS_ValueType:$cell, CTJS_ValueType:$value);
+  // PHASE 55: $cell NEITHER; $value SINK(stored) - the slot is traced
+  // (objects.cpp:59).
+  let arguments = (ins CTJS_ValueType:$cell, Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$value);
   let assemblyFormat = "$cell `,` $value attr-dict";
 }
 
 def CTJS_CreateObjectOp
     : CTJS_RuntimeOp<"create_object", "ct_aot_new_object", [CTJS_MayThrow, CTJS_Safepoint]> {
   let summary = "A fresh empty object";
+  // PHASE 55: A TRACKED SITE, one of two (EscapeAnalysis::isTrackedSite).
+  // run_loop.cpp:552-553 make_object, vm.hpp:245 allocate<object_object>.
+  // No operands, so nothing to annotate; the site is a C++ fact because the
+  // NEITHER proofs above are valid for this kind and arrays only.
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "attr-dict";
 }
@@ -759,7 +925,9 @@ def CTJS_CreateObjectOp
 def CTJS_CreateArrayOp
     : CTJS_RuntimeOp<"create_array", "ct_aot_new_array", [CTJS_MayThrow, CTJS_Safepoint]> {
   let summary = "A fresh array, optionally with its elements";
-  let arguments = (ins Variadic<CTJS_ValueType>:$elements);
+  // PHASE 55: A TRACKED SITE, the other of the two. Each element
+  // SINK(stored): items are traced (objects.cpp:42).
+  let arguments = (ins Arg<Variadic<CTJS_ValueType>, "", [CTJS_SinkStored]>:$elements);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "`[` ($elements^)? `]` attr-dict";
 }
@@ -771,7 +939,10 @@ def CTJS_AppendOp : CTJS_RuntimeOp<"append", "ct_aot_append", [CTJS_MayThrow, CT
     is how the bytecode builds one - so importing `[a, b]` without this means
     importing it as an empty array.
   }];
-  let arguments = (ins CTJS_ValueType:$array, CTJS_ValueType:$element);
+  // PHASE 55: $array NEITHER - context::array_append is a push_back and
+  // nothing else (objects.cpp:161-163); $element SINK(stored) - traced
+  // (objects.cpp:42).
+  let arguments = (ins CTJS_ValueType:$array, Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$element);
   let assemblyFormat = "$element `to` $array attr-dict";
 }
 
@@ -783,8 +954,10 @@ def CTJS_CreateRegExpOp : CTJS_Op<"create_regexp", [CTJS_MayThrow, CTJS_Safepoin
     better than pointing it at a helper that does something else - and it is
     a real gap in the ABI rather than in this file.
   }];
+  // PHASE 55: a boxed site, reason not_tracked - an untracked kind with no
+  // helper.
   let arguments = (ins StrAttr:$pattern, StrAttr:$flags);
-  let results = (outs CTJS_ValueType:$result);
+  let results = (outs Res<CTJS_ValueType, "", [CTJS_BoxedNotTracked]>:$result);
   let assemblyFormat = "$pattern `,` $flags attr-dict";
 }
 
@@ -874,7 +1047,10 @@ def CTJS_ModuleExportCellOp
     for every module with fewer than 65,536 names, so an importer reading b
     alone exports name 0 under this name - silently.
   }];
-  let arguments = (ins StrAttr:$name, CTJS_ValueType:$current);
+  // PHASE 55: $current SINK(stored). Alias-returning: call.cpp:240 returns
+  // `current` itself outside a module, and 251-255 adopts a record cell that
+  // the module's export table roots (objects.cpp:700-703).
+  let arguments = (ins StrAttr:$name, Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$current);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$name `adopting` $current attr-dict";
 }
@@ -939,7 +1115,9 @@ def CTJS_DynamicImportOp
     one is CT_AOT_FAILED rather than a quiet no-write, because the interpreter
     raise()s there and stops.
   }];
-  let arguments = (ins CTJS_ValueType:$specifier);
+  // PHASE 55 (may_reenter 1: dyn_import): SINK(converted) - the specifier's
+  // toString is user code.
+  let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkConverted]>:$specifier);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$specifier attr-dict";
 }
@@ -956,8 +1134,17 @@ def CTJS_CallOp
     compiled body, or a native built-in, and which of those it is is decided
     at run time by the one place that reads function_proto::aot_entry.
   }];
-  let arguments = (ins CTJS_ValueType:$callee, CTJS_ValueType:$receiver,
-                       Variadic<CTJS_ValueType>:$args);
+  // PHASE 55 (may_reenter 1: call, call_method, call_computed,
+  // call_receiver). ALL SINK(passed): invoke copies every argument into the
+  // callee's register window (call.cpp:82-92; a root, objects.cpp:668) and
+  // the receiver into call_frame::receiver (call.cpp:127-129; root
+  // objects.cpp:683) or current_this_ for a native (call.cpp:58-60; root
+  // objects.cpp:672); a native gets a std::vector copy (run_loop.cpp:648-650)
+  // and may retain anything - Map.set, Promise.then, addEventListener. The
+  // MVP has no callee summaries, so `a.push(i)` is NOT proved confined.
+  let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$callee,
+                       Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$receiver,
+                       Arg<Variadic<CTJS_ValueType>, "", [CTJS_SinkPassed]>:$args);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$callee `(` $receiver (`,` $args^)? `)` attr-dict";
 }
@@ -965,8 +1152,13 @@ def CTJS_CallOp
 def CTJS_ConstructOp
     : CTJS_RuntimeOp<"construct", "ct_aot_construct", CTJS_GenericEffects # [CTJS_MaySuspend]> {
   let summary = "`new callee(...)`";
-  let arguments = (ins CTJS_ValueType:$callee, CTJS_ValueType:$new_target,
-                       Variadic<CTJS_ValueType>:$args);
+  // PHASE 55 (may_reenter 1: construct). ALL SINK(passed): new_target is a
+  // root (objects.cpp:686), the arguments go through invoke. The instance is
+  // made at run_loop.cpp:1099 / call.cpp:507-517 under this operation's pc -
+  // an UNCLAIMED site by design, not a boxed-site claim.
+  let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$callee,
+                       Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$new_target,
+                       Arg<Variadic<CTJS_ValueType>, "", [CTJS_SinkPassed]>:$args);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$callee `(` $new_target (`,` $args^)? `)` attr-dict";
 }
@@ -1007,7 +1199,13 @@ def CTJS_FuncOp : CTJS_Op<"func", [
 
 def CTJS_ReturnOp : CTJS_Op<"return", [Terminator, ReturnLike, HasParent<"FuncOp">]> {
   let summary = "Return a value from a JavaScript function";
-  let arguments = (ins CTJS_ValueType:$value);
+  // PHASE 55: SINK(returned) - run_loop.cpp:755 writes the caller's register,
+  // 754 hands it to a C++ caller (call.cpp:136). Its own reason because 55B
+  // reads it: a site that escapes ONLY by return is the std::unique_ptr
+  // candidate. NOTE this is a ReturnLike terminator with no result: the
+  // analysis applies sinks in a post-fixpoint walk precisely because the
+  // sparse framework never calls visitOperation for it.
+  let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkReturned]>:$value);
   let assemblyFormat = "$value attr-dict";
 }
 
@@ -1020,7 +1218,11 @@ def CTJS_ThrowOp
     to_primitive_string, which calls the thrown object's own toString. Page
     JavaScript runs in the middle of a fatal error.
   }];
-  let arguments = (ins CTJS_ValueType:$value);
+  // PHASE 55 (may_reenter 1: throw_value): SINK(thrown) - thrown_ is a root
+  // (objects.cpp:705; run_loop.cpp:1196), the value lands in the catching
+  // frame's register (vm.hpp:1488), and describe_thrown runs getters with it
+  // as `this` (call.cpp:526-543).
+  let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkThrown]>:$value);
   let assemblyFormat = "$value attr-dict";
 }
 
@@ -1103,7 +1305,9 @@ def CTJS_WrapPromiseOp
     well-formed object, and a caller polls ct_aot_failed at a back edge. It
     allocates, so the result is parked like every other value.
   }];
-  let arguments = (ins CTJS_ValueType:$value);
+  // PHASE 55: SINK(stored) - stored as the promise's `__value`
+  // (builtins/internal.hpp:262, 342) or returned as-is.
+  let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$value);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$value attr-dict";
 }
@@ -1117,7 +1321,14 @@ def CTJS_SuspendOp
     is structurally different from one that does not, and discovering that
     after the importer exists would mean rewriting it.
   }];
-  let arguments = (ins CTJS_SuspendKind:$kind, CTJS_ValueType:$value);
+  // PHASE 55: $value SINK(stored), AND A WHOLE-FUNCTION REFUSAL (R4,
+  // `suspended`) in EscapeAnalysis.cpp: the entire register window is copied
+  // into a coroutine_object (run_loop.cpp:866-867 await, 922-923 yield;
+  // vm.hpp:1160-1192) and traced from the heap (objects.cpp:86-97), so every
+  // site of the function outlives its frame. The importer already refuses
+  // every suspension point (BytecodeImport.cpp); the analysis's line is for
+  // hand-written IR.
+  let arguments = (ins CTJS_SuspendKind:$kind, Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$value);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$kind $value attr-dict";
 }
@@ -1164,7 +1375,8 @@ def CTJS_FrameEnterOp : CTJS_RuntimeOp<"frame_enter", "ct_aot_enter", [CTJS_MayT
   let assemblyFormat = "$reg_count attr-dict";
 }
 
-def CTJS_FrameExitOp : CTJS_RuntimeOp<"frame_exit", "ct_aot_leave", []> {
+// PHASE 55: no tracked operand (the context is not a value); NEITHER.
+def CTJS_FrameExitOp : CTJS_RuntimeOp<"frame_exit", "ct_aot_leave", [CTJS_NoEscapeEffects]> {
   let summary = "Release the AOT shadow frame";
   let description = [{
     Infallible, and it must NOT run on the unwound path - the unwinder has
@@ -1175,7 +1387,9 @@ def CTJS_FrameExitOp : CTJS_RuntimeOp<"frame_exit", "ct_aot_leave", []> {
   let assemblyFormat = "$context attr-dict";
 }
 
-def CTJS_RootOp : CTJS_Op<"root", []> {
+// PHASE 55: NEITHER - it parks the value into THIS frame's own register
+// window, which dies with the frame.
+def CTJS_RootOp : CTJS_Op<"root", [CTJS_NoEscapeEffects]> {
   let summary = "Keep a value reachable across a safepoint";
   let description = [{
     CONSERVATIVE, and Phase 29 refines it. The collector is precise and walks

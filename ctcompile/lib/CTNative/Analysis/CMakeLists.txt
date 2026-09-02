@@ -9,6 +9,7 @@
 # naming both dialects is its entire job.
 add_mlir_library(CTNativeAnalysis
   TypeInference.cpp
+  EscapeAnalysis.cpp
 
   LINK_LIBS PUBLIC
     CTNativeDialect
