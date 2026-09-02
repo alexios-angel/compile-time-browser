@@ -204,6 +204,158 @@ struct admission {
         return llvm::all_of(
             key, [](char ch) { return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_'; });
     }
+    // A KEY THAT IS A C IDENTIFIER AND STILL CANNOT BE A FIELD NAME. Field
+    // names are emitted verbatim - `cIdentifier()` sanitises symbols, not
+    // members - so `o.class = 3` emitted `double class;` and `o.NAN = 5`
+    // emitted `double NAN;` under this file's own `#include <cmath>`. Both
+    // were admitted with no refusal and both are hard -Werror build failures
+    // on a program the tier had declared native. Refused rather than mangled:
+    // a generated field keeps the JavaScript name a reader is looking for, and
+    // mangling every field to buy this rare case is a trade Phase 56C should
+    // make deliberately, not this fix.
+    static bool isReservedInCpp(llvm::StringRef key) {
+        static constexpr llvm::StringLiteral kReserved[] = {
+            // keywords a member may not be named
+            "alignas",
+            "alignof",
+            "and",
+            "and_eq",
+            "asm",
+            "auto",
+            "bitand",
+            "bitor",
+            "bool",
+            "break",
+            "case",
+            "catch",
+            "char",
+            "char8_t",
+            "char16_t",
+            "char32_t",
+            "class",
+            "compl",
+            "concept",
+            "const",
+            "consteval",
+            "constexpr",
+            "constinit",
+            "const_cast",
+            "continue",
+            "co_await",
+            "co_return",
+            "co_yield",
+            "decltype",
+            "default",
+            "delete",
+            "do",
+            "double",
+            "dynamic_cast",
+            "else",
+            "enum",
+            "explicit",
+            "export",
+            "extern",
+            "false",
+            "float",
+            "for",
+            "friend",
+            "goto",
+            "if",
+            "inline",
+            "int",
+            "long",
+            "mutable",
+            "namespace",
+            "new",
+            "noexcept",
+            "not",
+            "not_eq",
+            "nullptr",
+            "operator",
+            "or",
+            "or_eq",
+            "private",
+            "protected",
+            "public",
+            "register",
+            "reinterpret_cast",
+            "requires",
+            "return",
+            "short",
+            "signed",
+            "sizeof",
+            "static",
+            "static_assert",
+            "static_cast",
+            "struct",
+            "switch",
+            "template",
+            "this",
+            "thread_local",
+            "throw",
+            "true",
+            "try",
+            "typedef",
+            "typeid",
+            "typename",
+            "union",
+            "unsigned",
+            "using",
+            "virtual",
+            "void",
+            "volatile",
+            "wchar_t",
+            "while",
+            "xor",
+            "xor_eq",
+            // macros the two headers this file emits are allowed to define
+            "NAN",
+            "INFINITY",
+            "HUGE_VAL",
+            "HUGE_VALF",
+            "HUGE_VALL",
+            "EOF",
+            "NULL",
+            "BUFSIZ",
+            "FILENAME_MAX",
+            "FOPEN_MAX",
+            "L_tmpnam",
+            "TMP_MAX",
+            "SEEK_SET",
+            "SEEK_CUR",
+            "SEEK_END",
+            "stdin",
+            "stdout",
+            "stderr",
+            "errno",
+            "MATH_ERRNO",
+            "MATH_ERREXCEPT",
+            "FP_FAST_FMA",
+            "FP_INFINITE",
+            "FP_NAN",
+            "FP_NORMAL",
+            "FP_SUBNORMAL",
+            "FP_ZERO",
+            "FP_ILOGB0",
+            "FP_ILOGBNAN",
+        };
+        return llvm::is_contained(kReserved, key);
+    }
+    // NAMES OBJECT.PROTOTYPE ANSWERS FOR. A field that is only ever READ is
+    // `undefined` for a plain key, which this tier carries as NaN - but these
+    // names are not undefined: the literal's prototype answers them, and the
+    // interpreter finds a function where the generated struct finds NaN. So
+    // `if (o.constructor)` took the else branch natively and the then branch
+    // in the interpreter, with no refusal anywhere. A key that IS stored
+    // shadows the inherited one and is fine; only a read-only key is refused.
+    static bool namesObjectPrototypeMember(llvm::StringRef key) {
+        static constexpr llvm::StringLiteral kInherited[] = {
+            "constructor",      "hasOwnProperty",   "isPrototypeOf",    "propertyIsEnumerable",
+            "toLocaleString",   "toString",         "valueOf",          "__proto__",
+            "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__",
+        };
+        return llvm::is_contained(kInherited, key);
+    }
     // A string constant whose every use is a property key of a closed object
     // lowers to nothing: the key becomes a member name.
     static bool isKeyOnlyString(mlir::Operation * o) {
@@ -291,12 +443,34 @@ struct admission {
         if (llvm::isa<FrameEnterOp, FrameExitOp, RootOp>(o)) { return true; }
         if (auto object = llvm::dyn_cast<CreateObjectOp>(o)) {
             if (!isClosedObject(object.getResult())) { return refuse(whyOpen(object.getResult())); }
+            // The keys this literal is ever WRITTEN with. A read of one of
+            // them is an own property; a read of anything else falls through
+            // to the prototype, which is what makes an inherited name wrong.
+            llvm::StringSet<> written;
+            for (mlir::Operation * user : object.getResult().getUsers()) {
+                if (auto set = llvm::dyn_cast<SetPropertyOp>(user)) {
+                    written.insert(keyOf(set.getKey()));
+                }
+            }
             for (mlir::Operation * user : object.getResult().getUsers()) {
                 const llvm::StringRef key = llvm::isa<GetPropertyOp>(user)
                                                 ? keyOf(llvm::cast<GetPropertyOp>(user).getKey())
                                                 : keyOf(llvm::cast<SetPropertyOp>(user).getKey());
                 if (!isCIdentifier(key)) {
                     return refuse(("field `" + key + "` is not a C identifier").str());
+                }
+                if (isReservedInCpp(key)) {
+                    return refuse(("field `" + key +
+                                   "` is a C++ keyword or a macro of <cmath>/<cstdio>, so the "
+                                   "generated struct would not compile")
+                                      .str());
+                }
+                if (!written.contains(key) && namesObjectPrototypeMember(key)) {
+                    return refuse(("field `" + key +
+                                   "` is read but never written, and Object.prototype answers "
+                                   "that name - the interpreter finds a function where this "
+                                   "would find undefined")
+                                      .str());
                 }
                 if (auto set = llvm::dyn_cast<SetPropertyOp>(user)) {
                     const carrier c = carrierOf(typeOf(set.getValue()));
@@ -1032,12 +1206,20 @@ struct lowering {
         llvm::SmallVector<llvm::StringRef> names(globals.keys().begin(), globals.keys().end());
         llvm::sort(names);
         for (llvm::StringRef name : names) {
-            // Undefined until the first store: NaN.
-            auto global = ec::GlobalOp::create(
-                b, module.getLoc(), ("g_" + name).str(), mlir::Float64Type::get(context),
-                b.getF64FloatAttr(std::numeric_limits<double>::quiet_NaN()),
-                /*extern_specifier=*/false, /*static_specifier=*/true,
-                /*const_specifier=*/false);
+            // NO INITIALISER, so static zero-initialisation gives 0. Not NaN,
+            // which is what this used to emit: every global then started at
+            // the same bytes the gate prints for a NaN a program computed, so
+            // "never written" and "computed NaN" compared EQUAL and any global
+            // whose right answer is NaN was un-failable. Deleting the whole
+            // body of the fixture function that exists to prove undefined-field
+            // semantics kept the gate green. A global that is never stored is
+            // refused outright (see the census in runOnOperation), so 0 is not
+            // a value any correct program can observe here.
+            auto global =
+                ec::GlobalOp::create(b, module.getLoc(), ("g_" + name).str(),
+                                     mlir::Float64Type::get(context), mlir::Attribute{},
+                                     /*extern_specifier=*/false, /*static_specifier=*/true,
+                                     /*const_specifier=*/false);
             global->setAttr("ctnative.provenance", b.getStringAttr("global " + name.str()));
         }
     }
@@ -1125,6 +1307,82 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             lower.names[fn.getSymName()] =
                 fn.getSymName().starts_with("_script_$") ? "main" : cIdentifier(fn.getSymName());
         }
+
+        // THE GLOBAL CENSUS, over the whole accepted set and BEFORE any
+        // function is lowered.
+        //
+        // Two things depend on it. First, `main` prints the globals from this
+        // set, and it used to be filled lazily as each global was first
+        // touched - so a global written and read only inside a helper was
+        // declared and never printed, because main is the importer's function
+        // 0 and is lowered first. The differential then failed by naming the
+        // missing line rather than the ordering, which is a bug report
+        // pointing at the wrong file.
+        //
+        // Second, a global with no store anywhere in the unit is `undefined`,
+        // and this tier carries undefined as NaN - exact for arithmetic and
+        // comparison, NOT for printing, where the interpreter reports "not a
+        // Number" and the binary would print `nan`. That difference is
+        // observable, so it is refused rather than represented, which is the
+        // rule this file is built on.
+        // A FUNCTION'S OWN NAME IS A GLOBAL TOO, and it is not one of these.
+        // `function f(){}` at the top level is a store of a closure into the
+        // global "f", and every call is a load of it; both lower to nothing,
+        // because the closed world turned the call into a direct one. Counting
+        // them would declare `static double g_accumulate;` and print
+        // `accumulate=0` beside the numbers - which is exactly what happened
+        // the first time this census ran.
+        const auto bindsAFunction = [](ctjs::StoreGlobalOp store) {
+            return llvm::isa_and_nonnull<ctjs::CreateClosureOp>(store.getValue().getDefiningOp());
+        };
+        const auto callsOnly = [](ctjs::LoadGlobalOp load) {
+            return !load.getResult().use_empty() &&
+                   llvm::all_of(load.getResult().getUsers(), [](mlir::Operation * user) {
+                       return llvm::isa<ctjs::CallDirectOp>(user);
+                   });
+        };
+        llvm::StringSet<> storedGlobals;
+        for (ctjs::FuncOp fn : accepted) {
+            fn.getBody().walk([&](ctjs::StoreGlobalOp store) {
+                if (!bindsAFunction(store)) { storedGlobals.insert(store.getName()); }
+            });
+        }
+        llvm::SmallVector<llvm::StringRef> neverStored;
+        for (ctjs::FuncOp fn : accepted) {
+            fn.getBody().walk([&](mlir::Operation * o) {
+                llvm::StringRef name;
+                if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o)) {
+                    if (callsOnly(load)) { return; }
+                    name = load.getName();
+                }
+                if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(o)) {
+                    if (bindsAFunction(store)) { return; }
+                    name = store.getName();
+                }
+                if (name.empty()) { return; }
+                if (lower.globals.insert(name).second && !storedGlobals.contains(name)) {
+                    neverStored.push_back(name);
+                }
+            });
+        }
+        if (!neverStored.empty()) {
+            llvm::sort(neverStored);
+            const auto entry = llvm::find_if(
+                accepted, [](ctjs::FuncOp fn) { return fn.getSymName().starts_with("_script_$"); });
+            if (entry != accepted.end()) {
+                entry->getOperation()->setAttr(
+                    "ctnative.not_native",
+                    mlir::StringAttr::get(
+                        &getContext(),
+                        ("global `" + neverStored.front() +
+                         "` is read but never stored, so it is undefined - which this tier "
+                         "carries as NaN, and printing that as a number is not what the "
+                         "interpreter answers")
+                            .str()));
+                accepted.erase(entry);
+            }
+        }
+
         for (ctjs::FuncOp fn : accepted) { lower.lower(fn); }
         if (!accepted.empty()) { lower.declareGlobals(); }
         lower.finish();

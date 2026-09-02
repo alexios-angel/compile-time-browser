@@ -51,3 +51,15 @@ var swap_answer = swap_sum();
 var nan_from_undefined = read_before_write();
 var flags = boolean_field(1000) * 10 + boolean_field(5);
 var mean = accumulate(10);
+
+// A GLOBAL WRITTEN ONLY INSIDE A HELPER, never mentioned at the top level.
+// `main` prints the globals from a set that used to be filled lazily as each
+// was first touched, and main is lowered first - so this one was declared and
+// never printed, and the differential failed by naming a missing line instead
+// of the ordering that caused it. The census now runs over the whole accepted
+// set before anything is lowered.
+function stash(x) {
+    hidden = x * 2;
+    return x;
+}
+var stashed = stash(21);

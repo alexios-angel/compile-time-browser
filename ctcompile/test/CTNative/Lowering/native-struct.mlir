@@ -16,6 +16,7 @@ function closed() {
   p.x = p.x + 3;
   return p.x * p.y;
 }
+
 function open() {
   var p = { x: 1, y: 2 };
   return p;
@@ -76,6 +77,7 @@ var b = looped();
 //
 // CHECK: ctjs.func private @open$2
 // CHECK-SAME: ctnative.not_native = "an object literal that escapes - it is returned"
+
 
 // --- THE ONE UPDATED IN A LOOP: one slot, nothing copied - obligation O-3 --
 //
