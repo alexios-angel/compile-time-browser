@@ -1013,3 +1013,45 @@ add_test(NAME ctcompile_frame_ends_citations
                  -DDEF=${CMAKE_CURRENT_SOURCE_DIR}/../include/ctcompile/JavaScript/FrameEnds.def
                  -DROOT=${CTBROWSER_MONOREPO_ROOT}
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/check-def-citations.cmake)
+
+# === PHASE 55 CLOSED: the escape claims over four corpora ===
+#
+# Phase 55A checked by 55O. check-escape-claims.cmake runs the interpreter's
+# recording and the compiler's claims over one corpus and the Python checker
+# over both; zero soundness violations is the gate. Budgets follow
+# 25-escape-analysis.md §5: unlimited on the fixture and bootstrap, bounded on
+# the two big bundles, where every frame pop otherwise costs a full mark.
+if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
+  foreach(_corpus fixture bootstrap p5 phaser)
+    set(_prefix "")
+    set(_budget "")
+    set(_strict OFF)
+    if(_corpus STREQUAL "fixture")
+      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/escape-claims-fixture.js")
+      set(_strict ON)
+    elseif(_corpus STREQUAL "bootstrap")
+      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/type-oracle-bootstrap.js")
+      set(_prefix "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js")
+    else()
+      set(_js "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/${_corpus}/${_corpus}.js")
+      if(_corpus STREQUAL "p5")
+        set(_budget 8)
+      else()
+        set(_budget 4)
+      endif()
+    endif()
+    add_test(NAME ctcompile_escape_claims_${_corpus}
+             COMMAND ${CMAKE_COMMAND}
+                     -DORACLE=$<TARGET_FILE:ctcompile-test-type-oracle>
+                     -DCLAIMS=$<TARGET_FILE:ctcompile-test-escape-claims>
+                     -DPYTHON=${Python3_EXECUTABLE}
+                     -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/escape-oracle.py
+                     -DCORPUS=${_js}
+                     -DPREFIX=${_prefix}
+                     -DBUDGET=${_budget}
+                     -DSTRICT=${_strict}
+                     -DWORK=${CMAKE_CURRENT_BINARY_DIR}
+                     -DNAME=${_corpus}
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/check-escape-claims.cmake)
+  endforeach()
+endif()
