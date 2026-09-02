@@ -540,6 +540,7 @@ struct admission {
             case BinaryKind::Mod:
             case BinaryKind::Pow:
                 return numeric(b.getLhs(), "binary") && numeric(b.getRhs(), "binary");
+            // (`**` is not std::pow; exponentiate() below is why.)
             default: return refuse("a bitwise or string operator is not native yet");
             }
         }
@@ -868,6 +869,37 @@ struct lowering {
             .getResult(0);
     }
 
+    // JAVASCRIPT'S `**`, WHICH IS NOT C++'s std::pow.
+    //
+    // Number::exponentiate answers NaN when the base has magnitude one and the
+    // exponent is NaN or infinite; C++ answers 1 for pow(1, NaN) and
+    // pow(1, INFINITY). Everywhere else the two agree, including pow(NaN, 0)
+    // == 1. So the whole difference is one guard, and emitting it is better
+    // than refusing the operator: `2 ** 31` keeps working and `1 ** undefined`
+    // stops being wrong. Undefined IS this tier's NaN, which is what made the
+    // difference reachable from ordinary JavaScript rather than only from a
+    // literal NaN.
+    //
+    // StdLibMap.td already classifies the library spelling `Math.pow` as
+    // Divergent with this exact witness; this is the operator path catching up.
+    mlir::Value exponentiate(mlir::OpBuilder & b, mlir::Location where, mlir::Value base,
+                             mlir::Value exponent) {
+        const auto i1 = mlir::IntegerType::get(context, 1);
+        mlir::Value magnitude = libmCall(b, where, "std::fabs", {base});
+        mlir::Value isOne = ec::CmpOp::create(b, where, i1, ec::CmpPredicate::eq, magnitude,
+                                              f64Constant(b, where, 1.0));
+        mlir::Value finite =
+            ec::CallOpaqueOp::create(b, where, mlir::TypeRange{i1},
+                                     b.getStringAttr("std::isfinite"), mlir::ValueRange{exponent})
+                .getResult(0);
+        mlir::Value notFinite = ec::LogicalNotOp::create(b, where, i1, finite);
+        mlir::Value diverges = ec::LogicalAndOp::create(b, where, i1, isOne, notFinite);
+        return ec::ConditionalOp::create(
+            b, where, mlir::Float64Type::get(context), diverges,
+            f64Constant(b, where, std::numeric_limits<double>::quiet_NaN()),
+            libmCall(b, where, "std::pow", {base, exponent}));
+    }
+
     // Retype every JavaScript value in the function from the lattice. Done
     // BEFORE any operation is replaced, so the replacements see carriers.
     void retype(ctjs::FuncOp fn) {
@@ -1006,7 +1038,7 @@ struct lowering {
             case BinaryKind::Mul: swap(ec::MulOp::create(b, where, f64, l, r)); return;
             case BinaryKind::Div: swap(ec::DivOp::create(b, where, f64, l, r)); return;
             case BinaryKind::Mod: swap(libmCall(b, where, "std::fmod", {l, r})); return;
-            case BinaryKind::Pow: swap(libmCall(b, where, "std::pow", {l, r})); return;
+            case BinaryKind::Pow: swap(exponentiate(b, where, l, r)); return;
             default: llvm_unreachable("admission refused it");
             }
         }

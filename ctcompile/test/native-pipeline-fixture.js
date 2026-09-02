@@ -17,6 +17,14 @@ while (count < 10) {
 var ratio = total / count;
 var neg = -ratio;
 var big = 2 ** 31;
+// `**` IS NOT std::pow. Number::exponentiate answers NaN when the base has
+// magnitude one and the exponent is NaN or infinite; C++ answers 1. Undefined
+// is this tier's NaN, so `1 ** undefined` reaches the same difference from
+// ordinary JavaScript. Both of these printed 1 natively and NaN in the
+// interpreter, on a program nothing refused.
+var one_to_nan = 1 ** (0 / 0);
+var one_to_inf = 1 ** (1 / 0);
+var minus_one_to_inf = (0 - 1) ** (1 / 0);
 var rem = 7.5 % 2;
 var quarter = 1 / 4;
 var inf = 1 / 0;

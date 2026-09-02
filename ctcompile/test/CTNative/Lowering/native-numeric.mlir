@@ -53,7 +53,13 @@ function scale(x) { return x * 2; }
 // CHECK: scf.condition
 // CHECK: div
 // CHECK: unary_minus
+// `**` is emitted as its guard and then the call: NaN when the base has
+// magnitude one and the exponent is not finite, std::pow otherwise. Pinning
+// the bare call is what let the divergence sit here unnoticed.
+// CHECK: call_opaque "std::fabs"
+// CHECK: call_opaque "std::isfinite"
 // CHECK: call_opaque "std::pow"
+// CHECK: conditional
 // CHECK: call_opaque "printf"({{.*}}) : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
 // CHECK: return %{{.*}} : i32
 
