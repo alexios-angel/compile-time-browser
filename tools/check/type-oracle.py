@@ -167,13 +167,19 @@ def read_recording(path: str) -> Recording:
         header = handle.readline().split()
         if header[:1] != ["ctbrowser-type-recording"]:
             raise SystemExit(f"{path}: not a type recording")
-        if header[1] != "1":
-            raise SystemExit(f"{path}: recording version {header[1]}, this reads 1")
+        # VERSION 2 IS VERSION 1 PLUS THE ESCAPE HALF (ctcompile Phase 55O):
+        # an `escape` header line, `alloc` and `site` lines under each `fn`.
+        # This checker is about registers and reads past them; the escape
+        # lines have their own checker in escape-oracle.py.
+        if header[1] not in ("1", "2"):
+            raise SystemExit(f"{path}: recording version {header[1]}, this reads 1 and 2")
         for line in handle:
             parts = line.split()
             if not parts:
                 continue
             tag = parts[0]
+            if tag in ("escape", "alloc", "site"):
+                continue
             if tag == "opcodes":
                 rec.opcodes, rec.writers = int(parts[1]), int(parts[3])
             elif tag == "defs":

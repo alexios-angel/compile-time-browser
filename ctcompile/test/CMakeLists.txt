@@ -865,3 +865,48 @@ if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/check-type-claims.cmake)
   endforeach()
 endif()
+
+# === PHASE 55O: escape oracle ===
+# ============================================================================
+# PHASE 55O - THE ESCAPE ORACLE. Appended as ONE block, per part 23's Appendix
+# A.3, and never edited in the middle.
+#
+# The native backend gives an allocation an RAII lifetime - a stack object, a
+# unique_ptr, a shared_ptr - only where an escape analysis can PROVE the object
+# never outlives the activation that made it; anything it cannot prove is
+# outside the native subset and is diagnosed. The interpreter is the reference
+# semantics that settles whether a proof is right: its precise collector knows,
+# at the moment a frame ends, exactly what is still reachable from which root,
+# so the recorder borrows that root walk (bounded at the ending frame's base,
+# mark only, never sweep) and writes down per site what happened to every
+# object born there. The checker compares a static claim against it.
+#
+# THE SAME TWO-IMPLEMENTATION SHAPE AS 54B: the escape self-test lives in the
+# same executable as the type one (one recorder, one file, header version 2),
+# walks the recorder in memory, and asserts a HAND-COMPUTED table; the Python
+# checker parses the file; check-escape-oracle.cmake makes one's numbers the
+# other's expectations. No MLIR anywhere near it.
+add_test(NAME ctcompile_escape_oracle COMMAND ctcompile-test-type-oracle --escape)
+
+if(Python3_Interpreter_FOUND)
+  add_test(NAME ctcompile_escape_oracle_checker
+           COMMAND ${CMAKE_COMMAND}
+                   -DEXE=$<TARGET_FILE:ctcompile-test-type-oracle>
+                   -DPYTHON=${Python3_EXECUTABLE}
+                   -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/escape-oracle.py
+                   -DWORK=${CMAKE_CURRENT_BINARY_DIR}
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/check-escape-oracle.cmake)
+else()
+  message(STATUS "ctcompile: no Python3 - the escape oracle's checker is not registered")
+endif()
+
+# EVERY PLACE A FRAME ENDS, AS A TABLE. FrameEnds.def lists the eight sites
+# that truncate `frames_` and says which two are hooked; the escape self-test
+# static_asserts its shape, and this checks that the file:line half of each
+# citation still lands inside the file it names - the one class of rot a
+# machine can see, per check-def-citations.cmake's own header.
+add_test(NAME ctcompile_frame_ends_citations
+         COMMAND ${CMAKE_COMMAND}
+                 -DDEF=${CMAKE_CURRENT_SOURCE_DIR}/../include/ctcompile/JavaScript/FrameEnds.def
+                 -DROOT=${CTBROWSER_MONOREPO_ROOT}
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/check-def-citations.cmake)

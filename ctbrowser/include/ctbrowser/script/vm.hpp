@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cmath>
@@ -18,6 +19,7 @@
 
 #include <ctbrowser/script/bytecode.hpp>
 #include <ctbrowser/script/dispatch.hpp>
+#include <ctbrowser/script/type_record.hpp>
 #include <ctbrowser/script/value.hpp>
 
 // The interpreter.
@@ -42,12 +44,13 @@ namespace ctbrowser::script {
 
 struct closure_object;
 
-// THE TYPE ORACLE'S RECORDER - ctcompile Phase 54B, defined in
-// script/type_record.hpp. Forward-declared rather than included: the recorder
-// is a developer mode nothing in a shipped build touches, and vm.hpp is
-// included by every subsystem that can run script.
-class type_recorder;
-[[nodiscard]] type_recorder * active_type_recorder() noexcept;
+// THE TYPE ORACLE'S RECORDER - ctcompile Phase 54B, and since 55O the escape
+// oracle's too. It used to be forward-declared here, the recorder being a
+// developer mode nothing in a shipped build touches; it is included now
+// because the escape half needs one thing from it in THIS header - the
+// `root_label` vocabulary `each_root` hands its visitor - and that vocabulary
+// belongs beside the site tally it indexes. The header is small and constexpr,
+// and every subsystem that can run script already paid for bytecode.hpp.
 
 using native_fn = std::function<value(class context &, std::span<value>)>;
 
@@ -237,6 +240,12 @@ public:
         p->next = heap_;
         heap_ = p;
         ++live_objects_;
+        // THE ESCAPE ORACLE'S HOOK, ctcompile Phase 55O. One predictable
+        // not-taken branch per allocation in every build - `recorder_` exists
+        // in every build for the reason its declaration gives, and the
+        // `new` above dwarfs a branch. Measured once on bench_script, and the
+        // number is in the Phase 55 status block of the plan's part 24.
+        if (recorder_ != nullptr) [[unlikely]] { note_allocation(p); }
         return p;
     }
     [[nodiscard]] value string(std::string s) {
@@ -1102,7 +1111,9 @@ public:
     [[nodiscard]] type_recorder * type_recorder_installed() const noexcept { return recorder_; }
     // ONE INTERPRETER STEP, called from the dispatch loop and defined in
     // type_record.cpp. Public only because the macro in run_loop.cpp is
-    // clearer than a friend declaration; nothing else should call it.
+    // clearer than a friend declaration; nothing else should call it. The
+    // escape oracle's four hooks (Phase 55O) are its siblings and are
+    // declared with the collector's root walk further down, after call_frame.
     void record_step(instruction in);
 
     // A point where the ABI says a collection may happen. Does nothing unless
@@ -1361,6 +1372,20 @@ private:
         // function that never awaits anything pending returns normally and
         // needs no promise of its own beyond the one `wrap_promise` makes.
         value async_promise = value::undefined();
+
+        // THE ESCAPE ORACLE'S FRAME IDENTITY - ctcompile Phase 55O. Zero until
+        // this frame's first tracked allocation, when note_allocation assigns
+        // the next serial; a frame that allocates nothing never gets one and
+        // costs nothing at its end. Keyed on a serial rather than on `base`
+        // or `proto` because neither is unique across a run.
+        //
+        // TRAILING, WITH A DEFAULT, AND IT MUST STAY THAT WAY. Five sites
+        // build a call_frame with a positional aggregate initializer that
+        // lists the first eight members (run_loop.cpp's VM_CASE(call) and
+        // VM_CASE(construct); call.cpp's invoke, run_module and execute);
+        // a member added anywhere but the end shifts every one of them and
+        // compiles cleanly. This codebase has been broken that way twice.
+        std::uint64_t serial = 0;
     };
 
     // The `this` a frame actually sees. For an ordinary function that is its
@@ -1481,6 +1506,16 @@ private:
             const handler h = handlers_.back();
             handlers_.pop_back();
             if (h.frame >= frames_.size()) { continue; } // its frame already returned
+            // THE ESCAPE ORACLE SEES THE FRAMES BEFORE THEY GO - ctcompile
+            // Phase 55O, FrameEnds.def row `unwind`. Here `thrown_` is still
+            // set (it is cleared below, after the landing write), so a value
+            // in flight is a root and an object thrown out of a frame reads
+            // as escaped `via thrown` rather than as confined. Only frames
+            // ABOVE the handler's are ending; a throw caught in its own frame
+            // discards none and records nothing.
+            if (recorder_ != nullptr && h.frame + 1 < frames_.size()) [[unlikely]] {
+                record_frames_unwound(h.frame + 1);
+            }
             frames_.resize(h.frame + 1);
             call_frame & target = frames_.back();
             target.ip = h.address;
@@ -1498,6 +1533,122 @@ private:
     void mark(value v);
     void mark_object(heap_object * o);
     void sweep_all();
+
+    // --- THE ONE ROOT INVENTORY --------------------------------------------
+    //
+    // Every root the collector walks, in GCRoots.def's order and with that
+    // table's name on each, handed to a visitor. collect() marks through it
+    // and nothing else about collect() changed when it was split out; the
+    // escape oracle (type_record.cpp) walks the SAME inventory with the popped
+    // frame's dead register window excluded, so a root the collector knows
+    // cannot be one the oracle forgets. A template rather than a virtual, so
+    // the visitor collect() passes inlines to what the loop was before.
+    //
+    // `register_limit` bounds the flat register file: slots at or above it
+    // are not visited. `frame_limit` bounds the per-frame roots: frames at or
+    // above that index are not visited. collect() passes the whole of both.
+    // The oracle passes the ending frame's base and index - an inline callee
+    // sits INSIDE its caller's register extent (VM_CASE(call) places it at
+    // base + a + 1) and `ret` never shrinks registers_, so without the bound
+    // every object an ending frame still held in a register would read as
+    // reachable, and "reachable in the VM" is not "reachable in the program".
+    template <class Visit>
+    void each_root(std::size_t register_limit, std::size_t frame_limit, Visit && visit) {
+        for (const auto & [name, v] : globals_) { visit(root_label::globals, v); }
+        const std::size_t top = std::min(register_limit, registers_.size());
+        for (std::size_t i = 0; i < top; ++i) { visit(root_label::registers, registers_[i]); }
+        // The receiver of a native call in progress. It is held in a C++
+        // local, not in a register, so nothing else would keep it alive - and
+        // collecting the object a method is running on is about as bad as it
+        // gets.
+        visit(root_label::current_this, current_this_);
+        // The constructor a super() call is in the middle of handing on. It
+        // lives only in this slot between the two instructions, which is
+        // exactly the window a collection can fall in.
+        visit(root_label::pending_new_target, pending_new_target_);
+        visit(root_label::pending_closure, pending_closure_);
+        // And the closure each live frame is executing. A function called
+        // from C++ via call() is likewise only referenced from a C++ local;
+        // without this its upvalues can be freed while its body is still
+        // running.
+        const std::size_t frames = std::min(frame_limit, frames_.size());
+        for (std::size_t k = 0; k < frames; ++k) {
+            const call_frame & f = frames_[k];
+            if (f.closure != nullptr) {
+                visit(root_label::frame_closure, value::object(f.closure));
+            }
+            visit(root_label::frame_receiver, f.receiver);
+            visit(root_label::frame_arguments, f.arguments_object);
+            visit(root_label::frame_async_promise, f.async_promise);
+            visit(root_label::frame_new_target, f.new_target);
+        }
+        // A QUEUED JOB AND ITS ARGUMENTS. Nothing else refers to them between
+        // the moment they are queued and the moment they run, which is
+        // precisely the window a collection can fall in.
+        for (const microtask & job : microtasks_) {
+            visit(root_label::microtasks, job.fn);
+            for (const value & arg : job.args) { visit(root_label::microtasks, arg); }
+        }
+        // EVERY MODULE'S EXPORT CELLS. They live in `modules_` and in no
+        // register once the module has finished evaluating, so without this a
+        // collection between two modules frees the bindings the second one is
+        // about to import - and it frees them while a closure inside the
+        // first still refers to the same cell.
+        for (auto & [specifier, mod] : modules_) {
+            for (auto & [name, cell] : mod.exports) { visit(root_label::module_exports, cell); }
+            visit(root_label::module_namespace, mod.namespace_object);
+        }
+        // A thrown value in flight is reachable from nothing else.
+        visit(root_label::thrown, thrown_);
+        // AND WHAT A C++ SCOPE IS HOLDING ACROSS A CALL. `construct` allocates
+        // the instance and then runs field initialisers and the constructor
+        // body with it in a local; without this the object being constructed
+        // is freed by any collection inside either. See context::rooted.
+        for (const value & v : temporaries_) { visit(root_label::temporaries, v); }
+        // The prototype tables hold every builtin method. Nothing else
+        // references them, so without this the standard library is collected
+        // on the first gc.
+        for (object_object * table : prototypes_) {
+            if (table != nullptr) { visit(root_label::prototypes, value::object(table)); }
+        }
+        // The per-function string cache. These are live `value`s held by the
+        // context itself and referenced from nowhere else - a sweep without
+        // them frees a string literal that a running loop is about to read
+        // again.
+        for (auto & [proto, cache] : string_cache_) {
+            for (auto & [index, v] : cache) { visit(root_label::string_cache, v); }
+        }
+        // The BigInt literal cache is a root for exactly the same reason: the
+        // context is the only thing holding those values, so a sweep without
+        // this frees a literal a running loop is about to read again.
+        for (auto & [proto, cache] : bigint_cache_) {
+            for (auto & [index, v] : cache) { visit(root_label::bigint_cache, v); }
+        }
+        // And whatever the embedder holds: every DOM listener, timer callback
+        // and element wrapper lives in the bindings, not in any VM structure.
+        if (external_roots_) {
+            external_roots_([&](value v) { visit(root_label::external, v); });
+        }
+    }
+    // collect(), in its three parts - objects.cpp. `mark_roots` marks through
+    // each_root; `sweep` frees the unmarked and clears the marked; `unmark_all`
+    // clears every mark and frees NOTHING, which is the escape oracle's exit.
+    void mark_roots(std::size_t register_limit);
+    [[nodiscard]] std::size_t sweep();
+    void unmark_all();
+
+    // --- THE ESCAPE ORACLE'S HOOKS, ctcompile Phase 55O - type_record.cpp ---
+    //
+    // Beside record_step in spirit; declared here because two of them take a
+    // call_frame, which the class has not declared at that point. All four are
+    // reached only through `recorder_ != nullptr` and under the Record
+    // instantiation of the dispatch loop, so a shipped build runs none of them.
+    void note_allocation(heap_object * p);
+    void note_freed(heap_object * o);
+    void record_frame_pop(const call_frame & popped, value carried);
+    void record_frames_unwound(std::size_t first);
+    void adjudicate(std::size_t register_limit, std::size_t frame_limit,
+                    std::vector<type_recorder::escape_record> & records);
 
     // WHAT IS RUNNING RIGHT NOW - the interpreter, a compiled body, or C++.
     //
