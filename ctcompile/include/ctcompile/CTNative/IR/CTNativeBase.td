@@ -64,7 +64,6 @@ def CTNative_Dialect : Dialect {
   // Inherent attributes stored as properties, for the same reason CTJS does it:
   // cheaper, and uniquified less. Costs nothing while there are no operations
   // and does not have to be revisited when there are.
-  let usePropertiesForAttributes = 1;
 
   // Split for the same reason CTJS splits it: addTypes<> needs the STORAGE
   // classes complete, and those are emitted into CTNativeTypes.cpp by

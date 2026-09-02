@@ -117,6 +117,12 @@ if(CTCOMPILE_ENABLE_MLIR)
   # everything from the ABI to the TableGen syntax.
   find_package(MLIR CONFIG REQUIRED)
   find_package(LLVM CONFIG REQUIRED)
+  # THE FOUND HEADERS COME FIRST. Brew links a formula's headers into
+  # <prefix>/include, which other dependencies put on the search path as a
+  # plain -I - and -I is searched before -isystem, so whatever llvm brew has
+  # linked there shadows the install find_package chose. Measured on
+  # 2026-09-02 with two llvms on the box. BEFORE puts the chosen one first.
+  include_directories(BEFORE SYSTEM ${MLIR_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS})
 
   # THE PIN, CHECKED AT CONFIGURE TIME, through the function that already owns
   # that rule. Phase -1 put ct_require_llvm_version() in cmake/modules/ and

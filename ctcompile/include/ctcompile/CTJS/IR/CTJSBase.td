@@ -39,7 +39,6 @@ def CTJS_Dialect : Dialect {
   let useDefaultAttributePrinterParser = 1;
 
   // Inherent attributes stored as properties: cheaper and uniquified less.
-  let usePropertiesForAttributes = 1;
 
   // Required for the folder to rebuild constants.
   let hasConstantMaterializer = 1;

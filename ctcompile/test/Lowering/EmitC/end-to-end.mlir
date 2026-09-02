@@ -71,5 +71,5 @@ function f(a) { return a; }
 // not optional - one compiled body serves both `f()` and `new f()`.
 // CHECK: ctbrowser::aot::ct_aot_leave([[FRAME]]);
 // CHECK: [[RESULT:v[0-9]+]] = ctbrowser::aot::ct_aot_return_value([[ARG0]],
-// CHECK: *{{v[0-9]+}} = [[RESULT]];
+// CHECK: {{v[0-9]+}}[{{v[0-9]+}}] = [[RESULT]];
 // CHECK: return static_cast<int32_t>(ctbrowser::aot::ct_aot_status::ok);

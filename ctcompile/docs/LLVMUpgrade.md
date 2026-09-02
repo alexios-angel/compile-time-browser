@@ -7,9 +7,9 @@
 `cmake/LLVMVersion.cmake`, at the monorepo root:
 
 ```cmake
-set(CTCOMPILE_REQUIRED_LLVM_MAJOR 22)
-set(CTCOMPILE_TESTED_LLVM_VERSION "22.1.8")
-set(CTCOMPILE_MAX_LLVM_MAJOR 22)
+set(CTCOMPILE_REQUIRED_LLVM_MAJOR 23)
+set(CTCOMPILE_TESTED_LLVM_VERSION "23.1.0")
+set(CTCOMPILE_MAX_LLVM_MAJOR 23)
 ```
 
 `ct_require_llvm_version()` refuses to configure outside that range, with a
@@ -17,7 +17,39 @@ message naming both versions and the install it found. That is deliberate:
 without it the failure lands inside `mlir-tblgen`, in a diagnostic that names a
 TableGen template and never mentions a version.
 
-## Why 22 and not the 20 the plan names
+## 22 → 23, 2026-09-02
+
+The user's call: "the current stable version of LLVM is 23; bump the code and
+use that." Done as its own commit, per the rule at the top. What 23 changed
+for this tree is recorded in the commit that made the bump; the two mechanical
+ones were `mlir::SideEffects::Resource::getName()` becoming `const` (every
+escape-route resource in `CTJSEscapeEffects.h`) and the C++ emitter's
+declare-variables-at-top check on `emitc.dereference`. On the box the formula
+is `brew pin llvm`-pinned so a `brew bundle install` cannot float it again.
+
+What the bump touched, for the next one:
+
+* `usePropertiesForAttributes` is gone from `Dialect` (properties are
+  unconditional) - removed from both dialect bases.
+* `emitc.apply` is gone (`address_of` / `dereference`) - the fork's printer
+  for it removed.
+* `mlir::SideEffects::Resource::getName()` is `const` - the escape routes.
+* Upstream 23's C++ emitter refuses `emitc.assign` through an
+  `emitc.dereference` result under `--declare-variables-at-top`; the boxed
+  lowering's one such store (`*out = value`) is now `out[0] = value` through
+  `emitc.subscript`, which both emitters accept.
+* `test/Target/Cpp/upstream/`: `lvalue`, `global`, `common-cpp` refreshed to
+  23's files verbatim; `expressions.mlir` is 22's minus its
+  two `emitc.apply` functions, with one expectation taken from 23:
+  `parentheses_for_low_precedence` now returns through a temporary, because
+  23's dialect stopped inlining a single-use expression into a `return` and
+  the fork follows the dialect. 23's own file adds expression forms (a
+  `subscript` and a `load` inside an expression, among others) the fork does
+  not print yet - refreshing the fork to 23's emitter is that feature, tracked
+  in part 22, not part of the bump. The other 31 files are still 22's and
+  passed unchanged.
+
+## Why 22 and not the 20 the plan names (history)
 
 The master plan pins major 20. Neither the build box nor anything else here can
 install 20: apt ships MLIR 18 for Ubuntu 24.04 and brew ships 22.1.8, and the
