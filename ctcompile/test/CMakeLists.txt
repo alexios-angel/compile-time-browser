@@ -865,3 +865,70 @@ if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/check-type-claims.cmake)
   endforeach()
 endif()
+
+# === PHASE 55C: escape cycle ===
+# ============================================================================
+# PHASE 55C - THE CYCLE FIXTURE, gate 4 of 25-escape-analysis.md §5. Appended
+# as ONE block, per part 23's Appendix A.3.
+#
+# One executable pins, against the running interpreter, what a cycle MEANS:
+# the VM's tracing collector keeps a ring alive while any member is reachable
+# and frees it whole when none is (gates 4(a) and 4(b)); beside it, in C++, the
+# two ways "replace back-references with weak links" fails - a shared_ptr ring
+# that destroys nothing, a compiler-chosen weak_ptr that destroys a node
+# JavaScript can still see - and the frame-owned region that is the one
+# RAII-sound answer for a CONFINED cycle (gate 4(c)); the ND-2 and ND-3 probes
+# of docs/native-divergences.md (gate 4(e)); and, when ctjs-translate is built,
+# the fixture's printed ctjs module read as text for `ctnative.weak` (4(f)).
+#
+# IT NEEDS NO MLIR, like ctcompile-test-type-oracle: every question here is put
+# to the interpreter, and the module check is a string search over a file the
+# build printed. Gate 4(d) - the recorder over this file - belongs to the
+# escape-oracle work and its check-escape-claims.cmake; 4(g) is deferred by the
+# design itself until 55B emits anything.
+set(_cyc_js "${CMAKE_CURRENT_SOURCE_DIR}/escape-cycle.js")
+# THE DRIVER READS THE SAME FILE EVERYTHING ELSE DOES - the recorder, the
+# claims, the printed module - for gc-roots.js's reason: two copies of one
+# fixture are two programs.
+set(_cyc_inc "${CMAKE_CURRENT_BINARY_DIR}/escape-cycle.js.inc")
+add_custom_command(
+  OUTPUT "${_cyc_inc}"
+  COMMAND "${CMAKE_COMMAND}" -DSOURCE=${_cyc_js} -DOUTPUT=${_cyc_inc}
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
+  DEPENDS "${_cyc_js}" "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
+  COMMENT "Embedding escape-cycle.js for the driver"
+  VERBATIM)
+set(_cyc_sources EscapeCycle.cpp "${_cyc_inc}")
+set(_cyc_has_module OFF)
+if(TARGET ctjs-translate)
+  # THE PRINTED MODULE, embedded the same way. ctjs-translate is an
+  # MlirTranslateMain tool, so `-o` is its own; the .mlir is then wrapped in
+  # the raw string embed-js.cmake writes - the content is MLIR text and cannot
+  # contain the delimiter. When there is no ctjs-translate the executable says
+  # SKIPPED for (f) rather than the suite silently shrinking.
+  set(_cyc_mlir "${CMAKE_CURRENT_BINARY_DIR}/escape-cycle.ctjs.mlir")
+  set(_cyc_mlir_inc "${CMAKE_CURRENT_BINARY_DIR}/escape-cycle.ctjs.inc")
+  add_custom_command(
+    OUTPUT "${_cyc_mlir}"
+    COMMAND $<TARGET_FILE:ctjs-translate> --ctbrowser-js-to-ctjs "${_cyc_js}" -o "${_cyc_mlir}"
+    DEPENDS "${_cyc_js}" ctjs-translate
+    COMMENT "Importing escape-cycle.js to ctjs for the ctnative.weak check"
+    VERBATIM)
+  add_custom_command(
+    OUTPUT "${_cyc_mlir_inc}"
+    COMMAND "${CMAKE_COMMAND}" -DSOURCE=${_cyc_mlir} -DOUTPUT=${_cyc_mlir_inc}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
+    DEPENDS "${_cyc_mlir}" "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
+    COMMENT "Embedding the ctjs module of escape-cycle.js for the driver"
+    VERBATIM)
+  list(APPEND _cyc_sources "${_cyc_mlir_inc}")
+  set(_cyc_has_module ON)
+endif()
+add_executable(ctcompile-test-escape-cycle ${_cyc_sources})
+target_include_directories(ctcompile-test-escape-cycle PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(ctcompile-test-escape-cycle PRIVATE ctbrowser::ctbrowser)
+if(_cyc_has_module)
+  target_compile_definitions(ctcompile-test-escape-cycle PRIVATE CTCOMPILE_ESCAPE_CYCLE_MODULE=1)
+endif()
+ctcompile_target(ctcompile-test-escape-cycle)
+add_test(NAME ctcompile_escape_cycle COMMAND ctcompile-test-escape-cycle)
