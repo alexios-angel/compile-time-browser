@@ -138,9 +138,29 @@ def CTNative_StrType : CTNative_Type<"Str", "str"> {
     a test asserts it against what the interpreter actually answers. The day
     the engine closes its UTF-16 gap, that constant flips and the test says
     so. See ctcompile/docs/native-divergences.md, entry ND-1.
+
+    THE C++ CARRIER FOLLOWS THE ENCODING, and `cppCarrier()` below is the one
+    place that says so. Part 24 Stage 53D Step 4: the reason to move a string
+    to `utf16` is that `.length` was observed, and `.length` is only `.size()`
+    when the container's ELEMENT is a UTF-16 code unit. A `str<utf16>` carried
+    in a `std::string` would answer in bytes and be exactly the bug the
+    encoding parameter exists to prevent.
+
+    `std::u32string` IS NOT AN OPTION HERE and Step 5 says why: a `char32_t`
+    is a code point, so it would answer `1` for `"\u{1F600}".length` -
+    matching neither ECMA-262's 2 nor this engine's 4. It is the right type
+    for iterating a string BY CODE POINT, which is what `for...of` does, and
+    that is Phase 57's business rather than this type's.
   }];
   let parameters = (ins EnumParameter<CTNative_StrEncoding>:$encoding);
   let assemblyFormat = "`<` $encoding `>`";
+  let extraClassDeclaration = [{
+    /// The C++ type that carries a string in this encoding. See the
+    /// description: `utf16` is `std::u16string` and not `std::string`.
+    ::llvm::StringRef cppCarrier() const {
+      return getEncoding() == StrEncoding::UTF16 ? "std::u16string" : "std::string";
+    }
+  }];
 }
 
 def CTNative_StrViewType : CTNative_Type<"StrView", "strview"> {
@@ -161,6 +181,14 @@ def CTNative_StrViewType : CTNative_Type<"StrView", "strview"> {
   }];
   let parameters = (ins EnumParameter<CTNative_StrEncoding>:$encoding);
   let assemblyFormat = "`<` $encoding `>`";
+  let extraClassDeclaration = [{
+    /// The C++ type that carries a view in this encoding - the same rule as
+    /// CTNative_StrType::cppCarrier, one `_view` further along.
+    ::llvm::StringRef cppCarrier() const {
+      return getEncoding() == StrEncoding::UTF16 ? "std::u16string_view"
+                                                 : "std::string_view";
+    }
+  }];
 }
 
 def CTNative_JsonType : CTNative_Type<"Json", "json"> {

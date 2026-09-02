@@ -793,3 +793,22 @@ if(Python3_Interpreter_FOUND)
 else()
   message(STATUS "ctcompile: no Python3 - the type oracle's checker is not registered")
 endif()
+
+# ============================================================================
+# PHASE 54A - THE TYPE INFERENCE'S TRANSFER FUNCTION. Appended as ONE block,
+# per part 23's Appendix A.3.
+#
+# The oracle next door answers "is the inference sound over a corpus". This
+# answers "which rule is wrong", which the oracle cannot: it is a table of
+# JavaScript facts, one small function each. Half its rows are NEGATIVE - an
+# operator whose operands might be BigInts must refuse to claim a number - and
+# those are the rows that fail if anyone makes the analysis unconditional.
+#
+# Behind the MLIR guard, like every other target that names a dialect.
+if(CTCOMPILE_ENABLE_MLIR)
+  add_executable(ctcompile-test-type-inference TypeInference.cpp)
+  target_link_libraries(ctcompile-test-type-inference
+    PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser)
+  ctcompile_target(ctcompile-test-type-inference)
+  add_test(NAME ctcompile_type_inference COMMAND ctcompile-test-type-inference)
+endif()

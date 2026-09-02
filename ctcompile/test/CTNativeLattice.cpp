@@ -494,11 +494,41 @@ int main() {
         }
     }
 
+    //===----------------------------------------------------------------===//
+    // The C++ carrier, which the encoding parameter exists to choose
+    //===----------------------------------------------------------------===//
+    //
+    // Part 24 Stage 53D Step 4. The encoding parameter is only worth carrying
+    // if something downstream reads it, and what reads it is the emitter
+    // asking "what C++ type is this". A `str<utf16>` carried in a
+    // `std::string` would answer `.length` in BYTES - which is precisely the
+    // bug the parameter was added to prevent - so the two travel together and
+    // `cppCarrier()` is the single place that says which goes with which.
+    {
+        using ctcompile::ctnative::StrType;
+        using ctcompile::ctnative::StrViewType;
+        check("str<utf8> is carried by std::string",
+              StrType::get(&context, StrEncoding::UTF8).cppCarrier() == "std::string");
+        check("str<utf16> is carried by std::u16string and NOT by std::string",
+              StrType::get(&context, StrEncoding::UTF16).cppCarrier() == "std::u16string");
+        check("strview<utf8> is carried by std::string_view",
+              StrViewType::get(&context, StrEncoding::UTF8).cppCarrier() == "std::string_view");
+        check("strview<utf16> is carried by std::u16string_view",
+              StrViewType::get(&context, StrEncoding::UTF16).cppCarrier() == "std::u16string_view");
+        // AND THE TIE TO THE DIVERGENCE ABOVE. Today the default encoding is
+        // the engine's utf8, so the carrier a fresh string gets is
+        // std::string. When the engine closes its UTF-16 gap and
+        // kDefaultStringEncoding flips, THIS line changes with it - which is
+        // the point of deriving it rather than writing "std::string" twice.
+        check("the default encoding's carrier is std::string while the engine is utf8",
+              StrType::get(&context, kDefaultStringEncoding).cppCarrier() == "std::string");
+    }
+
     // ASSERT THE COUNTER. A test that silently stopped running most of itself
     // exits 0 and looks exactly like a passing one; this is the number to
     // update when a case is added, and the reason it is here rather than a
     // lower bound is that a lower bound would not notice a case being deleted.
-    const int expectedChecks = 79;
+    const int expectedChecks = 84;
     if (checks != expectedChecks) {
         std::printf("FAILED  ran %d checks, expected %d - a case was added or lost\n", checks,
                     expectedChecks);

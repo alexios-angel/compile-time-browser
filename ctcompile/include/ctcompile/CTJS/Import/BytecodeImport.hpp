@@ -17,6 +17,9 @@
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "mlir/IR/Value.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
 namespace ctbrowser::script {
@@ -45,9 +48,45 @@ struct unsupported_opcode {
     std::string reason;
 };
 
+// Phase 54A. Which bytecode register slots each imported SSA value ever
+// occupied. The type inference produces a fact per SSA VALUE; the Phase 54B
+// oracle observes a fact per REGISTER. This is the join between them.
+//
+// A VALUE MAY OCCUPY MORE THAN ONE SLOT, which is why the mapped type is a
+// list: the importer models `mov dst, src` by aliasing one mlir::Value into a
+// second slot rather than by emitting a copy.
+//
+// EVERY WRITE, NOT THE FINAL RESIDENT. A slot written twice inside one block -
+// `r0 = a + b; r0 = c + d;` - holds only the second value by the time the
+// block branches, and the interpreter observed BOTH. The importer therefore
+// records at each write site rather than reading the mapping back off the IR,
+// and the claim for a slot is the join over every value listed against it.
+// Missing a write would leave the claim not covering a type the interpreter
+// saw, which reads as unsoundness in a checker whose whole job is to be
+// believed.
+//
+// THE KEYS BORROW `import_result::module`. An mlir::Value is a handle into the
+// operations the module owns, so a map outlives nothing: it is only meaningful
+// while the module it came from is alive.
+struct register_map {
+    std::uint32_t function_index = 0;
+    llvm::MapVector<mlir::Value, llvm::SmallVector<std::uint16_t, 1>> slots;
+};
+
 struct import_result {
     mlir::OwningOpRef<mlir::ModuleOp> module;
     std::vector<unsupported_opcode> skipped;
+    // AT THE END, WITH AN INITIALISER, because this struct has been extended
+    // before and a field inserted mid-struct silently re-points any positional
+    // aggregate initialiser. (There is none today - every construction is
+    // `import_result out;` or copy-initialisation from import_program - and
+    // appending keeps it that way.)
+    //
+    // ONE ENTRY PER FUNCTION THE MODULE ACTUALLY CONTAINS. A function that was
+    // abandoned emits no ctjs.func and its values die with the scratch module
+    // that held them, so recording a map for it would hand out dangling
+    // handles; `skipped` is where those functions are reported.
+    std::vector<register_map> register_maps{};
 };
 
 // Every eligible function of one program, as one module.

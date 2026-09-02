@@ -13,6 +13,8 @@
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <bit>
@@ -162,6 +164,12 @@ struct function_importer {
 
     // slot -> the value currently in it
     llvm::SmallVector<mlir::Value> registers{};
+
+    // AND EVERY SLOT EACH VALUE HAS EVER BEEN IN - Phase 54A's half of the
+    // join with the Phase 54B oracle, which keys its observations by register
+    // rather than by SSA value. See `register_map` in the header for why the
+    // mapped type is a list and why this cannot be recovered afterwards.
+    llvm::MapVector<mlir::Value, llvm::SmallVector<std::uint16_t, 1>> occupied{};
     llvm::DenseMap<std::int64_t, mlir::Block *> blocks{};
     mlir::Value frame{};
     bool gave_up = false;
@@ -229,6 +237,28 @@ struct function_importer {
         std::uint16_t slot;
     };
     llvm::SmallVector<open_handler> handlers{};
+
+    // THE ONE PLACE A REGISTER IS WRITTEN. Every assignment into `registers`
+    // goes through here so that `occupied` cannot fall behind it - there were
+    // five such sites when this was added (the entry seeding, the two
+    // block-argument rebinds, the catch pad's thrown value and the `set`
+    // lambda every opcode result funnels through), and a sixth written as a
+    // bare `registers[slot] = ...` would silently drop a value from the map.
+    //
+    // THE BOUNDS TEST LIVES HERE TOO, because two of those five sites carried
+    // their own copy of it - one of them the `set` lambda, whose callers pass a
+    // slot straight out of an instruction operand and do not check it.
+    void write(std::size_t slot, mlir::Value v) {
+        if (slot >= registers.size()) { return; }
+        registers[slot] = v;
+        if (!v) { return; }
+        // LINEAR, AND DELIBERATELY SO. The list is one element for almost
+        // every value - a value in two slots is a `mov` alias, a value in
+        // three is rare - so a set would cost more than the scan it saves.
+        llvm::SmallVector<std::uint16_t, 1> & slots = occupied[v];
+        const auto narrowed = static_cast<std::uint16_t>(slot);
+        if (!llvm::is_contained(slots, narrowed)) { slots.push_back(narrowed); }
+    }
 
     // The register vector as successor operands - the whole file, every time.
     [[nodiscard]] llvm::SmallVector<mlir::Value> outgoing() const {
@@ -389,10 +419,10 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         // undefined everywhere else.
         state.registers.assign(proto.frame_size, mlir::Value{});
         for (std::size_t slot = 0; slot < proto.frame_size; ++slot) {
-            state.registers[slot] =
-                slot < proto.param_count
-                    ? entry->getArgument(static_cast<unsigned>(implicit_arguments + slot))
-                    : state.undefined(state.location_for(0));
+            state.write(slot,
+                        slot < proto.param_count
+                            ? entry->getArgument(static_cast<unsigned>(implicit_arguments + slot))
+                            : state.undefined(state.location_for(0)));
         }
 
         // ---- leaders ------------------------------------------------------
@@ -492,7 +522,7 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             }
             into.setInsertionPointToEnd(block);
             for (std::size_t slot = 0; slot < proto.frame_size; ++slot) {
-                state.registers[slot] = block->getArgument(static_cast<unsigned>(slot));
+                state.write(slot, block->getArgument(static_cast<unsigned>(slot)));
             }
         };
 
@@ -573,18 +603,14 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 block_at(static_cast<std::int64_t>(at)) != nullptr) {
                 auto land = ctjs::CatchLandOp::create(into, state.location_for(at),
                                                       into.getI32Type(), value_type);
-                if (landed->second < state.registers.size()) {
-                    state.registers[landed->second] = land.getThrown();
-                }
+                state.write(landed->second, land.getThrown());
             }
             const instruction & in = proto.code[at];
             const mlir::Location where = state.location_for(at);
             const auto reg = [&](std::uint16_t slot) -> mlir::Value {
                 return slot < state.registers.size() ? state.registers[slot] : mlir::Value{};
             };
-            const auto set = [&](std::uint16_t slot, mlir::Value v) {
-                if (slot < state.registers.size()) { state.registers[slot] = v; }
-            };
+            const auto set = [&](std::uint16_t slot, mlir::Value v) { state.write(slot, v); };
 
             // THE REGISTER FILE AS OF THE THROW, SNAPSHOT BEFORE THE
             // INSTRUCTION RUNS. It is what the handler block will be given, and
@@ -1203,7 +1229,7 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                                       state.handlers.back().pad);
                 into.setInsertionPointToEnd(fresh);
                 for (std::size_t slot = 0; slot < proto.frame_size; ++slot) {
-                    state.registers[slot] = fresh->getArgument(static_cast<unsigned>(slot));
+                    state.write(slot, fresh->getArgument(static_cast<unsigned>(slot)));
                 }
             }
         }
@@ -1238,6 +1264,15 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         }
         function->remove();
         out.module->push_back(function);
+
+        // AND ITS REGISTER MAP, ONLY NOW. Everything above this line can still
+        // abandon the function, and an abandoned function's values are erased
+        // with the scratch module - so a map handed out earlier would be a set
+        // of dangling handles rather than a coverage gap somebody notices.
+        register_map occupancy;
+        occupancy.function_index = static_cast<std::uint32_t>(index);
+        occupancy.slots = std::move(state.occupied);
+        out.register_maps.push_back(std::move(occupancy));
     }
 
     return out;

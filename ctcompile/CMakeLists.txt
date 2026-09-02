@@ -164,6 +164,9 @@ if(CTCOMPILE_ENABLE_MLIR)
   # same reason - it is MLIR all the way down.
   add_subdirectory(include/ctcompile/CTNative/IR)
   add_subdirectory(lib/CTNative/IR)
+  # Phase 54A's type inference. Separate from the IR library because it links
+  # CTJSDialect and that library must not: see lib/CTNative/Analysis/CMakeLists.txt.
+  add_subdirectory(lib/CTNative/Analysis)
   # The forked EmitC C++ emitter, for the same reason: it is MLIR all the way
   # down. See lib/Target/Cpp/TranslateToCpp.cpp.
   add_subdirectory(lib/Target/Cpp)
