@@ -99,7 +99,8 @@ def CTNativePruneDeadStores : Pass<"ctnative-prune-dead-stores"> {
   }];
   let statistics = [
     Statistic<"prunedVariables", "pruned-variables", "emitc.variables erased because nothing ever read them">,
-    Statistic<"prunedOps", "pruned-ops", "operations erased as trivially dead once their store was gone">
+    Statistic<"prunedOps", "pruned-ops", "operations erased as trivially dead once their store was gone">,
+    Statistic<"markedStatements", "marked-statements", "calls whose result nothing reads, marked to print as a statement rather than an unused variable">
   ];
   let options = [
     Option<"report", "report", "bool", /*default=*/"false",

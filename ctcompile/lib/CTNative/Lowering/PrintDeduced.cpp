@@ -62,6 +62,12 @@ struct CTNativePrintDeducedPass : impl::CTNativePrintDeducedBase<CTNativePrintDe
         module.walk([&](ec::FuncOp fn) {
             fn.getBody().walk([&](mlir::Operation * o) {
                 if (o->getNumResults() != 1 || !isDeducible(o)) { return; }
+                // A result nothing reads is printed as a bare statement, not a
+                // declaration (see emitAssignPrefix in the fork's emitter), so
+                // there is nothing to deduce and nothing to pin. Marking it
+                // would emit a CTCOMPILE_PIN naming a variable that does not
+                // exist.
+                if (o->getResult(0).use_empty()) { return; }
                 if (o->getParentOfType<ec::ExpressionOp>()) { return; } // inline, never declared
                 o->setAttr("ctnative.deduced", mlir::UnitAttr::get(ctx));
                 ++deduced;

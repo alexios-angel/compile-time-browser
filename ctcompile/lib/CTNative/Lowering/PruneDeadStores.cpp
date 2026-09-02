@@ -14,6 +14,7 @@
 #include "ctcompile/CTNative/Transforms/Passes.h"
 
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
@@ -55,6 +56,19 @@ struct CTNativePruneDeadStoresPass
 
     void runOnOperation() override {
         mlir::Operation * root = getOperation();
+        // A CALL WHOSE RESULT NOTHING READS IS A STATEMENT, and only this tier
+        // may say so - upstream's emitter declares a variable for it, and its
+        // tests are kept verbatim here. The emitter honours the attribute; the
+        // call itself stays, because a call may do anything.
+        unsigned markedStatementCount = 0;
+        root->walk([&](mlir::Operation * o) {
+            if (!llvm::isa<ec::CallOp, ec::CallOpaqueOp>(o)) { return; }
+            if (o->getNumResults() != 1 || !o->getResult(0).use_empty()) { return; }
+            if (o->hasAttr("ctnative.statement")) { return; }
+            o->setAttr("ctnative.statement", mlir::UnitAttr::get(&getContext()));
+            ++markedStatements;
+            ++markedStatementCount;
+        });
         unsigned prunedVariableCount = 0;
         unsigned prunedOpCount = 0;
         for (bool changed = true; changed;) {
@@ -100,7 +114,8 @@ struct CTNativePruneDeadStoresPass
         // and people an explicit, release-build-independent report as well.
         if (report) {
             root->emitRemark() << "pruned " << prunedVariableCount << " variable(s) and "
-                               << prunedOpCount << " operation(s)";
+                               << prunedOpCount << " operation(s), marked " << markedStatementCount
+                               << " call(s) as statements";
         }
     }
 };

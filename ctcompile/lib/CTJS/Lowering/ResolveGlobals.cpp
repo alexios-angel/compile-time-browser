@@ -149,23 +149,68 @@ std::string describe(mlir::Operation * op) {
     return text;
 }
 
+// The two kinds of value this walk follows. They escape and are written
+// through in the same places, but they are different objects and a diagnostic
+// that names the wrong one sends a reader to the wrong line.
+enum class watched {
+    global_object, // globalThis / window, whose properties ARE the globals
+    compiler,      // a value that may be `Function`, which compiles source
+};
+
+// The constant string key of a property access, or empty.
+llvm::StringRef constant_key(mlir::Value key) {
+    auto constant = key.getDefiningOp<ConstantOp>();
+    if (!constant) { return {}; }
+    auto text = llvm::dyn_cast<StringAttr>(constant.getValue());
+    return text ? text.getValue() : llvm::StringRef{};
+}
+
 // CLAUSE 5: can anything in the module write the globals table other than a
 // ctjs.store_global this pass can count? Answers the reason if so.
 std::optional<std::string> dynamic_global_writes(mlir::ModuleOp module) {
     std::optional<std::string> reason;
-    llvm::DenseSet<mlir::Value> marked;
+    llvm::DenseMap<mlir::Value, watched> marked;
     llvm::SmallVector<mlir::Value> work;
-    const auto mark = [&](mlir::Value value) {
-        if (marked.insert(value).second) { work.push_back(value); }
+    const auto mark = [&](mlir::Value value, watched kind) {
+        if (marked.try_emplace(value, kind).second) { work.push_back(value); }
     };
+    const auto name_of = [](watched kind) {
+        return kind == watched::global_object ? "the global object"
+                                              : "a value that may be the run-time compiler";
+    };
+
+    // A FUNCTION THE IMPORTER REFUSED IS A FUNCTION THIS PASS CANNOT READ, and
+    // its `ctjs.store_global`s are not in the module to be counted. The census
+    // below would then see one store where the program has two and resolve a
+    // name that is rebound at run time - a call compiled to the WRONG function
+    // rather than a diagnostic. Whole-module bail, because nothing says which
+    // names the missing bodies touch.
+    if (auto skipped = module->getAttrOfType<mlir::ArrayAttr>("ctjs.skipped");
+        skipped && !skipped.empty()) {
+        return "the importer refused " + std::to_string(skipped.size()) +
+               " function(s) (ctjs.skipped), and a body this pass cannot read may store any global";
+    }
 
     module.walk([&](mlir::Operation * op) {
         if (reason) { return mlir::WalkResult::interrupt(); }
         if (auto load = mlir::dyn_cast<LoadGlobalOp>(op)) {
-            if (names_global_object(load.getName())) { mark(load.getResult()); }
+            if (names_global_object(load.getName())) {
+                mark(load.getResult(), watched::global_object);
+            }
             if (names_eval(load.getName())) {
                 reason = "a run-time compiler is reachable (" + describe(op) +
                          ") and the program it builds can store any global";
+            }
+        }
+        // `Function` IS NOT ONLY A GLOBAL NAME. It sits on every function's
+        // prototype as `.constructor`, so `(function(){}).constructor` is the
+        // compiler reached through a property read this pass would otherwise
+        // never look at. Following the value rather than refusing the key is
+        // what keeps `o.constructor === C` and `o.constructor.name` resolvable:
+        // those end at a comparison, and only a call or an escape answers.
+        if (auto get = mlir::dyn_cast<GetPropertyOp>(op)) {
+            if (constant_key(get.getKey()) == "constructor") {
+                mark(get.getResult(), watched::compiler);
             }
         }
         if (mlir::isa<DynamicImportOp>(op)) {
@@ -184,12 +229,13 @@ std::optional<std::string> dynamic_global_writes(mlir::ModuleOp module) {
     // the answer.
     while (!work.empty()) {
         const mlir::Value value = work.pop_back_val();
+        const watched kind = marked.find(value)->second;
         for (mlir::OpOperand & use : value.getUses()) {
             mlir::Operation * op = use.getOwner();
             if (auto branch = mlir::dyn_cast<mlir::BranchOpInterface>(op)) {
                 if (const std::optional<mlir::BlockArgument> argument =
                         branch.getSuccessorBlockArgument(use.getOperandNumber())) {
-                    mark(*argument);
+                    mark(*argument, kind);
                 }
                 continue;
             }
@@ -199,17 +245,18 @@ std::optional<std::string> dynamic_global_writes(mlir::ModuleOp module) {
             }
             if (mlir::isa<GetPropertyOp, GetProtoOp, IterableOp, ConvertOp, CellGetOp,
                           LoadUpvalueOp>(op)) {
-                for (const mlir::Value result : op->getResults()) { mark(result); }
+                for (const mlir::Value result : op->getResults()) { mark(result, kind); }
                 continue;
             }
             if (mlir::isa<SetPropertyOp, DeletePropertyOp, DeleteNamedOp, DefineAccessorOp,
                           SetProtoOp, CopyPropsOp>(op)) {
-                return "the global object is written through (" + describe(op) + ")";
+                return std::string{name_of(kind)} + " is written through (" + describe(op) + ")";
             }
-            // Passed, stored, captured, returned, thrown, or an operation this
-            // walk does not know: the object is out of sight and anything may
-            // write through it from here on.
-            return "the global object escapes into " + describe(op);
+            // Passed, stored, captured, returned, thrown, called, or an
+            // operation this walk does not know: the value is out of sight and
+            // anything may write through it - or compile through it - from
+            // here on.
+            return std::string{name_of(kind)} + " escapes into " + describe(op);
         }
     }
     return std::nullopt;

@@ -27,6 +27,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/rebound.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=REBOUND
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/surplus.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=SURPLUS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/global-object.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=DYNAMIC
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/skipped.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=SKIPPED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/constructor.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=CTOR
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/constructor-compared.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=COMPARED
 
 // --- THE POSITIVE CASE: the MVP program ---------------------------------------
 //
@@ -127,6 +130,43 @@
 // DYNAMIC-LABEL: ctjs.func @add$1(
 // DYNAMIC-NOT: call_direct
 
+// --- NEGATIVE: a function the IMPORTER refused ---------------------------------
+//
+// A body this pass cannot read may contain a `ctjs.store_global`, and the
+// census counts only the stores that are IN the module. With a refused
+// function present, a name stored once visibly and once inside that body looks
+// singly bound, and every call to it would be compiled to the wrong function
+// rather than diagnosed. So a non-empty `ctjs.skipped` unresolves the whole
+// module, exactly as a dynamic write does.
+//
+// SKIPPED-NOT: call_direct
+// SKIPPED: ctjs.globals = [
+// SKIPPED-SAME: reason = "the importer refused {{[0-9]+}} function(s) (ctjs.skipped), and a body this pass cannot read may store any global"
+// SKIPPED: ctjs.call %
+
+// --- NEGATIVE: the compiler reached through `.constructor` ----------------------
+//
+// `Function` is not only a global name: it is on every function's prototype as
+// `.constructor`, so this reaches the run-time compiler without ever loading
+// the global. The value is followed rather than the key refused, and here it
+// is CALLED, which is the escape that answers.
+//
+// CTOR-NOT: call_direct
+// CTOR: ctjs.globals = [
+// CTOR-SAME: reason = "a value that may be the run-time compiler escapes into ctjs.call{{[^"]*}}"
+// CTOR: ctjs.call %
+
+// --- POSITIVE: `.constructor` that only gets COMPARED still resolves ------------
+//
+// The point of following the value instead of refusing the key: a comparison
+// answers a primitive, so it stops the walk, and the module stays closed. If
+// this went red the fix would have cost every program that writes
+// `o.constructor === C`.
+//
+// COMPARED: ctjs.globals = [
+// COMPARED-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
+// COMPARED: ctjs.call_direct @add$1
+
 //--- closed.js
 function add(a, b) { return a + b; }
 function twice(x) { return add(x, x); }
@@ -148,3 +188,25 @@ var v = add(1);
 function add(a, b) { return a + b; }
 globalThis.x = 1;
 var w = add(1, 2);
+
+//--- skipped.js
+function add(a, b) { return a + b; }
+// A generator is a suspension point, which the importer refuses to lower, so
+// its body - and any store_global in it - never reaches this pass.
+function* gen() { yield 1; }
+var y = add(1, 2);
+
+//--- constructor.js
+function add(a, b) { return a + b; }
+function seed() { return 1; }
+// Called where it is read, so the CALL is the escape. Storing it into a global
+// first would also answer - as a store_global escape - but then this test
+// would be pinning the store rather than the thing it is about.
+seed.constructor("return 1");
+var z = add(1, 2);
+
+//--- constructor-compared.js
+function add(a, b) { return a + b; }
+function seed() { return 1; }
+var same = seed.constructor === seed.constructor;
+var z = add(1, 2);

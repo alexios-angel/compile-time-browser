@@ -1810,6 +1810,23 @@ LogicalResult CppEmitter::emitAssignPrefix(Operation &op) {
     break;
   case 1: {
     OpResult result = op.getResult(0);
+    // ctcompile: A CALL MARKED `ctnative.statement` IS PRINTED AS ONE.
+    // Declaring a variable for a call whose result nothing reads emits
+    // `double v13 = f();` with v13 never read, which is
+    // -Werror=unused-variable, and nothing downstream removes it: EmitC ops
+    // declare no memory effects, so `isOpTriviallyDead` is false for all of
+    // them, and --ctnative-prune-dead-stores deliberately will not erase a
+    // call, because a call may do anything.
+    //
+    // ON AN ATTRIBUTE, NOT ON `use_empty()` ITSELF. Upstream declares the
+    // variable in that case and its tests are kept here verbatim to measure
+    // the fork's distance from it; a silent behaviour change would rewrite
+    // eight of them. So the divergence is opt-in and carried in the IR, like
+    // `ctnative.deduced` and `ctnative.provenance` - one ctcompile pass sets
+    // it, one consumer reads it.
+    if (!shouldDeclareVariablesAtTop() && op.hasAttr("ctnative.statement")) {
+      break;
+    }
     if (shouldDeclareVariablesAtTop()) {
       if (failed(emitVariableAssignment(result)))
         return failure();
