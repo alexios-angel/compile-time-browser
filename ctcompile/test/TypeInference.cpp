@@ -269,6 +269,38 @@ int main() {
                 "  } {check}\n",
          "!ctnative.num<i32>"},
 
+        // --- THE CLOSED SHAPE (part 24 Phase 56A) ----------------------------
+        //
+        // An object literal used only through constant keys: a read of a key
+        // is the join of its stores, from undefined. Any other use opens the
+        // shape and every read is boxed.
+        {"a closed object's field reads as its store, or undefined",
+         five + "  %o = ctjs.create_object\n"
+                "  %k = ctjs.constant #ctjs.string<\"x\">\n"
+                "  ctjs.set_property %o[%k], %a\n"
+                "  %k2 = ctjs.constant #ctjs.string<\"x\">\n"
+                "  %r = ctjs.get_property %o[%k2] {check}\n",
+         "!ctnative.opt<!ctnative.num<i32>>"},
+        {"a key never stored reads as undefined",
+         "  %o = ctjs.create_object\n"
+         "  %k = ctjs.constant #ctjs.string<\"x\">\n"
+         "  %r = ctjs.get_property %o[%k] {check}\n",
+         "!ctnative.opt<!ctnative.bottom>"},
+        {"a dynamic key opens the shape: every read is boxed",
+         five + "  %o = ctjs.create_object\n"
+                "  %k = ctjs.constant #ctjs.string<\"x\">\n"
+                "  ctjs.set_property %o[%k], %a\n"
+                "  ctjs.set_property %o[%p], %a\n"
+                "  %r = ctjs.get_property %o[%k] {check}\n",
+         "!ctnative.boxed"},
+        {"an object that reaches a call has an open shape",
+         five + "  %o = ctjs.create_object\n"
+                "  %k = ctjs.constant #ctjs.string<\"x\">\n"
+                "  ctjs.set_property %o[%k], %a\n"
+                "  %c = ctjs.call %p(%o)\n"
+                "  %r = ctjs.get_property %o[%k] {check}\n",
+         "!ctnative.boxed"},
+
         // --- and the positive halves of the same operators ------------------
         {"`|` on two numbers is an int32", five + "  %r = ctjs.binary bitor %a, %b {check}\n",
          "!ctnative.num<i32>"},

@@ -39,6 +39,7 @@
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 
@@ -108,9 +109,24 @@ public:
     /// The index is built once, in initialize(), from the module being solved.
     mlir::LogicalResult initialize(mlir::Operation * top) override;
 
+    /// THE CLOSED SHAPE (part 24 Phase 56A, the typing half). An object
+    /// literal whose every use is a `get_property` or `set_property` with a
+    /// constant string key has a shape nothing else can change: no dynamic
+    /// key, no delete, no enumeration, no escape - it never reaches anything
+    /// that could add or remove a field. For such an object a read of key
+    /// `k` is the join of every store of `k` to it, starting from undefined
+    /// because nothing orders the read after a store. Any other use of the
+    /// object - a call, a return, a dynamic key, a `delete`, `in`, spread -
+    /// makes its shape open and every read of it `boxed`.
+    static bool hasClosedShape(mlir::Value object);
+
 private:
     llvm::StringMap<llvm::SmallVector<mlir::Value, 4>> globalStores_;
     bool globalsAreDynamic_ = false;
+    // (object value, key) -> the values ever stored under that key, for
+    // closed-shape objects only; built in initialize().
+    llvm::DenseMap<std::pair<mlir::Value, llvm::StringRef>, llvm::SmallVector<mlir::Value, 2>>
+        fieldStores_;
 
     /// ANYTHING THIS ANALYSIS DID NOT DERIVE IS `boxed`. Function parameters,
     /// values crossing a call boundary, and every operation the switch does not

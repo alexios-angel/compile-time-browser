@@ -241,9 +241,41 @@ mlir::Type staticResultType(mlir::Operation * op) {
 
 // --- the analysis ------------------------------------------------------------
 
+namespace {
+// The constant string a property key operand carries, or empty.
+llvm::StringRef constantKey(mlir::Value key) {
+    auto constant = key.getDefiningOp<ctjs::ConstantOp>();
+    if (!constant) { return {}; }
+    auto str = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
+    return str ? str.getValue() : llvm::StringRef{};
+}
+} // namespace
+
+bool TypeInference::hasClosedShape(mlir::Value object) {
+    if (!object.getDefiningOp<ctjs::CreateObjectOp>()) { return false; }
+    for (mlir::OpOperand & use : object.getUses()) {
+        mlir::Operation * user = use.getOwner();
+        if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
+            if (use.getOperandNumber() != 0 || constantKey(get.getKey()).empty()) { return false; }
+        } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
+            // The object as the TARGET only: stored as a value into another
+            // object it would escape, and that is not this rule's business.
+            if (use.getOperandNumber() != 0 || constantKey(set.getKey()).empty()) { return false; }
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
 mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     globalStores_.clear();
     globalsAreDynamic_ = false;
+    fieldStores_.clear();
+    top->walk([&](ctjs::SetPropertyOp store) {
+        if (!hasClosedShape(store.getObject())) { return; }
+        fieldStores_[{store.getObject(), constantKey(store.getKey())}].push_back(store.getValue());
+    });
     top->walk([&](mlir::Operation * op) {
         if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op)) {
             globalStores_[store.getName()].push_back(store.getValue());
@@ -384,8 +416,31 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         }
     }
 
-    const mlir::Type fromOperation =
-        globalKnown ? global : (numeric != nullptr ? numeric : staticResultType(op));
+    // THE CLOSED-SHAPE FIELD READ: the join over the stores of that key to
+    // that object, from undefined. Same mechanism as the global rule, with
+    // getLatticeElementFor subscribing this read to every store.
+    mlir::Type field{};
+    bool fieldKnown = false;
+    if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
+        if (hasClosedShape(get.getObject())) {
+            fieldKnown = true;
+            field = absentType(c);
+            const auto stores = fieldStores_.find({get.getObject(), constantKey(get.getKey())});
+            if (stores != fieldStores_.end()) {
+                for (mlir::Value stored : stores->second) {
+                    const TypeLattice * lattice =
+                        getLatticeElementFor(getProgramPointAfter(op), stored);
+                    if (lattice->getValue().isUninitialized()) { continue; }
+                    field = meet(field, lattice->getValue().getType());
+                }
+            }
+        }
+    }
+
+    const mlir::Type fromOperation = fieldKnown ? field
+                                     : globalKnown
+                                         ? global
+                                         : (numeric != nullptr ? numeric : staticResultType(op));
     for (TypeLattice * result : results) {
         const mlir::Type answer = fromOperation != nullptr ? fromOperation : BoxedType::get(c);
         propagateIfChanged(result, result->join(TypeValue{answer}));
