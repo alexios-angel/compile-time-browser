@@ -39,7 +39,7 @@ of the tooling already uses (`tools/check/*.py`, `ctbrowser_test()`, the devbox)
 
 **So: the OFFICIAL corpus, at a pinned commit, never vendored, plus a two-part
 runner of our own.** The corpus is the part that must not be reinvented; a
-runner is 700 lines.
+runner is 460 lines of C++ and 610 of Python.
 
 ---
 
@@ -50,6 +50,7 @@ runner is 700 lines.
 | `tools/fetch-test262.sh` | shallow-fetches tc39/test262 at a **pinned commit** into `~/.cache/ctbrowser/test262` (override with `TEST262_DIR`) and VERIFIES the hash. Outside the source tree, never committed, not synced by `remote-build.sh`. |
 | `ctbrowser/tools/ct262/ct262.cpp` | the HOST. One process, one test, one realm: `$262`, `print`, the harness preludes as separate programs, the strict transformation, the ES-module loader, and a one-line machine-readable failure report. |
 | `tools/check/test262.py` | the RUNNER. Frontmatter, mode selection, the process cap, classification, the per-directory table, the gate, and its own self-test. |
+| `tools/check/test262-baseline.sh` | the ten areas below, run one after another with identical flags. Sequential: four workers is the cap the whole devbox shares. |
 | `ctbrowser/test/test262/expectations.txt` | what the gate's subset does today. Written by `--update-expectations`, never by hand. |
 
 The pinned commit is **`771005236e88a909635104e03ba12559688c0172`** (tc39/test262
@@ -165,8 +166,10 @@ and are named here rather than discovered later:
    those score as failures. What it cannot separate is a ctjs PARSER gap from a
    genuine early error: both are "parse error", and both count as a pass.
 3. **A skipped test is not a failure but it is not a pass either.** The skip
-   count is in the table; the reasons are one command away
-   (`--list-skips`) and there are five of them.
+   count is in the table and the reasons are one command away (`--list-skips`):
+   six features the host cannot present, one harness include, one flag, and the
+   `intl402` paths the suite itself says to skip without ECMA-402. Only 64 tests
+   in the whole baseline were skipped, and every one names a HOST capability.
 
 ### Top failure causes
 
@@ -210,7 +213,10 @@ the whole graph, create every export cell, then evaluate post-order — over the
 filesystem, which is the shape `lib/Shell/browser.cpp` uses for a page. test262's
 specifiers are all `./name.js` beside the importer, so resolution is
 `std::filesystem` and nothing else. `_FIXTURE` files are dependencies, never
-tests, exactly as INTERPRETING.md requires.
+tests, exactly as INTERPRETING.md requires. Measured: `test/language/module-code`
+reads **261 of 599**, and `test/language/export` 1 of 3 — the loader is real, and
+what fails there is the engine's module semantics rather than the harness's
+ability to present a graph.
 
 ### The two leniencies, stated
 
@@ -248,6 +254,12 @@ directions were proved rather than assumed —
 | one `FAIL` line changed to `CRASH` | `REGRESSED ...: expected CRASH, got FAIL` | **1** |
 | a `FAIL` line added for a test that passes | `NOW PASSES ...: recorded as FAIL` | **1** |
 | the file as recorded | `gate ok: 341 tests match` | 0 |
+
+And through ctest, which is where it has to bite: with a `FAIL` line planted for
+a passing test, `ctest -R test262_gate` reports **`54 - test262_gate (Failed)`**;
+with the file restored, `100% tests passed`. `test262_selftest` and
+`test262_gate` together take **11.8 seconds**, and the whole suite with them
+registered is 118 tests green on the devbox (2026-09-02).
 
 ---
 
