@@ -1,0 +1,24 @@
+//===- dropped-attribute.pdll - the miscompile that reports success -------===//
+//
+// THE HOLE THE GUARD EXISTS FOR. mlir-pdll cannot parse an attribute literal of
+// a dialect it has not loaded, and it has no way to load ours - `--help` lists
+// -I and nothing else. What it does instead of failing is print
+//
+//   error: #"ctjs"<"binary_kind<add>"> : 'none' attribute created with
+//   unregistered dialect ...
+//
+// on stderr, EXIT 0, and emit a pattern in which `kind` is a bare
+// `%1 = attribute` - no constraint at all. The pattern below, built by an
+// unguarded mlir-pdll, matches `ctjs.binary sub` exactly as happily as `add`.
+//
+// check-pdll-guard.cmake asserts BOTH halves: that the raw tool accepts this
+// file (so the hole is real and the test is not vacuous), and that
+// utils/pdll-strict.sh refuses it.
+//
+//===----------------------------------------------------------------------===//
+#include "ctcompile/CTJS/IR/CTJSOps.td"
+
+Pattern OnlyAdd {
+  let root = op<ctjs.binary> {kind = attr<"#ctjs.binary_kind<add>">};
+  replace root with root;
+}

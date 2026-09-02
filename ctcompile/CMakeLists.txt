@@ -151,6 +151,46 @@ if(CTCOMPILE_ENABLE_MLIR)
   # out where CTCOMPILE_WARNING_OPTIONS is set; this is the half of it that
   # keeps the engine's bar where it is.
   include_directories(SYSTEM ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
+
+  # THE PDLL GUARD, INSTALLED AS THE TOOL ITSELF.
+  #
+  # mlir-pdll EXITS 0 WHILE DROPPING A CONSTRAINT IT COULD NOT PARSE. Measured
+  # here on 2026-09-02 against the pinned 23.1.0: an attribute literal of an
+  # out-of-tree dialect -
+  #   op<ctjs.binary> {kind = attr<"#ctjs.binary_kind<add>">}
+  # - prints "'none' attribute created with unregistered dialect" on stderr,
+  # EXITS 0, and emits a pattern with the constraint GONE, so it also matches
+  # `ctjs.binary sub`. A miscompile out of a build that reported success. The
+  # tool has no flag that registers a dialect; its only inputs are -I and ODS.
+  #
+  # And an operation name ODS does not know - `op<ctjs.binry>`, or the same
+  # name with the #include forgotten - is not diagnosed AT ALL: exit 0, empty
+  # stderr, a pattern that never fires.
+  #
+  # utils/pdll-strict.sh refuses both. It is put where the helper looks for the
+  # tool rather than added as an extra check beside it, so that a .pdll added
+  # in some other directory tomorrow is guarded too and no target can opt out:
+  # AddMLIR.cmake's _pdll_tablegen does `set(tablegen_exe
+  # ${MLIR_PDLL_TABLEGEN_EXE})` and then `COMMAND ${tablegen_exe} ...`, so a
+  # TWO-ELEMENT list is the wrapper followed by the real tool, and the same two
+  # entries become the command's file-level DEPENDS - which is what re-runs
+  # every pattern when the guard itself changes.
+  if(NOT MLIR_PDLL_TABLEGEN_EXE)
+    message(FATAL_ERROR "ctcompile: MLIR_PDLL_TABLEGEN_EXE is not set; MLIRConfig.cmake "
+                        "is expected to point it at the imported mlir-pdll target")
+  endif()
+  # It is exec'd directly, so it is committed mode 755 - a checkout that lost
+  # the bit fails the first pattern with "Permission denied", which is loud.
+  set(CTCOMPILE_PDLL_GUARD "${PROJECT_SOURCE_DIR}/utils/pdll-strict.sh")
+  # An INSTALLED MLIR names the imported target (`mlir-pdll`); a tree that
+  # already resolved it to a path hands the path straight through. Both have to
+  # end up as something the guard can exec.
+  if(TARGET ${MLIR_PDLL_TABLEGEN_EXE})
+    set(CTCOMPILE_PDLL_REAL "$<TARGET_FILE:${MLIR_PDLL_TABLEGEN_EXE}>")
+  else()
+    set(CTCOMPILE_PDLL_REAL "${MLIR_PDLL_TABLEGEN_EXE}")
+  endif()
+  set(MLIR_PDLL_TABLEGEN_EXE "${CTCOMPILE_PDLL_GUARD}" "${CTCOMPILE_PDLL_REAL}")
 endif()
 
 # THE DIALECT, ITS PASSES AND ITS DRIVERS, only when MLIR is on. Everything

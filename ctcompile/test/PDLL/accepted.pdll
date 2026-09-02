@@ -1,0 +1,27 @@
+//===- accepted.pdll - what the guard must let through --------------------===//
+//
+// A PATTERN OVER OUR OWN DIALECT, WRITTEN THE WAY THE BOUNDARY ALLOWS: the
+// operation comes from ODS (so its operand and result shape are checked), and
+// the kind test is a NATIVE constraint, because the attribute literal that
+// would express it is dropped - see dropped-attribute.pdll next door.
+//
+// This file is never compiled into the product. check-pdll-guard.cmake runs
+// utils/pdll-strict.sh over it and requires exit 0: a guard that refused
+// everything would pass the two negative cases and be worthless.
+//
+// The constraint body names a function nothing declares; that is deliberate and
+// harmless, because -x=mlir never compiles the C++ and the guard only ever asks
+// for the pattern.
+//
+//===----------------------------------------------------------------------===//
+#include "ctcompile/CTJS/IR/CTJSOps.td"
+
+Constraint IsAddKind(op: Op) [{
+  return ::ctcompile::test::isAddKind(rewriter, op);
+}];
+
+Pattern OnlyAdd {
+  let root = op<ctjs.binary>(lhs: Value, rhs: Value);
+  IsAddKind(root);
+  replace root with lhs;
+}

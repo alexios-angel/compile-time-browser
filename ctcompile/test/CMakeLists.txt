@@ -1315,3 +1315,49 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
     "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
     --mutate-drop-one-reason "--expect-failure=were dropped silently")
 endif()
+
+# ============================================================================
+# THE PDLL GUARD. Appended as ONE block, per part 23's Appendix A.3.
+#
+# A .pdll in this tree may now name a `ctjs` operation, because
+# lib/CTNative/Lowering/CMakeLists.txt puts our include roots on mlir-pdll's
+# search path. That is only safe with utils/pdll-strict.sh in front of the
+# tool, because mlir-pdll EXITS 0 on two things that silently change what a
+# pattern matches - an attribute literal of an unregistered dialect (which it
+# drops, after saying so on stderr) and an operation name ODS never heard of
+# (which it does not mention at all).
+#
+# The guard is installed as MLIR_PDLL_TABLEGEN_EXE, so every pattern in the
+# tree already goes through it and a passing build is some evidence. It is not
+# enough: the guard keys off text mlir-pdll prints, so a release that reworded
+# the diagnostic would turn it off silently. This test runs it over three
+# fixtures under PDLL/ that are never compiled into anything, and asserts the
+# RAW tool's behaviour beside the guard's - so the day upstream closes a hole,
+# the gate says which one rather than passing on.
+#
+# It costs six mlir-pdll runs, about 70 ms.
+if(CTCOMPILE_ENABLE_MLIR)
+  # MLIR_PDLL_TABLEGEN_EXE is the two-element list ctcompile/CMakeLists.txt
+  # made of it: the guard, then the real tool (a generator expression when MLIR
+  # was found as an installed package, which add_test expands).
+  list(LENGTH MLIR_PDLL_TABLEGEN_EXE _pdll_parts)
+  if(NOT _pdll_parts EQUAL 2)
+    message(FATAL_ERROR "ctcompile: MLIR_PDLL_TABLEGEN_EXE is '${MLIR_PDLL_TABLEGEN_EXE}', not "
+                        "the guard-and-tool pair ctcompile/CMakeLists.txt sets. The PDLL guard "
+                        "is not installed and no pattern in this tree is checked.")
+  endif()
+  list(GET MLIR_PDLL_TABLEGEN_EXE 0 _pdll_guard)
+  list(GET MLIR_PDLL_TABLEGEN_EXE 1 _pdll_real)
+  # THE SAME TWO ROOTS THE PATTERNS THEMSELVES GET. Comma-separated because a
+  # -D value carrying semicolons is one list argument CMake would split at the
+  # wrong level; check-pdll-guard.cmake splits it back.
+  string(REPLACE ";" "," _pdll_includes "${PROJECT_SOURCE_DIR}/include;${MLIR_INCLUDE_DIRS}")
+  add_test(NAME ctcompile_pdll_guard
+           COMMAND ${CMAKE_COMMAND}
+                   -DGUARD=${_pdll_guard}
+                   -DPDLL=${_pdll_real}
+                   -DDIR=${CMAKE_CURRENT_SOURCE_DIR}/PDLL
+                   "-DINCLUDES=${_pdll_includes}"
+                   -DWORK=${CMAKE_CURRENT_BINARY_DIR}
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/check-pdll-guard.cmake)
+endif()

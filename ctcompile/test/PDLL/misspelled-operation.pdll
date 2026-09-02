@@ -1,0 +1,23 @@
+//===- misspelled-operation.pdll - the name nothing checks ----------------===//
+//
+// THE SECOND HOLE, AND IT CONTRADICTS WHAT PruneDeadStores.pdll USED TO CLAIM.
+// Including the ODS does NOT make the operation name checked: `ctjs.binry`
+// below compiles with exit 0 and an EMPTY stderr, and the pattern it emits
+// never fires on anything. The include buys shape checking on a name ODS
+// recognises - `op<ctjs.unary>(a: Value, b: Value)` is a hard error quoting the
+// record - and nothing at all on a name it does not.
+//
+// A forgotten `#include` looks exactly the same from the outside, which is why
+// the guard's census is over the ODS the run actually loaded rather than over a
+// list of dialects somebody maintains.
+//
+// check-pdll-guard.cmake asserts that the raw tool accepts this file and that
+// utils/pdll-strict.sh names `ctjs.binry` and refuses it.
+//
+//===----------------------------------------------------------------------===//
+#include "ctcompile/CTJS/IR/CTJSOps.td"
+
+Pattern NeverFires {
+  let root = op<ctjs.binry>;
+  replace root with root;
+}

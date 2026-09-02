@@ -1,0 +1,71 @@
+//===- UnaryPlusIsIdentity.pdll - the first pattern over OUR dialect ------===//
+//
+// `+x` IS `x` ONCE ADMISSION HAS PROVED x A NUMBER, and this is the one arm of
+// LowerToEmitC's replace() that a PDLL pattern can state on its own.
+//
+// WHY ONLY THIS ONE - the boundary, in three sentences. A PDLL native
+// constraint is registered as a PLAIN FUNCTION POINTER and captures nothing,
+// so it cannot reach the pass's DataFlowSolver lattice or its side tables
+// (`shapes`, `accessKey`, `keyConstants`, `names`). Every other arm of
+// replace() builds an EmitC operation over `f64`/`i1`, which is only correct
+// AFTER retype() has rewritten every value's type from that lattice - and
+// after retype() a `ctjs.unary` has an f64 operand where its ODS declares
+// `CTJS_ValueType`, so the function no longer verifies and is no place to run
+// a pattern driver. This rule is the exception because it is type-preserving
+// at the ctjs level: it replaces a `!ctjs.value` result with a `!ctjs.value`
+// operand, so it runs BEFORE retype() on IR that still verifies, and it needs
+// no type from anywhere.
+//
+// WHAT MAKES IT SOUND IS WHERE IT RUNS, not what it matches. `+x` in general
+// is ToNumber: it can re-enter user code through valueOf and it can produce a
+// different value ("1" becomes 1). It is the identity only on a value already
+// proved numeric, which is exactly what admission::op()'s
+//   case UnaryKind::Plus: return numeric(u.getOperand(), "unary");
+// establishes - so this pattern is run by lowering::lower(), which is called
+// for accepted functions and nothing else. That is the same guarantee the C++
+// arm it replaces had; it is written down here because a pattern file looks
+// context-free and this one is not.
+//
+// AND IF IT DOES NOT FIRE, THE BUILD SAYS SO. PDL has no diagnostic on a
+// non-match, so replace() keeps an arm for UnaryKind::Plus that calls
+// report_fatal_error naming this file. A silently non-firing pattern is the
+// failure mode this project cares most about; it is not available here.
+//
+//===----------------------------------------------------------------------===//
+
+// OUR OWN ODS, WHICH IS THE POINT OF THE FILE. With it, `op<ctjs.unary>` is
+// checked for operand and result shape against CTJSOps.td - naming two
+// operands is a hard error quoting the record. It does NOT check the NAME
+// (measured: `op<ctjs.binry>` is exit 0 and silence), and it does not make
+// `attr<"#ctjs.unary_kind<plus>">` parse - that prints "'none' attribute
+// created with unregistered dialect", exits 0, and drops the constraint.
+// utils/pdll-strict.sh turns both into build failures; the kind test below is
+// native for the same reason.
+#include "ctcompile/CTJS/IR/CTJSOps.td"
+
+//===- The native constraint ----------------------------------------------===//
+
+// THE KIND, IN C++, BECAUSE THE ATTRIBUTE LITERAL IS NOT AVAILABLE. Writing
+// `op<ctjs.unary> {kind = attr<"#ctjs.unary_kind<plus>">}` compiles and emits
+// a pattern with NO constraint on `kind` at all, which would rewrite `-x` and
+// `!x` to their operands. A native constraint is not a workaround for that: it
+// is better, because `UnaryKind::Pluss` is a C++ compile error where the
+// literal's typo is silence.
+//
+// ONE CALL INTO A NAMED FUNCTION, which is the policy's rule for native
+// bodies - inline C++ in a pattern file is not clang-formatted, not covered by
+// -Wall -Wextra -Werror -Wconversion, and not separately testable. `rewriter`
+// is threaded through because mlir-pdll generates the wrapper with that
+// parameter whether the body wants it or not, and an unused parameter is a
+// build failure here.
+Constraint IsUnaryPlus(op: Op) [{
+  return ::ctcompile::ctnative::pdll::isUnaryPlus(rewriter, op);
+}];
+
+//===- The pattern --------------------------------------------------------===//
+
+Pattern UnaryPlusIsIdentity {
+  let root = op<ctjs.unary>(operand: Value);
+  IsUnaryPlus(root);
+  replace root with operand;
+}

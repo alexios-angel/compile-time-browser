@@ -47,7 +47,16 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
+// mlir-pdll's output CALLS mlir::parseSourceString: a declarative pattern in
+// this release is PDL text the generated constructor parses, not generated
+// code. Without this header the .inc fails with "no member named
+// 'parseSourceString'", which reads like a bad pattern and is a missing
+// include.
+#include "mlir/Parser/Parser.h"
+#include "mlir/Rewrite/FrozenRewritePatternSet.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringMap.h"
@@ -63,9 +72,35 @@ namespace ctcompile::ctnative {
 #define GEN_PASS_DEF_CTNATIVELOWERTOEMITC
 #include "ctcompile/CTNative/Transforms/Passes.h.inc"
 
+// --- the PDLL pattern's native body -------------------------------------------
+//
+// NOT IN THE ANONYMOUS NAMESPACE BELOW: the generated header spells it by
+// qualified name. See PruneDeadStores.cpp for the same shape and the same two
+// rules - one call into a named function, and the rewriter threaded through
+// whether the body wants it or not, because mlir-pdll emits the wrapper with
+// that parameter and -Wextra -Werror makes an unused one a build failure.
+namespace pdll {
+
+// THE KIND TEST FOR UnaryPlusIsIdentity.pdll. It is C++ rather than an
+// attribute literal in the pattern because the literal does not work: mlir-pdll
+// cannot parse `attr<"#ctjs.unary_kind<plus>">` without our dialect registered,
+// and it drops the constraint and exits 0 rather than saying so. The dyn_cast
+// is not redundant with `op<ctjs.unary>` - a native constraint receives an
+// `Operation *` and nothing in the generated wrapper has narrowed it.
+mlir::LogicalResult isUnaryPlus(mlir::PatternRewriter &, mlir::Operation * o) {
+    auto unary = llvm::dyn_cast<ctjs::UnaryOp>(o);
+    return mlir::success(unary && unary.getKind() == ctjs::UnaryKind::Plus);
+}
+
+} // namespace pdll
+
 namespace {
 
 namespace ec = mlir::emitc;
+
+// mlir-pdll's output, from UnaryPlusIsIdentity.pdll. Generated into the BUILD
+// tree by add_mlir_pdll_library - Principle 9: never committed, never a source.
+#include "UnaryPlusIsIdentity.h.inc"
 
 // --- representation -----------------------------------------------------------
 
@@ -918,12 +953,24 @@ constexpr llvm::StringLiteral kVectorHelpers =
     "}\n"
     "} // namespace ctnative";
 
+// THE DECLARATIVE RULE'S PATTERN SET, BUILT ONCE. Freezing a PDL pattern
+// compiles its bytecode, which is not something to redo per function - and
+// FrozenRewritePatternSet is what both greedy entry points take.
+mlir::FrozenRewritePatternSet declarativePatterns(mlir::MLIRContext * context) {
+    mlir::RewritePatternSet patterns(context);
+    populateGeneratedPDLLPatterns(patterns);
+    return patterns;
+}
+
 struct lowering {
     mlir::DataFlowSolver & solver;
     mlir::MLIRContext * context;
     mlir::ModuleOp module;
+    // UnaryPlusIsIdentity.pdll, frozen. Declared here so the member
+    // initialisation order matches the list below and -Wreorder stays quiet.
+    mlir::FrozenRewritePatternSet declarative;
     lowering(mlir::DataFlowSolver & s, mlir::MLIRContext * c, mlir::ModuleOp m)
-        : solver(s), context(c), module(m) {}
+        : solver(s), context(c), module(m), declarative(declarativePatterns(c)) {}
     llvm::StringSet<> globals; // numeric globals the emitted unit declares
     // ctjs symbol -> emitc symbol, decided for EVERY accepted function before
     // any is lowered, so a call lowered before its callee already names the
@@ -1352,7 +1399,18 @@ struct lowering {
             case UnaryKind::Neg:
                 swap(ec::UnaryMinusOp::create(b, where, f64, u.getOperand()));
                 return;
-            case UnaryKind::Plus: swap(u.getOperand()); return;
+            // `+x` IS GONE BY NOW, ERASED BY UnaryPlusIsIdentity.pdll in
+            // applyDeclarativeRules() above. This arm is not dead code and it
+            // is not llvm_unreachable: PDL has NO DIAGNOSTIC ON A NON-MATCH, so
+            // a pattern that silently stopped firing - a rename in CTJSOps.td,
+            // a guard the constraint gets wrong, a driver that never ran - would
+            // otherwise reach the default arm and abort with a message blaming
+            // admission. Naming the file that owed the rewrite is the whole
+            // difference between a bug report and a wild goose chase.
+            case UnaryKind::Plus:
+                llvm::report_fatal_error("ctnative lowering: a `ctjs.unary plus` reached replace() "
+                                         "- UnaryPlusIsIdentity.pdll was supposed to have erased "
+                                         "it, and PDL does not report a non-match");
             case UnaryKind::Not: {
                 mlir::Value v = u.getOperand();
                 if (!llvm::isa<mlir::IntegerType>(v.getType())) { v = truthyNumber(b, where, v); }
@@ -1440,9 +1498,42 @@ struct lowering {
         // scf ops stay for --convert-scf-to-emitc.
     }
 
+    // THE ONE DECLARATIVE STEP OF THIS PASS, AND WHERE IT HAS TO GO.
+    //
+    // UnaryPlusIsIdentity.pdll replaces `ctjs.unary plus %x` with `%x`. It runs
+    // BEFORE retype() because that is the only window in which a PDL driver can
+    // touch this function at all: retype() sets every value's type to its
+    // carrier, and a `ctjs.unary` whose operand is f64 does not satisfy its own
+    // ODS (`CTJS_ValueType`), so from that line onwards the function does not
+    // verify and no driver may be pointed at it. Before it, the rewrite is
+    // `!ctjs.value` for `!ctjs.value` and the IR stays valid throughout.
+    //
+    // applyOpPatternsGreedily AND NOT applyPatternsGreedily, with the worklist
+    // seeded by name. Every greedy entry point "performs simple dead-code
+    // elimination before attempting to match", no configuration option turns
+    // that off, and this pass has its own erasure discipline - eraseIfUnused()
+    // is fatal on an operation with uses, and PruneDeadStores already lost a
+    // test COUNT to the driver taking over an erasure the pass used to make
+    // itself. Handing the driver a list of `ctjs.unary` operations and
+    // ExistingOps strictness keeps its worklist to exactly those.
+    void applyDeclarativeRules(ctjs::FuncOp fn) {
+        llvm::SmallVector<mlir::Operation *> unaries;
+        fn.getBody().walk([&](ctjs::UnaryOp u) { unaries.push_back(u.getOperation()); });
+        if (unaries.empty()) { return; }
+        mlir::GreedyRewriteConfig config;
+        config.setStrictness(mlir::GreedyRewriteStrictness::ExistingOps)
+            .enableFolding(false)
+            .enableConstantCSE(false);
+        if (mlir::failed(mlir::applyOpPatternsGreedily(unaries, declarative, config))) {
+            llvm::report_fatal_error("ctnative lowering: the declarative pattern driver did not "
+                                     "converge over a function admission had accepted");
+        }
+    }
+
     void lower(ctjs::FuncOp fn) {
         const bool isEntry = fn.getSymName().starts_with("_script_$");
         mlir::Block & entry = fn.getBody().front();
+        applyDeclarativeRules(fn);
         retype(fn);
 
         // The signature: the parameters after the three implicit arguments,

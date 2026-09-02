@@ -19,11 +19,49 @@
 # ${MLIR_INCLUDE_DIRS} from ctcompile/CMakeLists.txt, but naming it here is
 # what the policy asks for and what stops a reorganisation upstairs breaking a
 # pattern file downstairs.
+#
+# AND IT REACHES OUR OWN, which is what lets a pattern say
+# `#include "ctcompile/CTJS/IR/CTJSOps.td"` and match `op<ctjs.unary>`. Two
+# roots, spelled the way ctcompile_target() spells them for C++ so that a .td
+# and a .h are included by the same project path:
+#
+#   ${PROJECT_SOURCE_DIR}/include   the hand-written .td files
+#   ${PROJECT_BINARY_DIR}/include   the generated ones, which mlir_tablegen
+#                                   writes into the mirror of the source tree
+#
+# The build-tree root has nothing in it that a .pdll needs TODAY - CTJSOps.td
+# includes only siblings - and it is here anyway, because the day a .td is
+# generated is not the day to discover the include path was half of one.
+#
+# WHAT THIS DOES AND DOES NOT BUY, measured rather than assumed (2026-09-02,
+# LLVM 23.1.0). It buys operand, result and attribute-shape checking on an
+# operation ODS recognises: `op<ctjs.unary>(a: Value, b: Value)` is a hard
+# error quoting the record in CTJSOps.td. It does NOT buy a check on the NAME -
+# `op<ctjs.binry>` compiles with exit 0 and an empty stderr - and it does not
+# make an attribute LITERAL of our dialect parse; that one prints an error and
+# still exits 0, with the constraint dropped. utils/pdll-strict.sh, installed
+# as MLIR_PDLL_TABLEGEN_EXE in ctcompile/CMakeLists.txt, is what turns both of
+# those into build failures. Without it this include path would be a licence to
+# write a pattern that silently matches the wrong thing.
+set(CTCOMPILE_PDLL_INCLUDES
+  ${MLIR_INCLUDE_DIRS}
+  ${PROJECT_SOURCE_DIR}/include
+  ${PROJECT_BINARY_DIR}/include)
+
 add_mlir_pdll_library(CTNativePruneDeadStoresPDLLIncGen
   PruneDeadStores.pdll
   PruneDeadStores.h.inc
   EXTRA_INCLUDES
-    ${MLIR_INCLUDE_DIRS})
+    ${CTCOMPILE_PDLL_INCLUDES})
+
+# THE SECOND PATTERN, AND THE FIRST ONE OVER OUR OWN DIALECT. `+x` where x is
+# already proved a number is x - see UnaryPlusIsIdentity.pdll for why that is
+# the one arm of LowerToEmitC's replace() a capture-free pattern can state.
+add_mlir_pdll_library(CTNativeUnaryPlusPDLLIncGen
+  UnaryPlusIsIdentity.pdll
+  UnaryPlusIsIdentity.h.inc
+  EXTRA_INCLUDES
+    ${CTCOMPILE_PDLL_INCLUDES})
 
 # The native tier's lowering: proved CTJS -> EmitC over plain C++ types. Links
 # the analyses it consults and the dialects it emits into; nothing here names a
@@ -36,7 +74,8 @@ add_library(ctcompile-ctnative-lowering
 ctcompile_target(ctcompile-ctnative-lowering)
 add_dependencies(ctcompile-ctnative-lowering
   CTNativeTransformsPassIncGen
-  CTNativePruneDeadStoresPDLLIncGen)
+  CTNativePruneDeadStoresPDLLIncGen
+  CTNativeUnaryPlusPDLLIncGen)
 
 target_link_libraries(ctcompile-ctnative-lowering
   PUBLIC

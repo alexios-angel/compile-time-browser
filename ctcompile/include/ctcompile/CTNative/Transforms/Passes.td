@@ -41,9 +41,17 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
     Runs AFTER --ctjs-resolve-globals and --ctjs-lift-to-scf; a function that
     still carries `cf` branches is refused as unstructured.
   }];
+  // pdl AND pdl_interp ARE NOT AN EMITTED DIALECT, THEY ARE THE PATTERN'S
+  // RUNTIME. `+x` on a proved number is erased by UnaryPlusIsIdentity.pdll, and
+  // mlir-pdll does not compile a matcher: it emits PDL TEXT that MLIRParser
+  // parses when the pattern set is built, PDLToPDLInterp lowers, and a
+  // bytecode interpreter runs. Parsing that text needs both dialects loaded
+  // before the pass runs, which is what this list is for.
   let dependentDialects = [
     "::ctcompile::ctnative::CTNativeDialect",
     "::mlir::emitc::EmitCDialect",
+    "::mlir::pdl::PDLDialect",
+    "::mlir::pdl_interp::PDLInterpDialect",
     "::mlir::scf::SCFDialect"
   ];
 }

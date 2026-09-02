@@ -1783,9 +1783,15 @@ an opaque one — and the generated pattern **drops the constraint entirely**:
 
 That matches `ctjs.binary sub` as readily as `add` and rewrites it to
 `emitc.add`. A **silent miscompile from a build that succeeds**, with one line
-on stderr that Ninja does not treat as a failure. Every `BinaryKind`,
-`CompareKind`, `UnaryKind` and `ConvertKind` discrimination in `replace()` is
-this shape, which is why that switch cannot move.
+on stderr that Ninja does not treat as a failure.
+
+> **Corrected 2026-09-02 — see "PDLL over our own dialect" below.** The
+> attribute *literal* is indeed unusable, and that half stands. What does not
+> stand is the conclusion drawn from it. A **native constraint** discriminates
+> on the same enum, in C++ that the compiler checks, and it works today; and
+> the build no longer succeeds when the literal is used, because
+> `utils/pdll-strict.sh` refuses any run that printed a diagnostic. The reason
+> `replace()`'s switch cannot move is *the lattice*, not the attribute.
 
 **6. ODS arity does not check native signatures.** `emitc.call` declares
 `Variadic` results, so `op<emitc.call> -> (r: Type)` does not pin the count, and
@@ -1830,10 +1836,12 @@ for PDL.
 
 ### The boundary
 
-* **PDLL** — rewrites whose whole match is *upstream* operation names, operands
-  and results: EmitC and SCF cleanups after the lowering, and the
-  `canonicalize.mlir` patterns the dialect does not have yet. Not rewrites that
-  discriminate on a `ctjs` attribute, until `mlir-pdll` can load this dialect.
+* **PDLL** — rewrites whose whole match is operation names, operands and
+  results, *including this project's own operations*: EmitC and SCF cleanups
+  after the lowering, the `canonicalize.mlir` patterns the dialect does not have
+  yet, and any type-preserving `ctjs` rewrite that needs no lattice. A `ctjs`
+  **kind** is available too, through a native constraint — see the correction
+  below; only the attribute *literal* is not.
 * **An op INTERFACE** — the per-operation `if`-chains in `replace()` and
   `admission::op()`. This is the policy's own prescribed remedy and it is the
   right one, but PDLL is not the mechanism: a `CTNativeLowerable` interface with
@@ -1853,6 +1861,172 @@ the predicates read. **A PDLL `admission` would replace a named refusal with a s
 non-match**, which is a regression in precisely the property this project exists
 to protect. It stays C++, and the interface above is how its per-operation
 switch stops being a switch.
+
+## PDLL over our own dialect, and the guard that makes it safe
+
+The section above concluded that `mlir-pdll` "has no way to load an out-of-tree
+dialect" and therefore that no pattern may touch a `ctjs` operation. The first
+clause is true and the second does not follow. Measured on the devbox against
+the pinned LLVM 23.1.0 on 2026-09-02, there are **three** separate facts where
+the earlier spike saw one.
+
+### 1. Matching our operations already worked
+
+PDLL learns operations from **ODS**, not from a registered dialect. With
+`ctcompile/include` on the include path,
+
+```
+#include "ctcompile/CTJS/IR/CTJSOps.td"
+Pattern P { let root = op<ctjs.binary>; replace root with root; }
+```
+
+compiles, exits 0, and emits `operation "ctjs.binary"`. The include is load
+bearing for *shape*: `op<ctjs.unary>(a: Value, b: Value)` is a hard error —
+*"invalid number of operand groups for `ctjs.unary`; expected 1, but got 2"* —
+quoting the record in `CTJSOps.td`.
+
+`lib/CTNative/Lowering/CMakeLists.txt` now passes `${PROJECT_SOURCE_DIR}/include`
+and `${PROJECT_BINARY_DIR}/include` to every `add_mlir_pdll_library` beside
+`${MLIR_INCLUDE_DIRS}`, spelled the way `ctcompile_target()` spells them for
+C++, so a `.td` and a `.h` are included by the same project path.
+
+### 2. Two ways for `mlir-pdll` to succeed while lying — both now build failures
+
+**An attribute literal of our dialect is dropped.** As above: stderr says
+*"'none' attribute created with unregistered dialect"*, the exit status is
+**0**, and the emitted pattern's `kind` is a bare `%1 = attribute` with no
+constraint. `mlir-pdll --help` has no dialect-registration flag; its only inputs
+are `-I` and the ODS it parses.
+
+**An operation name ODS does not know is not diagnosed at all.** This one the
+earlier spike had backwards, and `PruneDeadStores.pdll` said so in a comment:
+
+```
+#include "ctcompile/CTJS/IR/CTJSOps.td"
+Pattern P { let root = op<ctjs.binry>; replace root with root; }
+```
+
+is **exit 0 with an empty stderr**. So is the same file with the `#include`
+deleted. The name is taken as an unchecked string and the pattern never fires.
+
+`ctcompile/utils/pdll-strict.sh` closes both. It is installed as
+`MLIR_PDLL_TABLEGEN_EXE` in `ctcompile/CMakeLists.txt` — the variable
+`AddMLIR.cmake`'s `_pdll_tablegen` reads — as the two-element list *(guard, real
+tool)*, so every `add_mlir_pdll_library` in the tree goes through it and no
+target can opt out. It does two things:
+
+1. runs the tool, and **fails the build on any diagnostic even at exit 0**;
+2. re-runs it with `--dump-ods` (which prints to *stderr*) and `-x=mlir`, and
+   fails if any `operation "…"` the emitted pattern names is absent from the
+   ODS the run actually loaded. No argument parsing: `-o`, `-d` and `-x` are
+   ordinary `cl::opt` scalars, so the copies appended after `"$@"` win.
+
+`test/check-pdll-guard.cmake` (ctest: `ctcompile_pdll_guard`, ~70 ms) runs it
+over three fixtures in `test/PDLL/` that nothing compiles, and asserts **both
+sides** of each: that the raw `mlir-pdll` accepts the two bad ones — so the day
+upstream closes a hole the gate says which — and that the guard refuses them,
+naming *"unregistered dialect"* and *"ctjs.binry"* respectively. The accepted
+fixture must pass and its output must contain `operation "ctjs.binary"`, so a
+guard that simply refused everything fails here.
+
+### 3. A native constraint is the substitute, and it is better
+
+`ctcompile/lib/CTNative/Lowering/UnaryPlusIsIdentity.pdll` is the first pattern
+in the tree over our own dialect: `+x` on a value admission has proved a number
+is `x`.
+
+```
+Constraint IsUnaryPlus(op: Op) [{
+  return ::ctcompile::ctnative::pdll::isUnaryPlus(rewriter, op);
+}];
+
+Pattern UnaryPlusIsIdentity {
+  let root = op<ctjs.unary>(operand: Value);
+  IsUnaryPlus(root);
+  replace root with operand;
+}
+```
+
+Unlike the literal, `UnaryKind::Pluss` here is a C++ compile error.
+`test/CTNative/Lowering/unary-plus.mlir` asserts that the pattern fires *and*
+that `ctjs.unary neg` in the next function is untouched — which is exactly what
+a dropped kind constraint would break.
+
+Both halves were falsified on the devbox rather than argued:
+
+* **The test has teeth.** Weakening `isUnaryPlus` to
+  `return mlir::success(unary != nullptr)` — the mutation a dropped attribute
+  literal would produce — and relinking `ctjs-opt` makes `unary_minus` vanish
+  from the output entirely (`grep -c unary_minus` → 0) and `FileCheck` exit 1.
+* **The guard stops a real build, not just its own test.** Rewriting the
+  pattern as
+  `op<ctjs.unary>(operand: Value) {kind = attr<"#ctjs.unary_kind<plus>">}`
+  and running `ninja CTNativeUnaryPlusPDLLIncGen` gives
+  `FAILED: … UnaryPlusIsIdentity.h.inc` — with `mlir-pdll`'s own
+  *"'none' attribute created with unregistered dialect"* above the guard's
+  refusal, and the guard's message stating that the tool had exited 0.
+
+(One process note, since it cost a suite run here: `tools/remote-build.sh`'s
+rsync preserves the local mtime, so a source edited *on the box* and then
+re-synced can be OLDER than the object built from the edit, and ninja skips the
+rebuild. Four native-pipeline gates failed against a binary still carrying the
+mutation. `touch` the file on the box after any hand edit there.)
+
+### Why that arm and no other in `replace()`
+
+Every other arm builds an EmitC operation over `f64`/`i1`, and that is only
+correct **after** `retype()` has rewritten each value's type from the
+`DataFlowSolver` lattice. Two things follow:
+
+* a native constraint captures nothing, so it cannot read the lattice or the
+  pass-local `shapes` / `accessKey` / `keyConstants` / `names`; and
+* after `retype()` a `ctjs.unary` has an `f64` operand where its ODS declares
+  `CTJS_ValueType`, so **the function no longer verifies** and is no place to
+  point a pattern driver at all.
+
+`UnaryKind::Plus` is the exception because it is type-preserving at the `ctjs`
+level — a `!ctjs.value` result replaced by a `!ctjs.value` operand — so it runs
+*before* `retype()` on IR that still verifies, and needs no type from anywhere.
+Its soundness comes from **where it runs**, not from what it matches: `+x` is
+`ToNumber` in general, and the identity only on a proved number, which
+`admission::op()` establishes before `lowering::lower()` is ever called. That is
+the same guarantee the C++ arm had.
+
+The driver is `applyOpPatternsGreedily` with the worklist seeded by name and
+`GreedyRewriteStrictness::ExistingOps`, not `applyPatternsGreedily`: every
+greedy entry point does dead-code elimination first, no option turns it off, and
+this pass has `eraseIfUnused()` as a fatal invariant. And because PDL reports
+nothing on a non-match, `replace()` keeps a `UnaryKind::Plus` arm that calls
+`report_fatal_error` naming the `.pdll` — a pattern that silently stopped firing
+would otherwise reach `default:` and blame admission.
+
+### Is a forked `ctjs-pdll` worth it? No.
+
+It would buy exactly one thing: `attr<"#ctjs.binary_kind<add>">` parsing, so a
+kind test could be spelled in the pattern instead of in a five-line C++
+function. Against that:
+
+* **`mlir-pdll`'s `main` is not a library entry point.** `MLIRPDLLAST`,
+  `MLIRPDLLCodeGen` and `MLIRPDLLODS` are exported, but the driver — the option
+  parsing, the include search, `--dump-ods`, `--split-input-file`, the depfile,
+  `--write-if-changed` — is `mlir-pdll.cpp` and is not installed. A fork is a
+  copy of that file, re-vendored at every LLVM bump.
+* **PDLL is already the most version-sensitive thing in the tree.**
+  `docs/LLVMUpgrade.md` says every ODS, PDLL and pass-generation construct must
+  be verified against the new release before it is relied on, and calls PDLL the
+  youngest of them. A forked front end makes the project's own tool the thing
+  that must be re-verified.
+* **The native constraint is not a workaround; it is the safer spelling.** A
+  typo in the enumerator is a compile error, a typo in the literal is silence.
+  Anything a constraint wants that an attribute cannot say — a use count, a
+  parent, a second operand's producer — is already available in it.
+* **The remaining gap is unreachable anyway.** The arms that would use a kind
+  literal are the ones that need the lattice, and a fork does not give a native
+  function a capture.
+
+The verdict holds unless upstream exposes the driver as a library, at which
+point the trade is worth re-measuring — and the guard stays either way, because
+an unchecked operation name is orthogonal to dialect registration.
 
 ## The ladder ahead
 
