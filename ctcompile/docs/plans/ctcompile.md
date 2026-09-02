@@ -1677,6 +1677,183 @@ name check cannot see: a helper that does not exist is already a compile error;
 an operation whose operands have drifted from its helper's parameters reads fine
 in both files.
 
+## The first PDLL pattern, and where the declarative boundary actually is
+
+Part 4 of the master plan sends "structural rewrites" to PDLL. Until now nothing
+in this tree had one, so the question of whether that instruction is the right
+one here had never been asked with a build behind it. One rule was converted and
+kept green; the interesting output is the list of things that could not follow
+it.
+
+### What was converted
+
+`--ctnative-prune-dead-stores` had two rules. The first — *an `emitc.call` or
+`emitc.call_opaque` whose single result nothing reads gets `ctnative.statement`,
+so the emitter prints `f(x);` rather than `double v = f(x);`* — is a match on
+operation structure and an attribute on the same operation, with no type
+conversion, no block surgery and no analysis. It is now
+`ctcompile/lib/CTNative/Lowering/PruneDeadStores.pdll`, compiled by `mlir-pdll`
+through `add_mlir_pdll_library` into the build tree.
+`test/CTNative/Lowering/unused-call.mlir` — which already pinned the marked
+call, the unmarked one, the emitted C++ and the count — passes **unchanged**.
+
+The second rule stayed C++. Erasing a write-only `emitc.variable` needs every
+*use* of a value classified, its users erased with it, and the whole run to a
+fixpoint; PDL matches structure, not use lists.
+
+The runners-up were weighed and rejected, each for a different reason, and the
+reasons are the map:
+
+* **`CTJSToRuntime`'s `RuntimeCallLowering`** is an `OpInterfaceRewritePattern`
+  that reads `getHelperID()` and edits the module's symbol table. PDL dispatches
+  on an operation *name*; it cannot match an interface and cannot call an
+  interface method. Converting it would replace one pattern with fifty.
+* **`CTJSToEmitC`** (the boxed tier) is **not** disqualified by a
+  `TypeConverter` — it does not use one, and neither does the native lowering.
+  It is disqualified by refusal diagnostics and by rebuilding a function body
+  through an `IRMapping`.
+* **`LowerToEmitC::replace()`** is the most pattern-shaped code in the project
+  and is the one that cannot be written at all. See below.
+
+### Six things PDLL could not express, with what happened
+
+**1. It cannot read a lattice.** PDLL's type vocabulary is `Attr`, `Op`, `Type`,
+`TypeRange`, `Value`, `ValueRange` and ODS constraints — nothing else:
+
+```
+error: unknown reference to constraint `DataFlowSolver`
+Constraint IsProvedNumber(v: Value, solver: DataFlowSolver) [{
+                                            ^
+```
+
+**2. It cannot reach pass-local state either.** `mlir-pdll` registers each
+native body as a plain function pointer —
+`registerConstraintFunction("HasExactlyOneResult", HasExactlyOneResultPDLFn)` —
+whose only parameters are the rewriter and the matched entities. Nothing
+captures. `PDLPatternConfig`, the one hook that travels with a pattern, offers
+only `notifyRewriteBegin/End(PatternRewriter &)` and never reaches a native
+function. So `shapes`, `accessKey`, `keyConstants` and `names` can only be
+reached from a global or a `thread_local`. Every predicate in `admission` is
+therefore native, and once every predicate is native the `.pdll` contributes the
+operation name and nothing else.
+
+**3. A non-match is silent, and there is no `otherwise`.**
+
+```
+error: undefined reference to `otherwise`
+```
+
+A native constraint *can* emit a diagnostic — it holds the rewriter and the
+operation — but constraints run only after the structural predicates have
+already matched, so the case that matters (this operation is not one we handle)
+never reaches C++. Worse, it is not even observable here: the release LLVM has
+no `--debug-only`, so `greedy-rewriter` tracing is unavailable
+(`ctjs-opt: Unknown command line argument '--debug-only=greedy-rewriter'`).
+
+**4. It cannot retype a value in place.** A matched `Type` is immutable; there
+is no assignment in a rewrite body:
+
+```
+d-retype.pdll:8:7: error: expected `;` after statement
+    r = type<"f64">;
+      ^
+```
+
+`LowerToEmitC::retype()` sets carriers on existing values *before* any operation
+is replaced, and the whole of the native lowering depends on that ordering. No
+part of it can be PDL.
+
+**5. `mlir-pdll` cannot parse this project's own attributes, and says so with
+exit status 0.** The policy's own example discriminates on a dialect enum
+(`attr<"#ctjs.convert_kind<to_boolean>">`). Try it:
+
+```
+error: #"ctjs"<"binary_kind<add>"> : 'none' attribute created with
+unregistered dialect...
+exit=0
+```
+
+`mlir-pdll` has no way to load an out-of-tree dialect, so the attribute becomes
+an opaque one — and the generated pattern **drops the constraint entirely**:
+
+```mlir
+%2 = attribute
+%4 = operation "ctjs.binary"(%0, %1) {"kind" = %2} -> (%3)
+```
+
+That matches `ctjs.binary sub` as readily as `add` and rewrites it to
+`emitc.add`. A **silent miscompile from a build that succeeds**, with one line
+on stderr that Ninja does not treat as a failure. Every `BinaryKind`,
+`CompareKind`, `UnaryKind` and `ConvertKind` discrimination in `replace()` is
+this shape, which is why that switch cannot move.
+
+**6. ODS arity does not check native signatures.** `emitc.call` declares
+`Variadic` results, so `op<emitc.call> -> (r: Type)` does not pin the count, and
+`root.0` is a `!pdl.range<value>` handed to a constraint declared
+`(result: Value)` — accepted, exit 0, no diagnostic, wrong only at run time.
+That is why `HasExactlyOneResult` is a native constraint on the operation.
+
+### And two things about the driver, which is not optional
+
+A PDL pattern can only run inside a pattern driver, and the greedy driver
+arrives with **folding, constant CSE and AGGRESSIVE region simplification on by
+default**. All three are switched off explicitly here; leaving them inherited
+would run upstream folding over this IR, which has crashed before.
+
+What cannot be switched off is its **dead-code elimination** — every greedy
+entry point "performs simple dead-code elimination before attempting to match
+any of the provided patterns", and `GreedyRewriteConfig` has no knob for it. An
+unused `emitc.variable` is allocate-only, so the driver started erasing one that
+this pass used to erase itself, and `prune-dead-stores.mlir` went red on the
+*count* while the output IR stayed byte-identical. The pass now attaches a
+`RewriterBase::Listener` and asks the driver what it removed. Relatedly, the
+driver reports no per-pattern hit count, so the `report` option recovers the
+marks it made by diffing the IR.
+
+### What it cost
+
+Measured on the devbox, compiling the same TU both ways with the same command
+line and relinking `ctjs-opt` against each:
+
+| | before | after |
+|---|---|---|
+| `PruneDeadStores.cpp.o` | 58,424 B | 105,400 B |
+| that TU's compile | 2.75 s | 3.27 s |
+| `ctjs-opt` | 12,270,824 B | 12,289,440 B (+0.15%) |
+
+`mlir-pdll` itself runs in 11 ms. The binary barely moves because the PDL
+interpreter was **already there**: `MLIRRewrite`'s interface libraries are
+`MLIRIR;MLIRSideEffectInterfaces;LLVM;MLIRPDLDialect;MLIRPDLInterpDialect;MLIRPDLToPDLInterp;MLIRRewritePDL`,
+and `PatternApplicator.cpp.o` has undefined references to `PDLByteCode`
+unconditionally. Anything here that already ran a pattern driver already paid
+for PDL.
+
+### The boundary
+
+* **PDLL** — rewrites whose whole match is *upstream* operation names, operands
+  and results: EmitC and SCF cleanups after the lowering, and the
+  `canonicalize.mlir` patterns the dialect does not have yet. Not rewrites that
+  discriminate on a `ctjs` attribute, until `mlir-pdll` can load this dialect.
+* **An op INTERFACE** — the per-operation `if`-chains in `replace()` and
+  `admission::op()`. This is the policy's own prescribed remedy and it is the
+  right one, but PDLL is not the mechanism: a `CTNativeLowerable` interface with
+  `carrierOf`/`emit` methods keeps the dispatch out of the pass exactly the way
+  `CTJS_RuntimeCallOpInterface` already does for the boxed tier, and unlike PDL
+  it can be given the solver and the side tables.
+* **C++, under the policy's own carve-outs** — `retype()` (in-place types), the
+  prune fixpoint (use lists), the importer, and **`admission` in full**.
+
+`admission` deserves the plainest possible statement. Its output is not a
+boolean: it is a refusal *string* naming the first thing that failed, and the
+tier is defined by that diagnostic — a `ctnative.not_native` reading
+*"field `class` is a C++ keyword or a macro of <cmath>/<cstdio>, so the
+generated struct would not compile"* is the product. PDLL has no `otherwise`,
+no way to order which predicate reports first, and no way to reach the lattice
+the predicates read. **A PDLL `admission` would replace a named refusal with a silent
+non-match**, which is a regression in precisely the property this project exists
+to protect. It stays C++, and the interface above is how its per-operation
+switch stops being a switch.
+
 ## The ladder ahead
 
 | phase | what | where |
