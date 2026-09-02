@@ -631,6 +631,32 @@ private:
     [[nodiscard]] node_id find_by_tag(std::string_view tag);
     // Every element with this tag, in document order; "*" means all of them.
     [[nodiscard]] std::vector<node_id> all_by_tag(std::string_view tag);
+    // Every element below `root` whose class attribute holds every one of
+    // `tokens`, in document order. An EMPTY `root` means the whole document and
+    // includes the document's own root element - which is `<html>` here, this
+    // tree builder having no Document node above it. A given `root` is an
+    // element and is excluded, a search being over descendants. An empty
+    // `tokens` matches nothing, which is what the ordered set parser leaves
+    // behind for an all-whitespace argument and what the DOM says the answer is.
+    [[nodiscard]] std::vector<node_id> all_by_class(node_id root,
+                                                    const std::vector<std::string> & tokens);
+    // Every HTML element in the document whose `name` attribute is exactly
+    // `name`, in document order. HTML only: `document.getElementsByName` is an
+    // HTML method and an SVG element carrying `name=` is not one of its answers.
+    [[nodiscard]] std::vector<node_id> all_by_name(std::string_view name);
+    // The DOM's ORDERED SET PARSER: split on ASCII whitespace - space, tab, LF,
+    // FF and CR, all five - and drop duplicates. `split` above splits on spaces
+    // alone, which is right for nothing in particular and wrong for a class
+    // attribute written across two lines.
+    [[nodiscard]] static std::vector<std::string> ordered_set(std::string_view text);
+    // A COLLECTION THAT IS LIVE, which is the whole difficulty. `getElementsBy*`
+    // returns a view of the document rather than a snapshot of it: a page takes
+    // the collection, appends an element, and reads `length` again expecting the
+    // new number. An array cannot answer that, so this is a Proxy whose `get`
+    // and `has` traps re-run `members` on every read - the same mechanism the
+    // `window` proxy already uses, and the reason a second one is cheap.
+    [[nodiscard]] value make_live_collection(context & cx,
+                                             std::function<std::vector<node_id>()> members);
     // Compound selectors only - see the definition.
     [[nodiscard]] std::vector<node_id> query(std::string_view selector, node_id within = node_id{});
     // The document's own live properties - title and activeElement.

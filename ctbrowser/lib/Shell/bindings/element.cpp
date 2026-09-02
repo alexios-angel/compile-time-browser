@@ -81,6 +81,38 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
             }
         }
         obj.set("tagName", cx.string(tag_name));
+        // `nodeName` AND `nodeType`, which every tree-walking page reads and
+        // this wrapper did not have. They are not aliases of `tagName`: a
+        // wrapper is made for text and comment nodes too - `childNodes` hands
+        // them out - and for those the tag is empty, so `tagName` is "" and
+        // `nodeName` is "#text". A page that switches on nodeType to decide
+        // whether to recurse got `undefined` and took no branch at all.
+        const node_kind kind = txn.kind(id).value_or(node_kind::element);
+        switch (kind) {
+        case node_kind::element:
+            obj.set("nodeName", cx.string(tag_name));
+            obj.set("nodeType", value::number(1));
+            break;
+        case node_kind::text:
+            obj.set("nodeName", cx.string("#text"));
+            obj.set("nodeType", value::number(3));
+            break;
+        case node_kind::comment:
+            obj.set("nodeName", cx.string("#comment"));
+            obj.set("nodeType", value::number(8));
+            break;
+        case node_kind::document:
+            obj.set("nodeName", cx.string("#document"));
+            obj.set("nodeType", value::number(9));
+            break;
+        }
+        // `localName` is the tag WITHOUT the case fold - `tagName` uppercases an
+        // HTML element's and localName never does, which is exactly the pair the
+        // suite compares against each other.
+        obj.set("localName",
+                kind == node_kind::element
+                    ? cx.string(std::string{atoms_->text(txn.tag(id).value_or(atom{}))})
+                    : value::undefined());
     }
     // `id`, `className`, `width` and `height` are NOT set here: they are
     // accessors over the attributes, installed once in install_element_views.
@@ -754,6 +786,26 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         if (!txn.has_attribute(id, name)) { return value::null(); }
         return c.string(std::string{txn.attribute_value(id, name)});
     });
+    // THE OTHER TWO HALVES OF THE ATTRIBUTE API. `setAttribute` and
+    // `getAttribute` were here and these were not, so an attribute could be
+    // written and read and never taken away: `el.removeAttribute('class')` was a
+    // TypeError, and `el.hasAttribute('disabled')` - the correct way to ask
+    // about a boolean attribute - did not exist at all, leaving `getAttribute()
+    // !== null` as the only spelling and undefined behaviour for the page that
+    // did not know it.
+    method("removeAttribute", [this](context & c, std::span<value> args) {
+        const node_id id = receiver(c);
+        if (!id) { return value::undefined(); }
+        (void)doc_->remove_attribute(id, atoms_->intern_lower(arg_string(c, args, 0)));
+        mutated();
+        return value::undefined();
+    });
+    method("hasAttribute", [this](context & c, std::span<value> args) {
+        const node_id id = receiver(c);
+        if (!id) { return value::boolean(false); }
+        return value::boolean(
+            doc_->read().has_attribute(id, atoms_->intern_lower(arg_string(c, args, 0))));
+    });
     method("setText", [this](context & c, std::span<value> args) {
         set_text(id_or_nothing(c), arg_string(c, args, 0));
         return value::undefined();
@@ -905,6 +957,16 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         // DESCENDANTS ONLY - the element itself is not one of its own results.
         walk(walk, from, false);
         return out;
+    });
+    // `element.getElementsByClassName(names)`, scoped to this subtree and LIVE
+    // for the same reason the document's is - see make_live_collection. The
+    // element is not one of its own results.
+    method("getElementsByClassName", [this](context & c, std::span<value> args) {
+        const node_id from = receiver(c);
+        const std::vector<std::string> tokens = ordered_set(arg_string(c, args, 0));
+        return make_live_collection(c, [this, from, tokens] {
+            return from ? all_by_class(from, tokens) : std::vector<node_id>{};
+        });
     });
     method("getBoundingClientRect", [this](context & c, std::span<value>) {
         const rect box = box_of(receiver(c));

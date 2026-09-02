@@ -283,6 +283,58 @@ void test_tree_navigation() {
     check(log[4] == "self=1", "remove() takes an element out itself: " + log[4]);
 }
 
+// getElementsByClassName and getElementsByName, and the property that makes
+// them hard: they are LIVE. A page takes the collection, mutates the document
+// and reads the collection AGAIN, expecting the new answer - which a snapshot
+// array cannot give, and which is what five of web-platform-tests' own
+// getElementsByClassName tests do. Asserted here rather than only there because
+// WPT is opt-in, needs a 40 MB corpus, and takes four minutes.
+void test_element_collections_are_live() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html class="a"><body class="a">
+      <p id=p1 class="x  y"></p><input id=i1 name=q><script>
+        const all = document.getElementsByClassName('a');
+        console.log('n=' + all.length + ',' + all[0].tagName + ',' + all[1].tagName);
+        // THE ORDERED SET PARSER: split on all five ASCII whitespace
+        // characters, a repeat asks for the class once, an all-whitespace
+        // argument matches nothing, and the match is case-SENSITIVE.
+        console.log('tokens=' + document.getElementsByClassName('\ty\n x\r').length +
+                    ',' + document.getElementsByClassName('x x').length +
+                    ',' + document.getElementsByClassName('   ').length +
+                    ',' + document.getElementsByClassName('X').length);
+        const made = document.createElement('span');
+        made.className = 'a';
+        document.body.appendChild(made);
+        console.log('grew=' + all.length);
+        document.body.removeAttribute('class');
+        console.log('shrank=' + all.length);
+        // What assert_array_equals checks before it compares one element.
+        console.log('own=' + all.hasOwnProperty(0) + ',' + all.hasOwnProperty(9) +
+                    ',' + ('length' in all) + ',' + (typeof all));
+        // Scoped to a subtree, and the element is never one of its own results.
+        console.log('scoped=' + document.body.getElementsByClassName('a').length);
+        // getElementsByName is keyed on the name ATTRIBUTE, never on id.
+        console.log('named=' + document.getElementsByName('q').length +
+                    ',' + document.getElementsByName('i1').length +
+                    ',' + document.getElementsByName('q')[0].id);
+        console.log('nodes=' + made.nodeName + ',' + made.nodeType + ',' + made.localName);
+        console.log('attr=' + document.getElementById('p1').hasAttribute('class') +
+                    ',' + document.body.hasAttribute('class'));
+      </script></body></html>)");
+    check(page.script_error().empty(), "the collection script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() == 9, "every line was logged");
+    check(log[0] == "n=2,HTML,BODY", "document order, elements only: " + log[0]);
+    check(log[1] == "tokens=1,1,0,0", "the ordered set parser: " + log[1]);
+    check(log[2] == "grew=3", "an appended element joins the collection: " + log[2]);
+    check(log[3] == "shrank=2", "a removed class leaves it: " + log[3]);
+    check(log[4] == "own=true,false,true,object", "the collection is array-shaped: " + log[4]);
+    check(log[5] == "scoped=1", "an element's search is its descendants: " + log[5]);
+    check(log[6] == "named=1,0,i1", "getElementsByName reads `name`: " + log[6]);
+    check(log[7] == "nodes=SPAN,1,span", "nodeName, nodeType and localName: " + log[7]);
+    check(log[8] == "attr=true,false", "hasAttribute after removeAttribute: " + log[8]);
+}
+
 // The canvas additions p5.js draws through: the transform family, ellipse and
 // Path2D. A Path2D is a RECORDING - built once and replayed by fill(path) or
 // stroke(path), which is how p5 draws every 2D shape.
@@ -2436,6 +2488,7 @@ int main() {
     test_text_alignment();
     test_reflected_attributes();
     test_tree_navigation();
+    test_element_collections_are_live();
     test_canvas_transform_and_paths();
     test_window_is_the_global_object();
     test_class_list_edits_the_attribute();

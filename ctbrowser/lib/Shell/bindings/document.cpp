@@ -9,7 +9,11 @@
 #include <ctbrowser/shell/bindings.hpp>
 #include <ctbrowser/shell/net/url.hpp>
 
+#include <algorithm>
+#include <charconv>
+#include <memory>
 #include <numbers>
+#include <optional>
 
 // dom_bindings' method bodies - the API a page's script actually calls.
 //
@@ -246,6 +250,20 @@ void dom_bindings::install_document(context & cx) {
         }
         list->set("length", value::number(static_cast<double>(found.size())));
         return value::object(list);
+    });
+    // LIVE, unlike getElementsByTagName above, and the difference is not
+    // decoration: five of the suite's own tests take the collection, mutate the
+    // document and read the collection again. See make_live_collection.
+    method("getElementsByClassName", [this](context & c, std::span<value> args) {
+        const std::vector<std::string> tokens = ordered_set(arg_string(c, args, 0));
+        return make_live_collection(c, [this, tokens] { return all_by_class(node_id{}, tokens); });
+    });
+    // `document.getElementsByName`, which is keyed on the `name` ATTRIBUTE and
+    // not on `id`. It is HTML's, not the DOM's - hence the document only, and
+    // hence HTML elements only.
+    method("getElementsByName", [this](context & c, std::span<value> args) {
+        const std::string name = arg_string(c, args, 0);
+        return make_live_collection(c, [this, name] { return all_by_name(name); });
     });
 
     method("querySelector", [this](context & c, std::span<value> args) {
@@ -634,6 +652,156 @@ node_id dom_bindings::find_by_tag(std::string_view tag) {
     };
     walk(walk, txn.root());
     return found;
+}
+
+namespace {
+
+// ASCII whitespace, as the DOM defines it: TAB, LF, FF, CR and SPACE. Not
+// `isspace`, which is locale-dependent and includes vertical tab.
+constexpr std::string_view dom_whitespace = "\t\n\f\r ";
+
+// A property key that is a whole non-negative integer and nothing else. "1x" is
+// not index 1, and neither is " 1", "+1" or "1.0" - a collection has to say no
+// to those or `hasOwnProperty` starts agreeing to keys nobody indexed.
+[[nodiscard]] std::optional<std::size_t> whole_index(std::string_view key) {
+    if (key.empty() || (key.size() > 1 && key.front() == '0')) { return std::nullopt; }
+    std::size_t at = 0;
+    const char * first = key.data();
+    const char * last = first + key.size();
+    const auto [stopped, failed] = std::from_chars(first, last, at);
+    if (failed != std::errc{} || stopped != last) { return std::nullopt; }
+    return at;
+}
+
+} // namespace
+
+std::vector<std::string> dom_bindings::ordered_set(std::string_view text) {
+    std::vector<std::string> out;
+    for (std::size_t at = 0; at < text.size();) {
+        const std::size_t start = text.find_first_not_of(dom_whitespace, at);
+        if (start == std::string_view::npos) { break; }
+        std::size_t end = text.find_first_of(dom_whitespace, start);
+        if (end == std::string_view::npos) { end = text.size(); }
+        std::string token{text.substr(start, end - start)};
+        // AN ORDERED *SET*: "a a" asks for one class twice, and a duplicate in
+        // the wanted list is a match requirement that is already satisfied.
+        if (std::ranges::find(out, token) == out.end()) { out.push_back(std::move(token)); }
+        at = end;
+    }
+    return out;
+}
+
+std::vector<node_id> dom_bindings::all_by_class(node_id root,
+                                                const std::vector<std::string> & tokens) {
+    if (tokens.empty()) { return {}; }
+    const auto txn = doc_->read();
+    const atom class_attribute = atoms_->intern("class");
+    std::vector<node_id> found;
+    const auto has_every = [&](node_id at) {
+        // CASE-SENSITIVE, which is the standards-mode rule. A quirks-mode
+        // document matches ASCII-case-insensitively; this engine does not carry
+        // the document's mode past the tree builder yet, so the standards answer
+        // is the one given - it is the right one for every document with a
+        // doctype, which is every document a test suite writes on purpose.
+        const std::vector<std::string> held = ordered_set(txn.attribute_value(at, class_attribute));
+        return std::ranges::all_of(tokens, [&](const std::string & want) {
+            return std::ranges::find(held, want) != held.end();
+        });
+    };
+    const auto walk = [&](auto && self, node_id at, bool include) -> void {
+        // ELEMENTS ONLY, and never the element the search started from: a search
+        // rooted at an element looks at its DESCENDANTS.
+        if (include && txn.tag(at).has_value() && has_every(at)) { found.push_back(at); }
+        for (const node_id child : txn.children(at)) { self(self, child, true); }
+    };
+    // THE DOCUMENT'S ROOT IS THE <html> ELEMENT, not a Document node - this
+    // tree builder makes `<html>` and calls set_root with it, and there is no
+    // node above it. So a document-wide search must INCLUDE the root, or
+    // `document.getElementsByClassName` silently cannot return the one element
+    // that is most often given a class. An element-rooted search excludes it.
+    walk(walk, root ? root : txn.root(), !root);
+    return found;
+}
+
+std::vector<node_id> dom_bindings::all_by_name(std::string_view name) {
+    const auto txn = doc_->read();
+    const atom key = atoms_->intern("name");
+    std::vector<node_id> found;
+    const auto walk = [&](auto && self, node_id at) -> void {
+        if (txn.tag(at).has_value() && txn.element_ns(at) == node_ns::html &&
+            txn.has_attribute(at, key) && txn.attribute_value(at, key) == name) {
+            found.push_back(at);
+        }
+        for (const node_id child : txn.children(at)) { self(self, child); }
+    };
+    walk(walk, txn.root());
+    return found;
+}
+
+// THE LIVE COLLECTION. Three things have to be true at once and only a proxy
+// gets all three: `length` is recomputed on every read, `collection[i]` is
+// recomputed on every read, and `collection.hasOwnProperty(i)` agrees with both
+// - which is exactly what `assert_array_equals` checks before it compares a
+// single element.
+//
+// `item` and `namedItem` are ordinary properties of the TARGET rather than
+// answers the trap fabricates, so they keep their identity across reads and so
+// the trap's fallback - an ordinary lookup on the target - finds them along with
+// everything Object.prototype provides.
+value dom_bindings::make_live_collection(context & cx,
+                                         std::function<std::vector<node_id>()> members) {
+    auto * target = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+    // Shared rather than copied into each trap: `members` walks the document, and
+    // three copies of the same walk is three chances for them to disagree.
+    const auto live = std::make_shared<std::function<std::vector<node_id>()>>(std::move(members));
+
+    const auto native = [&](std::string name, script::native_fn fn) {
+        return value::object(cx.allocate<script::native_object>(std::move(name), std::move(fn)));
+    };
+    target->set("item", native("item", [this, live](context & c, std::span<value> a) {
+                    const std::vector<node_id> found = (*live)();
+                    const double at = arg_number(a, 0);
+                    if (at < 0 || at >= static_cast<double>(found.size())) { return value::null(); }
+                    return wrap(c, found[static_cast<std::size_t>(at)]);
+                }));
+    target->set("namedItem", native("namedItem", [this, live](context & c, std::span<value> a) {
+                    const std::string want = arg_string(c, a, 0);
+                    const auto txn = doc_->read();
+                    const atom id = atoms_->intern("id");
+                    const atom name = atoms_->intern("name");
+                    for (const node_id at : (*live)()) {
+                        if (txn.attribute_value(at, id) == want ||
+                            txn.attribute_value(at, name) == want) {
+                            return wrap(c, at);
+                        }
+                    }
+                    return value::null();
+                }));
+
+    handler->set("get", native("get", [this, live](context & c, std::span<value> args) {
+                     if (args.size() < 2) { return value::undefined(); }
+                     const std::string key = c.to_string(args[1]);
+                     if (key == "length") {
+                         return value::number(static_cast<double>((*live)().size()));
+                     }
+                     if (const std::optional<std::size_t> at = whole_index(key)) {
+                         const std::vector<node_id> found = (*live)();
+                         return *at < found.size() ? wrap(c, found[*at]) : value::undefined();
+                     }
+                     return c.lookup_property(args[0], key);
+                 }));
+    handler->set("has", native("has", [live](context & c, std::span<value> args) {
+                     if (args.size() < 2) { return value::boolean(false); }
+                     const std::string key = c.to_string(args[1]);
+                     if (key == "length") { return value::boolean(true); }
+                     if (const std::optional<std::size_t> at = whole_index(key)) {
+                         return value::boolean(*at < (*live)().size());
+                     }
+                     return value::boolean(!c.lookup_property(args[0], key).is_undefined());
+                 }));
+    return value::object(
+        cx.allocate<script::proxy_object>(value::object(target), value::object(handler)));
 }
 
 } // namespace ctbrowser::shell
