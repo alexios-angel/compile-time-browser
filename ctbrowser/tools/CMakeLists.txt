@@ -33,3 +33,19 @@ foreach(tool ctbrowse ctdrive ctrun)
   # is what assembles the dist.
   set_property(GLOBAL APPEND PROPERTY CTBROWSER_DIST_TARGETS ctbrowser-tool-${tool})
 endforeach()
+
+# === test262 ===
+# ct262, the host shell the ECMAScript conformance suite is run through.
+#
+# APPENDED RATHER THAN ADDED TO THE `foreach` ABOVE, and not for the link line:
+# it is not a tool anybody types. `ctbrowse` opens a page and `ctdrive` is driven
+# over a socket, while this one runs ONE test262 file and exits, and is only ever
+# spawned by tools/check/test262.py - tens of thousands of times, one process per
+# test per mode. Listing it in that loop would say it is the same kind of thing.
+#
+# NOT IN CTBROWSER_DIST_TARGETS for the same reason: the Windows dist ships what
+# a user runs, and a conformance harness is not that.
+add_executable(ctbrowser-tool-ct262 "${CMAKE_CURRENT_SOURCE_DIR}/ct262/ct262.cpp")
+target_link_libraries(ctbrowser-tool-ct262 PRIVATE ctbrowser::ctbrowser)
+ctbrowser_target(ctbrowser-tool-ct262)
+set_target_properties(ctbrowser-tool-ct262 PROPERTIES OUTPUT_NAME ct262)
