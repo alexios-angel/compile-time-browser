@@ -1163,6 +1163,35 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
       COMMENT "Lowering ${name} through the native pipeline")
     add_custom_target(ctcompile-native-pipeline-${name} ALL DEPENDS "${_module}")
     ctcompile_add_native_unit(pipeline_${name} "${_module}" "${js}")
+    # PHASE 62½-E: the same module with the printing policy applied goes
+    # through the same gate (62½-D stays green), and the printing gate proves
+    # the rest: auto and pins pair up, the two files differ only in spelling,
+    # the byte counts are reported, and the pin mutation fails the build
+    # naming the JavaScript site (check-print-deduced.cmake).
+    set(_deduced "${CMAKE_CURRENT_BINARY_DIR}/${name}.pipeline.deduced.emitc.mlir")
+    set(_mutated "${CMAKE_CURRENT_BINARY_DIR}/${name}.pipeline.mutated.emitc.mlir")
+    add_custom_command(
+      OUTPUT "${_deduced}"
+      COMMAND $<TARGET_FILE:ctjs-opt> --ctnative-print-deduced "${_module}" --mlir-print-debuginfo -o "${_deduced}"
+      DEPENDS "${_module}" ctjs-opt
+      COMMENT "Applying the printing policy to ${name}")
+    add_custom_command(
+      OUTPUT "${_mutated}"
+      COMMAND $<TARGET_FILE:ctjs-opt> "--ctnative-print-deduced=mutate=1" "${_module}" --mlir-print-debuginfo -o "${_mutated}"
+      DEPENDS "${_module}" ctjs-opt
+      COMMENT "Mutating one pin in ${name}")
+    add_custom_target(ctcompile-native-deduced-${name} ALL DEPENDS "${_deduced}" "${_mutated}")
+    ctcompile_add_native_unit(pipeline_${name}_deduced "${_deduced}" "${js}")
+    add_test(NAME ctcompile_print_deduced_${name}
+             COMMAND ${CMAKE_COMMAND}
+                     -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
+                     -DPLAIN=${_module}
+                     -DDEDUCED=${_deduced}
+                     -DMUTATED=${_mutated}
+                     -DCXX=${CMAKE_CXX_COMPILER}
+                     -DWORK=${CMAKE_CURRENT_BINARY_DIR}
+                     -DNAME=${name}
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/check-print-deduced.cmake)
   endfunction()
   # numbers and booleans, no functions
   ctcompile_add_native_pipeline(numeric "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline-fixture.js")

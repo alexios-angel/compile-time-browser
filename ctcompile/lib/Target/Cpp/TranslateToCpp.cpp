@@ -1813,6 +1813,17 @@ LogicalResult CppEmitter::emitAssignPrefix(Operation &op) {
     if (shouldDeclareVariablesAtTop()) {
       if (failed(emitVariableAssignment(result)))
         return failure();
+    } else if (op.hasAttr("ctnative.deduced")) {
+      // ctcompile Stage 53E: `auto` is an ATTRIBUTE, not a type. The policy
+      // pass (--ctnative-print-deduced) marks a declaration whose initialiser
+      // fixes its type; the IR keeps the proved type, and this is the one
+      // consumer that prints `auto` for it. Stage 53F pins the deduction
+      // right after the statement - see emitOperation.
+      if (hasDeferredEmission(result.getDefiningOp()))
+        return success();
+      if (hasValueInScope(result))
+        return op.emitError("result variable for the operation already declared");
+      os << "auto " << getOrCreateName(result) << " = ";
     } else {
       if (failed(emitVariableDeclaration(result, /*trailingSemicolon=*/false)))
         return failure();
@@ -1897,6 +1908,39 @@ LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
            emitc::VerbatimOp>(op);
 
   os << (trailingSemicolon ? ";\n" : "\n");
+
+  // ctcompile Stage 53F: every deduction is pinned by a static_assert that
+  // names the JavaScript site, so a C++ compiler that deduces differently
+  // from ctcompile fails the build there instead of running something else.
+  // `ctnative.pinned` overrides the pinned type; the policy pass sets it only
+  // under its mutation option, which is how the gate proves the pin bites.
+  // CTCOMPILE_PIN is defined by the policy pass at the top of the module and
+  // is empty under -DCTCOMPILE_NO_TYPE_PINS.
+  if (trailingSemicolon && op.getNumResults() == 1 &&
+      op.hasAttr("ctnative.deduced") && !shouldDeclareVariablesAtTop()) {
+    Type pinned = op.getResult(0).getType();
+    if (auto override = op.getAttrOfType<TypeAttr>("ctnative.pinned"))
+      pinned = override.getValue();
+    // The importer fuses a NameLoc with the FileLineColLoc of the JavaScript
+    // site; the first file location found, at any depth, is the site.
+    FileLineColLoc site;
+    op.getLoc()->walk([&](Location l) {
+      if (!site)
+        if (auto file = dyn_cast<FileLineColLoc>(l))
+          site = file;
+      return site ? WalkResult::interrupt() : WalkResult::advance();
+    });
+    os << "CTCOMPILE_PIN(" << getOrCreateName(op.getResult(0)) << ", \"";
+    if (site)
+      os << site.getFilename().getValue() << ":" << site.getLine() << ":"
+         << site.getColumn();
+    else
+      os << "unknown";
+    os << "\", ";
+    if (failed(emitType(op.getLoc(), pinned)))
+      return failure();
+    os << ");\n";
+  }
 
   return success();
 }

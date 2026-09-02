@@ -48,4 +48,38 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
   ];
 }
 
+def CTNativePrintDeduced : Pass<"ctnative-print-deduced", "mlir::ModuleOp"> {
+  let summary = "Mark the declarations the emitter may print as `auto`, each pinned by a static_assert";
+  let description = [{
+    Part 24 Stage 53E, the printing policy, and Stage 53F, the pins; turned
+    on at Phase 62½-E, against a module that already compiles and runs with
+    every type printed. `auto` is an ATTRIBUTE, not a type: this pass sets
+    `ctnative.deduced` on each single-result operation that is printed as a
+    declaration with an initialiser and whose initialiser fixes the type -
+    arithmetic, comparison, cast, a call of a generated function, the logical,
+    bitwise and conditional ops. The IR keeps the proved type on every value;
+    the forked TranslateToCpp is the one consumer, printing `auto` for the
+    declaration and `CTCOMPILE_PIN(name, "site", type);` after it.
+
+    The never-deduce list (53E) is what this pass does NOT mark: a constant
+    (`auto x = 0;` is int, a JavaScript number is double), a load (`auto x =
+    *p;` copies, `auto & x = *p;` does not, and which one a line means is
+    Phase 55's question), a variable declaration (no initialiser), an opaque
+    call (the standard-library boundary prints its result type), and anything
+    inside an emitc.expression (printed inline, never declared).
+
+    The pin macro is a static_assert on decltype naming the JavaScript site,
+    defined at the top of the module after the includes and empty under
+    -DCTCOMPILE_NO_TYPE_PINS. `mutate=N` pins the Nth deduced double as
+    int32_t instead; the emitted file must then fail to build naming the
+    site, which is the gate that proves the pins bite. A mutation that lands
+    on nothing is a pass failure, not a silent pass.
+  }];
+  let options = [
+    Option<"mutate", "mutate", "unsigned", /*default=*/"0",
+           "Stage 53F's mutation gate: pin the Nth deduced double as int32_t so the file fails to build naming its site">
+  ];
+  let dependentDialects = ["::mlir::emitc::EmitCDialect"];
+}
+
 #endif // CTCOMPILE_CTNATIVE_TRANSFORMS_PASSES_TD

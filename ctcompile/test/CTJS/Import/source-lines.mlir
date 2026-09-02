@@ -42,11 +42,11 @@ function first(a) {
 // and the third pattern would then have nothing left to match. That failure
 // reads as "the column is missing" when the column is present and the pattern
 // was greedy.
-// CHECK-DAG: loc("first":23:
-// CHECK-DAG: loc("first":24:
+// CHECK-DAG: loc("{{[^"]*}}source-lines.mlir":23:
+// CHECK-DAG: loc("{{[^"]*}}source-lines.mlir":24:
 
 // AND THE COLUMNS DIFFER WITHIN A LINE. On line 25, `n + 2` and the assignment
 // to `m` are not the same place; a table that got the line right and the column
 // wrong would satisfy the checks above and still be too coarse to step through.
-// CHECK-DAG: loc("first":25:13
-// CHECK-DAG: loc("first":25:15
+// CHECK-DAG: loc("{{[^"]*}}source-lines.mlir":25:13
+// CHECK-DAG: loc("{{[^"]*}}source-lines.mlir":25:15

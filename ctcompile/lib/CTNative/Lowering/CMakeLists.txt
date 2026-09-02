@@ -3,7 +3,8 @@
 # runtime symbol, and part 24 §1.2 is why - the output of this pass links no
 # ctbrowser library at all.
 add_library(ctcompile-ctnative-lowering
-  LowerToEmitC.cpp)
+  LowerToEmitC.cpp
+  PrintDeduced.cpp)
 ctcompile_target(ctcompile-ctnative-lowering)
 add_dependencies(ctcompile-ctnative-lowering CTNativeTransformsPassIncGen)
 

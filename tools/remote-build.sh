@@ -91,6 +91,7 @@ repo_root=$(git rev-parse --show-toplevel)
 # "playwright not installed" about a venv that was there a minute ago.
 rsync -az --delete \
   --exclude '.git/' \
+  --exclude '.claude/' \
   --exclude 'build*/' \
   --exclude 'tools/clang-std-embed/' \
   --exclude 'tools/.venv/' \

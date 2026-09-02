@@ -197,8 +197,12 @@ struct function_importer {
         // THE OLD SPAN IS THE FALLBACK RATHER THAN A REGRESSION: code_offsets
         // is empty when the debug tables were compiled out or the image
         // dropped its source, and a per-function span still beats nothing.
-        const mlir::StringAttr file =
-            mlir::StringAttr::get(context, proto.name.empty() ? "<anonymous>" : proto.name);
+        // THE FILE SLOT NAMES THE SOURCE the program came from - the program
+        // id, which ctjs-translate sets to its input's buffer identifier - not
+        // the function: a Stage 53F pin, a resolve-globals diagnostic and a
+        // debugger all want `file.js:line:col`, and the function is already
+        // named by the symbol the op sits in.
+        const mlir::StringAttr file = mlir::StringAttr::get(context, program_id);
         if (lines != nullptr && at < proto.code_offsets.size()) {
             const std::uint32_t offset = proto.code_offsets[at];
             return mlir::FusedLoc::get(

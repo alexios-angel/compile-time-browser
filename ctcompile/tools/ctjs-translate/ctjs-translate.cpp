@@ -128,10 +128,14 @@ void register_translations() {
     const auto dialects = [](mlir::DialectRegistry & registry) {
         ctcompile::registerCTCompileDialects(registry);
     };
+    // THE SOURCE-MANAGER FORM, for the input's name: it becomes the program id
+    // and the file slot of every location, so a diagnostic or a Stage 53F pin
+    // reads `fixture.js:12:5` rather than a placeholder.
     static mlir::TranslateToMLIRRegistration from_source(
         "ctbrowser-js-to-ctjs", "compile JavaScript source and import it as CTJS MLIR",
-        [](llvm::StringRef text, mlir::MLIRContext * context) {
-            return import_source(text, "<source>", context,
+        [](const std::shared_ptr<llvm::SourceMgr> & sources, mlir::MLIRContext * context) {
+            const llvm::MemoryBuffer * buffer = sources->getMemoryBuffer(sources->getMainFileID());
+            return import_source(buffer->getBuffer(), buffer->getBufferIdentifier(), context,
                                  ctbrowser::script::script_kind::classic);
         },
         dialects);
@@ -143,8 +147,9 @@ void register_translations() {
     static mlir::TranslateToMLIRRegistration from_module(
         "ctbrowser-module-to-ctjs",
         "compile JavaScript source AS AN ES MODULE and import it as CTJS MLIR",
-        [](llvm::StringRef text, mlir::MLIRContext * context) {
-            return import_source(text, "<module>", context,
+        [](const std::shared_ptr<llvm::SourceMgr> & sources, mlir::MLIRContext * context) {
+            const llvm::MemoryBuffer * buffer = sources->getMemoryBuffer(sources->getMainFileID());
+            return import_source(buffer->getBuffer(), buffer->getBufferIdentifier(), context,
                                  ctbrowser::script::script_kind::module_);
         },
         dialects);
