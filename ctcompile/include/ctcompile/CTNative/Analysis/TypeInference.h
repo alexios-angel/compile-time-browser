@@ -120,6 +120,21 @@ public:
     /// makes its shape open and every read of it `boxed`.
     static bool hasClosedShape(mlir::Value object);
 
+    /// THE DENSE ARRAY (part 24 Phase 57A, the typing half). An array literal
+    /// whose every use is an `append` onto it, an index read of it, or a read
+    /// of its `length` is a `std::vector` and not a JavaScript array: nothing
+    /// can make it sparse, nothing can rename an element, and it never leaves
+    /// the frame. THE DEFAULT ARM IS THE PROOF - every other use, including
+    /// the two the plan names by hand (`a[i] = v`, which `a[100] = 1` turns
+    /// into a sparse array with `length` 101, and `delete a[0]`, which punches
+    /// a hole in one) opens the site and every read of it is `boxed`.
+    ///
+    /// For such an array a read of an index is the join of every appended
+    /// value, starting from undefined - because an index nothing appended,
+    /// and every index past the end, reads `undefined` - and a read of
+    /// `length` is a Number.
+    static bool isDenseVectorSite(mlir::Value array);
+
 private:
     llvm::StringMap<llvm::SmallVector<mlir::Value, 4>> globalStores_;
     bool globalsAreDynamic_ = false;
@@ -127,6 +142,15 @@ private:
     // closed-shape objects only; built in initialize().
     llvm::DenseMap<std::pair<mlir::Value, llvm::StringRef>, llvm::SmallVector<mlir::Value, 2>>
         fieldStores_;
+    // array value -> everything ever appended to it, in source order, for
+    // dense vector sites only; built in initialize() beside fieldStores_.
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> appends_;
+
+    /// The element type of a dense array: the join over everything appended to
+    /// it, from `undefined`. `op` is the operation asking, so every appended
+    /// value's lattice subscribes it and a store that widens later re-visits
+    /// the read.
+    mlir::Type elementTypeOf(mlir::Operation * op, mlir::Value array);
 
     /// ANYTHING THIS ANALYSIS DID NOT DERIVE IS `boxed`. Function parameters,
     /// values crossing a call boundary, and every operation the switch does not

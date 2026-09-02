@@ -273,3 +273,35 @@ function poke(v) { var x = +v; var y = x - 1; var z = x * 1; var w = x; w++; ret
 var nanBuf = new ArrayBuffer(8), nanBytes = new Uint8Array(nanBuf), nanF64 = new Float64Array(nanBuf);
 nanBytes[6] = 0xF4; nanBytes[7] = 0x7F;
 for (var payload = 0; payload < 4; payload++) { nanBytes[0] = payload; poke(nanF64[0]); }
+
+// DENSE ARRAYS - part 24 Phase 57A, checked against the interpreter rather
+// than against a lit. The inference claims a `vec<T>` for an array literal
+// whose every use is an append or a read, and claims the join of the appends
+// FROM UNDEFINED for every index read - so `a[7]` on a three-element array,
+// which the interpreter observes as `undefined`, is covered by the claim
+// rather than violating it. The recording is what settles that.
+function denseInts() { var a = [1, 2, 3]; return a[0] + a[2] + a.length; }
+denseInts();
+function denseWidths() { var a = [1, 2.5]; return a[0] + a[1]; }
+denseWidths();
+function denseHole() { var a = [1, 2]; return a[7]; }
+denseHole();
+
+// AND A READ THROUGH A KEY NOTHING PROVED A NUMBER. This array is still a
+// dense site - a read through a computed key is a read - but `a["push"]` is a
+// FUNCTION, not an element, so the inference answers `boxed` unless the key
+// itself is proved numeric.
+//
+// THE ORACLE CANNOT SEE THAT GUARD, AND IT WAS MEASURED RATHER THAN ASSUMED.
+// A claim is per REGISTER and is the join over every value that ever occupied
+// it; the bytecode puts the array literal and the result of the read in the
+// SAME slot, so the claim is `boxed` from the array alone and stays sound with
+// the guard deleted. Measured on this function and on two rewrites of it. The
+// row in ctcompile/test/TypeInference.cpp is what bites: with the guard gone
+// it reports `!ctnative.opt<!ctnative.num<i32>>` where `!ctnative.boxed` is
+// the only sound answer. This stays for the coverage it does give - the dense
+// path, run against the interpreter.
+function denseNamed(k) { var a = [1, 2]; return a[k]; }
+denseNamed(0);
+denseNamed("length");
+denseNamed("push");

@@ -145,6 +145,10 @@ int main() {
 
     const std::string five = std::string{"  %a = ctjs.constant "} + kFive + "\n" +
                              "  %b = ctjs.constant " + kFive + "\n";
+    // The array rows need their own constant names: `five` spells %a and %b,
+    // and %a would collide with the array in the rows below.
+    const std::string ints = std::string{"  %i1 = ctjs.constant "} + kFive + "\n" +
+                             "  %i2 = ctjs.constant " + kFive + "\n";
 
     const std::vector<row> rows = {
         // --- literals, where the bound proof is the literal itself ----------
@@ -299,6 +303,86 @@ int main() {
                 "  ctjs.set_property %o[%k], %a\n"
                 "  %c = ctjs.call %p(%o)\n"
                 "  %r = ctjs.get_property %o[%k] {check}\n",
+         "!ctnative.boxed"},
+
+        // --- THE DENSE ARRAY (part 24 Phase 57A) -----------------------------
+        //
+        // WHY THESE ROWS EXIST AT ALL. The emitter hardcodes `vector<double>`
+        // and PrintDeduced::isDeducible excludes both `emitc.call_opaque` and
+        // `emitc.variable`, so nothing downstream ever prints the element type
+        // - a join that widened wrongly would still lower, still compile and
+        // still agree with the interpreter on the fixture. The element type is
+        // observable HERE and in the oracle corpus, and nowhere else.
+        {"a dense array literal is a vector of the join of its appends, from undefined",
+         ints + "  %arr = ctjs.create_array [] {check}\n"
+                "  ctjs.append %i1 to %arr\n"
+                "  ctjs.append %i2 to %arr\n",
+         "!ctnative.vec<!ctnative.opt<!ctnative.num<i32>>>"},
+        // TWO WIDTHS MERGE, THEY DO NOT UNION. Stage 53G normalises `num<i32>`
+        // and `num<f64>` into the wider number, so `[1, 2.5]` is a
+        // vector<double> and not a vector of a two-alternative variant.
+        {"two numeric widths in one array are the wider number, not a union",
+         ints + "  %h = ctjs.constant " + kOneAndAHalf +
+             "\n"
+             "  %arr = ctjs.create_array [] {check}\n"
+             "  ctjs.append %i1 to %arr\n"
+             "  ctjs.append %h to %arr\n",
+         "!ctnative.vec<!ctnative.opt<!ctnative.num<f64>>>"},
+        {"a literal's own inline elements count toward the element type too",
+         ints + "  %arr = ctjs.create_array [%i1] {check}\n",
+         "!ctnative.vec<!ctnative.opt<!ctnative.num<i32>>>"},
+        {"an index read is the element type - undefined among it, because a[7] is undefined",
+         ints + "  %arr = ctjs.create_array []\n"
+                "  ctjs.append %i1 to %arr\n"
+                "  %r = ctjs.get_property %arr[%i1] {check}\n",
+         "!ctnative.opt<!ctnative.num<i32>>"},
+        // `length` IS NEVER UNDEFINED and is never an i32 either: an array's
+        // length is a uint32, which does not fit one, and nothing here proves
+        // this array is short.
+        {"`length` on a dense array is a number, and an f64 rather than an i32",
+         ints + "  %arr = ctjs.create_array []\n"
+                "  ctjs.append %i1 to %arr\n"
+                "  %k = ctjs.constant #ctjs.string<\"length\">\n"
+                "  %r = ctjs.get_property %arr[%k] {check}\n",
+         "!ctnative.num<f64>"},
+
+        // --- AND THE FOUR NEGATIVE ROWS, which are why the rule is a proof ---
+        //
+        // An index STORE is the sparsity route part 24 Stage 57A names by
+        // hand: `a[100] = 1` gives `length` 101 with one element. It opens the
+        // site, so the literal and every read of it are boxed.
+        {"an index store opens the site: a[100] = 1 makes it sparse",
+         ints + "  %arr = ctjs.create_array []\n"
+                "  ctjs.append %i1 to %arr\n"
+                "  ctjs.set_property %arr[%i1], %i2\n"
+                "  %r = ctjs.get_property %arr[%i1] {check}\n",
+         "!ctnative.boxed"},
+        // A KEY NOTHING PROVED A NUMBER READS A PROPERTY, NOT AN ELEMENT:
+        // `a["push"]` is a function. The site is still dense - a read is a
+        // read - so only the key check stands between this and a claim of
+        // `opt<num<i32>>` for a function.
+        //
+        // THIS ROW IS THE ONLY GATE ON THAT GUARD, and the oracle is not, which
+        // was measured: a claim is per REGISTER, the bytecode puts the array
+        // literal and the read in one slot, and the join over the two is
+        // `boxed` whatever the read claims. Deleting the guard turns this row
+        // red with `!ctnative.opt<!ctnative.num<i32>>` and leaves every corpus
+        // in check-type-claims.cmake green.
+        {"a key nothing proved a number reads a property, and is boxed",
+         ints + "  %arr = ctjs.create_array []\n"
+                "  ctjs.append %i1 to %arr\n"
+                "  %r = ctjs.get_property %arr[%p] {check}\n",
+         "!ctnative.boxed"},
+        {"a read through a named key opens the site",
+         ints + "  %arr = ctjs.create_array [] {check}\n"
+                "  ctjs.append %i1 to %arr\n"
+                "  %k = ctjs.constant #ctjs.string<\"foo\">\n"
+                "  %r = ctjs.get_property %arr[%k]\n",
+         "!ctnative.boxed"},
+        {"an array that escapes into a global is not a vector",
+         ints + "  %arr = ctjs.create_array [] {check}\n"
+                "  ctjs.append %i1 to %arr\n"
+                "  ctjs.store_global \"g\", %arr\n",
          "!ctnative.boxed"},
 
         // --- and the positive halves of the same operators ------------------

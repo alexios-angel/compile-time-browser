@@ -73,7 +73,8 @@ enum class carrier {
     none,
     boolean,
     number,
-    structure
+    structure,
+    vector
 };
 
 // What C++ type carries a value of this ctnative type, per the table above.
@@ -89,7 +90,27 @@ carrier carrierOf(mlir::Type type) {
         // where the difference shows (equality) - the number rows' shape.
         if (llvm::isa<BoolType>(opt.getElementType())) { return carrier::boolean; }
     }
+    // PHASE 57A: A DENSE ARRAY IS A `std::vector<double>` AND NOTHING ELSE
+    // YET. The element carrier decides: `vector<bool>` is a bit-packed
+    // specialisation whose `operator[]` returns a proxy that aliases the
+    // container and converts differently from `bool` (part 24 Stage 57A says
+    // so by name), and a vector of anything with no carrier has none either.
+    // So only a numeric element has a representation here, and the refusal
+    // for the rest is named at the literal.
+    if (auto elements = llvm::dyn_cast<VecType>(type)) {
+        return carrierOf(elements.getElementType()) == carrier::number ? carrier::vector
+                                                                       : carrier::none;
+    }
     return carrier::none;
+}
+
+// The one C++ type a dense array lowers to. Spelled once: the emitted
+// declaration, the helper signatures and the lit test all have to agree, and
+// three copies of a string is how they stop agreeing.
+constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
+
+mlir::Type vectorCarrierType(mlir::MLIRContext * c) {
+    return ec::LValueType::get(ec::OpaqueType::get(c, kVectorType));
 }
 
 // Can this value's carrier be undefined? True for the two `opt` rows, whose
@@ -108,6 +129,7 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     case carrier::boolean: return mlir::IntegerType::get(c, 1);
     case carrier::number: return mlir::Float64Type::get(c);
     case carrier::structure:
+    case carrier::vector:
     case carrier::none: break;
     }
     llvm::report_fatal_error("ctnative lowering: asked for the C++ carrier of a value that has "
@@ -388,6 +410,85 @@ struct admission {
         return true;
     }
 
+    // PHASE 57A: A DENSE ARRAY IS A `std::vector<double>` BY VALUE.
+    // TypeInference::isDenseVectorSite is the proof - every use is an append
+    // onto it or a read of an index or of `length`, so nothing can make it
+    // sparse, nothing renames an element, and it never leaves the frame.
+    static bool isVectorSite(mlir::Value v) { return TypeInference::isDenseVectorSite(v); }
+
+    // WHY AN ARRAY LITERAL IS NOT A DENSE VECTOR: the first use that is not an
+    // append or a read, named by what it is. The two sparsity routes come
+    // first, because they are the ones part 24 Stage 57A names by hand and the
+    // ones a reader will not expect to be refused.
+    static std::string whyNotDense(mlir::Value array) {
+        for (mlir::OpOperand & use : array.getUses()) {
+            mlir::Operation * user = use.getOwner();
+            if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
+                if (use.getOperandNumber() == 0) {
+                    const llvm::StringRef key = keyOf(set.getKey());
+                    if (key == "length") {
+                        return "an array literal whose `length` is assigned - that resizes it, "
+                               "and a resize leaves holes no `std::vector` can hold";
+                    }
+                    if (key.empty()) {
+                        return "an array literal written through an index - `a[100] = 1` gives "
+                               "`length` 101 with one element, so density is not proved";
+                    }
+                    return ("an array literal given the named property `" + key + "`").str();
+                }
+                if (use.getOperandNumber() == 2) {
+                    return "an array literal that escapes - it is stored into another object";
+                }
+            }
+            if (llvm::isa<ctjs::DeletePropertyOp, ctjs::DeleteNamedOp>(user)) {
+                return "an array literal with an element deleted - `delete a[0]` punches a hole "
+                       "in it, so density is not proved";
+            }
+            if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
+                if (use.getOperandNumber() == 0) {
+                    const llvm::StringRef key = keyOf(get.getKey());
+                    if (key.empty() || key == "length") { continue; }
+                    return ("an array literal read through the named property `" + key + "`").str();
+                }
+            }
+            if (llvm::isa<ctjs::AppendOp>(user) && use.getOperandNumber() == 0) { continue; }
+            if (llvm::isa<mlir::scf::WhileOp, mlir::scf::YieldOp, mlir::scf::ConditionOp>(user)) {
+                return "an array literal that is loop-carried - more than one value reaches the "
+                       "variable that holds it (assigned again inside a loop, or on only one "
+                       "path before it)";
+            }
+            if (llvm::isa<ctjs::ReturnOp>(user)) {
+                return "an array literal that escapes - it is returned";
+            }
+            return ("an array literal that escapes - it reaches `" +
+                    user->getName().getStringRef() + "`")
+                .str();
+        }
+        return "an array literal that is not a dense vector";
+    }
+
+    // A string constant whose every use is the `length` key of a dense array
+    // lowers to nothing: the read becomes a call to the size helper.
+    //
+    // WITHOUT THIS ARM `counted()` REFUSES OUTRIGHT, and the reason is worth
+    // stating: isKeyOnlyString requires isClosedObject, which is false for an
+    // array, so the constant falls through to the ConstantOp arm and is
+    // refused as "a constant that is not a number, a boolean or undefined".
+    static bool isVectorKeyString(mlir::Operation * o) {
+        auto constant = llvm::dyn_cast_or_null<ctjs::ConstantOp>(o);
+        if (!constant || !llvm::isa<ctjs::StringAttr>(constant.getValue()) ||
+            constant.getResult().use_empty()) {
+            return false;
+        }
+        for (mlir::OpOperand & use : constant.getResult().getUses()) {
+            auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
+            if (!get || use.getOperandNumber() != 1 || !isVectorSite(get.getObject())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // WHY A LITERAL'S SHAPE IS OPEN: the first use that is not a get or a set
     // through a constant key on the literal itself, named by what it is. A
     // refusal that lists every route there is tells the reader nothing about
@@ -444,7 +545,7 @@ struct admission {
                    llvm::isa<ctjs::FuncOp>(arg.getOwner()->getParentOp()) && arg.getArgNumber() < 3;
         }
         mlir::Operation * o = v.getDefiningOp();
-        if (isDeclarationClosure(o) || isKeyOnlyString(o)) { return true; }
+        if (isDeclarationClosure(o) || isKeyOnlyString(o) || isVectorKeyString(o)) { return true; }
         if (o->getName().getStringRef() == "ub.poison") { return true; }
         return llvm::isa<ctjs::LoadGlobalOp>(o) && feedsOnlyDirectCallees(v);
     }
@@ -495,19 +596,64 @@ struct admission {
             }
             return true;
         }
+        if (auto array = llvm::dyn_cast<CreateArrayOp>(o)) {
+            if (!isVectorSite(array.getResult())) { return refuse(whyNotDense(array.getResult())); }
+            // ONE FRAME SLOT, WHICH IS OBLIGATION O-4. A literal made inside an
+            // `if` or a loop body would declare its vector inside that block
+            // and the storage would end at the closing brace; the function's
+            // own entry block is the only place a frame-scope declaration can
+            // go.
+            if (!llvm::isa<ctjs::FuncOp>(o->getParentOp()) || !o->getBlock()->isEntryBlock()) {
+                return refuse("an array literal created inside a branch or a loop - its storage "
+                              "has to be one frame slot (obligation O-4)");
+            }
+            if (carrierOf(typeOf(array.getResult())) != carrier::vector) {
+                auto elements = llvm::dyn_cast_or_null<VecType>(typeOf(array.getResult()));
+                const mlir::Type element = elements ? elements.getElementType() : mlir::Type{};
+                if (carrierOf(element) == carrier::boolean) {
+                    return refuse("an array of booleans - `std::vector<bool>` is a bit-packed "
+                                  "specialisation whose elements are a proxy, not a `bool`");
+                }
+                return refuse("an array whose elements are " + printed(element) + ", not numbers");
+            }
+            for (mlir::Value element : array.getElements()) {
+                if (!numeric(element, "array element")) { return false; }
+            }
+            return true;
+        }
+        if (auto push = llvm::dyn_cast<AppendOp>(o)) {
+            if (!isVectorSite(push.getArray())) {
+                return refuse("an append onto an array that is not a dense literal");
+            }
+            return numeric(push.getElement(), "array element");
+        }
         if (auto get = llvm::dyn_cast<GetPropertyOp>(o)) {
+            if (isVectorSite(get.getObject())) {
+                // `length` is `size()`, exactly, BECAUSE the site proof is what
+                // rules out a hole; every other key is an index, and the index
+                // has to be a number - `a[k]` with a string `k` reads a
+                // property, and `a["push"]` is a function.
+                if (keyOf(get.getKey()) == "length") { return true; }
+                return numeric(get.getKey(), "array index");
+            }
             if (!isClosedObject(get.getObject())) {
                 return refuse("a property read on an object that is not a closed-shape literal");
             }
             return true; // its result's carrier is checked with every other value
         }
         if (auto set = llvm::dyn_cast<SetPropertyOp>(o)) {
+            // An array literal written through is not a vector site at all, so
+            // the site's own diagnostic names the sparsity route rather than
+            // this one naming a closed shape the program never asked for.
+            if (set.getObject().getDefiningOp<CreateArrayOp>()) {
+                return refuse(whyNotDense(set.getObject()));
+            }
             if (!isClosedObject(set.getObject())) {
                 return refuse("a property write on an object that is not a closed-shape literal");
             }
             return true; // the value's carrier was checked at the object
         }
-        if (isKeyOnlyString(o)) { return true; }
+        if (isKeyOnlyString(o) || isVectorKeyString(o)) { return true; }
         if (auto load = llvm::dyn_cast<LoadGlobalOp>(o);
             load && feedsOnlyDirectCallees(load.getResult())) {
             return true;
@@ -657,7 +803,9 @@ struct admission {
             // neither has a carrier and neither needs one.
             if (isDeclarationClosure(o)) { return; }
             if (o->getName().getStringRef() == "ub.poison") { return; }
-            if (llvm::isa<ctjs::CreateObjectOp>(o) || isKeyOnlyString(o)) { return; }
+            if (llvm::isa<ctjs::CreateObjectOp>(o) || isKeyOnlyString(o) || isVectorKeyString(o)) {
+                return;
+            }
             if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o);
                 load && feedsOnlyDirectCallees(load.getResult())) {
                 return;
@@ -732,6 +880,44 @@ std::string cIdentifier(llvm::StringRef symbol) {
     return name;
 }
 
+// THE DENSE-ARRAY HELPERS - part 24 Phase 57A, emitted ONLY when the unit has
+// a vector site, because a preamble emitted unconditionally moves every byte
+// count the printing gate reports and every line the other lits pin.
+//
+// THREE OF THEM AND NO MORE. `push` and `size` are what the plan's rule names;
+// `at` is the one that has to exist rather than being `v[i]`, because
+// `a[7]` on a three-element array is `undefined` in JavaScript and undefined
+// behaviour in C++, and undefined is this tier's NaN. Every out-of-range,
+// fractional or negative index therefore answers NaN, which is EXACTLY what
+// the element type says it may be - the join starts from `undefined` for this
+// reason (TypeInference::elementTypeOf).
+//
+// EACH ONE UNDER ITS OWN PROVENANCE COMMENT, which is Phase 63 Step 7's rule
+// for a generated definition, and `inline` so no translation unit that
+// includes none of them warns about one.
+constexpr llvm::StringLiteral kVectorHelpers =
+    "// ctcompile: the dense-array helpers - part 24 Phase 57A\n"
+    "namespace ctnative {\n"
+    "// ctcompile: `a[i]`, whose out-of-range answer is undefined, which is NaN "
+    "here\n"
+    "inline double vec_at(const std::vector<double> & v, double i) {\n"
+    "  if (!(i >= 0.0) || i != std::trunc(i) ||\n"
+    "      i >= static_cast<double>(v.size())) {\n"
+    "    return NAN;\n"
+    "  }\n"
+    "  return v[static_cast<std::vector<double>::size_type>(i)];\n"
+    "}\n"
+    "// ctcompile: `a.length`, which is `size()` exactly - the site proof is "
+    "what rules out a hole\n"
+    "inline double vec_length(const std::vector<double> & v) {\n"
+    "  return static_cast<double>(v.size());\n"
+    "}\n"
+    "// ctcompile: one element of an array literal, in source order\n"
+    "inline void vec_push(std::vector<double> & v, double x) {\n"
+    "  v.push_back(x);\n"
+    "}\n"
+    "} // namespace ctnative";
+
 struct lowering {
     mlir::DataFlowSolver & solver;
     mlir::MLIRContext * context;
@@ -762,6 +948,14 @@ struct lowering {
     // no longer reads as a closed create_object.
     llvm::DenseMap<mlir::Operation *, std::string> accessKey; // get/set -> member name
     llvm::DenseSet<mlir::Operation *> keyConstants;           // constants that lower to nothing
+    // PHASE 57A. Decided while the IR is still ctjs, for collectShape's reason:
+    // by the time a read is replaced, the array it reads is already an
+    // emitc.variable and no longer reads as a dense create_array.
+    llvm::DenseSet<mlir::Operation *> vectorLengthReads;
+    llvm::DenseSet<mlir::Operation *> vectorIndexReads;
+    // Set by the first array lowered; the include and the helper preamble ride
+    // on it. An empty unit emits neither.
+    bool needsVector = false;
 
     mlir::Type classType(const shape & sh) {
         return ec::LValueType::get(ec::OpaqueType::get(context, sh.name));
@@ -794,6 +988,32 @@ struct lowering {
         llvm::sort(sh.fields, [](const auto & a, const auto & b) { return a.first < b.first; });
         shapeOf[object.getResult()] = static_cast<unsigned>(shapes.size());
         shapes.push_back(std::move(sh));
+    }
+
+    // The reads of one dense array, sorted into `length` and index, and the
+    // `length` key constants marked as lowering to nothing - exactly what
+    // collectShape does for a closed object's member names.
+    void collectVector(ctjs::CreateArrayOp array) {
+        needsVector = true;
+        for (mlir::Operation * user : array.getResult().getUsers()) {
+            auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+            if (!get) { continue; }
+            if (admission::keyOf(get.getKey()) == "length") {
+                vectorLengthReads.insert(user);
+                // AND THE KEY CONSTANT IS NOT MARKED, WHICH WAS MEASURED. The
+                // obvious thing here is `keyConstants.insert(...)`, so that
+                // replace() drops the `"length"` constant rather than swapping
+                // a NaN double in for it - which is what collectShape does for
+                // a member name. It makes no difference: the `vec_length` call
+                // built below takes the ARRAY and not the key, so whatever
+                // replace() leaves behind has no users and lower()'s own sweep
+                // erases it. Adding the line changed not one byte of the
+                // emitted C++ and no test could be made to fail without it, so
+                // it is not here.
+            } else {
+                vectorIndexReads.insert(user);
+            }
+        }
     }
 
     void finish() {
@@ -873,6 +1093,18 @@ struct lowering {
         mlir::Value notNaN = ec::CmpOp::create(b, where, i1, ec::CmpPredicate::eq, x, x);
         return ec::LogicalAndOp::create(b, where, i1, nonzero, notNaN);
     }
+    // ZERO RESULTS, AND THAT IS THE WHOLE POINT. A call with one result that
+    // nothing reads is declared as a variable by the emitter, which is
+    // -Werror=unused-variable on a file this tier promises compiles clean; the
+    // fork's `ctnative.statement` attribute exists for the calls that cannot
+    // avoid it, and --ctnative-prune-dead-stores deliberately will not erase a
+    // call to tidy up after one. A push has nothing to return, so it returns
+    // nothing.
+    void push(mlir::OpBuilder & b, mlir::Location where, mlir::Value into, mlir::Value element) {
+        ec::CallOpaqueOp::create(b, where, mlir::TypeRange{}, b.getStringAttr("ctnative::vec_push"),
+                                 mlir::ValueRange{into, element});
+    }
+
     mlir::Value libmCall(mlir::OpBuilder & b, mlir::Location where, llvm::StringRef fn,
                          mlir::ValueRange args) {
         return ec::CallOpaqueOp::create(b, where, mlir::TypeRange{mlir::Float64Type::get(context)},
@@ -920,6 +1152,13 @@ struct lowering {
             // below; everything else takes its carrier now.
             if (admission::isClosedObject(v)) { return; }
             const carrier c = carrierOf(typeOf(v));
+            // A DENSE ARRAY TAKES ITS OWN CARRIER, which is not one of the two
+            // scalars carrierType() can spell: `std::vector<double>`, by value,
+            // in this frame.
+            if (c == carrier::vector) {
+                v.setType(vectorCarrierType(context));
+                return;
+            }
             // NO CARRIER IS FATAL, NOT A DOUBLE. This fell through to f64
             // for anything that was not a boolean, so a value admission
             // never looked at - a boxed object threaded through a loop, say
@@ -973,6 +1212,9 @@ struct lowering {
             collectShape(object);
             mlir::Value(object.getResult()).setType(classType(shapes[shapeOf[object.getResult()]]));
         });
+        // AND THE ARRAYS, whose type was taken above; what is left is which
+        // reads are `length` and which are indices.
+        fn.getBody().walk([&](ctjs::CreateArrayOp array) { collectVector(array); });
     }
 
     // THE ONLY ERASE. An operation with uses is never erased: in a release
@@ -1026,6 +1268,34 @@ struct lowering {
                 ec::AssignOp::create(b, where, member, init);
             }
             swap(local);
+            return;
+        }
+        if (auto array = llvm::dyn_cast<CreateArrayOp>(o)) {
+            // The vector, by value, in this frame - default-constructed, which
+            // is the empty array the appends below fill.
+            mlir::Value local = ec::VariableOp::create(b, where, vectorCarrierType(context),
+                                                       ec::OpaqueAttr::get(context, ""));
+            for (mlir::Value element : array.getElements()) { push(b, where, local, element); }
+            swap(local);
+            return;
+        }
+        if (auto append = llvm::dyn_cast<AppendOp>(o)) {
+            push(b, where, append.getArray(), append.getElement());
+            eraseIfUnused(o);
+            return;
+        }
+        if (vectorLengthReads.contains(o)) {
+            swap(ec::CallOpaqueOp::create(b, where, mlir::TypeRange{f64},
+                                          b.getStringAttr("ctnative::vec_length"),
+                                          mlir::ValueRange{o->getOperand(0)})
+                     .getResult(0));
+            return;
+        }
+        if (vectorIndexReads.contains(o)) {
+            swap(ec::CallOpaqueOp::create(b, where, mlir::TypeRange{f64},
+                                          b.getStringAttr("ctnative::vec_at"),
+                                          mlir::ValueRange{o->getOperand(0), o->getOperand(1)})
+                     .getResult(0));
             return;
         }
         if (auto get = llvm::dyn_cast<GetPropertyOp>(o)) {
@@ -1266,6 +1536,14 @@ struct lowering {
         // needs <cmath> above it.
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cmath"), b.getUnitAttr());
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstdio"), b.getUnitAttr());
+        // ONLY WHEN A VECTOR SITE EXISTS. An include and a preamble emitted
+        // unconditionally would move every byte count the printing gate
+        // reports and every line the other native lits pin, for programs that
+        // have no array in them.
+        if (needsVector) {
+            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("vector"), b.getUnitAttr());
+            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kVectorHelpers));
+        }
         llvm::SmallVector<llvm::StringRef> names(globals.keys().begin(), globals.keys().end());
         llvm::sort(names);
         for (llvm::StringRef name : names) {

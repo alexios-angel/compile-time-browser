@@ -1229,6 +1229,8 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
   ctcompile_add_native_pipeline(functions "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.js")
   # Phase 56: object literals with closed shapes, on the stack
   ctcompile_add_native_pipeline(structs "${CMAKE_CURRENT_SOURCE_DIR}/native-struct-fixture.js")
+  # Phase 57A: dense, uniformly numeric array literals, as std::vector<double>
+  ctcompile_add_native_pipeline(arrays "${CMAKE_CURRENT_SOURCE_DIR}/native-array-fixture.js")
 endif()
 
 # === PART 24 §3.3: the deduction probe ===
