@@ -73,10 +73,16 @@ private:
 
 using TypeLattice = mlir::dataflow::Lattice<TypeValue>;
 
-// The analysis itself. Load it into a solver alongside DeadCodeAnalysis - which
-// is not optional: without it the framework has no predecessor information, so
-// block arguments never receive the operands branched into them and every
-// register in a loop stays uninitialized.
+// The analysis itself. Load it into a solver alongside BOTH DeadCodeAnalysis
+// AND SparseConstantPropagation, and neither is optional:
+//
+//   * without DeadCodeAnalysis the framework has no predecessor information,
+//     so block arguments never receive the operands branched into them;
+//   * without SparseConstantPropagation, DeadCodeAnalysis cannot decide which
+//     successor of a branch is live - it asks for each branch operand's
+//     ConstantValue lattice, finds it uninitialized, and marks NO successor
+//     live. Every op past the first branch is then never visited. The unit
+//     test has a multi-block row so this cannot regress quietly.
 class TypeInference : public mlir::dataflow::SparseForwardDataFlowAnalysis<TypeLattice> {
 public:
     using SparseForwardDataFlowAnalysis::SparseForwardDataFlowAnalysis;

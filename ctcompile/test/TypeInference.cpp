@@ -21,8 +21,10 @@
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
 
+#include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlowFramework.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Parser/Parser.h"
@@ -88,6 +90,15 @@ void check(mlir::MLIRContext & context, const row & r) {
     // receives what was branched into it and every answer is uninitialized.
     mlir::DataFlowSolver solver;
     solver.load<mlir::dataflow::DeadCodeAnalysis>();
+    // AND SparseConstantPropagation, WHICH IS NOT OPTIONAL EITHER, and the
+    // reason is a trap worth naming. DeadCodeAnalysis decides which successor
+    // of a branch is live by asking for every branch operand's ConstantValue
+    // lattice; if nothing provides one, those lattices stay uninitialized, it
+    // bails out, and NO successor is ever marked live. The sparse analysis
+    // then skips every op in every non-entry block - measured: 109 unvisited
+    // values and zero registers beating `boxed` on the fixture, while the
+    // single-block unit rows all passed.
+    solver.load<mlir::dataflow::SparseConstantPropagation>();
     solver.load<TypeInference>();
     if (failed(solver.initializeAndRun(module->getOperation()))) {
         std::printf("FAIL %s: the solver did not converge\n", r.what);
@@ -124,6 +135,7 @@ void check(mlir::MLIRContext & context, const row & r) {
 int main() {
     mlir::MLIRContext context;
     context.getOrLoadDialect<ctcompile::ctjs::CTJSDialect>();
+    context.getOrLoadDialect<mlir::cf::ControlFlowDialect>();
     context.getOrLoadDialect<ctcompile::ctnative::CTNativeDialect>();
 
     const std::string five = std::string{"  %a = ctjs.constant "} + kFive + "\n" +
@@ -175,6 +187,22 @@ int main() {
          "!ctnative.boxed"},
         {"generic `+` concatenates, so it stays boxed even on two numbers",
          five + "  %r = ctjs.binary add %a, %b {check}\n", "!ctnative.boxed"},
+
+        // --- A SECOND BLOCK, which the single-block rows above cannot test --
+        //
+        // Every other row lives in the entry block, and the entry block is
+        // live by fiat. This one puts the checked op behind a branch so the
+        // solver has to decide the successor is live - which it cannot do
+        // without SparseConstantPropagation loaded. Without it this row reads
+        // `<uninitialized>`.
+        {"a value behind a branch is still visited",
+         "  %t = ctjs.truthy %p\n"
+         "  cf.cond_br %t, ^yes, ^no\n"
+         "^yes:\n"
+         "  %r = ctjs.unary typeof %p {check}\n"
+         "  ctjs.return %r\n"
+         "^no:\n",
+         "!ctnative.str<utf8>"},
 
         // --- and the positive halves of the same operators ------------------
         {"`|` on two numbers is an int32", five + "  %r = ctjs.binary bitor %a, %b {check}\n",

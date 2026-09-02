@@ -808,7 +808,52 @@ endif()
 if(CTCOMPILE_ENABLE_MLIR)
   add_executable(ctcompile-test-type-inference TypeInference.cpp)
   target_link_libraries(ctcompile-test-type-inference
-    PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser)
+    PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
+            MLIRControlFlowDialect)
   ctcompile_target(ctcompile-test-type-inference)
   add_test(NAME ctcompile_type_inference COMMAND ctcompile-test-type-inference)
+endif()
+
+# ============================================================================
+# PHASE 54A CHECKED BY PHASE 54B - THE ORACLE, CLOSED. Appended as ONE block.
+#
+# ctcompile-test-type-claims is the compiler's half: it imports a corpus, runs
+# the inference and writes one claim per register in the checker's format. It
+# is a SEPARATE executable from ctcompile-test-type-oracle on purpose - that
+# one refuses to link MLIR so a recording cannot share a bug with the claim it
+# is checking. check-type-claims.cmake runs both over one corpus and the Python
+# checker over their two outputs, and the gate is zero soundness violations.
+#
+# TWO CORPORA. The fixture is small, runs in milliseconds, and calls every
+# guarded operator with BigInts so an unsound claim is OBSERVED rather than
+# merely possible. Bootstrap is the real thing, prepended to the driver that
+# Phase 54B wrote for it - and its precision is stated against the registers
+# it actually reaches, which is an eighth of the bundle.
+if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
+  add_executable(ctcompile-test-type-claims TypeClaims.cpp)
+  target_link_libraries(ctcompile-test-type-claims
+    PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect ctcompile::ctjs-import
+            MLIRIR MLIRAnalysis ctbrowser::ctbrowser)
+  ctcompile_target(ctcompile-test-type-claims)
+
+  foreach(_corpus fixture bootstrap)
+    if(_corpus STREQUAL "fixture")
+      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/type-claims-fixture.js")
+      set(_prefix "")
+    else()
+      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/type-oracle-bootstrap.js")
+      set(_prefix "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js")
+    endif()
+    add_test(NAME ctcompile_type_claims_${_corpus}
+             COMMAND ${CMAKE_COMMAND}
+                     -DORACLE=$<TARGET_FILE:ctcompile-test-type-oracle>
+                     -DCLAIMS=$<TARGET_FILE:ctcompile-test-type-claims>
+                     -DPYTHON=${Python3_EXECUTABLE}
+                     -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/type-oracle.py
+                     -DCORPUS=${_js}
+                     -DPREFIX=${_prefix}
+                     -DWORK=${CMAKE_CURRENT_BINARY_DIR}
+                     -DNAME=${_corpus}
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/check-type-claims.cmake)
+  endforeach()
 endif()
