@@ -158,6 +158,23 @@ public:
     // register a keydown listener and never learn which key was pressed.
     bool dispatch_key(std::string_view type, node_id target, const input_event & input);
 
+    // AN UNCAUGHT EXCEPTION, ANNOUNCED. `window.onerror` and
+    // `addEventListener("error", ...)` are how a page learns that one of its
+    // OTHER scripts threw, and this engine reported such a throw only into
+    // `browser::script_error()` - a string an embedder can read and a page
+    // cannot. So a page whose second <script> died had no way to know, and the
+    // only thing that ever noticed was a human reading the terminal.
+    //
+    // WPT is what made it matter. testharness.js registers an `error` listener
+    // and turns it into a harness ERROR, which is the difference between "this
+    // test threw during load" and "this test never finished" - the second being
+    // what every such page reported before, ten seconds later and blaming the
+    // wrong thing. The event carries `message`, `filename`, `lineno`, `colno`
+    // and `error` because those are the five properties that handler reads;
+    // only `message` is real here, and the rest say so by being empty rather
+    // than by being absent.
+    bool dispatch_error(std::string_view message);
+
     // A MouseEvent. clientX/clientY are viewport coordinates, which is what
     // MDN's breakout reads to move its paddle.
     bool dispatch_mouse(std::string_view type, node_id target, const input_event & input);

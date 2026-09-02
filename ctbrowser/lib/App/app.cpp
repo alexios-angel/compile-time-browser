@@ -645,6 +645,12 @@ int run_app(std::string_view html, app_options options) {
                      images_refused, options.script_images.size());
     }
     page.assets().set_base_path(options.asset_path);
+    // AND WHERE A LEADING `/` POINTS. Empty for every application in this
+    // tree, which leaves it meaning what it always did - the root of the
+    // filesystem. tools/wpt/run-wpt.py is the one caller: a web-platform-test
+    // names its harness `/resources/testharness.js`, and this is the document
+    // root a server would have resolved that against.
+    page.assets().set_document_root(options.document_root);
     page.assets().set_sealed(options.sealed_assets);
     page.allow_network(options.network);
     detail::install_image_decoder(page.images());

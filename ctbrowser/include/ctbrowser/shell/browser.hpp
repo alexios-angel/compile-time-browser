@@ -1717,6 +1717,23 @@ private:
     // context the asking script is running on.
     bool loading_ = false;
     std::optional<std::string> pending_load_;
+    // THE DOCUMENT FINISHED LOADING AND NOBODY HAS BEEN TOLD YET. Set when a
+    // page's scripts have run, cleared by the first tick that fires
+    // `DOMContentLoaded` and `load` at the window.
+    //
+    // Fired from tick() rather than from load_one_page() for the same reason a
+    // navigation is queued there: a listener runs script, and running script
+    // inside the load is what the whole `loading_` dance exists to prevent.
+    //
+    // WHY IT WAS MISSING, and why it is not merely a nicety. This engine sets
+    // `document.readyState` to "complete" from the start, so every library that
+    // asks before it listens - p5, Phaser, Babylon - takes its already-loaded
+    // branch and never needs the event. testharness.js does the opposite: it
+    // listens unconditionally and sets `all_loaded` in the handler, and
+    // `Tests.all_done()` requires that flag. Without this, EVERY
+    // web-platform-test ran its subtests, passed them, and then sat until the
+    // harness's own 10-second timeout, reporting TIMEOUT.
+    bool load_event_pending_ = false;
     std::size_t scripts_compiled_from_source_ = 0;
     // ONE PROGRAM PER MODULE, kept alive for the page's lifetime. A module's
     // top-level declarations live in its own frame and its functions close over

@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset=utf-8>
+<title>selftest: a passing test is reported as passing</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<div id=log></div>
+<script>
+// THE FLOOR. Nothing below is evidence of anything unless this one works: a
+// harness that reports every page as broken would "catch" every failure.
+test(function () {
+    assert_equals(1 + 1, 2, "arithmetic");
+}, "a synchronous test that passes");
+
+async_test(function (t) {
+    t.step_timeout(function () {
+        t.done();
+    }, 0);
+}, "an asynchronous test that passes");
+</script>

@@ -180,23 +180,38 @@ void dom_bindings::install_window(context & cx) {
     window->set("innerWidth", value::number(viewport_width_));
     window->set("innerHeight", value::number(viewport_height_));
     window->set("devicePixelRatio", value::number(1));
-    window->set("addEventListener",
-                value::object(cx.allocate<script::native_object>(
-                    "addEventListener", [this](context & c, std::span<value> args) {
-                        listeners_.push_back(make_listener(c, node_id{}, args));
-                        return value::undefined();
-                    })));
-    window->set("removeEventListener",
-                value::object(cx.allocate<script::native_object>(
-                    "removeEventListener", [this](context & c, std::span<value> args) {
-                        const std::string type = arg_string(c, args, 0);
-                        const value callback = arg(args, 1);
-                        std::erase_if(listeners_, [&](const listener & l) {
-                            return !l.target && l.type == type &&
-                                   l.callback.bits() == callback.bits();
-                        });
-                        return value::undefined();
-                    })));
+    // ON THE WINDOW AND AS A BARE GLOBAL, which is one function reachable by two
+    // names rather than two functions. The window IS the global object in a
+    // browser, so `addEventListener("error", f)` with no receiver is the same
+    // call as `window.addEventListener(...)` - and the proxy's fallback only
+    // goes one way, from `window.x` down to a global, never from a bare `x` up
+    // to a window property.
+    //
+    // WPT is what found it. testharness.js installs its uncaught-exception
+    // handler as `addEventListener("error", ...)` inside
+    // `(function (global_scope) { ... }(self))`, so a missing bare name threw a
+    // TypeError at the very end of the harness's own initialisation - after the
+    // asserts were exposed and BEFORE `on_tests_ready()`, which is the worst
+    // possible place: the file half-ran and said nothing. `getComputedStyle`
+    // already works exactly this way and says so.
+    const value add_listener = value::object(cx.allocate<script::native_object>(
+        "addEventListener", [this](context & c, std::span<value> args) {
+            listeners_.push_back(make_listener(c, node_id{}, args));
+            return value::undefined();
+        }));
+    const value remove_listener = value::object(cx.allocate<script::native_object>(
+        "removeEventListener", [this](context & c, std::span<value> args) {
+            const std::string type = arg_string(c, args, 0);
+            const value callback = arg(args, 1);
+            std::erase_if(listeners_, [&](const listener & l) {
+                return !l.target && l.type == type && l.callback.bits() == callback.bits();
+            });
+            return value::undefined();
+        }));
+    window->set("addEventListener", add_listener);
+    window->set("removeEventListener", remove_listener);
+    cx.define_global("addEventListener", add_listener);
+    cx.define_global("removeEventListener", remove_listener);
     // `localStorage`, IN MEMORY AND FOR THIS PAGE ONLY. 38 uses in p5.js, which
     // reads it before it draws anything.
     //
@@ -918,7 +933,49 @@ void dom_bindings::install_window(context & cx) {
         cx.allocate<script::proxy_object>(window_target, value::object(window_handler)));
     cx.define_global("window", window_view);
     cx.define_global("globalThis", window_view);
+    // `self`, WHICH IS THE SAME OBJECT AND WAS MISSING. It is what a script
+    // that means to run in a window OR a worker names the global by, so a
+    // library never writes `window` at all - and the first thing
+    // web-platform-tests found here was that it is not defined.
+    //
+    // The failure it produced is the reason this line has a comment. Every
+    // testharness.js test is `(function (global_scope) { ... expose(test,
+    // "test") ... }(self))`, so `global_scope` was undefined, and this engine
+    // treats a property STORE on undefined as a no-op rather than a TypeError -
+    // so the harness ran to completion, reported no error, and defined not one
+    // of its globals. The page then failed with "`test` is undefined", forty
+    // lines from the cause. 100% of WPT was unrunnable for one missing alias.
+    cx.define_global("self", window_view);
     cx.define_global("performance", value::object(performance));
+
+    // THE BROWSING-CONTEXT CHAIN, WHICH TERMINATES HERE. This document is
+    // always the top one: there are no iframes and no `window.open`, so `parent`
+    // and `top` are this window and `opener` is null. That is not a stub - it is
+    // what the specification says a top-level browsing context reports, and it
+    // is the ANSWER rather than the absence of one.
+    //
+    // SET AFTER THE PROXY EXISTS, and to the PROXY, which is the whole subtlety:
+    // scripts compare `w != w.parent` by identity, so handing them the raw
+    // target object while `self` is the proxy makes the two differ and the walk
+    // never terminates.
+    //
+    // WPT is what found it, and the failure was three layers from the cause.
+    // testharness.js walks `[self ... top, opener]` to broadcast test state, and
+    // with `parent` undefined the walk ran one step past the end and called
+    // `postMessage` on `undefined`. That threw inside a COMPLETION CALLBACK -
+    // and `Tests.prototype.notify_complete` runs its callbacks in a bare
+    // `forEach` with no try/catch, so the throw killed every later callback
+    // including the one that reports results. Every test that ran perfectly
+    // reported nothing at all and was recorded as a timeout.
+    //
+    // `postMessage` is deliberately still absent. With this chain correct
+    // nothing on a single-document page reaches it, and defining a fake one
+    // would let tests that genuinely need a second browsing context appear to
+    // work instead of failing honestly.
+    window->set("parent", window_view);
+    window->set("top", window_view);
+    window->set("opener", value::null());
+    window->set("frameElement", value::null());
 }
 
 void dom_bindings::install_timers(context & cx) {

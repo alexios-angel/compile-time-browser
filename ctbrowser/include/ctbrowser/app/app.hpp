@@ -124,6 +124,13 @@ struct app_options {
     // Where a relative asset path (an <img src>, a page-local fetch) resolves
     // from when the registry misses. Empty means the working directory.
     std::filesystem::path asset_path;
+    // And what a SERVER-ABSOLUTE one resolves against - a leading `/`. Empty
+    // means the root of this filesystem, which is what it has always meant
+    // here. A page written for a server names its shared resources that way:
+    // `<script src="/resources/testharness.js">` is the first line of every
+    // web-platform-test, and this is the document root that would have served
+    // it. `CTBROWSER_DOC_ROOT` sets it; see shell::asset_registry.
+    std::filesystem::path document_root;
     // Real outline fonts, from the vendored OFL faces and whatever the page's
     // @font-face rules ask for. ON by default - an application wants text that
     // looks like text - and falling back to the built-in bitmap font when
@@ -233,6 +240,8 @@ struct app_options {
 //                             suite, examples/CMakeLists.txt for the examples,
 //                             because in the source tree they live in
 //                             ctbrowser/resources/fonts/.
+//   CTBROWSER_DOC_ROOT     -> document_root, what a leading `/` in a
+//                             resource name resolves against
 //   CTBROWSER_MAX_FPS      -> max_fps, the redraw cap (0 = uncapped)
 //   CTBROWSER_PROFILE      -> profile_path ("-" = summary only)
 //   CTBROWSER_PROFILE_SECONDS -> profile_seconds
@@ -260,6 +269,11 @@ inline void apply_environment(app_options & options) {
         const std::string_view text{network};
         options.network = !(text == "0" || text == "off" || text == "no");
     }
+    // THE DOCUMENT ROOT, for a page that was written to be SERVED. Unset for
+    // every application in this tree; tools/wpt/run-wpt.py is the one caller,
+    // and it is here rather than a flag because ctdrive parses four arguments
+    // and this is a property of the corpus rather than of the driver.
+    if (const char * root = std::getenv("CTBROWSER_DOC_ROOT")) { options.document_root = root; }
     if (const char * fps = std::getenv("CTBROWSER_MAX_FPS")) { options.max_fps = std::atoi(fps); }
     if (const char * profile = std::getenv("CTBROWSER_PROFILE")) { options.profile_path = profile; }
     if (const char * seconds = std::getenv("CTBROWSER_PROFILE_SECONDS")) {

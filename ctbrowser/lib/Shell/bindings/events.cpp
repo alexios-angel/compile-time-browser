@@ -50,6 +50,27 @@ bool dom_bindings::dispatch(std::string_view type, node_id target) {
     return dispatch_event(type, target, make_event(*cx_, type, target));
 }
 
+// AT THE WINDOW, which is where an uncaught exception is reported. `node_id{}`
+// is the window-and-document bucket every global listener already lives in, so
+// this reaches `window.onerror` and `addEventListener("error", ...)` alike.
+//
+// The `error` property is undefined rather than a fabricated Error object: this
+// engine's failure is a STRING by the time it gets here, and handing a page a
+// synthetic exception whose stack is a lie is worse than handing it nothing.
+// testharness.js reads `e.error && e.error.stack` and falls back to
+// filename:lineno:colno, which is the branch this takes.
+bool dom_bindings::dispatch_error(std::string_view message) {
+    if (cx_ == nullptr) { return false; }
+    value event = make_event(*cx_, "error", node_id{});
+    auto * object = static_cast<script::object_object *>(event.as_heap());
+    object->set("message", cx_->string(std::string{message}));
+    object->set("filename", cx_->string(std::string{}));
+    object->set("lineno", value::number(0));
+    object->set("colno", value::number(0));
+    object->set("error", value::undefined());
+    return dispatch_event("error", node_id{}, event);
+}
+
 bool dom_bindings::dispatch_key(std::string_view type, node_id target, const input_event & input) {
     if (cx_ == nullptr) { return false; }
     value event = make_event(*cx_, type, target);

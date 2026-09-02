@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset=utf-8>
+<title>selftest: no harness at all is a HARNESS_ERROR, never a pass</title>
+<!-- testharness.js IS DELIBERATELY ABSENT. Only the report hook is loaded. -->
+<script src="/resources/testharnessreport.js"></script>
+<div id=log></div>
+<script>
+// Nothing else. There is no `test`, no `done`, nothing to run.
+//
+// THIS IS THE FAILURE THE WHOLE HOOK EXISTS TO CATCH. `/resources/` is a
+// SERVER-ABSOLUTE path and there is no server here: before
+// `asset_registry::set_document_root`, every test in the corpus loaded exactly
+// this way - no harness, no subtests, no error - and a runner that scores "zero
+// failing subtests" as a pass would have reported a green sweep of thousands of
+// tests, none of which had run a line.
+//
+// So the hook checks for `add_completion_callback` and says so in the payload,
+// and the runner refuses to call an empty result a pass.
+</script>

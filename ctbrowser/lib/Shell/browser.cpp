@@ -84,6 +84,10 @@ void browser::load_one_page(std::string_view html) {
     load_page_fonts();
     mark(dirty::everything);
     run_scripts();
+    // AND THE PAGE HAS LOADED. Announced on the next tick, not here - see
+    // browser::load_event_pending_ for why the delay is the point rather than
+    // an accident.
+    load_event_pending_ = true;
 }
 
 bool browser::has_selection() const noexcept {
@@ -344,6 +348,20 @@ std::size_t browser::tick(double elapsed_ms) {
     // Only the CARET changed, so only the paint is stale - a blink must not
     // re-run layout, which is what made the previous engine lay the page out every frame.
     if (focused_ && caret_visible() != was_visible) { mark(dirty::paint); }
+    // `DOMContentLoaded` AND THEN `load`, in that order, once per document.
+    // Both go to the window - dispatch() with an empty node is the window and
+    // the document at once, which is how their listeners are already stored -
+    // and both are dispatched BEFORE this tick's timers, so a handler that
+    // schedules `setTimeout(f, 0)` gets f on the very next tick rather than one
+    // further out. testharness.js does exactly that.
+    if (load_event_pending_) {
+        load_event_pending_ = false;
+        (void)bindings_->dispatch("DOMContentLoaded", node_id{});
+        (void)bindings_->dispatch("load", node_id{});
+        if (script_error_.empty() && !bindings_->callback_error().empty()) {
+            script_error_ = bindings_->callback_error();
+        }
+    }
     bindings_->advance_clock(elapsed_ms);
     const std::size_t ran = bindings_->run_due_callbacks();
     // A fault in a timer or an animation frame is a script error too. It was
@@ -1018,6 +1036,29 @@ void browser::run_scripts() {
         if (!result.ok && !a_script_failed) {
             script_error_ = result.error;
             a_script_failed = true;
+        }
+        // AND THE PAGE IS TOLD, every time rather than only the first: a page
+        // that listens for `error` is entitled to hear about each script that
+        // threw, and `script_error_` above is the embedder's channel, not the
+        // page's. Fired here, between scripts, which is where the specification
+        // fires it - a later <script> can therefore see that an earlier one
+        // died, which is exactly what testharness.js is doing.
+        if (!result.ok) {
+            // THE FAULT IS CLEARED FIRST, AND THAT IS THE WHOLE TRICK. `run`
+            // leaves `failed_` set when a script throws, and every C++ entry
+            // into JavaScript refuses to run while it is - so dispatching the
+            // event without this called no listener at all, reported the
+            // ORIGINAL error a second time as a "callback fault", and left the
+            // page believing nothing had gone wrong. The harness then finished
+            // normally and a page that threw during load was reported as a
+            // PASS, which is the single worst answer this instrument can give.
+            //
+            // Clearing is not discarding: `result.error` already holds the
+            // text and `script_error_` above has recorded it. Handing it to the
+            // page is a HANDOFF, and the page cannot be handed anything while
+            // the VM is still refusing to run its code.
+            (void)script_->take_error();
+            (void)bindings_->dispatch_error(result.error);
         }
     }
 

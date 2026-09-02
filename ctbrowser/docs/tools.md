@@ -126,6 +126,13 @@ with it.
 - `tools/check/test262-baseline.sh` — the ten areas `docs/test262.md` records a
   number for, run one after another with identical flags. Sequential: four
   workers is the cap the whole devbox shares, and two of these at once is eight.
-
+- `tools/wpt/fetch-wpt.sh`, `tools/wpt/run-wpt.py` — **web-platform-tests**, the
+  standards suite every browser is measured against, run against this engine one
+  directory at a time. The corpus is fetched sparse and shallow at a pinned
+  commit to `~/.cache/wpt` and is never vendored; `run-wpt.py --dir dom/nodes`
+  prints a table and `--selftest` proves the harness reports a failure as a
+  failure before any of it is believed. `tools/wpt/expectations.txt` is the
+  known-failure file and the gate fails on an unexpected PASS as well as on a
+  regression. See **`docs/wpt.md`**.
 - `tools/format.sh`, `tools/check/check-package.sh`, `tools/check/check-render.cmake`,
   `tools/remote-build.sh`.

@@ -343,3 +343,43 @@ foreach(forbidden LLVMCore MLIRIR MLIRSupport)
       "not the engine's (Principle 8). Move the find_package into ctcompile.")
   endif()
 endforeach()
+
+# === WPT ===================================================================
+# web-platform-tests, OPT-IN. `-DCTBROWSER_WPT=ON` registers two ctest entries;
+# without it this block registers nothing and costs one `if`.
+#
+# OFF BY DEFAULT because the corpus is not in this repository and must not be:
+# it is ~40 MB fetched to ~/.cache/wpt at a pinned commit by
+# tools/wpt/fetch-wpt.sh, and a test that silently passes when the corpus is
+# absent is worse than one that is not registered at all.
+#
+# TWO TESTS, and the first is the one that matters:
+#
+#   wpt-selftest  the NEGATIVE PROOFS - five fixtures whose outcomes are
+#                 asserted, including a test that must fail and a page with no
+#                 harness at all. Seconds to run, and nothing below it means
+#                 anything until it passes.
+#   wpt-gate      a fixed subset measured against tools/wpt/expectations.txt,
+#                 budgeted at two minutes. Fails on a difference in EITHER
+#                 direction: a regression, and an unexpected PASS, because an
+#                 expectations file that has quietly gone stale is a file that
+#                 lies about the engine.
+#
+# The FULL run is a documented command, not a build step - see
+# ctbrowser/docs/wpt.md. It takes tens of minutes and belongs to a person.
+option(CTBROWSER_WPT "Register the web-platform-tests ctest entries" OFF)
+if(CTBROWSER_WPT AND CTBROWSER_BUILD_TESTS AND NOT CMAKE_CROSSCOMPILING)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  set(wpt-runner "${CTBROWSER_MONOREPO_ROOT}/tools/wpt/run-wpt.py")
+  # THE DRIVER BY GENERATOR EXPRESSION, not by a guessed path. run-wpt.py's own
+  # default is build/tools/ctdrive, which is right for a person typing the
+  # command and wrong for any build tree that is not called `build`.
+  add_test(NAME wpt-selftest COMMAND ${Python3_EXECUTABLE} "${wpt-runner}"
+           --selftest --driver "$<TARGET_FILE:ctbrowser-tool-ctdrive>")
+  add_test(NAME wpt-gate COMMAND ${Python3_EXECUTABLE} "${wpt-runner}"
+           --gate --jobs 4 --driver "$<TARGET_FILE:ctbrowser-tool-ctdrive>")
+  # LABELLED, so `ctest -L wpt` runs exactly these two and `ctest -LE wpt` runs
+  # everything else. TIMEOUT is a backstop above the runner's own per-test one:
+  # the runner kills a hung page itself, and this catches the runner hanging.
+  set_tests_properties(wpt-selftest wpt-gate PROPERTIES LABELS wpt TIMEOUT 300)
+endif()

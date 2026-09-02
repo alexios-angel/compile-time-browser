@@ -1,0 +1,29 @@
+<!doctype html>
+<meta charset=utf-8>
+<title>selftest: an exception during load is a HARNESS_ERROR</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<div id=log></div>
+<script>
+// AN UNCAUGHT EXCEPTION BEFORE ANY TEST EXISTS. testharness.js listens for
+// `error` at the window and turns this into a harness-level ERROR; the page
+// defines no subtests at all, so there is nothing here that could be mistaken
+// for a result.
+//
+// This fixture is also what proves the engine's `error` event exists.
+// ctbrowser reported an uncaught throw only through
+// `browser::script_error()` - an embedder channel a page cannot read - until
+// WPT asked for it, so this page used to sit for ten seconds and then report
+// TIMEOUT: the right colour for the wrong reason.
+throw new Error("thrown on purpose, during load");
+</script>
+<script>
+// A SECOND SCRIPT, AND IT DOES RUN - a throw in one classic script does not
+// stop the next, here or in any browser. It is here to show that the page still
+// reports HARNESS_ERROR and NOT the pass this would otherwise contribute: the
+// harness reached its COMPLETE phase inside the error handler above, and a test
+// registered after that is dropped.
+test(function () {
+    assert_true(true);
+}, "registered after the harness had already errored, and therefore ignored");
+</script>
