@@ -95,10 +95,24 @@ def CTJSLiftToSCF : Pass<"ctjs-lift-to-scf", "mlir::ModuleOp"> {
     A REGION THE UTILITY REFUSES IS LEFT IN CFG FORM rather than failing the
     module. The EmitC backend reads CFG perfectly well; lifting is an
     improvement, not a precondition.
+
+    ONE THING RUNS BEFORE THE LIFT AND IS OURS: trivial-phi removal (Braun et
+    al. 2013 §3.1) on the CFG. The importer gives every block the whole
+    register file as arguments, so a loop header carries one for a variable
+    assigned before the loop and never inside it - fed by the variable on the
+    entry edge and by ITSELF on the back edge, which is the one shape
+    simplifyRegions does not drop. Left in place it becomes a loop-carried
+    value, and a closed-shape object literal threaded through a loop that way
+    reads as open and is refused by the native tier. Part 24 Phase 56B's
+    obligation O-3: one stack slot, however many SSA values reach it.
   }];
   let dependentDialects = ["::mlir::scf::SCFDialect", "::mlir::ub::UBDialect",
                            "::mlir::arith::ArithDialect",
                            "::mlir::cf::ControlFlowDialect"];
+  let statistics = [
+    Statistic<"droppedSelfCarriedArguments", "self-carried-args-dropped",
+              "block arguments fed by themselves and one other value, replaced by that value (O-3)">
+  ];
 }
 
 def CTJSDropUncompiled : Pass<"ctjs-drop-uncompiled", "mlir::ModuleOp"> {

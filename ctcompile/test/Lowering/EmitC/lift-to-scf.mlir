@@ -77,6 +77,48 @@ ctjs.func @counter(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %k
 }
 
+// --- A VALUE THE LOOP ONLY CARRIES IS NOT CARRIED ---------------------------
+//
+// The importer's loop header takes the whole register file, so a variable
+// assigned before the loop and never inside it arrives as an argument fed by
+// itself on the back edge and by the variable on the entry edge - the one
+// shape simplifyRegions' dropRedundantArguments leaves alone, because the two
+// operands differ. Lifted as it stands it becomes an iteration argument of
+// the scf.while, and a result too when it is read after the loop: four values
+// through a loop with one counter. For a number that is a copy; for an object
+// literal it is a refusal, because its shape is no longer closed (part 24
+// Phase 56B, obligation O-3). The pass drops the argument first - a trivial
+// phi, Braun et al. 2013 §3.1 - so the loop carries the counter and its
+// post-loop export and nothing else.
+//
+// PROVED LOAD-BEARING: with dropSelfCarriedArguments removed from the pass,
+// this scf.while has four operands and four results, and this line is red.
+//
+// Measured with --mlir-pass-statistics, self-carried-args-dropped: this file 1
+// (only %inv), native-struct.mlir's program 3 (`acc` in looped, leaked - and
+// in reassigned NOTHING, its `acc` is a real phi - plus `i`'s twin in none of
+// them: `i` is assigned inside every loop), native-struct-fixture.js 2 (`acc`
+// and `n` in accumulate), native-fixture.js 0.
+//
+// CHECK-LABEL: ctjs.func @invariant
+// CHECK-NOT: cf.br
+// CHECK: scf.while ({{.*}}) : (!ctjs.value, !ctjs.value) -> (!ctjs.value, !ctjs.value)
+ctjs.func @invariant(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                     %callee: !ctjs.value, %n: !ctjs.value, %m: !ctjs.value) -> !ctjs.value
+    attributes {upvalue_count = 0 : i32} {
+  cf.br ^head(%n, %m : !ctjs.value, !ctjs.value)
+^head(%i: !ctjs.value, %inv: !ctjs.value):
+  %bit = ctjs.truthy %i
+  cf.cond_br %bit, ^body(%i, %inv : !ctjs.value, !ctjs.value),
+                   ^done(%i, %inv : !ctjs.value, !ctjs.value)
+^body(%j: !ctjs.value, %jinv: !ctjs.value):
+  %next = ctjs.unary neg %j
+  cf.br ^head(%next, %jinv : !ctjs.value, !ctjs.value)
+^done(%k: !ctjs.value, %kinv: !ctjs.value):
+  %sum = ctjs.binary add %k, %kinv
+  ctjs.return %sum
+}
+
 // --- AND WHAT IT REFUSES, WHICH IS RECORDED RATHER THAN FATAL ---------------
 //
 // ctjs.push_handler is a TERMINATOR WITH SIDE EFFECTS - it installs a handler -
