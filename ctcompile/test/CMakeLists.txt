@@ -1768,3 +1768,48 @@ if(COMMAND ctcompile_add_native_claims)
                               "${CMAKE_CURRENT_SOURCE_DIR}/native-object-argument-fixture.js"
                               16 7 15 9)
 endif()
+
+# ============================================================================
+# === PART 24: `new` BUILDS A STRUCT IN THE FRAME - the slice before Phase 60
+# ============================================================================
+# native-constructor-fixture.js is six functions whose objects are built by
+# `new` rather than written as literals. The rewrite is two operations that
+# already lower - an empty ctjs.create_object for the instance, and the
+# ctjs.call_direct the RECEIVER lift already emits for the constructor - so
+# after it there is no constructor in the IR at all and the instance is an
+# ordinary closed literal. `hasClosedShape`, `groupReceivers`, `fieldsOf`,
+# `censusShapes` and `replace` needed no constructor case at all.
+#
+# THE GATE IS THE POINT, NOT THE IR. `new` that evaluated to the wrong thing
+# produces a module that verifies and compiles clean under -Werror and prints
+# a different number: a constructor whose body returned an object REPLACES the
+# instance in the VM (`produced.is_object_like() ? produced : self`,
+# vm/call.cpp), so admitting one would print the instance where the
+# interpreter prints the returned object. Only the interpreter can say so.
+#
+# WHAT IS NOT ADMITTED, AND IT IS THE COMMONEST SHAPE IN REAL CODE: a top-level
+# `function Point() {}`. That is stored to a global and `new Point(...)` loads
+# it back, so the construct's callee is a `ctjs.load_global` and not a closure.
+# Measured: the census row reads "open: the binding is used by ctjs.construct".
+# Naming it needs the closed world's per-name verdict, which is the next lever.
+#
+# THE REFUSALS ARE NOT HERE, and cannot be: native-pipeline.cmake refuses to
+# write a module while any function carries `ctnative.not_native`, and a
+# refusal is contagious in both directions anyway. They are one program apiece
+# in CTNative/Lowering/constructor-refusals.mlir, under split-file.
+#
+# One appended block, per part 23 Appendix A.3.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(constructors
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-constructor-fixture.js")
+endif()
+# AND THE CLAIMED COUNT, AS A FLOOR. A change that stops lifting one of them
+# fails HERE even if the fixture above were deleted, which is what
+# --min-claimed is for. `lifted` is the fourth floor: every one of these calls
+# is made by the lift inside --ctnative-lower-to-emitc, where the resolver's
+# `direct` count cannot see it.
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(constructors
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-constructor-fixture.js"
+                              14 6 7 8)
+endif()

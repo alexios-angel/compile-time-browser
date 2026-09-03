@@ -272,14 +272,15 @@ llvm::StringRef constantKeyOf(mlir::Value key) {
 // out of the LLVM package this builds against, so a counter that is asserted
 // has to be printed.
 struct liftReport {
-    unsigned functions = 0; // ctjs.funcs whose captures became parameters
-    unsigned closures = 0;  // ctjs.create_closures that now lower to nothing
-    unsigned captures = 0;  // capture operands turned into arguments
-    unsigned calls = 0;     // ctjs.calls rewritten to ctjs.call_direct
-    unsigned cells = 0;     // ctjs.create_cells proved constant and unboxed
-    unsigned methods = 0;   // method fields whose closure became a free function
-    unsigned receivers = 0; // of those, the ones whose `this` became a parameter
-    unsigned objects = 0;   // parameters that became a pointer to a closed shape
+    unsigned functions = 0;    // ctjs.funcs whose captures became parameters
+    unsigned closures = 0;     // ctjs.create_closures that now lower to nothing
+    unsigned captures = 0;     // capture operands turned into arguments
+    unsigned calls = 0;        // ctjs.calls rewritten to ctjs.call_direct
+    unsigned cells = 0;        // ctjs.create_cells proved constant and unboxed
+    unsigned methods = 0;      // method fields whose closure became a free function
+    unsigned receivers = 0;    // of those, the ones whose `this` became a parameter
+    unsigned objects = 0;      // parameters that became a pointer to a closed shape
+    unsigned constructors = 0; // `new X(...)` sites turned into a frame-scope struct
 };
 
 // --- THE RECEIVER IS A PARAMETER ------------------------------------------------
@@ -396,6 +397,26 @@ struct closureLifter {
     llvm::MapVector<mlir::Operation *, llvm::SmallVector<methodCall>> callsOfTarget;
     llvm::DenseSet<mlir::Operation *> methodClosures; // create_closures bound to a method field
 
+    // --- the constructor lift ----------------------------------------------
+    //
+    // `new X(a, b)` WHERE X IS A ctjs.create_closure RESULT. The whole of this
+    // rule is a rewrite into two operations that already lower: the instance
+    // becomes an empty ctjs.create_object - a frame-scope struct, allocated
+    // nowhere - and the constructor becomes the RECEIVER CARRIER's free
+    // function over it, reached by the same ctjs.call_direct the method lift
+    // emits. So `hasClosedShape`, `groupReceivers`, `fieldsOf`, `censusShapes`
+    // and `replace` need no constructor case at all: after the rewrite there
+    // is no constructor, only a literal and a call that takes its address.
+    //
+    // WHAT THIS DELIBERATELY DOES NOT BUILD IS THE PROTOTYPE CHAIN. The VM
+    // gives every instance one (call.cpp, `make_instance` -> `ensure_prototype`)
+    // and Phase 60 owns turning that into C++ inheritance, so any program that
+    // touches a constructor's `prototype` is refused by name here rather than
+    // compiled to something with no chain at all.
+    llvm::SmallVector<ctjs::ConstructOp> allConstructs;
+    llvm::MapVector<mlir::Operation *, llvm::SmallVector<ctjs::ConstructOp>> constructsOfTarget;
+    llvm::DenseSet<mlir::Operation *> constructorClosures; // used ONLY as `new` callees
+
     // --- THE CENSUS, which is a MEASUREMENT and not a rule ------------------
     //
     // Widening `closedAfterLift` is only worth what the corpora actually
@@ -510,6 +531,8 @@ struct closureLifter {
                 // reach both: a literal handed to a named call is in exactly
                 // the position a literal handed to an unnamed one is.
                 allDirectCalls.push_back(direct);
+            } else if (auto built = llvm::dyn_cast<ctjs::ConstructOp>(o)) {
+                allConstructs.push_back(built);
             }
         });
         // The fixpoint over the closure-target graph.
@@ -692,9 +715,13 @@ struct closureLifter {
                               ctjs::CreateArrayOp>(user)) {
                     return "it is stored into an object or an array - Phase 59 slice 2";
                 }
-                if (llvm::isa<ctjs::ConstructOp>(user) && use.getOperandNumber() == 0) {
-                    return "it is used as a constructor - Phase 60 owns `new`";
-                }
+                // A REFUSAL WAS HERE AND IS GONE: "it is used as a constructor
+                // - Phase 60 owns `new`". Every closure a `ctjs.construct`
+                // names is now in `constructorClosures` and dispatches to
+                // whyNotLiftableConstructor, so this arm was unreachable - and
+                // it was pinned by no test, which is how it stayed reachable-
+                // looking. The mixed case it used to describe is named there
+                // instead, where the clause that actually failed can be said.
                 if (call || llvm::isa<ctjs::CallDirectOp, ctjs::ConstructOp>(user)) {
                     // PASSING A CLOSURE IS NOT A LIFT, and this is the one
                     // place the brief for this work asked for something the
@@ -739,7 +766,47 @@ struct closureLifter {
     // IR this rewrite is about to produce, where the load is gone and the
     // receiver is a call_direct operand `hasClosedShape` now admits by name.
     bool closedAfterLift(mlir::Value object) {
-        if (!object.getDefiningOp<ctjs::CreateObjectOp>()) { return false; }
+        if (!object.getDefiningOp<ctjs::CreateObjectOp>() && !makesAnInstance(object)) {
+            return false;
+        }
+        return usesCloseTheShape(object);
+    }
+
+    // A `ctjs.construct` RESULT IS A LITERAL THAT HAS NOT HAPPENED YET.
+    //
+    // The constructor lift replaces the construct with an empty
+    // ctjs.create_object and a receiver call, so by the time anything reads a
+    // shape the instance IS an object literal. Every census here runs BEFORE
+    // that rewrite, though, so each would see a `ctjs.construct` and answer
+    // "not a literal" - which refuses the module for an instance that is
+    // merely passed to a lifted function. This is the same question asked of
+    // the IR the rewrite is about to produce, exactly as `closedAfterLift`
+    // itself is for a method call.
+    //
+    // ONLY FOR A CALLEE THIS PASS HAS PROVED, which is what
+    // `constructorClosures` holds and why that census runs first: a construct
+    // whose callee is opaque is not going to become a literal, and admitting
+    // one here would be a shape claim about an object the VM allocates.
+    bool makesAnInstance(mlir::Value object) {
+        auto built = object.getDefiningOp<ctjs::ConstructOp>();
+        if (!built) { return false; }
+        auto closure = built.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
+        if (!closure || !constructorClosures.contains(closure.getOperation())) { return false; }
+        // AND NOTHING BUT `new` USES IT. `constructorClosures` is every closure
+        // a `new` names, so that the prototype clause can be REACHED and name
+        // itself; this predicate is a different claim - that the rewrite will
+        // actually happen - and a closure used anywhere else cannot support it.
+        return llvm::all_of(closure.getResult().getUsers(), [](mlir::Operation * user) {
+            return llvm::isa<ctjs::ConstructOp>(user);
+        });
+    }
+
+    // THE USE-LIST HALF OF CONDITION 1, ASKED WITHOUT THE QUESTION OF WHAT MADE
+    // THE VALUE. `closedAfterLift` asks it of a literal. The constructor lift
+    // asks the identical question of a `ctjs.construct` result, because the
+    // rewrite turns that result INTO a literal and its use list does not move -
+    // so a second, drifting copy of this walk is exactly what is not wanted.
+    bool usesCloseTheShape(mlir::Value object) {
         for (mlir::OpOperand & use : object.getUses()) {
             mlir::Operation * user = use.getOwner();
             if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
@@ -1472,6 +1539,203 @@ struct closureLifter {
         return whyUpvalueReadsDoNotLift(target);
     }
 
+    // --- the constructor lift -----------------------------------------------
+
+    // WHICH CLOSURES ARE USED AS `new` CALLEES AND AS NOTHING ELSE.
+    //
+    // A closure that is BOTH called and constructed is left to
+    // `whyNotLiftable`, which refuses it by name ("it is used as a
+    // constructor"): one ctjs.func is one C++ signature, and a body that is a
+    // free function at one site and a constructor at another would need two.
+    void constructorCensus() {
+        llvm::DenseSet<mlir::Operation *> constructed;
+        for (ctjs::ConstructOp made : allConstructs) {
+            auto closure = made.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
+            if (!closure) { continue; }
+            constructed.insert(closure.getOperation());
+            if (ctjs::FuncOp target = targetOf(closure)) {
+                constructsOfTarget[target.getOperation()].push_back(made);
+            }
+        }
+        // EVERY CLOSURE A `new` NAMES, whatever else it does. The narrower set
+        // - only those used as nothing but a `new` callee - was the wrong one:
+        // a closure that is ALSO written through (`Shape.prototype = {...}`)
+        // then fell to `whyNotLiftable`, which met the new.target operand first
+        // and answered "it is passed as an argument". The clause a reader needs
+        // is the prototype, and only the constructor rule knows to say so.
+        constructorClosures.insert(constructed.begin(), constructed.end());
+    }
+
+    // IS THIS VALUE PROVABLY NOT `is_object_like()`?
+    //
+    // THE QUESTION `new` ASKS OF A RETURN, and the reason it has to be asked.
+    // `context::construct` ends `return produced.is_object_like() ? produced :
+    // self` (vm/call.cpp:695, and :685 for a native), so a constructor that
+    // returns an object REPLACES the instance and `new X()` is not the struct
+    // this rewrite built at all. `is_object_like()` is
+    // `is_object() || is_array() || is_callable() || is_kind(proxy)`
+    // (Script/value.hpp:162-164) - note a STRING is not one, so
+    // `return "done"` is harmless and still evaluates to the instance.
+    //
+    // THE ANSWER IS "NO" UNLESS THE DEFINING OPERATION SAYS OTHERWISE, which is
+    // the direction that keeps this sound: a block argument, a call result, a
+    // property read and anything this list does not name are all assumed to be
+    // able to carry an object.
+    static bool isNotObjectLike(mlir::Value v) {
+        mlir::Operation * definition = v.getDefiningOp();
+        if (definition == nullptr) { return false; } // a block argument: unknown
+        // ctjs.constant carries undefined, null, a string, a number or a
+        // boolean and nothing else; the arithmetic, predicate and conversion
+        // operations all answer primitives.
+        return llvm::isa<ctjs::ConstantOp, ctjs::BinaryOp, ctjs::BinaryStaticOp, ctjs::UnaryOp,
+                         ctjs::CompareOp, ctjs::TruthyOp, ctjs::FromBoolOp, ctjs::InstanceOfOp,
+                         ctjs::HasPropertyOp, ctjs::DeletePropertyOp, ctjs::DeleteNamedOp>(
+            definition);
+    }
+
+    // GUARD 3: the body must not hand back an object.
+    //
+    // SHADOWED FOR THE OUTCOME AND NOT FOR THE DIAGNOSTIC, measured. Removing
+    // this clause does not admit `returns-object.js`: the `{v: 9}` it hands
+    // back is then refused as "an object literal that escapes - it is
+    // returned", and an array by the array form of the same sentence. Every
+    // object-like value this tier can build already has an escape rule, so no
+    // program could be found where this clause alone decides. It is kept, and
+    // it runs FIRST, because it is the only one that names what `new` does -
+    // and because the clause that shadows it is exactly what Phase 59 slice 2
+    // exists to relax, after which this is the only thing between a returning
+    // constructor and a wrong answer.
+    std::optional<std::string> whyConstructorReturnsAnObject(ctjs::FuncOp target) {
+        std::optional<std::string> bad;
+        target.getBody().walk([&](ctjs::ReturnOp returned) {
+            if (!bad && !isNotObjectLike(returned.getValue())) {
+                bad = "its constructor returns a value this pass cannot prove is not an object, "
+                      "and a constructor that returns one REPLACES the instance "
+                      "(context::construct: `produced.is_object_like() ? produced : self`) - so "
+                      "`new` would not evaluate to the struct this rewrite builds";
+            }
+        });
+        return bad;
+    }
+
+    // GUARD 5: nothing may touch the constructor function's `prototype`.
+    //
+    // SHADOWED THE SAME WAY, AND KEPT FOR THE SAME REASON. Removing it leaves
+    // `prototype-written.js` refused by the mixed-use clause below - "it is
+    // used as a constructor and also reaches `ctjs.set_property`" - which is
+    // true and tells a reader nothing about what to do next. This one names
+    // Stage 60A.
+    //
+    // Refused BY NAME rather than falling through to the generic "used as a
+    // value elsewhere", because the work item behind it is a specific one: the
+    // plan's Stage 60A immutability proof, which is what turns a prototype
+    // table into a base class. Without it an instance here has NO chain, so a
+    // program that writes `X.prototype.m = ...` and calls `o.m()` would compile
+    // to a struct with no `m` at all.
+    std::optional<std::string> whyPrototypeIsTouched(ctjs::CreateClosureOp c) {
+        for (mlir::Operation * user : c.getResult().getUsers()) {
+            llvm::StringRef key;
+            if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
+                key = constantKeyOf(get.getKey());
+            } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
+                key = constantKeyOf(set.getKey());
+            }
+            if (key == "prototype") {
+                return "its constructor's `prototype` is read or written, which is a prototype "
+                       "chain this slice does not build - Stage 60A's immutability proof owns it";
+            }
+        }
+        return std::nullopt;
+    }
+
+    // THE CONSTRUCTOR FORM OF whyNotLiftable, one sentence per clause. Every
+    // clause it shares with the method lift is CALLED rather than re-typed:
+    // the instance is a literal and the constructor is a receiver carrier, so
+    // the two rules are the same rule reached through `new`.
+    std::optional<std::string> whyNotLiftableConstructor(ctjs::CreateClosureOp c) {
+        // THE ARROW GUARD FIRST, as the method form does: an arrow's `this` is
+        // lexical, so every use of it reads as a legal constant-key access to
+        // the receiver clause below and admitting one would answer wrongly
+        // rather than refuse. (An arrow is not a constructor in the VM either -
+        // `ensure_prototype` returns undefined for one.)
+        if (const std::optional<std::string> why = whyTargetIsNotLiftable(c)) { return why; }
+        ctjs::FuncOp target = targetOf(c);
+        mlir::Block & entry = target.getBody().front();
+        const unsigned parameters = entry.getNumArguments() - 3;
+        // GUARD 5, before the generic clauses, so the diagnostic names the
+        // prototype rather than whatever else the read happens to be.
+        if (const std::optional<std::string> why = whyPrototypeIsTouched(c)) { return why; }
+        // AND THE CLOSURE IS USED FOR NOTHING BUT `new`. One ctjs.func is one
+        // C++ signature, so a body that is a free function at one site and a
+        // constructor at another needs two.
+        //
+        // `new X(a)` USES THE CLOSURE TWICE ON ONE OPERATION - as the callee
+        // AND as new.target, which is what the VM pushes for a construct - so
+        // this counts operations and not operands.
+        for (mlir::Operation * user : c.getResult().getUsers()) {
+            if (!llvm::isa<ctjs::ConstructOp>(user)) {
+                return ("it is used as a constructor and also reaches `" +
+                        user->getName().getStringRef() +
+                        "` - one ctjs.func is one C++ signature, and a body that is a free "
+                        "function at one site and a constructor at another needs two")
+                    .str();
+            }
+        }
+        // GUARD 2: `this` never escapes the constructor, and every use of it is
+        // a constant-key access. Word for word the receiver carrier's
+        // condition 3, because it IS that condition.
+        if (const std::optional<std::string> leak = whyThisLeaks(target)) { return leak; }
+        // GUARD 3.
+        if (const std::optional<std::string> why = whyConstructorReturnsAnObject(target)) {
+            return why;
+        }
+        const auto sites = constructsOfTarget.find(target.getOperation());
+        if (sites == constructsOfTarget.end() || sites->second.empty()) {
+            return "nothing constructs it";
+        }
+        for (ctjs::ConstructOp made : sites->second) {
+            // GUARD 1 AT EVERY SITE, not only at this one: a target is one C++
+            // signature, so a second `new` through a callee this pass cannot
+            // name would leave that site dispatching through a closure which is
+            // about to lower to nothing.
+            if (made.getCallee().getDefiningOp<ctjs::CreateClosureOp>() != c) {
+                return "it is constructed at a site whose callee this pass cannot name";
+            }
+            // GUARD 4: the instance's own uses close its shape, by the literal
+            // rule, asked of the value the rewrite is about to make a literal.
+            if (!usesCloseTheShape(made.getResult())) {
+                return "the instance `new` makes does not have a closed shape - every use of it "
+                       "has to be a constant-key read or write, or a receiver this lift carries";
+            }
+            // A CLAUSE WAS HERE AND IS GONE, MEASURED: "the instance's `k` is
+            // read but never assigned". It refused every instance that reads a
+            // key the constructor does not write, on the grounds that the VM
+            // would find it on the prototype. THE HAZARD IS ALREADY COVERED
+            // AND MORE PRECISELY: admission's own clause names the keys
+            // Object.prototype answers ("field `constructor` is read but never
+            // written, and Object.prototype answers that name - the interpreter
+            // finds a function where this would find undefined"), and every
+            // OTHER unwritten key is undefined in the VM too, exactly as it is
+            // for a literal. Removing it, `unwritten-key.js` compiles with no
+            // refusal at all and agrees with the interpreter; the clause was
+            // strictly narrowing the tier for nothing.
+            if (made.getArgs().size() > parameters) {
+                return "a `new` passes " + std::to_string(made.getArgs().size()) +
+                       " argument(s) to " + std::to_string(parameters) +
+                       " parameter(s) - the surplus has frame semantics";
+            }
+            auto caller = made->getParentOfType<ctjs::FuncOp>();
+            if (caller && passesNewTarget.contains(caller.getOperation())) {
+                return "a `new` of it sits in a function that passes new.target";
+            }
+        }
+        if (const std::optional<std::string> why = whyCapturesDoNotLift(c)) { return why; }
+        if (const std::optional<std::string> escapes = whyOwnClosureEscapes(target)) {
+            return escapes;
+        }
+        return whyUpvalueReadsDoNotLift(target);
+    }
+
     liftReport run() {
         census();
         // THE ARGUMENT SLOTS FIRST, because `closedAfterLift` reads them and
@@ -1479,6 +1743,15 @@ struct closureLifter {
         // rewrite: a lifted call is a `ctjs.call_direct`, which `closedAfterLift`
         // does not know, so a decision made after the first lift would differ
         // from the same decision made before it.
+        // THE `new` SITES FIRST, and the ordering is load-bearing. This census
+        // is purely STRUCTURAL - which closures are used as `new` callees and
+        // nowhere else - and asks no question about any shape, so it is safe
+        // this early. It has to be this early: `closedAfterLift` admits a
+        // `ctjs.construct` result as an object, and `argumentCensus`'s fixpoint
+        // asks `closedAfterLift` of every argument. Run after, the instance
+        // would still be a `ctjs.construct` there, read as "not a literal", and
+        // an instance passed to a lifted function would refuse the module.
+        constructorCensus();
         argumentCensus();
         methodCensus();
         liftReport out;
@@ -1498,9 +1771,17 @@ struct closureLifter {
             // which whyNotLiftable refuses by name - and the calls that reach
             // it come through a `get_property` on the object. So the two rules
             // are asked separately and share their capture clauses.
-            const std::optional<std::string> why = methodClosures.contains(c.getOperation())
-                                                       ? whyNotLiftableMethod(c)
-                                                       : whyNotLiftable(c);
+            // AND A CONSTRUCTOR IS A THIRD ADMISSION. Its closure value is
+            // never called and never stored - it is the callee of a
+            // `ctjs.construct` - so neither of the other two rules describes
+            // it, and `whyNotLiftable` refuses it by name ("it is used as a
+            // constructor") for the MIXED case this set deliberately excludes:
+            // one ctjs.func is one C++ signature, and a body that is a free
+            // function at one site and a constructor at another needs two.
+            const std::optional<std::string> why =
+                constructorClosures.contains(c.getOperation()) ? whyNotLiftableConstructor(c)
+                : methodClosures.contains(c.getOperation())    ? whyNotLiftableMethod(c)
+                                                               : whyNotLiftable(c);
             if (why) {
                 reasonOf[c.getOperation()] = *why;
                 if (target) { blocked.try_emplace(target.getOperation(), *why); }
@@ -1637,14 +1918,83 @@ struct closureLifter {
         // parameter nothing reads is `-Wunused-parameter` under -Werror, and
         // passing the object would be a use of it that opens its shape for no
         // gain.
-        const bool method = callsOfTarget.count(target.getOperation()) != 0 &&
+        const bool constructor = llvm::all_of(made, [&](ctjs::CreateClosureOp c) {
+            return constructorClosures.contains(c.getOperation());
+        });
+        const bool method = !constructor && callsOfTarget.count(target.getOperation()) != 0 &&
                             llvm::all_of(made, [&](ctjs::CreateClosureOp c) {
                                 return methodClosures.contains(c.getOperation());
                             });
-        const bool carriesReceiver = method && !entry.getArgument(0).use_empty();
+        // A CONSTRUCTOR ALWAYS CARRIES ITS RECEIVER WHEN IT TOUCHES `this` -
+        // the instance IS the receiver - and the test is the same one a method
+        // gets: `%arg0` read at all. A constructor that never touches `this`
+        // builds the empty shape, and passing it would be a use that opens it
+        // for no gain.
+        const bool carriesReceiver = (method || constructor) && !entry.getArgument(0).use_empty();
         if (carriesReceiver) {
             target->setAttr("ctnative.receiver", mlir::UnitAttr::get(context));
             ++out.receivers;
+        }
+
+        if (constructor) {
+            // `new X(a, b)` BECOMES A LITERAL PLUS THE CALL THE RECEIVER LIFT
+            // ALREADY EMITS, and that is the whole lowering.
+            //
+            // The instance is an EMPTY ctjs.create_object placed where the
+            // `new` was, and the constructor is entered through a
+            // ctjs.call_direct carrying it as operand 0 with
+            // `ctnative.receiver` on the call. After this rewrite there is no
+            // constructor in the IR at all - only a closed object literal and a
+            // free function that writes through a pointer to it - so
+            // `hasClosedShape`, `groupReceivers`, `fieldsOf`, `censusShapes`
+            // and `replace` need no constructor case, and the instance lowers
+            // to a frame-scope `ctn_X` variable like any other literal. Zero
+            // allocation, and the object lives in the caller's frame.
+            //
+            // $callee_value IS UNDEFINED, as it is in the method arm and for
+            // the same reason: the native call arm drops operand 2, this
+            // rewrite runs inside --ctnative-lower-to-emitc, and the boxed tier
+            // never sees the op. The closure is erased below.
+            for (ctjs::CreateClosureOp c : made) {
+                c->setAttr("ctnative.lifted", mlir::UnitAttr::get(context));
+                ++out.closures;
+                out.captures += captures;
+            }
+            llvm::SmallVector<mlir::Value> captured;
+            ctjs::CreateClosureOp only = made.front();
+            for (mlir::Value cell : only.getUpvalues()) {
+                captured.push_back(cell.getDefiningOp<ctjs::CreateCellOp>().getInitial());
+            }
+            for (ctjs::ConstructOp built : constructsOfTarget[target.getOperation()]) {
+                mlir::OpBuilder at(built);
+                const mlir::Value undefined = ctjs::ConstantOp::create(
+                    at, built.getLoc(), valueType, ctjs::UndefinedAttr::get(context));
+                // THE INSTANCE. An empty literal: every field it has, the
+                // constructor writes through `this`, and `fieldsOf` collects
+                // those over the alias group the receiver mark creates.
+                auto instance = ctjs::CreateObjectOp::create(at, built.getLoc(), valueType);
+                llvm::SmallVector<mlir::Value> arguments(captured);
+                arguments.append(built.getArgs().begin(), built.getArgs().end());
+                while (arguments.size() < captures + parameters) { arguments.push_back(undefined); }
+                auto direct = ctjs::CallDirectOp::create(
+                    at, built.getLoc(), valueType,
+                    mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
+                    carriesReceiver ? instance.getResult() : undefined, undefined, undefined,
+                    arguments, /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
+                if (carriesReceiver) {
+                    direct->setAttr("ctnative.receiver", mlir::UnitAttr::get(context));
+                }
+                // AND `new` EVALUATES TO THE INSTANCE, NOT TO THE CALL. That is
+                // the whole of context::construct's last line for a body this
+                // rule admits: `produced.is_object_like() ? produced : self`,
+                // and whyConstructorReturnsAnObject has just proved `produced`
+                // is never object-like, so the answer is always `self`.
+                built.getResult().replaceAllUsesWith(instance.getResult());
+                built.erase();
+                ++out.calls;
+                ++out.constructors;
+            }
+            return;
         }
 
         if (method) {
@@ -4082,7 +4432,9 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                                 << " function(s), rewrote " << lifted.calls << " call(s), unboxed "
                                 << lifted.cells << " cell(s), " << lifted.methods
                                 << " method(s) of which " << lifted.receivers
-                                << " take a receiver, " << lifted.objects << " object parameter(s)";
+                                << " take a receiver, " << lifted.objects
+                                << " object parameter(s), " << lifted.constructors
+                                << " constructor site(s)";
         }
 
         // THE ALIAS GROUPS, once the lift has written its attributes and before
