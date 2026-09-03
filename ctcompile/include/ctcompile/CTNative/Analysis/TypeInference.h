@@ -133,6 +133,18 @@ public:
     /// constant-key get or set, or the receiver of another lifted method call.
     static bool isReceiverArgument(mlir::Value v);
 
+    /// AND AN ARGUMENT IS A PARAMETER TOO. `f(o)` where every call passes a
+    /// closed literal there and the parameter is only ever read through
+    /// constant keys is lifted the same way: the lowering marks the target and
+    /// each of its calls `ctnative.object_args` with the ENTRY-BLOCK indices
+    /// that carry a `ctn_x *`. Nothing in the receiver carrier was about
+    /// operand 0, so this is the same row of the table one operand along.
+    ///
+    /// TRUE FOR ANY ENTRY ARGUMENT THE LIFT LISTED, `%arg0` included via
+    /// isReceiverArgument - so `hasClosedShape` and `groupReceivers` ask this
+    /// one question rather than two.
+    static bool namesAnObjectParameter(mlir::Value v);
+
     /// THE VALUES THAT NAME ONE OBJECT, once `this` is a parameter. A method
     /// lifted onto two literals of one shape has ONE `%arg0` standing for
     /// both, and `this.x = 5` inside it is a store the caller's `o.x` has to

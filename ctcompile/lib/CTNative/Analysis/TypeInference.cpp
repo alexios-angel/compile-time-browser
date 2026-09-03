@@ -266,6 +266,22 @@ bool TypeInference::isReceiverArgument(mlir::Value v) {
     return fn && fn->hasAttr("ctnative.receiver");
 }
 
+// AND THE ARGUMENT FORM, WHICH IS THE SAME ATTRIBUTE LOOKUP ONE OPERAND ALONG.
+// `ctnative.object_args` lists entry-block indices rather than a single bit
+// because a function may take two of them - `join(a, b)` is one signature with
+// two `ctn_x *` - and because the operand number is what the call site and the
+// emitted parameter list both count in.
+bool TypeInference::namesAnObjectParameter(mlir::Value v) {
+    if (isReceiverArgument(v)) { return true; }
+    auto arg = llvm::dyn_cast<mlir::BlockArgument>(v);
+    if (!arg || !arg.getOwner()->isEntryBlock()) { return false; }
+    auto fn = llvm::dyn_cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
+    if (!fn) { return false; }
+    auto listed = fn->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.object_args");
+    return listed &&
+           llvm::is_contained(listed.asArrayRef(), static_cast<int32_t>(arg.getArgNumber()));
+}
+
 namespace {
 // A USE THAT PASSES THE OBJECT AS A LIFTED METHOD'S `this`, which does NOT open
 // its shape: the lift proved that method reaches `this` only through constant
@@ -273,12 +289,19 @@ namespace {
 // one attribute lookup instead of a symbol lookup.
 bool passesAReceiver(mlir::OpOperand & use) {
     auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
-    return call && use.getOperandNumber() == 0 && call->hasAttr("ctnative.receiver");
+    if (!call) { return false; }
+    if (use.getOperandNumber() == 0 && call->hasAttr("ctnative.receiver")) { return true; }
+    // AND AN ARGUMENT THE LIFT PROVED IS A PARAMETER. ctjs.call_direct's
+    // operands ARE the callee's entry block in order, so the operand number IS
+    // the index the attribute lists - no adjustment, and no symbol lookup.
+    auto listed = call->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.object_args");
+    return listed &&
+           llvm::is_contained(listed.asArrayRef(), static_cast<int32_t>(use.getOperandNumber()));
 }
 } // namespace
 
 bool TypeInference::hasClosedShape(mlir::Value object) {
-    if (!object.getDefiningOp<ctjs::CreateObjectOp>() && !isReceiverArgument(object)) {
+    if (!object.getDefiningOp<ctjs::CreateObjectOp>() && !namesAnObjectParameter(object)) {
         return false;
     }
     for (mlir::OpOperand & use : object.getUses()) {
@@ -331,16 +354,37 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
         }
     });
     top->walk([&](ctjs::FuncOp fn) {
-        if (!fn->hasAttr("ctnative.receiver") || fn.getBody().empty()) { return; }
-        const mlir::Value self = fn.getBody().front().getArgument(0);
-        parent.try_emplace(self, self);
+        if (fn.getBody().empty()) { return; }
+        mlir::Block & entry = fn.getBody().front();
+        if (fn->hasAttr("ctnative.receiver")) {
+            const mlir::Value self = entry.getArgument(0);
+            parent.try_emplace(self, self);
+        }
+        if (auto listed = fn->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.object_args")) {
+            for (int32_t index : listed.asArrayRef()) {
+                const mlir::Value parameter = entry.getArgument(static_cast<unsigned>(index));
+                parent.try_emplace(parameter, parameter);
+            }
+        }
     });
     top->walk([&](ctjs::CallDirectOp call) {
-        if (!call->hasAttr("ctnative.receiver")) { return; }
+        auto listed = call->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.object_args");
+        if (!call->hasAttr("ctnative.receiver") && !listed) { return; }
         auto fn =
             mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
         if (!fn || fn.getBody().empty()) { return; }
-        join(call.getReceiver(), fn.getBody().front().getArgument(0));
+        mlir::Block & entry = fn.getBody().front();
+        if (call->hasAttr("ctnative.receiver")) { join(call.getReceiver(), entry.getArgument(0)); }
+        // ONE GROUP PER PARAMETER, NOT ONE PER FUNCTION. `f(a, b)` taking two
+        // objects joins a to %arg3 and b to %arg4; joining them to each other
+        // would give both the union of two shapes and a class with fields
+        // neither literal has.
+        if (listed) {
+            for (int32_t index : listed.asArrayRef()) {
+                join(call->getOperand(static_cast<unsigned>(index)),
+                     entry.getArgument(static_cast<unsigned>(index)));
+            }
+        }
     });
 
     // THE KEYS FIRST, because `find` compresses paths and so writes to
