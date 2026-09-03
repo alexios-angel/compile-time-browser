@@ -169,14 +169,17 @@ def CTJS_CreateClosureOp
     closure the VM copies into the slot, is the attribute's whole business.
 
     $enclosing_indices IS OPTIONAL AND, WHEN PRESENT, EXACTLY AS LONG AS
-    $upvalues, which its verifier enforces. Entry i is the descriptor's
-    `up.index` when slot i is filled from the enclosing closure, and -1 when the
-    operand beside it is the real cell (from_parent_local) - or when the index
-    names no upvalue the enclosing frame has, which the VM answers with
-    undefined and this answers with the placeholder alone. Absent means every
-    slot is from_parent_local. The importer writes it, the boxed lowering
-    ignores it exactly as it ignores the placeholder, and the reader is the
-    native tier's closure lift (Phase 59 slice 1b, LowerToEmitC.cpp).
+    $upvalues - and every slot it NAMES carries the `undefined` placeholder and
+    no real binding. Its verifier enforces both, because those are the two ways
+    a reader could write a list that means something other than this paragraph
+    says, and the second one is the one the lift would act on. Entry i is the
+    descriptor's `up.index` when slot i is filled from the enclosing closure,
+    and -1 when the operand beside it is the real cell (from_parent_local) - or
+    when the index names no upvalue the enclosing frame has, which the VM
+    answers with undefined and this answers with the placeholder alone. Absent
+    means every slot is from_parent_local. The importer writes it, the boxed
+    lowering ignores it exactly as it ignores the placeholder, and the reader
+    is the native tier's closure lift (Phase 59 slice 1b, LowerToEmitC.cpp).
 
     THE INDEX NAMES A CELL AND THE LIFT READS A VALUE, and that is not a
     contradiction. context::make_closure copies `enclosing->upvalues[up.index]`
@@ -199,11 +202,18 @@ def CTJS_CreateClosureOp
     tools/check/capture-census.py counts the operands over the module
     `ctjs-translate --ctbrowser-js-to-ctjs` writes - 573 create_closure, 376
     with a capture list, 1,021 operands, 414 of them ctjs.create_cell, 388 block
-    arguments and 219 the placeholder - and it scopes SSA names to the function
-    that defines them, which a flat table over 574 functions of `%0` does not
-    (that reading said 427). The bytes are a comparison between commits, so they
-    name them: bootstrap through the boxed pipeline compile-js-to-cpp.cmake
-    spells is 10,976,150 bytes at 69ea710 and at THIS encoding, and 10,988,521
+    arguments and 219 the placeholder. It scopes SSA names to the ctjs.func that
+    defines them, because `%0` exists in all 574 of bootstrap's; on this module
+    that precaution does not change the answer, since a capture operand is
+    always defined earlier in the same function than the create_closure that
+    reads it and an in-order flat table therefore agrees, 414/388/219 either
+    way. AND THE 427 AN EARLIER BRIEF REPORTED IS NOT REPRODUCED by any reading
+    tried here - not the in-order flat table, not a whole-module two-pass one -
+    so where it came from is unknown; 219 is the figure three commits and the
+    ctjs.load_upvalue delta agree on. The bytes are a comparison between
+    commits, so they name them: bootstrap through the boxed pipeline
+    compile-js-to-cpp.cmake spells is 10,976,150 bytes at 69ea710 and at THIS
+    encoding, and 10,988,521
     at 0bf7501, where the index was an operand. ctjs.load_upvalue in the
     imported module moves with it: 1,111, 1,111, and 1,330 - and 1,330 - 1,111
     is the same 219.

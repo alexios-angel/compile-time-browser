@@ -142,3 +142,20 @@ ctjs.func @index_over_a_cell(%a: !ctjs.value, %b: !ctjs.value)
         {enclosing_indices = array<i32: -1, 0>}
   ctjs.return %fn
 }
+
+// -----
+
+// ---- ctjs.create_closure: an index over a block argument -------------------
+// The same disagreement in its commoner shape. 388 of bootstrap's 1,021 capture
+// operands are block arguments rather than ctjs.create_cell - a from_parent_local
+// binding that lives in a register - so a slot that names an enclosing upvalue
+// AND holds one of those is the same two answers for one slot. Here the lift
+// would take the INDEX and drop the operand, which is the mirror image of the
+// case above and just as silent.
+ctjs.func @index_over_a_register(%a: !ctjs.value, %b: !ctjs.value)
+    -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+  // expected-error @+1 {{`enclosing_indices[0]` is 1, so slot 0 is filled from the enclosing closure and its capture operand has to be the importer's `ctjs.constant #ctjs.undefined` placeholder}}
+  %fn = ctjs.create_closure %a[0] this %b captures %b
+        {enclosing_indices = array<i32: 1>}
+  ctjs.return %fn
+}

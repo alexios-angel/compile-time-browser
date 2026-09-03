@@ -8,12 +8,21 @@ A comment in this repository is read as specification, so a number in one that
 no command reproduces is a liability: the script that produced the original
 figure lived in a devbox directory and was deleted with it.
 
-AND THE FIRST FIGURE WAS WRONG FOR A REASON THIS SCRIPT IS BUILT AROUND. An
-earlier count said 427, from a flat table of SSA names over the whole module.
-SSA names RESET AT EVERY ctjs.func - `%0` exists in all 574 of bootstrap's - so
-a flat table has one entry per name and the last function to define `%0` decides
-what every other function's `%0` was. The definitions here are scoped to the
-function that contains them, which is what makes 219 reproducible.
+SSA NAMES ARE SCOPED TO THE FUNCTION THAT DEFINES THEM, because `%0` exists in
+all 574 of bootstrap's ctjs.funcs and a table shared across them would let the
+last definition decide what every other function's `%0` was. On bootstrap that
+precaution does not change the answer - a capture operand is always defined
+earlier in the SAME function than the create_closure that reads it, so a flat
+table walked in order agrees, 414/388/219 either way - but it is wrong in
+principle and it costs one line to be right.
+
+AND AN EARLIER COUNT SAID 427, WHICH NOTHING HERE REPRODUCES. Neither an
+in-order flat table nor a whole-module two-pass one gives 427 on any of the
+three commits' modules, so the 427 has no derivation on record and should not be
+quoted. What 219 has is three corroborations: it is the placeholder count at
+69ea710 (where no index existed anywhere), the count of live upvalue reads
+standing in capture operands at 0bf7501, and the exact ctjs.load_upvalue delta
+between them, 1,330 - 1,111.
 
 WHAT IT COUNTS, over the module `ctjs-translate --ctbrowser-js-to-ctjs` writes:
 
@@ -74,7 +83,7 @@ INDICES = re.compile(r"enclosing_indices\s*=\s*array<i32\s*:?\s*([^>]*)>")
 LOAD_UPVALUE = re.compile(r"\bctjs\.load_upvalue\b")
 
 
-def census(lines):
+def census(lines, scoped=True):
     counts = dict(closures=0, with_list=0, operands=0, cells=0, block_args=0,
                   placeholder=0, other=0, indexed=0, load_upvalue=0, functions=0)
     disagreements = []
@@ -82,7 +91,11 @@ def census(lines):
 
     for number, line in enumerate(lines, 1):
         if FUNC.match(line):
-            kind = {}
+            # --flat KEEPS THE TABLE, which is the reading the sentence in the
+            # docstring is about: on bootstrap it agrees, and a reader can see
+            # that rather than take it.
+            if scoped:
+                kind = {}
             counts["functions"] += 1
             for name in ARG.findall(line):
                 kind[name] = "block_args"
@@ -130,10 +143,12 @@ def main():
     ap.add_argument("--json")
     ap.add_argument("--expect-indexed", type=int)
     ap.add_argument("--expect-operands", type=int)
+    ap.add_argument("--flat", action="store_true",
+                    help="share one SSA table across every function (the wrong reading)")
     args = ap.parse_args()
 
     text = sys.stdin.read() if args.module == "-" else open(args.module).read()
-    counts, disagreements = census(text.splitlines())
+    counts, disagreements = census(text.splitlines(), scoped=not args.flat)
 
     width = max(len(k) for k in counts)
     for key, value in counts.items():

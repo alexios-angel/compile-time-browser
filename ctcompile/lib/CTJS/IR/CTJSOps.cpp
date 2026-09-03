@@ -23,11 +23,15 @@
 // and which MLIR routes through SymbolUserOpInterface::verifySymbolUses.
 //
 // AND ONE MORE (Phase 59 slice 1b): ctjs.create_closure's `enclosing_indices`
-// against the length of its variadic capture list. That is an ATTRIBUTE
-// measured against an OPERAND COUNT, which is the same shape of question the
-// bar above admits - no constraint reaches across the two - and the operation's
-// description already says the list is parallel rather than packed. Saying it
-// twice, once where it can fail, is the point.
+// against its variadic capture list - the LENGTH, and, for every slot the
+// attribute names, WHAT THE OPERAND BESIDE IT IS. Both are an ATTRIBUTE
+// measured against OPERANDS, which is the same shape of question the bar above
+// admits - no constraint reaches across the two - and the operation's
+// description already says the list is parallel rather than packed and that a
+// named slot carries a placeholder. Saying it twice, once where it can fail, is
+// the point: the encoding this replaced had ONE place to write each slot's
+// answer, so it could not disagree with itself, and an attribute beside an
+// operand can.
 
 #define GET_OP_CLASSES
 #include "ctcompile/CTJS/IR/CTJSOps.cpp.inc"
@@ -343,12 +347,32 @@ mlir::LogicalResult CreateClosureOp::verify() {
         // the descriptors want `0, 1` is two well-formed slots. That one is the
         // importer's to get right, and native-nested-closure-fixture.js is where
         // it would be caught - by the answer, not by a verifier.
-        if (entries[i] >= 0 && getUpvalues()[i].getDefiningOp<CreateCellOp>() != nullptr) {
+        if (entries[i] < 0) { continue; }
+        if (getUpvalues()[i].getDefiningOp<CreateCellOp>() != nullptr) {
             return emitOpError("`enclosing_indices[")
                    << i << "]` is " << entries[i] << ", so slot " << i
                    << " is filled from the enclosing closure - but its capture operand is a "
                       "ctjs.create_cell of this frame, and the two describe the same slot "
                       "differently; the native lift believes the cell and the index is lost";
+        }
+        // AND A CELL IS ONLY THE COMMONEST WAY TO SAY IT TWICE. 388 of
+        // bootstrap's 1,021 capture operands are block arguments rather than
+        // ctjs.create_cell - a from_parent_local binding that lives in a
+        // register - and an index written over one of THOSE is the same lie
+        // with the same consequence, except that capturedValue takes the index
+        // arm and drops the operand instead of the reverse. So the clause is
+        // the invariant itself: a slot the enclosing closure fills carries the
+        // importer's `undefined` placeholder and nothing else. That SUBSUMES
+        // the cell clause above, which is kept for its sentence: a cell is the
+        // mistake a reader actually makes, and "you wrote a cell here" reads
+        // better than "that is not the placeholder".
+        auto placeholder = getUpvalues()[i].getDefiningOp<ConstantOp>();
+        if (!placeholder || !llvm::isa<UndefinedAttr>(placeholder.getValue())) {
+            return emitOpError("`enclosing_indices[")
+                   << i << "]` is " << entries[i] << ", so slot " << i
+                   << " is filled from the enclosing closure and its capture operand has to be "
+                      "the importer's `ctjs.constant #ctjs.undefined` placeholder - a real value "
+                      "there is a second, contradictory answer for the same slot";
         }
     }
     return mlir::success();
