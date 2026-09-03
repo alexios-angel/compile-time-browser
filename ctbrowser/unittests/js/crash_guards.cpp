@@ -79,5 +79,47 @@ int main() {
               "return n===0?'x':String(nest(n-1))}}}return String(nest(100))})()",
               "x");
 
+    // ================================================================
+    // 2. THE DENSE ARRAY - 23 SIGABRTs
+    // ================================================================
+    //
+    // `a[4294967295] = "x"` resized a std::vector<value> to 4,294,967,296
+    // slots: 34 GB, std::bad_alloc, SIGABRT. 2^32-1 is not an array index
+    // (6.1.7), so the specified answer stores it without touching `length`.
+    js_expect("(function(){var a=[];a[4294967295]='x';return a[4294967295]})()", "x");
+    js_expect("(function(){var a=[];a[4294967295]='x';return a.length})()", "0");
+    js_expect("(function(){var a=[0,1,2];a[4294967295]='x';return a.length})()", "3");
+    // A VALID index that far out DOES raise the length, and is still not
+    // materialised.
+    js_expect("(function(){var a=[];a[2147483648]=1;return a.length})()", "2147483649");
+    js_expect("(function(){var a=[];a[2147483648]=1;return a[2147483648]})()", "1");
+    js_expect("(function(){var a=[];a[4294967294]=1;return a.length})()", "4294967295");
+    // `a.length = n` records rather than allocates, and refuses what is not a
+    // length at all - 10.4.2.4's RangeError, which used to be swallowed.
+    js_expect("(function(){var a=[];a.length=4294967295;return a.length})()", "4294967295");
+    js_expect("(function(){try{var a=[];a.length=4294967296}catch(e){return e.name}})()",
+              "RangeError");
+    js_expect("(function(){try{var a=[];a.length=-1}catch(e){return e.name}})()", "RangeError");
+    js_expect("(function(){try{var a=[];a.length=1.5}catch(e){return e.name}})()", "RangeError");
+    // `new Array(n)` took the same allocation and the same abort.
+    js_expect("new Array(4294967295).length", "4294967295");
+    js_expect("(function(){try{new Array(1.5)}catch(e){return e.name}})()", "RangeError");
+    js_expect("new Array(3).length", "3");
+    // SHRINKING DISCARDS BOTH HALVES: an index at or above the new length is
+    // deleted whether it was materialised or not.
+    js_expect("(function(){var a=[];a[2147483648]=1;a.length=0;return a.length})()", "0");
+    js_expect("(function(){var a=[];a[2147483648]=1;a.length=0;return typeof a[2147483648]})()",
+              "undefined");
+
+    // AND AN ORDINARY ARRAY IS STILL DENSE, which is the whole reason the rule
+    // is on the size of the JUMP rather than on the index: a sequential fill
+    // grows by one slot at a time and never goes sparse.
+    js_expect("(function(){var a=[];for(var i=0;i<10;i++){a[i]=i}return a.join(',')})()",
+              "0,1,2,3,4,5,6,7,8,9");
+    js_expect("(function(){var a=[];a[5]=1;return a.length})()", "6");
+    js_expect("(function(){var a=[];a[5]=1;return String(a)})()", ",,,,,1");
+    js_expect("(function(){var a=[1,2,3];a.length=1;return a.join(',')})()", "1");
+    js_expect("(function(){var a=[1];a.length=3;return a.length+':'+a.join(',')})()", "3:1,,");
+
     REPORT("crash_guards");
 }

@@ -722,10 +722,22 @@ void test_array_length_is_writable() {
     expect_result("var a = [1]; a.length = 3; return String(a[2]);", "undefined");
     // A string coerces, as it does everywhere else.
     expect_result("var a = [1,2,3]; a.length = '1'; return JSON.stringify(a);", "[1]");
-    // NONSENSE LEAVES IT ALONE rather than throwing: the spec says RangeError,
-    // and this engine is lenient with pages for the same reason it is elsewhere.
-    expect_result("var a = [1,2]; a.length = -1; return a.length;", "2");
-    expect_result("var a = [1,2]; a.length = NaN; return a.length;", "2");
+    // NONSENSE THROWS, and these two rows used to assert the opposite.
+    //
+    // The leniency they pinned - "a dropped nonsense write leaves the array as
+    // it was" - was not free: the same branch that swallowed `-1` also had to
+    // decide what to do with 4294967295, and it RESIZED, which is 34 GB and the
+    // SIGABRT test262 measured in eleven of its Array tests on 2026-09-02. One
+    // predicate now answers both questions (array_object::set_js_length), and
+    // 10.4.2.4's RangeError is what it answers with. No page can have depended
+    // on the old behaviour, because every browser throws here.
+    expect_result("var a = [1,2]; try { a.length = -1; } catch (e) { return e.name; }",
+                  "RangeError");
+    expect_result("var a = [1,2]; try { a.length = NaN; } catch (e) { return e.name; }",
+                  "RangeError");
+    // ...and the array is untouched by the refusal, which is the half of the
+    // old leniency worth keeping.
+    expect_result("var a = [1,2]; try { a.length = -1; } catch (e) {} return a.length;", "2");
     // A TYPED array is a view over bytes sized once; resizing it would leave
     // the view and its buffer disagreeing, so the write is a no-op.
     expect_result("var t = new Uint8Array(4); t.length = 0; return t.length;", "4");

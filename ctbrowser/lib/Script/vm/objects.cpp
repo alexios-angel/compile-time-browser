@@ -40,6 +40,10 @@ void context::mark_object(heap_object * o) {
     case heap_kind::array: {
         auto * arr = static_cast<array_object *>(o);
         for (const value & v : arr->items) { mark(v); }
+        // AND THE SPARSE HALF. An element that is only reachable through
+        // `sparse` is reachable, and a collector that walked `items` alone
+        // would free it under a page that can still read it by index.
+        for (const auto & [index, v] : arr->sparse) { mark(v); }
         mark(arr->viewed);
         mark(arr->index);
         mark(arr->input);
@@ -144,6 +148,11 @@ value context::lookup_index(value target, value key) {
         if (i >= 0 && static_cast<std::size_t>(i) < arr->items.size()) {
             return arr->items[static_cast<std::size_t>(i)];
         }
+        // AND THE SPARSE HALF, second and behind an empty test so that reading
+        // past the end of an ordinary array is the one branch it was before.
+        if (!arr->sparse.empty() && i >= 0 && static_cast<std::uint64_t>(i) <= 4294967295ull) {
+            if (value * found = arr->find_sparse(static_cast<std::uint32_t>(i))) { return *found; }
+        }
         return value::undefined();
     }
     if (target.is_string() && key.is_number()) {
@@ -183,10 +192,25 @@ void context::store_index(value target, value key, value v) {
             return;
         }
         if (i >= 0) {
-            if (static_cast<std::size_t>(i) >= arr->items.size()) {
-                arr->items.resize(static_cast<std::size_t>(i) + 1, value::undefined());
+            const auto index = static_cast<std::uint64_t>(i);
+            if (index < arr->items.size()) {
+                arr->items[static_cast<std::size_t>(index)] = v;
+                return;
             }
-            arr->items[static_cast<std::size_t>(i)] = v;
+            // HOW MANY SLOTS THIS ONE WRITE WOULD MATERIALISE. `a[4294967295]
+            // = "x"` asked for 34 GB and std::bad_alloc ended the process; the
+            // test is on the SIZE OF THE JUMP so that a sequential fill, whose
+            // jump is always one, is untouched. See array_object::dense_limit.
+            if (index <= 4294967295ull &&
+                index + 1 - arr->items.size() > array_object::dense_limit) {
+                arr->set_sparse(static_cast<std::uint32_t>(index), v);
+                return;
+            }
+            // Past 2^32-1 a numeric key is not an index and not a slot either;
+            // it is an ordinary property, which an array here cannot hold.
+            if (index > 4294967295ull) { return; }
+            arr->items.resize(static_cast<std::size_t>(index) + 1, value::undefined());
+            arr->items[static_cast<std::size_t>(index)] = v;
         }
         return;
     }
@@ -365,15 +389,15 @@ void context::store_property(value target, const std::string & name, value v) {
         // sized once, and resizing it here would leave the view and its buffer
         // disagreeing. The spec makes the write a no-op, not an error.
         if (arr->elements != element_kind::none) { return; }
-        const double wanted = to_number(v);
-        // The spec throws RangeError for a non-integer or negative length. This
-        // engine is lenient with pages elsewhere for the same reason it is
-        // here: a dropped nonsense write leaves the array as it was, which is
-        // strictly better than the page dying.
-        if (!std::isfinite(wanted) || wanted < 0) { return; }
-        constexpr double length_limit = 4294967295.0; // 2^32 - 1, the spec's cap
-        if (wanted > length_limit) { return; }
-        arr->items.resize(static_cast<std::size_t>(wanted));
+        // A RangeError, WHICH IT USED TO SWALLOW. 10.4.2.4 step 3 makes any
+        // length that is not a uint32 a RangeError, and dropping the write
+        // instead was leniency bought at the cost of a test that checks for the
+        // throw (S15.4.5.2_A3_T3) - and, for a length in range, of a resize
+        // that asked for 34 GB. set_js_length records what it will not
+        // materialise; see array_object::dense_limit.
+        if (!arr->set_js_length(to_number(v))) {
+            throw_error("RangeError", "Invalid array length");
+        }
         return;
     }
     if (target.is_kind(heap_kind::native)) {
@@ -466,7 +490,10 @@ value context::lookup_property(value target, const std::string & name) {
     }
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
-        if (name == "length") { return value::number(static_cast<double>(arr->length())); }
+        // js_length, NOT length(): an index too far out to materialise raises
+        // `length` without allocating for it, and this is the one read that has
+        // to see that. Everything else keeps items.size() and its bounds.
+        if (name == "length") { return value::number(static_cast<double>(arr->js_length())); }
         // WHAT A VIEW KNOWS ABOUT ITS BUFFER. `new Uint8Array(f32.buffer)` is
         // how a page makes a second view of a different width over storage it
         // already has - Phaser does exactly that - and it needs `buffer` to

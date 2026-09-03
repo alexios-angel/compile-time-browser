@@ -1,10 +1,12 @@
 #pragma once
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #if defined(CTBROWSER_WITH_GMP)
@@ -426,6 +428,91 @@ struct array_object final : heap_object {
     [[nodiscard]] bool is_view() const noexcept { return viewed.is_array(); }
     [[nodiscard]] std::size_t length() const noexcept {
         return is_view() ? view_length : items.size();
+    }
+
+    // --- SPARSE STORAGE, and why an array needs any -------------------------
+    //
+    // `a[4294967295] = "x"` is one line of test262 (built-ins/Array/15.4.5.1-5-1)
+    // and it used to ask this engine for 4,294,967,296 `value` slots - 34 GB -
+    // because `context::store_index` resized `items` to cover whatever gap the
+    // write left. std::bad_alloc then took the process down with SIGABRT, and
+    // the runner's 2 GB RLIMIT_AS is the only reason it took ITSELF down rather
+    // than the shared machine. 18 of the 19 crashes in `built-ins/Array` were
+    // that one allocation, measured 2026-09-02.
+    //
+    // So an array materialises at most `dense_limit` NEW slots per operation.
+    // Past that the write is RECORDED instead: `sparse` holds the index and the
+    // value, and `sparse_length` holds what `length` must read back as. The rule
+    // is on the SIZE OF THE JUMP rather than on the index, deliberately - a
+    // sequential fill grows by one slot at a time and therefore stays dense
+    // however long it runs, so nothing that works today becomes sparse.
+    //
+    // WHAT THIS DOES NOT DO, said here rather than discovered: the array
+    // built-ins (join, forEach, map, indexOf, ...) walk `items` and do not
+    // consult `sparse`, so an element out there is reachable by index and by
+    // `length` and is invisible to iteration. That is a deviation and it is the
+    // cheap half of a real sparse array; the expensive half is 364 uses of
+    // `.items` across the engine, the DOM and the bindings. What it replaces is
+    // a process that died, which is not a better answer to any question.
+    //
+    // A SORTED VECTOR RATHER THAN A MAP because a sparse array holds a handful
+    // of entries in practice and `value.hpp` reaches every translation unit
+    // that touches the engine - `<map>` is a header this one should not grow.
+    static constexpr std::size_t dense_limit = 1u << 24; // 16,777,216 values = 128 MiB
+    // 6.1.7: an array index is 0 .. 2^32-2. 2^32-1 is an ORDINARY PROPERTY, so
+    // writing it must not touch `length` - which is what 15.4.5.1-5-2 asserts.
+    static constexpr std::uint32_t max_index = 4294967294u;
+    static constexpr double max_length = 4294967295.0; // 2^32 - 1
+    std::vector<std::pair<std::uint32_t, value>> sparse;
+    std::uint32_t sparse_length = 0;
+
+    // The `length` PROPERTY, which is not always `items.size()`. Only the
+    // `length` read and the `length` write use it; everything else keeps
+    // `items.size()` and therefore keeps its bounds.
+    [[nodiscard]] std::size_t js_length() const noexcept {
+        return is_view() ? view_length : std::max<std::size_t>(items.size(), sparse_length);
+    }
+    [[nodiscard]] value * find_sparse(std::uint32_t i) {
+        const auto it = std::lower_bound(
+            sparse.begin(), sparse.end(), i,
+            [](const std::pair<std::uint32_t, value> & e, std::uint32_t k) { return e.first < k; });
+        return it != sparse.end() && it->first == i ? &it->second : nullptr;
+    }
+    void set_sparse(std::uint32_t i, value v) {
+        const auto it = std::lower_bound(
+            sparse.begin(), sparse.end(), i,
+            [](const std::pair<std::uint32_t, value> & e, std::uint32_t k) { return e.first < k; });
+        if (it != sparse.end() && it->first == i) {
+            it->second = v;
+            return;
+        }
+        sparse.insert(it, {i, v});
+        // An INDEX raises the length; 2^32-1 and beyond are not indices.
+        if (i <= max_index && static_cast<std::size_t>(i) + 1 > js_length()) {
+            sparse_length = i + 1;
+        }
+    }
+    // `a.length = n`, WITHOUT MATERIALISING WHAT IT DOES NOT HAVE TO. False
+    // means `n` is not a valid array length, which is the specification's
+    // RangeError (10.4.2.4) and used to be a 34 GB `resize`.
+    [[nodiscard]] bool set_js_length(double n) {
+        if (!(n >= 0) || n > max_length || n != std::trunc(n)) { return false; }
+        const auto wanted = static_cast<std::uint64_t>(n);
+        // Shrinking DISCARDS, in both halves - "every property whose name is an
+        // array index whose value is not smaller than the new length is
+        // automatically deleted" (S15.4.5.2_A3).
+        if (wanted < items.size()) { items.resize(static_cast<std::size_t>(wanted)); }
+        std::erase_if(sparse, [wanted](const std::pair<std::uint32_t, value> & e) {
+            return e.first >= wanted;
+        });
+        if (wanted <= dense_limit) {
+            // Growing pads with undefined, exactly as before.
+            items.resize(static_cast<std::size_t>(wanted), value::undefined());
+            sparse_length = 0;
+        } else {
+            sparse_length = static_cast<std::uint32_t>(wanted);
+        }
+        return true;
     }
     // What `RegExp.prototype.exec` hangs off its result. The spec puts these on
     // the array as ordinary properties; an array here has no property table, so
