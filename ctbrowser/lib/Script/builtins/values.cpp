@@ -316,7 +316,7 @@ void install_number(context & cx) {
 
     object_object * number_proto = new_table(cx);
     method(cx, number_proto, "toFixed", [](context & c, std::span<value> a) {
-        const double self = context::to_number(c.current_this());
+        const double self = detail::this_number_value(c, "Number.prototype.toFixed");
         const auto digits = static_cast<int>(std::clamp(num_at(a, 0), 0.0, 20.0));
         // NOT snprintf("%.*f"): it is locale-dependent, it prints a thousand
         // digits past 1e21 where the specification hands back ToString, and it
@@ -331,11 +331,19 @@ void install_number(context & cx) {
     // a string a colour parser can neither reject nor read correctly, which is
     // how p5.js ended up filling a sketch's background with white.
     method(cx, number_proto, "toString", [](context & c, std::span<value> a) {
-        const double v = context::to_number(c.current_this());
-        const int radix = a.empty() ? 10 : static_cast<int>(context::to_number(a[0]));
-        if (radix == 10 || radix < 2 || radix > 36 || std::isnan(v) || std::isinf(v)) {
-            return c.string(c.to_string(c.current_this()));
+        const double v = detail::this_number_value(c, "Number.prototype.toString");
+        // AN OUT-OF-RANGE RADIX IS A RangeError (21.1.3.6 step 4), not a silent
+        // fall back to 10 - and that fall back was the segfault: it reached
+        // `c.to_string(c.current_this())`, which for an object receiver calls
+        // this native again. Nothing below asks the CONTEXT to stringify the
+        // receiver any more; it stringifies the NUMBER, which cannot re-enter.
+        const int radix =
+            a.empty() || a[0].is_undefined() ? 10 : static_cast<int>(c.to_number_value(a[0]));
+        if (radix < 2 || radix > 36) {
+            c.throw_error("RangeError", "toString() radix must be between 2 and 36");
+            return c.string("");
         }
+        if (radix == 10 || std::isnan(v) || std::isinf(v)) { return c.string(number_to_string(v)); }
         const bool negative = v < 0;
         double magnitude = std::fabs(v);
         constexpr std::string_view digits = "0123456789abcdefghijklmnopqrstuvwxyz";
@@ -366,10 +374,10 @@ void install_number(context & cx) {
         return c.string(negative ? "-" + out : out);
     });
     method(cx, number_proto, "valueOf", [](context & c, std::span<value>) {
-        return value::number(context::to_number(c.current_this()));
+        return value::number(detail::this_number_value(c, "Number.prototype.valueOf"));
     });
     method(cx, number_proto, "toExponential", [](context & c, std::span<value> a) {
-        const double v = context::to_number(c.current_this());
+        const double v = detail::this_number_value(c, "Number.prototype.toExponential");
         // NO ARGUMENT IS NOT SIX. The specification asks for as many digits as
         // uniquely specify the value, so `(5).toExponential()` is "5e+0" and
         // not "5.000000e+0"; -1 is how number_to_exponential is told that.
@@ -379,9 +387,11 @@ void install_number(context & cx) {
         return c.string(number_to_exponential(v, places));
     });
     method(cx, number_proto, "toPrecision", [](context & c, std::span<value> a) {
-        const double v = context::to_number(c.current_this());
-        // No argument at all is toString, not zero significant digits.
-        if (a.empty() || a[0].is_undefined()) { return c.string(c.to_string(c.current_this())); }
+        const double v = detail::this_number_value(c, "Number.prototype.toPrecision");
+        // No argument at all is toString, not zero significant digits - of the
+        // NUMBER, not of the receiver. `c.to_string(c.current_this())` here was
+        // the second half of the toString cycle: see this_number_value.
+        if (a.empty() || a[0].is_undefined()) { return c.string(number_to_string(v)); }
         const int digits = std::clamp(static_cast<int>(context::to_number(a[0])), 1, 100);
         // NOT "%.*g", which drops trailing zeros where toPrecision keeps them -
         // `(1.5).toPrecision(3)` is "1.50" - and writes two exponent digits.

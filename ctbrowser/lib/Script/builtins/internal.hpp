@@ -75,6 +75,40 @@ namespace ctbrowser::script {
     return std::isnan(n) ? 0.0 : std::trunc(n);
 }
 
+// ToIntegerOrInfinity (7.1.5) over an argument that MAY BE AN OBJECT, and the
+// three non-terminating string methods are why it exists.
+//
+// `num_at` above is the STATIC context::to_number, which cannot run a user
+// `valueOf` and therefore answers NaN for every object. NaN is where
+// `repeat`, `padStart` and `padEnd` broke: each wrote
+//
+//     static_cast<std::size_t>(std::clamp(num_at(a, 0), 0.0, 1000000.0))
+//
+// and `std::clamp(NaN, lo, hi)` is NaN - neither comparison in it is true - so
+// the cast is undefined behaviour, which on x86-64 is `cvttsd2si`'s indefinite
+// value: 0x8000000000000000, or 9.2e18 as a size_t. `"abc".padStart(NaN)` and
+// `"x".repeat({valueOf: () => 3})` then asked for a 9-exabyte string, which is
+// the 2 TIMEOUTs and 6 CRASHes test262 measured in built-ins/String on
+// 2026-09-02.
+//
+// Infinity is PRESERVED rather than clamped: the callers have to tell "too
+// long" from "as long as you like" because the specification makes one of them
+// a RangeError.
+[[nodiscard]] inline double integer_arg(context & cx, std::span<value> args, std::size_t i) {
+    const double n = i < args.size() ? cx.to_number_value(args[i]) : 0.0;
+    return std::isnan(n) ? 0.0 : std::trunc(n);
+}
+
+// THE LONGEST STRING THIS ENGINE WILL BUILD, and why there is a limit at all.
+//
+// ECMA-262 caps a String at 2^53-1 code units and leaves the real limit to the
+// implementation - V8 throws "Invalid string length" past 2^29-24. Here a
+// string is UTF-8 bytes in a std::string, so the limit is memory. What this
+// replaces is a silent clamp to a million, which answered a SHORTER STRING THAN
+// ASKED FOR: `"x".repeat(2000000).length` was 1000000 and nothing said so. A
+// ceiling that THROWS is the honest form of the same protection.
+inline constexpr double max_string_length = 268435456.0; // 2^28 bytes
+
 // Was an OPTIONAL index supplied at all? Absent and an explicit `undefined`
 // mean the same thing, and testing the argument COUNT alone gets that wrong:
 // `"abc".slice(1, undefined)` is "bc" because the end defaults to the length,
@@ -108,6 +142,34 @@ namespace detail {
     const value self = cx.current_this();
     return self.is_string() ? static_cast<string_object *>(self.as_heap())->text
                             : cx.to_string(self);
+}
+
+// thisNumberValue (21.1.3), WHICH THIS FILE DID NOT HAVE - and the cycle that
+// cost 45 of test262's 54 SIGSEGVs.
+//
+// Every Number.prototype method opened with `context::to_number(current_this())`,
+// the STATIC coercion, which answers NaN for an object receiver. `toString` and
+// `toPrecision` then fell back to `c.to_string(c.current_this())` for the NaN
+// case - and ToString of an object is ToPrimitive, which calls the receiver's
+// own `toString`, which is this native again:
+//
+//     Number.prototype.toString()      // `this` is Number.prototype, an object
+//       -> to_string -> to_primitive_string -> invoke -> to_string -> ...
+//
+// The specification does not coerce here at all: `this` is a Number or an
+// object with a [[NumberData]] slot, and anything else is a TypeError. There
+// are no wrapper objects in this engine (`new Number(x)` is a conversion - see
+// install_number), so the only object with [[NumberData]] is `Number.prototype`
+// itself, whose slot is +0 by 21.1.3 - which is exactly why
+// `Number.prototype.toString()` is specified to return "0".
+[[nodiscard]] inline double this_number_value(context & cx, const char * method) {
+    const value self = cx.current_this();
+    if (self.is_number()) { return self.as_number(); }
+    if (self.is_object() && self.as_heap() == cx.prototype(context::proto_kind::number)) {
+        return 0.0;
+    }
+    cx.throw_error("TypeError", std::string{method} + " requires that 'this' be a Number");
+    return std::nan("");
 }
 
 [[nodiscard]] inline object_object * new_table(context & cx) {

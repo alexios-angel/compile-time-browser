@@ -20,8 +20,14 @@ void install_array(context & cx) {
         auto * made = static_cast<array_object *>(out.as_heap());
         // `Array(n)` is a length, `Array(a, b, ...)` is the elements.
         if (a.size() == 1 && a[0].is_number()) {
-            made->items.assign(static_cast<std::size_t>(std::max(0.0, a[0].as_number())),
-                               value::undefined());
+            // THROUGH set_js_length, not `assign`. `new Array(4294967295)` is
+            // legal JavaScript and `assign` made it 34 GB of `value` - one of
+            // the SIGABRTs test262 found (built-ins/Array/length/
+            // S15.4.2.2_A2.1_T1) - while `new Array(1.5)` is a RangeError the
+            // silent std::max swallowed.
+            if (!made->set_js_length(a[0].as_number())) {
+                c.throw_error("RangeError", "Invalid array length");
+            }
         } else {
             made->items.assign(a.begin(), a.end());
         }

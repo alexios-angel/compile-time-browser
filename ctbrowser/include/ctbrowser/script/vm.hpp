@@ -450,6 +450,61 @@ public:
         if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
     }
 
+    // --- THE CEILING THE C++ STACK NEVER HAD -------------------------------
+    //
+    // `frames_` counts INTERPRETED frames, so the 512-frame ceiling in
+    // `invoke` cannot see a cycle that never pushes one. A native `toString`
+    // that asks the context to stringify its own receiver recurses
+    //
+    //     to_string -> to_primitive_string -> invoke -> to_string -> ...
+    //
+    // entirely on the C++ stack. test262's
+    // built-ins/Number/prototype/toString/S15.7.4.2_A1_T01.js produced a
+    // 47,000-frame backtrace and a SIGSEGV that way, and 54 of the suite's 77
+    // crashes were that one shape (measured 2026-09-02). A self-referential
+    // array - `a[0] = a; String(a)` - is the same cycle with no call in it at
+    // all, which is why the counter is on the CONVERSIONS as well as on the
+    // native call and not on `invoke`'s interpreted arm, which has its own.
+    //
+    // A RangeError because that is what every engine throws for stack
+    // exhaustion, and CATCHABLE because a page wrapping a deep conversion in
+    // try/catch is its own business. The ceiling is the SAME 512 the
+    // interpreted stack uses: one level here is four C++ frames of a few
+    // hundred bytes, so 512 of them is a few hundred KB of an 8 MB stack -
+    // far enough below the fault to be a diagnosis rather than a coin toss,
+    // and far enough above any finite conversion that legitimate work cannot
+    // reach it. Nothing in the vendored corpora nests conversions past 3.
+    static constexpr std::uint32_t reentry_ceiling = 512;
+
+    // RAII, one level. `overflowed()` says the ceiling was reached, in which
+    // case the RangeError HAS ALREADY BEEN THROWN and the caller must answer
+    // with something harmless instead of recursing again.
+    class reentry_scope {
+    public:
+        explicit reentry_scope(context & cx) : cx_(&cx) {
+            over_ = ++cx_->reentry_depth_ > reentry_ceiling;
+            // ONCE PER EPISODE. Throwing again on the way out would pop a
+            // second handler off `handlers_` for one overflow, which loses the
+            // `try` a page actually wrote.
+            if (over_ && !cx_->reentry_reported_) {
+                cx_->reentry_reported_ = true;
+                cx_->throw_error("RangeError", "Maximum call stack size exceeded");
+            }
+        }
+        ~reentry_scope() {
+            if (--cx_->reentry_depth_ == 0) { cx_->reentry_reported_ = false; }
+        }
+        reentry_scope(const reentry_scope &) = delete;
+        reentry_scope & operator=(const reentry_scope &) = delete;
+        reentry_scope(reentry_scope &&) = delete;
+        reentry_scope & operator=(reentry_scope &&) = delete;
+        [[nodiscard]] bool overflowed() const noexcept { return over_; }
+
+    private:
+        context * cx_;
+        bool over_ = false;
+    };
+
     // Call a JS function FROM C++. This is what an event listener, a timer and
     // a requestAnimationFrame callback all need, and without it script can only
     // ever be entered at the top.
@@ -1788,6 +1843,11 @@ private:
     };
     std::deque<microtask> microtasks_;
     value thrown_ = value::undefined();
+    // How deep the C++ stack currently is inside a conversion or a native, and
+    // whether this episode has already reported its overflow. See
+    // reentry_scope, which is the only thing that touches either.
+    std::uint32_t reentry_depth_ = 0;
+    bool reentry_reported_ = false;
 
     // string_flat_map, NOT flat_map<std::string, value>: the plain one's hasher
     // and equality are not transparent, so `find(string_view)` cannot exist and
