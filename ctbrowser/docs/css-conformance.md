@@ -185,6 +185,41 @@ it returns is built from the style map resolved at load, so a script that writes
 That, and the camelCase spelling above it, are why a correct answer inside the
 style engine is invisible to this corpus.
 
+
+### Proved load-bearing, three ways
+
+Each fix was reverted on its own and the suite watched go red. The revert was
+confirmed to have reached the build machine before the run — rsync preserves
+mtimes, so an edit that never landed looks exactly like a guard that fired.
+
+| reverted | assertions that went red |
+|---|---|
+| `run()` refuses a number answer again | 16, incl. `opacity`/`z-index`/`tab-size`/`color` at cascade level |
+| `min`/`max`/`clamp` removed from the evaluator and from the name scan | 19, incl. `clamp(1rem, 2vw, 3rem)` at cascade level |
+| `math_context_of` always says `any`, `wrong_kind` always false | 11, incl. two assertions that predate this work: `!fold_calc("calc(-1 * 0)").ok` and the Bootstrap `.row` case, which starts reporting `0` instead of being invalid |
+
+The third is the one worth reading twice: without the property table, the
+number-answer change would have re-introduced the exact 24-element regression
+the original "a number is not a length" comment was written about.
+
+### The CSSOM wall, priced
+
+`getComputedStyle` exposing the IDL spellings looked like the cheapest unlock —
+1,034 `cssom` subtests fail with `undefined`. It was measured with a throwaway
+patch to `lib/Shell/bindings/computed_style.cpp` (**not committed, reverted
+immediately**) that publishes each property under its camelCase name as well:
+
+    camel marginTop=[32px]  css margin-top=[32px]      <- the patch works
+    css/cssom        8 / 148 / 15 / 0 / 21 / 29        <- and moved NOTHING
+    css/css-values  16 / 211 /  2 / 0 / 42 / 237       <- not one subtest
+
+So the spelling is necessary and **not sufficient**, and the real blocker is the
+one below it: `getComputedStyle` builds its object from the style map resolved
+at load and there is no way to flush a pending restyle, so a property an element
+only acquires through `el.style` is not on the object at all — whatever it is
+called. Anyone taking that on should budget for the flush first and treat the
+IDL names as the second half of the same change.
+
 ## 6. Re-running this
 
 ```bash
