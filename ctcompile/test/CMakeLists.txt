@@ -1530,3 +1530,65 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND UNIX)
   set_tests_properties(ctcompile_native_snapshot_selftest PROPERTIES
                        ENVIRONMENT "CMAKE=${CMAKE_COMMAND}")
 endif()
+
+# === PHASE 63 STEP 5: THE DECLARED DIVERGENCES, AS A PROGRAM ===
+#
+# ctcompile/docs/native-divergences.md is one row per place the native tier's
+# answer differs, or must not differ, from the interpreter's. Half of those
+# rows are refusals and are pinned by their text
+# (CTNative/Lowering/divergence-refusals.mlir); the other half are EMITTED -
+# `**` and its guard, `%` as fmod, -0 through the printing convention,
+# undefined carried as NaN where that is exact, and an out-of-range index as
+# NaN rather than as undefined behaviour. An emitted divergence is a CLAIM
+# THAT THE TWO SIDES AGREE, and part 24 §A.2 says a claim like that is not
+# done until a binary and an interpreter have both answered. So the witnesses
+# go through the same Phase 62½-D gate every other native program does, and
+# through Step 7's two-toolchain compile with them.
+#
+# One appended block, per part 23 Appendix A.3. `ctcompile_add_native_pipeline`
+# is defined inside the block above; a CMake function outlives the `if()` it
+# was defined in, so this reads it rather than editing that block.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(divergence
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-divergence-fixture.js")
+  # THE NEGATIVE PROOF, AND IT IS A REAL DEFECT RATHER THAN AN INJECTED ONE.
+  #
+  # The fixture above claims every emitted guard agrees with the interpreter.
+  # That claim is worth nothing until the gate is shown catching a guard that
+  # does NOT, on a module this pipeline generated. `vec_at` answers NaN for a
+  # fractional index where this interpreter truncates - `[10,20,30][0.5]` is
+  # 10 - so this program is registered to FAIL, naming the global. When
+  # LowerToEmitC.cpp is fixed the gate starts passing, THIS TEST GOES RED, and
+  # whoever fixed it is made to come back and update ND-8. See
+  # native-index-truncation-fixture.js and ctcompile/docs/native-divergences.md.
+  #
+  # WHY NOT THE DRIVER'S OWN -DMUTATE, which is how every other native unit
+  # takes its negative proof: it anchors the off-by-one on the literal text
+  # `std::printf(`, and the emitter writes that only for the HAND-WRITTEN
+  # native-fixture.emitc.mlir. A generated module gets a bare `printf(`, so
+  # -DMUTATE aborts with "cannot mutate" on every pipeline program. That is
+  # recorded rather than repaired here because check-native-unit.cmake is not
+  # this block's to edit; measured on the box, 2026-09-02.
+  set(_defect_js "${CMAKE_CURRENT_SOURCE_DIR}/native-index-truncation-fixture.js")
+  set(_defect_module "${CMAKE_CURRENT_BINARY_DIR}/index-truncation.pipeline.emitc.mlir")
+  add_custom_command(
+    OUTPUT "${_defect_module}"
+    COMMAND ${CMAKE_COMMAND}
+            -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
+            -DOPT=$<TARGET_FILE:ctjs-opt>
+            -DSOURCE=${_defect_js}
+            -DOUTPUT=${_defect_module}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline.cmake"
+    DEPENDS "${_defect_js}" "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline.cmake"
+            ctjs-translate ctjs-opt
+    COMMENT "Lowering the index-truncation defect witness through the native pipeline")
+  add_custom_target(ctcompile-native-pipeline-index-truncation ALL DEPENDS "${_defect_module}")
+  ctcompile_add_native_unit(pipeline_index_truncation "${_defect_module}" "${_defect_js}"
+                            "-DEXPECT_FAILURE=global 'idx_fractional' differs")
+  # IT STILL HAS TO COMPILE CLEAN. A wrong answer is not a licence to emit a
+  # file Phase 63 Step 7 would reject, and this is the one program in the tree
+  # whose C++ is known to be wrong - so it is the one most worth building.
+  if(COMMAND ctcompile_add_compile_clean)
+    ctcompile_add_compile_clean(pipeline_index_truncation "${_defect_module}")
+  endif()
+endif()
