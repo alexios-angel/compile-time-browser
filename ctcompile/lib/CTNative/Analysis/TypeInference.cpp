@@ -37,6 +37,7 @@
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
 
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/SymbolTable.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cmath>
@@ -251,8 +252,35 @@ llvm::StringRef constantKey(mlir::Value key) {
 }
 } // namespace
 
+// THE RECEIVER IS A PARAMETER, and `%arg0` of a lifted method is the only block
+// argument that names an object. The attribute is written by the lift inside
+// --ctnative-lower-to-emitc, which runs BEFORE this analysis is loaded, so by
+// the time anything here asks the question the answer is already in the IR -
+// and it is one attribute lookup rather than a walk of the module for the call
+// sites. That matters: this predicate is asked once per property access per
+// solver visit, and a symbol-table walk here would be quadratic in the module.
+bool TypeInference::isReceiverArgument(mlir::Value v) {
+    auto arg = llvm::dyn_cast<mlir::BlockArgument>(v);
+    if (!arg || arg.getArgNumber() != 0 || !arg.getOwner()->isEntryBlock()) { return false; }
+    auto fn = llvm::dyn_cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
+    return fn && fn->hasAttr("ctnative.receiver");
+}
+
+namespace {
+// A USE THAT PASSES THE OBJECT AS A LIFTED METHOD'S `this`, which does NOT open
+// its shape: the lift proved that method reaches `this` only through constant
+// keys, and it marked the CALL as well as the callee so that this test costs
+// one attribute lookup instead of a symbol lookup.
+bool passesAReceiver(mlir::OpOperand & use) {
+    auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+    return call && use.getOperandNumber() == 0 && call->hasAttr("ctnative.receiver");
+}
+} // namespace
+
 bool TypeInference::hasClosedShape(mlir::Value object) {
-    if (!object.getDefiningOp<ctjs::CreateObjectOp>()) { return false; }
+    if (!object.getDefiningOp<ctjs::CreateObjectOp>() && !isReceiverArgument(object)) {
+        return false;
+    }
     for (mlir::OpOperand & use : object.getUses()) {
         mlir::Operation * user = use.getOwner();
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
@@ -261,11 +289,73 @@ bool TypeInference::hasClosedShape(mlir::Value object) {
             // The object as the TARGET only: stored as a value into another
             // object it would escape, and that is not this rule's business.
             if (use.getOperandNumber() != 0 || constantKey(set.getKey()).empty()) { return false; }
-        } else {
+        } else if (!passesAReceiver(use)) {
             return false;
         }
     }
     return true;
+}
+
+llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::groupReceivers(
+    mlir::Operation * top) {
+    // A union-find over the two kinds of node there are: a closed object
+    // literal, and the `%arg0` of a function the lift marked. A node absent
+    // from `parent` is not in any group.
+    llvm::DenseMap<mlir::Value, mlir::Value> parent;
+    const auto find = [&parent](mlir::Value v) {
+        mlir::Value root = v;
+        for (auto next = parent.find(root); next != parent.end() && next->second != root;
+             next = parent.find(root)) {
+            root = next->second;
+        }
+        // Path compression: `a.m()` calling `this.n()` calling `this.o()` is a
+        // chain, and without this the walk is quadratic in its depth.
+        for (mlir::Value at = v; at != root;) {
+            const mlir::Value next = parent.lookup(at);
+            parent[at] = root;
+            at = next;
+        }
+        return root;
+    };
+    const auto join = [&](mlir::Value a, mlir::Value b) {
+        parent.try_emplace(a, a);
+        parent.try_emplace(b, b);
+        const mlir::Value ra = find(a);
+        const mlir::Value rb = find(b);
+        if (ra != rb) { parent[rb] = ra; }
+    };
+
+    top->walk([&](ctjs::CreateObjectOp object) {
+        if (hasClosedShape(object.getResult())) {
+            parent.try_emplace(object.getResult(), object.getResult());
+        }
+    });
+    top->walk([&](ctjs::FuncOp fn) {
+        if (!fn->hasAttr("ctnative.receiver") || fn.getBody().empty()) { return; }
+        const mlir::Value self = fn.getBody().front().getArgument(0);
+        parent.try_emplace(self, self);
+    });
+    top->walk([&](ctjs::CallDirectOp call) {
+        if (!call->hasAttr("ctnative.receiver")) { return; }
+        auto fn =
+            mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
+        if (!fn || fn.getBody().empty()) { return; }
+        join(call.getReceiver(), fn.getBody().front().getArgument(0));
+    });
+
+    // THE KEYS FIRST, because `find` compresses paths and so writes to
+    // `parent`: resolving while iterating it would be a mutation under an
+    // iterator, and the fact that DenseMap survives an assignment to a key it
+    // already holds is not a thing to rely on.
+    llvm::SmallVector<mlir::Value> nodes;
+    for (const auto & entry : parent) { nodes.push_back(entry.first); }
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> byRoot;
+    for (mlir::Value node : nodes) { byRoot[find(node)].push_back(node); }
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> out;
+    for (const auto & [root, members] : byRoot) {
+        for (mlir::Value member : members) { out[member] = members; }
+    }
+    return out;
 }
 
 // A DENSE ARRAY IS AN ARRAY NOTHING CAN MAKE SPARSE, and the default arm below
@@ -343,9 +433,25 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     globalsAreDynamic_ = false;
     fieldStores_.clear();
     appends_.clear();
+    // THE FIELD INDEX IS OVER THE GROUP, NOT OVER ONE VALUE, and that is the
+    // whole of what a receiver parameter costs this analysis. `this.x = 5`
+    // inside a lifted method is a store the CALLER's `o.x` has to see, and
+    // `this.x` inside it is a read of the store the caller made - two values,
+    // `%arg0` and the literal, naming one object. Every member of a group gets
+    // every store made through any of them; a literal no method is lifted onto
+    // is a group of one, which is the row this file had before.
+    const auto groups = groupReceivers(top);
     top->walk([&](ctjs::SetPropertyOp store) {
         if (!hasClosedShape(store.getObject())) { return; }
-        fieldStores_[{store.getObject(), constantKey(store.getKey())}].push_back(store.getValue());
+        const llvm::StringRef key = constantKey(store.getKey());
+        const auto group = groups.find(store.getObject());
+        if (group == groups.end()) {
+            fieldStores_[{store.getObject(), key}].push_back(store.getValue());
+            return;
+        }
+        for (mlir::Value member : group->second) {
+            fieldStores_[{member, key}].push_back(store.getValue());
+        }
     });
     // THE APPENDS INDEX, beside fieldStores_ and for the same reason: an
     // element read has to find every value the array was ever built from, and

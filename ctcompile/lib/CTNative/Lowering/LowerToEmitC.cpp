@@ -258,6 +258,16 @@ bool isUndefinedConstant(mlir::Value v) {
     return k && llvm::isa<ctjs::UndefinedAttr>(k.getValue());
 }
 
+// The constant string a property key operand carries, or empty. The same
+// reading TypeInference and admission::keyOf make; spelled here because the
+// lift runs before either of them is available.
+llvm::StringRef constantKeyOf(mlir::Value key) {
+    auto constant = key.getDefiningOp<ctjs::ConstantOp>();
+    if (!constant) { return {}; }
+    auto str = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
+    return str ? str.getValue() : llvm::StringRef{};
+}
+
 // What the rewrite did, for the `report` remark. Pass statistics are compiled
 // out of the LLVM package this builds against, so a counter that is asserted
 // has to be printed.
@@ -267,7 +277,61 @@ struct liftReport {
     unsigned captures = 0;  // capture operands turned into arguments
     unsigned calls = 0;     // ctjs.calls rewritten to ctjs.call_direct
     unsigned cells = 0;     // ctjs.create_cells proved constant and unboxed
+    unsigned methods = 0;   // method fields whose closure became a free function
+    unsigned receivers = 0; // of those, the ones whose `this` became a parameter
 };
+
+// --- THE RECEIVER IS A PARAMETER ------------------------------------------------
+//
+// `var o = { x: 1, bump: function (n) { return this.x + n; } }; o.bump(2)` is a
+// method table, which is what a bundle's initialisation builds, and until this
+// slice the tier refused every function in it: `uses \`this\`` was 6,649 of the
+// corpus refusals and the reason was not that the callee is unknown - it is that
+// there was no C++ type carrying a receiver. `carrierOf` had a `structure` row
+// nothing could produce, and the one object carrier was a closed-shape struct BY
+// VALUE, refused the moment it was returned, stored or passed.
+//
+// So the receiver lifts, exactly as a capture does. `ctjs.call_direct`'s operand
+// order IS the callee's entry block - receiver, new.target, callee, parameters -
+// so the receiver is ALREADY operand 0 and %arg0 is already the place it lands.
+// Nothing had to be added to the call: what had to change is that the lowering
+// stops dropping operand 0, that `%arg0` gets a carrier, and that the method
+// call becomes a call_direct at all.
+//
+// THE FOUR ADMISSION CONDITIONS, each a named refusal when it fails:
+//
+//  1. THE RECEIVER IS A PROVED CLOSED-SHAPE LITERAL. `closedAfterLift` is
+//     `hasClosedShape` as it will read once this rewrite has run: a use as the
+//     receiver of a method call it is about to make direct is not an opening
+//     use, and the `get_property` that loads the method is gone by then.
+//  2. THE CALLEE IS PROVABLY ONE FUNCTION. The field holding it is written
+//     exactly once on that literal, with a `ctjs.create_closure` of a known
+//     target, and the closure value is used for nothing but such stores. Two
+//     writes of one key, or a value that is not a closure made here, refuse.
+//  3. THE TARGET'S `this` USES ARE ALL CONSTANT-KEY PROPERTY ACCESS on the
+//     receiver, or the receiver of another method call this resolves - so
+//     `this.x` becomes `self->x` and `this.other()` becomes a second direct
+//     call. Returning `this`, storing it, or passing it as an argument refuses:
+//     each of those needs an owner, and this slice introduces none.
+//  4. THE TARGET IS OTHERWISE NATIVE - the existing call-graph fixpoint's
+//     question, not this rewrite's - and its captures, if it is also a closure,
+//     lift exactly as Phase 59 slice 1 already lifts them. A method IS a
+//     closure in the IR, so this costs nothing: the captures become leading
+//     parameters after the three implicit arguments and the receiver stays at
+//     %arg0, which is where call_direct already puts it.
+//
+// A METHOD FIELD IS NOT A STRUCT MEMBER, AND NOT PART OF THE SHAPE KEY. The
+// method is a free function; the field holds a compile-time-constant identity
+// that condition 2 has just proved single, and it occupies no storage. So the
+// store lowers to nothing (`ctnative.method`), the closure lowers to nothing
+// (`ctnative.lifted`, the same attribute the closure lift writes), and
+// `{x: 1, bump: f}` has the shape `{x}`. That is what lets `{x: 1, f: F}` and
+// `{x: 10, f: G}` share ONE class while calling two different functions: the
+// class is the data, the method is not in it. Including a method in the key
+// would instead demand a member of a type this tier has no carrier for, and
+// would split one data layout into as many classes as there are method
+// identities - which is the redundant-definition failure Phase 56C exists to
+// prevent.
 
 struct closureLifter {
     mlir::ModuleOp module;
@@ -306,6 +370,30 @@ struct closureLifter {
 
     llvm::SmallVector<ctjs::CreateClosureOp> closures;
 
+    // --- the receiver lift's census ---------------------------------------
+    llvm::SmallVector<ctjs::CreateObjectOp> objects;
+    llvm::SmallVector<ctjs::CallOp> allCalls;
+    // The single closure a literal's key holds, per literal, per key.
+    struct methodField {
+        ctjs::SetPropertyOp store;
+        ctjs::CreateClosureOp closure;
+    };
+    llvm::DenseMap<mlir::Value, llvm::StringMap<methodField>> methodsOf;
+    // Which closed literals a receiver value may name: a literal names itself,
+    // and a lifted method's `%arg0` names everything its call sites pass. The
+    // second row is a fixpoint, because `this.other()` inside a method is a
+    // call whose receiver is that `%arg0`.
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> behind;
+    // One method call this rewrite makes direct.
+    struct methodCall {
+        ctjs::CallOp call;
+        ctjs::GetPropertyOp load;
+        mlir::Value receiver;
+        ctjs::FuncOp target;
+    };
+    llvm::MapVector<mlir::Operation *, llvm::SmallVector<methodCall>> callsOfTarget;
+    llvm::DenseSet<mlir::Operation *> methodClosures; // create_closures bound to a method field
+
     explicit closureLifter(mlir::ModuleOp m) : module(m), context(m.getContext()) {}
 
     ctjs::FuncOp targetOf(ctjs::CreateClosureOp c) {
@@ -326,6 +414,10 @@ struct closureLifter {
                 if (holder) { passesNewTarget.insert(holder.getOperation()); }
             } else if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(o)) {
                 closures.push_back(made);
+            } else if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(o)) {
+                objects.push_back(object);
+            } else if (auto call = llvm::dyn_cast<ctjs::CallOp>(o)) {
+                allCalls.push_back(call);
             }
         });
         // The fixpoint over the closure-target graph.
@@ -356,10 +448,12 @@ struct closureLifter {
         return true;
     }
 
-    // The four admission conditions of slice 1, as one sentence each. The
-    // reason is written onto the closure so that the function containing it is
-    // refused by NAME rather than by "`ctjs.create_closure` is not native yet".
-    std::optional<std::string> whyNotLiftable(ctjs::CreateClosureOp c) {
+    // THE CAPTURE CLAUSES, SHARED WITH THE RECEIVER LIFT. A method IS a closure
+    // in the IR - `{ f: function () {} }` compiles to a `closure` opcode and a
+    // `set_prop` - so a method that also captures a binding has to satisfy
+    // exactly these, and factoring them is what makes the two rules compose
+    // rather than diverge.
+    std::optional<std::string> whyTargetIsNotLiftable(ctjs::CreateClosureOp c) {
         ctjs::FuncOp target = targetOf(c);
         if (!target) {
             return "its target emitted no ctjs.func - the importer refused it (ctjs.skipped)";
@@ -368,7 +462,6 @@ struct closureLifter {
             return "its target has no body";
         }
         mlir::Block & entry = target.getBody().front();
-        const unsigned parameters = entry.getNumArguments() - 3;
         const auto captures = static_cast<unsigned>(c.getUpvalues().size());
         if (captures != static_cast<unsigned>(target.getUpvalueCount())) {
             return "its capture list disagrees with the descriptors of the function it names";
@@ -378,11 +471,23 @@ struct closureLifter {
         // says a target is one. A lifted call passes the CALL's receiver as
         // %arg0, which for an arrow is not what the interpreter reads - so an
         // arrow may be lifted only when it never looks.
+        //
+        // THIS IS THE GUARD THAT KEEPS AN ARROW OUT OF THE RECEIVER LIFT, and
+        // it is the one whose removal gives a WRONG ANSWER rather than a
+        // refusal: `{ f: () => this.x }` reads the ENCLOSING `this`, every use
+        // of it is a constant-key read that condition 3 admits, and lifting it
+        // would silently rebind `this` to the literal. It is asked FIRST for
+        // that reason, before any rule that admits a `this` use.
         if (!isUndefinedConstant(c.getEnclosingThis()) && !entry.getArgument(0).use_empty()) {
             return "it is an arrow function that reads its lexical `this` - Stage 59B";
         }
-        // CONDITION 1 and CONDITION 2, which are one test on the cell: a
-        // capture is a constant box in this frame, or it is not liftable.
+        return std::nullopt;
+    }
+
+    std::optional<std::string> whyCapturesDoNotLift(ctjs::CreateClosureOp c) {
+        if (const std::optional<std::string> why = whyTargetIsNotLiftable(c)) { return why; }
+        const auto captures = static_cast<unsigned>(c.getUpvalues().size());
+        // A capture is a constant box in this frame, or it is not liftable.
         for (unsigned i = 0; i < captures; ++i) {
             auto cell = c.getUpvalues()[i].getDefiningOp<ctjs::CreateCellOp>();
             if (!cell) {
@@ -395,6 +500,58 @@ struct closureLifter {
                        " is a binding that is reassigned - a shared cell is Phase 59 slice 2";
             }
         }
+        return std::nullopt;
+    }
+
+    // THE TARGET'S OWN CLOSURE FEEDS NOTHING BUT NESTED CLOSURES AND UPVALUE
+    // READS, which is ResolveGlobals' clause 4 word for word and is here for
+    // its reason: the lift marks the target `private`, and `private` is the
+    // claim that EVERY caller is visible. A target that leaks its own closure
+    // value can be called through that value by something this IR cannot see,
+    // and the claim would be false.
+    std::optional<std::string> whyOwnClosureEscapes(ctjs::FuncOp target) {
+        for (mlir::OpOperand & use : target.getBody().front().getArgument(2).getUses()) {
+            mlir::Operation * user = use.getOwner();
+            if (use.getOperandNumber() == 0 &&
+                llvm::isa<ctjs::CreateClosureOp, ctjs::LoadUpvalueOp, ctjs::StoreUpvalueOp>(user)) {
+                continue;
+            }
+            return ("its target's own closure escapes into `" + user->getName().getStringRef() +
+                    "`, so a call of it may come from somewhere this rewrite cannot see")
+                .str();
+        }
+        return std::nullopt;
+    }
+
+    // The target's own upvalue reads have to be the shape the rewrite replaces,
+    // or a load would be left naming a closure that is gone.
+    std::optional<std::string> whyUpvalueReadsDoNotLift(ctjs::FuncOp target) {
+        mlir::Block & entry = target.getBody().front();
+        const auto captures = static_cast<unsigned>(target.getUpvalueCount());
+        std::optional<std::string> bad;
+        target.getBody().walk([&](mlir::Operation * o) {
+            if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(o)) {
+                if (read.getClosure() != entry.getArgument(2) ||
+                    static_cast<unsigned>(read.getIndex()) >= captures) {
+                    bad = "its target reads an upvalue this rewrite cannot name";
+                }
+            }
+            if (llvm::isa<ctjs::StoreUpvalueOp>(o)) {
+                bad = "its target reassigns a captured binding - a shared cell is Phase 59 "
+                      "slice 2";
+            }
+        });
+        return bad;
+    }
+
+    // The four admission conditions of slice 1, as one sentence each. The
+    // reason is written onto the closure so that the function containing it is
+    // refused by NAME rather than by "`ctjs.create_closure` is not native yet".
+    std::optional<std::string> whyNotLiftable(ctjs::CreateClosureOp c) {
+        if (const std::optional<std::string> why = whyCapturesDoNotLift(c)) { return why; }
+        ctjs::FuncOp target = targetOf(c);
+        mlir::Block & entry = target.getBody().front();
+        const unsigned parameters = entry.getNumArguments() - 3;
         // CONDITION 4: every use of the closure VALUE is a call this lowers.
         if (c.getResult().use_empty()) { return "nothing calls it"; }
         for (mlir::OpOperand & use : c.getResult().getUses()) {
@@ -405,6 +562,15 @@ struct closureLifter {
                     return "it is stored to a global - Phase 59 slice 2";
                 }
                 if (llvm::isa<ctjs::ReturnOp>(user)) { return "it is returned - Phase 59 slice 2"; }
+                // A METHOD FIELD THE RECEIVER LIFT DID NOT TAKE. Saying "it is
+                // stored into an object" for `{f: function(){}}` names the
+                // mechanism and not the obstacle, and the obstacle is always
+                // one of two things - the shape is not closed, or the key is
+                // written twice - which is exactly what a reader needs.
+                if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                    set && use.getOperandNumber() == 2) {
+                    return whyNotAMethodField(set);
+                }
                 if (llvm::isa<ctjs::SetPropertyOp, ctjs::CreateObjectOp, ctjs::AppendOp,
                               ctjs::CreateArrayOp>(user)) {
                     return "it is stored into an object or an array - Phase 59 slice 2";
@@ -439,43 +605,331 @@ struct closureLifter {
                 return "a call of it sits in a function that passes new.target";
             }
         }
-        // THE TARGET'S OWN CLOSURE FEEDS NOTHING BUT NESTED CLOSURES AND
-        // UPVALUE READS, which is ResolveGlobals' clause 4 word for word and
-        // is here for its reason: the lift marks the target `private`, and
-        // `private` is the claim that EVERY caller is visible. A target that
-        // leaks its own closure value can be called through that value by
-        // something this IR cannot see, and the claim would be false.
-        for (mlir::OpOperand & use : entry.getArgument(2).getUses()) {
+        if (const std::optional<std::string> escapes = whyOwnClosureEscapes(target)) {
+            return escapes;
+        }
+        // CONDITION 3 is the existing call-graph fixpoint's, not this one's.
+        return whyUpvalueReadsDoNotLift(target);
+    }
+
+    // --- the receiver lift --------------------------------------------------
+
+    // CONDITION 1, AS IT WILL READ AFTER THE REWRITE. `hasClosedShape` refuses
+    // any use that is not a constant-key get or set, and a method call is two
+    // of those uses - the object as the call's RECEIVER, and the get_property
+    // that loads the method - so asking it before the rewrite would refuse
+    // every object with a method on it. This is the same question asked of the
+    // IR this rewrite is about to produce, where the load is gone and the
+    // receiver is a call_direct operand `hasClosedShape` now admits by name.
+    bool closedAfterLift(mlir::Value object) {
+        if (!object.getDefiningOp<ctjs::CreateObjectOp>()) { return false; }
+        for (mlir::OpOperand & use : object.getUses()) {
             mlir::Operation * user = use.getOwner();
-            if (use.getOperandNumber() == 0 &&
-                llvm::isa<ctjs::CreateClosureOp, ctjs::LoadUpvalueOp, ctjs::StoreUpvalueOp>(user)) {
+            if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
+                if (use.getOperandNumber() != 0 || constantKeyOf(get.getKey()).empty()) {
+                    return false;
+                }
                 continue;
             }
-            return ("its target's own closure escapes into `" + user->getName().getStringRef() +
-                    "`, so a call of it may come from somewhere this rewrite cannot see")
+            if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
+                if (use.getOperandNumber() != 0 || constantKeyOf(set.getKey()).empty()) {
+                    return false;
+                }
+                continue;
+            }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
+                // The object as the RECEIVER of a call whose callee is a
+                // constant-key read of that same object: a method call. Any
+                // other operand position is the object being PASSED, which
+                // opens it - slice 2's business, and refused here.
+                if (use.getOperandNumber() != 1) { return false; }
+                auto load = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                if (!load || load.getObject() != object || constantKeyOf(load.getKey()).empty()) {
+                    return false;
+                }
+                continue;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    // CONDITION 2: the one function a method call reaches, or null. Every
+    // literal the receiver may name must bind the key exactly once, and all of
+    // them must name the SAME ctjs.func - one target is one C++ signature.
+    ctjs::FuncOp resolveMethod(ctjs::CallOp call, mlir::Value & receiverOut,
+                               ctjs::GetPropertyOp & loadOut) {
+        auto load = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+        if (!load || !load.getResult().hasOneUse()) { return {}; }
+        const mlir::Value receiver = load.getObject();
+        if (receiver != call.getReceiver()) { return {}; }
+        const llvm::StringRef key = constantKeyOf(load.getKey());
+        if (key.empty()) { return {}; }
+        const auto objects = behind.find(receiver);
+        if (objects == behind.end() || objects->second.empty()) { return {}; }
+        ctjs::FuncOp target;
+        for (mlir::Value object : objects->second) {
+            const auto fields = methodsOf.find(object);
+            if (fields == methodsOf.end()) { return {}; }
+            const auto field = fields->second.find(key);
+            if (field == fields->second.end()) { return {}; }
+            ctjs::FuncOp named = targetOf(field->second.closure);
+            if (!named || (target && named != target)) { return {}; }
+            target = named;
+        }
+        receiverOut = receiver;
+        loadOut = load;
+        return target;
+    }
+
+    // WHY A CLOSURE STORED INTO AN OBJECT IS NOT A METHOD FIELD. Three routes,
+    // and only the third is "this is not a method table at all".
+    std::string whyNotAMethodField(ctjs::SetPropertyOp set) {
+        const mlir::Value object = set.getObject();
+        const llvm::StringRef key = constantKeyOf(set.getKey());
+        if (!object.getDefiningOp<ctjs::CreateObjectOp>()) {
+            return "it is stored into something that is not an object literal made here - "
+                   "Phase 59 slice 2";
+        }
+        if (key.empty()) {
+            return "it is stored into an object under a key that is not a constant, so which "
+                   "field holds it is not known here";
+        }
+        if (!closedAfterLift(object)) {
+            return ("it is a method field of an object whose shape is not closed, so `" + key +
+                    "` cannot become a free function taking that object")
                 .str();
         }
-        // CONDITION 3 is the existing call-graph fixpoint's, not this one's -
-        // but the target's own upvalue reads have to be the shape the rewrite
-        // replaces, or a load would be left naming a closure that is gone.
-        std::optional<std::string> bad;
-        target.getBody().walk([&](mlir::Operation * o) {
-            if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(o)) {
-                if (read.getClosure() != entry.getArgument(2) ||
-                    static_cast<unsigned>(read.getIndex()) >= captures) {
-                    bad = "its target reads an upvalue this rewrite cannot name";
+        const auto fields = methodsOf.find(object);
+        if (fields == methodsOf.end() || fields->second.find(key) == fields->second.end()) {
+            return ("the field `" + key +
+                    "` is written more than once, so which function a call through it reaches "
+                    "depends on which store ran")
+                .str();
+        }
+        return "it is stored into an object or an array - Phase 59 slice 2";
+    }
+
+    void methodCensus() {
+        for (ctjs::CreateObjectOp object : objects) {
+            if (!closedAfterLift(object.getResult())) { continue; }
+            llvm::StringMap<unsigned> writes;
+            llvm::StringMap<methodField> fields;
+            for (mlir::Operation * user : object.getResult().getUsers()) {
+                auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                if (!set || set.getObject() != object.getResult()) { continue; }
+                ++writes[constantKeyOf(set.getKey())];
+                if (auto made = set.getValue().getDefiningOp<ctjs::CreateClosureOp>()) {
+                    fields[constantKeyOf(set.getKey())] = methodField{set, made};
                 }
             }
-            if (llvm::isa<ctjs::StoreUpvalueOp>(o)) {
-                bad = "its target reassigns a captured binding - a shared cell is Phase 59 "
-                      "slice 2";
+            llvm::StringMap<methodField> & into = methodsOf[object.getResult()];
+            for (const auto & entry : fields) {
+                // A KEY WRITTEN TWICE IS NOT A METHOD, whatever the second
+                // write holds: `o.f = g` after `var o = {f: h}` makes the
+                // callee depend on which store ran, which is exactly what
+                // condition 2 forbids. The key is simply not admitted, and the
+                // call through it stays a ctjs.call - refused by name below.
+                if (writes[entry.first()] == 1) { into[entry.first()] = entry.second; }
             }
-        });
-        return bad;
+            behind[object.getResult()].push_back(object.getResult());
+        }
+        // THE FIXPOINT OVER THE RECEIVER CHAIN. `this.other()` inside a method
+        // has `%arg0` for a receiver, and `%arg0` names whatever the call sites
+        // pass - which is only known once those call sites resolve. One round
+        // per link in the chain, and it terminates because `behind` only grows
+        // and is bounded by the literals in the module.
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (ctjs::CallOp call : allCalls) {
+                mlir::Value receiver;
+                ctjs::GetPropertyOp load;
+                ctjs::FuncOp target = resolveMethod(call, receiver, load);
+                if (!target || target.getBody().empty() ||
+                    target.getBody().front().getNumArguments() < 3) {
+                    continue;
+                }
+                llvm::SmallVector<mlir::Value, 2> & named =
+                    behind[target.getBody().front().getArgument(0)];
+                for (mlir::Value object : behind.lookup(receiver)) {
+                    if (!llvm::is_contained(named, object)) {
+                        named.push_back(object);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        // AND THE CALLS THEMSELVES, once `behind` has stopped moving.
+        for (ctjs::CallOp call : allCalls) {
+            mlir::Value receiver;
+            ctjs::GetPropertyOp load;
+            ctjs::FuncOp target = resolveMethod(call, receiver, load);
+            if (!target || target.getBody().empty() ||
+                target.getBody().front().getNumArguments() < 3) {
+                continue;
+            }
+            callsOfTarget[target.getOperation()].push_back(
+                methodCall{call, load, receiver, target});
+        }
+        for (const auto & entry : methodsOf) {
+            for (const auto & field : entry.second) {
+                ctjs::CreateClosureOp bound = field.second.closure;
+                methodClosures.insert(bound.getOperation());
+            }
+        }
+    }
+
+    // CONDITION 3: what the target does with `this`. Every use has to be
+    // something the receiver parameter can carry - a constant-key read or
+    // write, or the receiver of another method call - and every route out of
+    // the function is named, because "it leaks `this`" is not a work item and
+    // "it is returned" is.
+    std::optional<std::string> whyThisLeaks(ctjs::FuncOp target) {
+        mlir::Block & entry = target.getBody().front();
+        for (mlir::OpOperand & use : entry.getArgument(0).getUses()) {
+            mlir::Operation * user = use.getOwner();
+            if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
+                if (use.getOperandNumber() == 0 && !constantKeyOf(get.getKey()).empty()) {
+                    continue;
+                }
+                return "it reads `this` through a dynamic key";
+            }
+            if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
+                if (use.getOperandNumber() == 0 && !constantKeyOf(set.getKey()).empty()) {
+                    continue;
+                }
+                if (use.getOperandNumber() == 2) {
+                    return "it stores `this` into another object - that needs an owner, and this "
+                           "slice introduces none";
+                }
+                return "it writes `this` through a dynamic key";
+            }
+            if (llvm::isa<ctjs::ReturnOp>(user)) {
+                return "it returns `this` - the receiver is the caller's frame, so returning it "
+                       "would outlive the object";
+            }
+            if (llvm::isa<ctjs::StoreGlobalOp>(user)) { return "it stores `this` into a global"; }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
+                // `this.other()`: the receiver of a call this rewrite also
+                // makes direct. Any other position is `this` passed as an
+                // argument, which has no call site to move it to.
+                mlir::Value receiver;
+                ctjs::GetPropertyOp load;
+                if (use.getOperandNumber() == 1 && resolveMethod(call, receiver, load)) {
+                    continue;
+                }
+                return "it passes `this` to a call this rewrite cannot make direct";
+            }
+            // AND A CALL --ctjs-resolve-globals ALREADY MADE DIRECT, which is
+            // what `f(this)` is by the time this rewrite runs: the closed world
+            // named that callee long before, so the operand sits on a
+            // ctjs.call_direct and not on a ctjs.call. Without this arm the
+            // commonest way there is to leak a receiver got the default
+            // sentence - "it reaches `ctjs.call_direct`" - which names the
+            // operation and not the mistake.
+            if (llvm::isa<ctjs::CallDirectOp>(user)) {
+                return "it passes `this` as an argument to another function - a receiver moves "
+                       "to the CALL SITE, and an argument position has none to move to (that "
+                       "needs a specialised callee, Phase 63, not a lift)";
+            }
+            return ("it reaches `" + user->getName().getStringRef() +
+                    "`, which slice 1 does not carry a receiver through")
+                .str();
+        }
+        return std::nullopt;
+    }
+
+    // The method form of whyNotLiftable: conditions 1 to 4, one sentence each.
+    // The capture and own-closure clauses are the closure lift's, unchanged -
+    // a method IS a closure in the IR, and the two rules compose.
+    std::optional<std::string> whyNotLiftableMethod(ctjs::CreateClosureOp c) {
+        // THE ARROW GUARD FIRST, and the rest of the target's validity with it:
+        // an arrow's `this` is lexical, every use of it reads as a legal
+        // constant-key access to condition 3, and admitting one would rebind
+        // `this` to the object and answer wrongly rather than refuse.
+        if (const std::optional<std::string> why = whyTargetIsNotLiftable(c)) { return why; }
+        ctjs::FuncOp target = targetOf(c);
+        mlir::Block & entry = target.getBody().front();
+        // CONDITION 2, the other half: the closure value is used for method
+        // stores and nothing else. `methodClosures` says at least one store is
+        // one; this says none of them is anything else.
+        for (mlir::OpOperand & use : c.getResult().getUses()) {
+            auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+            if (!set || use.getOperandNumber() != 2) {
+                return "it is a method field that is also used as a value elsewhere - Phase 59 "
+                       "slice 2";
+            }
+            const auto fields = methodsOf.find(set.getObject());
+            if (fields == methodsOf.end() ||
+                fields->second.lookup(constantKeyOf(set.getKey())).closure != c) {
+                return whyNotAMethodField(set);
+            }
+        }
+        // CONDITION 3.
+        if (const std::optional<std::string> leak = whyThisLeaks(target)) { return leak; }
+        // AND EVERY CALL OF IT IS ONE THIS RESOLVES. A method field nothing
+        // calls has nowhere to move the receiver to, and a call the resolution
+        // above could not name would be left dispatching through a closure
+        // that is about to lower to nothing.
+        const auto calls = callsOfTarget.find(target.getOperation());
+        if (calls == callsOfTarget.end()) {
+            // A METHOD READ AS A VALUE. `var g = o.m;` loads the field and does
+            // not call it, so there is no call site for the receiver to move
+            // to and the closure would have to become a value that carries one
+            // - a bound function, which is an owner this slice does not build.
+            for (mlir::OpOperand & use : c.getResult().getUses()) {
+                auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+                if (!set) { continue; }
+                const llvm::StringRef key = constantKeyOf(set.getKey());
+                for (mlir::Operation * user : set.getObject().getUsers()) {
+                    auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+                    if (get && constantKeyOf(get.getKey()) == key) {
+                        return ("its field `" + key +
+                                "` is read as a value rather than called - a method used as a "
+                                "function value has to carry its receiver, which is a bound "
+                                "function and an owner this slice does not build")
+                            .str();
+                    }
+                }
+            }
+            return "nothing calls it";
+        }
+        const unsigned parameters = entry.getNumArguments() - 3;
+        for (methodCall at : calls->second) {
+            if (at.call.getArgs().size() > parameters) {
+                return "a call passes " + std::to_string(at.call.getArgs().size()) +
+                       " argument(s) to " + std::to_string(parameters) +
+                       " parameter(s) - the surplus has frame semantics";
+            }
+            auto caller = at.call->getParentOfType<ctjs::FuncOp>();
+            if (caller && passesNewTarget.contains(caller.getOperation())) {
+                return "a call of it sits in a function that passes new.target";
+            }
+            // CONDITION 1 AT THE CALL SITE, not only at the literal: the
+            // receiver is either a literal this proved closed, or the `%arg0`
+            // of a method whose own receivers are.
+            if (behind.lookup(at.receiver).empty()) {
+                return "it is called on a receiver whose shape is not a proved closed literal";
+            }
+        }
+        // CONDITION 4: the target is otherwise native - which is the existing
+        // call-graph fixpoint's question - and its captures lift as Phase 59
+        // slice 1 already lifts them. LAST, so that a leaked `this` is reported
+        // as a leaked `this` and not as whatever the enclosing frame happened
+        // to box for it: `box.held = this` inside a method captures `box`, and
+        // a hoisted `var` is always a cell that is written, so asking the
+        // capture clause first answered "capture 0 is a binding that is
+        // reassigned" for a program whose actual problem is the receiver.
+        if (const std::optional<std::string> why = whyCapturesDoNotLift(c)) { return why; }
+        if (const std::optional<std::string> escapes = whyOwnClosureEscapes(target)) {
+            return escapes;
+        }
+        return whyUpvalueReadsDoNotLift(target);
     }
 
     liftReport run() {
         census();
+        methodCensus();
         liftReport out;
         // Per target: the closures that name it, and the first reason any of
         // them could not be lifted. A target's signature changes for the whole
@@ -488,13 +942,47 @@ struct closureLifter {
             // already. Leave it to admission::isDeclarationClosure.
             if (admissionIsDeclaration(c)) { continue; }
             ctjs::FuncOp target = targetOf(c);
-            const std::optional<std::string> why = whyNotLiftable(c);
+            // A METHOD FIELD IS A DIFFERENT ADMISSION, NOT A SPECIAL CASE OF
+            // THE OTHER ONE. Its closure value is never called - it is STORED,
+            // which whyNotLiftable refuses by name - and the calls that reach
+            // it come through a `get_property` on the object. So the two rules
+            // are asked separately and share their capture clauses.
+            const std::optional<std::string> why = methodClosures.contains(c.getOperation())
+                                                       ? whyNotLiftableMethod(c)
+                                                       : whyNotLiftable(c);
             if (why) {
                 reasonOf[c.getOperation()] = *why;
                 if (target) { blocked.try_emplace(target.getOperation(), *why); }
                 continue;
             }
             byTarget[target.getOperation()].push_back(c);
+        }
+        // TWO REFUSALS WERE HERE AND ARE GONE, BECAUSE THEY WERE DECORATION.
+        // Both asked what happens when two ctjs.create_closures name ONE
+        // ctjs.func - a target that is a method field at one site and a plain
+        // closure at another, whose receiver would be an argument in one call
+        // and not the other; and a method created twice with captures, whose
+        // two capture lists cannot both be one parameter list. Neither is
+        // reachable: `compiler_impl` emits exactly one `op::closure` per
+        // function proto, so a proto has exactly one creation site, and a
+        // probe counting `made.size() > 1` measured ZERO across bootstrap, p5
+        // and phaser (13,053 functions) and all three native fixtures.
+        // Removing them changed nothing anywhere, so they are not here.
+        //
+        // WHAT IS HERE IS THE INVARIANT ITSELF, as a named fatal rather than a
+        // refusal, which is this file's idiom for "a rule let one through"
+        // (carrierType, memberName, shapeAt, eraseIfUnused). If the reasoning
+        // above is ever wrong, lift() would cast a ctjs.set_property to a
+        // ctjs.call and crash with no message; this says which claim failed.
+        for (auto & [target, made] : byTarget) {
+            if (made.size() > 1) {
+                llvm::report_fatal_error(
+                    llvm::Twine("ctnative lowering: `") +
+                    llvm::cast<ctjs::FuncOp>(target).getSymName() +
+                    "` is named by more than one ctjs.create_closure - one function proto has "
+                    "one `closure` opcode, and the receiver lift's capture list and its method "
+                    "test both assume it");
+            }
         }
         for (auto & [target, made] : byTarget) {
             if (blocked.contains(target)) {
@@ -508,9 +996,14 @@ struct closureLifter {
             lift(llvm::cast<ctjs::FuncOp>(target), made, out);
         }
         // The reasons, onto the closures that kept them, so that the function
-        // holding one is refused by name.
+        // holding one is refused by name. A method field says so, because "a
+        // closure used as a value" is a true sentence about `{f: function(){}}`
+        // that sends a reader to the wrong slice.
         for (const auto & [op, why] : reasonOf) {
             op->setAttr("ctnative.closure_reason", mlir::StringAttr::get(context, why));
+            if (methodClosures.contains(op)) {
+                op->setAttr("ctnative.method_refusal", mlir::UnitAttr::get(context));
+            }
         }
         unboxCells(out);
         return out;
@@ -564,6 +1057,95 @@ struct closureLifter {
         // which the conditions above have just established.
         mlir::SymbolTable::setSymbolVisibility(target, mlir::SymbolTable::Visibility::Private);
         ++out.functions;
+
+        // A METHOD, AND WHETHER ITS RECEIVER IS A PARAMETER AT ALL. The lift
+        // marks `ctnative.receiver` only when `%arg0` is READ: a method that
+        // never touches `this` needs no receiver, so the call passes undefined
+        // instead of the object, exactly as the importer passes undefined for
+        // a non-arrow's `$enclosing_this`. That is not a nicety - an emitted
+        // parameter nothing reads is `-Wunused-parameter` under -Werror, and
+        // passing the object would be a use of it that opens its shape for no
+        // gain.
+        const bool method = callsOfTarget.count(target.getOperation()) != 0 &&
+                            llvm::all_of(made, [&](ctjs::CreateClosureOp c) {
+                                return methodClosures.contains(c.getOperation());
+                            });
+        const bool carriesReceiver = method && !entry.getArgument(0).use_empty();
+        if (carriesReceiver) {
+            target->setAttr("ctnative.receiver", mlir::UnitAttr::get(context));
+            ++out.receivers;
+        }
+
+        if (method) {
+            // THE FIELD LOWERS TO NOTHING, and so does the closure in it: the
+            // method is a free function, not a member. The reasons are written
+            // as attributes because admission meets the store and the closure
+            // long before it meets the call.
+            for (ctjs::CreateClosureOp c : made) {
+                for (mlir::Operation * user : c.getResult().getUsers()) {
+                    user->setAttr("ctnative.method", mlir::UnitAttr::get(context));
+                }
+                c->setAttr("ctnative.lifted", mlir::UnitAttr::get(context));
+                ++out.closures;
+                ++out.methods;
+                out.captures += captures;
+            }
+            ctjs::CreateClosureOp only = made.front();
+            llvm::SmallVector<mlir::Value> captured;
+            for (mlir::Value cell : only.getUpvalues()) {
+                captured.push_back(cell.getDefiningOp<ctjs::CreateCellOp>().getInitial());
+            }
+            for (methodCall at : callsOfTarget[target.getOperation()]) {
+                mlir::OpBuilder builder(at.call);
+                const mlir::Value undefined = ctjs::ConstantOp::create(
+                    builder, at.call.getLoc(), valueType, ctjs::UndefinedAttr::get(context));
+                llvm::SmallVector<mlir::Value> arguments(captured);
+                arguments.append(at.call.getArgs().begin(), at.call.getArgs().end());
+                while (arguments.size() < captures + parameters) { arguments.push_back(undefined); }
+                // THE RECEIVER IS OPERAND 0 AND ALWAYS WAS. ctjs.call_direct's
+                // operands ARE the callee's entry block in order, so passing
+                // the object here is the whole of "the receiver is a
+                // parameter" - `%arg0` is where it lands with no reordering.
+                //
+                // $callee_value IS UNDEFINED, and this is the one place this
+                // rewrite differs from the closure lift. There, the closure
+                // value still exists and is passed. Here the callee VALUE is
+                // `at.load`, a property read of the object, and keeping it
+                // would leave a `!ctnative.boxed` result in an accepted
+                // function for no consumer: the native call arm drops operand
+                // 2, and this rewrite runs inside --ctnative-lower-to-emitc so
+                // the boxed tier never sees the op. The load is erased below.
+                auto direct = ctjs::CallDirectOp::create(
+                    builder, at.call.getLoc(), valueType,
+                    mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
+                    carriesReceiver ? at.receiver : undefined, undefined, undefined, arguments,
+                    /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
+                if (carriesReceiver) {
+                    direct->setAttr("ctnative.receiver", mlir::UnitAttr::get(context));
+                }
+                at.call.getResult().replaceAllUsesWith(direct.getResult());
+                at.call.erase();
+                // AND THE METHOD LOAD GOES WITH IT. Leaving it would keep a
+                // use of the object that `hasClosedShape` reads as open, which
+                // would refuse the very literal this rewrite just admitted.
+                //
+                // WITH ITS KEY CONSTANT, IF NOTHING ELSE HOLDS ONE. A string
+                // constant with no users left is not a property key any more -
+                // `isKeyOnlyString` needs a use to recognise one - so it falls
+                // through admission to "a constant that is not a number, a
+                // boolean or undefined" and refuses the whole function. The
+                // importer may or may not share the constant with the store
+                // that binds the field, so this asks rather than assumes.
+                mlir::Value key = at.load.getKey();
+                at.load.erase();
+                if (mlir::Operation * made = key.getDefiningOp();
+                    made != nullptr && made->use_empty()) {
+                    made->erase();
+                }
+                ++out.calls;
+            }
+            return;
+        }
 
         for (ctjs::CreateClosureOp c : made) {
             llvm::SmallVector<mlir::Value> captured;
@@ -653,9 +1235,29 @@ struct closureLifter {
 
 // --- the admission check --------------------------------------------------------
 
+// THE VALUES THAT NAME ONE OBJECT. Built once per pass run by
+// TypeInference::groupReceivers - one walk, shared by admission and by the
+// shape census - because a lifted method's `%arg0` and the literal it is called
+// on are two values with one set of fields between them.
+using receiverGroups = llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>>;
+
+// Every value that names the same object as `v`, `v` included. A literal
+// nothing is lifted onto is a group of one, so callers need no special case.
+llvm::SmallVector<mlir::Value, 2> aliasesOf(const receiverGroups * groups, mlir::Value v) {
+    if (groups != nullptr) {
+        const auto entry = groups->find(v);
+        if (entry != groups->end()) { return entry->second; }
+    }
+    return {v};
+}
+
 struct admission {
     mlir::DataFlowSolver & solver;
     std::string why;
+    // Null in the unit tests that construct an admission directly; every path
+    // through it then reads a literal's own uses, which is what it did before
+    // a receiver could be a parameter.
+    const receiverGroups * groups = nullptr;
     // The carrier every `return` in the function agrees on; `none` until the
     // first return is seen. A function with no return at all returns NaN -
     // undefined's carrier - which lower() picks when this stays `none`.
@@ -732,9 +1334,10 @@ struct admission {
     // - and the operand's answer was "uses its own closure", which is a
     // sentence about the ENCLOSING function reading a value it never reads.
     static std::string closureRefusal(mlir::Operation * o) {
+        const llvm::StringRef what =
+            o->hasAttr("ctnative.method_refusal") ? "a method field" : "a closure used as a value";
         auto why = o->getAttrOfType<mlir::StringAttr>("ctnative.closure_reason");
-        return why ? ("a closure used as a value: " + why.getValue()).str()
-                   : std::string{"a closure used as a value - Phase 59"};
+        return why ? (what + ": " + why.getValue()).str() : (what + " - Phase 59").str();
     }
 
     // THE CALLEE VALUE OF A DIRECT CALL lowers to nothing: the call names its
@@ -1057,11 +1660,51 @@ struct admission {
             if (llvm::isa<ctjs::ReturnOp>(user)) {
                 return "an object literal that escapes - it is returned";
             }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
+                // A METHOD CALL THE RECEIVER LIFT DID NOT TAKE. It is still a
+                // ctjs.call, so the object is passed to a dispatcher this tier
+                // cannot see through; the reason the lift gave is on the
+                // closure the field holds, and this points at it.
+                if (use.getOperandNumber() == 1) {
+                    return "an object literal whose method call was not lifted - it is still "
+                           "dispatched through the callee value, so the object is passed to "
+                           "something that could add or remove a field";
+                }
+                return "an object literal that escapes - it is passed to a call";
+            }
+            if (llvm::isa<ctjs::CallDirectOp>(user)) {
+                return "an object literal passed to a direct call as an argument - only a "
+                       "receiver is carried, and only into a lifted method";
+            }
             return ("an object literal that escapes - it reaches `" +
                     user->getName().getStringRef() + "`")
                 .str();
         }
         return "an object literal whose shape is not closed";
+    }
+
+    // WHY A LIFTED METHOD'S `this` IS NO LONGER CLOSED: the first use of
+    // `%arg0` that is not a constant-key access or a lifted method call, named
+    // by what it is. In practice there is one route - a `this.other()` whose
+    // callee was refused, so the call stayed a `ctjs.call` - and the sentence
+    // has to say that rather than repeat the whole rule.
+    static std::string whyOpenReceiver(mlir::Value self) {
+        for (mlir::OpOperand & use : self.getUses()) {
+            mlir::Operation * user = use.getOwner();
+            if (llvm::isa<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(user) &&
+                use.getOperandNumber() == 0) {
+                continue;
+            }
+            if (llvm::isa<ctjs::CallDirectOp>(user) && use.getOperandNumber() == 0 &&
+                user->hasAttr("ctnative.receiver")) {
+                continue;
+            }
+            if (llvm::isa<ctjs::CallOp>(user)) {
+                return "it calls another method on itself that this tier did not lift";
+            }
+            return ("it reaches `" + user->getName().getStringRef() + "`").str();
+        }
+        return "no use of it opens the shape, so the lift and this check disagree";
     }
 
     // A VALUE THAT LOWERS TO NOTHING NEEDS NO CARRIER, and these are the only
@@ -1085,21 +1728,44 @@ struct admission {
     bool op(mlir::Operation * o) {
         using namespace ctjs;
         if (llvm::isa<FrameEnterOp, FrameExitOp, RootOp>(o)) { return true; }
+        // THE METHOD FIELD'S STORE LOWERS TO NOTHING, with the closure in it.
+        // Checked before the closed-shape arms below because the value it
+        // stores is a closure, which has no carrier and would be refused as a
+        // field the moment the literal is examined.
+        if (o->hasAttr("ctnative.method")) { return true; }
         if (auto object = llvm::dyn_cast<CreateObjectOp>(o)) {
             if (!isClosedObject(object.getResult())) { return refuse(whyOpen(object.getResult())); }
+            // EVERY ACCESS IN THE GROUP, NOT ONLY THE LITERAL'S OWN. A lifted
+            // method reaches these fields through its `%arg0`, in a different
+            // function, and those reads and writes are this shape's too - so
+            // `this.class = 1` has to be refused HERE, at the one place that
+            // checks a key, or it reaches the emitter as `self->class`.
+            llvm::SmallVector<mlir::Operation *> accesses;
+            for (mlir::Value alias : aliasesOf(groups, object.getResult())) {
+                for (mlir::OpOperand & use : alias.getUses()) {
+                    if (use.getOperandNumber() == 0 &&
+                        llvm::isa<GetPropertyOp, SetPropertyOp>(use.getOwner())) {
+                        accesses.push_back(use.getOwner());
+                    }
+                }
+            }
             // The keys this literal is ever WRITTEN with. A read of one of
             // them is an own property; a read of anything else falls through
             // to the prototype, which is what makes an inherited name wrong.
             llvm::StringSet<> written;
-            for (mlir::Operation * user : object.getResult().getUsers()) {
+            for (mlir::Operation * user : accesses) {
                 if (auto set = llvm::dyn_cast<SetPropertyOp>(user)) {
-                    written.insert(keyOf(set.getKey()));
+                    // A METHOD FIELD IS NOT A FIELD. Its store lowers to
+                    // nothing and it takes no space in the class, so it is not
+                    // a key that shadows an inherited name either.
+                    if (!user->hasAttr("ctnative.method")) { written.insert(keyOf(set.getKey())); }
                 }
             }
             // The carrier each key has been STORED so far, for the one-carrier
             // check below.
             llvm::StringMap<carrier> storedCarrier;
-            for (mlir::Operation * user : object.getResult().getUsers()) {
+            for (mlir::Operation * user : accesses) {
+                if (user->hasAttr("ctnative.method")) { continue; }
                 const llvm::StringRef key = llvm::isa<GetPropertyOp>(user)
                                                 ? keyOf(llvm::cast<GetPropertyOp>(user).getKey())
                                                 : keyOf(llvm::cast<SetPropertyOp>(user).getKey());
@@ -1211,10 +1877,19 @@ struct admission {
             return true;
         }
         if (auto call = llvm::dyn_cast<CallDirectOp>(o)) {
-            // receiver, new.target and the callee value are dropped; every
-            // argument is a number. Whether the CALLEE is native is the
-            // fixpoint in runOnOperation, not a question for one function.
+            // new.target and the callee value are dropped; every argument is a
+            // number. Whether the CALLEE is native is the fixpoint in
+            // runOnOperation, not a question for one function.
+            //
+            // THE RECEIVER IS NOT DROPPED WHEN THE LIFT MARKED THIS CALL. It
+            // is operand 0, it becomes the callee's first C++ parameter, and
+            // its carrier is the generated class - so what has to hold here is
+            // that it really is a closed-shape object and not some other
+            // value the lift never looked at.
             const auto operands = call.getArgOperands();
+            if (o->hasAttr("ctnative.receiver") && !isClosedObject(call.getReceiver())) {
+                return refuse("a method call whose receiver is not a closed-shape object");
+            }
             for (unsigned i = 3; i < operands.size(); ++i) {
                 if (!numeric(operands[i], "argument")) { return false; }
             }
@@ -1339,9 +2014,21 @@ struct admission {
 
     bool function(ctjs::FuncOp fn) {
         mlir::Block & entry = fn.getBody().front();
+        // THE RECEIVER IS A PARAMETER when the lift said so, and %arg0 is then
+        // the one implicit argument that HAS a carrier: the generated class of
+        // the shape every call site passes. The lift proved every use of it is
+        // a constant-key access or another lifted method call; this asks the
+        // same question of the IR that came out, because the lift's proof was
+        // made before its own rewrite ran and a later refusal - the callee of
+        // a `this.other()` that was not lifted - can have opened it since.
+        const bool carriesReceiver = fn->hasAttr("ctnative.receiver");
+        if (carriesReceiver && !isClosedObject(entry.getArgument(0))) {
+            return refuse("its `this` is no longer a closed-shape receiver - " +
+                          whyOpenReceiver(entry.getArgument(0)));
+        }
         // THE THREE IMPLICIT ARGUMENTS - receiver, new.target, callee - have no
         // native carrier and must be unused.
-        for (unsigned i = 0; i < 3 && i < entry.getNumArguments(); ++i) {
+        for (unsigned i = carriesReceiver ? 1 : 0; i < 3 && i < entry.getNumArguments(); ++i) {
             for (mlir::Operation * user : entry.getArgument(i).getUsers()) {
                 // A closure that lowers to nothing does not READ these: a
                 // declaration's pair is erased with its store, and a LIFTED
@@ -1616,6 +2303,12 @@ struct lowering {
     // emitc.variable and no longer reads as a dense create_array.
     llvm::DenseSet<mlir::Operation *> vectorLengthReads;
     llvm::DenseSet<mlir::Operation *> vectorIndexReads;
+    // THE RECEIVER LIFT. The alias groups, shared with admission, and per
+    // lifted method the lvalue local its `%arg0` is copied into - the one
+    // `ctn_x * self;` `self = v0;` pair that `emitc.member_of_ptr` needs.
+    const receiverGroups * groups = nullptr;
+    llvm::DenseSet<mlir::Value> receiverArgs;
+    llvm::DenseMap<mlir::Value, mlir::Value> receiverLocal;
     // Set by the first array lowered; the include and the helper preamble ride
     // on it. An empty unit emits neither.
     bool needsVector = false;
@@ -1649,6 +2342,31 @@ struct lowering {
     }
     mlir::Type classType(const siteShape & site) {
         return ec::LValueType::get(ec::OpaqueType::get(context, spelling(site)));
+    }
+    // THE RECEIVER CARRIER, AND WHY IT IS A POINTER RATHER THAN A `&`.
+    //
+    // The answer this slice wanted is `ctn_x & self`, and EmitC has no spelling
+    // for it. `emitc.func` REJECTS an lvalue argument type outright - "cannot
+    // have lvalue type as argument" is in the dialect, and it is the check that
+    // makes a C++ reference parameter unrepresentable - so a parameter is
+    // always a value type. `emitc.member` on a value-typed operand gives a
+    // value-typed result, which can be read and not assigned, so `this.x = 5`
+    // would have no lowering. `emitc.dereference` does give an lvalue, but the
+    // emitter caches it as the string `*v0` and `emitc.member` then prints
+    // `*v0.x` - the wrong expression, with no diagnostic anywhere.
+    //
+    // `emitc.member_of_ptr` on an lvalue HOLDING a pointer is the one member
+    // access that survives a parameter, so the receiver is `ctn_x *`, the
+    // method opens with one `ctn_x * self;` `self = v0;` pair, and every
+    // access is `self->x`. That is a REFERENCE in every sense this tier cares
+    // about - non-owning, no allocation, the caller's frame, dead after the
+    // call - and `-O2` emits the same instructions. It is a pointer only in
+    // the spelling, and the spelling is the backend's, not this slice's.
+    mlir::Type receiverType(const siteShape & site) {
+        return ec::PointerType::get(ec::OpaqueType::get(context, spelling(site)));
+    }
+    mlir::Type receiverLocalType(const siteShape & site) {
+        return ec::LValueType::get(receiverType(site));
     }
     // THE MEMBER NAME OF ONE ACCESS, and a named fatal rather than
     // `accessKey.at(o)`. `at` on a key that is not there THROWS, and this
@@ -1698,24 +2416,42 @@ struct lowering {
     // every value in the function had already taken its carrier, so it could
     // read `get.getResult().getType()`. The census runs before any of that and
     // asks the solver the question retype() would have asked.
-    llvm::SmallVector<std::pair<std::string, mlir::Type>> fieldsOf(ctjs::CreateObjectOp object) {
+    llvm::SmallVector<std::pair<std::string, mlir::Type>> fieldsOf(mlir::Value object) {
         const auto carried = [&](mlir::Value v) {
             return carrierType(context, carrierOf(typeOf(v)));
         };
         llvm::StringMap<mlir::Type> stored;
         llvm::StringMap<mlir::Type> read;
-        for (mlir::Operation * user : object.getResult().getUsers()) {
-            mlir::Value key;
-            if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
-                key = get.getKey();
-                read.try_emplace(admission::keyOf(key), carried(get.getResult()));
-            } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-                key = set.getKey();
-                stored.try_emplace(admission::keyOf(key), carried(set.getValue()));
-            }
-            if (key) {
-                accessKey[user] = admission::keyOf(key).str();
-                keyConstants.insert(key.getDefiningOp());
+        // OVER THE GROUP. A lifted method's `this.x` is a read of this shape
+        // made through a different value in a different function, and a field
+        // only that method touches is still a field. Collecting them here is
+        // also what records the member name for the access, so replace() can
+        // spell `self->x` without asking the census a second time.
+        for (mlir::Value alias : aliasesOf(groups, object)) {
+            for (mlir::Operation * user : alias.getUsers()) {
+                // The method field takes no member: the closure it holds is a
+                // free function and the store lowers to nothing. Its KEY
+                // constant is still marked, so replace() drops it rather than
+                // swapping a NaN in for a string nothing reads.
+                if (auto method = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                    method && user->hasAttr("ctnative.method")) {
+                    keyConstants.insert(method.getKey().getDefiningOp());
+                    continue;
+                }
+                mlir::Value key;
+                if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
+                    if (get.getObject() != alias) { continue; }
+                    key = get.getKey();
+                    read.try_emplace(admission::keyOf(key), carried(get.getResult()));
+                } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
+                    if (set.getObject() != alias) { continue; }
+                    key = set.getKey();
+                    stored.try_emplace(admission::keyOf(key), carried(set.getValue()));
+                }
+                if (key) {
+                    accessKey[user] = admission::keyOf(key).str();
+                    keyConstants.insert(key.getDefiningOp());
+                }
             }
         }
         llvm::SmallVector<std::pair<std::string, mlir::Type>> fields;
@@ -1740,7 +2476,7 @@ struct lowering {
         std::vector<std::set<std::string>> keys; // per family, its distinct (name, type) keys
         for (ctjs::FuncOp fn : accepted) {
             fn.getBody().walk([&](ctjs::CreateObjectOp object) {
-                const auto fields = fieldsOf(object);
+                const auto fields = fieldsOf(object.getResult());
                 std::string nameKey; // the family key: just the names
                 std::string typeKey; // the instantiation key: names AND types
                 siteShape site;
@@ -1771,7 +2507,18 @@ struct lowering {
                 }
                 families[site.family].where.push_back(siteOf(object.getLoc()));
                 keys[site.family].insert(typeKey);
-                shapeOf[object.getResult()] = std::move(site);
+                // EVERY VALUE IN THE GROUP GETS THE SHAPE, which is what makes
+                // a receiver parameter spellable: `%arg0` of the lifted method
+                // has the same class as the literal it is called on, because
+                // it IS that literal. Two literals of one shape calling one
+                // method put the same answer here twice; a disagreement would
+                // be two literals whose fields differ, and the group has
+                // already joined those into ONE shape - which is correct, and
+                // is why "two objects of the same shape share one method" needs
+                // no separate check.
+                for (mlir::Value alias : aliasesOf(groups, object.getResult())) {
+                    shapeOf[alias] = site;
+                }
             });
         }
         for (unsigned i = 0; i < families.size(); ++i) {
@@ -2090,6 +2837,14 @@ struct lowering {
         fn.getBody().walk([&](ctjs::CreateObjectOp object) {
             mlir::Value(object.getResult()).setType(classType(shapeAt(object.getResult())));
         });
+        // AND THE RECEIVER, which is the same shape one indirection away. It is
+        // done here rather than in the loop above because `retypeValue` skips
+        // a closed object - "keeps its ctjs type until its shape is known" -
+        // and `%arg0` of a lifted method is exactly that.
+        if (fn->hasAttr("ctnative.receiver")) {
+            mlir::Value self = fn.getBody().front().getArgument(0);
+            self.setType(receiverType(shapeAt(self)));
+        }
         // AND THE ARRAYS, whose type was taken above; what is left is which
         // reads are `length` and which are indices.
         fn.getBody().walk([&](ctjs::CreateArrayOp array) { collectVector(array); });
@@ -2104,6 +2859,39 @@ struct lowering {
                                      o->getName().getStringRef() + "` while it still has uses");
         }
         o->erase();
+    }
+
+    // `o.x` OR `self->x`, DECIDED BY WHAT THE OBJECT IS. A literal in this
+    // frame is an `emitc.variable` and takes `emitc.member`; a lifted method's
+    // receiver arrived as a pointer and takes `emitc.member_of_ptr` through the
+    // local `lower()` made for it. Both give an lvalue, so the read and the
+    // write above are the same two lines either way.
+    mlir::Value memberAccess(mlir::OpBuilder & b, mlir::Location where, mlir::Value object,
+                             llvm::StringRef member, mlir::Type type) {
+        if (!receiverArgs.contains(object)) {
+            return ec::MemberOp::create(b, where, ec::LValueType::get(type), member, object);
+        }
+        // AT THE FIRST FIELD, NOT AT THE FUNCTION'S FIRST LINE - AND THIS IS A
+        // TIDINESS CHOICE, WHICH IS NOT WHAT THE COMMENT HERE FIRST CLAIMED.
+        // `twice() { return this.area() * 2; }` reads no field of its own, so
+        // building the local eagerly leaves `ctn_h_w * v2; v2 = v1;` with
+        // nothing reading v2, and the prediction was that -Werror would reject
+        // it. Measured: it does not. The pipeline's `canonicalize` deletes the
+        // dead `emitc.variable` before any C++ is printed, `twice` compiles
+        // clean either way, and the whole suite is green with the eager form.
+        // So this buys nothing the pipeline was not already buying - what it
+        // buys is that the RAW `--ctnative-lower-to-emitc` output, which the
+        // lit and the printing gate read, has no variable no one reads in it.
+        // Block start still dominates every use, so building it here is free.
+        mlir::Value & local = receiverLocal[object];
+        if (!local) {
+            mlir::OpBuilder at =
+                mlir::OpBuilder::atBlockBegin(llvm::cast<mlir::BlockArgument>(object).getOwner());
+            local = ec::VariableOp::create(at, where, ec::LValueType::get(object.getType()),
+                                           ec::OpaqueAttr::get(context, ""));
+            ec::AssignOp::create(at, where, local, object);
+        }
+        return ec::MemberOfPtrOp::create(b, where, ec::LValueType::get(type), member, local);
     }
 
     void replace(mlir::Operation * o, bool isEntry, mlir::Type returnType) {
@@ -2182,18 +2970,24 @@ struct lowering {
                      .getResult(0));
             return;
         }
+        // THE METHOD FIELD IS NOT A FIELD, so its store goes and the closure it
+        // held loses its last use and goes in the sweep. `this` is a parameter
+        // and the method is a free function; there is nothing to write.
+        if (o->hasAttr("ctnative.method")) {
+            eraseIfUnused(o);
+            return;
+        }
         if (auto get = llvm::dyn_cast<GetPropertyOp>(o)) {
             const mlir::Type type = get.getResult().getType();
-            mlir::Value member = ec::MemberOp::create(b, where, ec::LValueType::get(type),
-                                                      memberName(o), get.getObject());
-            swap(ec::LoadOp::create(b, where, type, member));
+            swap(ec::LoadOp::create(b, where, type,
+                                    memberAccess(b, where, get.getObject(), memberName(o), type)));
             return;
         }
         if (auto set = llvm::dyn_cast<SetPropertyOp>(o)) {
-            mlir::Value member =
-                ec::MemberOp::create(b, where, ec::LValueType::get(set.getValue().getType()),
-                                     memberName(o), set.getObject());
-            ec::AssignOp::create(b, where, member, set.getValue());
+            ec::AssignOp::create(
+                b, where,
+                memberAccess(b, where, set.getObject(), memberName(o), set.getValue().getType()),
+                set.getValue());
             eraseIfUnused(o);
             return;
         }
@@ -2291,7 +3085,25 @@ struct lowering {
             // to the emitc.func when that function is lowered, whichever
             // order the two are visited in.
             const auto operands = call.getArgOperands();
-            llvm::SmallVector<mlir::Value> args(operands.begin() + 3, operands.end());
+            llvm::SmallVector<mlir::Value> args;
+            // THE RECEIVER GOES FIRST WHEN THE LIFT MARKED THE CALL, and this
+            // one line is where the tier stops dropping it. The callee takes a
+            // pointer, so a literal in this frame - an `emitc.variable`, an
+            // lvalue - needs its address, and a receiver being PASSED ON by
+            // `this.other()` is already one.
+            if (o->hasAttr("ctnative.receiver")) {
+                const mlir::Value self = call.getReceiver();
+                args.push_back(
+                    llvm::isa<ec::PointerType>(self.getType())
+                        ? self
+                        : ec::AddressOfOp::create(
+                              b, where,
+                              ec::PointerType::get(
+                                  llvm::cast<ec::LValueType>(self.getType()).getValueType()),
+                              self)
+                              .getResult());
+            }
+            args.append(operands.begin() + 3, operands.end());
             const auto named = names.find(call.getCallee());
             const std::string target =
                 named == names.end() ? cIdentifier(call.getCallee()) : named->second;
@@ -2377,7 +3189,13 @@ struct lowering {
         // returning double (every native function returns a number; a
         // function that returns nothing returns NaN, which is undefined's
         // carrier).
+        // THE RECEIVER IS THE FIRST PARAMETER, and this is the whole of the
+        // signature change: `double bump_3(ctn_x * self, double n)`. It comes
+        // first because ctjs.call_direct's operand 0 is the receiver, so the
+        // caller already passes it there.
+        const bool carriesReceiver = fn->hasAttr("ctnative.receiver");
         llvm::SmallVector<mlir::Type> params;
+        if (carriesReceiver) { params.push_back(entry.getArgument(0).getType()); }
         for (unsigned i = 3; i < entry.getNumArguments(); ++i) {
             params.push_back(entry.getArgument(i).getType());
         }
@@ -2406,6 +3224,13 @@ struct lowering {
                                       ", " + siteOfFunction(fn)));
         made.getBody().takeBody(fn.getBody());
         mlir::Block & body = made.getBody().front();
+
+        // THE ONE LOCAL A RECEIVER COSTS, built by memberAccess() at the first
+        // field it reads: `emitc.member_of_ptr` wants an lvalue HOLDING the
+        // pointer and a parameter is not one, so a method that touches a field
+        // opens with `ctn_x * self; self = v0;` and every `this.x` after it is
+        // `self->x`. A method that only FORWARDS the receiver gets neither.
+        if (carriesReceiver) { receiverArgs.insert(body.getArgument(0)); }
 
         llvm::SmallVector<mlir::Operation *> ops;
         made.getBody().walk([&](mlir::Operation * o) {
@@ -2465,14 +3290,19 @@ struct lowering {
         // uses is the same silent use-after-free as erasing an operation
         // with uses, and it surfaced as a crash three passes later in a fold
         // of an operation that did not exist. Same invariant, same fatal.
-        const unsigned drop = isEntry ? body.getNumArguments() : 3u;
+        //
+        // AND A LIFTED METHOD KEEPS %arg0, which is why this counts from a
+        // first index rather than always from zero: the receiver is a real
+        // parameter now and new.target and the callee are the two that go.
+        const unsigned first = carriesReceiver ? 1u : 0u;
+        const unsigned drop = isEntry ? body.getNumArguments() : 3u - first;
         for (unsigned i = 0; i < drop; ++i) {
-            if (!body.getArgument(0).use_empty()) {
+            if (!body.getArgument(first).use_empty()) {
                 llvm::report_fatal_error(
                     llvm::Twine("ctnative lowering: implicit argument of `") + fn.getSymName() +
                     "` still has uses after lowering - admission should have refused it");
             }
-            body.eraseArgument(0);
+            body.eraseArgument(first);
         }
 
         // THE OLD ctjs.func STAYS FOR NOW, hollow: an accepted caller lowered
@@ -2539,8 +3369,16 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             module.emitRemark() << "ctnative: lifted " << lifted.closures << " closure(s) over "
                                 << lifted.captures << " capture(s) into " << lifted.functions
                                 << " function(s), rewrote " << lifted.calls << " call(s), unboxed "
-                                << lifted.cells << " cell(s)";
+                                << lifted.cells << " cell(s), " << lifted.methods
+                                << " method(s) of which " << lifted.receivers << " take a receiver";
         }
+
+        // THE ALIAS GROUPS, once the lift has written its attributes and before
+        // anything reads a field. TypeInference::groupReceivers is the one walk
+        // that says which values name one object; admission and the shape
+        // census both read it, so a field a method touches is the same field
+        // the literal has in both.
+        const receiverGroups groups = TypeInference::groupReceivers(module);
 
         // All three, and none optional - TypeInference.h says why.
         mlir::DataFlowSolver solver;
@@ -2562,7 +3400,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                             mlir::StringAttr::get(&getContext(), "unstructured control flow"));
                 continue;
             }
-            admission check{solver, {}};
+            admission check{solver, {}, &groups};
             if (check.function(fn)) {
                 accepted.push_back(fn);
             } else {
@@ -2614,6 +3452,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                        [&](ctjs::FuncOp fn) { return !nativeSet.contains(fn.getOperation()); });
 
         lowering lower{solver, &getContext(), module};
+        lower.groups = &groups;
         for (ctjs::FuncOp fn : accepted) {
             lower.names[fn.getSymName()] =
                 fn.getSymName().starts_with("_script_$") ? "main" : cIdentifier(fn.getSymName());

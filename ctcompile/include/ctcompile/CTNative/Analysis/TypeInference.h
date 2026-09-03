@@ -120,6 +120,37 @@ public:
     /// makes its shape open and every read of it `boxed`.
     static bool hasClosedShape(mlir::Value object);
 
+    /// THE RECEIVER IS A PARAMETER (part 24, the receiver carrier). A method
+    /// whose `this` uses are all constant-key property accesses is lifted:
+    /// `--ctnative-lower-to-emitc` marks the target `ctnative.receiver` and
+    /// each of its calls with the same attribute, and `%arg0` - the entry
+    /// block's receiver - then names the object literal the call passes. So a
+    /// receiver argument has a closed shape by the lift's own proof, and
+    /// `this.x` is the same field read as `o.x` in the caller.
+    ///
+    /// TRUE FOR `%arg0` OF A `ctnative.receiver` FUNCTION, with the same use
+    /// loop as a literal: the argument is closed only if every use of it is a
+    /// constant-key get or set, or the receiver of another lifted method call.
+    static bool isReceiverArgument(mlir::Value v);
+
+    /// THE VALUES THAT NAME ONE OBJECT, once `this` is a parameter. A method
+    /// lifted onto two literals of one shape has ONE `%arg0` standing for
+    /// both, and `this.x = 5` inside it is a store the caller's `o.x` has to
+    /// see - so the field index, the shape census and the emitted class all
+    /// have to work over the GROUP and not over one value. Built by one walk
+    /// of `top`: every closed literal and every receiver argument is a node,
+    /// and each `ctnative.receiver` call joins the callee's `%arg0` to the
+    /// receiver it passes. Every member maps to the whole group, itself
+    /// included, so a singleton literal is a group of one and nothing else in
+    /// the pipeline needs a special case for it.
+    ///
+    /// ONE FUNCTION, TWO CALLERS: TypeInference::initialize() indexes the
+    /// field stores with it, and the EmitC lowering's shape census collects a
+    /// class's fields with it. A second copy of this walk is a second chance
+    /// for the two to disagree about what a field is.
+    static llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> groupReceivers(
+        mlir::Operation * top);
+
     /// THE DENSE ARRAY (part 24 Phase 57A, the typing half). An array literal
     /// whose every use is an `append` onto it, an index read of it, or a read
     /// of its `length` is a `std::vector` and not a JavaScript array: nothing

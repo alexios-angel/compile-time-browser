@@ -1629,3 +1629,40 @@ if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(closures
                               "${CMAKE_CURRENT_SOURCE_DIR}/native-closure-fixture.js" 20 9 9)
 endif()
+
+# ============================================================================
+# === PART 24: THE RECEIVER IS A PARAMETER - methods lift like closures ===
+# ============================================================================
+# native-receiver-fixture.js is eight functions whose objects are METHOD
+# TABLES: closed-shape literals with numeric fields and function-expression
+# fields that reach the data through `this`. That is the shape the tier refused
+# whole - `uses `this`` is 6,649 of the 12,916 refusals it makes over the three
+# corpora - and the blocker was never that the callee is unknown. It is that no
+# C++ type carried a receiver.
+#
+# THE GATE IS THE POINT, NOT THE IR. A lift that passes the receiver by value
+# instead of by pointer produces a module that verifies, compiles clean under
+# -Werror and prints 3 where the interpreter prints 9, because the mutation
+# never reaches the caller's object. Only the interpreter can say so, and
+# `mutating()` calling its method TWICE is what makes the difference show.
+#
+# THE REFUSALS ARE NOT HERE, and cannot be: native-pipeline.cmake refuses to
+# write a module while any function carries `ctnative.not_native`, and a
+# refusal is contagious in both directions anyway. They are one program apiece
+# in CTNative/Lowering/receiver-refusals.mlir, under split-file.
+#
+# One appended block, per part 23 Appendix A.3.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(receivers "${CMAKE_CURRENT_SOURCE_DIR}/native-receiver-fixture.js")
+endif()
+# AND THE CLAIMED COUNT, AS A FLOOR. Sixteen functions and all of them claimed:
+# the top level, seven that build a method table, and eight methods. A change
+# that stops lifting one of them fails HERE even if the fixture above were
+# deleted, which is what --min-claimed is for. `resolved` and `direct` are the
+# closed world's own counters and the receiver lift does not move them - it
+# emits its ctjs.call_direct inside --ctnative-lower-to-emitc, after
+# --ctjs-resolve-globals has already been counted.
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(receivers
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-receiver-fixture.js" 16 7 8)
+endif()
