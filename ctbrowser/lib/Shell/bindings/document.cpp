@@ -42,6 +42,30 @@ namespace {
 //
 // shell/net/url.hpp parses once now, for both.
 
+// The four namespaces the DOM names by URI. Spelled out rather than derived,
+// because getting one character wrong makes a NamespaceError fire on the valid
+// case and not on the invalid one, and nothing about the failure would say so.
+constexpr std::string_view html_namespace = "http://www.w3.org/1999/xhtml";
+constexpr std::string_view svg_namespace = "http://www.w3.org/2000/svg";
+constexpr std::string_view xml_namespace = "http://www.w3.org/XML/1998/namespace";
+constexpr std::string_view xmlns_namespace = "http://www.w3.org/2000/xmlns/";
+
+// The prefix and the local part of a qualified name, split at the FIRST colon.
+// `a:b:c` is prefix `a` and local `b:c`, which is what the DOM says and is not
+// what the XML QName production says - the two disagree and the DOM is what a
+// page is measured against.
+struct qualified_name {
+    std::string_view prefix; // empty when there is no colon
+    std::string_view local;
+    bool has_colon = false;
+};
+
+[[nodiscard]] qualified_name split_qualified(std::string_view name) {
+    const std::size_t colon = name.find(':');
+    if (colon == std::string_view::npos) { return qualified_name{{}, name, false}; }
+    return qualified_name{name.substr(0, colon), name.substr(colon + 1), true};
+}
+
 } // namespace
 
 // Every part of the URL, derived from href. Called wherever href is set, so
@@ -233,6 +257,83 @@ void dom_bindings::install_document(context & cx) {
     // constructors, and the DOM has had them since the first version. The
     // document could make an element and a text node and nothing else, so a page
     // could not annotate what it built and could not batch what it inserted.
+    // `document.createElementNS(namespace, qualifiedName)`.
+    //
+    // WHAT IT MUST GET RIGHT is the round trip: the element remembers the exact
+    // namespace it was given, `tagName` is the qualified name, `prefix` is the
+    // part before the first colon and `localName` the part after, and NONE of it
+    // is case-folded - createElement lowercases for an HTML document and this
+    // deliberately does not.
+    //
+    // The namespace ERRORS are the rules that make a prefix mean something:
+    // a prefix with no namespace, `xml:` outside the XML namespace, and `xmlns`
+    // anywhere but the XMLNS namespace (and that namespace used for anything
+    // else) are all NamespaceError.
+    method("createElementNS", [this](context & c, std::span<value> args) {
+        // A NULLABLE DOMString: null and undefined are both the null namespace,
+        // and so is the empty string. The qualified name is an ordinary
+        // DOMString, so null there is the four characters "null".
+        const value given = arg(args, 0);
+        const std::string ns =
+            given.is_null() || given.is_undefined() ? std::string{} : arg_string(c, args, 0);
+        const std::string qualified =
+            args.size() > 1 ? c.to_string(args[1]) : std::string{"undefined"};
+        const qualified_name split = split_qualified(qualified);
+        // An empty name, an empty prefix (":x") and an empty local part ("x:")
+        // are the three shapes that cannot name anything.
+        if (qualified.empty() ||
+            (split.has_colon && (split.prefix.empty() || split.local.empty()))) {
+            c.throw_error("InvalidCharacterError",
+                          "createElementNS: '" + qualified + "' is not a qualified name");
+            return value::undefined();
+        }
+        const bool prefixed = split.has_colon;
+        const auto fail = [&c](const std::string & why) {
+            c.throw_error("NamespaceError", "createElementNS: " + why);
+            return value::undefined();
+        };
+        if (prefixed && ns.empty()) { return fail("a prefix needs a namespace"); }
+        if (split.prefix == "xml" && ns != xml_namespace) {
+            return fail("the xml prefix belongs to the XML namespace");
+        }
+        if ((qualified == "xmlns" || split.prefix == "xmlns") && ns != xmlns_namespace) {
+            return fail("xmlns belongs to the XMLNS namespace");
+        }
+        if (ns == xmlns_namespace && qualified != "xmlns" && split.prefix != "xmlns") {
+            return fail("the XMLNS namespace is only for xmlns");
+        }
+        const node_ns kind = ns == html_namespace  ? node_ns::html
+                             : ns == svg_namespace ? node_ns::svg
+                                                   : node_ns::other;
+        // INTERNED AS WRITTEN, not lowercased: the qualified name IS the tag
+        // here, and folding it would lose the case an XML document depends on.
+        const node_id made = doc_->create_element(atoms_->intern(qualified), kind);
+        if (kind == node_ns::other || ns.empty()) { namespaces_.emplace(pack(made), ns); }
+        return wrap(c, made);
+    });
+    // `getElementsByTagNameNS(namespace, localName)`, with "*" meaning any on
+    // either half. Live, like its two siblings.
+    method("getElementsByTagNameNS", [this](context & c, std::span<value> args) {
+        const value given = arg(args, 0);
+        const std::string ns =
+            given.is_null() || given.is_undefined() ? std::string{} : arg_string(c, args, 0);
+        const std::string local = arg_string(c, args, 1);
+        return make_live_collection(c, [this, ns, local] {
+            const auto txn = doc_->read();
+            std::vector<node_id> found;
+            const auto walk = [&](auto && self, node_id at) -> void {
+                if (txn.tag(at).has_value()) {
+                    const std::string_view name = atoms_->text(txn.tag(at).value_or(atom{}));
+                    const bool name_fits = local == "*" || split_qualified(name).local == local;
+                    const bool ns_fits = ns == "*" || namespace_of(at) == ns;
+                    if (name_fits && ns_fits) { found.push_back(at); }
+                }
+                for (const node_id child : txn.children(at)) { self(self, child); }
+            };
+            walk(walk, txn.root());
+            return found;
+        });
+    });
     method("createComment", [this](context & c, std::span<value> args) {
         return wrap(c, doc_->create_comment(arg_string(c, args, 0)));
     });
@@ -545,6 +646,12 @@ node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool dee
     case node_kind::document:
     case node_kind::element:
         made = doc_->create_element(from.tag(source).value_or(atom{}), from.element_ns(source));
+        // AND ITS NAMESPACE, which is not on the node: a clone of an element
+        // createElementNS made must report the same namespaceURI, and reading
+        // it off `element_ns` alone would answer for the wrong one.
+        if (const auto it = namespaces_.find(pack(source)); it != namespaces_.end()) {
+            namespaces_.emplace(pack(made), it->second);
+        }
         for (const attribute & held : from.attributes(source)) {
             (void)doc_->set_attribute(made, held.name, held.value);
         }
@@ -828,6 +935,20 @@ constexpr std::string_view dom_whitespace = "\t\n\f\r ";
 }
 
 } // namespace
+
+std::string dom_bindings::namespace_of(node_id id) const {
+    if (const auto it = namespaces_.find(pack(id)); it != namespaces_.end()) { return it->second; }
+    switch (doc_->read().element_ns(id)) {
+    case node_ns::svg: return std::string{svg_namespace};
+    case node_ns::html: return std::string{html_namespace};
+    // An `other` element with no recorded URI cannot happen - the only thing
+    // that makes one records it - but a stale handle resolves to `html` and
+    // then to this, and the null namespace is the honest answer for a node that
+    // is not there any more.
+    case node_ns::other: break;
+    }
+    return {};
+}
 
 std::vector<std::string> dom_bindings::ordered_set(std::string_view text) {
     std::vector<std::string> out;

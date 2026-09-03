@@ -39,7 +39,16 @@ namespace {
 }
 
 [[nodiscard]] std::string_view ns_name(node_ns ns) {
-    return ns == node_ns::svg ? "svg" : "html";
+    // `other` added with node_ns::other (DOM change, 2026-09-03): only
+    // createElementNS produces one, so a PARSED document never carries it, but
+    // reporting it as "html" would make a difference invisible in a comparison
+    // whose whole job is to find one.
+    switch (ns) {
+    case node_ns::svg: return "svg";
+    case node_ns::other: return "other";
+    case node_ns::html: break;
+    }
+    return "html";
 }
 
 struct walker {

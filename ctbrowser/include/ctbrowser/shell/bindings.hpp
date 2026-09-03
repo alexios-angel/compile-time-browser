@@ -368,6 +368,11 @@ private:
     // what makes `el.append("hello")` work and is the whole reason those methods
     // are nicer than appendChild.
     [[nodiscard]] node_id node_from(context & cx, value v);
+    // THE EXACT NAMESPACE OF AN ELEMENT, as a string. Derived from `element_ns`
+    // for everything the parser built - there are only two answers there - and
+    // read from `namespaces_` for an element `createElementNS` put in some other
+    // one. Empty means the null namespace, which reports as `null`.
+    [[nodiscard]] std::string namespace_of(node_id id) const;
     [[nodiscard]] std::string text_content(node_id target) const;
     void write_location_parts(context & cx, script::object_object & loc);
     // `element.style` and `element.classList` - the two views onto an element
@@ -748,6 +753,12 @@ private:
         std::string value;
         bool checked = false;
     };
+    // WHERE AN ARBITRARY NAMESPACE URI LIVES. `node` carries a three-valued
+    // `node_ns` and not a URI, for the size reason written down beside the
+    // enumerator; the handful of elements a page creates with createElementNS in
+    // a namespace that is neither HTML nor SVG keep their URI here, keyed the
+    // same way a wrapper is.
+    flat_map<std::uint64_t, std::string> namespaces_;
     flat_map<std::uint64_t, script::object_object *> wrappers_;
     flat_map<std::uint64_t, property_mirror> mirrors_;
     bool wrote_to_control_ = false;

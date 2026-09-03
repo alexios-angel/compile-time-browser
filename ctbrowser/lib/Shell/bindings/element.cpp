@@ -110,13 +110,31 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
             obj.set("nodeType", value::number(11));
             break;
         }
-        // `localName` is the tag WITHOUT the case fold - `tagName` uppercases an
-        // HTML element's and localName never does, which is exactly the pair the
-        // suite compares against each other.
-        obj.set("localName",
-                kind == node_kind::element
-                    ? cx.string(std::string{atoms_->text(txn.tag(id).value_or(atom{}))})
-                    : value::undefined());
+        // `localName`, `prefix` and `namespaceURI` - the three halves of a
+        // qualified name, and the pair `tagName` is compared against.
+        //
+        // localName is the tag WITHOUT the case fold and WITHOUT the prefix:
+        // `createElementNS(ns, "a:b")` has tagName "a:b" and localName "b", and
+        // reporting the whole qualified name for both makes the two
+        // indistinguishable. prefix is null when there is no colon, which is
+        // every element the parser builds.
+        if (kind == node_kind::element) {
+            const std::string_view qualified = atoms_->text(txn.tag(id).value_or(atom{}));
+            const std::size_t colon = qualified.find(':');
+            if (colon == std::string_view::npos) {
+                obj.set("localName", cx.string(std::string{qualified}));
+                obj.set("prefix", value::null());
+            } else {
+                obj.set("localName", cx.string(std::string{qualified.substr(colon + 1)}));
+                obj.set("prefix", cx.string(std::string{qualified.substr(0, colon)}));
+            }
+            const std::string ns = namespace_of(id);
+            obj.set("namespaceURI", ns.empty() ? value::null() : cx.string(ns));
+        } else {
+            obj.set("localName", value::undefined());
+            obj.set("prefix", value::null());
+            obj.set("namespaceURI", value::null());
+        }
     }
     // `id`, `className`, `width` and `height` are NOT set here: they are
     // accessors over the attributes, installed once in install_element_views.

@@ -573,6 +573,67 @@ void test_document_implementation() {
           "the two that need a second Document are absent: " + log[2]);
 }
 
+// `createElementNS`, and the round trip that has to survive it: the exact
+// namespace, the qualified name, the prefix and the local part, none of them
+// case-folded. A createElementNS that lost the namespace would be worse than
+// none - a page would build an SVG element that styled and painted as HTML.
+void test_create_element_ns() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body><svg id=s><rect/></svg><script>
+        var HTML = 'http://www.w3.org/1999/xhtml';
+        var SVG  = 'http://www.w3.org/2000/svg';
+        var MINE = 'http://example.com/ns';
+
+        var h = document.createElementNS(HTML, 'div');
+        var v = document.createElementNS(SVG, 'linearGradient');
+        var m = document.createElementNS(MINE, 'pre:fix');
+        console.log('html=' + h.namespaceURI + ',' + h.tagName + ',' + h.localName +
+                    ',' + (h.prefix === null));
+        // NOT case-folded, and an HTML-namespace tagName still uppercases.
+        console.log('svg=' + v.namespaceURI + ',' + v.tagName + ',' + v.localName);
+        console.log('mine=' + m.namespaceURI + ',' + m.tagName + ',' + m.prefix +
+                    ',' + m.localName);
+        // The parser's own elements answer the same three questions.
+        var s = document.getElementById('s');
+        console.log('parsed=' + s.namespaceURI + ',' + document.body.namespaceURI);
+        // A clone keeps the namespace: it is not on the node, so this is the
+        // one that would silently regress.
+        console.log('clone=' + m.cloneNode(false).namespaceURI);
+        // The null namespace is null, not the empty string.
+        console.log('nullns=' + (document.createElementNS(null, 'x').namespaceURI === null));
+        // The prefix rules, which are what make a prefix mean anything.
+        function threw(fn) { try { fn(); return 'no'; } catch (e) { return e.name; } }
+        console.log('errors=' + threw(function () { document.createElementNS(null, 'p:q'); }) +
+                    ',' + threw(function () { document.createElementNS(MINE, 'xml:q'); }) +
+                    ',' + threw(function () { document.createElementNS(MINE, 'xmlns'); }) +
+                    ',' + threw(function () { document.createElementNS(MINE, ':q'); }) +
+                    ',' + threw(function () { document.createElementNS(MINE, 'q:'); }));
+        // getElementsByTagNameNS matches on the namespace AND the local part.
+        document.body.appendChild(v);
+        // Three SVG elements by then: <svg>, its <rect>, and the appended one.
+        console.log('bytag=' + document.getElementsByTagNameNS(SVG, '*').length +
+                    ',' + document.getElementsByTagNameNS(HTML, 'div').length +
+                    ',' + document.getElementsByTagNameNS('*', 'linearGradient').length);
+      </script></body></html>)");
+    check(page.script_error().empty(), "the createElementNS script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() == 8, "every line was logged");
+    check(log[0] == "html=http://www.w3.org/1999/xhtml,DIV,div,true",
+          "an HTML-namespace element uppercases tagName only: " + log[0]);
+    check(log[1] == "svg=http://www.w3.org/2000/svg,linearGradient,linearGradient",
+          "createElementNS does not case-fold: " + log[1]);
+    check(log[2] == "mine=http://example.com/ns,pre:fix,pre,fix",
+          "the qualified name splits at the first colon: " + log[2]);
+    check(log[3] == "parsed=http://www.w3.org/2000/svg,http://www.w3.org/1999/xhtml",
+          "the parser's elements know their namespace too: " + log[3]);
+    check(log[4] == "clone=http://example.com/ns", "a clone keeps the namespace: " + log[4]);
+    check(log[5] == "nullns=true", "the null namespace reports null: " + log[5]);
+    check(log[6] == "errors=NamespaceError,NamespaceError,NamespaceError,"
+                    "InvalidCharacterError,InvalidCharacterError",
+          "the prefix rules are enforced: " + log[6]);
+    check(log[7] == "bytag=3,0,1", "getElementsByTagNameNS matches both halves: " + log[7]);
+}
+
 // The canvas additions p5.js draws through: the transform family, ellipse and
 // Path2D. A Path2D is a RECORDING - built once and replayed by fill(path) or
 // stroke(path), which is how p5 draws every 2D shape.
@@ -2731,6 +2792,7 @@ int main() {
     test_a_standalone_event_target();
     test_the_constructible_dom();
     test_document_implementation();
+    test_create_element_ns();
     test_canvas_transform_and_paths();
     test_window_is_the_global_object();
     test_class_list_edits_the_attribute();

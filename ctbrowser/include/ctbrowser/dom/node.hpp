@@ -60,7 +60,16 @@ enum class node_kind : std::uint8_t {
 // unittests/unit/dom_basics asserts sizeof(node) did not move.
 enum class node_ns : std::uint8_t {
     html,
-    svg
+    svg,
+    // NEITHER, which `document.createElementNS` can ask for and the parser
+    // never produces. The exact URI is not here - it lives beside the element
+    // wrapper, because putting a fourth field on `node` would take it from 40
+    // bytes to 48 and this is the most replicated object in the engine. What
+    // the enumerator buys is the distinction every consumer actually tests for:
+    // `element_ns == html` gates script execution, <style> collection and the
+    // tagName case fold, and an element in some page-invented namespace must
+    // fail all three.
+    other
 };
 
 struct attribute {
