@@ -1281,14 +1281,35 @@ add_test(NAME ctcompile_deduction_probe
 # counters, and prints the per-name refusal reasons as the roadmap for them.
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Python3_EXECUTABLE)
   # `resolved` and `direct` are floors under the closed world. They are 0 on
-  # the three real corpora and that is the MEASURED TRUTH rather than a gap in
-  # the gate: all three are genuinely open programs - bootstrap's UMD header
-  # passes `globalThis`/`self` into the factory it calls, p5 constructs
-  # `Function`, phaser calls `eval` with a computed string - and the window
-  # proxy's `set` trap really does define_global (Shell/bindings/window.cpp:
-  # 911-923), so none of those refusals may be relaxed. A zero floor still
-  # bites the day one of them earns a number: raising it is then a visible act
-  # in the commit that earns it.
+  # the three real corpora, and THE REASON WRITTEN HERE WAS WRONG. It said all
+  # three are open programs - "bootstrap's UMD header passes `globalThis`/
+  # `self` into the factory it calls, p5 constructs `Function`, phaser calls
+  # `eval` with a computed string" - and named clause 5 as the ceiling. Clause
+  # 5 is not the ceiling on any of them. Disabling it OUTRIGHT (returning
+  # nullopt from dynamic_global_writes, 2026-09-03) leaves all three at 0
+  # resolved and 0 ctjs.call_direct, with the rows reading:
+  #
+  #   bootstrap  37 of 37  never stored in this program - a host binding
+  #   p5         96 of 101 the same, 4 bound outside the hoisting prologue,
+  #                        1 bound to something other than a closure
+  #   phaser     72 of 72  never stored in this program - a host binding
+  #
+  # A BUNDLE DECLARES NOTHING AT GLOBAL SCOPE. Each of these hands a factory's
+  # result to one property of the window, so there is no global NAME for the
+  # census to bind and `resolved` is 0 by clause 1 whatever clause 5 says. The
+  # escape reasons these rows carried were decorations on a refusal clauses 1-3
+  # make anyway. That does not relax clause 5 - the window proxy's `set` trap
+  # really does define_global (Shell/bindings/window.cpp:880-892) - it says
+  # clause 5 is not where a vendor bundle is lost.
+  #
+  # WHAT WOULD MOVE THESE NUMBERS is the OTHER half of known_callee(): a
+  # ctjs.call whose callee is a ctjs.create_closure result is provably that
+  # function without any global name at all, and rewriting those to
+  # ctjs.call_direct is the only path to a direct call inside a bundle. There
+  # are 21 such sites in bootstrap, 42 in p5 and 50 in phaser.
+  #
+  # A zero floor still bites the day one of them earns a number: raising it is
+  # then a visible act in the commit that earns it.
   function(ctcompile_add_native_claims name js floor resolved direct)
     add_test(NAME ctcompile_native_claims_${name}
              COMMAND ${Python3_EXECUTABLE}

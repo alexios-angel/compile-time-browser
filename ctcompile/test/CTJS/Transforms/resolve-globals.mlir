@@ -55,6 +55,14 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/ctor-member-prototype.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=MEMBERPROTO
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-read.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINREAD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/window-alias.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=WINALIAS
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-read.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERREAD
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-write.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERWRITE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-computed.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERCOMPUTED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-unknown.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERUNKNOWN
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-cycle.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERCYCLE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-arguments.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERARGS
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-surplus.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERSURPLUS
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/self-write.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=SELFWRITE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/closed.js 2>/dev/null | ctjs-opt '--ctjs-resolve-globals=report=true' 2>&1 >/dev/null | FileCheck %s --check-prefix=REPORT
 
 // --- THE POSITIVE CASE: the MVP program ---------------------------------------
@@ -145,16 +153,24 @@
 // bindings, so nothing in the module may be resolved - every row carries the
 // same reason, and `add`'s call stays a ctjs.call.
 //
-// DYNAMIC-NOT: call_direct
+// THE EXPECTATION THAT CHANGED, AND THE CLAUSE THAT CHANGED WITH IT. This
+// pinned `globalThis.x = 1` refusing EVERY name in the program, on the
+// reasoning that a write through the window proxy calls define_global. That
+// reasoning is right and it is about ONE name: the `set` trap
+// (lib/Shell/bindings/window.cpp:880-892) is a two-armed if, and both arms -
+// store_property on an own property of the window target, define_global on
+// everything else - touch exactly the name written. `x` is therefore rebound
+// and `add` is not, so `add` resolves and `x` gets a row of its own saying
+// why it cannot. Deleting the constant_key() test in the SetPropertyOp clause
+// makes `x` resolve as an ordinary unstored name and this goes red on it.
+//
 // DYNAMIC: ctjs.globals = [
-// DYNAMIC-SAME: {name = "add", reason = "the global object is written through (ctjs.set_property at {{[^)]*}})", resolved = "none", stores = 1 : i32}
-// DYNAMIC-SAME: {name = "globalThis", reason = "the global object is written through (ctjs.set_property at {{[^)]*}})", resolved = "none", stores = 0 : i32}
+// DYNAMIC-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
+// DYNAMIC-SAME: {name = "globalThis", reason = "never stored in this program - a host binding", resolved = "none", stores = 0 : i32}
+// DYNAMIC-SAME: {name = "x", reason = "written through the global object (ctjs.set_property at {{[^)]*}}), which binds this name", resolved = "none", stores = 0 : i32}
 // DYNAMIC-LABEL: ctjs.func @_script_$0(
 // DYNAMIC: ctjs.set_property
-// DYNAMIC-NOT: call_direct
-// DYNAMIC: ctjs.call %
-// DYNAMIC-LABEL: ctjs.func @add$1(
-// DYNAMIC-NOT: call_direct
+// DYNAMIC: ctjs.call_direct @add$1
 
 // --- POSITIVE: a function the importer refused that stores NOTHING --------------
 //
@@ -343,9 +359,119 @@
 // politeness: the proxy's `set` trap calls define_global, so this really does
 // rebind a global.
 //
-// WINALIAS-NOT: call_direct
+// AND IT IS STILL THE WINDOW AFTER THE NAMED-WRITE CLAUSE, which is what this
+// case has to keep proving. `injected` gets a row only because the walk
+// followed `window` through `.self` and recognised the write as a global
+// binding; dropping "self" from hands_back_the_global_object() leaves the
+// value unmarked, no row is written for `injected` at all, and the first line
+// below goes red while `add` stays green either way.
+//
 // WINALIAS: ctjs.globals = [
-// WINALIAS-SAME: reason = "the global object is written through (ctjs.set_property{{[^"]*}}"
+// WINALIAS-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
+// WINALIAS-SAME: {name = "injected", reason = "written through the global object (ctjs.set_property at {{[^)]*}}), which binds this name", resolved = "none", stores = 0 : i32}
+// WINALIAS: ctjs.call_direct @add$1
+
+// --- POSITIVE: the global object FOLLOWED INTO A KNOWN CALLEE ----------------------
+//
+// THE CHANGE THIS COMMIT IS. `(function (g) { ... })(globalThis)` is a closure
+// defined two tokens before it is called - the shape of every UMD header - and
+// the walk used to answer "the global object escapes into ctjs.call" and refuse
+// all four names here. The callee is a ctjs.create_closure result naming its
+// own function index, so nothing leaves this pass's sight: the object arrives
+// at `g`, and the walk continues at that block argument. `g.innerWidth` is a
+// named read that is not one of the host's self-aliases, so it stops there.
+//
+// Deleting the CallOp clause in dynamic_global_writes() restores the escape and
+// this goes red on the first line.
+//
+// ENTERREAD: ctjs.globals = [
+// ENTERREAD-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
+// ENTERREAD: ctjs.call_direct @add$1
+
+// --- POSITIVE AND NEGATIVE AT ONCE: a NAMED write inside that callee ---------------
+//
+// The write rules do not change when the walk crosses a call: `g.injected = 1`
+// two frames from the load is the same proxy `set` trap as `globalThis.injected
+// = 1` at the top level, so it binds `injected` and says nothing about `add` or
+// `twice`. One program pins the refusal and both acceptances, which is only
+// possible because the clause is per name.
+//
+// ENTERWRITE: ctjs.globals = [
+// ENTERWRITE-SAME: {name = "add", reason = "closed: 2 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
+// ENTERWRITE-SAME: {name = "twice", reason = "closed: 1 call(s) rewritten", resolved = @twice$2, stores = 1 : i32}
+// ENTERWRITE-SAME: {name = "injected", reason = "written through the global object (ctjs.set_property at {{[^)]*}}), which binds this name", resolved = "none", stores = 0 : i32}
+// ENTERWRITE: ctjs.call_direct @add$1
+
+// --- NEGATIVE: a COMPUTED key inside it refuses the module, unchanged --------------
+//
+// THE HALF THAT MUST NOT MOVE. `o[k] = 1` with `k` a parameter names no name,
+// so nothing bounds which binding it rebinds and the whole census is void. That
+// the write is two frames from the ctjs.load_global changes nothing: following
+// the value is what makes this reachable at all, and precision is not
+// permission.
+//
+// ENTERCOMPUTED-NOT: call_direct
+// ENTERCOMPUTED: ctjs.globals = [
+// ENTERCOMPUTED-SAME: reason = "the global object is written through (ctjs.set_property{{[^"]*}}"
+
+// --- NEGATIVE: an UNKNOWN callee still bails, and it is bootstrap's ----------------
+//
+// `window.scrollTo(0, 0)` passes the window as the RECEIVER of a call whose
+// callee is a property read - a native this module does not hold. This is
+// bootstrap.bundle.js:3062 exactly, the first escape in that bundle, and no
+// amount of following makes a body that is not here visible.
+//
+// ENTERUNKNOWN-NOT: call_direct
+// ENTERUNKNOWN: ctjs.globals = [
+// ENTERUNKNOWN-SAME: reason = "the global object escapes into a call whose callee this module does not name (ctjs.call{{[^"]*}}"
+
+// --- POSITIVE: a CYCLE terminates -------------------------------------------------
+//
+// `ping` and `pong` hand the global object to each other. Entering a callee
+// marks a BLOCK ARGUMENT and mark() enqueues a value only the first time it is
+// seen, so each parameter is marked once and the fixpoint closes. A walk
+// without that property does not fail this test, it hangs - which is why the
+// case is here rather than in a comment.
+//
+// ENTERCYCLE: ctjs.globals = [
+// ENTERCYCLE-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
+// ENTERCYCLE-SAME: {name = "ping", reason = "closed: 2 call(s) rewritten", resolved = @ping$2, stores = 1 : i32}
+// ENTERCYCLE-SAME: {name = "pong", reason = "closed: 1 call(s) rewritten", resolved = @pong$3, stores = 1 : i32}
+// ENTERCYCLE: ctjs.call_direct
+
+// --- NEGATIVE: a callee that reads its RAW argument window -------------------------
+//
+// `arguments` copies the FRAME's registers - every value the site passed - and
+// is read back under an index this walk cannot see, so a parameter is not where
+// the value stops. Deleting the reads_arguments() guard makes this resolve
+// `add` and hides a real hole: `arguments[0]` IS the global object here.
+//
+// ENTERARGS-NOT: call_direct
+// ENTERARGS: ctjs.globals = [
+// ENTERARGS-SAME: reason = "the global object is passed to loose$2, which reads its raw argument window (ctjs.call{{[^"]*}}"
+
+// --- NEGATIVE: more arguments than parameters --------------------------------------
+//
+// The surplus lands in the callee's raw register window with no block argument
+// to name it - the same frame semantics the rewrite refuses a call site for -
+// so there is nowhere to continue the walk.
+//
+// ENTERSURPLUS-NOT: call_direct
+// ENTERSURPLUS: ctjs.globals = [
+// ENTERSURPLUS-SAME: reason = "the global object is passed to one$2 beyond its 1 parameter(s), where the surplus keeps frame semantics (ctjs.call{{[^"]*}}"
+
+// --- NEGATIVE: `self` IS a name of the global object, and was not ------------------
+//
+// lib/Shell/bindings/window.cpp:934-948 is three define_global calls of the
+// same proxy and names_global_object() listed two of them, so `self.injected =
+// 1` - define_global("injected", 1) through the `set` trap - was invisible.
+// The row below is the whole test: without `self` in that list the value is
+// never marked, no row is written for `injected`, and `add` resolves for the
+// wrong reason.
+//
+// SELFWRITE: ctjs.globals = [
+// SELFWRITE-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
+// SELFWRITE-SAME: {name = "injected", reason = "written through the global object (ctjs.set_property at {{[^)]*}}), which binds this name", resolved = "none", stores = 0 : i32}
 
 // --- THE COUNTERS, ASSERTED RATHER THAN READ ---------------------------------------
 //
@@ -486,4 +612,65 @@ function add(a, b) { return a + b; }
 // `Function`.
 function grab(o) { return o.constructor.prototype; }
 var t = grab(1);
+var z = add(1, 2);
+
+//--- enter-read.js
+function add(a, b) { return a + b; }
+// The global object handed to a closure defined two tokens earlier - a UMD
+// header, minus the module/define arms. `g` is a parameter and the walk
+// continues there; `g.innerWidth` is a number.
+(function (g) { return g.innerWidth; })(globalThis);
+var z = add(1, 2);
+
+//--- enter-write.js
+function add(a, b) { return a + b; }
+function twice(x) { return add(x, x); }
+// A NAMED write two frames from the load: the proxy's `set` trap, so it binds
+// `injected` and nothing else.
+(function (g) { g.injected = 1; })(globalThis);
+var z = add(1, 2);
+var y = twice(3);
+
+//--- enter-computed.js
+function add(a, b) { return a + b; }
+// And a COMPUTED one, which names no name. `k` is a block argument, so
+// constant_key() is empty exactly as it is for `globalThis[k] = 1`.
+function bind(o, k) { o[k] = 1; }
+bind(globalThis, "x");
+var z = add(1, 2);
+
+//--- enter-unknown.js
+function add(a, b) { return a + b; }
+// The window as the RECEIVER of a call whose callee is a property read. This
+// is bootstrap.bundle.js:3062, the first escape in that bundle.
+window.scrollTo(0, 0);
+var z = add(1, 2);
+
+//--- enter-cycle.js
+function add(a, b) { return a + b; }
+// Each hands the object to the other. The walk must mark each parameter once.
+function ping(g, n) { if (n > 0) { pong(g, n - 1); } return n; }
+function pong(g, n) { ping(g, n - 1); return n; }
+ping(globalThis, 4);
+var z = add(1, 2);
+
+//--- enter-arguments.js
+function add(a, b) { return a + b; }
+// `arguments[0]` IS the global object, under an index this walk cannot read.
+function loose(o) { return arguments.length + (o ? 1 : 0); }
+loose(globalThis);
+var z = add(1, 2);
+
+//--- enter-surplus.js
+function add(a, b) { return a + b; }
+// One parameter, two arguments: the surplus has frame semantics.
+function one(o) { return o ? 1 : 0; }
+one(globalThis, globalThis);
+var z = add(1, 2);
+
+//--- self-write.js
+function add(a, b) { return a + b; }
+// The third name the Shell binds the window proxy to, and the one this list
+// was missing. `(function (global_scope) { ... }(self))` is testharness.js.
+self.injected = 1;
 var z = add(1, 2);
