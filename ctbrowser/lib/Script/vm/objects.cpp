@@ -78,9 +78,15 @@ void context::mark_object(heap_object * o) {
         mark(closure->proto_link);
         break;
     }
-    case heap_kind::native:
-        for (const auto & [name, v] : static_cast<native_object *>(o)->props) { mark(v); }
+    case heap_kind::native: {
+        auto * fn = static_cast<native_object *>(o);
+        for (const auto & [name, v] : fn->props) { mark(v); }
+        // ...AND ITS OWN [[Prototype]]. `TypeError.__proto__` is `Error`, and a
+        // constructor reachable only through another one would otherwise be
+        // swept out from under it.
+        mark(fn->proto_link);
         break;
+    }
     case heap_kind::proxy: {
         auto * proxy = static_cast<proxy_object *>(o);
         mark(proxy->target);
@@ -1078,8 +1084,31 @@ value context::lookup_property(value target, const std::string & name) {
         return value::undefined();
     }
     if (target.is_kind(heap_kind::native)) {
-        if (value * found = static_cast<native_object *>(target.as_heap())->find(name)) {
-            return *found;
+        auto * fn = static_cast<native_object *>(target.as_heap());
+        if (value * found = fn->find(name)) { return *found; }
+        // A BUILT-IN FUNCTION HAS A NAME, and it was undefined for every one
+        // that is not a constructor - so test262's own assert.throws printed
+        // "Expected a undefined to be thrown", 2,670 times, because it builds
+        // its message out of `expectedErrorConstructor.name`. It lives on the
+        // C++ object rather than in the table, which is why it is answered here
+        // rather than installed on 400 natives.
+        if (name == "name") { return string(fn->name); }
+        // STATIC INHERITANCE through the constructor's own [[Prototype]] - the
+        // same walk a closure does. `TypeError.__proto__` is `Error`, so a
+        // static installed on Error is found through all six NativeErrors.
+        for (value up = fn->proto_link; up.is_object() || up.is_callable();) {
+            if (up.is_kind(heap_kind::native)) {
+                auto * parent = static_cast<native_object *>(up.as_heap());
+                if (value * found = parent->find(name)) { return *found; }
+                up = parent->proto_link;
+                continue;
+            }
+            if (up.is_object()) {
+                if (value * found = static_cast<object_object *>(up.as_heap())->find(name)) {
+                    return *found;
+                }
+            }
+            break;
         }
         // ...then Function.prototype, so `nativeFn.call(...)` works too.
         if (object_object * table = prototype(proto_kind::function)) {

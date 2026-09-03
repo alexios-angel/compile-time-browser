@@ -114,3 +114,9 @@ ctbrowser_test(js/crash_guards)
 # measured only by test262, which is opt-in, needs a 273 MB corpus that is not
 # in the repository, and takes five minutes.
 ctbrowser_test(js/property_attributes)
+# --- the per-constructor error prototypes, the second-largest gap -----------
+# Six NativeError constructors and prototypes existed; what did not was any way
+# for an error the ENGINE raised to land on the right one. Its own file for the
+# same reason as the one above: it asks about the SHAPE of a thrown value rather
+# than about the value an expression computes.
+ctbrowser_test(js/error_types)

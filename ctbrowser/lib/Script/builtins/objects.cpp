@@ -380,6 +380,12 @@ void install_object(context & cx) {
         if (of.is_kind(heap_kind::function)) {
             return static_cast<closure_object *>(of.as_heap())->proto_link;
         }
+        // A BUILT-IN CONSTRUCTOR HAS ONE TOO, and for the NativeErrors it is
+        // `Error` rather than Function.prototype (20.5.6.2).
+        if (of.is_kind(heap_kind::native)) {
+            auto * fn = static_cast<native_object *>(of.as_heap());
+            if (!fn->proto_link.is_null()) { return fn->proto_link; }
+        }
         const auto table = [&](context::proto_kind kind) {
             object_object * found = c.prototype(kind);
             return found == nullptr ? value::null() : value::object(found);
@@ -398,6 +404,8 @@ void install_object(context & cx) {
             static_cast<object_object *>(of.as_heap())->prototype = arg_at(a, 1);
         } else if (of.is_kind(heap_kind::function)) {
             static_cast<closure_object *>(of.as_heap())->proto_link = arg_at(a, 1);
+        } else if (of.is_kind(heap_kind::native)) {
+            static_cast<native_object *>(of.as_heap())->proto_link = arg_at(a, 1);
         }
         return of;
     });
@@ -558,8 +566,11 @@ void install_errors(context & cx) {
     using detail::new_table;
 
     object_object * error_proto = new_table(cx);
-    error_proto->set("name", cx.string("Error"));
-    error_proto->set("message", cx.string(""));
+    // 20.5.3: `message` is "" and `name` is "Error" on the PROTOTYPE, both
+    // { writable: true, enumerable: false, configurable: true }. Enumerable is
+    // what put them in `Object.keys(e)` and in `JSON.stringify(e)`.
+    error_proto->define("name", cx.string("Error"), attr_builtin);
+    error_proto->define("message", cx.string(""), attr_builtin);
     method(cx, error_proto, "toString", [](context & c, std::span<value>) {
         const value self = c.current_this();
         const std::string name = c.to_string(c.lookup_property(self, "name"));
@@ -567,13 +578,24 @@ void install_errors(context & cx) {
         return c.string(message.empty() ? name : name + ": " + message);
     });
 
-    // One constructor shape, five names. `parent` is Error's prototype for the
+    // One constructor shape, seven names. `parent` is Error's prototype for the
     // subclasses, so the chain a page walks is the one it expects.
+    //
+    // AND `cx.register_error_prototype` IS THE HALF THAT WAS MISSING. The
+    // constructors and the prototypes were both here already; what was not was
+    // any way for `context::make_error` to find the RIGHT one, so every error
+    // the engine itself raised was put on Error.prototype and answered `Error`
+    // to `thrown.constructor`. test262 measured 336 tests failing on that shape
+    // alone (docs/test262.md, 2026-09-02).
+    native_object * error_ctor = nullptr;
     const auto define = [&](const char * name, object_object * parent) {
         object_object * proto = parent == nullptr ? error_proto : new_table(cx);
         if (parent != nullptr) {
             proto->prototype = value::object(parent);
-            proto->set("name", cx.string(name));
+            // 20.5.6.3: each NativeError.prototype carries its OWN `name` and
+            // its own `message`, rather than inheriting Error's.
+            proto->define("name", cx.string(name), attr_builtin);
+            proto->define("message", cx.string(""), attr_builtin);
         }
         auto * ctor = cx.allocate<native_object>(name, [proto](context & c, std::span<value> a) {
             // `this` is the instance when called through `new`; a bare
@@ -582,7 +604,12 @@ void install_errors(context & cx) {
             if (!self.is_object()) { self = c.make_object(); }
             auto * made = static_cast<object_object *>(self.as_heap());
             if (!made->prototype.is_object()) { made->prototype = value::object(proto); }
-            if (!a.empty()) { made->set("message", c.string(c.to_string(a[0]))); }
+            // 20.5.8.1: an instance's `message` is { true, false, true }, and
+            // an ABSENT argument installs no own property at all - which is why
+            // `new TypeError().hasOwnProperty('message')` is false.
+            if (!a.empty() && !a[0].is_undefined()) {
+                made->define("message", c.string(c.to_string(a[0])), attr_builtin);
+            }
             // `stack` CARRIES THE FRAMES, not just the message.
             //
             // It said "TypeError: whatever" and stopped there, which reads as a
@@ -594,17 +621,26 @@ void install_errors(context & cx) {
             // No frame is skipped: a native pushes none of its own, so the top
             // of the stack is already the JS function that wrote `new Error`,
             // which is the line a reader wants named first.
-            made->set("stack", c.string(c.to_string(c.lookup_property(self, "name")) +
-                                        (a.empty() ? std::string{} : ": " + c.to_string(a[0])) +
-                                        c.current_stack()));
+            made->define("stack",
+                         c.string(c.to_string(c.lookup_property(self, "name")) +
+                                  (a.empty() ? std::string{} : ": " + c.to_string(a[0])) +
+                                  c.current_stack()),
+                         attr_builtin);
             return self;
         });
-        proto->set("constructor", value::object(ctor));
-        ctor->set("prototype", value::object(proto));
+        // `X.prototype` on a built-in constructor is { false, false, false }
+        // (20.5.6.2.1), and `X.length` is 1 - both non-enumerable. link_constructor
+        // wires `prototype.constructor` and `X.name` with the right attributes.
+        link_constructor(cx, proto, name, value::object(ctor));
+        ctor->define("prototype", value::object(proto), attr_none);
+        ctor->define("length", value::number(1), attr_configurable);
+        // 20.5.6.2: a NativeError constructor's [[Prototype]] is %Error%.
+        if (error_ctor != nullptr) { ctor->proto_link = value::object(error_ctor); }
+        cx.register_error_prototype(name, proto);
         cx.define_global(name, value::object(ctor));
-        return proto;
+        return ctor;
     };
-    define("Error", nullptr);
+    error_ctor = define("Error", nullptr);
     for (const char * name :
          {"TypeError", "RangeError", "ReferenceError", "SyntaxError", "EvalError", "URIError"}) {
         (void)define(name, error_proto);

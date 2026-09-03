@@ -118,10 +118,10 @@ otherwise, so the run is about 1.8 processes per test.
 | `built-ins/JSON` | 165 | 31 | 130 | 0 | 2 | 0 | 2 | **19.0%** | 4.6 s |
 | **total** | **32,927** | **9,314** | **23,466** | **2** | **77** | **4** | **64** | **28.3%** | **5m 03s** |
 
-**9,314 of the 32,863 tests that ran passed: 28.3%.** (Two later measurements
-supersede this: 9,380 after the crash fixes below, and **10,813 - 32.9%** after
-property attributes, measured 2026-09-03 and tabulated at the bottom of this
-file.) That is the number, and it is not a good one — nor should it look like one. The engine is a deliberate
+**9,314 of the 32,863 tests that ran passed: 28.3%.** (Three later measurements
+supersede this: 9,380 after the crash fixes below, 10,813 - 32.9% after property
+attributes, and **11,210 - 34.1%** after the per-constructor error prototypes,
+both measured 2026-09-03 and tabulated at the bottom of this file.) That is the number, and it is not a good one — nor should it look like one. The engine is a deliberate
 subset (`docs/script.md` says which), and this is the first measurement of how
 large the rest is.
 
@@ -222,13 +222,17 @@ ability to present a graph.
 
 ### The two leniencies, stated
 
-1. **A negative test matches on `thrown.constructor.name` OR `thrown.name`.**
-   The suite means the constructor. In this engine they disagree: every error
-   `context::throw_error` builds is put on the one Error prototype, so an
-   engine-raised TypeError has `name === "TypeError"` and
-   `constructor === Error`. Requiring the constructor would fail ~40 runtime
-   negatives for a prototype-wiring detail unrelated to what they test. `ct262`
-   reports both fields and the runner accepts either.
+1. ~~**A negative test matches on `thrown.constructor.name` OR `thrown.name`.**~~
+   **The reason for this one is GONE as of 2026-09-03** - `context::make_error`
+   now puts an engine-raised error on the prototype its kind names, so
+   `thrown.constructor` is `TypeError` for a TypeError. The leniency is still in
+   the runner and still harmless (the two fields now agree wherever the engine
+   raises), and tightening it is a runner change rather than an engine one:
+   `tools/check/test262.py` and `ctbrowser/tools/ct262/ct262.cpp` both belong to
+   whoever owns the harness. Recorded here so it is removed deliberately rather
+   than inherited. The original reason: every error `throw_error` built was put
+   on the one Error prototype, so an engine-raised TypeError had
+   `name === "TypeError"` and `constructor === Error`.
 2. **A parse failure is reported as `SyntaxError` without checking that the
    engine would have produced one**, because the engine has no way to say. See
    inflation (2) above; the `refusal` phase is what keeps it from being worse.
@@ -320,10 +324,11 @@ Ranked by how many tests each accounts for, from the run above.
    and Math 60.9%.
 3. **Missing methods, ~3,400 tests.** `TypeError: X is undefined, not a
    function`, spread across every built-in.
-4. **The error constructors are not real constructors.** `TypeError.name` is
-   undefined and `(new TypeError).constructor` is `Error`, so `assert.throws`
-   cannot match even when the engine throws the right kind (336 tests say so
-   explicitly).
+4. ~~**The error constructors are not real constructors.**~~ **CLOSED
+   2026-09-03** - see the section at the bottom of this file. `TypeError.name`
+   was undefined and `(new TypeError).constructor` was `Error`, so
+   `assert.throws` could not match even when the engine threw the right kind
+   (336 tests said so explicitly).
 5. **Parser gaps.** 2,381 tests fail with `parse error:` on valid source, and
    `harness/deepEqual.js` is one of the casualties.
 6. **No strict mode at all**, as above.
@@ -534,6 +539,99 @@ total went up" is not an answer to "did anything break".
 
 `unittests/js/property_attributes.cpp` is the engine's own regression net for
 all of this - 90 assertions, in the suite, no corpus needed.
+
+---
+
+## Per-constructor error prototypes - 2026-09-03
+
+**10,813 -> 11,210 of the ten areas, 32.9% -> 34.1%, and NOTHING that passed
+before fails now.** Gap 4 in the list above: `thrown.constructor !== TypeError`,
+336 tests reporting it by name.
+
+### What was actually wrong, which is not what the brief expected
+
+The six NativeError constructors and their prototypes ALREADY EXISTED and were
+already chained to `Error.prototype` - `install_errors` has built them since
+p5.js needed `throw new TypeError` to work. And every internal throw site was
+already raising the right KIND: all 19 `throw_error` calls in `lib/Script/` were
+audited against the specification and **not one of them was wrong**. The brief
+expected that audit to be the work; it was half an hour and it changed nothing.
+
+The whole gap was one function. `context::make_error` put every error the ENGINE
+raised on `prototype(proto_kind::error)` - Error's - because `proto_kind` is a
+fixed enum over the value kinds property lookup falls back to and there was no
+way to ask it for "the RangeError prototype". So a VM-raised TypeError had the
+right `name` (written as an own property) and `Error` as its constructor.
+
+### What was implemented
+
+* A small keyed list of error prototypes on the context, `register_error_prototype`
+  / `error_prototype`, rather than seven more `proto_kind` enumerators - that
+  array is indexed by every property read on a primitive and does not need to grow.
+* `make_error` looks the kind up in it, and **stops writing an own `name`**:
+  20.5.6.5 puts `name` on the prototype, and an own one made
+  `e.hasOwnProperty('name')` true and put it in `Object.keys(e)`.
+* A kind with no constructor falls back to `Error.prototype` PLUS an own `name`.
+  `structuredClone` raises `DataCloneError`, which is a DOMException name rather
+  than an ECMAScript one; the fallback keeps the name right and
+  `e instanceof Error` true, and `unittests/js/error_types.cpp` asserts it.
+* Each `NativeError.prototype` gets its own `name` AND its own `message` (`""`,
+  20.5.6.3), both `{ true, false, true }`; each constructor gets `name`,
+  `length: 1` and a non-writable, non-configurable `prototype`.
+* `native_object` gains a `proto_link`, so `Object.getPrototypeOf(TypeError)` is
+  `Error` (20.5.6.2) rather than `Function.prototype`, statics inherit through
+  it, and the collector marks it.
+* An instance's `message` and `stack` are `{ true, false, true }` and an ABSENT
+  argument installs no `message` at all, so `JSON.stringify(new TypeError('m'))`
+  is `{}` and `new TypeError().hasOwnProperty('message')` is false.
+* A built-in function's `name` is answered from the C++ object rather than
+  installed on 400 natives, which is what made `assert.throws`'s own message read
+  "Expected a undefined to be thrown" 2,670 times.
+
+### Measured, per test
+
+| area | tests | pass before | pass after | delta | PASS -> FAIL |
+|---|---:|---:|---:|---:|---:|
+| `test/language` | 23,726 | 7,202 | **7,296** | +94 | 0 |
+| `built-ins/Array` | 3,082 | 689 | **741** | +52 | 0 |
+| `built-ins/Object` | 3,411 | 1,706 | **1,913** | +207 | 0 |
+| `built-ins/Number` | 340 | 205 | **213** | +8 | 0 |
+| `built-ins/Math` | 327 | 199 | 199 | 0 | 0 |
+| `built-ins/String` | 1,223 | 584 | **596** | +12 | 0 |
+| `built-ins/Boolean` | 51 | 20 | 20 | 0 | 0 |
+| `built-ins/Function` | 509 | 155 | **164** | +9 | 0 |
+| `built-ins/Error` | 93 | 14 | **27** | +13 | 0 |
+| `built-ins/JSON` | 165 | 39 | **41** | +2 | 0 |
+| **total** | **32,927** | **10,813** | **11,210** | **+397** | **0** |
+
+CRASH 7, TIMEOUT 0, HOST 4, SKIP 64, all unchanged. The gate matched its
+expectations file exactly, so nothing was re-recorded for this change.
+
+It also fixed four of the fifteen regressions the property-attribute work left:
+`Object/defineProperties/15.2.3.7-5-a-{13,14,16}` and `-5-b-245`, all of which
+were an engine-made object carrying an enumerable own property that was not a
+descriptor. **Eleven remain**, and every one is the same list of gaps as before -
+no global object (5), the private-field model (2), `RegExp.prototype` not
+exposed (1), `BigInt.prototype[Symbol.toStringTag]` absent (1), a method's
+synthesised `prototype` (1), a String wrapper (1).
+
+### What is deliberately NOT done
+
+* **`AggregateError`, `Error.prototype.stack` as an accessor, and `cause`.** The
+  seven constructors here are the seven the specification names as `Error` plus
+  the six NativeErrors; `AggregateError` is a separate clause and needs
+  `errors`.
+* **`ct262`'s leniency is not tightened.** It matches on `thrown.name` OR
+  `thrown.constructor.name` and could now require the constructor; both halves
+  of the harness belong to whoever owns it. See the leniency note above.
+* **The 512-frame `invoke` ceiling still ends the run rather than throwing.**
+  `try { f() } catch (e)` around an infinite recursion sees nothing, so there is
+  no constructor to be right about. The CONVERSION ceiling does throw a
+  catchable RangeError and `unittests/js/crash_guards.cpp` covers that one.
+* **Reading a property of `null` is still `undefined`, not a TypeError.** A
+  different gap - the engine has no nullish guard on member access - and
+  `unittests/js/error_types.cpp` says so where it would otherwise have used
+  `null.x` as its example of an engine-raised TypeError.
 
 ---
 

@@ -142,6 +142,12 @@ struct native_object final : heap_object {
         return true;
     }
 
+    // THE FUNCTION'S OWN [[Prototype]], which a closure has had since Babel's
+    // `_inherits` needed one. A NativeError constructor's is %Error% (20.5.6.2)
+    // rather than Function.prototype, so `Object.getPrototypeOf(TypeError)` is
+    // `Error` and a static on Error is inherited by all six.
+    value proto_link = value::null();
+
     native_object(std::string n, native_fn f)
         : heap_object(heap_kind::native), name(std::move(n)), fn(std::move(f)) {}
 };
@@ -506,18 +512,51 @@ public:
     [[nodiscard]] value make_error(std::string_view kind, std::string message) {
         value made = make_object();
         auto * o = static_cast<object_object *>(made.as_heap());
-        o->set("name", string(std::string{kind}));
+        // ON THE PROTOTYPE THE KIND NAMES, not on Error's.
+        //
+        // Every error the engine raised used to land on Error.prototype, so a
+        // VM-raised TypeError had `name === "TypeError"` and
+        // `constructor === Error`. test262 counted 336 tests failing on exactly
+        // that - `assert.throws(TypeError, ...)` compares the CONSTRUCTOR - and
+        // tools/check/test262.py carries a stated leniency because of it.
+        //
+        // `name` is NOT written as an own property any more: 20.5.6.5 puts it
+        // on the prototype, and writing one here would make
+        // `Object.keys(e)` report it and `e.hasOwnProperty('name')` true.
+        object_object * table = error_prototype(kind);
+        if (table == nullptr) {
+            // A KIND WITH NO CONSTRUCTOR - "DataCloneError" is a DOMException
+            // name rather than an ECMAScript one, and this engine has no
+            // DOMException. Error.prototype plus an own `name` is the honest
+            // fallback: the name is still right and `e instanceof Error` holds.
+            table = prototype(proto_kind::error);
+            o->set("name", string(std::string{kind}));
+        }
         o->set("message", string(message));
         // The frames it happened on, exactly as a constructed Error gets them -
         // a page catching a TypeError the VM raised should be able to report
         // where as easily as one it threw itself.
         o->set("stack", string(std::string{kind} + ": " + message + current_stack()));
-        // On the Error prototype, so `e instanceof Error` and `e.toString()`
-        // work on a thrown one exactly as on `new TypeError(...)`.
-        if (object_object * table = prototype(proto_kind::error)) {
-            o->prototype = value::object(table);
-        }
+        if (table != nullptr) { o->prototype = value::object(table); }
         return made;
+    }
+
+    // --- ONE PROTOTYPE PER ERROR KIND ------------------------------------
+    //
+    // `proto_kind` is a fixed enum over the value KINDS property lookup falls
+    // back to, and the error types are not that: they are seven ordinary
+    // objects chained to one another, and the runtime only ever looks one up by
+    // the name a throw site wrote. A small keyed list rather than seven more
+    // enumerators keeps the fallback array - which every property read on a
+    // primitive indexes - exactly the size it was.
+    void register_error_prototype(std::string kind, object_object * table) {
+        error_prototypes_.emplace_back(std::move(kind), table);
+    }
+    [[nodiscard]] object_object * error_prototype(std::string_view kind) const {
+        for (const auto & [name, table] : error_prototypes_) {
+            if (name == kind) { return table; }
+        }
+        return nullptr;
     }
 
     void throw_error(std::string_view kind, std::string message) {
@@ -1830,6 +1869,13 @@ private:
         for (object_object * table : prototypes_) {
             if (table != nullptr) { visit(root_label::prototypes, value::object(table)); }
         }
+        // ...and the six NativeError prototypes, for the same reason: an
+        // engine-raised error is put on one, and a page that never mentions
+        // `RangeError` holds no other reference to its table.
+        for (const auto & [kind, table] : error_prototypes_) {
+            (void)kind;
+            if (table != nullptr) { visit(root_label::prototypes, value::object(table)); }
+        }
         // The per-function string cache. These are live `value`s held by the
         // context itself and referenced from nowhere else - a sweep without
         // them frees a string literal that a running loop is about to read
@@ -1917,6 +1963,8 @@ private:
     // able to find a handler several frames up.
     std::vector<handler> handlers_;
     std::array<object_object *, static_cast<std::size_t>(proto_kind::count_)> prototypes_{};
+    // Seven entries, scanned linearly: see register_error_prototype.
+    std::vector<std::pair<std::string, object_object *>> error_prototypes_;
     std::function<value(context &, value, bool)> promise_factory_;
     // Making a PENDING promise and settling one. The VM can read a promise's
     // state - `await` already did - but creating and settling run the standard
