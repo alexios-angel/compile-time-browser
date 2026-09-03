@@ -590,6 +590,27 @@ bool reads_raw_arguments(FuncOp function) {
     return reads;
 }
 
+// PADDING A SHORT CALL IS VISIBLE TO `arguments`, AND IS THE ONE THING THE PAD
+// MAY NOT CHANGE.
+//
+// The rewrite fills a call that passes fewer arguments than the callee declares
+// with `ctjs.constant #ctjs.undefined`, which is exactly what VM_CASE(call)
+// does to the callee's REGISTERS (run_loop.cpp: `registers_[new_base + i] =
+// undefined` for i in [argc, param_count)). It is NOT what op::call does to the
+// ARGUMENT WINDOW: make_arguments_object copies the raw window, whose length is
+// argc, so `function f(a, b) { return arguments.length; } f(1)` is 1 in the VM.
+// A padded ctjs.call_direct would make it 2, because the boxed tier parks
+// `getArgs()` and hands ct_aot_call that window (CTJSToEmitC.cpp, the
+// `dispatched_arguments` arm).
+//
+// AT EXACT ARITY THERE IS NO PAD AND NOTHING TO HIDE, which is why this asks
+// about the PADDING and not about `arguments`: refusing every callee that
+// mentions `arguments` would refuse calls that are already the right length and
+// change nothing about them.
+bool padding_hides_arguments(FuncOp target, std::size_t supplied, unsigned parameters) {
+    return supplied < parameters && reads_raw_arguments(target);
+}
+
 // CLAUSE 5: can anything in the module write the globals table other than a
 // ctjs.store_global this pass can count? Answers the reason if so.
 //
@@ -876,6 +897,12 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         std::size_t resolved_here = 0;
         std::size_t rewritten_here = 0;
         std::size_t closed_here = 0;
+        // THE SECOND SHAPE'S OWN NUMBER, counted apart from the per-name one so
+        // that a test can pin it. `rewritten_here` is both shapes together
+        // because tools/check/native-claims.py holds it equal to the count of
+        // ctjs.call_direct in the IR, and that invariant is what stops a pass
+        // reporting a rewrite it did not make.
+        std::size_t closure_here = 0;
 
         // THE CENSUS. In first-seen order, so the attribute is stable.
         census world;
@@ -995,6 +1022,20 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                         }
                         continue;
                     }
+                    // AND THE PAD MAY NOT BE VISIBLE. This clause was missing:
+                    // a short call into a body that reads its raw argument
+                    // window was padded, and `arguments.length` came out as the
+                    // parameter count instead of the argument count.
+                    if (padding_hides_arguments(target, call.getArgs().size(), parameters)) {
+                        if (!open) {
+                            open = "a call passes " + std::to_string(call.getArgs().size()) +
+                                   " argument(s) to " + std::to_string(parameters) +
+                                   " parameter(s) and the callee reads its raw argument window, "
+                                   "which the pad would lengthen (" +
+                                   describe(user) + ")";
+                        }
+                        continue;
+                    }
 
                     mlir::OpBuilder at(call);
                     const auto value_type = ValueType::get(context);
@@ -1029,6 +1070,72 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                    "closed: " + std::to_string(rewritten) + " call(s) rewritten");
         }
 
+        // ---- THE SECOND SHAPE, AND THE ONLY ONE A VENDOR BUNDLE HAS --------
+        //
+        // A ctjs.call whose callee is a ctjs.create_closure RESULT is provably
+        // that function with no global NAME involved at all: the closure names
+        // its function index outright (ctjs.create_closure's own words) and
+        // calling it enters that function. known_callee() already proves it -
+        // clause 5's escape walk crosses exactly this shape - so this asks it
+        // rather than re-deriving it.
+        //
+        // IT DEPENDS ON NO CLAUSE OF THE PER-NAME CENSUS, WHICH IS THE POINT.
+        // Clauses 1-3 need a name bound once in the hoisting prologue, and a
+        // BUNDLE BINDS NO GLOBALS AT ALL - each hands a factory's result to one
+        // property of the window - so `resolved` is 0 on bootstrap, p5 and
+        // phaser before any other clause is consulted. Nothing a program does
+        // to the globals table can change which function a closure VALUE
+        // enters, so clause 5's module-wide refusal is not a reason to refuse
+        // this either: it runs even when `dynamic` refused every name above.
+        //
+        // MEASURED, BECAUSE THE ESTIMATE WAS WRONG ONCE. There are 21 such
+        // ctjs.call sites in bootstrap, 42 in p5 and 50 in phaser - and
+        // --ctnative-lower-to-emitc's closure lift ALREADY named some of them
+        // later in the pipeline (3, 47 and 3 calls respectively). This is not
+        // that rewrite: it is the same proof applied where the whole pipeline,
+        // and tools/check/native-claims.py, can see it.
+        llvm::SmallVector<CallOp> closure_calls;
+        module.walk([&](CallOp call) {
+            if (call.getCallee().getDefiningOp<CreateClosureOp>() != nullptr) {
+                closure_calls.push_back(call);
+            }
+        });
+        for (CallOp call : closure_calls) {
+            FuncOp target = known_callee(world, call.getCallee());
+            if (!target || target->hasAttr("ctjs.not_lowered")) { continue; }
+            if (target.getBody().empty() || target.getBody().front().getNumArguments() < 3) {
+                continue;
+            }
+            const unsigned parameters = target.getBody().front().getNumArguments() - 3;
+            // ARITY IS A HARD VERIFIER FAILURE, NOT A REFUSAL THIS MAY LEAVE TO
+            // SOMEBODY ELSE. CallDirectOp::verifySymbolUses holds the operand
+            // count equal to the entry block's, so a surplus call must be
+            // refused HERE; a short one is padded, as VM_CASE(call) pads.
+            if (call.getArgs().size() > parameters) { continue; }
+            if (padding_hides_arguments(target, call.getArgs().size(), parameters)) { continue; }
+            // new.target is undefined for a plain call, and a function holding
+            // a ctjs.pass_new_target may have the pending flag live at any call
+            // in it - adjacency is an invariant nothing checks.
+            if (passes_new_target.contains(call->getParentOfType<FuncOp>())) { continue; }
+
+            mlir::OpBuilder at(call);
+            const auto value_type = ValueType::get(context);
+            const mlir::Value undefined =
+                ConstantOp::create(at, call.getLoc(), value_type, UndefinedAttr::get(context));
+            llvm::SmallVector<mlir::Value> arguments(call.getArgs());
+            while (arguments.size() < parameters) { arguments.push_back(undefined); }
+            auto direct =
+                CallDirectOp::create(at, call.getLoc(), value_type,
+                                     mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
+                                     call.getReceiver(), undefined, call.getCallee(), arguments,
+                                     /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
+            call.getResult().replaceAllUsesWith(direct.getResult());
+            call.erase();
+            ++rewrittenCalls;
+            ++rewritten_here;
+            ++closure_here;
+        }
+
         module->setAttr("ctjs.globals", builder.getArrayAttr(rows));
 
         // THE COUNTS, AS A REMARK, BECAUSE THE STATISTICS ARE INERT. The
@@ -1040,7 +1147,8 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         if (report) {
             module->emitRemark() << "resolved " << resolved_here << " global(s), rewrote "
                                  << rewritten_here << " call(s), closed " << closed_here
-                                 << " function(s) over " << rows.size() << " name(s)";
+                                 << " function(s) over " << rows.size() << " name(s), named "
+                                 << closure_here << " closure call(s)";
         }
     }
 };

@@ -49,6 +49,15 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
 // RUN:              '--ctnative-lower-to-emitc=census=1' -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=CENSUS
+// AND THE SAME CENSUS OVER A SITE THE CLOSED WORLD ALREADY NAMED, which is the
+// one that can silently change bucket. --ctjs-resolve-globals rewrites a call
+// whose callee is a create_closure into a ctjs.call_direct, and the census is
+// what the plan's next lever is chosen from - so the label has to be the SAME
+// label, not an undifferentiated `call_direct.argument`.
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/census-named.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
+// RUN:              '--ctnative-lower-to-emitc=census=1' -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=CENSUSNAMED
 
 // --- CONDITION 1: THE CALLEE IS NOT ONE FUNCTION ---------------------------
 //
@@ -132,6 +141,17 @@
 //
 // CENSUS: ctnative census: 1 method-bearing literal(s) refused as open, holding 1 method field(s); blocking uses: call.argument.callee-opaque=1; sole blocker: call.argument.callee-opaque=1; sole blocker by method field: call.argument.callee-opaque=1; root of the nesting: call.argument.callee-opaque=1
 
+// AND THE NAMED SITE KEEPS ITS BUCKET. The IIFE's callee IS a create_closure,
+// so --ctjs-resolve-globals turns the call into a ctjs.call_direct and the
+// literal's blocking use moves from operand 2 of a ctjs.call to operand 3 of a
+// ctjs.call_direct. The label must still say WHY - the parameter escapes,
+// because it is returned - and not merely that the operation was a direct call.
+// Without `blockingLabel`'s call_direct arm this reads
+// `call_direct.argument=1`, and the callee-known / callee-opaque distinction
+// the census exists to draw is gone for every site the resolver names.
+//
+// CENSUSNAMED: ctnative census: 1 method-bearing literal(s) refused as open, holding 1 method field(s); blocking uses: call.argument.parameter-escapes=1; sole blocker: call.argument.parameter-escapes=1; sole blocker by method field: call.argument.parameter-escapes=1; root of the nesting: call.argument.parameter-escapes=1
+
 //--- opaque.js
 function sink(p) { return p.x; }
 sink = function (p) { return p.x + 1; };
@@ -183,3 +203,14 @@ function blocked() {
     return sink(o) + o.bump(2);
 }
 var a = blocked();
+
+//--- census-named.js
+// The callee is the closure two tokens back, so the closed world NAMES this
+// call. `p` is returned, so the slot is not a read-only object parameter and
+// the literal stays open - which is what puts it in the census at all.
+function blockednamed() {
+    var o = { x: 1, bump: function (n) { return this.x + n; } };
+    var kept = (function (p) { return p; })(o);
+    return kept.x + o.bump(2);
+}
+var b = blockednamed();
