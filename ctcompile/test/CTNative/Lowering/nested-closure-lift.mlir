@@ -4,14 +4,15 @@
 // `deep` names `k`, which belongs to `outer` and not to `inner` or `mid`. The
 // bytecode compiler boxes `k` once, in `outer`'s frame; `mid` captures the cell
 // as a from_parent_local descriptor, and `inner` and `deep` each say "fill my
-// slot from the enclosing closure's slot 0". The importer writes those two
-// operands as a ctjs.load_upvalue of the enclosing function's own closure, and
-// slice 1 refused them: "capture 0 is not a cell of this frame". Now the lift is
-// a fixpoint. Round one lifts `mid` - its capture IS a cell of `outer`'s frame
-// and nothing writes it - and rewrites every ctjs.load_upvalue in `mid` to its
-// new parameter, `inner`'s capture operand included. Round two admits `inner`
-// on exactly that: its operand is an entry-block argument of a lifted function,
-// inside that function's capture range. Round three admits `deep` the same way.
+// slot from the enclosing closure's slot 0". The importer leaves an `undefined`
+// placeholder in those two operands and writes the 0 on `enclosing_indices`,
+// and slice 1 refused them: "capture 0 is not a cell of this frame". Now the
+// lift is a fixpoint. Round one lifts `mid` - its capture IS a cell of
+// `outer`'s frame and nothing writes it - which puts `ctnative.captures` on
+// `mid` and makes its upvalue 0 the entry-block argument %arg3. Round two
+// admits `inner` on exactly that: its slot names upvalue 0 of a lifted
+// function, inside that function's capture range. Round three admits `deep` the
+// same way.
 //
 // THE SIGNATURES ARE THE ASSERTION. Every level lowers to a function of ONE
 // double, the value of `k`, and every call passes it straight through - the

@@ -162,14 +162,38 @@ def CTJS_CreateClosureOp
     fills the rest from the enclosing closure. A packed list is the plausible
     wrong reading and captures the wrong bindings silently.
 
-    AN ENTRY THE HELPER FILLS IS WRITTEN AS THE READ OF THE UPVALUE IT IS
-    FILLED FROM: a ctjs.load_upvalue of the enclosing function's own closure at
-    the descriptor's index, which is the cell context::make_closure copies into
-    the slot. The helper never looks at that operand. The native tier's
-    closure lift does - once the enclosing function is lifted the load is its
-    capture parameter, and the nested closure's capture is provably the same
-    constant (Phase 59 slice 1b). It used to be an `undefined` placeholder,
-    and the descriptor's index was then in the IR nowhere.
+    AN ENTRY THE HELPER FILLS IS AN `undefined` PLACEHOLDER, AND $enclosing_indices
+    SAYS WHICH UPVALUE FILLS IT. The placeholder keeps the operand list parallel
+    with the descriptors and is read by nobody - not the helper, not either
+    lowering - and the one fact it cannot carry, WHICH upvalue of the enclosing
+    closure the VM copies into the slot, is the attribute's whole business.
+
+    $enclosing_indices IS OPTIONAL AND, WHEN PRESENT, EXACTLY AS LONG AS
+    $upvalues, which its verifier enforces. Entry i is the descriptor's
+    `up.index` when slot i is filled from the enclosing closure, and -1 when the
+    operand beside it is the real cell (from_parent_local) - or when the index
+    names no upvalue the enclosing frame has, which the VM answers with
+    undefined and this answers with the placeholder alone. Absent means every
+    slot is from_parent_local. The importer writes it, the boxed lowering
+    ignores it exactly as it ignores the placeholder, and the reader is the
+    native tier's closure lift (Phase 59 slice 1b, LowerToEmitC.cpp).
+
+    THE INDEX NAMES A CELL AND THE LIFT READS A VALUE, and that is not a
+    contradiction. context::make_closure copies `enclosing->upvalues[up.index]`
+    - the CELL - into the new closure's slot (call.cpp:920), and every read of
+    that slot goes through ctjs.load_upvalue, which yields `cell->slot`, the
+    VALUE (run_loop.cpp, VM_CASE(get_upvalue)). So the lift never wants the box:
+    once the enclosing function is lifted, its upvalue `up.index` IS its capture
+    parameter - an entry-block argument holding the initial of a cell an outer
+    frame proved constant - and the nested closure captures that same constant.
+
+    AN ATTRIBUTE RATHER THAN AN OPERAND, and the difference is the boxed tier's
+    bill. Writing the index as a live `ctjs.load_upvalue` of this frame's own
+    closure put the same fact in the IR, but CTJSToEmitC parks EVERY capture
+    operand into ct_aot_make_closure's argument window - so each one became a
+    runtime upvalue read, parked, and then ignored by a helper that fills the
+    slot itself. Measured on bootstrap: 219 of 1,021 capture operands, and
+    12,371 more bytes of emitted C++. An attribute costs the boxed tier nothing.
 
     AND $enclosing_this IS THE EFFECTIVE RECEIVER, used only when the target is
     an arrow - because an arrow's `this` is decided where it is WRITTEN, not
@@ -200,10 +224,16 @@ def CTJS_CreateClosureOp
   let arguments = (ins CTJS_ValueType:$enclosing_closure,
                        Arg<CTJS_ValueType, "", [CTJS_SinkCaptured]>:$enclosing_this,
                        I32Attr:$function,
-                       Arg<Variadic<CTJS_ValueType>, "", [CTJS_SinkCaptured]>:$upvalues);
+                       Arg<Variadic<CTJS_ValueType>, "", [CTJS_SinkCaptured]>:$upvalues,
+                       OptionalAttr<DenseI32ArrayAttr>:$enclosing_indices);
   let results = (outs Res<CTJS_ValueType, "", [CTJS_BoxedPhase59]>:$result);
   let assemblyFormat = "$enclosing_closure `[` $function `]` `this` $enclosing_this"
                        " (`captures` $upvalues^)? attr-dict";
+  // THE PARALLEL LIST, ENFORCED. `$enclosing_indices` is meaningless unless it
+  // is indexed the same way `$upvalues` is, and a shorter one is precisely the
+  // PACKED reading this operation's description refuses - which captures the
+  // wrong bindings and says nothing.
+  let hasVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//

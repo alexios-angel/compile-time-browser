@@ -3,6 +3,8 @@
 // The Phase 8 gate: "invalid.mlir covers every verifier diagnostic and passes
 // under -verify-diagnostics". Four operations have a hand-written verifier -
 // the plan names exactly those four - and each of their messages appears below.
+// More have been added since, the newest being ctjs.create_closure's parallel
+// `enclosing_indices` (Phase 59 slice 1b); their messages are here too.
 //
 // A VERIFIER WITH NO TEST IS A VERIFIER THAT MIGHT NOT RUN. That is the same
 // discipline the runtime side of this project uses everywhere: the negative
@@ -90,4 +92,34 @@ ctjs.func @sparse_resume() -> !ctjs.value attributes {upvalue_count = 0 : i32} {
   ctjs.resume_point 2
   %v = ctjs.constant #ctjs.undefined
   ctjs.return %v
+}
+
+// -----
+
+// ---- ctjs.create_closure: enclosing_indices is PARALLEL, not packed --------
+// Two captures and one index. A reader who wrote only the slots the enclosing
+// closure fills would get exactly this, and it is wrong SILENTLY: index 0 would
+// then name slot 1's descriptor, and the native lift would pass a different
+// binding into a function that compiles clean and prints a wrong number. That
+// is the same trap $upvalues itself carries, said again where it can fail.
+ctjs.func @packed_indices(%a: !ctjs.value, %b: !ctjs.value)
+    -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+  // expected-error @+1 {{`enclosing_indices` has 1 entries for 2 capture operand(s)}}
+  %fn = ctjs.create_closure %a[0] this %b captures %a, %b
+        {enclosing_indices = array<i32: 0>}
+  ctjs.return %fn
+}
+
+// -----
+
+// ---- ctjs.create_closure: -1 is the only sentinel --------------------------
+// A second negative number would be a second meaning nobody has defined - and
+// the lift reads `k >= 0` to decide whether the slot is filled at all, so -2
+// would read as "not filled" while looking deliberate.
+ctjs.func @other_sentinel(%a: !ctjs.value, %b: !ctjs.value)
+    -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+  // expected-error @+1 {{`enclosing_indices[1]` is -2; the only negative entry is -1}}
+  %fn = ctjs.create_closure %a[0] this %b captures %a, %b
+        {enclosing_indices = array<i32: -1, -2>}
+  ctjs.return %fn
 }

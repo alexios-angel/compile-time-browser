@@ -7,6 +7,8 @@
 #include "mlir/Interfaces/FunctionImplementation.h"
 
 #include <cassert>
+#include <cstddef>
+#include <cstdint>
 
 // VERIFIERS, FOLDERS AND CANONICALIZER HOOKS ONLY - never a parser, a printer,
 // a builder or an accessor, all of which TableGen produces.
@@ -19,6 +21,13 @@
 // PLUS ONE SYMBOL-USE VERIFIER (Phase 62½-A): ctjs.call_direct's arity against
 // the ctjs.func it names is a symbol-table question, which ODS cannot spell
 // and which MLIR routes through SymbolUserOpInterface::verifySymbolUses.
+//
+// AND ONE MORE (Phase 59 slice 1b): ctjs.create_closure's `enclosing_indices`
+// against the length of its variadic capture list. That is an ATTRIBUTE
+// measured against an OPERAND COUNT, which is the same shape of question the
+// bar above admits - no constraint reaches across the two - and the operation's
+// description already says the list is parallel rather than packed. Saying it
+// twice, once where it can fail, is the point.
 
 #define GET_OP_CLASSES
 #include "ctcompile/CTJS/IR/CTJSOps.cpp.inc"
@@ -272,6 +281,44 @@ mlir::LogicalResult ResumePointOp::verify() {
         if (!seen[i]) {
             return emitOpError("resume point indices must be dense: ")
                    << i << " is missing while " << (seen.size() - 1) << " is present";
+        }
+    }
+    return mlir::success();
+}
+
+//===----------------------------------------------------------------------===//
+// ctjs.create_closure
+//===----------------------------------------------------------------------===//
+
+mlir::LogicalResult CreateClosureOp::verify() {
+    // PARALLEL WITH THE CAPTURE LIST, NOT PACKED - the same claim the
+    // operation's description makes about $upvalues, made about the attribute
+    // indexed alongside it. A list holding only the slots filled from the
+    // enclosing closure is the plausible wrong reading, and it is wrong
+    // SILENTLY: every index past the first from_parent_local slot would name a
+    // different capture, and the native lift would pass the wrong binding into
+    // a function that compiles clean and prints a wrong number.
+    //
+    // AN ODS CONSTRAINT CANNOT SAY IT. The length this must match is the number
+    // of variadic OPERANDS, which no constraint over an attribute can reach -
+    // which is this file's stated bar for writing a verifier at all.
+    const mlir::DenseI32ArrayAttr indices = getEnclosingIndicesAttr();
+    if (!indices) { return mlir::success(); }
+    if (indices.size() != static_cast<std::int64_t>(getUpvalues().size())) {
+        return emitOpError("`enclosing_indices` has ")
+               << indices.size() << " entries for " << getUpvalues().size()
+               << " capture operand(s) - the two are indexed in parallel with the target's "
+                  "upvalue descriptors, and a packed list captures the wrong bindings silently";
+    }
+    // -1 IS THE ONLY SENTINEL. It means "the operand beside me is the cell",
+    // and any other negative number is a reader's guess about which.
+    const llvm::ArrayRef<std::int32_t> entries = indices.asArrayRef();
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        if (entries[i] < -1) {
+            return emitOpError("`enclosing_indices[")
+                   << i << "]` is " << entries[i]
+                   << "; the only negative entry is -1, which means the slot is filled from the "
+                      "operand rather than from the enclosing closure";
         }
     }
     return mlir::success();

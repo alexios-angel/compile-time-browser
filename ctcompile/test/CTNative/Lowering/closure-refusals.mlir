@@ -130,16 +130,18 @@
 //
 // `deep` names `k`, which belongs to `outer` and not to `mid`, so the compiler
 // marks `deep`'s descriptor NOT from_parent_local and the VM fills that slot
-// from the enclosing closure. The importer writes that operand as a
-// ctjs.load_upvalue of `mid`'s own closure (BytecodeImport.cpp, op::closure),
-// and the lift carries it ONLY once `mid` is lifted and the load has become
-// `mid`'s capture parameter - which is the whole of slice 1b, and what
-// nested-closure-lift.mlir and native-nested-closure-fixture.js exercise.
+// from the enclosing closure. The importer leaves an `undefined` placeholder in
+// that operand and puts the descriptor's index on `enclosing_indices`
+// (BytecodeImport.cpp, op::closure), and the lift carries the slot ONLY once
+// `mid` is lifted and that upvalue has become `mid`'s capture parameter - which
+// is the whole of slice 1b, and what nested-closure-lift.mlir and
+// native-nested-closure-fixture.js exercise.
 //
 // Here `mid` does NOT lift: `outer` writes `k` after making `mid`, so the cell
 // is shared mutable state and `mid`'s capture is refused as reassigned. `deep`'s
-// capture is then a read of a closure this tier does not carry, and the refusal
-// says so AND says why `mid` did not lift - the chained sentence is the one a
+// capture is then named on a closure this tier does not carry - `mid` has no
+// `ctnative.captures` - and the refusal says so AND says why `mid` did not
+// lift - the chained sentence is the one a
 // reader can act on, and it is only knowable after the fixpoint has settled
 // `mid`'s verdict. Write the reasons inside the loop instead of after it and
 // the suffix is gone: this line pins that.

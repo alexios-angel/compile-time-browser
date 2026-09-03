@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <bit>
 #include <cctype>
+#include <cstdint>
 #include <iterator>
 #include <optional>
 #include <string_view>
@@ -915,37 +916,53 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 const function_proto & target = state.prog.functions[in.bx()];
                 // IN PARALLEL WITH THE DESCRIPTORS, NOT PACKED. Only the
                 // entries the compiler marked from_parent_local are read by the
-                // helper; the rest it fills from the enclosing closure. A
+                // helper; the rest it fills from the enclosing closure, and
+                // undefined here is a placeholder that is never looked at. A
                 // packed list would silently capture the wrong bindings.
                 //
-                // AND AN ENTRY THE HELPER FILLS FROM THE ENCLOSING CLOSURE IS
-                // WRITTEN AS THE READ OF THAT UPVALUE, not as `undefined`. The
-                // VM copies `enclosing->upvalues[up.index]` into the slot
-                // (context::make_closure, call.cpp) - the cell this frame's own
-                // closure holds at that index - so the honest operand is what
-                // this frame reads there: a ctjs.load_upvalue of its own
-                // closure at `up.index`. The helper still never looks at it.
-                // What does is the native tier's closure lift: once THIS
-                // function is lifted, that load is its capture parameter, and
-                // the nested closure's capture is then provably the same
-                // constant - Phase 59 slice 1b. An `undefined` placeholder
-                // carried no such edge, and the slice could not be built on it:
-                // the descriptor's `up.index` is not in the IR anywhere else.
+                // AND WHICH UPVALUE FILLS SUCH A SLOT GOES ON THE ATTRIBUTE
+                // BESIDE THE LIST, `enclosing_indices`: the descriptor's
+                // `up.index` where the placeholder stands, -1 where the operand
+                // is the cell. The VM copies `enclosing->upvalues[up.index]` -
+                // the CELL - into the slot (context::make_closure,
+                // call.cpp:920), and every read of the slot goes through
+                // op::get_upvalue, which yields `cell->slot`, the VALUE
+                // (run_loop.cpp). ct_aot_make_closure reads neither the
+                // placeholder nor the attribute, because it walks the same
+                // descriptors and fills the slot itself. What reads the
+                // attribute is the native tier's closure lift: once THIS
+                // function is lifted, its upvalue `up.index` IS its capture
+                // parameter, holding the initial of a cell an outer frame
+                // proved constant, and the nested closure captures that same
+                // constant - Phase 59 slice 1b.
                 //
-                // OUT OF RANGE IS UNDEFINED, exactly as the VM has it
-                // (`up.index < enclosing->upvalues.size()`, else undefined).
+                // AN ATTRIBUTE RATHER THAN AN OPERAND, and the difference is
+                // what the boxed tier is charged. Writing the index as a live
+                // `ctjs.load_upvalue` of this frame's own closure said the same
+                // thing, but CTJSToEmitC parks EVERY capture operand into
+                // ct_aot_make_closure's argument window - so each one became a
+                // runtime upvalue read, parked, and then ignored. Measured on
+                // bootstrap: 219 of 1,021 capture operands, 12,371 more bytes
+                // of emitted C++, and no gain anywhere, the native tier
+                // included.
+                //
+                // OUT OF RANGE IS -1 AND THE PLACEHOLDER STANDS ALONE, exactly
+                // as the VM has it (`up.index < enclosing->upvalues.size()`,
+                // else undefined): the enclosing frame holds no such cell, so
+                // there is no index to name and nothing for the lift to carry.
                 llvm::SmallVector<mlir::Value> captured;
+                llvm::SmallVector<std::int32_t> from_enclosing;
                 captured.reserve(target.upvalues.size());
+                from_enclosing.reserve(target.upvalues.size());
                 bool reachable = true;
+                bool any_from_enclosing = false;
                 for (const upvalue_desc & up : target.upvalues) {
                     if (!up.from_parent_local) {
-                        captured.push_back(
-                            up.index < proto.upvalues.size()
-                                ? ctjs::LoadUpvalueOp::create(
-                                      into, where, value_type, entry->getArgument(arg_callee),
-                                      into.getI32IntegerAttr(static_cast<std::int32_t>(up.index)))
-                                      .getResult()
-                                : state.undefined(where));
+                        const bool in_range = up.index < proto.upvalues.size();
+                        captured.push_back(state.undefined(where));
+                        from_enclosing.push_back(in_range ? static_cast<std::int32_t>(up.index)
+                                                          : -1);
+                        any_from_enclosing = any_from_enclosing || in_range;
                         continue;
                     }
                     if (up.index >= state.registers.size()) {
@@ -954,6 +971,7 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                         break;
                     }
                     captured.push_back(reg(up.index));
+                    from_enclosing.push_back(-1);
                 }
                 if (!reachable) { break; }
                 // `this` ONLY WHEN THE TARGET IS AN ARROW, and that is a
@@ -977,7 +995,14 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                     ctjs::CreateClosureOp::create(
                         into, where, value_type, entry->getArgument(arg_callee),
                         target.is_arrow ? entry->getArgument(arg_receiver) : state.undefined(where),
-                        into.getI32IntegerAttr(static_cast<std::int32_t>(in.bx())), captured));
+                        into.getI32IntegerAttr(static_cast<std::int32_t>(in.bx())), captured,
+                        // ABSENT WHEN NO SLOT IS FILLED FROM THE ENCLOSING
+                        // CLOSURE, which is most closures: an all -1 list says
+                        // nothing the missing attribute does not, and printing
+                        // one on every create_closure in a bundle is noise a
+                        // reader has to check.
+                        any_from_enclosing ? into.getDenseI32ArrayAttr(from_enclosing)
+                                           : mlir::DenseI32ArrayAttr{}));
                 break;
             }
             case op::get_global:

@@ -68,6 +68,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <optional>
 #include <set>
@@ -232,21 +233,25 @@ std::string printed(mlir::Type type) {
 //
 // AND A CAPTURE THAT IS NOT A CELL COMES THROUGH THE ENCLOSING CLOSURE - PHASE
 // 59 SLICE 1b. For a descriptor that is not from_parent_local the VM copies the
-// enclosing closure's upvalue into the slot (context::make_closure), and the
-// importer writes that operand as a `ctjs.load_upvalue` of the enclosing
-// function's own closure at that index (BytecodeImport.cpp, op::closure). While
-// the enclosing function is unlifted that load is a read of a closure this tier
-// does not carry, and the capture is refused - naming the enclosing closure's
-// own reason, because that is the obstacle. Once the enclosing function IS
-// lifted, lift() has rewritten the load to its capture parameter: an entry-block
-// argument in [3, 3 + ctnative.captures) holding the initial of a cell some
-// outer frame proved constant. A nested closure whose capture is that argument
-// captures the same constant, and passing the argument on is exact for exactly
-// the reason slice 1 is. The classify-then-lift loop is therefore a FIXPOINT:
-// an outer closure lifts in one round and the closure nested in it is judged
-// again in the next, against the rewritten operand. This is what a UMD bundle
-// is made of - the module body is the factory's frame, so every closure inside
-// a nested function reaches a module binding this way - and it was 15 of the 19
+// enclosing closure's upvalue into the slot (context::make_closure); the
+// operand the importer writes beside it is an `undefined` placeholder nothing
+// reads, and WHICH upvalue is on the closure's `enclosing_indices` attribute,
+// parallel to the capture list (BytecodeImport.cpp, op::closure). While the
+// enclosing function is unlifted this tier does not carry that closure at all,
+// and the capture is refused - naming the enclosing closure's own reason,
+// because that is the obstacle. Once the enclosing function IS lifted, lift()
+// has turned its upvalue k into its capture parameter: the entry-block argument
+// 3 + k, in [3, 3 + ctnative.captures), holding the initial of a cell some outer
+// frame proved constant. The index names a CELL in the enclosing closure and
+// the argument holds the VALUE every read of that cell yields (run_loop.cpp,
+// VM_CASE(get_upvalue): `reg = cell->slot`), which is what a lifted call wants:
+// a nested closure whose capture is that argument captures the same constant,
+// and passing the argument on is exact for exactly the reason slice 1 is. The
+// classify-then-lift loop is therefore a FIXPOINT: an outer closure lifts in one
+// round and the closure nested in it is judged again in the next, when its
+// enclosing function carries `ctnative.captures`. This is what a UMD bundle is
+// made of - the module body is the factory's frame, so every closure inside a
+// nested function reaches a module binding this way - and it was 15 of the 19
 // callees a direct call reaches in bootstrap before this slice.
 
 // The function index the importer put after the last `$` of the symbol. The
@@ -611,45 +616,64 @@ struct closureLifter {
         return std::nullopt;
     }
 
-    // THE VALUE A LIFTED CALL PASSES FOR A CAPTURE OPERAND, or null when the
-    // operand is neither shape a lift carries. Two shapes, and both hold the
-    // VALUE of a binding, never the box:
+    // WHICH UPVALUE OF THE ENCLOSING CLOSURE FILLS CAPTURE SLOT i, or -1 when
+    // the operand beside it is the binding and nothing is filled. The list is
+    // optional and, when present, exactly as long as the capture list -
+    // ctjs.create_closure's own description, and its verifier - so a missing
+    // attribute means every slot is from_parent_local, which is most closures.
+    static std::int32_t enclosingIndex(ctjs::CreateClosureOp c, unsigned i) {
+        const mlir::DenseI32ArrayAttr indices = c.getEnclosingIndicesAttr();
+        if (!indices || i >= static_cast<unsigned>(indices.size())) { return -1; }
+        return indices[i];
+    }
+
+    // THE VALUE A LIFTED CALL PASSES FOR CAPTURE SLOT i, or null when the slot
+    // is neither shape a lift carries. Two shapes, and both hold the VALUE of a
+    // binding, never the box:
     //
-    //   * a ctjs.create_cell of this frame: its initial. A read of the capture
-    //     in the target is a read of that value, because ctjs.load_upvalue reads
-    //     THROUGH the cell (run_loop.cpp, get_upvalue: `reg = cell->slot`), and
-    //     isConstantCell has to prove nothing ever wrote it.
-    //   * PHASE 59 SLICE 1b: a capture parameter of the ENCLOSING function - an
-    //     entry-block argument in [3, 3 + ctnative.captures) of a function that
-    //     carries `ctnative.captures`, i.e. one lift() has already rewritten.
-    //     lift() put the operand there itself, replacing the importer's
-    //     ctjs.load_upvalue, and the argument holds the initial of a cell an
-    //     outer frame proved constant. Passing it on is passing the same value.
+    //   * the operand is a ctjs.create_cell of this frame: its initial. A read
+    //     of the capture in the target is a read of that value, because
+    //     ctjs.load_upvalue reads THROUGH the cell (run_loop.cpp, get_upvalue:
+    //     `reg = cell->slot`), and isConstantCell has to prove nothing ever
+    //     wrote it.
+    //   * PHASE 59 SLICE 1b: `enclosing_indices[i]` is a k >= 0 - the slot is
+    //     filled from the ENCLOSING closure's upvalue k - and the enclosing
+    //     ctjs.func has already lifted, so `ctnative.captures` is on it and
+    //     k is inside that range. lift() made its upvalue k an entry-block
+    //     argument at 3 + k, holding the initial of a cell an outer frame
+    //     proved constant. The index names a CELL there and the argument holds
+    //     what every read of that cell yields, which is what a capture is read
+    //     for; passing it on is passing the same value. The capture OPERAND at
+    //     i is the importer's `undefined` placeholder and is never consulted -
+    //     ct_aot_make_closure does not consult it either.
     //
     // NOTHING ELSE. A parameter of the enclosing function (index at or past
-    // 3 + captures) is not a capture and cannot appear here - a captured
-    // parameter is boxed, so its operand is the cell; %arg0-2 never are; and a
-    // block argument of a lowered block is not this frame's binding at all.
-    mlir::Value capturedValue(ctjs::CreateClosureOp c, mlir::Value operand) {
-        if (auto cell = operand.getDefiningOp<ctjs::CreateCellOp>()) { return cell.getInitial(); }
-        auto argument = llvm::dyn_cast<mlir::BlockArgument>(operand);
-        if (!argument) { return {}; }
-        auto enclosing = c->getParentOfType<ctjs::FuncOp>();
-        if (!enclosing || enclosing.getBody().empty() ||
-            argument.getOwner() != &enclosing.getBody().front()) {
-            return {};
+    // 3 + captures) is not a capture and no index names it - a captured
+    // parameter is boxed, so its slot is from_parent_local and its operand is
+    // the cell; %arg0-2 are never captures; and a k the enclosing function's
+    // capture range does not cover names an upvalue the lift did not carry.
+    mlir::Value capturedValue(ctjs::CreateClosureOp c, unsigned i) {
+        if (auto cell = c.getUpvalues()[i].getDefiningOp<ctjs::CreateCellOp>()) {
+            return cell.getInitial();
         }
+        const std::int32_t k = enclosingIndex(c, i);
+        if (k < 0) { return {}; }
+        auto enclosing = c->getParentOfType<ctjs::FuncOp>();
+        if (!enclosing || enclosing.getBody().empty()) { return {}; }
         const auto captures = enclosing->getAttrOfType<mlir::IntegerAttr>("ctnative.captures");
-        if (!captures) { return {}; }
-        const unsigned index = argument.getArgNumber();
-        if (index < 3 || index >= 3 + static_cast<unsigned>(captures.getInt())) { return {}; }
-        return argument;
+        if (!captures || k >= captures.getInt()) { return {}; }
+        // 3 + captures ARGUMENTS AT LEAST, which lift() guarantees by inserting
+        // them into a block that already had three. Asked anyway, because this
+        // reads an argument by number and the claim costs one comparison.
+        mlir::Block & entry = enclosing.getBody().front();
+        if (entry.getNumArguments() <= 3 + static_cast<unsigned>(k)) { return {}; }
+        return entry.getArgument(3 + static_cast<unsigned>(k));
     }
 
     // The same, after admission: anything else here is a rule that let one
     // through, which this file reports as a named fatal and never as a number.
-    mlir::Value liftedCapture(ctjs::CreateClosureOp c, mlir::Value operand) {
-        if (const mlir::Value value = capturedValue(c, operand)) { return value; }
+    mlir::Value liftedCapture(ctjs::CreateClosureOp c, unsigned i) {
+        if (const mlir::Value value = capturedValue(c, i)) { return value; }
         llvm::report_fatal_error(
             "ctnative lowering: a capture admitted by whyCapturesDoNotLift is neither a constant "
             "cell of its frame nor a lifted capture parameter of the enclosing function - the "
@@ -657,11 +681,11 @@ struct closureLifter {
     }
 
     // A CAPTURE THE ENCLOSING CLOSURE FILLS, WHILE THAT CLOSURE IS UNLIFTED:
-    // the importer's ctjs.load_upvalue of the enclosing function's own closure,
-    // which lift() has not rewritten because the enclosing function was not
-    // lifted. The closure is refused for it, and run() appends the ENCLOSING
-    // closure's own reason to the sentence once the fixpoint has settled it -
-    // which is why this map exists: the reason cannot be known here.
+    // `enclosing_indices` names an upvalue of a function that carries no
+    // `ctnative.captures`, because it was not lifted. The closure is refused
+    // for it, and run() appends the ENCLOSING closure's own reason to the
+    // sentence once the fixpoint has settled it - which is why this map exists:
+    // the reason cannot be known here.
     llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> chainedThrough;
 
     std::optional<std::string> whyCapturesDoNotLift(ctjs::CreateClosureOp c) {
@@ -679,11 +703,9 @@ struct closureLifter {
                 }
                 continue;
             }
-            if (capturedValue(c, operand)) { continue; }
-            if (auto read = operand.getDefiningOp<ctjs::LoadUpvalueOp>();
-                read && enclosing && !enclosing.getBody().empty() &&
-                enclosing.getBody().front().getNumArguments() >= 3 &&
-                read.getClosure() == enclosing.getBody().front().getArgument(2)) {
+            if (capturedValue(c, i)) { continue; }
+            if (enclosingIndex(c, i) >= 0 && enclosing &&
+                !enclosing->hasAttr("ctnative.captures")) {
                 chainedThrough[c.getOperation()] = enclosing;
                 return "capture " + std::to_string(i) +
                        " is filled from the enclosing closure, which did not lift";
@@ -2135,8 +2157,8 @@ struct closureLifter {
             }
             llvm::SmallVector<mlir::Value> captured;
             ctjs::CreateClosureOp only = made.front();
-            for (mlir::Value operand : only.getUpvalues()) {
-                captured.push_back(liftedCapture(only, operand));
+            for (unsigned i = 0; i < static_cast<unsigned>(only.getUpvalues().size()); ++i) {
+                captured.push_back(liftedCapture(only, i));
             }
             for (ctjs::ConstructOp built : constructsOfTarget[target.getOperation()]) {
                 mlir::OpBuilder at(built);
@@ -2186,8 +2208,8 @@ struct closureLifter {
             }
             ctjs::CreateClosureOp only = made.front();
             llvm::SmallVector<mlir::Value> captured;
-            for (mlir::Value operand : only.getUpvalues()) {
-                captured.push_back(liftedCapture(only, operand));
+            for (unsigned i = 0; i < static_cast<unsigned>(only.getUpvalues().size()); ++i) {
+                captured.push_back(liftedCapture(only, i));
             }
             for (methodCall at : callsOfTarget[target.getOperation()]) {
                 mlir::OpBuilder builder(at.call);
@@ -2244,10 +2266,12 @@ struct closureLifter {
         for (ctjs::CreateClosureOp c : made) {
             // THE VALUE, NOT THE CELL, in both shapes: a constant cell's
             // initial, or the enclosing function's capture parameter passed
-            // as it is - it already holds the value (slice 1b).
+            // as it is - it already holds the value (slice 1b). The slot's
+            // INDEX is what selects between them, because a slot the enclosing
+            // closure fills carries a placeholder operand and nothing else.
             llvm::SmallVector<mlir::Value> captured;
-            for (mlir::Value operand : c.getUpvalues()) {
-                captured.push_back(liftedCapture(c, operand));
+            for (unsigned i = 0; i < static_cast<unsigned>(c.getUpvalues().size()); ++i) {
+                captured.push_back(liftedCapture(c, i));
             }
             // BOTH SHAPES OF CALL SITE, because --ctjs-resolve-globals may have
             // named this one already. `whyNotLiftable` admits a ctjs.call at
