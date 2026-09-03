@@ -75,15 +75,27 @@ string(REPLACE "]" "\\]" text "${text}")
 string(REPLACE "\n" ";" lines "${text}")
 set(definitions 0)
 set(previous "")
+set(before_previous "")
 foreach(line IN LISTS lines)
   if(line MATCHES "^[A-Za-z_][A-Za-z_0-9:<>]* [A-Za-z_][A-Za-z_0-9]*\\(.*\\) \\{$"
      OR line MATCHES "^class [A-Za-z_][A-Za-z_0-9]* \\{$"
      OR line MATCHES "^static [A-Za-z_][A-Za-z_0-9:<>]* [A-Za-z_][A-Za-z_0-9]* = ")
-    if(NOT previous MATCHES "^// ctcompile: ")
-      message(FATAL_ERROR "compile-clean (${NAME}): a definition without a provenance comment above it:\n  ${previous}\n  ${line}")
+    # TWO LINES OF LOOKBACK, BECAUSE A TEMPLATE PUTS ONE IN BETWEEN. Phase 56C
+    # emits one class template for a family of object literals that agree on
+    # the field names and disagree on a type, so the line above
+    # `class ctn_at_hit {` is `template <class T0>` and the comment is the one
+    # above THAT. Two, and no more: a definition that has drifted further than
+    # that from its comment is exactly what this gate is here to catch.
+    set(comment "${previous}")
+    if(previous MATCHES "^template <")
+      set(comment "${before_previous}")
+    endif()
+    if(NOT comment MATCHES "^// ctcompile: ")
+      message(FATAL_ERROR "compile-clean (${NAME}): a definition without a provenance comment above it:\n  ${comment}\n  ${line}")
     endif()
     math(EXPR definitions "${definitions} + 1")
   endif()
+  set(before_previous "${previous}")
   set(previous "${line}")
 endforeach()
 if(definitions EQUAL 0)

@@ -58,14 +58,19 @@
 #include "mlir/Rewrite/FrozenRewritePatternSet.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
+#include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <set>
 #include <string>
+#include <vector>
 
 namespace ctcompile::ctnative {
 
@@ -599,6 +604,9 @@ struct admission {
                     written.insert(keyOf(set.getKey()));
                 }
             }
+            // The carrier each key has been STORED so far, for the one-carrier
+            // check below.
+            llvm::StringMap<carrier> storedCarrier;
             for (mlir::Operation * user : object.getResult().getUsers()) {
                 const llvm::StringRef key = llvm::isa<GetPropertyOp>(user)
                                                 ? keyOf(llvm::cast<GetPropertyOp>(user).getKey())
@@ -625,6 +633,23 @@ struct admission {
                         return refuse(("field `" + key + "` is stored a " +
                                        printed(typeOf(set.getValue())) +
                                        ", not a number or a boolean")
+                                          .str());
+                    }
+                    // PHASE 56C: A FIELD HAS ONE CARRIER, and this is the only
+                    // route by which it might not. Where the field is ever
+                    // READ, the join of its stores is `!ctnative.boxed` and the
+                    // read is refused for having no carrier; where it never is,
+                    // both stores were admitted and the field took whichever
+                    // one the use-list handed over first. That was unobservable
+                    // while the class was per site. It is not now: the shape
+                    // key IS the field types, so two sites of one shape whose
+                    // use-lists ran in different orders would disagree and
+                    // split into a template that says nothing about the
+                    // program.
+                    const auto [entry, fresh] = storedCarrier.try_emplace(key, c);
+                    if (!fresh && entry->second != c) {
+                        return refuse(("field `" + key +
+                                       "` is stored a number on one path and a boolean on another")
                                           .str());
                     }
                 }
@@ -823,8 +848,26 @@ struct admission {
         for (unsigned i = 3; i < entry.getNumArguments(); ++i) {
             const mlir::Type t = typeOf(entry.getArgument(i));
             if (carrierOf(t) == carrier::none) {
+                // TWO CAUSES, AND THEY SEND A READER TO DIFFERENT PLACES. This
+                // said "no caller proves it (a closed-world call is Phase
+                // 62½-A)" for both, and for `function tag(s){return s} tag("hi")`
+                // that is false in both halves: a caller DID prove it - the
+                // lattice propagated `!ctnative.str<utf8>` all the way to the
+                // parameter - and the closed world is not what is missing. What
+                // is missing is a CARRIER for a string.
+                //
+                // `boxed` (or unvisited, which is a parameter no reachable call
+                // ever gave a value) is the other case and keeps the old
+                // wording: nothing resolved a caller, so nothing was proved.
+                // All 688 parameter refusals measured over bootstrap and p5 are
+                // that kind, so the corpus numbers do not move; only the proved
+                // and uncarried case gets the new sentence.
+                if (t == nullptr || llvm::isa<BoxedType>(t)) {
+                    return refuse("parameter " + std::to_string(i - 3) + " is " + printed(t) +
+                                  " - no caller proves it (a closed-world call is Phase 62½-A)");
+                }
                 return refuse("parameter " + std::to_string(i - 3) + " is " + printed(t) +
-                              " - no caller proves it (a closed-world call is Phase 62½-A)");
+                              ", which has no native carrier yet");
             }
         }
         bool ok = true;
@@ -980,22 +1023,64 @@ struct lowering {
     llvm::StringMap<std::string> names;
     // The hollowed ctjs.funcs, erased together in finish().
     llvm::SmallVector<ctjs::FuncOp> shells;
-    // ONE CLASS PER CLOSED-SHAPE SITE (Phase 56C's one-definition-per-shape is
-    // the next step): the class name, and its fields in name order with their
-    // carrier types, declared at the top of the module by finish().
-    struct shape {
-        std::string name;
-        std::string site; // the object literal, for the provenance comment
-        llvm::SmallVector<std::pair<std::string, mlir::Type>> fields;
+    // PHASE 56C: ONE SHAPE IS ONE DEFINITION, PROGRAM-WIDE.
+    //
+    // 56B emitted one class per creation SITE, so the shipped struct fixture
+    // had seven classes for six shapes and two of them were byte for byte the
+    // same. The key is the SHAPE instead - the ordered list of (field name,
+    // field type) - so two sites with the same key get the same type and the
+    // same NAME. That is what makes a generated struct passable between
+    // functions at all, and it is the naming prerequisite for every later
+    // phase.
+    //
+    // WHERE THE NAMES MATCH AND A TYPE DIFFERS, THE DEFINITION IS A TEMPLATE.
+    // `{hit: false, at: 0}` and `{hit: 0, at: 0}` are one FAMILY at two
+    // instantiations: `template <class T0> class ctn_at_hit { double at; T0
+    // hit; };`. Only the positions the family disagrees on become parameters -
+    // a position every site agrees on keeps its concrete type, which is more
+    // information and not less, and a family that agrees everywhere is not a
+    // template at all. NOT a variant field: each site is monomorphic and only
+    // the union of the sites is not, so a variant would put a `std::visit` in
+    // front of every read at both sites to pay for a polymorphism neither site
+    // has (part 24 Phase 56C, steps 2 and 3).
+    //
+    // THE REACHABLE DOMAIN IS TWO CARRIERS, AND THE PLAN'S OWN EXAMPLE IS NOT
+    // EXPRESSIBLE. A field is a number or a boolean - obligation O-2, enforced
+    // by admission - so the only disagreement this tier can build a template
+    // over today is `double` against `bool`. Phase 56C's written example, "the
+    // same {x, y} literal at three sites, two numeric and one string", cannot
+    // be written: a string has no carrier here, and `field `x` is stored a
+    // !ctnative.str<utf8>, not a number or a boolean` refuses the function
+    // before any shape is formed. The mechanism below is general over the
+    // field types; the fixture that exercises it has to be a boolean.
+    struct family {
+        llvm::SmallVector<std::string> fields;     // the field names, sorted - the family key
+        llvm::SmallVector<mlir::Type> types;       // the first site's carrier, per position
+        llvm::BitVector varies;                    // a later site disagreed at this position
+        llvm::SmallVector<std::string> parameters; // per position: "" or the template parameter
+        llvm::SmallVector<std::string> where;      // the JavaScript sites, first sight first
+        unsigned instantiations = 0;               // distinct (name, type) keys in this family
+        std::string name;                          // ctn_at_hit, unique across the module
     };
-    llvm::SmallVector<shape> shapes;
-    llvm::DenseMap<mlir::Value, unsigned> shapeOf; // create_object result -> index into shapes
+    // ONE SITE: which family it belongs to, and the carriers ITS fields took.
+    // The types are per site and the names are per family, which is the whole
+    // of 56C in two lines.
+    struct siteShape {
+        unsigned family = 0;
+        llvm::SmallVector<mlir::Type> types;
+    };
+    // N = 0: `family` is 320 bytes and SmallVector's default inline count
+    // static_asserts above 256. There is one of these per distinct shape in the
+    // whole program, so inline storage would buy nothing anyway.
+    llvm::SmallVector<family, 0> families;
+    llvm::StringMap<unsigned> familyIndex;          // the joined field names -> index into families
+    llvm::DenseMap<mlir::Value, siteShape> shapeOf; // create_object result -> its site
     // Decided while the IR is still ctjs: by the time a key constant or an
     // access is replaced, the object it keys is already an emitc.variable and
     // no longer reads as a closed create_object.
     llvm::DenseMap<mlir::Operation *, std::string> accessKey; // get/set -> member name
     llvm::DenseSet<mlir::Operation *> keyConstants;           // constants that lower to nothing
-    // PHASE 57A. Decided while the IR is still ctjs, for collectShape's reason:
+    // PHASE 57A. Decided while the IR is still ctjs, for fieldsOf()'s reason:
     // by the time a read is replaced, the array it reads is already an
     // emitc.variable and no longer reads as a dense create_array.
     llvm::DenseSet<mlir::Operation *> vectorLengthReads;
@@ -1004,42 +1089,243 @@ struct lowering {
     // on it. An empty unit emits neither.
     bool needsVector = false;
 
-    mlir::Type classType(const shape & sh) {
-        return ec::LValueType::get(ec::OpaqueType::get(context, sh.name));
+    // The C++ spelling of a field carrier, and there are two of them: a field
+    // is a number or a boolean (O-2) and admission refuses everything else by
+    // name. Needed because a template ARGUMENT is text - `ctn_at_hit<bool>` -
+    // where a field's type is an mlir::Type the emitter prints.
+    static const char * spelled(mlir::Type type) {
+        if (llvm::isa<mlir::Float64Type>(type)) { return "double"; }
+        if (auto integer = llvm::dyn_cast_or_null<mlir::IntegerType>(type);
+            integer && integer.getWidth() == 1) {
+            return "bool";
+        }
+        llvm::report_fatal_error("ctnative lowering: a struct field whose carrier is neither a "
+                                 "double nor a bool - admission should have refused it");
     }
-    // The fields of a closed object: every key read or written, with the
-    // carrier of the field's inferred type (the join of its stores, which
-    // every read carries); a key only ever read is undefined, carried as NaN.
-    void collectShape(ctjs::CreateObjectOp object) {
-        shape sh;
-        sh.name = "ctn_shape_" + std::to_string(shapes.size());
-        sh.site = siteOf(object.getLoc());
-        llvm::StringMap<mlir::Type> fields;
+    // THE TYPE OF ONE SITE. A family that agrees everywhere is spelled by its
+    // name alone; one that does not is that name with an argument for each
+    // position it disagrees on, in field order.
+    std::string spelling(const siteShape & site) const {
+        const family & f = families[site.family];
+        if (!f.varies.any()) { return f.name; }
+        std::string out = f.name + "<";
+        for (unsigned i = 0, written = 0; i < f.fields.size(); ++i) {
+            if (!f.varies[i]) { continue; }
+            if (written++ != 0) { out += ", "; }
+            out += spelled(site.types[i]);
+        }
+        return out + ">";
+    }
+    mlir::Type classType(const siteShape & site) {
+        return ec::LValueType::get(ec::OpaqueType::get(context, spelling(site)));
+    }
+    // THE MEMBER NAME OF ONE ACCESS, and a named fatal rather than
+    // `accessKey.at(o)`. `at` on a key that is not there THROWS, and this
+    // process cannot catch it: an access whose object never went through the
+    // shape census would have been an uncaught exception with no message
+    // naming the invariant. The invariant does hold - fieldsOf() records every
+    // get and set on a literal that passed the closed-shape proof, and
+    // admission refuses a property access on anything else - but it held by an
+    // argument and not by a check, which is the difference this makes.
+    [[nodiscard]] llvm::StringRef memberName(mlir::Operation * access) const {
+        const auto entry = accessKey.find(access);
+        if (entry == accessKey.end()) {
+            llvm::report_fatal_error(llvm::Twine("ctnative lowering: `") +
+                                     access->getName().getStringRef() +
+                                     "` has no recorded member name - it reads or writes an "
+                                     "object the shape census never saw, and admission should "
+                                     "have refused the function for a property access on "
+                                     "something that is not a closed-shape literal");
+        }
+        return entry->second;
+    }
+    [[nodiscard]] const siteShape & shapeAt(mlir::Value object) const {
+        const auto entry = shapeOf.find(object);
+        if (entry == shapeOf.end()) {
+            llvm::report_fatal_error("ctnative lowering: a closed object literal that the shape "
+                                     "census never saw - censusShapes() runs over the whole "
+                                     "accepted set before any function is lowered");
+        }
+        return entry->second;
+    }
+
+    // The fields of one closed object literal: every key read or written,
+    // sorted by name, with the carrier of the field's inferred type (the join
+    // of its stores, which every read carries); a key only ever read is
+    // undefined, carried as NaN.
+    //
+    // A STORE DECIDES THE FIELD TYPE, AND A READ ONLY WHERE THERE IS NO STORE.
+    // This used to take whichever user the use-list happened to hand over
+    // first, which was harmless when the class was per site and is not now: the
+    // shape key IS the field types, so two sites of the same shape whose
+    // use-lists ran in different orders could disagree and split into a
+    // template that says nothing. Admission refuses a field stored two
+    // different carriers, so "any store" and "the join of the stores" are the
+    // same answer here.
+    //
+    // AND IT READS THE LATTICE, NOT THE IR. This ran inside retype(), after
+    // every value in the function had already taken its carrier, so it could
+    // read `get.getResult().getType()`. The census runs before any of that and
+    // asks the solver the question retype() would have asked.
+    llvm::SmallVector<std::pair<std::string, mlir::Type>> fieldsOf(ctjs::CreateObjectOp object) {
+        const auto carried = [&](mlir::Value v) {
+            return carrierType(context, carrierOf(typeOf(v)));
+        };
+        llvm::StringMap<mlir::Type> stored;
+        llvm::StringMap<mlir::Type> read;
         for (mlir::Operation * user : object.getResult().getUsers()) {
             mlir::Value key;
             if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
                 key = get.getKey();
-                fields.try_emplace(admission::keyOf(key), get.getResult().getType());
+                read.try_emplace(admission::keyOf(key), carried(get.getResult()));
             } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
                 key = set.getKey();
-                fields.try_emplace(admission::keyOf(key), set.getValue().getType());
+                stored.try_emplace(admission::keyOf(key), carried(set.getValue()));
             }
             if (key) {
                 accessKey[user] = admission::keyOf(key).str();
                 keyConstants.insert(key.getDefiningOp());
             }
         }
-        for (const auto & entry : fields) {
-            sh.fields.emplace_back(entry.getKey().str(), entry.getValue());
+        llvm::SmallVector<std::pair<std::string, mlir::Type>> fields;
+        for (const auto & entry : stored) {
+            fields.emplace_back(entry.getKey().str(), entry.getValue());
         }
-        llvm::sort(sh.fields, [](const auto & a, const auto & b) { return a.first < b.first; });
-        shapeOf[object.getResult()] = static_cast<unsigned>(shapes.size());
-        shapes.push_back(std::move(sh));
+        for (const auto & entry : read) {
+            if (!stored.contains(entry.getKey())) {
+                fields.emplace_back(entry.getKey().str(), entry.getValue());
+            }
+        }
+        llvm::sort(fields, [](const auto & a, const auto & b) { return a.first < b.first; });
+        return fields;
+    }
+
+    // THE SHAPE CENSUS, over the whole accepted set and BEFORE any function is
+    // lowered - for the same reason the global census in runOnOperation() runs
+    // there. A site's TYPE is `ctn_at_hit<bool>`, and WHICH positions are
+    // template parameters is a property of every site in the program, so no
+    // site can be spelled until all of them have been seen.
+    void censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
+        std::vector<std::set<std::string>> keys; // per family, its distinct (name, type) keys
+        for (ctjs::FuncOp fn : accepted) {
+            fn.getBody().walk([&](ctjs::CreateObjectOp object) {
+                const auto fields = fieldsOf(object);
+                std::string nameKey; // the family key: just the names
+                std::string typeKey; // the instantiation key: names AND types
+                siteShape site;
+                for (const auto & field : fields) {
+                    nameKey += field.first;
+                    nameKey.push_back('\0'); // no field name can contain one
+                    typeKey += field.first;
+                    typeKey += ':';
+                    typeKey += spelled(field.second);
+                    typeKey.push_back('\0');
+                    site.types.push_back(field.second);
+                }
+                const auto [entry, fresh] =
+                    familyIndex.try_emplace(nameKey, static_cast<unsigned>(families.size()));
+                site.family = entry->second;
+                if (fresh) {
+                    family made;
+                    for (const auto & field : fields) { made.fields.push_back(field.first); }
+                    made.types = site.types;
+                    made.varies = llvm::BitVector(static_cast<unsigned>(fields.size()), false);
+                    families.push_back(std::move(made));
+                    keys.emplace_back();
+                } else {
+                    family & f = families[site.family];
+                    for (unsigned i = 0; i < f.types.size(); ++i) {
+                        if (f.types[i] != site.types[i]) { f.varies.set(i); }
+                    }
+                }
+                families[site.family].where.push_back(siteOf(object.getLoc()));
+                keys[site.family].insert(typeKey);
+                shapeOf[object.getResult()] = std::move(site);
+            });
+        }
+        for (unsigned i = 0; i < families.size(); ++i) {
+            families[i].instantiations = static_cast<unsigned>(keys[i].size());
+        }
+        nameFamilies();
+    }
+
+    // THE NAME IS THE SHAPE, so the same fields name the same type wherever
+    // they are written: `{x, y}` is `ctn_x_y` in every function in the program.
+    void nameFamilies() {
+        llvm::StringSet<> taken;
+        for (family & f : families) {
+            std::string joined = "ctn";
+            for (const std::string & field : f.fields) { joined += "_" + field; }
+            // A LITERAL WITH NO FIELDS STILL NEEDS A NAME, and `ctn_` is not
+            // one. `var e = {};` is admitted today - hasClosedShape's loop over
+            // the uses of a literal with none is vacuously true - so this arm
+            // is reachable and is what keeps the empty shape a plain class.
+            if (f.fields.empty()) { joined += "_empty"; }
+            // A DOUBLE UNDERSCORE IS RESERVED TO THE IMPLEMENTATION IN EVERY
+            // SCOPE, and a JavaScript field named `_x` would put one here.
+            std::string squeezed;
+            for (char ch : joined) {
+                if (ch == '_' && !squeezed.empty() && squeezed.back() == '_') { continue; }
+                squeezed.push_back(ch);
+            }
+            // TWO FAMILIES CAN STILL WANT ONE NAME. `{a_b}` and `{a, b}` both
+            // join to `ctn_a_b`, because every character a field name may
+            // contain is also the character the separator is; and the squeeze
+            // above makes `{a, _b}` a third. The second family to ask gets
+            // `_2`. Without this the module holds two `emitc.class @ctn_a_b`
+            // and the symbol-table verifier rejects it - which is how the guard
+            // is proved.
+            f.name = squeezed;
+            for (unsigned n = 2; !taken.insert(f.name).second; ++n) {
+                f.name = squeezed + "_" + std::to_string(n);
+            }
+            // THE TEMPLATE PARAMETERS, one per position the family disagrees on
+            // and none at all where it agrees. A parameter may NOT be named for
+            // a field: `template <class T0> class C { double T0; };` is
+            // "declaration of 'T0' shadows template parameter", and `{T0: 1}`
+            // is a perfectly ordinary JavaScript object.
+            f.parameters.assign(f.fields.size(), std::string{});
+            for (unsigned i = 0, next = 0; i < f.fields.size(); ++i) {
+                if (!f.varies[i]) { continue; }
+                std::string parameter;
+                do {
+                    parameter = "T" + std::to_string(next++);
+                } while (llvm::is_contained(f.fields, parameter));
+                f.parameters[i] = parameter;
+            }
+        }
+    }
+
+    // PART 24 PHASE 63 STEP 7, WITH ONE DEFINITION FOR MANY SITES. Every
+    // generated definition sits under a comment naming its JavaScript site;
+    // a shape written at eleven places has eleven of them, so the comment
+    // names the first three, says how many there are, and says how many
+    // instantiations a template has. A reader who arrives at the class from a
+    // C++ diagnostic gets somewhere to start AND the fact that there are
+    // others - which a single site silently chosen from the eleven would hide.
+    [[nodiscard]] std::string provenanceOf(const family & f) const {
+        std::string out = "object literal at ";
+        const size_t shown = std::min<size_t>(3, f.where.size());
+        for (size_t i = 0; i < shown; ++i) {
+            if (i != 0) { out += ", "; }
+            out += f.where[i];
+        }
+        if (f.where.size() > shown) {
+            out += " and " + std::to_string(f.where.size() - shown) + " more";
+        }
+        if (f.where.size() > 1) {
+            out += " (" + std::to_string(f.where.size()) + " sites";
+            if (f.varies.any()) {
+                out += ", " + std::to_string(f.instantiations) + " instantiations";
+            }
+            out += ")";
+        }
+        return out;
     }
 
     // The reads of one dense array, sorted into `length` and index, and the
     // `length` key constants marked as lowering to nothing - exactly what
-    // collectShape does for a closed object's member names.
+    // fieldsOf() does for a closed object's member names.
     void collectVector(ctjs::CreateArrayOp array) {
         needsVector = true;
         for (mlir::Operation * user : array.getResult().getUsers()) {
@@ -1050,7 +1336,7 @@ struct lowering {
                 // AND THE KEY CONSTANT IS NOT MARKED, WHICH WAS MEASURED. The
                 // obvious thing here is `keyConstants.insert(...)`, so that
                 // replace() drops the `"length"` constant rather than swapping
-                // a NaN double in for it - which is what collectShape does for
+                // a NaN double in for it - which is what fieldsOf() does for
                 // a member name. It makes no difference: the `vec_length` call
                 // built below takes the ARRAY and not the key, so whatever
                 // replace() leaves behind has no users and lower()'s own sweep
@@ -1082,16 +1368,29 @@ struct lowering {
                     break;
                 }
             }
-            // THE CLASSES FIRST, one per closed-shape site, public fields
-            // only: emitc.class prints exactly that.
-            for (const shape & sh : shapes) {
-                auto cls = ec::ClassOp::create(b, module.getLoc(), sh.name);
-                cls->setAttr("ctnative.provenance",
-                             b.getStringAttr("object literal at " + sh.site));
+            // THE CLASSES FIRST, one per SHAPE and no longer one per site
+            // (Phase 56C), public fields only: emitc.class prints exactly that.
+            // A family that disagrees on a field type carries its parameter
+            // list as an attribute and its varying fields as the parameters -
+            // the fork's emitter is the one consumer, like every other
+            // ctcompile divergence in it.
+            for (const family & f : families) {
+                auto cls = ec::ClassOp::create(b, module.getLoc(), f.name);
+                cls->setAttr("ctnative.provenance", b.getStringAttr(provenanceOf(f)));
+                if (f.varies.any()) {
+                    llvm::SmallVector<mlir::Attribute> parameters;
+                    for (unsigned i = 0; i < f.fields.size(); ++i) {
+                        if (f.varies[i]) { parameters.push_back(b.getStringAttr(f.parameters[i])); }
+                    }
+                    cls->setAttr("ctnative.template_params", b.getArrayAttr(parameters));
+                }
                 mlir::Block & body = cls.getBody().emplaceBlock();
                 mlir::OpBuilder inside = mlir::OpBuilder::atBlockEnd(&body);
-                for (const auto & [name, type] : sh.fields) {
-                    ec::FieldOp::create(inside, module.getLoc(), name, type, mlir::Attribute{});
+                for (unsigned i = 0; i < f.fields.size(); ++i) {
+                    const mlir::Type type =
+                        f.varies[i] ? ec::OpaqueType::get(context, f.parameters[i]) : f.types[i];
+                    ec::FieldOp::create(inside, module.getLoc(), f.fields[i], type,
+                                        mlir::Attribute{});
                 }
             }
             for (ec::FuncOp f : lowered) {
@@ -1253,11 +1552,12 @@ struct lowering {
                 }
             }
         });
-        // NOW THE SHAPES, from the carriers the fields' values just took, and
-        // the objects' own types last.
+        // NOW THE SHAPES. The census gave every closed literal in the module
+        // its family before anything was lowered - a site's spelling depends on
+        // every OTHER site in the program - so here each object only takes the
+        // type of its own site.
         fn.getBody().walk([&](ctjs::CreateObjectOp object) {
-            collectShape(object);
-            mlir::Value(object.getResult()).setType(classType(shapes[shapeOf[object.getResult()]]));
+            mlir::Value(object.getResult()).setType(classType(shapeAt(object.getResult())));
         });
         // AND THE ARRAYS, whose type was taken above; what is left is which
         // reads are `length` and which are indices.
@@ -1302,12 +1602,18 @@ struct lowering {
             // The struct, by value, in this frame; every field set to its
             // undefined - NaN for a number, false for a boolean - before the
             // first store, so a read before a write is exact.
-            const shape & sh = shapes[shapeOf[object.getResult()]];
+            const siteShape & site = shapeAt(object.getResult());
+            const family & f = families[site.family];
             mlir::Value local =
-                ec::VariableOp::create(b, where, classType(sh), ec::OpaqueAttr::get(context, ""));
-            for (const auto & [name, type] : sh.fields) {
+                ec::VariableOp::create(b, where, classType(site), ec::OpaqueAttr::get(context, ""));
+            // THE MEMBER TAKES THE SITE'S CONCRETE CARRIER, never the family's
+            // template parameter: the assign and the load after it are typed
+            // ops over a `double` or a `bool`, and `T0` is a spelling that
+            // exists only inside the class.
+            for (unsigned i = 0; i < f.fields.size(); ++i) {
+                const mlir::Type type = site.types[i];
                 mlir::Value member =
-                    ec::MemberOp::create(b, where, ec::LValueType::get(type), name, local);
+                    ec::MemberOp::create(b, where, ec::LValueType::get(type), f.fields[i], local);
                 mlir::Value init =
                     llvm::isa<mlir::IntegerType>(type)
                         ? boolConstant(b, where, false)
@@ -1348,14 +1654,14 @@ struct lowering {
         if (auto get = llvm::dyn_cast<GetPropertyOp>(o)) {
             const mlir::Type type = get.getResult().getType();
             mlir::Value member = ec::MemberOp::create(b, where, ec::LValueType::get(type),
-                                                      accessKey.at(o), get.getObject());
+                                                      memberName(o), get.getObject());
             swap(ec::LoadOp::create(b, where, type, member));
             return;
         }
         if (auto set = llvm::dyn_cast<SetPropertyOp>(o)) {
             mlir::Value member =
                 ec::MemberOp::create(b, where, ec::LValueType::get(set.getValue().getType()),
-                                     accessKey.at(o), set.getObject());
+                                     memberName(o), set.getObject());
             ec::AssignOp::create(b, where, member, set.getValue());
             eraseIfUnused(o);
             return;
@@ -1595,6 +1901,26 @@ struct lowering {
             if (o->use_empty()) { eraseIfUnused(o); }
         }
 
+        // AND NOTHING OF THE ctjs DIALECT SURVIVED, WHICH IS THE WHOLE CLAIM.
+        // replace() is an if-chain over operation names with no fatal default,
+        // and the sweep above erases five kinds by name - so an operation that
+        // neither arm handles is simply still there. `ctjs.create_closure` is
+        // the live example: it is erased only by the declaration-store arm, so
+        // a closure whose store did not take that route rides into the emitted
+        // function and is discovered by the C++ emitter three steps later, or
+        // by nobody. Asserted here, on the function that was just built, where
+        // the message can name it.
+        made.getBody().walk([&](mlir::Operation * o) {
+            if (o->getDialect() != nullptr && o->getDialect()->getNamespace() == "ctjs") {
+                llvm::report_fatal_error(llvm::Twine("ctnative lowering: `") +
+                                         o->getName().getStringRef() + "` survived into `" +
+                                         made.getSymName() +
+                                         "` - every ctjs operation in an accepted function has to "
+                                         "be replaced or swept, and this one is handled by no arm "
+                                         "of replace()");
+            }
+        });
+
         // THE IMPLICIT ARGUMENTS GO LAST, once the declaration closures that
         // named `callee` and `this` have been erased with their stores - not
         // before, as they once did: erasing a block argument that still has
@@ -1814,6 +2140,14 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 accepted.erase(entry);
             }
         }
+
+        // AND THE SHAPE CENSUS, for the same reason and in the same place -
+        // after the last function has left the accepted set and before the
+        // first is lowered. Phase 56C keys a class on the SHAPE and not on the
+        // creation site, and whether a shape's definition is a template is a
+        // property of every site in the program at once, so no site's type can
+        // be spelled until all of them have been seen.
+        lower.censusShapes(accepted);
 
         for (ctjs::FuncOp fn : accepted) { lower.lower(fn); }
         if (!accepted.empty()) { lower.declareGlobals(); }
