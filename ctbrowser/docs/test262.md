@@ -355,6 +355,46 @@ are CRASH under memory pressure and TIMEOUT without it.
 None of these three is in `docs/script.md`, and all three took one run to find.
 That is the argument for the corpus.
 
+### ...and what they measure now - 2026-09-02, same day, same corpus
+
+All three are fixed. The three areas were re-run with the same flags (4 workers,
+10 s, 2 GB) before and after, on the devbox:
+
+| area | tests | pass | fail | crash | timeout |
+|---|---:|---:|---:|---:|---:|
+| `built-ins/Number` | 340 | 133 → **180** | 161 → 159 | 45 → **0** | 0 → 0 |
+| `built-ins/String` | 1,223 | 558 → **566** | 654 → 654 | 6 → **0** | 2 → **0** |
+| `built-ins/Array` | 3,082 | 641 → **651** | 2,406 → 2,414 | 19 → **1** | 0 → 0 |
+| `test/language` | 23,726 | 6,915 → 6,915 | 16,781 → 16,782 | 5 → **4** | 0 → 0 |
+
+**77 crashes → 7, and 2 timeouts → 0.** The seven left are 4 in `test/language`,
+2 in `built-ins/JSON` and one in `built-ins/Array`
+(`prototype/at/coerced-index-resize.js`, a SIGSEGV in resizable ArrayBuffers);
+none of them is any of the three diagnosed above. `built-ins/Object`, `Math`,
+`Boolean`, `Function` and `Error` are unchanged to the test, and **no test that
+passed before fails now**: for the three areas above that was checked PER TEST
+against the before run rather than inferred from the totals, and for
+`test/language` the pass count is identical to the row. The ten-area total is
+**9,380 passing of 32,863 run, 28.5%**, up from 9,315.
+
+Two corrections to the numbers above, both measured rather than argued:
+
+* the table says `built-ins/String` passed **557**; re-measured on the unmodified
+  binary it is **558**, so the ten-area total before the fixes is 9,315 and the
+  rate 28.34% rather than 28.3%.
+* "23 SIGABRTs from dense arrays" is the count across ALL ten areas, and they
+  are not all arrays. `built-ins/Array` holds 19 crashes, of which **18** are
+  the SIGABRT and one is a SIGSEGV that is a different defect
+  (`prototype/at/coerced-index-resize.js`); the other **5** SIGABRTs are in
+  `built-ins/String`, and they are the pad/repeat allocation, not an array.
+
+The engine's own regression net for all three is
+`unittests/js/crash_guards.cpp`, not this suite: these crashes are the kind that
+kill a process rather than print a wrong answer, and a net for them has to run
+with `ctest` rather than behind a 273 MB opt-in corpus. Each of the three was
+proved load-bearing by reverting it and watching that file go red - exit 139 for
+the recursion, 134 for both the array and the pad.
+
 `docs/script.md` is the engine's own account of what it implements and what it
 refuses by name; this file is the independent measurement of the same thing.
 Where they disagree, this one was measured.
