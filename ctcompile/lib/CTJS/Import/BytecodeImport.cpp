@@ -934,10 +934,27 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                     captured.push_back(reg(up.index));
                 }
                 if (!reachable) { break; }
+                // `this` ONLY WHEN THE TARGET IS AN ARROW, and that is a
+                // correction with a measured cost. The VM reads
+                // $enclosing_this at exactly one line - call.cpp:924,
+                // `if (target.is_arrow) { made->captured_this = ... }` - so
+                // for every ordinary function this operand was DEAD, and a
+                // dead operand is still a USE. The receiver arrives as %arg0,
+                // and admission::function refuses any function that reads it:
+                // so `function outer() { function inner() {} }` was refused
+                // for "uses `this`" when nothing in it mentions `this` at all.
+                // Measured over bootstrap, p5 and phaser, that artefact is
+                // 1,866 of the 8,600 `uses \`this\`` refusals.
+                //
+                // AND THE UNDEFINED IS A MARKER, not only a smaller graph:
+                // it is now the ONLY place the IR says whether a target is an
+                // arrow, which is what lets the native tier lift an ordinary
+                // closure and refuse an arrow that reads its lexical `this`
+                // (LowerToEmitC.cpp, the Phase 59 lift).
                 set(in.a,
                     ctjs::CreateClosureOp::create(
                         into, where, value_type, entry->getArgument(arg_callee),
-                        entry->getArgument(arg_receiver),
+                        target.is_arrow ? entry->getArgument(arg_receiver) : state.undefined(where),
                         into.getI32IntegerAttr(static_cast<std::int32_t>(in.bx())), captured));
                 break;
             }

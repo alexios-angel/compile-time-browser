@@ -1592,3 +1592,40 @@ if(COMMAND ctcompile_add_native_pipeline)
     ctcompile_add_compile_clean(pipeline_index_truncation "${_defect_module}")
   endif()
 endif()
+
+# === PART 24 PHASE 59 SLICE 1: closures, carried by lifting ===
+# ============================================================================
+# native-closure-fixture.js is nine functions that each make a closure, put it
+# in a local and call it through that local - the shape the tier refused whole
+# until the lift: the only closure it carried was a function DECLARATION,
+# whose create_closure/store_global pair lowers to nothing. It goes through the
+# same Phase 62½-D gate as every other native program: the module is written
+# only if no function carries a diagnostic, compiled with no ctbrowser library,
+# run, and every global compared with the interpreter's own answer.
+#
+# THE GATE IS THE POINT, NOT THE IR. A lift that passes the wrong capture, or
+# passes the right ones in the wrong order, produces a module that verifies,
+# compiles clean under -Werror and prints a wrong number; only the interpreter
+# can say so. The parameter ORDER in particular is pinned twice - once as a
+# signature in CTNative/Lowering/closure-lift.mlir, once as an answer here.
+#
+# THE REFUSALS ARE NOT HERE, and cannot be: native-pipeline.cmake refuses to
+# write a module while any function carries `ctnative.not_native`, and a
+# refusal is contagious in both directions anyway. They are one program apiece
+# in CTNative/Lowering/closure-refusals.mlir, under split-file.
+#
+# One appended block, per part 23 Appendix A.3.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(closures "${CMAKE_CURRENT_SOURCE_DIR}/native-closure-fixture.js")
+endif()
+# AND THE CLAIMED COUNT, AS A FLOOR. Twenty functions and all of them claimed:
+# the top level, nine that make a closure, and ten closures. A change that
+# stops lifting one of them fails HERE even if the fixture above were deleted,
+# which is what --min-claimed is for. `resolved` and `direct` are the closed
+# world's own counters and the lift does not move them - it emits its
+# ctjs.call_direct inside --ctnative-lower-to-emitc, after
+# --ctjs-resolve-globals has already been counted.
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(closures
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-closure-fixture.js" 20 9 9)
+endif()
