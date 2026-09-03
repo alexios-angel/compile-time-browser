@@ -345,8 +345,7 @@ mlir::LogicalResult CreateClosureOp::verify() {
         // it would be caught - by the answer, not by a verifier.
         if (entries[i] >= 0 && getUpvalues()[i].getDefiningOp<CreateCellOp>() != nullptr) {
             return emitOpError("`enclosing_indices[")
-                   << i << "]` is " << entries[i]
-                   << ", so slot " << i
+                   << i << "]` is " << entries[i] << ", so slot " << i
                    << " is filled from the enclosing closure - but its capture operand is a "
                       "ctjs.create_cell of this frame, and the two describe the same slot "
                       "differently; the native lift believes the cell and the index is lost";

@@ -192,8 +192,21 @@ def CTJS_CreateClosureOp
     closure put the same fact in the IR, but CTJSToEmitC parks EVERY capture
     operand into ct_aot_make_closure's argument window - so each one became a
     runtime upvalue read, parked, and then ignored by a helper that fills the
-    slot itself. Measured on bootstrap: 219 of 1,021 capture operands, and
+    slot itself. Measured on bootstrap: 219 of the 1,021 capture operands, and
     12,371 more bytes of emitted C++. An attribute costs the boxed tier nothing.
+
+    BOTH NUMBERS ARE REPRODUCIBLE, which is why they are allowed to be here.
+    tools/check/capture-census.py counts the operands over the module
+    `ctjs-translate --ctbrowser-js-to-ctjs` writes - 573 create_closure, 376
+    with a capture list, 1,021 operands, 414 of them ctjs.create_cell, 388 block
+    arguments and 219 the placeholder - and it scopes SSA names to the function
+    that defines them, which a flat table over 574 functions of `%0` does not
+    (that reading said 427). The bytes are a comparison between commits, so they
+    name them: bootstrap through the boxed pipeline compile-js-to-cpp.cmake
+    spells is 10,976,150 bytes at 69ea710 and at THIS encoding, and 10,988,521
+    at 0bf7501, where the index was an operand. ctjs.load_upvalue in the
+    imported module moves with it: 1,111, 1,111, and 1,330 - and 1,330 - 1,111
+    is the same 219.
 
     AND $enclosing_this IS THE EFFECTIVE RECEIVER, used only when the target is
     an arrow - because an arrow's `this` is decided where it is WRITTEN, not

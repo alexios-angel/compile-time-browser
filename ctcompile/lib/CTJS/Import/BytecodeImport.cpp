@@ -942,9 +942,17 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 // thing, but CTJSToEmitC parks EVERY capture operand into
                 // ct_aot_make_closure's argument window - so each one became a
                 // runtime upvalue read, parked, and then ignored. Measured on
-                // bootstrap: 219 of 1,021 capture operands, 12,371 more bytes
-                // of emitted C++, and no gain anywhere, the native tier
+                // bootstrap: 219 of the 1,021 capture operands, 12,371 more
+                // bytes of emitted C++, and no gain anywhere, the native tier
                 // included.
+                //
+                // AND BOTH FIGURES HAVE A COMMAND. tools/check/capture-census.py
+                // is the census of the operands - point it at the module this
+                // function writes - and the bytes are the boxed pipeline
+                // (compile-js-to-cpp.cmake) over bootstrap at 0bf7501,
+                // 10,988,521, against 69ea710 and this encoding, both
+                // 10,976,150. A number in a comment nobody can re-run is a
+                // number that quietly stops being true.
                 //
                 // OUT OF RANGE IS -1 AND THE PLACEHOLDER STANDS ALONE, exactly
                 // as the VM has it (`up.index < enclosing->upvalues.size()`,

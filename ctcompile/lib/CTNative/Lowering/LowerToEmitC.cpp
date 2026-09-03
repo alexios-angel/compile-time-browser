@@ -4492,6 +4492,21 @@ struct lowering {
             // closure goes. Program order puts the cell first, so the reversed
             // sweep erases the closure, then the cell, then the `undefined`
             // constant the importer made for its `$enclosing_this`.
+            //
+            // AND SLICE 1b'S CAPTURE PLACEHOLDERS GO THE SAME WAY, which is
+            // worth saying because they are new and they are DEAD BY
+            // CONSTRUCTION. A slot the enclosing closure fills carries an
+            // `undefined` operand nothing reads - the index is on
+            // `enclosing_indices` - so once the closure is erased the constant
+            // has no users at all. It costs the emitted C++ nothing: over
+            // native-nested-closure-fixture.js, whose lifted `mid` functions
+            // hold exactly these placeholders, the module this pass writes
+            // holds ZERO `emitc.constant` of 0x7FF8000000000000, and the
+            // emitted C++ is byte for byte what slice 1b emitted when the same
+            // slot held a live ctjs.load_upvalue instead (both sha256
+            // 36b671c54ab13025b5a4d971181d221b24a4fc217fb3e24c70f422404a3c292d,
+            // 9,665 bytes). Erasing the placeholder in lift() would therefore
+            // buy nothing, which is why it is not erased there.
             if (llvm::isa<ec::ConstantOp, ec::LiteralOp, ctjs::FrameEnterOp, ctjs::LoadGlobalOp,
                           ctjs::ConstantOp, ctjs::CreateClosureOp, ctjs::CreateCellOp>(o)) {
                 dead.push_back(o);
