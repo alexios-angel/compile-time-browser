@@ -153,6 +153,17 @@ def CTJSResolveGlobals : Pass<"ctjs-resolve-globals", "mlir::ModuleOp"> {
     attribute `ctjs.globals` records every name with its store count, what it
     resolved to and why or why not, so the verdict is in the IR.
 
+    TWO OF ITS CLAUSES ARE PER NAME RATHER THAN PER MODULE, and neither was
+    when they were written. A function the importer refused used to refuse
+    every global in the program, because its `ctjs.store_global`s are not here
+    to be counted; the importer now summarises each refused body from the
+    BYTECODE it still has - the exact set of names its op::set_globals name -
+    so only the names in that set are refused. And a `.constructor` read used
+    to be assumed to be `Function`; it is now assumed so only when the RECEIVER
+    can be a function, which `super(t, e)`, an object literal and a primitive
+    cannot be, and a named read off such a value stops the taint unless the
+    name is one of the few that hand `Function` back.
+
     C++ RATHER THAN DRR, and part 23 §1.2 is why: this is a module-wide
     census - a symbol table, a count of stores per name, an SSA reachability
     from the global object - and a Pat<> matches one operation's shape; it
@@ -165,6 +176,10 @@ def CTJSResolveGlobals : Pass<"ctjs-resolve-globals", "mlir::ModuleOp"> {
               "ctjs.call sites rewritten to ctjs.call_direct">,
     Statistic<"closedFunctions", "closed-functions",
               "functions made private because every caller is a ctjs.call_direct">
+  ];
+  let options = [
+    Option<"report", "report", "bool", /*default=*/"false",
+           "Emit the resolved-global, rewritten-call and closed-function counts as a remark (the release LLVM package compiles pass statistics out, so --mlir-pass-statistics measures nothing)">
   ];
 }
 

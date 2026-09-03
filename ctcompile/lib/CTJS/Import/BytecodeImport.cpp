@@ -17,6 +17,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <algorithm>
 #include <bit>
 #include <cctype>
 #include <iterator>
@@ -95,6 +96,155 @@ static_assert(std::size(opcode_may_suspend) == opcode_count,
 [[nodiscard]] bool may_suspend(op code) {
     const auto index = static_cast<std::size_t>(code);
     return index < std::size(opcode_may_suspend) && opcode_may_suspend[index];
+}
+
+// WHAT A DROPPED BODY CAN STILL DO TO THE GLOBALS TABLE - Phase 62 1/2-A.
+//
+// A refused function is not a function that does not run. It runs in the
+// interpreter, and every `op::set_global` in it rebinds a name that
+// --ctjs-resolve-globals is trying to prove bound exactly once. That pass
+// cannot count a store that is not in the module, so it refused EVERY name in
+// the program as soon as ONE function was skipped: 101 globals on p5, 72 on
+// phaser - and phaser's whole loss came from two functions.
+//
+// IT DOES NOT HAVE TO GUESS, AND THAT IS THE WHOLE POINT. `op::set_global`
+// names its target with `proto.names[in.bx()]`: a static index into the
+// function's own name pool, which the compiler decided and which needs no
+// lowering, no SSA form and no control flow to read back. The exact set of
+// names a body may store survives the refusal even though the body does not,
+// so the closed world can refuse those NAMES instead of all of them.
+//
+// AND THE SUMMARY MUST ANSWER THE SAME QUESTION CLAUSE 5 DOES, from bytecode
+// rather than from IR: can this body write the globals table other than
+// through a set_global counted above? Three ways, and each is an OPERAND test
+// rather than a scan of the pools:
+//
+//   * `Function` or `eval` read as a global. The program either builds runs a
+//     top level of its own. Opaque.
+//   * `.constructor` read with a constant key. That is `Function` off any
+//     function, and following the value needs the IR this body has none of.
+//     Opaque.
+//   * the global object read as a global. A write through it binds a global in
+//     a spec-conformant engine - but the NAME it binds is `proto.names[in.b]`
+//     of the op::set_prop that writes it, which is as static as a set_global's.
+//     So those names join `stores` and the body stays bounded. A write through
+//     a COMPUTED key is the one that cannot be named, and it is opaque.
+//
+// EVERY TEST IS ON AN OPERAND, and two earlier versions of this were not. The
+// first asked whether the NAME OR STRING POOLS mentioned `constructor`,
+// `window` or `Function` anywhere, which cost p5 all 101 of its globals over a
+// body that merely contained the word. The second still refused any
+// op::get_index in a body whose pool held the string, on the grounds that a
+// computed key MIGHT be it - and that was not merely coarse, it was
+// INCONSISTENT: the pass's own `constant_key` does not taint a
+// ctjs.get_property with a non-constant key either, so a computed `o[k]` is
+// invisible on the IR side. Refusing it here bought no soundness that the
+// other half of the same clause was not already giving away.
+//
+// WHAT NEITHER SIDE COVERS, said once and shared: a `constructor` key computed
+// at run time - `o[k]` where `k` becomes "constructor" - is invisible to this
+// summary exactly as it is invisible to the pass. That is ONE stated limit of
+// the closed world rather than two different ones.
+struct dropped_globals {
+    std::vector<std::string> stores;
+    std::string opaque;
+};
+
+[[nodiscard]] dropped_globals summarise_globals(const function_proto & proto) {
+    dropped_globals out;
+    const auto refuse = [&](std::string why) {
+        if (out.opaque.empty()) { out.opaque = std::move(why); }
+    };
+    const auto name_at = [&](std::uint32_t index) -> const std::string * {
+        return index < proto.names.size() ? &proto.names[index] : nullptr;
+    };
+    const auto missing = [&]() {
+        // UNREACHABLE FROM THE COMPILER, and refused rather than ignored: the
+        // importer's own cases give up on an out-of-range name index, and a
+        // summary that silently dropped one would be the single thing this
+        // record exists to prevent.
+        refuse("a refused body names an index outside its own name pool, so what it stores "
+               "cannot be read back");
+    };
+
+    bool reads_global_object = false;
+    bool writes_a_computed_key = false;
+    std::vector<std::string> through_the_global_object;
+
+    for (const instruction & in : proto.code) {
+        switch (in.code) {
+        case op::set_global: {
+            const std::string * name = name_at(in.bx());
+            if (name == nullptr) {
+                missing();
+                break;
+            }
+            out.stores.push_back(*name);
+            break;
+        }
+        case op::get_global: {
+            const std::string * name = name_at(in.bx());
+            if (name == nullptr) {
+                missing();
+                break;
+            }
+            if (*name == "Function" || *name == "eval") {
+                refuse("a refused body reads `" + *name +
+                       "`, and the program it compiles can store any global");
+            } else if (*name == "globalThis" || *name == "window" || *name == "self") {
+                reads_global_object = true;
+            }
+            break;
+        }
+        case op::get_prop: {
+            const std::string * name = name_at(in.c);
+            if (name != nullptr && *name == "constructor") {
+                refuse("a refused body reads `.constructor`, which is the run-time compiler on "
+                       "any function, and this pass cannot follow a value it never imported");
+            }
+            break;
+        }
+        // THE NAMED WRITES, whose target is as static as a set_global's. They
+        // matter only if this body also holds the global object.
+        case op::set_prop:
+        case op::define_getter:
+        case op::define_setter:
+        case op::delete_prop: {
+            const std::string * name = name_at(in.b);
+            if (name == nullptr) {
+                missing();
+                break;
+            }
+            through_the_global_object.push_back(*name);
+            break;
+        }
+        // AND THE WRITES WHOSE TARGET IS NOT. `o[k] = v`, `delete o[k]`,
+        // `{...o}` and a prototype swap all name nothing this can read.
+        case op::set_index:
+        case op::delete_index:
+        case op::copy_props:
+        case op::set_proto: writes_a_computed_key = true; break;
+        case op::dyn_import:
+            refuse("a refused body loads a module this compile cannot see, and its top level "
+                   "can store any global");
+            break;
+        default: break;
+        }
+    }
+
+    if (reads_global_object) {
+        if (writes_a_computed_key) {
+            refuse("a refused body holds the global object and writes a property this pass "
+                   "cannot name, which in a spec-conformant engine binds a global");
+        } else {
+            out.stores.insert(out.stores.end(), through_the_global_object.begin(),
+                              through_the_global_object.end());
+        }
+    }
+
+    llvm::sort(out.stores);
+    out.stores.erase(std::unique(out.stores.begin(), out.stores.end()), out.stores.end());
+    return out;
 }
 
 // WHAT A FUNCTION'S ENTRY BLOCK RECEIVES, in order, before its declared
@@ -217,9 +367,15 @@ struct function_importer {
     void give_up(std::size_t at, op code, std::string reason) {
         if (gave_up) { return; }
         gave_up = true;
+        // THE GLOBALS SUMMARY IS TAKEN HERE, where the bytecode is still in
+        // hand. Everything below this line abandons the IR; `proto` is the
+        // program's, outlives the scratch module, and is the only description
+        // of this function that survives the refusal.
+        dropped_globals globals = summarise_globals(proto);
         skipped.push_back(unsupported_opcode{program_id.str(), function_index,
                                              static_cast<std::uint32_t>(at),
-                                             std::string{name_of(code)}, std::move(reason)});
+                                             std::string{name_of(code)}, std::move(reason),
+                                             std::move(globals.stores), std::move(globals.opaque)});
     }
 
     [[nodiscard]] mlir::Value constant(mlir::Location where, mlir::Attribute value) {
@@ -458,9 +614,23 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             if (ends_a_block(in.code) && at + 1 <= proto.code.size()) { leader[at + 1] = true; }
         }
         if (malformed) {
-            skipped.push_back(unsupported_opcode{program_id.str(),
-                                                 static_cast<std::uint32_t>(index), 0, "jump",
-                                                 "a jump leaves the function's bytecode"});
+            // THE THIRD REFUSAL SITE, AND THE ONLY ONE THAT IS DELIBERATELY
+            // OPAQUE. The other two drop a function whose instruction stream is
+            // well formed, so reading its op::set_globals back off that stream
+            // is exact. This one drops a function whose CONTROL FLOW is not: a
+            // jump leaves the code array, which means the program is corrupt
+            // and nothing in it should be reasoned about instruction by
+            // instruction. Precision here would buy nothing and would be the
+            // one summary whose premise is already false.
+            skipped.push_back(unsupported_opcode{
+                program_id.str(),
+                static_cast<std::uint32_t>(index),
+                0,
+                "jump",
+                "a jump leaves the function's bytecode",
+                {},
+                "a refused body's jump leaves its own bytecode, so its instruction stream cannot "
+                "be read back for the globals it stores"});
             out.skipped.insert(out.skipped.end(), skipped.begin(), skipped.end());
             continue;
         }
@@ -1261,9 +1431,15 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         // bug, never a reason to relax the verifier" - so a function that does
         // not verify is reported as unsupported rather than emitted.
         if (mlir::failed(mlir::verify(function))) {
-            out.skipped.push_back(unsupported_opcode{program_id.str(),
-                                                     static_cast<std::uint32_t>(index), 0, "-",
-                                                     "the imported function did not verify"});
+            // THE SECOND REFUSAL SITE, and it needs the same summary: this
+            // function is dropped exactly as a `give_up` one is, so a globals
+            // record without it would be the one skipped row that still
+            // refuses the whole module.
+            dropped_globals globals = summarise_globals(proto);
+            out.skipped.push_back(
+                unsupported_opcode{program_id.str(), static_cast<std::uint32_t>(index), 0, "-",
+                                   "the imported function did not verify",
+                                   std::move(globals.stores), std::move(globals.opaque)});
             continue;
         }
         function->remove();

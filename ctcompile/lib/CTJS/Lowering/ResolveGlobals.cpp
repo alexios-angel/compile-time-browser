@@ -41,22 +41,71 @@
 //     clause gates `private` rather than the rewrite: the rewrite is right
 //     whenever the callee is F; `private` claims every caller is visible.
 //  5. NOTHING WRITES THE GLOBALS TABLE DYNAMICALLY. In this VM that table is
-//     context::globals_, written only by op::set_global (run_loop.cpp,
+//     context::globals_, written by op::set_global (run_loop.cpp,
 //     VM_CASE(set_global)), its AOT helper, and the host's define_global.
-//     `window` and `globalThis` are the Shell's window_view native object
-//     (lib/Shell/bindings/window.cpp:919-920) and do NOT alias it - so in this
-//     engine `globalThis.add = 1` never rebinds `add`. The plan's rule (part
-//     24, Phase 62½-A: "read through globalThis ... is unresolved") is kept
-//     anyway, conservatively, because it is what a spec-conformant engine
-//     would need and the cost is nothing on the programs this MVP targets:
-//     any ctjs.load_global of those two names whose value reaches an
-//     operation that writes through it, escapes into a call or a store, or
-//     reaches an operation this walk does not know, resolves NOTHING in the
-//     module. The eval-like case is real here: `Function(...)` compiles and
-//     runs a NEW program (builtins/objects.cpp, install_dynamic_function),
-//     whose top level can set_global anything, so a load of "Function" (or
-//     "eval", should one ever be installed) also resolves nothing, as does
-//     ctjs.dynamic_import, whose module can do the same.
+//
+//     AND `globalThis.add = 1` DOES REBIND `add` IN THIS ENGINE. This comment
+//     said the opposite - that `window` and `globalThis` are the Shell's
+//     window_view and "do NOT alias it", so the rule was "kept anyway,
+//     conservatively... and the cost is nothing on the programs this MVP
+//     targets". Both halves were wrong, and the line it cited is the proof of
+//     the first: lib/Shell/bindings/window.cpp:911-923 is the PROXY's `set`
+//     trap, and its else-arm is `c.define_global(name, args[2])`, which is
+//     `globals_[name] = v` (script/vm.hpp:257). A write through the window
+//     that does not hit an own property of the window target is a global
+//     binding, exactly as the specification says. So this clause is
+//     LOAD-BEARING, not spec-conformance politeness, and it may not be
+//     relaxed on the grounds that this engine is simpler than a browser.
+//
+//     The cost is not nothing either, and it is now measured: with the
+//     `.constructor` clause made precise, bootstrap resolves 0 of 37 globals
+//     because its UMD header passes `globalThis`/`self` into the factory it
+//     calls - a real escape of a real global-binding object.
+//
+//     Any ctjs.load_global of those names whose value reaches an operation
+//     that writes through it, escapes into a call or a store, or reaches an
+//     operation this walk does not know, resolves NOTHING in the module. A
+//     NAMED READ OFF IT DOES NOT PROPAGATE unless the name is one of the
+//     host's own self-aliases (hands_back_the_global_object), which is what
+//     keeps `window.getComputedStyle(el)` from answering.
+//
+//     The eval-like case is real here too: `Function(...)` compiles and runs a
+//     NEW program (builtins/objects.cpp, install_dynamic_function), whose body
+//     can set_global anything, so a load of "Function" or "eval" also resolves
+//     nothing, as does ctjs.dynamic_import. Measured on the corpora, those are
+//     not hypothetical: phaser calls `eval` with a computed string and p5
+//     constructs `Function`.
+//
+//  6. NO BODY THE IMPORTER REFUSED STORES THIS NAME. A `gave_up` function
+//     emits no ctjs.func, so its `ctjs.store_global`s are not here to be
+//     counted and a name stored once visibly and once inside such a body looks
+//     singly bound. That used to refuse EVERY name in the program - 101
+//     globals on p5 from 51 refusals, 72 on phaser from TWO - on the grounds
+//     that "nothing says which names the missing bodies touch". Nothing in the
+//     IR does. THE BYTECODE DOES: op::set_global names its target with
+//     `proto.names[in.bx()]`, a static index into the function's own name
+//     pool, so the importer reads the exact set off a body it is about to drop
+//     and puts it on the ctjs.skipped row (`stores`). Only a body whose
+//     summary cannot bound it - one whose pools name `Function`, `eval`,
+//     `constructor`, `globalThis` or `window`, or whose code holds a dynamic
+//     import - still refuses the module, and says so in `opaque`.
+//
+//     THE SUMMARY'S LIMIT IS THIS CLAUSE'S OWN LIMIT, deliberately. A
+//     `constructor` key computed at run time is invisible to the summary
+//     exactly as `constant_key` makes it invisible here, so the closed world
+//     has ONE stated hole rather than a different one on each side of the
+//     importer. An earlier summary refused every op::get_index in a body whose
+//     string pool held the word, which bought nothing the IR walk was not
+//     already giving away and cost p5 all 101 of its globals.
+//
+// AND THE `.constructor` CLAUSE OF 5 ASKS WHAT THE RECEIVER MAY BE. `Function`
+// on every function's prototype is a real hazard and marking EVERY
+// `get_property` whose constant key is "constructor" is not the way to say it:
+// `super(t, e)` desugars to exactly that shape (compile/expressions.cpp:640) -
+// 17 of bootstrap's 38 such reads - and `({}).constructor` is `Object`.
+// may_be_function() answers which receivers can hand back the compiler, and
+// hands_back_the_compiler() answers which named reads off such a value can:
+// `this.constructor.NAME` is a string, and that idiom is the other 21.
 //
 // WHAT THE REWRITE PASSES. ctjs.call_direct's operands are the callee's entry
 // block in order - receiver, new.target, callee, parameters (BytecodeImport
@@ -165,10 +214,213 @@ llvm::StringRef constant_key(mlir::Value key) {
     return text ? text.getValue() : llvm::StringRef{};
 }
 
+// CAN THIS VALUE BE A FUNCTION OBJECT?
+//
+// THE QUESTION THE `.constructor` CLAUSE FORGOT TO ASK. `o.constructor` is
+// `Function` only when `o` is one: `constructor` is an own property of every
+// `X.prototype` table and holds the function that owns that table (compile/
+// classes.cpp writes it for a class, vm/call.cpp:502 for an ordinary function,
+// builtins/internal.hpp:635 for the natives), and `Function.prototype`'s copy
+// is the one holding `Function`. Every function object reaches that table,
+// which is why `(function(){}).constructor` IS the compiler; a plain object
+// reaches `Object.prototype` first and gets `Object`.
+//
+// THE ANSWER IS "YES" UNLESS THE DEFINING OPERATION SAYS OTHERWISE, so a block
+// argument, a load, a call result and any operation not listed here stay
+// tainted. The list is only the shapes that CONSTRUCT something non-callable.
+//
+// AND `Object` IS ITSELF A FUNCTION. `({}).constructor` is untainted by this -
+// the receiver is a literal - and its RESULT is `Object`, which is callable and
+// whose own `.constructor` IS `Function`. That second read's receiver is a
+// ctjs.get_property, which is NOT in the list, so `({}).constructor.constructor`
+// is still tainted. Listing the results as non-functions too is the mistake
+// this paragraph exists to stop.
+bool may_be_function(mlir::Value value) {
+    mlir::Operation * definition = value.getDefiningOp();
+    if (definition == nullptr) { return true; } // a block argument: unknown
+
+    // A PRIMITIVE, OR A FRESH NON-CALLABLE. ctjs.constant carries undefined,
+    // null, a string, a number or a boolean and nothing else; the arithmetic,
+    // predicate and delete operations answer primitives; create_object,
+    // create_array, create_regexp, own_keys and the two `arguments`
+    // operations answer a fresh object or array.
+    if (mlir::isa<ConstantOp, CreateObjectOp, CreateArrayOp, CreateRegExpOp, MakeArgumentsOp,
+                  GatherRestOp, OwnKeysOp, BinaryOp, BinaryStaticOp, UnaryOp, CompareOp, TruthyOp,
+                  FromBoolOp, InstanceOfOp, HasPropertyOp, DeletePropertyOp, DeleteNamedOp>(
+            definition)) {
+        return false;
+    }
+
+    // THE `super(...)` DESUGARING, AND IT IS 17 OF BOOTSTRAP'S 38 CONSTRUCTOR
+    // READS.
+    //
+    // `super(t, e)` is not a property read anybody wrote. compile/expressions
+    // .cpp:640 and :685 compile it to `load_home; get_proto; get_prop
+    // "constructor"` - the parent constructor, reached through the class's own
+    // prototype chain - and the taint answered "a value that may be the
+    // run-time compiler escapes into ctjs.call", because the very next thing
+    // `super(...)` does is call it.
+    //
+    // WHY THAT VALUE IS NOT `Function`:
+    //   * `__home` inside a constructor is the class's own `prototype` table,
+    //     an op::new_object (compile/classes.cpp builds it and installs it);
+    //   * ctjs.get_proto of that table is the link `extends` installed, which
+    //     is the PARENT's `prototype` table (classes.cpp: get_prop "prototype"
+    //     then set_proto);
+    //   * a `prototype` table's own `constructor` is the function that owns
+    //     it, never `Function` - unless that table IS `Function.prototype`,
+    //     which means the class extends `Function`;
+    //   * and naming `Function` needs ctjs.load_global "Function", which this
+    //     clause refuses module-wide, or another `.constructor` read whose
+    //     value escapes into the `extends` clause, which this same walk
+    //     refuses.
+    //
+    // THE ONE PREMISE THE SSA WALK CANNOT SEE IS CHECKED, in
+    // prototype_replaced(): step two assumes nothing put a CALLABLE where that
+    // link points, and `X.prototype = <a function>` would.
+    // `Object.setPrototypeOf(X.prototype, f)` would too and is a call into a
+    // native - invisible here, exactly as a global object obtained without
+    // naming it (`(function(){ return this })()`) is invisible to the rest of
+    // this clause. Said rather than papered over.
+    if (auto link = mlir::dyn_cast<GetProtoOp>(definition)) {
+        if (link.getObject().getDefiningOp<LoadHomeOp>() != nullptr) { return false; }
+    }
+    return true;
+}
+
+// THE PREMISE OF THE SUPER CLAUSE, CHECKED RATHER THAN ASSUMED.
+//
+// A class's `prototype` table is written by the class machinery itself -
+// compile/classes.cpp emits `set_prop dst, "prototype", <the new_object>` - so
+// the ordinary case is a ctjs.create_object and provably not callable. A
+// `X.prototype = <anything this pass cannot rule out>` can point some class's
+// parent link at a function, whose `.constructor` IS `Function`. One such
+// write anywhere retires the super clause for the whole module. It does not
+// REFUSE the module: the clause it retires is a relaxation, so withdrawing it
+// only restores the older, coarser answer.
+bool prototype_replaced(mlir::ModuleOp module) {
+    bool replaced = false;
+    module.walk([&](SetPropertyOp set) {
+        if (constant_key(set.getKey()) == "prototype" && may_be_function(set.getValue())) {
+            replaced = true;
+            return mlir::WalkResult::interrupt();
+        }
+        return mlir::WalkResult::advance();
+    });
+    return replaced;
+}
+
+// FROM THE GLOBAL OBJECT, WHICH NAMED READS HAND IT BACK?
+//
+// THE SAME QUESTION AS THE ONE BELOW, ASKED OF THE OTHER WATCHED KIND, AND ON
+// BOOTSTRAP IT IS THE ONE THAT STILL BINDS AFTER THE `.constructor` CLAUSE IS
+// FIXED. The walk propagated through EVERY read - "a read through it yields
+// another value that may BE it (`window.window`)" - so
+// `window.getComputedStyle(el)` marked the getter and then answered "the
+// global object escapes into ctjs.call". Bootstrap reads eight names off the
+// window (getComputedStyle, CSS, jQuery, innerWidth, document, escape,
+// PointerEvent, DOMParser) and calls or returns every one of them; not one is
+// the window.
+//
+// THE ALIAS SET IS THE HOST'S AND IT IS CLOSED. lib/Shell/bindings/window.cpp
+// binds `window`, `globalThis` and `self` to the proxy as GLOBALS (934-948)
+// and sets `parent` and `top` on the target to the same proxy (975-976);
+// `frames` is listed because it is the standard fifth and costs nothing.
+// Reading any other name off the window yields whatever global has that name,
+// and for one of THOSE to be the window the program would have to have stored
+// the window into a global - which is a ctjs.store_global of the marked value,
+// an escape, and already the answer. So either this walk has already refused
+// the module, or the five names below are the only reads that alias.
+//
+// WHAT IT DOES NOT CLOSE, and did not before either: `document.defaultView` is
+// the window and `document` is an ordinary global this walk never marks, so
+// `document.defaultView.x = 1` was invisible before this change and is
+// invisible after it. The hole belongs to "which values are watched", not to
+// "how far a watched value propagates".
+bool hands_back_the_global_object(llvm::StringRef key) {
+    return key.empty() || key == "window" || key == "globalThis" || key == "self" ||
+           key == "parent" || key == "top" || key == "frames";
+}
+
+// FROM A VALUE THAT MAY BE `Function`, WHICH NAMED READS CAN HAND IT BACK?
+//
+// THE SECOND HALF OF THE PRECISION, AND ON THE CORPORA THE LARGER HALF. The
+// taint propagates through every property read, which is right for
+// `f.constructor.constructor` and absurd for `this.constructor.NAME` - a
+// string - or for `this.constructor.eventName("show")`, which is bootstrap's
+// commonest idiom and used to answer "escapes into ctjs.call". No named
+// property of `Function` is `Function`, except:
+//
+//   constructor  `Function.constructor` is `Function`
+//   prototype    and `Function.prototype.constructor` is too
+//   __proto__    the same table under its other name
+//   call/apply/bind  hand back something that CALLS `Function`
+//
+// A COMPUTED KEY IS UNKNOWN and keeps the taint - which is what an empty
+// constant_key means here, and also what `o[""]` gets, harmlessly.
+bool hands_back_the_compiler(llvm::StringRef key) {
+    return key.empty() || key == "constructor" || key == "prototype" || key == "__proto__" ||
+           key == "call" || key == "apply" || key == "bind";
+}
+
+// THE SKIPPED ROWS, READ FOR THE ONE THING THAT STILL REFUSES THE MODULE.
+//
+// A body the importer dropped is a body whose `ctjs.store_global`s are not
+// here to be counted, and the first version of this clause therefore refused
+// every name in the program the moment ONE function was skipped: 101 globals
+// on p5 from 51 skips, 72 on phaser from TWO. Sound, and far too coarse.
+//
+// The importer now summarises each dropped body FROM ITS BYTECODE, which it
+// still has: `stores` is the exact set of names the body's op::set_globals
+// name - a static index into the function's own name pool, needing no lowering
+// to read - and `opaque` says when that set does not bound the body. So only
+// `opaque` is a module-wide answer; `stores` is refused per NAME below.
+//
+// A ROW WITH NO SUMMARY IS OPAQUE. Hand-written IR, and any translator
+// predating the summary, produce rows without the two keys, and reading a
+// missing key as "stores nothing" would resolve names a dropped body rebinds -
+// the exact unsoundness this clause exists for. Absent means unknown.
+std::optional<std::string> opaque_refusal(mlir::ModuleOp module) {
+    auto skipped = module->getAttrOfType<mlir::ArrayAttr>("ctjs.skipped");
+    if (!skipped) { return std::nullopt; }
+    for (const mlir::Attribute row : skipped) {
+        auto fields = llvm::dyn_cast<mlir::DictionaryAttr>(row);
+        const auto opaque = fields ? fields.getAs<mlir::StringAttr>("opaque") : mlir::StringAttr{};
+        const auto stores = fields ? fields.getAs<mlir::ArrayAttr>("stores") : mlir::ArrayAttr{};
+        if (!opaque || !stores) {
+            return "the importer refused " + std::to_string(skipped.size()) +
+                   " function(s) (ctjs.skipped) and one of them carries no globals summary, so a "
+                   "body this pass cannot read may store any global";
+        }
+        if (!opaque.getValue().empty()) { return opaque.getValue().str(); }
+    }
+    return std::nullopt;
+}
+
+// AND THE NAMES THOSE BODIES MAY STORE, which are refused one by one.
+llvm::DenseSet<mlir::StringAttr> refused_store_names(mlir::ModuleOp module) {
+    llvm::DenseSet<mlir::StringAttr> names;
+    auto skipped = module->getAttrOfType<mlir::ArrayAttr>("ctjs.skipped");
+    if (!skipped) { return names; }
+    for (const mlir::Attribute row : skipped) {
+        auto fields = llvm::dyn_cast<mlir::DictionaryAttr>(row);
+        if (!fields) { continue; } // opaque_refusal has already refused the module
+        auto stores = fields.getAs<mlir::ArrayAttr>("stores");
+        if (!stores) { continue; }
+        for (const mlir::Attribute one : stores) {
+            if (auto text = llvm::dyn_cast<mlir::StringAttr>(one)) { names.insert(text); }
+        }
+    }
+    return names;
+}
+
 // CLAUSE 5: can anything in the module write the globals table other than a
 // ctjs.store_global this pass can count? Answers the reason if so.
 std::optional<std::string> dynamic_global_writes(mlir::ModuleOp module) {
     std::optional<std::string> reason;
+    // COMPUTED ONCE, because it is a question about the whole module and
+    // may_be_function() is asked once per `.constructor` read.
+    const bool super_is_open = prototype_replaced(module);
     llvm::DenseMap<mlir::Value, watched> marked;
     llvm::SmallVector<mlir::Value> work;
     const auto mark = [&](mlir::Value value, watched kind) {
@@ -183,13 +435,13 @@ std::optional<std::string> dynamic_global_writes(mlir::ModuleOp module) {
     // its `ctjs.store_global`s are not in the module to be counted. The census
     // below would then see one store where the program has two and resolve a
     // name that is rebound at run time - a call compiled to the WRONG function
-    // rather than a diagnostic. Whole-module bail, because nothing says which
-    // names the missing bodies touch.
-    if (auto skipped = module->getAttrOfType<mlir::ArrayAttr>("ctjs.skipped");
-        skipped && !skipped.empty()) {
-        return "the importer refused " + std::to_string(skipped.size()) +
-               " function(s) (ctjs.skipped), and a body this pass cannot read may store any global";
-    }
+    // rather than a diagnostic.
+    //
+    // IT IS NO LONGER A WHOLE-MODULE BAIL, because "nothing says which names
+    // the missing bodies touch" was not true: the BYTECODE says, and the
+    // importer reads it. Only a body whose summary is `opaque` still refuses
+    // everything; the rest refuse the names they name, in the census.
+    if (const std::optional<std::string> refused = opaque_refusal(module)) { return refused; }
 
     module.walk([&](mlir::Operation * op) {
         if (reason) { return mlir::WalkResult::interrupt(); }
@@ -208,8 +460,14 @@ std::optional<std::string> dynamic_global_writes(mlir::ModuleOp module) {
         // never look at. Following the value rather than refusing the key is
         // what keeps `o.constructor === C` and `o.constructor.name` resolvable:
         // those end at a comparison, and only a call or an escape answers.
+        //
+        // AND THE RECEIVER IS ASKED FIRST. Marking EVERY `.constructor` read
+        // made the clause answer for `super(t, e)` - which is one of these,
+        // desugared - and for `({}).constructor`, neither of which can be the
+        // compiler. may_be_function() says which receivers can.
         if (auto get = mlir::dyn_cast<GetPropertyOp>(op)) {
-            if (constant_key(get.getKey()) == "constructor") {
+            if (constant_key(get.getKey()) == "constructor" &&
+                (super_is_open || may_be_function(get.getObject()))) {
                 mark(get.getResult(), watched::compiler);
             }
         }
@@ -243,8 +501,27 @@ std::optional<std::string> dynamic_global_writes(mlir::ModuleOp module) {
                           BinaryStaticOp, RootOp>(op)) {
                 continue; // a primitive comes out, never the object
             }
-            if (mlir::isa<GetPropertyOp, GetProtoOp, IterableOp, ConvertOp, CellGetOp,
-                          LoadUpvalueOp>(op)) {
+            if (auto get = mlir::dyn_cast<GetPropertyOp>(op)) {
+                // A NAMED READ OFF A WATCHED VALUE IS NOT THAT VALUE, unless it
+                // is one of the few names that hand it back. `Function.NAME` is
+                // undefined and `window.getComputedStyle` is a function;
+                // `this.constructor.eventName("show")` and
+                // `window.getComputedStyle(el)` are bootstrap's two commonest
+                // idioms and both used to answer here.
+                //
+                // ONLY WHEN THE TAINTED VALUE IS THE RECEIVER. As the KEY it is
+                // being converted to a string, and the property that comes out
+                // belongs to somebody else's object - marked conservatively,
+                // because narrowing that is not what this clause is about.
+                const llvm::StringRef key = constant_key(get.getKey());
+                const bool hands_back = kind == watched::compiler
+                                            ? hands_back_the_compiler(key)
+                                            : hands_back_the_global_object(key);
+                if (use.getOperandNumber() == 0 && !hands_back) { continue; }
+                mark(get.getResult(), kind);
+                continue;
+            }
+            if (mlir::isa<GetProtoOp, IterableOp, ConvertOp, CellGetOp, LoadUpvalueOp>(op)) {
                 for (const mlir::Value result : op->getResults()) { mark(result, kind); }
                 continue;
             }
@@ -307,6 +584,20 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         mlir::MLIRContext * context = &getContext();
         mlir::Builder builder(context);
 
+        // THE COUNTERS THE REMARK PRINTS, BESIDE THE STATISTICS RATHER THAN
+        // INSTEAD OF THEM.
+        //
+        // A mlir::Pass::Statistic IS NOT A NUMBER IN THIS RELEASE. The LLVM
+        // package this builds against compiles statistics out, so the tracking
+        // type has no value to read and streaming one into a diagnostic
+        // printed an empty field - `resolved  global(s), rewrote  call(s)` -
+        // which a lit test would have matched with a wildcard and a floor
+        // would have read as zero. Counting locally is three lines and is the
+        // only number here that exists in a release build.
+        std::size_t resolved_here = 0;
+        std::size_t rewritten_here = 0;
+        std::size_t closed_here = 0;
+
         // THE CENSUS. In first-seen order, so the attribute is stable.
         llvm::MapVector<mlir::StringAttr, binding> bindings;
         llvm::DenseMap<std::uint32_t, FuncOp> by_index;
@@ -326,6 +617,7 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         });
 
         const std::optional<std::string> dynamic = dynamic_global_writes(module);
+        const llvm::DenseSet<mlir::StringAttr> refused = refused_store_names(module);
         FuncOp top = by_index.lookup(0);
 
         llvm::SmallVector<mlir::Attribute> rows;
@@ -347,6 +639,19 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             // ---- clauses 1-3, 5: is the name resolvable at all? ------------
             if (dynamic) {
                 record(name, facts.stores.size(), FuncOp{}, *dynamic);
+                continue;
+            }
+            // CLAUSE 6: A BODY THE IMPORTER REFUSED MAY STORE THIS NAME.
+            //
+            // Per name, from the summary the importer took off the refused
+            // body's bytecode. The store is real and this pass cannot see it,
+            // so the name is refused exactly as a second visible store would
+            // refuse it - and every OTHER name in the program is now free to
+            // resolve, which is the whole change.
+            if (refused.contains(name)) {
+                record(name, facts.stores.size(), FuncOp{},
+                       "a function the importer refused (ctjs.skipped) stores this name, so the "
+                       "binding this pass can see is not the only one");
                 continue;
             }
             if (facts.stores.empty()) {
@@ -396,6 +701,7 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                 continue;
             }
             ++resolvedGlobals;
+            ++resolved_here;
             const unsigned parameters = target.getBody().front().getNumArguments() - 3;
 
             // ---- the rewrite, per load ----------------------------------------
@@ -453,6 +759,7 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                     call.erase();
                     ++rewritten;
                     ++rewrittenCalls;
+                    ++rewritten_here;
                 }
             }
 
@@ -465,11 +772,24 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             }
             mlir::SymbolTable::setSymbolVisibility(target, mlir::SymbolTable::Visibility::Private);
             ++closedFunctions;
+            ++closed_here;
             record(name, facts.stores.size(), target,
                    "closed: " + std::to_string(rewritten) + " call(s) rewritten");
         }
 
         module->setAttr("ctjs.globals", builder.getArrayAttr(rows));
+
+        // THE COUNTS, AS A REMARK, BECAUSE THE STATISTICS ARE INERT. The
+        // release LLVM package this builds against compiles pass statistics
+        // out, so --mlir-pass-statistics prints an empty report and a lit test
+        // asserting one asserts nothing. This is the same escape hatch
+        // --ctjs-lift-to-scf ships, for the same reason, and it is what lets a
+        // test PIN a number rather than read the IR and hope.
+        if (report) {
+            module->emitRemark() << "resolved " << resolved_here << " global(s), rewrote "
+                                 << rewritten_here << " call(s), closed " << closed_here
+                                 << " function(s) over " << rows.size() << " name(s)";
+        }
     }
 };
 

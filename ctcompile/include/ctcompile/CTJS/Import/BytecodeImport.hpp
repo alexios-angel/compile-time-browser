@@ -46,6 +46,32 @@ struct unsupported_opcode {
     std::uint32_t bc_offset = 0;
     std::string opcode;
     std::string reason;
+
+    // WHAT THE DROPPED BODY CAN STILL DO TO THE GLOBALS TABLE - Phase 62 1/2-A.
+    //
+    // A function nobody lowers still RUNS, in the interpreter, and its
+    // `op::set_global`s rebind names the closed world is trying to prove
+    // singly bound. --ctjs-resolve-globals cannot count stores that are not in
+    // the module, so it used to refuse EVERY name as soon as one function was
+    // skipped - 101 globals on p5, 72 on phaser, and phaser's whole loss came
+    // from TWO functions.
+    //
+    // It does not have to guess. `op::set_global`'s name operand is
+    // `proto.names[in.bx()]` - a static index into the function's own name
+    // pool, decided by the compiler and needing no lowering, no SSA and no
+    // control flow to read. So the exact set of names a dropped body may store
+    // is recoverable from its bytecode, and the refusal becomes per NAME.
+    std::vector<std::string> stores;
+
+    // AND WHEN THE SET IS NOT THE WHOLE ANSWER, WHY. `stores` bounds a body's
+    // effect on the globals table only if that body cannot make a body OUTSIDE
+    // this module run - `Function`, `eval`, `import()` - and cannot hand the
+    // global object to something that writes through it. Those are the same
+    // hazards --ctjs-resolve-globals walks the IR for, and the IR is exactly
+    // what a dropped body does not have. Non-empty means "this summary bounds
+    // nothing; refuse the module", which is the old behaviour, kept for the
+    // bodies that earn it rather than for all of them.
+    std::string opaque;
 };
 
 // Phase 54A. Which bytecode register slots each imported SSA value ever
