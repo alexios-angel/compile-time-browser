@@ -1916,3 +1916,28 @@ if(COMMAND ctcompile_add_native_claims)
                               "${CMAKE_CURRENT_SOURCE_DIR}/native-nested-closure-fixture.js"
                               27 8 33 27)
 endif()
+
+# AND THE TWO FIGURES THE COMMENTS CITE, AS A GATE.
+#
+# CTJSOps.td and BytecodeImport.cpp both state that 219 of bootstrap's 1,021
+# capture operands are the placeholder that carries an index. Those had a
+# command but no gate, which in this tree is the same failure as a measurement
+# with neither: the comment is specification, and nothing was checking it had
+# stayed true. `--expect-indexed` is a floor AND a ceiling, so this fails in
+# both directions - a change that stops writing the attribute and one that
+# starts writing it where a real binding sits are both caught.
+#
+# IT MEASURES THE IMPORTER ONLY, one pass, no lowering: the module ctjs-translate
+# writes for the bundle. That is deliberate - the figure is about what the
+# BOXED tier is handed, and the boxed tier sees the importer's output.
+if(TARGET ctjs-translate)
+  add_test(NAME ctcompile_capture_census_bootstrap
+           COMMAND ${CMAKE_COMMAND}
+                   -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
+                   -DJS=${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js
+                   -DCENSUS=${CTBROWSER_MONOREPO_ROOT}/tools/check/capture-census.py
+                   -DINDEXED=219
+                   -DOPERANDS=1021
+                   -DWORK=${CMAKE_CURRENT_BINARY_DIR}
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/check-capture-census.cmake)
+endif()

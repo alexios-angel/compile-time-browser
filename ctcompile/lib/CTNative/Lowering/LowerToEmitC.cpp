@@ -4503,10 +4503,20 @@ struct lowering {
             // hold exactly these placeholders, the module this pass writes
             // holds ZERO `emitc.constant` of 0x7FF8000000000000, and the
             // emitted C++ is byte for byte what slice 1b emitted when the same
-            // slot held a live ctjs.load_upvalue instead (both sha256
-            // 36b671c54ab13025b5a4d971181d221b24a4fc217fb3e24c70f422404a3c292d,
-            // 9,665 bytes). Erasing the placeholder in lift() would therefore
-            // buy nothing, which is why it is not erased there.
+            // slot held a live ctjs.load_upvalue instead.
+            //
+            // MEASURED BETWEEN 0bf7501 AND 384dbc6, and the citation matters
+            // because the figure does not reproduce on THIS tree: both of
+            // those commits emit 9,665 bytes, sha256 36b671c54ab13025b5a4d971
+            // 181d221b24a4fc217fb3e24c70f422404a3c292d, while the tree
+            // carrying this comment emits 9,668 - three bytes more, because
+            // the same commit's doc edit to native-nested-closure-fixture.js
+            // shifted the JS line numbers that go into the provenance
+            // comments. A bare number here would read as false to the next
+            // person who checked it.
+            //
+            // Erasing the placeholder in lift() would therefore buy nothing,
+            // which is why it is not erased there.
             if (llvm::isa<ec::ConstantOp, ec::LiteralOp, ctjs::FrameEnterOp, ctjs::LoadGlobalOp,
                           ctjs::ConstantOp, ctjs::CreateClosureOp, ctjs::CreateCellOp>(o)) {
                 dead.push_back(o);
