@@ -196,23 +196,136 @@ bool dom_bindings::dispatch_mouse(std::string_view type, node_id target,
     return dispatch_event(type, target, build(type, false)) || stopped;
 }
 
-bool dom_bindings::dispatch_event(std::string_view type, node_id target, value event) {
+// WHERE AN EVENT GOES, and it is not the node chain alone.
+//
+// The path is the target, then every ancestor, then the DOCUMENT and then the
+// WINDOW - and the last two are the reason this exists as a function. The
+// document is not in the node tree here: this tree builder makes the `<html>`
+// element the document's root and there is no Document node above it, so the
+// two objects a page listens on most have to be appended by hand.
+//
+// An EMPTY target is the document. `browser::tick` dispatches `load` and
+// `DOMContentLoaded` that way and testharness registers its error handler on the
+// window, so both buckets must still be reached; making the document the target
+// rather than the window is what keeps `document.addEventListener(
+// 'DOMContentLoaded', ...)` - the single most common listener on the web -
+// firing. The deviation is that a `load` listener on the document fires too,
+// where a browser fires that one at the window with the document only as the
+// event's target.
+std::vector<dom_bindings::path_step> dom_bindings::propagation_path(path_step at) const {
+    std::vector<path_step> path;
+    if (at.on == listen_on::node && at.node) {
+        const auto txn = doc_->read();
+        for (node_id walk = at.node; walk; walk = txn.parent(walk)) {
+            path.push_back(path_step{walk, listen_on::node});
+        }
+    }
+    if (at.on != listen_on::window) { path.push_back(path_step{node_id{}, listen_on::document}); }
+    path.push_back(path_step{node_id{}, listen_on::window});
+    return path;
+}
+
+// What `currentTarget` reports for one step, and what an `on<type>` handler is
+// looked up on. The window is the PROXY rather than the object behind it: a page
+// compares `evt.currentTarget === window` by identity, and `window` is the proxy.
+value dom_bindings::object_of_step(context & cx, path_step step) {
+    switch (step.on) {
+    case listen_on::node: return wrap(cx, step.node);
+    case listen_on::document: return document_;
+    case listen_on::window: return cx.has_global("window") ? cx.global("window") : window_;
+    }
+    return value::undefined();
+}
+
+namespace {
+
+// The propagation flags, kept on the event where the page can see them through
+// `cancelBubble`. Reading them back off the object rather than out of a local is
+// what makes `evt.stopPropagation()` BEFORE dispatch mean something - which is
+// exactly what dom/events/Event-dispatch-propagation-stopped.html does.
+constexpr std::string_view stop_immediate_property = "__stopImmediate";
+constexpr std::string_view cancel_bubble_property = "__cancelBubble";
+
+[[nodiscard]] bool flag_of(context & cx, value event, std::string_view name) {
+    return context::truthy(cx.lookup_property(event, std::string{name}));
+}
+
+} // namespace
+
+// THE DISPATCH ALGORITHM: capture down the path, then bubble back up.
+//
+// What changed from the old three-line version, and why each half is
+// load-bearing:
+//
+//   * `currentTarget` and `eventPhase` are set BEFORE each step's listeners run
+//     and cleared after the whole dispatch. They are the two properties a
+//     delegating page reads, and both read `undefined` before.
+//   * the propagation flags are checked BETWEEN steps, so stopPropagation stops
+//     the rest of the path, and the immediate flag is checked between listeners
+//     at one step.
+//   * an event whose `bubbles` is false runs the bubble pass at the TARGET only,
+//     which is the whole meaning of the flag.
+//   * `preventDefault` is honoured only when `cancelable`, which is the
+//     difference between a cancellable click and a `load` a page cannot refuse.
+bool dom_bindings::dispatch_to(value event, path_step at) {
+    if (cx_ == nullptr || !event.is_object()) { return false; }
     // BEFORE the listeners run. A handler for `input` reads the field's new
     // value, so a wrapper still holding the old one is the whole bug.
     (void)refresh_wrappers();
-    const auto txn = doc_->read();
-    // CAPTURE THEN BUBBLE, which is what the two phases mean.
-    //
-    // A capturing listener sees the event on the way DOWN - before the target
-    // does - and that is the entire reason to pass `{ capture: true }`: it is
-    // how a page intercepts an event before whatever it is aimed at handles it.
-    // Firing everything in one bubbling pass ran them in the opposite order.
-    std::vector<node_id> chain;
-    for (node_id at = target; at; at = txn.parent(at)) { chain.push_back(at); }
-    fire_global(type, event, true);
-    for (std::size_t i = chain.size(); i-- > 0;) { fire_at(chain[i], type, event, true); }
-    for (const node_id at : chain) { fire_at(at, type, event, false); }
-    fire_global(type, event, false);
+    context & cx = *cx_;
+    auto * object = static_cast<script::object_object *>(event.as_heap());
+    const std::string type = cx.to_string(cx.lookup_property(event, "type"));
+    const std::vector<path_step> path = propagation_path(at);
+
+    const value target_object = object_of_step(cx, at);
+    object->set("target", target_object);
+    // `srcElement` is the same object under the name IE gave it, and plenty of
+    // shipped code still reads it.
+    object->set("srcElement", target_object);
+    object->set(std::string{stop_immediate_property}, value::boolean(false));
+    // THE DISPATCH FLAG, which is what makes initEvent a no-op while the event
+    // is in flight and what a second, nested dispatch of the same object would
+    // have to refuse.
+    object->set("__dispatching", value::boolean(true));
+
+    const auto stopped = [&] { return flag_of(cx, event, cancel_bubble_property); };
+    const auto at_target = [&](path_step step) { return step.on == at.on && step.node == at.node; };
+    const auto phase = [&](path_step step, double otherwise) {
+        return value::number(at_target(step) ? 2 : otherwise);
+    };
+
+    // CAPTURE: from the window down to the target. The target's own capturing
+    // listeners run here, at phase AT_TARGET rather than CAPTURING_PHASE.
+    for (std::size_t i = path.size(); i-- > 0;) {
+        if (stopped()) { break; }
+        object->set("currentTarget", object_of_step(cx, path[i]));
+        object->set("eventPhase", phase(path[i], 1));
+        fire_at(path[i], type, event, true);
+    }
+    // BUBBLE: back up. A non-bubbling event gets this pass at the target only.
+    const bool bubbles = context::truthy(cx.lookup_property(event, "bubbles"));
+    for (const path_step & step : path) {
+        if (stopped()) { break; }
+        if (!bubbles && !at_target(step)) { break; }
+        object->set("currentTarget", object_of_step(cx, step));
+        object->set("eventPhase", phase(step, 3));
+        fire_at(step, type, event, false);
+    }
+
+    // AFTER THE DISPATCH the event is not travelling any more, and the two
+    // properties that say where it is have to say so - a page keeps the object
+    // and reads them later.
+    object->set("currentTarget", value::null());
+    object->set("eventPhase", value::number(0));
+    object->set("__dispatching", value::boolean(false));
+    // AND THE PROPAGATION FLAGS ARE UNSET - concept-event-dispatch step 14, and
+    // not a detail: the same event object is dispatched twice by plenty of code,
+    // and an engine that left the flag set made the second dispatch reach
+    // nobody. Clearing them HERE rather than on entry is what lets
+    // `stopPropagation()` called BEFORE a dispatch stop that dispatch, which is
+    // the other half of the same rule.
+    object->set(std::string{cancel_bubble_property}, value::boolean(false));
+    object->set(std::string{stop_immediate_property}, value::boolean(false));
     // A `once` listener is removed AFTER the dispatch, not during it: erasing
     // from the vector being walked is how a later listener gets skipped.
     std::erase_if(listeners_, [](const listener & l) { return l.spent; });
@@ -224,29 +337,165 @@ bool dom_bindings::dispatch_event(std::string_view type, node_id target, value e
     // ...and after an event, which is the other checkpoint a browser has: a
     // listener that resolves a promise has its handlers run before the next
     // event is dispatched, not at some later frame.
-    if (cx_ != nullptr) { cx_->drain_microtasks(); }
+    cx.drain_microtasks();
     note_callback_fault(type);
     return prevented(event);
 }
 
-value dom_bindings::make_event(context & cx, std::string_view type, node_id target) {
+bool dom_bindings::dispatch_event(std::string_view type, node_id target, value event) {
+    (void)type; // the event carries it; initEvent can have changed it since
+    return dispatch_to(event, target ? path_step{target, listen_on::node}
+                                     : path_step{node_id{}, listen_on::document});
+}
+
+value dom_bindings::make_event_object(context & cx, std::string_view type, bool bubbles,
+                                      bool cancelable) {
     auto * event = static_cast<script::object_object *>(cx.make_object().as_heap());
+    const value self = value::object(event);
+    if (event_prototype_.is_object()) { event->prototype = event_prototype_; }
     event->set("type", cx.string(std::string{type}));
-    event->set("target", wrap(cx, target));
+    event->set("target", value::null());
+    event->set("srcElement", value::null());
+    event->set("currentTarget", value::null());
+    event->set("eventPhase", value::number(0));
+    event->set("bubbles", value::boolean(bubbles));
+    event->set("cancelable", value::boolean(cancelable));
+    event->set("composed", value::boolean(false));
+    // NOT trusted: every event a page can reach through this constructor was
+    // made by the page. The engine's input events say so by overwriting it.
+    event->set("isTrusted", value::boolean(false));
+    event->set("timeStamp", value::number(now_ms_));
     event->set("defaultPrevented", value::boolean(false));
+    event->set(std::string{cancel_bubble_property}, value::boolean(false));
+    event->set(std::string{stop_immediate_property}, value::boolean(false));
+    event->set("__dispatching", value::boolean(false));
+
+    const auto method = [&](std::string name, script::native_fn fn) {
+        event->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+    };
     // One SHARED event object per dispatch, so preventDefault called by any
     // listener is visible to the browser and to every later listener - which
     // is what makes it mean anything at all.
-    event->set("preventDefault", value::object(cx.allocate<script::native_object>(
-                                     "preventDefault", [](context & c, std::span<value>) {
-                                         const value self = c.current_this();
-                                         if (self.is_object()) {
-                                             static_cast<script::object_object *>(self.as_heap())
-                                                 ->set("defaultPrevented", value::boolean(true));
-                                         }
-                                         return value::undefined();
-                                     })));
-    return value::object(event);
+    //
+    // CANCELABLE OR NOTHING HAPPENS. `preventDefault` on an uncancellable event
+    // is a no-op in every browser, and treating it as one is the difference
+    // between a page that can refuse a click and a page that can refuse a load.
+    method("preventDefault", [](context & c, std::span<value>) {
+        const value target = c.current_this();
+        if (target.is_object() && context::truthy(c.lookup_property(target, "cancelable"))) {
+            static_cast<script::object_object *>(target.as_heap())
+                ->set("defaultPrevented", value::boolean(true));
+        }
+        return value::undefined();
+    });
+    method("stopPropagation", [](context & c, std::span<value>) {
+        const value target = c.current_this();
+        if (target.is_object()) {
+            static_cast<script::object_object *>(target.as_heap())
+                ->set(std::string{cancel_bubble_property}, value::boolean(true));
+        }
+        return value::undefined();
+    });
+    // The IMMEDIATE flag stops the listeners at THIS step as well as the rest
+    // of the path, which is the only difference between the two and the reason
+    // both exist.
+    method("stopImmediatePropagation", [](context & c, std::span<value>) {
+        const value target = c.current_this();
+        if (target.is_object()) {
+            auto * o = static_cast<script::object_object *>(target.as_heap());
+            o->set(std::string{cancel_bubble_property}, value::boolean(true));
+            o->set(std::string{stop_immediate_property}, value::boolean(true));
+        }
+        return value::undefined();
+    });
+    // `initEvent` is how an event made by `document.createEvent` is given its
+    // type - createEvent hands back an event whose type is the empty string, and
+    // a page that never calls this dispatches an event named "".
+    method("initEvent", [](context & c, std::span<value> a) {
+        const value target = c.current_this();
+        if (!target.is_object()) { return value::undefined(); }
+        // THE TYPE IS MANDATORY. `initEvent()` with no argument is a TypeError
+        // in every browser, and answering it with an event named "undefined"
+        // would be a dispatch to nobody that looks like it worked.
+        if (a.empty()) {
+            c.throw_error("TypeError",
+                          "initEvent requires at least 1 argument, but only 0 were passed");
+            return value::undefined();
+        }
+        // DOES NOTHING WHILE THE EVENT IS BEING DISPATCHED. The specification
+        // returns early on the dispatch flag, and it is not a corner: a listener
+        // that re-initialises the event it was handed would otherwise rename it
+        // and reset its flags underneath the rest of the path.
+        if (context::truthy(c.lookup_property(target, "__dispatching"))) {
+            return value::undefined();
+        }
+        auto * o = static_cast<script::object_object *>(target.as_heap());
+        o->set("type", c.string(arg_string(c, a, 0)));
+        o->set("bubbles", value::boolean(a.size() > 1 && context::truthy(a[1])));
+        o->set("cancelable", value::boolean(a.size() > 2 && context::truthy(a[2])));
+        // AND CLEARS THE THREE FLAGS. initEvent re-initialises the event, which
+        // means the canceled flag AND both propagation flags - an event that has
+        // been stopped once must be usable again, and the suite dispatches the
+        // same object several times to check exactly that.
+        o->set("defaultPrevented", value::boolean(false));
+        o->set(std::string{cancel_bubble_property}, value::boolean(false));
+        o->set(std::string{stop_immediate_property}, value::boolean(false));
+        return value::undefined();
+    });
+
+    // `cancelBubble` AND `returnValue` are accessors rather than properties,
+    // because both are one-way: `cancelBubble = false` does NOT restart a
+    // stopped propagation and `returnValue = true` does not un-cancel an event.
+    // As data properties each would undo itself, and both are set by shipped
+    // code that expects the specified asymmetry.
+    const auto accessor = [&](std::string name, script::native_fn read, script::native_fn write) {
+        event->define_accessor(
+            name, value::object(cx.allocate<script::native_object>(name, std::move(read))),
+            value::object(cx.allocate<script::native_object>(name, std::move(write))));
+    };
+    accessor(
+        "cancelBubble",
+        [](context & c, std::span<value>) {
+            return value::boolean(
+                context::truthy(c.lookup_property(c.current_this(), "__cancelBubble")));
+        },
+        [](context & c, std::span<value> a) {
+            const value target = c.current_this();
+            if (target.is_object() && !a.empty() && context::truthy(a[0])) {
+                static_cast<script::object_object *>(target.as_heap())
+                    ->set("__cancelBubble", value::boolean(true));
+            }
+            return value::undefined();
+        });
+    accessor(
+        "returnValue",
+        [](context & c, std::span<value>) {
+            return value::boolean(
+                !context::truthy(c.lookup_property(c.current_this(), "defaultPrevented")));
+        },
+        [](context & c, std::span<value> a) {
+            const value target = c.current_this();
+            if (target.is_object() && !a.empty() && !context::truthy(a[0]) &&
+                context::truthy(c.lookup_property(target, "cancelable"))) {
+                static_cast<script::object_object *>(target.as_heap())
+                    ->set("defaultPrevented", value::boolean(true));
+            }
+            return value::undefined();
+        });
+    return self;
+}
+
+value dom_bindings::make_event(context & cx, std::string_view type, node_id target) {
+    // AN ENGINE EVENT BUBBLES AND CAN BE CANCELLED. Every event the browser
+    // generates here is one a page may refuse - a click, a key, a wheel notch -
+    // and the flags decide whether the bubble pass runs at all and whether
+    // preventDefault does anything, so getting them wrong is not cosmetic.
+    value event = make_event_object(cx, type, true, true);
+    auto * object = static_cast<script::object_object *>(event.as_heap());
+    object->set("isTrusted", value::boolean(true));
+    object->set("target", wrap(cx, target));
+    object->set("srcElement", wrap(cx, target));
+    return event;
 }
 
 bool dom_bindings::prevented(value event) {
@@ -262,10 +511,11 @@ bool dom_bindings::prevented(value event) {
 // `passive` is accepted and ignored, which is honest: it is a promise the
 // listener will not call preventDefault, and nothing here optimises on that
 // promise, so honouring it would change nothing observable.
-dom_bindings::listener dom_bindings::make_listener(context & cx, node_id target,
+dom_bindings::listener dom_bindings::make_listener(context & cx, path_step target,
                                                    std::span<value> args) {
     listener made;
-    made.target = target;
+    made.target = target.node;
+    made.on = target.on;
     made.type = arg_string(cx, args, 0);
     made.callback = arg(args, 1);
     const value options = arg(args, 2);
@@ -279,29 +529,25 @@ dom_bindings::listener dom_bindings::make_listener(context & cx, node_id target,
     return made;
 }
 
-void dom_bindings::fire_at(node_id target, std::string_view type, value event, bool capturing) {
+void dom_bindings::fire_at(path_step step, std::string_view type, value event, bool capturing) {
     // Indexed rather than iterated: a listener may register another one, and
     // appending to the vector being walked invalidates an iterator. A listener
     // added during a dispatch does not run in that dispatch, which is the rule.
     const std::size_t count = listeners_.size();
     for (std::size_t i = 0; i < count && i < listeners_.size(); ++i) {
+        // RE-READ THE FLAG EACH TIME. stopImmediatePropagation is defined by
+        // stopping the listeners that would have run next at this very step, so
+        // a check hoisted out of the loop implements the other method.
+        if (context::truthy(cx_->lookup_property(event, "__stopImmediate"))) { return; }
         listener & l = listeners_[i];
-        if (l.target != target || l.type != type || l.capture != capturing || l.spent) { continue; }
+        if (l.on != step.on || l.type != type || l.capture != capturing || l.spent) { continue; }
+        if (l.on == listen_on::node && l.target != step.node) { continue; }
         if (l.once) { l.spent = true; }
         (void)cx_->call(l.callback, std::span<const value>{&event, 1});
     }
-    if (!capturing) { fire_handler_property(value_of_wrapper(target), type, event); }
-}
-
-void dom_bindings::fire_global(std::string_view type, value event, bool capturing) {
-    const std::size_t count = listeners_.size();
-    for (std::size_t i = 0; i < count && i < listeners_.size(); ++i) {
-        listener & l = listeners_[i];
-        if (l.target || l.type != type || l.capture != capturing || l.spent) { continue; }
-        if (l.once) { l.spent = true; }
-        (void)cx_->call(l.callback, std::span<const value>{&event, 1});
+    if (!capturing && !context::truthy(cx_->lookup_property(event, "__stopImmediate"))) {
+        fire_handler_property(object_of_step(*cx_, step), type, event);
     }
-    if (!capturing) { fire_handler_property(window_, type, event); }
 }
 
 // `el.onclick = fn` - an EVENT HANDLER PROPERTY, which is the other half of the
@@ -325,6 +571,117 @@ void dom_bindings::fire_handler_property(value target, std::string_view type, va
     const value handler = cx_->lookup_property(target, "on" + std::string{type});
     if (!handler.is_callable()) { return; }
     (void)cx_->call(handler, std::span<const value>{&event, 1}, target);
+}
+
+// `Event`, `CustomEvent` and `EventTarget`, as real interface objects.
+//
+// THREE THINGS HAVE TO BE TRUE and only one of them was:
+//
+//   * `new Event("x", { bubbles: true })` produces an object dispatch honours -
+//     the old stub's preventDefault and stopPropagation were empty functions, so
+//     an event could be constructed, dispatched and cancelled with no effect
+//     whatsoever and nothing said so.
+//   * `e instanceof Event` and `e.constructor === Event` - the second is what
+//     testharness's assert_throws_dom and assert_class_string compare, and what
+//     a page uses to tell one event from another.
+//   * the phase constants are readable BOTH ways: `Event.AT_TARGET` off the
+//     constructor and `e.AT_TARGET` off the instance, which is why they go on
+//     the prototype as well.
+void dom_bindings::install_event_interfaces(context & cx) {
+    const auto phase_constants = [](auto * target) {
+        target->set("NONE", value::number(0));
+        target->set("CAPTURING_PHASE", value::number(1));
+        target->set("AT_TARGET", value::number(2));
+        target->set("BUBBLING_PHASE", value::number(3));
+    };
+
+    auto * event_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    event_prototype_ = value::object(event_proto);
+    phase_constants(event_proto);
+
+    // `{ bubbles, cancelable }` - the EventInit dictionary, and the two members
+    // that change what a dispatch does.
+    const auto init_flag = [](context & c, std::span<value> args, const char * name) {
+        return args.size() > 1 && args[1].is_object() &&
+               context::truthy(c.lookup_property(args[1], name));
+    };
+    auto * event_ctor = cx.allocate<script::native_object>(
+        "Event", [this, init_flag](context & c, std::span<value> args) {
+            return make_event_object(c, arg_string(c, args, 0), init_flag(c, args, "bubbles"),
+                                     init_flag(c, args, "cancelable"));
+        });
+    event_ctor->set("prototype", event_prototype_);
+    phase_constants(event_ctor);
+    event_proto->set("constructor", value::object(event_ctor));
+    cx.define_global("Event", value::object(event_ctor));
+
+    // CustomEvent adds ONE member, `detail`, and it is the whole reason the
+    // interface exists: it is how a page carries its own payload on an event.
+    auto * custom_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    custom_proto->prototype = event_prototype_;
+    custom_event_prototype_ = value::object(custom_proto);
+    auto * custom_ctor = cx.allocate<script::native_object>(
+        "CustomEvent", [this, init_flag](context & c, std::span<value> args) {
+            value made = make_event_object(c, arg_string(c, args, 0), init_flag(c, args, "bubbles"),
+                                           init_flag(c, args, "cancelable"));
+            auto * object = static_cast<script::object_object *>(made.as_heap());
+            object->prototype = custom_event_prototype_;
+            object->set("detail", args.size() > 1 && args[1].is_object()
+                                      ? c.lookup_property(args[1], "detail")
+                                      : value::null());
+            // The older spelling, which pages that predate the constructor use
+            // after document.createEvent("CustomEvent").
+            object->set(
+                "initCustomEvent",
+                value::object(cx_->allocate<script::native_object>(
+                    "initCustomEvent", [](context & inner, std::span<value> a) {
+                        const value self = inner.current_this();
+                        if (!self.is_object()) { return value::undefined(); }
+                        auto * o = static_cast<script::object_object *>(self.as_heap());
+                        o->set("type", inner.string(arg_string(inner, a, 0)));
+                        o->set("bubbles", value::boolean(a.size() > 1 && context::truthy(a[1])));
+                        o->set("cancelable", value::boolean(a.size() > 2 && context::truthy(a[2])));
+                        o->set("detail", arg(a, 3));
+                        return value::undefined();
+                    })));
+            return made;
+        });
+    custom_ctor->set("prototype", custom_event_prototype_);
+    custom_proto->set("constructor", value::object(custom_ctor));
+    cx.define_global("CustomEvent", value::object(custom_ctor));
+
+    // `EventTarget` is not constructible HERE, and the reason is worth stating
+    // rather than hiding: `new EventTarget()` in a browser makes a standalone
+    // object with its own listener list, and this engine's listener list is
+    // keyed on a node, the document or the window. Handing back an object that
+    // accepts addEventListener and never fires is the wrong answer twice over -
+    // so it throws, which is at least a truthful one, and feature detection
+    // (`typeof EventTarget`) still finds it.
+    auto * target_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * target_ctor =
+        cx.allocate<script::native_object>("EventTarget", [](context & c, std::span<value>) {
+            c.throw_error("TypeError",
+                          "Illegal constructor: EventTarget has no standalone form in this engine");
+            return value::undefined();
+        });
+    target_ctor->set("prototype", value::object(target_proto));
+    target_proto->set("constructor", value::object(target_ctor));
+    cx.define_global("EventTarget", value::object(target_ctor));
+
+    // `window.dispatchEvent`. The window is the LAST stop on every path, so
+    // dispatching AT it runs only the window's own listeners - which is what the
+    // old stub did by accident and this does on purpose.
+    if (auto * window = window_object()) {
+        window->set("dispatchEvent", value::object(cx.allocate<script::native_object>(
+                                         "dispatchEvent", [this](context &, std::span<value> args) {
+                                             const value event = arg(args, 0);
+                                             if (!event.is_object()) {
+                                                 return value::boolean(true);
+                                             }
+                                             return value::boolean(!dispatch_to(
+                                                 event, path_step{node_id{}, listen_on::window}));
+                                         })));
+    }
 }
 
 } // namespace ctbrowser::shell

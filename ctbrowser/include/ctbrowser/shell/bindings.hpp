@@ -225,8 +225,28 @@ private:
         bool repeating = false;
         bool cancelled = false;
     };
+    // WHICH EVENT TARGET A LISTENER IS ON. Two of the three are not nodes, and
+    // they used to share one bucket - `target` empty meant "the document or the
+    // window, we cannot tell". That was harmless while an event carried no
+    // `currentTarget`, and wrong the moment it did: a page that listens on both
+    // saw the same object reported for each, and `removeEventListener` on one
+    // could take the other's listener away.
+    enum class listen_on : std::uint8_t {
+        node,     // an element; `target` names it
+        document, // document.addEventListener
+        window    // window.addEventListener, and the bare global spelling
+    };
+
+    // One stop on the path an event travels. A node, or one of the two event
+    // targets that have no node.
+    struct path_step {
+        node_id node; // empty unless `on` is `node`
+        listen_on on = listen_on::node;
+    };
+
     struct listener {
-        node_id target; // empty = document/window
+        node_id target; // set only when `on` is `node`
+        listen_on on = listen_on::node;
         std::string type;
         value callback;
         // The AbortSignal this listener was registered with, if any. Aborting
@@ -303,7 +323,7 @@ private:
     // One reading of addEventListener's third argument, shared by the element,
     // document and window registrations - three copies is three chances for
     // `once` to work on one of them and not the others.
-    [[nodiscard]] listener make_listener(context & cx, node_id target, std::span<value> args);
+    [[nodiscard]] listener make_listener(context & cx, path_step target, std::span<value> args);
     // `innerHTML`. Setting one PARSES: the markup becomes real nodes under the
     // element, replacing whatever was there. It used to be a plain property on
     // the wrapper, so assigning markup stored a string, rendered nothing, and
@@ -614,15 +634,33 @@ private:
     // --- events -----------------------------------------------------------
 
     [[nodiscard]] value make_event(context & cx, std::string_view type, node_id target);
+    // The shared Event builder: everything `new Event`, `document.createEvent`
+    // and the engine's own input events have in common. `bubbles` and
+    // `cancelable` are the two flags that change what dispatch does.
+    [[nodiscard]] value make_event_object(context & cx, std::string_view type, bool bubbles,
+                                          bool cancelable);
+    // `Event`, `CustomEvent` and `EventTarget` as globals, and the prototype an
+    // event object is linked to so `instanceof` and the phase constants work.
+    void install_event_interfaces(context & cx);
+    // THE DISPATCH ALGORITHM, over a path rather than over a node chain. See the
+    // definition: capture from the window down, then bubble back up, with
+    // `currentTarget` and `eventPhase` set for each step and the propagation
+    // flags checked between them. Returns whether a listener cancelled it.
+    bool dispatch_to(value event, path_step at);
+    // Where an event aimed at `at` travels: the node and its ancestors, then the
+    // document, then the window - innermost first.
+    [[nodiscard]] std::vector<path_step> propagation_path(path_step at) const;
+    // The JavaScript object for one step, which is what `currentTarget` reports
+    // and what an `on<type>` handler property is looked up on.
+    [[nodiscard]] value object_of_step(context & cx, path_step step);
 
     [[nodiscard]] static bool prevented(value event);
 
-    void fire_at(node_id target, std::string_view type, value event, bool capturing);
+    void fire_at(path_step step, std::string_view type, value event, bool capturing);
 
     // `onclick`, `onload` - the handler PROPERTY, run after the listeners.
     void fire_handler_property(value target, std::string_view type, value event);
     [[nodiscard]] value value_of_wrapper(node_id id) const;
-    void fire_global(std::string_view type, value event, bool capturing);
 
     // --- lookups ----------------------------------------------------------
 
@@ -712,6 +750,12 @@ private:
     // that prototype linked. See interface_prototype().
     value canvas_element_prototype_;
     value image_element_prototype_;
+    // `Event.prototype` and `CustomEvent.prototype`. Every event object this
+    // engine makes is linked to one, which is what carries `e.constructor`,
+    // `e instanceof Event` and the four phase constants a page reads as
+    // `e.AT_TARGET` rather than as `Event.AT_TARGET`.
+    value event_prototype_;
+    value custom_event_prototype_;
     value canvas2d_prototype_;
     value webgl_prototype_;
     // A SEPARATE INTERFACE, not a subclass. `WebGL2RenderingContext` does not

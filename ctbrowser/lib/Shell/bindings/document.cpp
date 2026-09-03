@@ -110,6 +110,11 @@ void dom_bindings::register_roots(context & cx) {
             if (obj != nullptr) { mark(value::object(obj)); }
         }
         mark(blob_prototype_);
+        // Event.prototype and CustomEvent.prototype, for the same reason
+        // Blob.prototype is here: they are held on a global a page can delete,
+        // and an event whose prototype was collected stops being an Event.
+        mark(event_prototype_);
+        mark(custom_event_prototype_);
         mark(location_);
         mark(document_);
         mark(window_);
@@ -123,6 +128,9 @@ void dom_bindings::install(context & cx) {
     location_ = make_location(cx);
     install_document(cx);
     install_window(cx);
+    // AFTER install_window, which is where `window_` is assigned: this puts
+    // `dispatchEvent` on the window object.
+    install_event_interfaces(cx);
     // AFTER install_window: it defines the `window` proxy whose handler falls
     // back to the globals, which is what makes one bare global answer both
     // `getComputedStyle(el)` and `window.getComputedStyle(el)`.
@@ -217,7 +225,7 @@ void dom_bindings::install_document(context & cx) {
         return wrap(c, doc_->create_text(arg_string(c, args, 0)));
     });
     method("addEventListener", [this](context & c, std::span<value> args) {
-        listeners_.push_back(make_listener(c, node_id{}, args));
+        listeners_.push_back(make_listener(c, path_step{node_id{}, listen_on::document}, args));
         return value::undefined();
     });
     // THE OTHER HALF, WHICH THE DOCUMENT DID NOT HAVE.
@@ -235,7 +243,8 @@ void dom_bindings::install_document(context & cx) {
         const std::string type = arg_string(c, args, 0);
         const value callback = arg(args, 1);
         std::erase_if(listeners_, [&](const listener & l) {
-            return !l.target && l.type == type && l.callback.bits() == callback.bits();
+            return l.on == listen_on::document && l.type == type &&
+                   l.callback.bits() == callback.bits();
         });
         return value::undefined();
     });
@@ -264,6 +273,33 @@ void dom_bindings::install_document(context & cx) {
     method("getElementsByName", [this](context & c, std::span<value> args) {
         const std::string name = arg_string(c, args, 0);
         return make_live_collection(c, [this, name] { return all_by_name(name); });
+    });
+
+    // `document.createEvent(interface)` - the OLDER way to make an event, and
+    // still the way most of the DOM's own test suite makes one. It hands back an
+    // UNINITIALISED event: type "", bubbles false, cancelable false, to be given
+    // all three by `initEvent`. The interface name is matched loosely on
+    // purpose - "Event", "Events", "HTMLEvents", "UIEvents", "MouseEvent" and a
+    // dozen more all produce an Event here, because this engine has one event
+    // class and pretending otherwise would mean an interface hierarchy nothing
+    // reads. "CustomEvent" is the exception, because `detail` is observable.
+    method("createEvent", [this](context & c, std::span<value> args) {
+        const std::string want = ascii_lower_copy(arg_string(c, args, 0));
+        value made = make_event_object(c, "", false, false);
+        if (want == "customevent") {
+            auto * object = static_cast<script::object_object *>(made.as_heap());
+            object->prototype = custom_event_prototype_;
+            object->set("detail", value::null());
+        }
+        return made;
+    });
+    // `document.dispatchEvent`. The document is a stop on every path, so this
+    // runs the document's listeners and then the window's - which is what
+    // dispatching AT the document means.
+    method("dispatchEvent", [this](context &, std::span<value> args) {
+        const value event = arg(args, 0);
+        if (!event.is_object()) { return value::boolean(true); }
+        return value::boolean(!dispatch_to(event, path_step{node_id{}, listen_on::document}));
     });
 
     method("querySelector", [this](context & c, std::span<value> args) {
@@ -364,6 +400,12 @@ void dom_bindings::install_document(context & cx) {
         })));
 
     doc->set("body", wrap(cx, find_by_tag("body")));
+    // `document.head`, which was missing beside its two neighbours. It is where
+    // a page appends a <style> or a <script> it built, and where any code that
+    // walks the document from the top starts - and an undefined one is a
+    // TypeError on the first property read, not a missing feature a page can
+    // detect.
+    doc->set("head", wrap(cx, find_by_tag("head")));
     doc->set("documentElement", wrap(cx, find_by_tag("html")));
     document_ = value::object(doc);
     cx.define_global("document", document_);

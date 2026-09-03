@@ -1005,7 +1005,7 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
     });
     method("addEventListener", [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
-        if (id) { listeners_.push_back(make_listener(c, id, args)); }
+        if (id) { listeners_.push_back(make_listener(c, path_step{id, listen_on::node}, args)); }
         return value::undefined();
     });
     // The other half. The WINDOW could remove a listener and an element could
@@ -1013,6 +1013,20 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
     // it is removed - threw instead. (The comment here used to say the document
     // could too. It could not, and that was found the same way, one corpus
     // later: see install_document.)
+    // `element.dispatchEvent(event)` - the third of the three EventTarget
+    // methods, and the one that was missing. addEventListener and
+    // removeEventListener were here; nothing a page constructed could ever be
+    // sent anywhere, so a page could only ever RECEIVE events the engine made.
+    //
+    // It returns whether the event was NOT cancelled, which is the opposite of
+    // what the internal dispatch reports and is how a caller learns that a
+    // listener refused the default action.
+    method("dispatchEvent", [this](context & c, std::span<value> args) {
+        const node_id id = receiver(c);
+        const value event = arg(args, 0);
+        if (!id || !event.is_object()) { return value::boolean(true); }
+        return value::boolean(!dispatch_to(event, path_step{id, listen_on::node}));
+    });
     method("removeEventListener", [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         const std::string type = arg_string(c, args, 0);

@@ -335,6 +335,100 @@ void test_element_collections_are_live() {
     check(log[8] == "attr=true,false", "hasAttribute after removeAttribute: " + log[8]);
 }
 
+// An event travelling its whole path, which is the part that was missing.
+//
+// Dispatch used to be three lines: fire the global bucket, walk the ancestors,
+// fire the global bucket again. Nothing carried `currentTarget`, nothing carried
+// `eventPhase`, `stopPropagation` was a no-op, the document and the window were
+// one indistinguishable bucket, and nothing a page CONSTRUCTED could be
+// dispatched at all. Every one of those is asserted here.
+void test_events_travel_the_whole_path() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body><div id=outer><div id=inner></div></div><script>
+        var outer = document.getElementById('outer');
+        var inner = document.getElementById('inner');
+        var seen = [];
+        function note(name) {
+          return function (e) {
+            var where = e.currentTarget === window ? 'window'
+                      : e.currentTarget === document ? 'document'
+                      : e.currentTarget.id;
+            seen.push(name + ':' + e.eventPhase + ':' + where);
+          };
+        }
+        window.addEventListener('poke', note('w-cap'), true);
+        document.addEventListener('poke', note('d-cap'), true);
+        outer.addEventListener('poke', note('o-cap'), true);
+        inner.addEventListener('poke', note('i-cap'), true);
+        inner.addEventListener('poke', note('i'), false);
+        outer.addEventListener('poke', note('o'), false);
+        document.addEventListener('poke', note('d'), false);
+        window.addEventListener('poke', note('w'), false);
+
+        var evt = document.createEvent('Event');
+        console.log('fresh=' + evt.type + ',' + evt.bubbles + ',' + evt.cancelable +
+                    ',' + evt.eventPhase);
+        evt.initEvent('poke', true, true);
+        var ok = inner.dispatchEvent(evt);
+        console.log('path=' + seen.join('|'));
+        console.log('after=' + ok + ',' + evt.eventPhase + ',' + (evt.currentTarget === null) +
+                    ',' + evt.target.id + ',' + (evt.srcElement === evt.target));
+
+        // A NON-BUBBLING event still captures all the way down; only the bubble
+        // pass is cut to the target.
+        seen.length = 0;
+        inner.dispatchEvent(new Event('poke'));
+        console.log('nobubble=' + seen.join('|'));
+
+        // preventDefault needs `cancelable`, and dispatchEvent reports it.
+        inner.addEventListener('stop', function (e) { e.preventDefault(); }, false);
+        console.log('cancel=' + inner.dispatchEvent(new Event('stop', {cancelable: true})) +
+                    ',' + inner.dispatchEvent(new Event('stop')));
+
+        // stopPropagation ends the path after the step it was called on.
+        seen.length = 0;
+        inner.addEventListener('halt', note('i-halt'), false);
+        inner.addEventListener('halt', function (e) { e.stopPropagation(); }, false);
+        outer.addEventListener('halt', note('o-halt'), false);
+        inner.dispatchEvent(new Event('halt', {bubbles: true}));
+        console.log('halted=' + seen.join('|'));
+
+        // ... and stopImmediatePropagation ends it DURING the step.
+        seen.length = 0;
+        inner.addEventListener('halt2', function (e) { e.stopImmediatePropagation(); }, false);
+        inner.addEventListener('halt2', note('i-halt2'), false);
+        inner.dispatchEvent(new Event('halt2', {bubbles: true}));
+        console.log('immediate=' + seen.length);
+
+        var custom = new CustomEvent('mine', {detail: 7, bubbles: true});
+        var got = 0;
+        document.addEventListener('mine', function (e) { got = e.detail; });
+        inner.dispatchEvent(custom);
+        console.log('custom=' + got + ',' + (custom instanceof Event) +
+                    ',' + (custom.constructor === CustomEvent));
+        console.log('kinds=' + (evt instanceof Event) + ',' + (evt.constructor === Event) +
+                    ',' + Event.AT_TARGET + ',' + evt.BUBBLING_PHASE);
+      </script></body></html>)");
+    check(page.script_error().empty(), "the event script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() == 9, "every line was logged");
+    check(log[0] == "fresh=,false,false,0",
+          "createEvent hands back an uninitialised event: " + log[0]);
+    check(log[1] == "path=w-cap:1:window|d-cap:1:document|o-cap:1:outer|i-cap:2:inner|"
+                    "i:2:inner|o:3:outer|d:3:document|w:3:window",
+          "capture down to the target, then bubble back to the window: " + log[1]);
+    check(log[2] == "after=true,0,true,inner,true",
+          "the event stops travelling when the dispatch ends: " + log[2]);
+    check(log[3] == "nobubble=w-cap:1:window|d-cap:1:document|o-cap:1:outer|i-cap:2:inner|"
+                    "i:2:inner",
+          "a non-bubbling event reaches the target and stops: " + log[3]);
+    check(log[4] == "cancel=false,true", "preventDefault needs cancelable: " + log[4]);
+    check(log[5] == "halted=i-halt:2:inner", "stopPropagation ends the path: " + log[5]);
+    check(log[6] == "immediate=0", "stopImmediatePropagation ends the step: " + log[6]);
+    check(log[7] == "custom=7,true,true", "CustomEvent carries detail: " + log[7]);
+    check(log[8] == "kinds=true,true,2,3", "Event identity and the phase constants: " + log[8]);
+}
+
 // The canvas additions p5.js draws through: the transform family, ellipse and
 // Path2D. A Path2D is a RECORDING - built once and replayed by fill(path) or
 // stroke(path), which is how p5 draws every 2D shape.
@@ -2489,6 +2583,7 @@ int main() {
     test_reflected_attributes();
     test_tree_navigation();
     test_element_collections_are_live();
+    test_events_travel_the_whole_path();
     test_canvas_transform_and_paths();
     test_window_is_the_global_object();
     test_class_list_edits_the_attribute();

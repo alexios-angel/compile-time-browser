@@ -196,7 +196,7 @@ void dom_bindings::install_window(context & cx) {
     // already works exactly this way and says so.
     const value add_listener = value::object(cx.allocate<script::native_object>(
         "addEventListener", [this](context & c, std::span<value> args) {
-            listeners_.push_back(make_listener(c, node_id{}, args));
+            listeners_.push_back(make_listener(c, path_step{node_id{}, listen_on::window}, args));
             return value::undefined();
         }));
     const value remove_listener = value::object(cx.allocate<script::native_object>(
@@ -204,7 +204,8 @@ void dom_bindings::install_window(context & cx) {
             const std::string type = arg_string(c, args, 0);
             const value callback = arg(args, 1);
             std::erase_if(listeners_, [&](const listener & l) {
-                return !l.target && l.type == type && l.callback.bits() == callback.bits();
+                return l.on == listen_on::window && l.type == type &&
+                       l.callback.bits() == callback.bits();
             });
             return value::undefined();
         }));
@@ -777,47 +778,15 @@ void dom_bindings::install_window(context & cx) {
         return value::object(out);
     });
 
-    cx.define_native("Event", [](context & c, std::span<value> args) {
-        auto * event = static_cast<script::object_object *>(c.make_object().as_heap());
-        event->set("type", c.string(arg_string(c, args, 0)));
-        event->set("bubbles", value::boolean(false));
-        event->set("cancelable", value::boolean(false));
-        event->set("defaultPrevented", value::boolean(false));
-        event->set("target", value::null());
-        const auto no_op = [&](const char * name) {
-            event->set(name,
-                       value::object(c.allocate<script::native_object>(
-                           name, [](context &, std::span<value>) { return value::undefined(); })));
-        };
-        no_op("preventDefault");
-        no_op("stopPropagation");
-        no_op("stopImmediatePropagation");
-        return value::object(event);
-    });
-    window->set("dispatchEvent", value::object(cx.allocate<script::native_object>(
-                                     "dispatchEvent", [this](context & c, std::span<value> args) {
-                                         const value event = arg(args, 0);
-                                         const std::string type =
-                                             event.is_object()
-                                                 ? c.to_string(c.lookup_property(event, "type"))
-                                                 : c.to_string(event);
-                                         // COPIED before dispatch: a listener may add or remove
-                                         // one, and appending to the vector being walked
-                                         // invalidates it.
-                                         std::vector<value> callbacks;
-                                         for (const listener & l : listeners_) {
-                                             if (!l.target && l.type == type) {
-                                                 callbacks.push_back(l.callback);
-                                             }
-                                         }
-                                         const value one[1] = {event};
-                                         for (const value & callback : callbacks) {
-                                             if (callback.is_callable()) {
-                                                 (void)c.call(callback, one);
-                                             }
-                                         }
-                                         return value::boolean(true);
-                                     })));
+    // `Event`, `CustomEvent`, `EventTarget` and `window.dispatchEvent` USED TO
+    // BE HERE, and each was a stub that answered the shape of the question and
+    // not the question. `new Event(t)` made an object whose preventDefault and
+    // stopPropagation were no-ops; `window.dispatchEvent` called the window's
+    // own listeners and nothing else - no capture, no bubble, no path, no
+    // currentTarget, and no return value that meant anything. They are real now
+    // and live in install_event_interfaces beside the dispatch algorithm they
+    // depend on. `install` calls it AFTER this function, because
+    // `window.dispatchEvent` has to be set on a window object that exists.
 
     // `navigator`. A page reads it to decide what it is running in, and
     // `navigator.userAgent.replace(...)` on an absent navigator is undefined
