@@ -477,6 +477,75 @@ void test_a_standalone_event_target() {
     check(log[3] == "sub=9,true", "a subclass inherits the three methods: " + log[3]);
 }
 
+// The rest of the constructible DOM: a comment, a fragment, the five insertion
+// methods that take any number of arguments, cloneNode and contains. A page
+// could make an element and a text node and nothing else before this.
+void test_the_constructible_dom() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body><ul id=list><li id=b>B</li></ul><script>
+        function ids(el) {
+          var out = [];
+          for (var i = 0; i < el.children.length; i++) { out.push(el.children[i].id); }
+          return out.join('');
+        }
+        var list = document.getElementById('list');
+        var b = document.getElementById('b');
+
+        // A FRAGMENT IS FLATTENED BY INSERTION: its children move and it does
+        // not, which is the whole reason to build one.
+        var frag = document.createDocumentFragment();
+        var one = document.createElement('li'); one.id = 'c';
+        var two = document.createElement('li'); two.id = 'd';
+        frag.append(one, two);
+        console.log('frag=' + frag.nodeType + ',' + frag.nodeName + ',' +
+                    frag.childNodes.length);
+        list.append(frag);
+        console.log('flat=' + ids(list) + ',' + frag.childNodes.length +
+                    ',' + (list.contains(one)) + ',' + (list.contains(list)));
+
+        // prepend keeps the ARGUMENT order, and a string becomes a Text node.
+        var a = document.createElement('li'); a.id = 'a';
+        list.prepend(a, 'loose');
+        console.log('prepend=' + ids(list) + ',' + list.childNodes[1].nodeType +
+                    ',' + list.childNodes[1].data);
+
+        // before / after / replaceWith, relative to a child.
+        var z = document.createElement('li'); z.id = 'z';
+        b.before(z);
+        var y = document.createElement('li'); y.id = 'y';
+        b.after(y);
+        console.log('around=' + ids(list));
+        var w = document.createElement('li'); w.id = 'w';
+        y.replaceWith(w);
+        console.log('replaced=' + ids(list));
+
+        // A comment is a node with data, and it is not an element.
+        var note = document.createComment('hi');
+        list.append(note);
+        console.log('comment=' + note.nodeType + ',' + note.nodeName + ',' + note.data +
+                    ',' + (b.data === null) + ',' + list.children.length +
+                    ',' + list.childNodes.length);
+
+        // cloneNode: shallow keeps the attributes only, deep keeps the subtree,
+        // and neither is attached to anything.
+        var shallow = list.cloneNode(false);
+        var deep = list.cloneNode(true);
+        console.log('clone=' + shallow.id + ',' + shallow.childNodes.length +
+                    ',' + deep.childNodes.length + ',' + (deep.parentNode === null));
+      </script></body></html>)");
+    check(page.script_error().empty(), "the constructible-DOM script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() == 7, "every line was logged");
+    check(log[0] == "frag=11,#document-fragment,2", "a fragment holds nodes: " + log[0]);
+    check(log[1] == "flat=bcd,0,true,true", "inserting a fragment moves its children: " + log[1]);
+    check(log[2] == "prepend=abcd,3,loose", "prepend keeps argument order: " + log[2]);
+    check(log[3] == "around=azbycd", "before and after place a sibling: " + log[3]);
+    check(log[4] == "replaced=azbwcd", "replaceWith swaps one for another: " + log[4]);
+    check(log[5] == "comment=8,#comment,hi,true,6,8",
+          "a comment is a node and not an element: " + log[5]);
+    check(log[6] == "clone=list,0,8,true", "cloneNode is shallow or deep, and detached: " + log[6]);
+}
+
 // The canvas additions p5.js draws through: the transform family, ellipse and
 // Path2D. A Path2D is a RECORDING - built once and replayed by fill(path) or
 // stroke(path), which is how p5 draws every 2D shape.
@@ -2633,6 +2702,7 @@ int main() {
     test_element_collections_are_live();
     test_events_travel_the_whole_path();
     test_a_standalone_event_target();
+    test_the_constructible_dom();
     test_canvas_transform_and_paths();
     test_window_is_the_global_object();
     test_class_list_edits_the_attribute();

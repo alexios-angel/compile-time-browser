@@ -353,6 +353,21 @@ private:
     // The scratch document a fragment is parsed into shares this atom table, so
     // a tag or attribute name needs no remapping.
     node_id copy_subtree(const read_txn & from, node_id node, node_id parent);
+    // `cloneNode(deep)`: a DETACHED copy, which is what makes it different from
+    // copy_subtree above - that one exists to move a parsed fragment into this
+    // document and needs somewhere to put it.
+    node_id clone_node(const read_txn & from, node_id source, bool deep);
+    // Insert `child` into `parent`, before `before` or at the end when `before`
+    // is empty, FLATTENING a DocumentFragment: inserting one moves its children
+    // and leaves the fragment itself empty and parentless. Every insertion
+    // method goes through here, because a fragment is legal at every one of them
+    // and handling it at four call sites is three chances to forget.
+    bool insert_node(node_id parent, node_id child, node_id before);
+    // One argument of append/prepend/before/after/replaceWith, as a node. A
+    // wrapper resolves to its node; ANYTHING ELSE becomes a Text node, which is
+    // what makes `el.append("hello")` work and is the whole reason those methods
+    // are nicer than appendChild.
+    [[nodiscard]] node_id node_from(context & cx, value v);
     [[nodiscard]] std::string text_content(node_id target) const;
     void write_location_parts(context & cx, script::object_object & loc);
     // `element.style` and `element.classList` - the two views onto an element

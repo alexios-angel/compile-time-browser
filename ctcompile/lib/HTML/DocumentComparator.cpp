@@ -21,6 +21,11 @@ namespace {
     case node_kind::element: return "element";
     case node_kind::text: return "#text";
     case node_kind::comment: return "#comment";
+    // Added with node_kind::document_fragment (DOM change, 2026-09-02). A
+    // parsed document never contains one - insertion flattens a fragment - so
+    // this arm exists to keep the switch exhaustive rather than because a
+    // comparison can reach it.
+    case node_kind::document_fragment: return "#document-fragment";
     }
     return "?";
 }

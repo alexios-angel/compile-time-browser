@@ -40,7 +40,13 @@ enum class node_kind : std::uint8_t {
     document,
     element,
     text,
-    comment
+    comment,
+    // A DocumentFragment: a parentless bag of nodes that a script fills and
+    // then inserts, at which point its CHILDREN move and the fragment itself
+    // does not. It never reaches style or layout - insertion flattens it - so
+    // nothing downstream has to learn about it; what it buys is the one idiom
+    // that makes building a list cheap, `frag.append(a, b, c); ul.append(frag)`.
+    document_fragment
 };
 
 // Which language an element is written in. HTML and SVG share a document but

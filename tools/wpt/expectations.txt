@@ -10,7 +10,7 @@
 # lie. Re-run with --update-expectations to record a change deliberately.
 #
 # wpt 3f6b09ae3ed55280074645ce38e9002f52fc60a8
-# css/css-values re-measured on 2026-09-03; 14467 line(s) carried over from suites this run did not touch
+# css/cssom re-measured on 2026-09-03; 14779 line(s) carried over from suites this run did not touch
 
 css/css-values/acos-asin-atan-atan2-computed.html	HARNESS_ERROR
 css/css-values/acos-asin-atan-atan2-invalid.html	HARNESS_ERROR
@@ -2174,7 +2174,6 @@ css/cssom/css-style-attr-decl-block.html	SUBTEST	FAIL	"Changes to CSS declaratio
 css/cssom/css-style-attr-decl-block.html	SUBTEST	FAIL	"Changes to CSS declaration block should queue mutation record for style attribute"
 css/cssom/css-style-attr-decl-block.html	SUBTEST	FAIL	"Changes to CSS declaration block should reflect on style attribute"
 css/cssom/css-style-attr-decl-block.html	SUBTEST	FAIL	"Changes to style attribute should reflect on CSS declaration block"
-css/cssom/css-style-attr-decl-block.html	SUBTEST	FAIL	"Expansion of all:unset and all:revert treated identically"
 css/cssom/css-style-attr-decl-block.html	SUBTEST	FAIL	"Removing non-existing property or setting invalid value on CSS declaration block shouldn't queue mutation record"
 css/cssom/css-style-attr-decl-block.html	SUBTEST	FAIL	"Style attribute should create CSS declaration block based on its content"
 css/cssom/css-style-declaration-modifications.html	HARNESS_ERROR
@@ -3560,7 +3559,6 @@ dom/events/Event-dispatch-bubbles-true.html	SUBTEST	FAIL	"In new Document()"
 dom/events/Event-dispatch-bubbles-true.html	SUBTEST	FAIL	"In window.document with click event"
 dom/events/Event-dispatch-bubbles-true.html	SUBTEST	FAIL	"In window.document with load event"
 dom/events/Event-dispatch-bubbles-true.html	SUBTEST	FAIL	"In window.document.cloneNode(true)"
-dom/events/Event-dispatch-click.html	FAIL
 dom/events/Event-dispatch-click.html	SUBTEST	FAIL	"basic with click()"
 dom/events/Event-dispatch-click.html	SUBTEST	FAIL	"basic with dispatchEvent()"
 dom/events/Event-dispatch-click.html	SUBTEST	FAIL	"disabled checkbox should be checked from dispatchEvent(new MouseEvent(\"click\"))"
@@ -3575,10 +3573,6 @@ dom/events/Event-dispatch-click.html	SUBTEST	FAIL	"disabled radio should get leg
 dom/events/Event-dispatch-click.html	SUBTEST	FAIL	"disabled radio should get legacy-canceled-activation behavior"
 dom/events/Event-dispatch-click.html	SUBTEST	FAIL	"disabled radio still has activation behavior"
 dom/events/Event-dispatch-click.html	SUBTEST	FAIL	"disabled submit button should not activate"
-dom/events/Event-dispatch-click.html	SUBTEST	FAIL	"disabling checkbox in onclick listener shouldn't suppress onchange"
-dom/events/Event-dispatch-click.html	SUBTEST	FAIL	"disabling checkbox in onclick listener shouldn't suppress oninput"
-dom/events/Event-dispatch-click.html	SUBTEST	FAIL	"disabling radio in onclick listener shouldn't suppress onchange"
-dom/events/Event-dispatch-click.html	SUBTEST	FAIL	"disabling radio in onclick listener shouldn't suppress oninput"
 dom/events/Event-dispatch-click.html	SUBTEST	FAIL	"disconnected checkbox should be checked from dispatchEvent(new MouseEvent('click'))"
 dom/events/Event-dispatch-click.html	SUBTEST	FAIL	"disconnected checkbox should be checked"
 dom/events/Event-dispatch-click.html	SUBTEST	FAIL	"disconnected form should not submit"
@@ -3593,6 +3587,9 @@ dom/events/Event-dispatch-click.html	SUBTEST	FAIL	"pick the first with activatio
 dom/events/Event-dispatch-click.html	SUBTEST	FAIL	"redispatch during post-click handling"
 dom/events/Event-dispatch-click.html	SUBTEST	FAIL	"submit button should not activate if the event listener disables it"
 dom/events/Event-dispatch-click.html	SUBTEST	FAIL	"submit button that morphed from checkbox should not activate"
+dom/events/Event-dispatch-click.html	SUBTEST	TIMEOUT	"disabling checkbox in onclick listener shouldn't suppress oninput"
+dom/events/Event-dispatch-click.html	SUBTEST	TIMEOUT	"disabling radio in onclick listener shouldn't suppress oninput"
+dom/events/Event-dispatch-click.html	TIMEOUT
 dom/events/Event-dispatch-click.tentative.html	FAIL
 dom/events/Event-dispatch-click.tentative.html	SUBTEST	FAIL	"checkbox morphed into another type should not mutate checked state"
 dom/events/Event-dispatch-click.tentative.html	SUBTEST	FAIL	"disabled checkbox should not be checked from label click by dispatchEvent"
@@ -3697,8 +3694,8 @@ dom/events/Event-subclasses-constructors.html	SUBTEST	FAIL	"WheelEvent construct
 dom/events/Event-subclasses-constructors.html	SUBTEST	FAIL	"WheelEvent constructor (no argument)"
 dom/events/Event-subclasses-constructors.html	SUBTEST	FAIL	"WheelEvent constructor (null argument)"
 dom/events/Event-subclasses-constructors.html	SUBTEST	FAIL	"WheelEvent constructor (undefined argument)"
-dom/events/Event-timestamp-cross-realm-getter.html	FAIL
-dom/events/Event-timestamp-cross-realm-getter.html	SUBTEST	FAIL	""
+dom/events/Event-timestamp-cross-realm-getter.html	SUBTEST	TIMEOUT	""
+dom/events/Event-timestamp-cross-realm-getter.html	TIMEOUT
 dom/events/Event-timestamp-high-resolution.html	FAIL
 dom/events/Event-timestamp-high-resolution.html	SUBTEST	FAIL	"Constructed FocusEvent timestamp should be high resolution and have the same time origin as performance.now()"
 dom/events/Event-timestamp-high-resolution.html	SUBTEST	FAIL	"Constructed KeyboardEvent timestamp should be high resolution and have the same time origin as performance.now()"
@@ -3798,8 +3795,6 @@ dom/events/event-global.html	SUBTEST	FAIL	"window.event is undefined inside wind
 dom/events/focus-event-document-move.html	SKIP	testdriver: needs WebDriver input injection
 dom/events/handler-count.html	SKIP	variant: the driver opens a file and has no query string
 dom/events/keypress-dispatch-crash.html	SKIP	not a testharness test
-dom/events/label-default-action.html	FAIL
-dom/events/label-default-action.html	SUBTEST	FAIL	"Label default action should not trigger when clicked button removes itself"
 dom/events/legacy-pre-activation-behavior.window.js	FAIL
 dom/events/legacy-pre-activation-behavior.window.js	SUBTEST	FAIL	"Use NONE phase during legacy-pre-activation behavior"
 dom/events/mouse-event-retarget.html	FAIL
@@ -4092,9 +4087,58 @@ dom/nodes/CharacterData-surrogates.html	SUBTEST	FAIL	"Text.deleteData() splittin
 dom/nodes/CharacterData-surrogates.html	SUBTEST	FAIL	"Text.insertData() splitting and creating surrogate pairs"
 dom/nodes/CharacterData-surrogates.html	SUBTEST	FAIL	"Text.replaceData() splitting and creating surrogate pairs"
 dom/nodes/CharacterData-surrogates.html	SUBTEST	FAIL	"Text.substringData() splitting surrogate pairs"
-dom/nodes/ChildNode-after.html	HARNESS_ERROR
-dom/nodes/ChildNode-before.html	HARNESS_ERROR
-dom/nodes/ChildNode-replaceWith.html	HARNESS_ERROR
+dom/nodes/ChildNode-after.html	FAIL
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Comment.after() on a child without any parent."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Comment.after() when pre-insert behaves like append."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Comment.after() with all siblings of child as arguments."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Comment.after() with context object itself and node as the arguments, switching positions."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Comment.after() with context object itself as the argument."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Comment.after() with null as an argument."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Comment.after() with one element and text as arguments."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Comment.after() with one sibling of child and text as arguments."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Comment.after() with only one element as an argument."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Comment.after() with only text as an argument."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Comment.after() with some siblings of child as arguments; no changes in tree."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Comment.after() with the empty string as an argument."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Comment.after() with undefined as an argument."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Comment.after() without any argument."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Comment.before() with some siblings of child as arguments; no changes in tree; viable sibling is first child."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Element.after() on a child without any parent."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Element.after() with all siblings of child as arguments."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Element.after() with one sibling of child and text as arguments."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Element.after() with some siblings of child as arguments; no changes in tree."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Element.after() with the empty string as an argument."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Element.before() with some siblings of child as arguments; no changes in tree; viable sibling is first child."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Text.after() on a child without any parent."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Text.after() with all siblings of child as arguments."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Text.after() with one sibling of child and text as arguments."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Text.after() with some siblings of child as arguments; no changes in tree."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Text.after() with the empty string as an argument."
+dom/nodes/ChildNode-after.html	SUBTEST	FAIL	"Text.before() with some siblings of child as arguments; no changes in tree; viable sibling is first child."
+dom/nodes/ChildNode-before.html	FAIL
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Comment.before() on a child without any parent."
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Comment.before() when pre-insert behaves like prepend."
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Comment.before() with all siblings of child as arguments."
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Comment.before() with context object itself and node as the arguments, switching positions."
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Comment.before() with context object itself as the argument."
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Comment.before() with null as an argument."
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Comment.before() with one element and text as arguments."
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Comment.before() with one sibling of child and text as arguments."
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Comment.before() with only one element as an argument."
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Comment.before() with only text as an argument."
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Comment.before() with some siblings of child as arguments; no changes in tree."
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Comment.before() with some siblings of child as arguments; no changes in tree; viable sibling is first child."
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Comment.before() with the empty string as an argument."
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Comment.before() with undefined as an argument."
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Comment.before() without any argument."
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Element.before() on a child without any parent."
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Element.before() with the empty string as an argument."
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Text.before() on a child without any parent."
+dom/nodes/ChildNode-before.html	SUBTEST	FAIL	"Text.before() with the empty string as an argument."
+dom/nodes/ChildNode-replaceWith.html	FAIL
+dom/nodes/ChildNode-replaceWith.html	SUBTEST	FAIL	"Comment.replaceWith() with one sibling of child and child itself as arguments."
+dom/nodes/ChildNode-replaceWith.html	SUBTEST	FAIL	"Element.replaceWith() with one sibling of child and child itself as arguments."
+dom/nodes/ChildNode-replaceWith.html	SUBTEST	FAIL	"Text.replaceWith() with one sibling of child and child itself as arguments."
 dom/nodes/Comment-constructor.html	SUBTEST	FAIL	"new Comment(): 42"
 dom/nodes/Comment-constructor.html	SUBTEST	FAIL	"new Comment(): \"&amp;\""
 dom/nodes/Comment-constructor.html	SUBTEST	FAIL	"new Comment(): \"-->\""
@@ -6266,8 +6310,42 @@ dom/nodes/Element-getElementsByClassName.html	SUBTEST	FAIL	"Interface should be 
 dom/nodes/Element-getElementsByClassName.html	SUBTEST	FAIL	"getElementsByClassName() should be a live collection"
 dom/nodes/Element-getElementsByTagName-change-document-HTMLNess.html	SUBTEST	NOTRUN	""
 dom/nodes/Element-getElementsByTagName-change-document-HTMLNess.html	TIMEOUT
-dom/nodes/Element-getElementsByTagName.html	HARNESS_ERROR
-dom/nodes/Element-getElementsByTagNameNS.html	HARNESS_ERROR
+dom/nodes/Element-getElementsByTagName.html	FAIL
+dom/nodes/Element-getElementsByTagName.html	SUBTEST	FAIL	"Element in HTML namespace, no prefix, non-ascii characters in name"
+dom/nodes/Element-getElementsByTagName.html	SUBTEST	FAIL	"Element in HTML namespace, prefix, non-ascii characters in name"
+dom/nodes/Element-getElementsByTagName.html	SUBTEST	FAIL	"Element in non-HTML namespace, no prefix, lowercase name"
+dom/nodes/Element-getElementsByTagName.html	SUBTEST	FAIL	"Element in non-HTML namespace, no prefix, uppercase name"
+dom/nodes/Element-getElementsByTagName.html	SUBTEST	FAIL	"Element in non-HTML namespace, non-ascii characters in name"
+dom/nodes/Element-getElementsByTagName.html	SUBTEST	FAIL	"Element in non-HTML namespace, prefix, lowercase name"
+dom/nodes/Element-getElementsByTagName.html	SUBTEST	FAIL	"Element in non-HTML namespace, prefix, non-ascii characters in name"
+dom/nodes/Element-getElementsByTagName.html	SUBTEST	FAIL	"Element in non-HTML namespace, prefix, uppercase name"
+dom/nodes/Element-getElementsByTagName.html	SUBTEST	FAIL	"HTML element with uppercase tagName never matches in HTML Documents"
+dom/nodes/Element-getElementsByTagName.html	SUBTEST	FAIL	"Interfaces"
+dom/nodes/Element-getElementsByTagName.html	SUBTEST	FAIL	"Matching the context object"
+dom/nodes/Element-getElementsByTagName.html	SUBTEST	FAIL	"Should be able to set expando shadowing a proto prop (item)"
+dom/nodes/Element-getElementsByTagName.html	SUBTEST	FAIL	"Should be able to set expando shadowing a proto prop (namedItem)"
+dom/nodes/Element-getElementsByTagName.html	SUBTEST	FAIL	"Shouldn't be able to set unsigned properties on a HTMLCollection (non-strict mode)"
+dom/nodes/Element-getElementsByTagName.html	SUBTEST	FAIL	"Shouldn't be able to set unsigned properties on a HTMLCollection (strict mode)"
+dom/nodes/Element-getElementsByTagName.html	SUBTEST	FAIL	"getElementsByTagName('*')"
+dom/nodes/Element-getElementsByTagName.html	SUBTEST	FAIL	"getElementsByTagName() should be a live collection"
+dom/nodes/Element-getElementsByTagName.html	SUBTEST	FAIL	"hasOwnProperty, getOwnPropertyDescriptor, getOwnPropertyNames"
+dom/nodes/Element-getElementsByTagNameNS.html	FAIL
+dom/nodes/Element-getElementsByTagNameNS.html	SUBTEST	FAIL	""
+dom/nodes/Element-getElementsByTagNameNS.html	SUBTEST	FAIL	"ABC element in html namespace"
+dom/nodes/Element-getElementsByTagNameNS.html	SUBTEST	FAIL	"A\u00c3\u0087, case sensitivity"
+dom/nodes/Element-getElementsByTagNameNS.html	SUBTEST	FAIL	"BODY element in test namespace, no prefix"
+dom/nodes/Element-getElementsByTagNameNS.html	SUBTEST	FAIL	"BODY element in test namespace, prefix"
+dom/nodes/Element-getElementsByTagNameNS.html	SUBTEST	FAIL	"Empty lists"
+dom/nodes/Element-getElementsByTagNameNS.html	SUBTEST	FAIL	"Empty string namespace"
+dom/nodes/Element-getElementsByTagNameNS.html	SUBTEST	FAIL	"Matching the context object (specific namespace)"
+dom/nodes/Element-getElementsByTagNameNS.html	SUBTEST	FAIL	"Matching the context object (wildcard namespace)"
+dom/nodes/Element-getElementsByTagNameNS.html	SUBTEST	FAIL	"abc element in html namespace"
+dom/nodes/Element-getElementsByTagNameNS.html	SUBTEST	FAIL	"body element in test namespace, no prefix"
+dom/nodes/Element-getElementsByTagNameNS.html	SUBTEST	FAIL	"body element in test namespace, prefix"
+dom/nodes/Element-getElementsByTagNameNS.html	SUBTEST	FAIL	"getElementsByTagNameNS('*', '*')"
+dom/nodes/Element-getElementsByTagNameNS.html	SUBTEST	FAIL	"getElementsByTagNameNS('*', 'body')"
+dom/nodes/Element-getElementsByTagNameNS.html	SUBTEST	FAIL	"getElementsByTagNameNS('http://www.w3.org/1999/xhtml', '*')"
+dom/nodes/Element-getElementsByTagNameNS.html	SUBTEST	FAIL	"getElementsByTagNameNS() should be a live collection"
 dom/nodes/Element-hasAttribute.html	FAIL
 dom/nodes/Element-hasAttribute.html	SUBTEST	FAIL	"hasAttribute should check for attribute presence, irrespective of namespace"
 dom/nodes/Element-hasAttributes.html	FAIL
@@ -6390,17 +6468,47 @@ dom/nodes/MutationObserver-characterData.html	SUBTEST	FAIL	"characterData Text.i
 dom/nodes/MutationObserver-characterData.html	SUBTEST	FAIL	"characterData Text.replaceData: empty mutation"
 dom/nodes/MutationObserver-characterData.html	SUBTEST	FAIL	"characterData Text.replaceData: simple mutation"
 dom/nodes/MutationObserver-characterData.html	SUBTEST	FAIL	"characterData/characterDataOldValue alone Text.data: simple mutation"
-dom/nodes/MutationObserver-childList.html	HARNESS_ERROR
+dom/nodes/MutationObserver-childList.html	FAIL
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"Range (r100) is created"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"Range (r70) is created"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"Range (r71) is created"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"Range (r80) is created"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"Range (r81) is created"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"Range (r90) is created"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"Range (r91) is created"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.appendChild: addition mutation"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.appendChild: addition outside document tree mutation"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.appendChild: fragment addition mutations"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.appendChild: fragment removal mutations"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.appendChild: removal and addition mutations"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.appendChild: removal mutation"
 dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.insertBefore: addition mutation"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.insertBefore: fragment addition mutations"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.insertBefore: fragment removal mutations"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.insertBefore: last child addition mutation"
 dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.insertBefore: removal and addition mutations"
 dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.insertBefore: removal mutation"
 dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.nodeValue: no mutation"
 dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.normalize mutation"
 dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.normalize mutations"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.removeChild: removal mutation"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.replaceChild: internal replacement mutation"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.replaceChild: removal mutation"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.replaceChild: replacement mutation"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.replaceChild: self internal replacement mutation"
 dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.textContent: empty string mutation"
 dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.textContent: no previous content mutation"
 dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.textContent: replace content mutation"
 dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Node.textContent: textContent no mutation"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList ParentNode.replaceChildren: move an existing child"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList ParentNode.replaceChildren: self replacement of only child"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Range.deleteContents: child and data removal mutation"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Range.deleteContents: child removal mutation"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Range.extractContents: child and data removal mutation"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Range.extractContents: child removal mutation"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Range.insertNode: child insertion mutation"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Range.insertNode: children insertion mutation"
+dom/nodes/MutationObserver-childList.html	SUBTEST	FAIL	"childList Range.surroundContents: children removal and addition mutation"
 dom/nodes/MutationObserver-cross-realm-callback-report-exception.html	SUBTEST	TIMEOUT	""
 dom/nodes/MutationObserver-cross-realm-callback-report-exception.html	TIMEOUT
 dom/nodes/MutationObserver-disconnect.html	FAIL
@@ -6445,8 +6553,11 @@ dom/nodes/Node-appendChild.html	FAIL
 dom/nodes/Node-appendChild.html	SUBTEST	FAIL	"Adopting a non-orphan"
 dom/nodes/Node-appendChild.html	SUBTEST	FAIL	"Adopting an orphan"
 dom/nodes/Node-appendChild.html	SUBTEST	FAIL	"Appending a document"
+dom/nodes/Node-appendChild.html	SUBTEST	FAIL	"Appending null to a comment"
+dom/nodes/Node-appendChild.html	SUBTEST	FAIL	"Appending null to a doctype"
 dom/nodes/Node-appendChild.html	SUBTEST	FAIL	"Appending null to a text node"
-dom/nodes/Node-appendChild.html	SUBTEST	FAIL	"Appending to a leaf node."
+dom/nodes/Node-appendChild.html	SUBTEST	FAIL	"Appending to a comment"
+dom/nodes/Node-appendChild.html	SUBTEST	FAIL	"Appending to a doctype"
 dom/nodes/Node-appendChild.html	SUBTEST	FAIL	"Appending to a text node"
 dom/nodes/Node-appendChild.html	SUBTEST	FAIL	"WebIDL tests"
 dom/nodes/Node-baseURI.html	FAIL
@@ -6455,8 +6566,6 @@ dom/nodes/Node-baseURI.html	SUBTEST	FAIL	"For attributes in elements belonging t
 dom/nodes/Node-baseURI.html	SUBTEST	FAIL	"For attributes in elements belonging to document, baseURI should be document URL"
 dom/nodes/Node-baseURI.html	SUBTEST	FAIL	"For attributes in elements unassigned to document, baseURI should be document URL"
 dom/nodes/Node-baseURI.html	SUBTEST	FAIL	"For attributes unassigned to element, baseURI should be document URL"
-dom/nodes/Node-baseURI.html	SUBTEST	FAIL	"For elements belonging to document fragments in document, baseURI should be document URL"
-dom/nodes/Node-baseURI.html	SUBTEST	FAIL	"For elements belonging to document fragments, baseURI should be document URL"
 dom/nodes/Node-childNodes-cache-2.html	FAIL
 dom/nodes/Node-childNodes-cache-2.html	SUBTEST	FAIL	""
 dom/nodes/Node-childNodes.html	FAIL
@@ -6477,7 +6586,11 @@ dom/nodes/Node-cloneNode-document-with-doctype.html	SUBTEST	FAIL	"Created with t
 dom/nodes/Node-cloneNode-external-stylesheet-no-bc.sub.html	FAIL
 dom/nodes/Node-cloneNode-external-stylesheet-no-bc.sub.html	SUBTEST	FAIL	""
 dom/nodes/Node-cloneNode-on-inactive-document-crash.html	SKIP	not a testharness test
-dom/nodes/Node-cloneNode-svg.html	HARNESS_ERROR
+dom/nodes/Node-cloneNode-svg.html	FAIL
+dom/nodes/Node-cloneNode-svg.html	SUBTEST	FAIL	"cloned <svg> should have the right properties"
+dom/nodes/Node-cloneNode-svg.html	SUBTEST	FAIL	"cloned <svg>'s xmlns:xlink attribute should have the right properties"
+dom/nodes/Node-cloneNode-svg.html	SUBTEST	FAIL	"cloned <use> should have the right properties"
+dom/nodes/Node-cloneNode-svg.html	SUBTEST	FAIL	"cloned <use>'s xlink:href attribute should have the right properties"
 dom/nodes/Node-cloneNode.html	FAIL
 dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"Node with custom prototype"
 dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"createAttribute"
@@ -6503,7 +6616,6 @@ dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"createElement(blockquote)"
 dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"createElement(body)"
 dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"createElement(br)"
 dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"createElement(button)"
-dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"createElement(canvas)"
 dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"createElement(caption)"
 dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"createElement(center)"
 dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"createElement(cite)"
@@ -6543,7 +6655,6 @@ dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"createElement(hr)"
 dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"createElement(html)"
 dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"createElement(i)"
 dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"createElement(iframe)"
-dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"createElement(img)"
 dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"createElement(input)"
 dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"createElement(ins)"
 dom/nodes/Node-cloneNode.html	SUBTEST	FAIL	"createElement(isindex)"
@@ -6684,6 +6795,24 @@ dom/nodes/Node-isSameNode.html	SUBTEST	FAIL	"elements should be compared on refe
 dom/nodes/Node-isSameNode.html	SUBTEST	FAIL	"processing instructions should be compared on reference"
 dom/nodes/Node-isSameNode.html	SUBTEST	FAIL	"text nodes should be compared on reference"
 dom/nodes/Node-lookupNamespaceURI.html	HARNESS_ERROR
+dom/nodes/Node-lookupNamespaceURI.html	SUBTEST	FAIL	"DocumentFragment is in default namespace, prefix \"\""
+dom/nodes/Node-lookupNamespaceURI.html	SUBTEST	FAIL	"DocumentFragment is in default namespace, prefix \"foo\""
+dom/nodes/Node-lookupNamespaceURI.html	SUBTEST	FAIL	"DocumentFragment is in default namespace, prefix \"xmlns\""
+dom/nodes/Node-lookupNamespaceURI.html	SUBTEST	FAIL	"DocumentFragment is in default namespace, prefix null"
+dom/nodes/Node-lookupNamespaceURI.html	SUBTEST	FAIL	"DocumentFragment should have null namespace, prefix \"\""
+dom/nodes/Node-lookupNamespaceURI.html	SUBTEST	FAIL	"DocumentFragment should have null namespace, prefix \"foo\""
+dom/nodes/Node-lookupNamespaceURI.html	SUBTEST	FAIL	"DocumentFragment should have null namespace, prefix \"xml\""
+dom/nodes/Node-lookupNamespaceURI.html	SUBTEST	FAIL	"DocumentFragment should have null namespace, prefix \"xmlns\""
+dom/nodes/Node-lookupNamespaceURI.html	SUBTEST	FAIL	"DocumentFragment should have null namespace, prefix null"
+dom/nodes/Node-lookupNamespaceURI.html	SUBTEST	FAIL	"DocumentType is in default namespace, prefix \"\""
+dom/nodes/Node-lookupNamespaceURI.html	SUBTEST	FAIL	"DocumentType is in default namespace, prefix \"foo\""
+dom/nodes/Node-lookupNamespaceURI.html	SUBTEST	FAIL	"DocumentType is in default namespace, prefix \"xmlns\""
+dom/nodes/Node-lookupNamespaceURI.html	SUBTEST	FAIL	"DocumentType is in default namespace, prefix null"
+dom/nodes/Node-lookupNamespaceURI.html	SUBTEST	FAIL	"DocumentType should have null namespace, prefix \"\""
+dom/nodes/Node-lookupNamespaceURI.html	SUBTEST	FAIL	"DocumentType should have null namespace, prefix \"foo\""
+dom/nodes/Node-lookupNamespaceURI.html	SUBTEST	FAIL	"DocumentType should have null namespace, prefix \"xml\""
+dom/nodes/Node-lookupNamespaceURI.html	SUBTEST	FAIL	"DocumentType should have null namespace, prefix \"xmlns\""
+dom/nodes/Node-lookupNamespaceURI.html	SUBTEST	FAIL	"DocumentType should have null namespace, prefix null"
 dom/nodes/Node-lookupPrefix.xhtml	FAIL
 dom/nodes/Node-lookupPrefix.xhtml	SUBTEST	FAIL	" 1"
 dom/nodes/Node-lookupPrefix.xhtml	SUBTEST	FAIL	" 10"
@@ -6700,24 +6829,18 @@ dom/nodes/Node-mutation-adoptNode.html	FAIL
 dom/nodes/Node-mutation-adoptNode.html	SUBTEST	FAIL	"Adopting an element into a different document update's the element's owner doc as well as the owner docs of it's attributes"
 dom/nodes/Node-mutation-adoptNode.html	SUBTEST	FAIL	"simple append of foreign div with text"
 dom/nodes/Node-nodeName-xhtml.xhtml	FAIL
-dom/nodes/Node-nodeName-xhtml.xhtml	SUBTEST	FAIL	"For Comment nodes, nodeName should return \"#comment\"."
 dom/nodes/Node-nodeName-xhtml.xhtml	SUBTEST	FAIL	"For Document nodes, nodeName should return \"#document\"."
-dom/nodes/Node-nodeName-xhtml.xhtml	SUBTEST	FAIL	"For DocumentFragment nodes, nodeName should return \"#document-fragment\"."
 dom/nodes/Node-nodeName-xhtml.xhtml	SUBTEST	FAIL	"For DocumentType nodes, nodeName should return the name."
 dom/nodes/Node-nodeName-xhtml.xhtml	SUBTEST	FAIL	"For Element nodes, nodeName should return the same as tagName."
 dom/nodes/Node-nodeName-xhtml.xhtml	SUBTEST	FAIL	"For ProcessingInstruction nodes, nodeName should return the target."
 dom/nodes/Node-nodeName.html	FAIL
-dom/nodes/Node-nodeName.html	SUBTEST	FAIL	"For Comment nodes, nodeName should return \"#comment\"."
 dom/nodes/Node-nodeName.html	SUBTEST	FAIL	"For Document nodes, nodeName should return \"#document\"."
-dom/nodes/Node-nodeName.html	SUBTEST	FAIL	"For DocumentFragment nodes, nodeName should return \"#document-fragment\"."
 dom/nodes/Node-nodeName.html	SUBTEST	FAIL	"For DocumentType nodes, nodeName should return the name."
 dom/nodes/Node-nodeName.html	SUBTEST	FAIL	"For Element nodes, nodeName should return the same as tagName."
 dom/nodes/Node-nodeValue.html	FAIL
 dom/nodes/Node-nodeValue.html	SUBTEST	FAIL	"Comment.nodeValue"
 dom/nodes/Node-nodeValue.html	SUBTEST	FAIL	"Document.nodeValue"
-dom/nodes/Node-nodeValue.html	SUBTEST	FAIL	"DocumentFragment.nodeValue"
 dom/nodes/Node-nodeValue.html	SUBTEST	FAIL	"DocumentType.nodeValue"
-dom/nodes/Node-nodeValue.html	SUBTEST	FAIL	"Element.nodeValue"
 dom/nodes/Node-nodeValue.html	SUBTEST	FAIL	"ProcessingInstruction.nodeValue"
 dom/nodes/Node-nodeValue.html	SUBTEST	FAIL	"Text.nodeValue"
 dom/nodes/Node-normalize.html	FAIL
@@ -6731,8 +6854,6 @@ dom/nodes/Node-parentElement.html	SUBTEST	FAIL	"When the parent is a document, p
 dom/nodes/Node-parentElement.html	SUBTEST	FAIL	"When the parent is null, parentElement should be null"
 dom/nodes/Node-parentElement.html	SUBTEST	FAIL	"parentElement should return null for children of DocumentFragments (element)"
 dom/nodes/Node-parentElement.html	SUBTEST	FAIL	"parentElement should return null for children of DocumentFragments (text)"
-dom/nodes/Node-parentElement.html	SUBTEST	FAIL	"parentElement should work correctly with DocumentFragments (element)"
-dom/nodes/Node-parentElement.html	SUBTEST	FAIL	"parentElement should work correctly with DocumentFragments (text)"
 dom/nodes/Node-parentNode-iframe.html	SKIP	not a testharness test
 dom/nodes/Node-parentNode.html	SUBTEST	FAIL	"Doctype"
 dom/nodes/Node-parentNode.html	SUBTEST	FAIL	"Document"
@@ -6789,7 +6910,6 @@ dom/nodes/Node-replaceChild.html	SUBTEST	FAIL	"Passing null to replaceChild shou
 dom/nodes/Node-replaceChild.html	SUBTEST	FAIL	"Replacing a node with its next sibling should work (2 children)"
 dom/nodes/Node-replaceChild.html	SUBTEST	FAIL	"Replacing a node with its next sibling should work (4 children)"
 dom/nodes/Node-replaceChild.html	SUBTEST	FAIL	"Replacing a node with itself should not move the node"
-dom/nodes/Node-replaceChild.html	SUBTEST	FAIL	"Replacing an element with a DocumentFragment should allow a child of the DocumentFragment to be found by Id."
 dom/nodes/Node-replaceChild.html	SUBTEST	FAIL	"Replacing the document element with a DocumentFragment containing a single element and comments should work."
 dom/nodes/Node-replaceChild.html	SUBTEST	FAIL	"Replacing the document element with a DocumentFragment containing a single element should work."
 dom/nodes/Node-replaceChild.html	SUBTEST	FAIL	"Replacing the document element with a single element should work."
@@ -6813,25 +6933,28 @@ dom/nodes/NodeList-live-mutations.window.js	SUBTEST	FAIL	"NodeList live mutation
 dom/nodes/NodeList-live-mutations.window.js	SUBTEST	FAIL	"NodeList live mutations: NodeList.item(index)"
 dom/nodes/NodeList-live-mutations.window.js	SUBTEST	FAIL	"NodeList live mutations: NodeList.length"
 dom/nodes/NodeList-live-mutations.window.js	SUBTEST	FAIL	"NodeList live mutations: NodeList[index]"
-dom/nodes/NodeList-static-length-getter-tampered-1.html	FAIL
-dom/nodes/NodeList-static-length-getter-tampered-1.html	SUBTEST	FAIL	""
-dom/nodes/NodeList-static-length-getter-tampered-2.html	FAIL
-dom/nodes/NodeList-static-length-getter-tampered-2.html	SUBTEST	FAIL	""
-dom/nodes/NodeList-static-length-getter-tampered-3.html	FAIL
-dom/nodes/NodeList-static-length-getter-tampered-3.html	SUBTEST	FAIL	""
+dom/nodes/NodeList-static-length-getter-tampered-1.html	TIMEOUT
+dom/nodes/NodeList-static-length-getter-tampered-2.html	TIMEOUT
+dom/nodes/NodeList-static-length-getter-tampered-3.html	TIMEOUT
 dom/nodes/NodeList-static-length-getter-tampered-indexOf-1.html	FAIL
 dom/nodes/NodeList-static-length-getter-tampered-indexOf-1.html	SUBTEST	FAIL	""
 dom/nodes/NodeList-static-length-getter-tampered-indexOf-2.html	FAIL
 dom/nodes/NodeList-static-length-getter-tampered-indexOf-2.html	SUBTEST	FAIL	""
 dom/nodes/NodeList-static-length-getter-tampered-indexOf-3.html	FAIL
 dom/nodes/NodeList-static-length-getter-tampered-indexOf-3.html	SUBTEST	FAIL	""
-dom/nodes/ParentNode-append.html	HARNESS_ERROR
+dom/nodes/ParentNode-append.html	FAIL
+dom/nodes/ParentNode-append.html	SUBTEST	FAIL	"DocumentFragment.append() with null as an argument, on a parent having a child."
+dom/nodes/ParentNode-append.html	SUBTEST	FAIL	"DocumentFragment.append() with null as an argument, on a parent having no child."
+dom/nodes/ParentNode-append.html	SUBTEST	FAIL	"DocumentFragment.append() with one element and text as argument, on a parent having a child."
+dom/nodes/ParentNode-append.html	SUBTEST	FAIL	"DocumentFragment.append() with only one element as an argument, on a parent having no child."
+dom/nodes/ParentNode-append.html	SUBTEST	FAIL	"DocumentFragment.append() with only text as an argument, on a parent having no child."
+dom/nodes/ParentNode-append.html	SUBTEST	FAIL	"DocumentFragment.append() with undefined as an argument, on a parent having no child."
+dom/nodes/ParentNode-append.html	SUBTEST	FAIL	"DocumentFragment.append() without any argument, on a parent having no child."
 dom/nodes/ParentNode-append.html	SUBTEST	FAIL	"Element.append() with null as an argument, on a parent having a child."
 dom/nodes/ParentNode-append.html	SUBTEST	FAIL	"Element.append() with null as an argument, on a parent having no child."
 dom/nodes/ParentNode-append.html	SUBTEST	FAIL	"Element.append() with one element and text as argument, on a parent having a child."
 dom/nodes/ParentNode-append.html	SUBTEST	FAIL	"Element.append() with only one element as an argument, on a parent having no child."
 dom/nodes/ParentNode-append.html	SUBTEST	FAIL	"Element.append() with only text as an argument, on a parent having no child."
-dom/nodes/ParentNode-append.html	SUBTEST	FAIL	"Element.append() with the same element twice."
 dom/nodes/ParentNode-append.html	SUBTEST	FAIL	"Element.append() with undefined as an argument, on a parent having no child."
 dom/nodes/ParentNode-append.html	SUBTEST	FAIL	"Element.append() without any argument, on a parent having no child."
 dom/nodes/ParentNode-append.html	SUBTEST	FAIL	"If node is a DocumentFragment with an element and parent is a document with another element, then throw a HierarchyRequestError DOMException."
@@ -6845,7 +6968,14 @@ dom/nodes/ParentNode-append.html	SUBTEST	FAIL	"If node is an Element and parent 
 dom/nodes/ParentNode-append.html	SUBTEST	FAIL	"If node is not a DocumentFragment, DocumentType, Element, Text, ProcessingInstruction, or Comment node, then throw a HierarchyRequestError DOMException."
 dom/nodes/ParentNode-children.html	FAIL
 dom/nodes/ParentNode-children.html	SUBTEST	FAIL	"ParentNode.children should be a live collection"
-dom/nodes/ParentNode-prepend.html	HARNESS_ERROR
+dom/nodes/ParentNode-prepend.html	FAIL
+dom/nodes/ParentNode-prepend.html	SUBTEST	FAIL	"DocumentFragment.prepend() with null as an argument, on a parent having a child."
+dom/nodes/ParentNode-prepend.html	SUBTEST	FAIL	"DocumentFragment.prepend() with null as an argument, on a parent having no child."
+dom/nodes/ParentNode-prepend.html	SUBTEST	FAIL	"DocumentFragment.prepend() with one element and text as argument, on a parent having a child."
+dom/nodes/ParentNode-prepend.html	SUBTEST	FAIL	"DocumentFragment.prepend() with only one element as an argument, on a parent having no child."
+dom/nodes/ParentNode-prepend.html	SUBTEST	FAIL	"DocumentFragment.prepend() with only text as an argument, on a parent having no child."
+dom/nodes/ParentNode-prepend.html	SUBTEST	FAIL	"DocumentFragment.prepend() with undefined as an argument, on a parent having no child."
+dom/nodes/ParentNode-prepend.html	SUBTEST	FAIL	"DocumentFragment.prepend() without any argument, on a parent having no child."
 dom/nodes/ParentNode-prepend.html	SUBTEST	FAIL	"Element.prepend() with null as an argument, on a parent having a child."
 dom/nodes/ParentNode-prepend.html	SUBTEST	FAIL	"Element.prepend() with null as an argument, on a parent having no child."
 dom/nodes/ParentNode-prepend.html	SUBTEST	FAIL	"Element.prepend() with one element and text as argument, on a parent having a child."
@@ -6931,7 +7061,22 @@ dom/nodes/ParentNode-querySelectors-namespaces.html	SUBTEST	FAIL	""
 dom/nodes/ParentNode-querySelectors-space-and-dash-attribute-value.html	FAIL
 dom/nodes/ParentNode-querySelectors-space-and-dash-attribute-value.html	SUBTEST	FAIL	"querySelector"
 dom/nodes/ParentNode-querySelectors-space-and-dash-attribute-value.html	SUBTEST	FAIL	"querySelectorAll"
-dom/nodes/ParentNode-replaceChildren.html	HARNESS_ERROR
+dom/nodes/ParentNode-replaceChildren.html	FAIL
+dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"Document.replaceChildren() with a DocumentFragment containing a single element, replacing an existing doctype and element."
+dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"Document.replaceChildren() with a doctype, replacing an existing doctype and element."
+dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"Document.replaceChildren() with an element, replacing an existing doctype and element."
+dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"Document.replaceChildren() with text throws a HierarchyRequestError."
+dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"Document.replaceChildren() with two elements throws a HierarchyRequestError."
+dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"Document.replaceChildren() without any argument, removing an existing doctype and element."
+dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"DocumentFragment.replaceChildren() should move nodes in the right order"
+dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"DocumentFragment.replaceChildren() with null as an argument, on a parent having a child."
+dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"DocumentFragment.replaceChildren() with null as an argument, on a parent having no child."
+dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"DocumentFragment.replaceChildren() with one element and text as argument, on a parent having a child."
+dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"DocumentFragment.replaceChildren() with only one element as an argument, on a parent having no child."
+dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"DocumentFragment.replaceChildren() with only text as an argument, on a parent having no child."
+dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"DocumentFragment.replaceChildren() with undefined as an argument, on a parent having no child."
+dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"DocumentFragment.replaceChildren() without any argument, on a parent having a child."
+dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"DocumentFragment.replaceChildren() without any argument, on a parent having no child."
 dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"Element.replaceChildren() should move nodes in the right order"
 dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"Element.replaceChildren() with null as an argument, on a parent having a child."
 dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"Element.replaceChildren() with null as an argument, on a parent having no child."
@@ -6946,6 +7091,8 @@ dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"If node is a Text node a
 dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"If node is a doctype and parent is not a document, then throw a HierarchyRequestError DOMException."
 dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"If node is a host-including inclusive ancestor of parent, then throw a HierarchyRequestError DOMException."
 dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"If node is not a DocumentFragment, DocumentType, Element, Text, ProcessingInstruction, or Comment node, then throw a HierarchyRequestError DOMException."
+dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"There should be MutationRecords for the nodes removed from another parent node."
+dom/nodes/ParentNode-replaceChildren.html	SUBTEST	FAIL	"There should be a MutationRecord for the node removed from another parent node."
 dom/nodes/ProcessingInstruction-escapes-1.xhtml	HARNESS_ERROR
 dom/nodes/ProcessingInstruction-in-doctype.xhtml	TIMEOUT
 dom/nodes/ProcessingInstruction-literal-1.xhtml	FAIL
@@ -7174,11 +7321,6 @@ dom/nodes/insertion-removing-steps/insertion-removing-steps-iframe.window.js	SUB
 dom/nodes/insertion-removing-steps/insertion-removing-steps-iframe.window.js	SUBTEST	FAIL	"Removing steps (replaceChildren): script does not run synchronously during iframe destruction"
 dom/nodes/insertion-removing-steps/insertion-removing-steps-script.window.js	FAIL
 dom/nodes/insertion-removing-steps/insertion-removing-steps-script.window.js	SUBTEST	FAIL	"Script execution happens after all batched DOM insertions complete through post-connection steps"
-dom/nodes/insertion-removing-steps/later-script-removed-by-earlier-script.html	FAIL
-dom/nodes/insertion-removing-steps/later-script-removed-by-earlier-script.html	SUBTEST	FAIL	"A later-inserted script removed by an earlier-inserted script in the same append() call should not run"
-dom/nodes/insertion-removing-steps/later-script-removed-by-earlier-script.html	SUBTEST	FAIL	"A later-inserted script removed by an earlier-inserted script in the same document fragment should not run"
-dom/nodes/insertion-removing-steps/script-does-not-run-on-child-removal.window.js	FAIL
-dom/nodes/insertion-removing-steps/script-does-not-run-on-child-removal.window.js	SUBTEST	FAIL	"Script execution is never triggered on child removals"
 dom/nodes/moveBefore/Node-moveBefore.html	FAIL
 dom/nodes/moveBefore/Node-moveBefore.html	SUBTEST	FAIL	"Calling moveBefore with a non-Node first argument must throw TypeError."
 dom/nodes/moveBefore/Node-moveBefore.html	SUBTEST	FAIL	"Calling moveBefore with second argument missing, or other than Node, null, or undefined, must throw TypeError."
@@ -7230,12 +7372,12 @@ dom/nodes/moveBefore/fieldset-child-blur-event.html	FAIL
 dom/nodes/moveBefore/fieldset-child-blur-event.html	SUBTEST	FAIL	"The 'blur' event is not fired on children of HTMLFieldSetElement during moveBefore()"
 dom/nodes/moveBefore/fieldset-child-date-input-blur-event.html	FAIL
 dom/nodes/moveBefore/fieldset-child-date-input-blur-event.html	SUBTEST	FAIL	"Neither 'blur' nor 'focusout' is fired on a focused <input type=date> child of HTMLFieldSetElement during moveBefore()"
-dom/nodes/moveBefore/fire-focusin-focusout.html	HARNESS_ERROR
+dom/nodes/moveBefore/fire-focusin-focusout.html	FAIL
+dom/nodes/moveBefore/fire-focusin-focusout.html	SUBTEST	FAIL	"Don't fire focusin and then correct when moving to a tree that is made inert using style"
+dom/nodes/moveBefore/fire-focusin-focusout.html	SUBTEST	FAIL	"Don't fire focusin and then correct when moving to an inert subtree"
+dom/nodes/moveBefore/fire-focusin-focusout.html	SUBTEST	FAIL	"Don't fire focusin/out when moving to the same parent"
+dom/nodes/moveBefore/fire-focusin-focusout.html	SUBTEST	FAIL	"Don't fire focusin/out when reparenting an element that has focus within"
 dom/nodes/moveBefore/fire-focusin-focusout.html	SUBTEST	FAIL	"Don't fire focusin/out when reparenting focused element directly"
-dom/nodes/moveBefore/fire-focusin-focusout.html	SUBTEST	NOTRUN	"Don't fire focusin and then correct when moving to a tree that is made inert using style"
-dom/nodes/moveBefore/fire-focusin-focusout.html	SUBTEST	NOTRUN	"Don't fire focusin and then correct when moving to an inert subtree"
-dom/nodes/moveBefore/fire-focusin-focusout.html	SUBTEST	NOTRUN	"Don't fire focusin/out when moving to the same parent"
-dom/nodes/moveBefore/fire-focusin-focusout.html	SUBTEST	NOTRUN	"Don't fire focusin/out when reparenting an element that has focus within"
 dom/nodes/moveBefore/focus-preserve-render.html	SKIP	reftest: needs a reference render, not a harness result
 dom/nodes/moveBefore/focus-preserve.html	FAIL
 dom/nodes/moveBefore/focus-preserve.html	SUBTEST	FAIL	"Focus is fixed up after moveBefore() moves an ancestor of the focused element into a hidden parent"
@@ -7243,20 +7385,18 @@ dom/nodes/moveBefore/focus-preserve.html	SUBTEST	FAIL	"Focus is fixed up after m
 dom/nodes/moveBefore/focus-preserve.html	SUBTEST	FAIL	"Focus is fixed up after moveBefore() moves the focused element into an inert subtree"
 dom/nodes/moveBefore/focus-preserve.html	SUBTEST	FAIL	"moveBefore() preserves focus and a backward selection in a text input"
 dom/nodes/moveBefore/focus-preserve.html	SUBTEST	FAIL	"moveBefore() preserves focus when the focused element remains focusable"
-dom/nodes/moveBefore/focus-within.html	HARNESS_ERROR
+dom/nodes/moveBefore/focus-within.html	FAIL
+dom/nodes/moveBefore/focus-within.html	SUBTEST	FAIL	":focus-within should be eventually up to date when moving to a subtree that would become inert via style"
+dom/nodes/moveBefore/focus-within.html	SUBTEST	FAIL	":focus-within should be eventually up to date when moving to an inert subtree"
+dom/nodes/moveBefore/focus-within.html	SUBTEST	FAIL	"focus-within should be updated when reparenting an element that has focus within"
 dom/nodes/moveBefore/focus-within.html	SUBTEST	FAIL	"focus-within should be updated when reparenting focused element directly"
-dom/nodes/moveBefore/focus-within.html	SUBTEST	NOTRUN	":focus-within should be eventually up to date when moving to a subtree that would become inert via style"
-dom/nodes/moveBefore/focus-within.html	SUBTEST	NOTRUN	":focus-within should be eventually up to date when moving to an inert subtree"
-dom/nodes/moveBefore/focus-within.html	SUBTEST	NOTRUN	"focus-within should be updated when reparenting an element that has focus within"
-dom/nodes/moveBefore/focus-within.html	SUBTEST	NOTRUN	"focus-within should remain the same when moving to the same parent"
+dom/nodes/moveBefore/focus-within.html	SUBTEST	FAIL	"focus-within should remain the same when moving to the same parent"
 dom/nodes/moveBefore/fullscreen-preserve.html	SKIP	testdriver: needs WebDriver input injection
 dom/nodes/moveBefore/hover-style-update.html	SKIP	testdriver: needs WebDriver input injection
 dom/nodes/moveBefore/iframe-document-preserve.window.js	HARNESS_ERROR
-dom/nodes/moveBefore/iframe-document-preserve.window.js	SUBTEST	FAIL	"moveBefore(): about:blank iframe's document is preserved"
 dom/nodes/moveBefore/iframe-document-preserve.window.js	SUBTEST	FAIL	"moveBefore(): cross-origin iframe is preserved: remove new parent"
 dom/nodes/moveBefore/iframe-document-preserve.window.js	SUBTEST	FAIL	"moveBefore(): cross-origin iframe is preserved: remove self via replaceChildren()"
 dom/nodes/moveBefore/iframe-document-preserve.window.js	SUBTEST	FAIL	"moveBefore(): cross-origin iframe is preserved: remove self"
-dom/nodes/moveBefore/iframe-document-preserve.window.js	SUBTEST	FAIL	"moveBefore(): simple same-origin document is preserved"
 dom/nodes/moveBefore/iframe-document-preserve.window.js	SUBTEST	NOTRUN	"moveBefore(): cross-origin iframe is preserved: remove self via innerHTML"
 dom/nodes/moveBefore/iframe-document-preserve.window.js	SUBTEST	NOTRUN	"window.frames ordering does not change due to moveBefore()"
 dom/nodes/moveBefore/input-moveBefore-crash.html	SKIP	not a testharness test
@@ -7325,8 +7465,6 @@ dom/nodes/moveBefore/style-applies.html	FAIL
 dom/nodes/moveBefore/style-applies.html	SUBTEST	FAIL	"Moving a style inside the document should not affect whether it's applied"
 dom/nodes/moveBefore/stylesheet-cascade-order.html	FAIL
 dom/nodes/moveBefore/stylesheet-cascade-order.html	SUBTEST	FAIL	"Moving loaded link stylesheets updates their cascade order"
-dom/nodes/moveBefore/stylesheet-no-refetch.html	FAIL
-dom/nodes/moveBefore/stylesheet-no-refetch.html	SUBTEST	FAIL	"Moving a loaded link stylesheet preserves its resource"
 dom/nodes/moveBefore/throws-exception.html	FAIL
 dom/nodes/moveBefore/throws-exception.html	SUBTEST	FAIL	"moveBefore() on a cross-document target node"
 dom/nodes/name-validation.html	FAIL
@@ -9796,7 +9934,13 @@ html/dom/elements/global-attributes/id-attribute.html	SUBTEST	FAIL	"Spaces are a
 html/dom/elements/global-attributes/id-attribute.html	SUBTEST	FAIL	"User agents must associate the element with an id value for purposes of CSS."
 html/dom/elements/global-attributes/lang-attribute-document-element-replacement.html	FAIL
 html/dom/elements/global-attributes/lang-attribute-document-element-replacement.html	SUBTEST	FAIL	"Disconnected descendants of a replaced document element should resolve lang from their actual ancestor"
-html/dom/elements/global-attributes/lang-attribute-shadow.window.js	HARNESS_ERROR
+html/dom/elements/global-attributes/lang-attribute-shadow.window.js	FAIL
+html/dom/elements/global-attributes/lang-attribute-shadow.window.js	SUBTEST	FAIL	"lang on host and slot and slotted element"
+html/dom/elements/global-attributes/lang-attribute-shadow.window.js	SUBTEST	FAIL	"lang on host and slot"
+html/dom/elements/global-attributes/lang-attribute-shadow.window.js	SUBTEST	FAIL	"lang on host and slotted element"
+html/dom/elements/global-attributes/lang-attribute-shadow.window.js	SUBTEST	FAIL	"lang on slot inherits from parent"
+html/dom/elements/global-attributes/lang-attribute-shadow.window.js	SUBTEST	FAIL	"lang only on host"
+html/dom/elements/global-attributes/lang-attribute-shadow.window.js	SUBTEST	FAIL	"lang only on slot"
 html/dom/elements/global-attributes/lang-attribute.window.js	FAIL
 html/dom/elements/global-attributes/lang-attribute.window.js	SUBTEST	FAIL	"unnamespaced lang attribute only works on elements in the HTML namespace"
 html/dom/elements/global-attributes/lang-xmllang-01.html	SKIP	reftest: needs a reference render, not a harness result
@@ -10171,7 +10315,9 @@ html/dom/partial-updates/tentative/fragment/buffer-streaming-reflection.html	SUB
 html/dom/partial-updates/tentative/fragment/buffer-streaming-reflection.html	TIMEOUT
 html/dom/partial-updates/tentative/fragment/buffer-targeted.html	FAIL
 html/dom/partial-updates/tentative/fragment/buffer-targeted.html	SUBTEST	FAIL	"Targeted template with buffer attribute buffers children and replaces target content atomically at finalization"
-html/dom/partial-updates/tentative/fragment/empty-for-streaming.html	HARNESS_ERROR
+html/dom/partial-updates/tentative/fragment/empty-for-streaming.html	FAIL
+html/dom/partial-updates/tentative/fragment/empty-for-streaming.html	SUBTEST	FAIL	"In-place template moving and removal during streaming"
+html/dom/partial-updates/tentative/fragment/empty-for-streaming.html	SUBTEST	FAIL	"In-place template with empty for attribute is removed and its children are inserted before it"
 html/dom/partial-updates/tentative/fragment/sanitize-boolean.html	FAIL
 html/dom/partial-updates/tentative/fragment/sanitize-boolean.html	SUBTEST	FAIL	"The sanitize attribute behaves like a boolean attribute"
 html/dom/partial-updates/tentative/fragment/sanitize-default.html	FAIL
@@ -16299,7 +16445,6 @@ html/dom/render-blocking/remove-element-unblocks-rendering.optional.html	SUBTEST
 html/dom/render-blocking/remove-pending-async-render-blocking-script.html	FAIL
 html/dom/render-blocking/remove-pending-async-render-blocking-script.html	SUBTEST	FAIL	""
 html/dom/render-blocking/render-blocking-during-update-the-rendering-crash.html	SKIP	not a testharness test
-html/dom/render-blocking/script-inserted-inline-module-with-import.html	HARNESS_ERROR
 html/dom/render-blocking/script-inserted-module-script.html	TIMEOUT
 html/dom/render-blocking/script-inserted-script.html	TIMEOUT
 html/dom/render-blocking/script-inserted-style-element.html	TIMEOUT

@@ -229,6 +229,15 @@ void dom_bindings::install_document(context & cx) {
     method("createTextNode", [this](context & c, std::span<value> args) {
         return wrap(c, doc_->create_text(arg_string(c, args, 0)));
     });
+    // `createComment` and `createDocumentFragment` - the two other node
+    // constructors, and the DOM has had them since the first version. The
+    // document could make an element and a text node and nothing else, so a page
+    // could not annotate what it built and could not batch what it inserted.
+    method("createComment", [this](context & c, std::span<value> args) {
+        return wrap(c, doc_->create_comment(arg_string(c, args, 0)));
+    });
+    method("createDocumentFragment",
+           [this](context & c, std::span<value>) { return wrap(c, doc_->create_fragment()); });
     method("addEventListener", [this](context & c, std::span<value> args) {
         add_listener(make_listener(c, path_step{node_id{}, listen_on::document}, args));
         return value::undefined();
@@ -480,6 +489,62 @@ node_id dom_bindings::copy_subtree(const read_txn & from, node_id node, node_id 
     (void)doc_->append_child(parent, made);
     for (const node_id child : from.children(node)) { copy_subtree(from, child, made); }
     return made;
+}
+
+node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool deep) {
+    node_id made;
+    switch (from.kind(source).value_or(node_kind::element)) {
+    case node_kind::text: made = doc_->create_text(from.text(source)); break;
+    case node_kind::comment: made = doc_->create_comment(from.text(source)); break;
+    case node_kind::document_fragment: made = doc_->create_fragment(); break;
+    // A document has no clone that means anything here - there is one document -
+    // so it is treated as the element it actually is: this tree builder makes
+    // `<html>` the root and nothing sits above it.
+    case node_kind::document:
+    case node_kind::element:
+        made = doc_->create_element(from.tag(source).value_or(atom{}), from.element_ns(source));
+        for (const attribute & held : from.attributes(source)) {
+            (void)doc_->set_attribute(made, held.name, held.value);
+        }
+        break;
+    }
+    if (deep) {
+        for (const node_id child : from.children(source)) {
+            (void)doc_->append_child(made, clone_node(from, child, true));
+        }
+    }
+    return made;
+}
+
+bool dom_bindings::insert_node(node_id parent, node_id child, node_id before) {
+    if (!parent || !child) { return false; }
+    bool fragment = false;
+    std::vector<node_id> moving;
+    {
+        const auto txn = doc_->read();
+        fragment = txn.kind(child).value_or(node_kind::element) == node_kind::document_fragment;
+        if (fragment) {
+            // COPIED FIRST. `children()` is a view onto the live child list and
+            // every move rewrites it, so walking it while inserting is a
+            // use-after-free waiting for the second child.
+            for (const node_id held : txn.children(child)) { moving.push_back(held); }
+        }
+    }
+    if (!fragment) { moving.push_back(child); }
+    for (const node_id one : moving) {
+        if (before) {
+            (void)doc_->insert_before(parent, one, before);
+        } else {
+            (void)doc_->append_child(parent, one);
+        }
+    }
+    mutated();
+    return true;
+}
+
+node_id dom_bindings::node_from(context & cx, value v) {
+    if (const node_id held = handle_of(v)) { return held; }
+    return doc_->create_text(cx.to_string(v));
 }
 
 // PARSE THE MARKUP, do not store it.

@@ -107,6 +107,10 @@ node_id document::create_comment(std::string_view value) {
     return id;
 }
 
+node_id document::create_fragment() {
+    return nodes_.insert(node_kind::document_fragment);
+}
+
 void document::detach_locked(node * child_node, node_id child) {
     const node_id old_parent = child_node->parent.load(std::memory_order_acquire);
     if (!old_parent) { return; }
