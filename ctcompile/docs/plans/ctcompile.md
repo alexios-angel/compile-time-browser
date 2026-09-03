@@ -1856,8 +1856,11 @@ boolean: it is a refusal *string* naming the first thing that failed, and the
 tier is defined by that diagnostic — a `ctnative.not_native` reading
 *"field `class` is a C++ keyword or a macro of <cmath>/<cstdio>, so the
 generated struct would not compile"* is the product. PDLL has no `otherwise`,
-no way to order which predicate reports first, and no way to reach the lattice
-the predicates read. **A PDLL `admission` would replace a named refusal with a silent
+no way to say WHICH predicate reports when a match fails, and no way to reach
+the lattice the predicates read. (Ordering between whole patterns IS
+expressible - a pattern's benefit defaults to the number of matched operations
+and can be set explicitly - so the missing thing is the diagnostic, not the
+precedence.) **A PDLL `admission` would replace a named refusal with a silent
 non-match**, which is a regression in precisely the property this project exists
 to protect. It stays C++, and the interface above is how its per-operation
 switch stops being a switch.
