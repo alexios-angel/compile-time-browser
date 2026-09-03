@@ -1869,12 +1869,24 @@ endif()
 # before this slice, 15 of the 19 callees a direct call reaches were refused
 # for exactly it.
 #
-# The importer writes such a capture operand as a ctjs.load_upvalue of the
-# enclosing function's own closure. Once that function is lifted the load IS
-# its capture parameter - an entry-block argument holding a value an outer
-# frame proved constant - and the nested closure lifts on it in the next
-# round of a fixpoint over the classify-then-lift loop. The call passes the
-# argument straight on: it already holds the VALUE, never the box.
+# The importer leaves an `undefined` PLACEHOLDER in such a capture operand -
+# there is no binding of this frame to point at - and writes the descriptor's
+# index on the closure's `enclosing_indices` attribute, parallel with the
+# capture list and -1 wherever the operand is the real cell. In the module this
+# fixture imports, `mid$25`'s closure for `deep` reads
+# `captures %7 {enclosing_indices = array<i32: 0>}` with `%7` a
+# `ctjs.constant #ctjs.undefined`. Once the enclosing function is lifted, its
+# upvalue k IS its capture parameter - the entry-block argument 3 + k, holding
+# a value an outer frame proved constant - and the nested closure lifts on that
+# index in the next round of a fixpoint over the classify-then-lift loop. The
+# call passes the argument straight on: it already holds the VALUE, never the
+# box.
+#
+# THE INDEX IS ON AN ATTRIBUTE BECAUSE AN OPERAND CHARGED THE BOXED TIER FOR IT.
+# Writing it as a live ctjs.load_upvalue of this frame's own closure said the
+# same thing, and CTJSToEmitC parked every capture operand into
+# ct_aot_make_closure's argument window - 219 runtime upvalue reads on bootstrap
+# that the helper then ignored. tools/check/capture-census.py is that census.
 #
 # THE GATE IS THE POINT, NOT THE IR. Every capture is READ in the innermost
 # body, so a lift that passed the wrong value, a stale one, or the cell where

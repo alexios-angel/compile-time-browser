@@ -320,6 +320,37 @@ mlir::LogicalResult CreateClosureOp::verify() {
                    << "; the only negative entry is -1, which means the slot is filled from the "
                       "operand rather than from the enclosing closure";
         }
+        // AND THE TWO HALVES OF A SLOT SAY THE SAME THING. An index names an
+        // upvalue of the ENCLOSING closure, which is what the VM fills the slot
+        // from; the operand beside it is then the importer's placeholder,
+        // because there is no binding of this frame to point at. A slot that
+        // names an index AND holds a real cell of this frame states both, and
+        // one of the two is a lie.
+        //
+        // IT IS A LIE THAT COMPILES. The native lift asks the operand first
+        // (LowerToEmitC.cpp, capturedValue): a ctjs.create_cell wins and the
+        // index is never read, so an index written where a cell already stands
+        // is silently discarded - and if the index was the truth, the lifted
+        // call passes this frame's binding where the enclosing closure's
+        // upvalue belonged. The module verifies, lowers, compiles under -Werror
+        // and prints a wrong number. The operand encoding this replaced could
+        // not express the disagreement at all, because there was only one place
+        // to write the answer; an attribute beside an operand can, so it is
+        // asked here.
+        //
+        // WHAT THIS CANNOT SAY is that a permuted list is permuted: the target's
+        // upvalue descriptors are not in the module, so `array<i32: 1, 0>` where
+        // the descriptors want `0, 1` is two well-formed slots. That one is the
+        // importer's to get right, and native-nested-closure-fixture.js is where
+        // it would be caught - by the answer, not by a verifier.
+        if (entries[i] >= 0 && getUpvalues()[i].getDefiningOp<CreateCellOp>() != nullptr) {
+            return emitOpError("`enclosing_indices[")
+                   << i << "]` is " << entries[i]
+                   << ", so slot " << i
+                   << " is filled from the enclosing closure - but its capture operand is a "
+                      "ctjs.create_cell of this frame, and the two describe the same slot "
+                      "differently; the native lift believes the cell and the index is lost";
+        }
     }
     return mlir::success();
 }

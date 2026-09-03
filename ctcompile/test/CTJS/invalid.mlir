@@ -123,3 +123,22 @@ ctjs.func @other_sentinel(%a: !ctjs.value, %b: !ctjs.value)
         {enclosing_indices = array<i32: -1, -2>}
   ctjs.return %fn
 }
+
+// -----
+
+// ---- ctjs.create_closure: an index and a cell describe the same slot -------
+// The one invariant the native lift depends on and the length check does not
+// reach: a slot the enclosing closure fills carries the importer's placeholder,
+// because there is no binding of THIS frame to point at. Here slot 1 says both
+// - `enclosing_indices[1] = 0` and a real ctjs.create_cell beside it - and the
+// lift asks the operand first, so the index would be silently discarded and the
+// wrong binding passed if the index was the truth. The IR would verify, lower,
+// compile under -Werror and print a wrong number; this is where it stops.
+ctjs.func @index_over_a_cell(%a: !ctjs.value, %b: !ctjs.value)
+    -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+  %cell = ctjs.create_cell %b
+  // expected-error @+1 {{`enclosing_indices[1]` is 0, so slot 1 is filled from the enclosing closure - but its capture operand is a ctjs.create_cell of this frame}}
+  %fn = ctjs.create_closure %a[0] this %b captures %a, %cell
+        {enclosing_indices = array<i32: -1, 0>}
+  ctjs.return %fn
+}

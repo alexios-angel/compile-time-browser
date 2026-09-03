@@ -616,6 +616,24 @@ struct closureLifter {
         return std::nullopt;
     }
 
+    // WHERE A LIFTED FUNCTION'S UPVALUE k IS, WRITTEN ONCE. lift() ESTABLISHES
+    // this layout - it inserts the captures at 3, after the three implicit
+    // arguments, and rewrites every ctjs.load_upvalue k to the argument here -
+    // and capturedValue() READS it, to hand a nested closure the enclosing
+    // function's capture k without an operand to follow (slice 1b's attribute
+    // encoding). Two places, one claim, so it is spelled in one.
+    //
+    // AND THE PIN IS THE POINT, NOT THE ARITHMETIC. While the index lived in an
+    // operand, capturedValue range-CHECKED an argument lift() had already
+    // written there, so a change to the layout could not make the two disagree:
+    // the wrong shape simply failed the check and the closure was refused. A
+    // reader that re-derives the position instead SELECTS an argument, and a
+    // layout change that this function did not hear about selects the wrong
+    // one - a capture silently swapped for a parameter, which compiles clean.
+    // A shared helper makes the divergence impossible rather than detectable,
+    // which is why it is preferred here to a test that would notice it.
+    static constexpr unsigned captureArgument(unsigned k) { return 3 + k; }
+
     // WHICH UPVALUE OF THE ENCLOSING CLOSURE FILLS CAPTURE SLOT i, or -1 when
     // the operand beside it is the binding and nothing is filled. The list is
     // optional and, when present, exactly as long as the capture list -
@@ -666,8 +684,8 @@ struct closureLifter {
         // them into a block that already had three. Asked anyway, because this
         // reads an argument by number and the claim costs one comparison.
         mlir::Block & entry = enclosing.getBody().front();
-        if (entry.getNumArguments() <= 3 + static_cast<unsigned>(k)) { return {}; }
-        return entry.getArgument(3 + static_cast<unsigned>(k));
+        if (entry.getNumArguments() <= captureArgument(static_cast<unsigned>(k))) { return {}; }
+        return entry.getArgument(captureArgument(static_cast<unsigned>(k)));
     }
 
     // The same, after admission: anything else here is a rule that let one
@@ -2061,7 +2079,7 @@ struct closureLifter {
         for (unsigned j = 0; j < parameters; ++j) {
             if (llvm::all_of(made,
                              [&](ctjs::CreateClosureOp c) { return slotCarriesAnObject(c, j); })) {
-                objectArgs.push_back(static_cast<int32_t>(3 + captures + j));
+                objectArgs.push_back(static_cast<int32_t>(captureArgument(captures) + j));
             }
         }
 
@@ -2070,7 +2088,7 @@ struct closureLifter {
         // IS the entry block's argument order - still lines up, and so that
         // lower()'s existing `for (i = 3; ...)` picks them up with no change.
         for (unsigned i = 0; i < captures; ++i) {
-            entry.insertArgument(3 + i, valueType, target.getLoc());
+            entry.insertArgument(captureArgument(i), valueType, target.getLoc());
         }
         llvm::SmallVector<mlir::Type> inputs(entry.getNumArguments(), valueType);
         target.setFunctionTypeAttr(
@@ -2080,7 +2098,7 @@ struct closureLifter {
         target.getBody().walk([&](ctjs::LoadUpvalueOp read) { reads.push_back(read); });
         for (ctjs::LoadUpvalueOp read : reads) {
             read.getResult().replaceAllUsesWith(
-                entry.getArgument(3 + static_cast<unsigned>(read.getIndex())));
+                entry.getArgument(captureArgument(static_cast<unsigned>(read.getIndex()))));
             read.erase();
         }
         // NO UPVALUES LEFT, and the attribute says so: after this the function

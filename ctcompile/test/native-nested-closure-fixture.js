@@ -12,17 +12,24 @@
 // module binding exactly this way. Measured on bootstrap before this slice, 15
 // of the 19 callees a direct call can reach were refused for it.
 //
-// WHAT MAKES THEM ADMISSIBLE. The importer writes such a capture operand as a
-// ctjs.load_upvalue of the enclosing function's own closure. When the enclosing
-// function is lifted (slice 1), that load becomes its capture PARAMETER - an
-// entry-block argument holding the initial of a cell the outer frame proved
-// constant - and the nested closure's operand is then that argument. The lift
-// is a fixpoint: the outer closure lifts in one round, the inner one is judged
-// again in the next against the rewritten operand, and a three-level chain
-// settles in three rounds. Each call passes the argument on as it is, because
-// it already holds the VALUE: ctjs.load_upvalue reads through the cell
-// (run_loop.cpp, get_upvalue: `reg = cell->slot`), so a lifted capture
-// parameter is never the box, and the innermost read is a read of a double.
+// WHAT MAKES THEM ADMISSIBLE. The importer leaves an `undefined` PLACEHOLDER in
+// such a capture operand - no binding of this frame belongs there - and writes
+// WHICH upvalue of the enclosing closure fills the slot on the closure's
+// `enclosing_indices` attribute, indexed in parallel with the capture list and
+// -1 where the operand is the real cell. `mid$2` in the module this file
+// imports reads `captures %7 {enclosing_indices = array<i32: 0>}`. When the
+// enclosing function is lifted (slice 1), its upvalue k becomes its capture
+// PARAMETER - the entry-block argument 3 + k, holding the initial of a cell the
+// outer frame proved constant - and the nested closure's slot is then that
+// argument, selected by the index rather than followed through an operand. The
+// lift is a fixpoint: the outer closure lifts in one round, the inner one is
+// judged again in the next, when its enclosing function carries
+// `ctnative.captures`, and a three-level chain settles in three rounds. Each
+// call passes the argument on as it is, because it already holds the VALUE: the
+// index names a CELL in the enclosing closure, and ctjs.load_upvalue reads
+// THROUGH a cell (run_loop.cpp, get_upvalue: `reg = cell->slot`), so a lifted
+// capture parameter is never the box and the innermost read is a read of a
+// double.
 //
 // EVERY CAPTURE IS READ IN THE INNERMOST BODY, not merely passed along. That is
 // what makes the gate below able to fail: a lift that passed the wrong value,
@@ -129,9 +136,13 @@ function arrow_two(k) {
     return mid(10);
 }
 
-// THE MIDDLE FUNCTION READS THE BINDING TOO. `mid` has two ctjs.load_upvalue
-// of `k`: its own read, and the one the importer wrote as `deep`'s capture
-// operand. The lift rewrites both to the same parameter.
+// THE MIDDLE FUNCTION READS THE BINDING TOO. `mid` has exactly ONE
+// ctjs.load_upvalue of `k` - its own read - and `deep`'s capture beside it is
+// the placeholder operand with `enclosing_indices = array<i32: 0>`. The lift
+// rewrites the read to `mid`'s capture parameter and hands `deep` that same
+// parameter by index, so both arrive at one argument by two routes. (It was two
+// loads while the index lived in an operand, and the second was a runtime
+// upvalue read the boxed tier paid for and nothing consumed.)
 function shared_read(k) {
     function mid() {
         function deep() { return k * 2; }
