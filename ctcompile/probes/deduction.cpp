@@ -8,6 +8,7 @@
 //
 // Built by check-deduction-probe.cmake on both compilers; the result of each
 // feature is recorded in part 24 §3.1.
+#include <cmath>
 #include <concepts>
 #include <type_traits>
 #include <utility>
@@ -85,6 +86,19 @@ int main() {
     auto q = pt{1.0, 2};
     static_assert(std::is_same_v<decltype(q), pt<double, int>>,
                   "ctcompile probe: aggregate CTAD, mixed");
+    // 3b: AND THE TRAP THAT KEEPS PHASE 56C FROM CONSTRUCTING WITH IT. Aggregate
+    // CTAD works, and the values this tier constructs a generated struct from
+    // are JavaScript `undefined`s - which the emitter spells as <cmath>'s
+    // `NAN`, a macro of type FLOAT (C++ [cmath.syn], and it is float on both
+    // devbox compilers, which is what this row measures). So `pt{NAN, false}`
+    // deduces `pt<float, bool>` where the field is a `double`: CTAD would
+    // silently change the carrier of every generated field it initialises. A
+    // declaration and an assignment CONVERT; a braced initialiser DEDUCES.
+    // Phase 56C therefore spells the instantiation and assigns, and this row is
+    // the reason rather than an opinion.
+    auto r = pt{NAN, false};
+    static_assert(std::is_same_v<decltype(r), pt<float, bool>>,
+                  "ctcompile probe: NAN is a float, so CTAD over it deduces float");
     // 4
     std::variant<double, int> v = 2.5;
     const double d = std::visit(
@@ -94,6 +108,7 @@ int main() {
     static_assert(std::is_same_v<decltype(n), double>, "ctcompile: n @ probe");
     const double e = uses_deduced();
     // Every probed value is used, so -Wunused cannot hide a row.
-    const double sum = a + b + c + p.x + p.y + q.x + static_cast<double>(q.y) + d + n + e;
+    const double sum = a + b + c + p.x + p.y + q.x + static_cast<double>(q.y) + d + n + e +
+                       (std::isnan(static_cast<double>(r.x)) && !r.y ? 0.0 : 1.0);
     return sum > 0.0 ? CT_PROBE_MOVE_ONLY_FUNCTION * 2 + CT_PROBE_RANGES_TO : 1;
 }

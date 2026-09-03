@@ -1224,6 +1224,33 @@ static LogicalResult printOperation(CppEmitter &emitter, ModuleOp moduleOp) {
 
 static LogicalResult printOperation(CppEmitter &emitter, ClassOp classOp) {
   raw_indented_ostream &os = emitter.ostream();
+  // ctcompile Phase 56C: ONE SHAPE IS ONE DEFINITION, and a family of object
+  // literals that agree on the field NAMES while disagreeing on a field TYPE
+  // is ONE class template at several instantiations. The parameter list is an
+  // attribute the lowering sets and this is its one consumer - the same
+  // divergence discipline as `ctnative.deduced` and `ctnative.provenance`.
+  if (auto parameters =
+          classOp->getAttrOfType<ArrayAttr>("ctnative.template_params")) {
+    // `template <>` IS NOT A DECLARATION. It is the explicit-specialisation
+    // syntax and is ill-formed on a primary template, so a family with nothing
+    // to parametrise - the empty shape `var e = {};` is admitted and reaches
+    // here - must arrive with no attribute at all rather than an empty one.
+    // Refused here, where it is a diagnostic, rather than emitted, where it is
+    // a C++ syntax error on a program ctcompile declared native.
+    if (parameters.empty())
+      return classOp.emitError("ctnative.template_params is empty: `template <>` is "
+                               "not a declaration, and a shape with no varying "
+                               "field is a plain class");
+    os << "template <";
+    for (size_t i = 0; i < parameters.size(); ++i) {
+      auto named = dyn_cast<StringAttr>(parameters[i]);
+      if (!named || named.getValue().empty())
+        return classOp.emitError(
+            "ctnative.template_params must be a list of non-empty strings");
+      os << (i == 0 ? "class " : ", class ") << named.getValue();
+    }
+    os << ">\n";
+  }
   os << "class " << classOp.getSymName();
   if (classOp.getFinalSpecifier())
     os << " final";

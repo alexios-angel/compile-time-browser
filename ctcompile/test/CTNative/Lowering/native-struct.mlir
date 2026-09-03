@@ -59,11 +59,11 @@ var b = looped();
 
 // --- one class per shape, fields as doubles, the local by value ------------
 //
-// CHECK: emitc.class @ctn_shape_
+// CHECK: emitc.class @ctn_x_y
 // CHECK-NEXT: emitc.field @x : f64
 // CHECK-NEXT: emitc.field @y : f64
 // CHECK-LABEL: emitc.func @closed_1() -> f64
-// CHECK: "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_shape_
+// CHECK: "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_x_y">>
 // CHECK: member = "x"
 // CHECK: assign
 // CHECK: member = "x"
@@ -92,17 +92,17 @@ var b = looped();
 // and nothing of that class, and the same %[[ACC]] under every `total`.
 //
 // CHECK-LABEL: emitc.func @looped_3() -> f64
-// CHECK: %[[ACC:.*]] = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_shape_
-// CHECK-NOT: "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_shape_
+// CHECK: %[[ACC:.*]] = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_total">>
+// CHECK-NOT: "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_total">>
 // CHECK: scf.while ({{.*}}) : (f64) -> f64 {
-// CHECK-NOT: "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_shape_
+// CHECK-NOT: "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_total">>
 // CHECK: "emitc.member"(%[[ACC]]) <{member = "total"}>
 // CHECK-NEXT: emitc.load
 // CHECK: "emitc.member"(%[[ACC]]) <{member = "total"}>
 // CHECK-NEXT: emitc.assign
-// CHECK-NOT: "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_shape_
+// CHECK-NOT: "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_total">>
 // CHECK: scf.yield
-// CHECK-NOT: "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_shape_
+// CHECK-NOT: "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_total">>
 // CHECK: "emitc.member"(%[[ACC]]) <{member = "total"}>
 // CHECK-NEXT: load
 // CHECK-NEXT: return
