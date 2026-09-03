@@ -114,6 +114,7 @@ void install_array(context & cx) {
         auto * self = detail::this_array(c);
         value out = c.make_array();
         if (self == nullptr || a.empty() || !a[0].is_callable()) { return out; }
+        const context::rooted keep(c, out); // as `map` - see the note there
         auto * result = static_cast<array_object *>(out.as_heap());
         const std::size_t n = self->items.size();
         for (std::size_t i = 0; i < n && i < self->items.size(); ++i) {
@@ -284,6 +285,16 @@ void install_array(context & cx) {
     });
     method(cx, array_proto, "map", [each](context & c, std::span<value> a) {
         value out = c.make_array();
+        // THE RESULT IS A C++ LOCAL ACROSS EVERY CALLBACK, and a C++ local is
+        // in none of the collector's roots. It is allocated BEFORE the first
+        // call, so a callback that collects - `$262.gc()`, or gc stress, which
+        // is where ctcompile's differential gate runs this - freed the array
+        // the remaining iterations then pushed into. Under the asan preset
+        // that is a heap-use-after-free WRITE; without one it is silent, and
+        // two distinct object literals become one allocation because the first
+        // was only reachable through the array that had already been freed.
+        // context::rooted is the primitive for exactly this.
+        const context::rooted keep(c, out);
         auto * result = static_cast<array_object *>(out.as_heap());
         each(c, a, [&](std::size_t, value produced) {
             result->items.push_back(produced);
@@ -295,6 +306,11 @@ void install_array(context & cx) {
         array_object * self = detail::this_array(c);
         value out = c.make_array();
         if (self == nullptr) { return out; }
+        // Unrooted exactly as `map`'s was. It survived only because the values
+        // it collects are also in the rooted source array - the ARRAY itself
+        // was still freed under the push, which asan reports and which is not
+        // something to leave standing on the strength of a coincidence.
+        const context::rooted keep(c, out);
         auto * result = static_cast<array_object *>(out.as_heap());
         const value callback = arg_at(a, 0);
         for (std::size_t i = 0; i < self->items.size(); ++i) {
@@ -402,6 +418,18 @@ void install_array(context & cx) {
             // Sorting a copy and writing it back cannot: the comparator may do
             // what it likes to the array meanwhile.
             std::vector<value> work = self->items;
+            // ...AND THE SNAPSHOT IS THE ONLY REFERENCE THERE IS once the
+            // comparator has emptied the array. A bare std::vector<value> is in
+            // none of the collector's roots, so `a.sort(function (x, y) {
+            // a.length = 0; $262.gc(); ... })` freed every element that was not
+            // currently an argument and the next merge step read them - a
+            // segfault in Release and a heap-use-after-free under asan. The
+            // work vector is permuted, never added to, so rooting the initial
+            // contents roots every value this loop can reach.
+            const context::rooted_values keep_work(c, work);
+            // The comparator is a C++ local too, and the only reference to it
+            // once whatever produced it has been overwritten.
+            const context::rooted keep_comparator(c, comparator);
             const std::size_t n = work.size();
             if (n > 1) {
                 std::vector<value> spare(n);
@@ -433,11 +461,28 @@ void install_array(context & cx) {
             // allocates a std::string for every one of them; a page sorting a
             // thousand items paid for twenty thousand conversions to answer a
             // thousand questions.
+            //
+            // ON A SNAPSHOT TOO, and for the same two reasons the comparator
+            // path sorts one. THIS PATH ALSO RUNS PAGE JAVASCRIPT: `to_string`
+            // of an object calls the page's own `toString`. That code could
+            // push to the very array this loop was walking with a range-for -
+            // which invalidates the iterators - and could empty it, after which
+            // the write-back below indexed `self->items` past the end. Neither
+            // needed a comparator to reach; `[].sort()` was enough.
+            std::vector<value> items = self->items;
+            const context::rooted_values keep_items(c, items);
             std::vector<std::pair<std::string, value>> keyed;
-            keyed.reserve(self->items.size());
-            for (const value & item : self->items) { keyed.emplace_back(c.to_string(item), item); }
+            keyed.reserve(items.size());
+            for (const value & item : items) { keyed.emplace_back(c.to_string(item), item); }
             std::ranges::stable_sort(keyed, {}, &std::pair<std::string, value>::first);
-            for (std::size_t i = 0; i < keyed.size(); ++i) { self->items[i] = keyed[i].second; }
+            // ASSIGNED, not written slot by slot - the same thing the
+            // comparator arm does with its own snapshot, so the two arms agree
+            // about what the array holds afterwards. Where nothing mutated
+            // during to_string the two spellings are identical; where something
+            // did, this is defined and the old one was not.
+            self->items.clear();
+            self->items.reserve(keyed.size());
+            for (const auto & [key, item] : keyed) { self->items.push_back(item); }
         }
         return c.current_this();
     });

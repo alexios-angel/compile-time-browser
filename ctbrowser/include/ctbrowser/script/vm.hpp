@@ -1361,6 +1361,42 @@ public:
         context * cx_;
     };
 
+    // THE SAME THING FOR A WHOLE RANGE - a std::vector<value> a builtin is
+    // holding across a call back into the VM.
+    //
+    // `Array.prototype.sort` is why. It snapshots the array so a comparator
+    // cannot make the merge index out of bounds, and that snapshot is a bare
+    // std::vector<value>: a comparator that empties the array leaves the
+    // snapshot holding the only reference to every element that is not
+    // currently an argument, and a collection there frees them under the merge
+    // that is still reading them. One `rooted` per element cannot be spelled -
+    // `rooted` is deliberately immovable, so it does not go in a container.
+    //
+    // A COPY AT CONSTRUCTION IS SUFFICIENT AND EXACT for a sort, because the
+    // work vector is PERMUTED and never gains a value the snapshot did not
+    // have. Anything that can grow its range mid-call wants a heap object it
+    // can root once instead.
+    class rooted_values {
+    public:
+        rooted_values(context & cx, std::span<const value> vs) : cx_(&cx), count_(vs.size()) {
+            cx.temporaries_.insert(cx.temporaries_.end(), vs.begin(), vs.end());
+        }
+        ~rooted_values() {
+            // Defensive in the same way `rooted`'s pop is: the stack discipline
+            // says these are exactly the top `count_`, and unwinding out of an
+            // engine fault is not the moment to trust that.
+            const std::size_t n = std::min(count_, cx_->temporaries_.size());
+            cx_->temporaries_.erase(cx_->temporaries_.end() - static_cast<std::ptrdiff_t>(n),
+                                    cx_->temporaries_.end());
+        }
+        rooted_values(const rooted_values &) = delete;
+        rooted_values & operator=(const rooted_values &) = delete;
+
+    private:
+        context * cx_;
+        std::size_t count_;
+    };
+
     // COLLECT AT EVERY SAFEPOINT, FOR TESTS. Phase 4.
     //
     // The only thing that collects in an ordinary run is `collect_if_due`, once

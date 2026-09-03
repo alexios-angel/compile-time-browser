@@ -132,6 +132,85 @@ void test_symbol_registry_survives_a_collection() {
               "true");
 }
 
+// --- array builtins across a callback --------------------------------------
+//
+// Each of these holds a heap value in a C++ local across a call back into the
+// VM. `context::rooted` is the primitive for exactly this and none of them used
+// it. The callback's `gc()` is what a page cannot do and `$262.gc` can.
+
+void test_map_result_survives_a_collection() {
+    // `map`'s `out` is allocated BEFORE the first callback and lives only in a
+    // C++ local until it is returned, so the first `gc()` frees the array the
+    // remaining iterations then push into.
+    expect_gc("map's result array survives gc in the callback", R"(
+        var out = [1, 2, 3].map(function (x) { gc(); return { v: x }; });
+        return out.length + ':' + out[0].v + ',' + out[1].v + ',' + out[2].v;
+    )",
+              "3:1,2,3");
+}
+
+void test_filter_result_survives_a_collection() {
+    // `filter` survived only by accident: the values it keeps are also in the
+    // rooted source array. Its `out` is as unrooted as `map`'s.
+    expect_gc("filter's result array survives gc in the callback", R"(
+        var src = [{ v: 1 }, { v: 2 }, { v: 3 }];
+        var out = src.filter(function (o) { gc(); return o.v !== 2; });
+        return out.length + ':' + out[0].v + ',' + out[1].v;
+    )",
+              "2:1,3");
+}
+
+void test_flat_map_result_survives_a_collection() {
+    expect_gc("flatMap's result array survives gc in the callback", R"(
+        var out = [1, 2].flatMap(function (x) { gc(); return [{ v: x }, { v: x * 10 }]; });
+        return out.length + ':' + out[0].v + ',' + out[1].v + ',' + out[2].v + ',' + out[3].v;
+    )",
+              "4:1,10,2,20");
+}
+
+void test_sort_snapshot_survives_a_collection() {
+    // `sort` copies the array so a comparator cannot make it index out of
+    // bounds - and that snapshot is a bare std::vector<value>. A comparator
+    // that empties the array leaves the snapshot holding the ONLY reference to
+    // every element not currently an argument, and `gc()` then frees them
+    // under the merge that is still reading them.
+    expect_gc("sort's snapshot survives gc in the comparator", R"(
+        var a = [{ k: 3 }, { k: 1 }, { k: 4 }, { k: 2 }];
+        a.sort(function (x, y) { a.length = 0; gc(); return x.k - y.k; });
+        var out = [];
+        for (var i = 0; i < a.length; i++) { out.push(a[i].k); }
+        return out.join(',');
+    )",
+              "1,2,3,4");
+    // The comparator itself is a C++ local too, and the only reference to it
+    // once the expression that produced it has been overwritten.
+    expect_gc("sort's comparator survives gc in itself", R"(
+        var a = [{ k: 2 }, { k: 3 }, { k: 1 }];
+        var by = function (x, y) { hold = null; gc(); return x.k - y.k; };
+        var hold = by;
+        by = null;
+        a.sort(hold);
+        var out = [];
+        for (var i = 0; i < a.length; i++) { out.push(a[i].k); }
+        return out.join(',');
+    )",
+              "1,2,3");
+    // THE DEFAULT SORT RUNS USER CODE TOO. It has no comparator, but it calls
+    // `to_string` on every element to build its keys, and `toString` is a page
+    // method - so the same window is open on the path nobody passes a function
+    // to. This one also walks `self->items` with a range-for while that code
+    // can push to it.
+    expect_gc("the default sort survives a mutating toString", R"(
+        var a = [];
+        a.push({ toString: function () { a.push({ toString: function () { return 'z'; } });
+                                         gc(); return 'b'; } });
+        a.push({ toString: function () { gc(); return 'a'; } });
+        a.sort();
+        return String(a.length >= 2);
+    )",
+              "true");
+}
+
 // --- the mark phase --------------------------------------------------------
 
 // `mark_object` recursed once per EDGE, with no depth bound and no worklist, so
@@ -182,6 +261,10 @@ int main(int argc, char ** argv) {
     };
     run("bind", &test_bind_captures_survive_a_collection);
     run("symbol", &test_symbol_registry_survives_a_collection);
+    run("map", &test_map_result_survives_a_collection);
+    run("filter", &test_filter_result_survives_a_collection);
+    run("flatmap", &test_flat_map_result_survives_a_collection);
+    run("sort", &test_sort_snapshot_survives_a_collection);
     run("chain", &test_a_deep_chain_does_not_exhaust_the_stack);
     REPORT("script_gc");
 }
