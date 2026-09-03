@@ -196,7 +196,7 @@ void dom_bindings::install_window(context & cx) {
     // already works exactly this way and says so.
     const value add_listener = value::object(cx.allocate<script::native_object>(
         "addEventListener", [this](context & c, std::span<value> args) {
-            listeners_.push_back(make_listener(c, path_step{node_id{}, listen_on::window}, args));
+            this->add_listener(make_listener(c, path_step{node_id{}, listen_on::window}, args));
             return value::undefined();
         }));
     const value remove_listener = value::object(cx.allocate<script::native_object>(

@@ -76,6 +76,10 @@ void dom_bindings::register_roots(context & cx) {
         for (const listener & l : listeners_) {
             mark(l.callback);
             mark(l.abort_signal);
+            // A STANDALONE EventTarget can be reachable from nowhere else: a
+            // page may `new EventTarget()`, register on it and drop the
+            // variable, and the listener is then the only reference there is.
+            mark(l.host);
         }
         for (const timer & t : timers_) { mark(t.callback); }
         // A QUEUED FETCH holds the only reference to the promise a page is
@@ -115,6 +119,7 @@ void dom_bindings::register_roots(context & cx) {
         // and an event whose prototype was collected stops being an Event.
         mark(event_prototype_);
         mark(custom_event_prototype_);
+        mark(event_target_prototype_);
         mark(location_);
         mark(document_);
         mark(window_);
@@ -225,7 +230,7 @@ void dom_bindings::install_document(context & cx) {
         return wrap(c, doc_->create_text(arg_string(c, args, 0)));
     });
     method("addEventListener", [this](context & c, std::span<value> args) {
-        listeners_.push_back(make_listener(c, path_step{node_id{}, listen_on::document}, args));
+        add_listener(make_listener(c, path_step{node_id{}, listen_on::document}, args));
         return value::undefined();
     });
     // THE OTHER HALF, WHICH THE DOCUMENT DID NOT HAVE.

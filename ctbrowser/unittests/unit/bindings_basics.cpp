@@ -429,6 +429,54 @@ void test_events_travel_the_whole_path() {
     check(log[8] == "kinds=true,true,2,3", "Event identity and the phase constants: " + log[8]);
 }
 
+// `new EventTarget()` - a listener list with no node under it, and the three
+// methods a subclass inherits. Also the DOM's duplicate rule, which applies
+// everywhere and was implemented nowhere: registering the same
+// (type, callback, capture) twice must do nothing.
+void test_a_standalone_event_target() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body><script>
+        var et = new EventTarget();
+        var n = 0;
+        function once() { n += 100; }
+        function each() { n += 1; }
+        et.addEventListener('go', once, {once: true});
+        et.addEventListener('go', each);
+        et.addEventListener('go', each);   // the same three: must be ignored
+        et.dispatchEvent(new Event('go'));
+        et.dispatchEvent(new Event('go'));
+        console.log('counts=' + n);
+
+        // A standalone target IS its whole path: nothing reaches the document.
+        var leaked = 0;
+        document.addEventListener('go', function () { leaked++; });
+        et.dispatchEvent(new Event('go'));
+        console.log('leak=' + leaked);
+
+        // preventDefault reaches dispatchEvent's answer here too.
+        et.addEventListener('no', function (e) { e.preventDefault(); });
+        console.log('cancel=' + et.dispatchEvent(new Event('no', {cancelable: true})));
+
+        // The three methods are on the PROTOTYPE, so a subclass has them and
+        // `this` is the instance rather than the base.
+        class Nicer extends EventTarget {
+          fire(d) { this.dispatchEvent(new CustomEvent('x', {detail: d})); }
+        }
+        var sub = new Nicer();
+        var got = 0;
+        sub.addEventListener('x', function (e) { got = e.detail; });
+        sub.fire(9);
+        console.log('sub=' + got + ',' + (sub instanceof EventTarget));
+      </script></body></html>)");
+    check(page.script_error().empty(), "the EventTarget script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() == 4, "every line was logged");
+    check(log[0] == "counts=102", "once fires once and a duplicate is not added: " + log[0]);
+    check(log[1] == "leak=0", "a standalone target does not reach the document: " + log[1]);
+    check(log[2] == "cancel=false", "preventDefault reaches dispatchEvent: " + log[2]);
+    check(log[3] == "sub=9,true", "a subclass inherits the three methods: " + log[3]);
+}
+
 // The canvas additions p5.js draws through: the transform family, ellipse and
 // Path2D. A Path2D is a RECORDING - built once and replayed by fill(path) or
 // stroke(path), which is how p5 draws every 2D shape.
@@ -2584,6 +2632,7 @@ int main() {
     test_tree_navigation();
     test_element_collections_are_live();
     test_events_travel_the_whole_path();
+    test_a_standalone_event_target();
     test_canvas_transform_and_paths();
     test_window_is_the_global_object();
     test_class_list_edits_the_attribute();

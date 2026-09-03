@@ -1005,7 +1005,7 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
     });
     method("addEventListener", [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
-        if (id) { listeners_.push_back(make_listener(c, path_step{id, listen_on::node}, args)); }
+        if (id) { add_listener(make_listener(c, path_step{id, listen_on::node}, args)); }
         return value::undefined();
     });
     // The other half. The WINDOW could remove a listener and an element could

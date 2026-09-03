@@ -214,6 +214,11 @@ bool dom_bindings::dispatch_mouse(std::string_view type, node_id target,
 // event's target.
 std::vector<dom_bindings::path_step> dom_bindings::propagation_path(path_step at) const {
     std::vector<path_step> path;
+    // A STANDALONE EventTarget IS THE WHOLE PATH. It is not in the tree, so
+    // there is nothing above it to capture through or bubble to, and appending
+    // the document and the window would deliver a page's private events to
+    // every global listener there is.
+    if (at.on == listen_on::object) { return {at}; }
     if (at.on == listen_on::node && at.node) {
         const auto txn = doc_->read();
         for (node_id walk = at.node; walk; walk = txn.parent(walk)) {
@@ -233,6 +238,7 @@ value dom_bindings::object_of_step(context & cx, path_step step) {
     case listen_on::node: return wrap(cx, step.node);
     case listen_on::document: return document_;
     case listen_on::window: return cx.has_global("window") ? cx.global("window") : window_;
+    case listen_on::object: return step.host;
     }
     return value::undefined();
 }
@@ -287,6 +293,22 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // is in flight and what a second, nested dispatch of the same object would
     // have to refuse.
     object->set("__dispatching", value::boolean(true));
+    ++dispatch_depth_;
+    // `composedPath()` is the path AS A LIST, and it is empty outside a
+    // dispatch. Built once here rather than recomputed by the method, because
+    // the tree may have moved by the time a page asks.
+    {
+        value listed = cx.make_array();
+        auto * items = static_cast<script::array_object *>(listed.as_heap());
+        for (const path_step & step : path) { items->items.push_back(object_of_step(cx, step)); }
+        object->set("__path", listed);
+        object->set("composedPath", value::object(cx.allocate<script::native_object>(
+                                        "composedPath", [](context & c, std::span<value>) {
+                                            const value self = c.current_this();
+                                            const value held = c.lookup_property(self, "__path");
+                                            return held.is_array() ? held : c.make_array();
+                                        })));
+    }
 
     const auto stopped = [&] { return flag_of(cx, event, cancel_bubble_property); };
     const auto at_target = [&](path_step step) { return step.on == at.on && step.node == at.node; };
@@ -326,9 +348,13 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     // the other half of the same rule.
     object->set(std::string{cancel_bubble_property}, value::boolean(false));
     object->set(std::string{stop_immediate_property}, value::boolean(false));
+    object->set("__path", cx.make_array());
     // A `once` listener is removed AFTER the dispatch, not during it: erasing
-    // from the vector being walked is how a later listener gets skipped.
-    std::erase_if(listeners_, [](const listener & l) { return l.spent; });
+    // from the vector being walked is how a later listener gets skipped. And not
+    // after a NESTED dispatch either - a listener may dispatch, and the inner
+    // compaction would shift the list the outer loop is indexing.
+    --dispatch_depth_;
+    reap_spent_listeners();
     // A LISTENER THAT FAULTS IS REPORTED AND THE FAULT CLEARED, exactly as for
     // a timer or an animation frame. Without this the first listener to fault
     // left the VM's failure flag set for the life of the page: every later
@@ -516,6 +542,7 @@ dom_bindings::listener dom_bindings::make_listener(context & cx, path_step targe
     listener made;
     made.target = target.node;
     made.on = target.on;
+    made.host = target.host;
     made.type = arg_string(cx, args, 0);
     made.callback = arg(args, 1);
     const value options = arg(args, 2);
@@ -527,6 +554,25 @@ dom_bindings::listener dom_bindings::make_listener(context & cx, path_step targe
         made.capture = context::truthy(options);
     }
     return made;
+}
+
+void dom_bindings::add_listener(listener made) {
+    // (type, callback, capture) ON ONE TARGET is a listener's identity, and the
+    // DOM says a second registration of the same three does nothing at all.
+    // Without this a page that registers in a function it calls twice got two
+    // calls per event, and a `once` listener registered twice fired twice.
+    const bool already = std::ranges::any_of(listeners_, [&](const listener & l) {
+        return l.on == made.on && l.target == made.target && l.host.bits() == made.host.bits() &&
+               l.type == made.type && l.capture == made.capture && !l.spent &&
+               l.callback.bits() == made.callback.bits();
+    });
+    if (already) { return; }
+    listeners_.push_back(std::move(made));
+}
+
+void dom_bindings::reap_spent_listeners() {
+    if (dispatch_depth_ > 0) { return; }
+    std::erase_if(listeners_, [](const listener & l) { return l.spent; });
 }
 
 void dom_bindings::fire_at(path_step step, std::string_view type, value event, bool capturing) {
@@ -542,6 +588,7 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
         listener & l = listeners_[i];
         if (l.on != step.on || l.type != type || l.capture != capturing || l.spent) { continue; }
         if (l.on == listen_on::node && l.target != step.node) { continue; }
+        if (l.on == listen_on::object && l.host.bits() != step.host.bits()) { continue; }
         if (l.once) { l.spent = true; }
         (void)cx_->call(l.callback, std::span<const value>{&event, 1});
     }
@@ -650,23 +697,61 @@ void dom_bindings::install_event_interfaces(context & cx) {
     custom_proto->set("constructor", value::object(custom_ctor));
     cx.define_global("CustomEvent", value::object(custom_ctor));
 
-    // `EventTarget` is not constructible HERE, and the reason is worth stating
-    // rather than hiding: `new EventTarget()` in a browser makes a standalone
-    // object with its own listener list, and this engine's listener list is
-    // keyed on a node, the document or the window. Handing back an object that
-    // accepts addEventListener and never fires is the wrong answer twice over -
-    // so it throws, which is at least a truthful one, and feature detection
-    // (`typeof EventTarget`) still finds it.
+    // `new EventTarget()` - a listener list with no node under it.
+    //
+    // The three methods live on the PROTOTYPE and find their target through
+    // `this`, which is what makes `class Nicer extends EventTarget` work: a
+    // subclass instance inherits them and `this` is the instance. Capturing the
+    // object in the closure instead would give every subclass the base's list.
     auto * target_proto = static_cast<script::object_object *>(cx.make_object().as_heap());
-    auto * target_ctor =
-        cx.allocate<script::native_object>("EventTarget", [](context & c, std::span<value>) {
-            c.throw_error("TypeError",
-                          "Illegal constructor: EventTarget has no standalone form in this engine");
-            return value::undefined();
+    const auto target_method = [&](std::string name, script::native_fn fn) {
+        target_proto->set(name,
+                          value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+    };
+    target_method("addEventListener", [this](context & c, std::span<value> args) {
+        const value self = c.current_this();
+        if (!self.is_object()) { return value::undefined(); }
+        add_listener(make_listener(c, path_step{node_id{}, listen_on::object, self}, args));
+        return value::undefined();
+    });
+    target_method("removeEventListener", [this](context & c, std::span<value> args) {
+        const value self = c.current_this();
+        const std::string type = arg_string(c, args, 0);
+        const value callback = arg(args, 1);
+        // The capture flag is part of a listener's identity, and the third
+        // argument may be an options object or the bare boolean.
+        const value options = arg(args, 2);
+        const bool capture = options.is_object()
+                                 ? context::truthy(c.lookup_property(options, "capture"))
+                                 : context::truthy(options);
+        std::erase_if(listeners_, [&](const listener & l) {
+            return l.on == listen_on::object && l.host.bits() == self.bits() && l.type == type &&
+                   l.capture == capture && l.callback.bits() == callback.bits();
         });
-    target_ctor->set("prototype", value::object(target_proto));
+        return value::undefined();
+    });
+    target_method("dispatchEvent", [this](context & c, std::span<value> args) {
+        const value self = c.current_this();
+        const value event = arg(args, 0);
+        if (!self.is_object() || !event.is_object()) { return value::boolean(true); }
+        return value::boolean(!dispatch_to(event, path_step{node_id{}, listen_on::object, self}));
+    });
+    // The Error constructor's shape, and for the same reason: `this` is the
+    // instance when this runs through `new` or through a subclass's `super()`,
+    // and a bare call still has to produce something.
+    const value target_prototype = value::object(target_proto);
+    auto * target_ctor = cx.allocate<script::native_object>(
+        "EventTarget", [target_prototype](context & c, std::span<value>) {
+            value self = c.current_this();
+            if (!self.is_object()) { self = c.make_object(); }
+            auto * made = static_cast<script::object_object *>(self.as_heap());
+            if (!made->prototype.is_object()) { made->prototype = target_prototype; }
+            return self;
+        });
+    target_ctor->set("prototype", target_prototype);
     target_proto->set("constructor", value::object(target_ctor));
     cx.define_global("EventTarget", value::object(target_ctor));
+    event_target_prototype_ = target_prototype;
 
     // `window.dispatchEvent`. The window is the LAST stop on every path, so
     // dispatching AT it runs only the window's own listeners - which is what the

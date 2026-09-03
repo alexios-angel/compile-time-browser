@@ -234,19 +234,27 @@ private:
     enum class listen_on : std::uint8_t {
         node,     // an element; `target` names it
         document, // document.addEventListener
-        window    // window.addEventListener, and the bare global spelling
+        window,   // window.addEventListener, and the bare global spelling
+        // `new EventTarget()`, and anything that inherits from one. It has no
+        // node and no place in the tree, so it is identified by the OBJECT -
+        // `host` below - and its path is itself and nothing else.
+        object
     };
 
-    // One stop on the path an event travels. A node, or one of the two event
-    // targets that have no node.
+    // One stop on the path an event travels. A node, one of the two event
+    // targets that have no node, or a standalone EventTarget.
     struct path_step {
-        node_id node; // empty unless `on` is `node`
-        listen_on on = listen_on::node;
+        node_id node;                    // empty unless `on` is `node`
+        listen_on on = listen_on::node;  // which kind of target this is
+        value host = value::undefined(); // set only when `on` is `object`
     };
 
     struct listener {
         node_id target; // set only when `on` is `node`
         listen_on on = listen_on::node;
+        // The standalone EventTarget this listener is on, when `on` is `object`.
+        // A GC root: nothing else may be holding it while a listener is.
+        value host = value::undefined();
         std::string type;
         value callback;
         // The AbortSignal this listener was registered with, if any. Aborting
@@ -324,6 +332,17 @@ private:
     // document and window registrations - three copies is three chances for
     // `once` to work on one of them and not the others.
     [[nodiscard]] listener make_listener(context & cx, path_step target, std::span<value> args);
+    // Register one, UNLESS AN EQUAL ONE IS ALREADY THERE. The DOM defines a
+    // listener's identity as (type, callback, capture) on one target and says a
+    // second addEventListener with all three the same does nothing - which is
+    // what a page relies on when it registers defensively in a function it calls
+    // more than once. Every addEventListener goes through here so the rule holds
+    // for elements, the document, the window and a standalone EventTarget alike.
+    void add_listener(listener made);
+    // Drop the listeners a `once` fired, but ONLY when no dispatch is running:
+    // erasing from the vector a dispatch is indexing is how the listener after
+    // the removed one gets skipped, and a listener may dispatch another event.
+    void reap_spent_listeners();
     // `innerHTML`. Setting one PARSES: the markup becomes real nodes under the
     // element, replacing whatever was there. It used to be a plain property on
     // the wrapper, so assigning markup stored a string, rendered nothing, and
@@ -717,6 +736,9 @@ private:
     flat_map<std::uint64_t, script::object_object *> wrappers_;
     flat_map<std::uint64_t, property_mirror> mirrors_;
     bool wrote_to_control_ = false;
+    // How many dispatches are on the stack. A listener may dispatch, and the
+    // inner dispatch must not compact the listener list the outer one is walking.
+    std::size_t dispatch_depth_ = 0;
     // What the browser last told us has focus, for document.activeElement.
     node_id focused_;
     std::string location_href_;
@@ -756,6 +778,9 @@ private:
     // `e.AT_TARGET` rather than as `Event.AT_TARGET`.
     value event_prototype_;
     value custom_event_prototype_;
+    // `EventTarget.prototype`, where the three methods a standalone target
+    // inherits live.
+    value event_target_prototype_;
     value canvas2d_prototype_;
     value webgl_prototype_;
     // A SEPARATE INTERFACE, not a subclass. `WebGL2RenderingContext` does not
