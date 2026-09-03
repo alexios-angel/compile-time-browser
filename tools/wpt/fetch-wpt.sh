@@ -40,6 +40,16 @@ SPARSE_PATHS=(
   /html/dom/           # reflection, and the document's own interface
   /css/cssom/          # getComputedStyle, style declarations, stylesheets
   /css/css-values/     # value parsing and computation - calc, lengths, units
+  # THE HELPERS css/ TESTS IMPORT, and leaving them out was not a saving.
+  # `test_valid_value`, `test_computed_value`, `test_math_used`,
+  # `test_interpolation` and `test_specified_serialization` all live in
+  # css/support/parsing-testcommon.js and friends, and a css/css-values test
+  # that cannot load one reports HARNESS_ERROR before it runs a single subtest.
+  # 94 of the suite's 128 harness errors were exactly that on 2026-09-02, and
+  # adding this directory converted 87 of them into real measurements - 84 FAIL
+  # and 3 PASS. Measurements are the point; a harness error is the absence of
+  # one.
+  /css/support/        # parsing-testcommon.js and the css/ suites' shared helpers
 )
 
 verify_only=0
