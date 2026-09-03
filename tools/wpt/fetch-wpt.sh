@@ -40,6 +40,15 @@ SPARSE_PATHS=(
   /html/dom/           # reflection, and the document's own interface
   /css/cssom/          # getComputedStyle, style declarations, stylesheets
   /css/css-values/     # value parsing and computation - calc, lengths, units
+  # THE HELPERS THE CSS SUITES IMPORT, and they are not optional. Almost every
+  # file in css/css-values is four lines long and calls test_valid_value,
+  # test_computed_value or test_math_used - all of which live in
+  # css/support/*.js. Without this line 94 of that suite's 508 files reported
+  # HARNESS_ERROR for a MISSING FILE rather than for anything about the engine,
+  # which is a measurement that cannot move no matter what is fixed. It is a
+  # SKIP_DIR_PARTS directory in run-wpt.py, so nothing here is ever collected as
+  # a test - it is imported, never run.
+  /css/support/        # parsing-, computed-, numeric-testcommon.js and friends
 )
 
 verify_only=0
@@ -63,7 +72,12 @@ if [ "$verify_only" = 1 ]; then
   # styles now - so --verify could never pass on any checkout at all. A guard
   # that always fires is worth exactly as much as one that never does, and this
   # one was inherited unrun. Each entry below was checked against the pin.
-  for must in resources/testharness.js resources/testharnessreport.js common dom/nodes; do
+  # css/support/parsing-testcommon.js is named because a checkout made before
+  # that path joined the list above is a checkout at the right SHA with the
+  # right harness that still loses 94 css-values files to a missing helper -
+  # which is precisely the failure --verify exists to catch and could not.
+  for must in resources/testharness.js resources/testharnessreport.js common dom/nodes \
+              css/support/parsing-testcommon.js; do
     [ -e "$WPT_DIR/$must" ] || {
       echo "$WPT_DIR/$must missing - the sparse checkout is incomplete" >&2
       exit 1
