@@ -133,6 +133,81 @@ struct source_bytes {
     }
 };
 
+// WHAT A CONSTANT IS ALLOWED TO BE - one rule, read by the writer and by the
+// reader, because a pool entry is EIGHT BYTES OF A FILE REINTERPRETED AS A
+// VALUE and that is the narrowest place in this format.
+//
+// The rule used to be `is_heap()` alone, which is a pure bit test and correct as
+// far as it goes - and one quiet-bit short of enough. A NaN-boxed value is a NaN
+// with bits 51 and 50 set (value.hpp's qnan_mask); a NaN with bit 50 set and bit
+// 51 CLEAR is therefore an ordinary number to every predicate here, and the
+// first arithmetic operation on it QUIETS bit 51:
+//
+//     0xFFF4000000000003   loaded: is_number() true, is_heap() false
+//     - 1                  the hardware quiets bit 51
+//     0xFFFC000000000003   is_heap() TRUE, as_heap() = 0x3, from the file
+//
+// Reproduced end to end: eight patched bytes in a `.ctapp` made `ctrun` fault in
+// `context::type_of` at an address the file chose. The engine had already met
+// this mechanism arriving through a Float64Array and canonicalises there
+// (`view_get`, and unittests/js/number_basics.cpp); an image is the same
+// boundary and had no such rule.
+//
+// REFUSED RATHER THAN CANONICALISED, which is a decision and rests on a fact
+// about the compiler rather than on taste. `add_constant` is reached from one
+// place - `emit_const`, compile/helpers.cpp:17 - and every caller of it passes
+// `value::number(...)` or `value::boolean(...)`; the only non-integral number
+// among them is `number_literal(text)`, which returns a parsed double, zero, or
+// +/-Infinity from `out_of_range_value`, and has NO PATH TO NaN. A source cannot
+// spell a NaN literal either: `NaN` is a global identifier, `0/0` is a runtime
+// division, and nothing here folds constants. So no legitimate image contains
+// one, refusing costs nothing, and it keeps this file's own promise that a
+// corrupt image is refused rather than run - where canonicalising would run a
+// tampered image with a silently different number in it.
+//
+// THE CANONICAL NaN IS STILL ACCEPTED, so that the day something does learn to
+// fold `0/0` the shape it should emit already loads. Note that is 0x7FF8...
+// exactly: x86-64's own default NaN for 0.0/0.0 is 0xFFF8..., and it is refused
+// too, because a rule about WHICH payloads are dangerous is a rule that has
+// already been wrong once.
+//
+// Returns nullptr when the bits are a value a pool may hold, and otherwise the
+// tail of the sentence "constant N ...".
+[[nodiscard]] constexpr const char * why_not_a_constant(std::uint64_t bits) noexcept {
+    const value v = value::from_bits(bits);
+    // is_heap(), NOT is_object(): is_object asks the pointed-to object what KIND
+    // it is, which dereferences a pointer that came out of a file. Every test
+    // here is a pure bit test, which is the only kind that is safe to run on
+    // bytes nobody has validated yet.
+    //
+    // The pool holds immediates only - a string literal lives in `strings` and
+    // is materialised by the VM - so a boxed pointer here is a file handing the
+    // engine an address to dereference.
+    if (v.is_heap()) { return "carries a heap pointer; the pool holds immediates only"; }
+    if (v.is_number()) {
+        // IEEE-754: a maximal exponent with any non-zero mantissa is a NaN, and
+        // there are 2^52 of them. Written as bits rather than std::isnan because
+        // this runs on unvalidated input and because the comparison below is
+        // against a bit pattern, not against a value - every NaN compares
+        // unequal to every NaN, this one included.
+        constexpr std::uint64_t exponent = 0x7FF0'0000'0000'0000ull;
+        constexpr std::uint64_t mantissa = 0x000F'FFFF'FFFF'FFFFull;
+        if ((bits & exponent) == exponent && (bits & mantissa) != 0 && bits != canonical_nan_bits) {
+            return "is a NaN carrying a payload - one arithmetic operation quiets bit 51 and "
+                   "turns it into a boxed tag or a heap pointer";
+        }
+        return nullptr;
+    }
+    // NOT A NUMBER AND NOT A POINTER, so it matches the boxed pattern and must
+    // be one of the four tags. Anything else is a value with no meaning at all:
+    // `is_kind` says no to every kind, `typeof` falls off the end of its own
+    // switch, and nothing in the engine describes what it holds. The old gate
+    // let every one of them through.
+    if (v.is_undefined() || v.is_null() || v.is_boolean()) { return nullptr; }
+    return "is a tag no value has - it is neither a number, nor undefined, null, false or "
+           "true, nor a heap pointer";
+}
+
 } // namespace
 
 // WHAT THIS BUILD'S COMPILER EMITS, as a number, measured rather than declared.
@@ -373,6 +448,22 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
         last_write_error = "refusing to write a program with more than 4,294,967,295 functions - "
                            "the image records the count as a 32-bit number";
         return {};
+    }
+    // AND THE READER'S CONSTANT RULE, ENFORCED HERE TOO. The reader refuses a
+    // pool entry that is not a value (see `why_not_a_constant`); a writer that
+    // will happily produce one is a writer whose output this build cannot load,
+    // and the place to find that out is the packager rather than the field. It
+    // is also the cheapest possible check that the compiler still cannot emit a
+    // NaN constant - which is the fact the reader's refusal rests on.
+    for (std::uint32_t fi = 0; fi < from.functions.size(); ++fi) {
+        const function_proto & fn = from.functions[fi];
+        for (std::size_t ci = 0; ci < fn.constants.size(); ++ci) {
+            if (const char * why = why_not_a_constant(fn.constants[ci].bits()); why != nullptr) {
+                last_write_error = "refusing to write function " + std::to_string(fi) +
+                                   ": constant " + std::to_string(ci) + " " + why;
+                return {};
+            }
+        }
     }
 
     // ONE POOL FOR NAMES, ONE FOR STRINGS. Measured on the corpora: babylon's
@@ -782,21 +873,15 @@ load_result load_image(std::span<const std::byte> bytes,
         }
         fn.constants.reserve(constant_count);
         for (std::uint32_t i = 0; i < constant_count && !in.bad; ++i) {
-            const value v = value::from_bits(in.u64());
-            // A CONSTANT MAY NOT BE A HEAP POINTER. The pool holds immediates
-            // only - a string literal lives in `strings` and is materialised by
-            // the VM - so a boxed pointer here is a file handing the engine an
-            // address to dereference.
-            // is_heap(), NOT is_object(): is_object asks the pointed-to
-            // object what KIND it is, which dereferences a pointer that came
-            // out of a file. is_heap is a pure bit test and is the only one
-            // that is safe to run on bytes nobody has validated yet.
-            if (v.is_heap()) {
-                in.fail(where() + "constant " + std::to_string(i) +
-                        " carries a heap pointer; the pool holds immediates only");
+            // A CONSTANT IS A VALUE, AND NOT EVERY 64-BIT PATTERN IS ONE. The
+            // whole rule, and why it is this rule rather than the `is_heap()`
+            // test it replaces, is above `why_not_a_constant`.
+            const std::uint64_t bits = in.u64();
+            if (const char * why = why_not_a_constant(bits); why != nullptr) {
+                in.fail(where() + "constant " + std::to_string(i) + " " + why);
                 break;
             }
-            fn.constants.push_back(v);
+            fn.constants.push_back(value::from_bits(bits));
         }
         if (in.bad) { break; }
 

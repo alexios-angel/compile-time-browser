@@ -32,14 +32,29 @@
 // mismatch is a REFUSAL rather than a best effort.
 //
 // AN IMAGE IS EXECUTABLE INPUT AND IS NOT AUTHENTICATED. `load` validates
-// structure exhaustively - every index, every operand, every count - so a
-// corrupt file is refused rather than run. That is sufficient for a build
-// artefact this build produced and consumed. It is NOT sufficient for an image
-// that could be written by somebody else: the checksum is unkeyed, and the VM
-// indexes its pools with unchecked operator[] once a program is in its hands.
-// If images ever land in a shared cache, a user-writable directory or a
-// network, they need a keyed hash first, and that is a decision to take before
-// they move rather than after.
+// SHAPE exhaustively - every index, every operand, every count, and every
+// constant against the bit patterns that are values at all - so no image can
+// reach memory the engine did not mean to give it. The VM indexes its pools
+// with unchecked operator[] and puts constants straight into registers, and
+// every one of those bounds is checked HERE precisely because it is not checked
+// there.
+//
+// THAT IS NOT THE SAME AS DETECTING CORRUPTION, and the difference is stated
+// plainly because the stronger claim stood here and was false. THERE IS NO
+// CHECKSUM OVER AN IMAGE. The prefix carries a build fingerprint - which engine
+// wrote this - and a source hash - which JavaScript it was built from - and
+// neither covers the bytes that follow; the source hash is a hash of the TEXT,
+// recorded as a number, and is not recomputed from the copy the image carries.
+// So a flipped bit inside an otherwise valid field runs: a number becomes
+// another number, a jump lands on another instruction, a string index names
+// another string. A file is refused when it is MALFORMED, not when it is wrong.
+//
+// AND A CHECKSUM WOULD NOT CHANGE THAT for the case that matters. An unkeyed
+// hash an attacker can recompute defends against a flipped bit and against
+// nothing else, which is why one is absent rather than merely unwritten. If
+// images ever land in a shared cache, a user-writable directory or a network,
+// what they need is a KEYED hash, and that is a decision to take before they
+// move rather than after.
 namespace ctbrowser::script {
 
 // Everything about this build whose meaning an image depends on. A mismatch

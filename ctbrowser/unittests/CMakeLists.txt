@@ -23,6 +23,13 @@ ctbrowser_test(unit/page_scripts)
 # about the SHAPE of a compiled program rather than about running one, and it
 # carries the corpus measurement behind CTBROWSER_DEBUG_TABLE_COST=1.
 ctbrowser_test(unit/script_debug)
+# THE IMAGE AS AN UNTRUSTED FILE. `ctcompile/test/ProgramImage.cpp` asks whether
+# an image round-trips and whether a corrupt one is refused; this asks the
+# narrower question the round-trip cannot see - whether a constant that is a
+# VALID double and an INVALID value gets into the VM. It lives here rather than
+# there because it is the ENGINE's trust boundary and must be gated in a
+# runtime-only build, where ctcompile is not in the tree at all.
+ctbrowser_test(unit/image_trust)
 ctbrowser_test(unit/gl_basics)
 ctbrowser_test(unit/net_basics)
 ctbrowser_test(unit/data_url)
