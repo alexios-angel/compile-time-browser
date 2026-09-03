@@ -1489,3 +1489,44 @@ if(COMMAND ctcompile_add_native_unit AND COMMAND ctcompile_add_compile_clean)
   # provenance comment.
   ctcompile_add_compile_clean(values "${_values_module}")
 endif()
+
+# ============================================================================
+# THE REFACTOR GOLDENS' OWN GATE. Appended as ONE block, per part 23's
+# Appendix A.3.
+#
+# docs/refactor-goldens.md is the procedure: snapshot the eight post-pipeline
+# modules and the four census JSONs before a change, `cmp` them after it, and
+# for a PURE REFACTOR not one byte may move. It is deliberately NOT a
+# checked-in golden - the artefacts embed the absolute paths the build passed
+# to ctjs-translate, and a golden of derived output has no regeneration rule
+# that cannot be abused - so nothing in ctest can run the comparison itself.
+#
+# WHAT ctest CAN DO is prove the INSTRUMENT works, which is the half that
+# would otherwise rot silently:
+#
+#   1. the pipeline is byte-deterministic - re-running it over an unchanged
+#      tree reproduces numeric.pipeline.emitc.mlir exactly. Without that, a
+#      before/after comparison reports differences that mean nothing and the
+#      first person to meet one learns to ignore the tool.
+#   2. the comparison bites - one byte appended to a saved copy is caught.
+#
+# A comparison nobody has watched fail is not a comparison, which is the same
+# reason native-claims.py carries floor_bites and silent_drop_caught.
+#
+# bash EXPLICITLY, not the shebang: core.filemode is false in this checkout
+# (a DrvFs working tree), so git does not carry the execute bit and a
+# COMMAND that relied on it would fail with "Permission denied" on a fresh
+# clone. CMAKE is passed through the environment because the selftest re-runs
+# native-pipeline.cmake and `cmake` need not be on PATH.
+if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND UNIX)
+  find_program(CTCOMPILE_BASH NAMES bash)
+  if(NOT CTCOMPILE_BASH)
+    message(FATAL_ERROR "ctcompile: bash not found - native-snapshot.sh cannot be gated, "
+                        "so the refactor goldens would have no proof they still work")
+  endif()
+  add_test(NAME ctcompile_native_snapshot_selftest
+           COMMAND ${CTCOMPILE_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/native-snapshot.sh
+                   selftest ${CMAKE_BINARY_DIR})
+  set_tests_properties(ctcompile_native_snapshot_selftest PROPERTIES
+                       ENVIRONMENT "CMAKE=${CMAKE_COMMAND}")
+endif()
