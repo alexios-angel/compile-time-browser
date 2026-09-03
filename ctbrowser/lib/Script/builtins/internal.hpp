@@ -110,6 +110,34 @@ namespace detail {
                             : cx.to_string(self);
 }
 
+// thisNumberValue (21.1.3), WHICH THIS FILE DID NOT HAVE - and the cycle that
+// cost 45 of test262's 54 SIGSEGVs.
+//
+// Every Number.prototype method opened with `context::to_number(current_this())`,
+// the STATIC coercion, which answers NaN for an object receiver. `toString` and
+// `toPrecision` then fell back to `c.to_string(c.current_this())` for the NaN
+// case - and ToString of an object is ToPrimitive, which calls the receiver's
+// own `toString`, which is this native again:
+//
+//     Number.prototype.toString()      // `this` is Number.prototype, an object
+//       -> to_string -> to_primitive_string -> invoke -> to_string -> ...
+//
+// The specification does not coerce here at all: `this` is a Number or an
+// object with a [[NumberData]] slot, and anything else is a TypeError. There
+// are no wrapper objects in this engine (`new Number(x)` is a conversion - see
+// install_number), so the only object with [[NumberData]] is `Number.prototype`
+// itself, whose slot is +0 by 21.1.3 - which is exactly why
+// `Number.prototype.toString()` is specified to return "0".
+[[nodiscard]] inline double this_number_value(context & cx, const char * method) {
+    const value self = cx.current_this();
+    if (self.is_number()) { return self.as_number(); }
+    if (self.is_object() && self.as_heap() == cx.prototype(context::proto_kind::number)) {
+        return 0.0;
+    }
+    cx.throw_error("TypeError", std::string{method} + " requires that 'this' be a Number");
+    return std::nan("");
+}
+
 [[nodiscard]] inline object_object * new_table(context & cx) {
     return static_cast<object_object *>(cx.make_object().as_heap());
 }

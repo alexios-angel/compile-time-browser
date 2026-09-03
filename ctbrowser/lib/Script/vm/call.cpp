@@ -54,6 +54,11 @@ value context::call(value callable, std::span<const value> args, value this_valu
 value context::invoke(value callable, std::span<const value> args, value this_value,
                       bool constructing) {
     if (callable.is_kind(heap_kind::native)) {
+        // A NATIVE PUSHES NO FRAME, so the 512-frame ceiling below cannot see
+        // it: a native that re-enters the VM recurses on the C++ stack alone.
+        // See context::reentry_scope.
+        const reentry_scope guard{*this};
+        if (guard.overflowed()) { return value::undefined(); }
         auto * nat = static_cast<native_object *>(callable.as_heap());
         std::vector<value> copy{args.begin(), args.end()};
         const value saved = current_this_;

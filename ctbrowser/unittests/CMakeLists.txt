@@ -98,3 +98,11 @@ endif()
 # a unittest belongs in this file.
 set_tests_properties(bindings_basics PROPERTIES ENVIRONMENT
   "CTBROWSER_FONT_PATH=${PROJECT_SOURCE_DIR}/resources/fonts;SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;TSAN_OPTIONS=suppressions=${CTBROWSER_TEST_SUPPORT_DIR}/tsan.supp;LSAN_OPTIONS=suppressions=${CTBROWSER_TEST_SUPPORT_DIR}/lsan.supp")
+
+# --- the three crash classes test262 found, 2026-09-02 (append-only) ---------
+# The toString recursion, the dense-array allocation and the two string methods
+# that did not terminate. Its own file rather than more of number_basics or
+# string_basics: every case in it fails by KILLING the process rather than by
+# printing a mismatch, which is a different kind of test from a differential
+# one. See docs/test262.md and the file's own header.
+ctbrowser_test(js/crash_guards)

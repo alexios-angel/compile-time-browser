@@ -93,6 +93,12 @@ std::string context::to_string(value v) {
     if (v.is_kind(heap_kind::bigint)) {
         return bigint_to_string(static_cast<bigint_object *>(v.as_heap())->digits);
     }
+    // ONE LEVEL OF C++ RE-ENTRY, and everything past this point is capable of
+    // it: an array's elements can include the array, and an object converts
+    // through a `toString` that can ask to convert the same object again. See
+    // context::reentry_scope.
+    const reentry_scope guard{*this};
+    if (guard.overflowed()) { return "[object Object]"; }
     if (v.is_array()) {
         auto * arr = static_cast<array_object *>(v.as_heap());
         std::string out;
@@ -123,6 +129,8 @@ std::string context::to_string(value v) {
 // `{toString: () => 'x'} + 1` is "x1", and which one it is depends on what the
 // object hands back rather than on the object being an object.
 value context::to_primitive(value v) {
+    const reentry_scope guard{*this};
+    if (guard.overflowed()) { return value::undefined(); }
     // A BIGINT IS ALREADY A PRIMITIVE, heap-allocated though it is. Letting it
     // into the valueOf/toString walk below turns it into a STRING the moment
     // BigInt.prototype carries those methods - which is exactly what made
@@ -149,6 +157,8 @@ value context::to_primitive(value v) {
 // defines valueOf means it to be used in arithmetic - that is the only reason to
 // define one - and without this every such object was NaN.
 double context::to_number_value(value v) {
+    const reentry_scope guard{*this};
+    if (guard.overflowed()) { return std::nan(""); }
     // A BIGINT REFUSES IMPLICIT CONVERSION TO A NUMBER, and that refusal is the
     // type's whole safety property: `+1n`, `Math.abs(1n)` and `1n * 2` all land
     // here, and each would silently round past 2^53. `Number(1n)` is the
@@ -169,6 +179,11 @@ double context::to_number_value(value v) {
 }
 
 std::string context::to_primitive_string(value v) {
+    // Guarded in its own right as well as through to_string, its only caller
+    // today: this is the half of the cycle that CALLS, so a second caller must
+    // not be able to reach it uncounted.
+    const reentry_scope guard{*this};
+    if (guard.overflowed()) { return "[object Object]"; }
     for (const char * name : {"toString", "valueOf"}) {
         const value fn = lookup_property(v, name);
         if (!fn.is_callable()) { continue; }
