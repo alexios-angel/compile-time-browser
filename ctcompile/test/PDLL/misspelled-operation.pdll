@@ -1,18 +1,23 @@
-//===- misspelled-operation.pdll - the name nothing checks ----------------===//
+//===- misspelled-operation.pdll - the name PDLL does not check -----------===//
 //
-// THE SECOND HOLE, AND IT CONTRADICTS WHAT PruneDeadStores.pdll USED TO CLAIM.
-// Including the ODS does NOT make the operation name checked: `ctjs.binry`
-// below compiles with exit 0 and an EMPTY stderr, and the pattern it emits
-// never fires on anything. The include buys shape checking on a name ODS
-// recognises - `op<ctjs.unary>(a: Value, b: Value)` is a hard error quoting the
-// record - and nothing at all on a name it does not.
+// NOT A BUG IN THE TOOL - A FEATURE THIS PROJECT DECLINES. Including the ODS
+// does not make the operation name checked: `ctjs.binry` below compiles with
+// exit 0 and an EMPTY stderr, and the pattern it emits never fires on anything.
+// The PDLL reference's "Unregistered Operations" section is why: a variable of
+// an unregistered operation is deliberately supported, with result access
+// falling back to numeric indexing, so a misspelling and an intentional
+// unregistered match are indistinguishable to `mlir-pdll`. What the ODS include
+// buys is SHAPE checking on a name it does recognise -
+// `op<ctjs.unary>(a: Value, b: Value)` is a hard error quoting the record.
 //
 // A forgotten `#include` looks exactly the same from the outside, which is why
 // the guard's census is over the ODS the run actually loaded rather than over a
 // list of dialects somebody maintains.
 //
 // check-pdll-guard.cmake asserts that the raw tool accepts this file and that
-// utils/pdll-strict.sh names `ctjs.binry` and refuses it.
+// utils/pdll-strict.sh names `ctjs.binry` and refuses it. The first half is the
+// important one here: this overrides documented behaviour, so the assertion
+// that the raw tool still accepts the file is what notices a change.
 //
 //===----------------------------------------------------------------------===//
 #include "ctcompile/CTJS/IR/CTJSOps.td"

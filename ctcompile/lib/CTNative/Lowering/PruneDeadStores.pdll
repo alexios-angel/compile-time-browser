@@ -32,11 +32,13 @@
 // measured on 2026-09-02 against the pinned 23.1.0. What ODS checks is the
 // SHAPE of an operation it recognises: naming two operand groups on a
 // one-operand operation is a hard error quoting the record. An operation name
-// ODS has NEVER HEARD OF is not diagnosed at all - `op<emitc.cal>` compiles
-// with exit 0 and an empty stderr, and the pattern never fires. So does the
-// same file with this line deleted.
+// ODS has NEVER HEARD OF is accepted DELIBERATELY - `op<emitc.cal>` compiles
+// with exit 0 and an empty stderr, as does the same file with this line
+// deleted, because the reference's "Unregistered Operations" section supports a
+// variable of an unregistered operation on purpose.
 //
-// That hole is closed outside this file, by utils/pdll-strict.sh, which
+// This project declines that freedom, outside this file, in
+// utils/pdll-strict.sh, which
 // re-runs the tool with --dump-ods and refuses any pattern naming an operation
 // no ODS on the include path defines. EXTRA_INCLUDES in ../CMakeLists.txt is
 // what makes the include resolve, and it now reaches this project's own .td

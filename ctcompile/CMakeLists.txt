@@ -165,7 +165,9 @@ if(CTCOMPILE_ENABLE_MLIR)
   #
   # And an operation name ODS does not know - `op<ctjs.binry>`, or the same
   # name with the #include forgotten - is not diagnosed AT ALL: exit 0, empty
-  # stderr, a pattern that never fires.
+  # stderr, a pattern that never fires. That half is DELIBERATE (the reference
+  # supports unregistered operations), so refusing it is this project declining
+  # a feature it has no use for, not a workaround.
   #
   # utils/pdll-strict.sh refuses both. It is put where the helper looks for the
   # tool rather than added as an extra check beside it, so that a .pdll added

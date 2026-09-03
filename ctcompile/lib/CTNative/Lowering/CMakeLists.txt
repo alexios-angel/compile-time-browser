@@ -37,12 +37,15 @@
 # LLVM 23.1.0). It buys operand, result and attribute-shape checking on an
 # operation ODS recognises: `op<ctjs.unary>(a: Value, b: Value)` is a hard
 # error quoting the record in CTJSOps.td. It does NOT buy a check on the NAME -
-# `op<ctjs.binry>` compiles with exit 0 and an empty stderr - and it does not
-# make an attribute LITERAL of our dialect parse; that one prints an error and
-# still exits 0, with the constraint dropped. utils/pdll-strict.sh, installed
-# as MLIR_PDLL_TABLEGEN_EXE in ctcompile/CMakeLists.txt, is what turns both of
-# those into build failures. Without it this include path would be a licence to
-# write a pattern that silently matches the wrong thing.
+# `op<ctjs.binry>` compiles with exit 0 and an empty stderr, which the reference
+# says is deliberate: a variable of an UNREGISTERED operation is a supported
+# feature. And it does not make an attribute LITERAL of our dialect parse; that
+# one prints an error and still exits 0, with the constraint dropped.
+# utils/pdll-strict.sh, installed as MLIR_PDLL_TABLEGEN_EXE in
+# ctcompile/CMakeLists.txt, turns both into build failures - declining the
+# feature in the first case and closing a trap in the second. Without it this
+# include path would be a licence to write a pattern that silently matches the
+# wrong thing.
 set(CTCOMPILE_PDLL_INCLUDES
   ${MLIR_INCLUDE_DIRS}
   ${PROJECT_SOURCE_DIR}/include
