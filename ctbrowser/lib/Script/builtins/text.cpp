@@ -530,35 +530,63 @@ void install_string(context & cx) {
         if (from == std::string::npos) { return c.string(std::string{}); }
         return c.string(s.substr(from, s.find_last_not_of(" \t\n\r\f\v") - from + 1));
     });
+    // 22.1.3.16. THE COUNT IS ToIntegerOrInfinity AND THEN A RANGE CHECK, not
+    // a clamp: `"x".repeat(-1)` and `"".repeat(Infinity)` are each a RangeError
+    // the clamp turned into "" and into a million-character string. And the
+    // clamp could not see the case that mattered - an object count coerces to
+    // NaN through the static to_number, `std::clamp` passes NaN straight
+    // through, and the cast to size_t is undefined behaviour. See integer_arg.
     method(cx, string_proto, "repeat", [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
-        const double raw = num_at(a, 0);
-        // A huge count is a page bug, and allocating for it is a hang. Cap it.
-        const auto count = static_cast<std::size_t>(std::clamp(raw, 0.0, 1000000.0));
+        const double n = integer_arg(c, a, 0);
+        if (n < 0 || std::isinf(n)) {
+            c.throw_error("RangeError", "Invalid count value");
+            return c.string("");
+        }
+        if (s.empty() || n == 0) { return c.string(""); }
+        if (n * static_cast<double>(s.size()) > max_string_length) {
+            c.throw_error("RangeError", "Invalid string length");
+            return c.string("");
+        }
+        const auto count = static_cast<std::size_t>(n);
         std::string out;
         out.reserve(s.size() * count);
         for (std::size_t i = 0; i < count; ++i) { out += s; }
         return c.string(out);
     });
-    method(cx, string_proto, "padStart", [](context & c, std::span<value> a) {
-        std::string s = detail::this_string(c);
-        const auto want = static_cast<std::size_t>(std::clamp(num_at(a, 0), 0.0, 1000000.0));
-        const std::string pad = a.size() > 1 ? c.to_string(a[1]) : " ";
-        if (pad.empty()) { return c.string(s); }
-        std::string prefix;
-        while (prefix.size() + s.size() < want) { prefix += pad; }
-        prefix.resize(want > s.size() ? want - s.size() : 0);
-        return c.string(prefix + s);
-    });
-    method(cx, string_proto, "padEnd", [](context & c, std::span<value> a) {
-        std::string self = detail::this_string(c);
-        const auto want = static_cast<std::size_t>(std::clamp(num_at(a, 0), 0.0, 1000000.0));
-        const std::string pad = a.size() > 1 ? c.to_string(a[1]) : " ";
-        if (pad.empty() || self.size() >= want) { return c.string(self); }
-        while (self.size() < want) { self += pad; }
-        self.resize(want);
-        return c.string(self);
-    });
+    // StringPad (22.1.3.17.1), both directions in one place because they are
+    // one algorithm and were two copies of the same defect.
+    //
+    // THE ORDER IS THE SPECIFICATION'S and it is observable: ToString(this),
+    // then ToIntegerOrInfinity(maxLength), then the length test, and ONLY THEN
+    // ToString(fillString) - built-ins/String/prototype/padStart/
+    // observable-operations.js asserts exactly that sequence of valueOf and
+    // toString calls. Coercing the filler first, as this did, gets the answer
+    // right and the log wrong.
+    const auto pad = [](context & c, std::span<value> a, bool at_start) {
+        const std::string self = detail::this_string(c);
+        const double want = integer_arg(c, a, 0);
+        // ToLength: negative and NaN are 0, so there is nothing to do. This is
+        // the line `'abc'.padStart(NaN, 'def')` needed - it used to cast NaN to
+        // a size_t and loop appending until the process died.
+        if (!(want > static_cast<double>(self.size()))) { return c.string(self); }
+        if (want > max_string_length) {
+            c.throw_error("RangeError", "Invalid string length");
+            return c.string("");
+        }
+        const std::string filler = has_index(a, 1) ? c.to_string(a[1]) : " ";
+        if (filler.empty()) { return c.string(self); }
+        const auto fill_length = static_cast<std::size_t>(want) - self.size();
+        std::string filled;
+        filled.reserve(fill_length);
+        while (filled.size() < fill_length) { filled += filler; }
+        filled.resize(fill_length);
+        return c.string(at_start ? filled + self : self + filled);
+    };
+    method(cx, string_proto, "padStart",
+           [pad](context & c, std::span<value> a) { return pad(c, a, true); });
+    method(cx, string_proto, "padEnd",
+           [pad](context & c, std::span<value> a) { return pad(c, a, false); });
     method(cx, string_proto, "trimStart", [](context & c, std::span<value>) {
         const std::string self = detail::this_string(c);
         const std::size_t from = self.find_first_not_of(" \t\n\r\f\v");
