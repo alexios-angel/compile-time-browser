@@ -915,15 +915,37 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 const function_proto & target = state.prog.functions[in.bx()];
                 // IN PARALLEL WITH THE DESCRIPTORS, NOT PACKED. Only the
                 // entries the compiler marked from_parent_local are read by the
-                // helper; the rest it fills from the enclosing closure, and
-                // undefined here is a placeholder that is never looked at. A
+                // helper; the rest it fills from the enclosing closure. A
                 // packed list would silently capture the wrong bindings.
+                //
+                // AND AN ENTRY THE HELPER FILLS FROM THE ENCLOSING CLOSURE IS
+                // WRITTEN AS THE READ OF THAT UPVALUE, not as `undefined`. The
+                // VM copies `enclosing->upvalues[up.index]` into the slot
+                // (context::make_closure, call.cpp) - the cell this frame's own
+                // closure holds at that index - so the honest operand is what
+                // this frame reads there: a ctjs.load_upvalue of its own
+                // closure at `up.index`. The helper still never looks at it.
+                // What does is the native tier's closure lift: once THIS
+                // function is lifted, that load is its capture parameter, and
+                // the nested closure's capture is then provably the same
+                // constant - Phase 59 slice 1b. An `undefined` placeholder
+                // carried no such edge, and the slice could not be built on it:
+                // the descriptor's `up.index` is not in the IR anywhere else.
+                //
+                // OUT OF RANGE IS UNDEFINED, exactly as the VM has it
+                // (`up.index < enclosing->upvalues.size()`, else undefined).
                 llvm::SmallVector<mlir::Value> captured;
                 captured.reserve(target.upvalues.size());
                 bool reachable = true;
                 for (const upvalue_desc & up : target.upvalues) {
                     if (!up.from_parent_local) {
-                        captured.push_back(state.undefined(where));
+                        captured.push_back(
+                            up.index < proto.upvalues.size()
+                                ? ctjs::LoadUpvalueOp::create(
+                                      into, where, value_type, entry->getArgument(arg_callee),
+                                      into.getI32IntegerAttr(static_cast<std::int32_t>(up.index)))
+                                      .getResult()
+                                : state.undefined(where));
                         continue;
                     }
                     if (up.index >= state.registers.size()) {

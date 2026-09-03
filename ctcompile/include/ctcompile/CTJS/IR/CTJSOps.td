@@ -162,6 +162,15 @@ def CTJS_CreateClosureOp
     fills the rest from the enclosing closure. A packed list is the plausible
     wrong reading and captures the wrong bindings silently.
 
+    AN ENTRY THE HELPER FILLS IS WRITTEN AS THE READ OF THE UPVALUE IT IS
+    FILLED FROM: a ctjs.load_upvalue of the enclosing function's own closure at
+    the descriptor's index, which is the cell context::make_closure copies into
+    the slot. The helper never looks at that operand. The native tier's
+    closure lift does - once the enclosing function is lifted the load is its
+    capture parameter, and the nested closure's capture is provably the same
+    constant (Phase 59 slice 1b). It used to be an `undefined` placeholder,
+    and the descriptor's index was then in the IR nowhere.
+
     AND $enclosing_this IS THE EFFECTIVE RECEIVER, used only when the target is
     an arrow - because an arrow's `this` is decided where it is WRITTEN, not
     where it is called. Reading the effective one rather than the raw receiver

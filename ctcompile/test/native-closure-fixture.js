@@ -86,7 +86,8 @@ function line(m, b) {
 // `inner` captures `mid`'s own parameter and is lifted inside a function that
 // was itself just lifted. `k` is NOT captured by either - it is mentioned only
 // in `outer_two`'s own body - so nothing here reaches through an enclosing
-// closure, which slice 1 refuses (closure-refusals.mlir pins that).
+// closure. That shape is slice 1b's, and native-nested-closure-fixture.js is
+// built out of it.
 function outer_two(k) {
     function mid(j) {
         function inner() { return j + j; }

@@ -1840,3 +1840,51 @@ if(COMMAND ctcompile_add_native_claims)
                               "${CMAKE_CURRENT_SOURCE_DIR}/native-constructor-fixture.js"
                               14 6 7 8)
 endif()
+
+# ============================================================================
+# === PART 24 PHASE 59 SLICE 1b: a capture filled from the enclosing closure ===
+# ============================================================================
+# native-nested-closure-fixture.js is eight functions whose innermost closure
+# names a binding two or three frames out. The bytecode compiler boxes that
+# binding once, in the frame that owns it; every closure between reaches it
+# through its ENCLOSING closure's upvalue, not through a cell of its own frame
+# - and that is the shape slice 1 refused whole ("capture N is not a cell of
+# this frame"). It is also what a UMD bundle is made of: measured on bootstrap
+# before this slice, 15 of the 19 callees a direct call reaches were refused
+# for exactly it.
+#
+# The importer writes such a capture operand as a ctjs.load_upvalue of the
+# enclosing function's own closure. Once that function is lifted the load IS
+# its capture parameter - an entry-block argument holding a value an outer
+# frame proved constant - and the nested closure lifts on it in the next
+# round of a fixpoint over the classify-then-lift loop. The call passes the
+# argument straight on: it already holds the VALUE, never the box.
+#
+# THE GATE IS THE POINT, NOT THE IR. Every capture is READ in the innermost
+# body, so a lift that passed the wrong value, a stale one, or the cell where
+# the value was meant produces a module that verifies, compiles clean under
+# -Werror and prints a wrong number - which only the interpreter can say. The
+# `_off_by_one` proof (trailing argument) asserts that the comparison can still
+# fail, on a global the printing prelude loads after the first one it prints.
+#
+# THE REFUSED CHAIN IS NOT HERE, and cannot be: native-pipeline.cmake refuses
+# to write a module while any function carries `ctnative.not_native`. The
+# outer frame that reassigns its binding - refused, with the enclosing
+# closure's own reason chained into the sentence - is one program apiece in
+# CTNative/Lowering/closure-refusals.mlir, under split-file.
+#
+# One appended block, per part 23 Appendix A.3.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(nested_closures
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-nested-closure-fixture.js"
+                                twice727)
+endif()
+# AND THE CLAIMED COUNT, AS A FLOOR: the four numbers are the MEASURED ones on
+# the day this landed, so a change that stops lifting one level fails HERE
+# even if the fixture above were deleted. `lifted` is the lift's own
+# ctjs.call_direct count, which the resolver's `direct` cannot see.
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(nested_closures
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-nested-closure-fixture.js"
+                              27 8 33 27)
+endif()

@@ -230,12 +230,24 @@ std::string printed(mlir::Type type) {
 // closure, no `ctjs.cell_set`, and no `ctjs.store_upvalue` anywhere the cell can
 // reach - and the carrier check then applies to what the cell HOLDS.
 //
-// AND A CAPTURE THAT IS NOT A CELL IS THE PLACEHOLDER. The importer pushes
-// `undefined` for every descriptor that is not from_parent_local, because the VM
-// fills those from the enclosing closure and never looks at the operand
-// (BytecodeImport.cpp, op::closure). Lifting one would capture `undefined` where
-// the program captured a binding, so requiring every capture to be a cell of
-// THIS frame is not a convenience: it is what makes the rewrite sound.
+// AND A CAPTURE THAT IS NOT A CELL COMES THROUGH THE ENCLOSING CLOSURE - PHASE
+// 59 SLICE 1b. For a descriptor that is not from_parent_local the VM copies the
+// enclosing closure's upvalue into the slot (context::make_closure), and the
+// importer writes that operand as a `ctjs.load_upvalue` of the enclosing
+// function's own closure at that index (BytecodeImport.cpp, op::closure). While
+// the enclosing function is unlifted that load is a read of a closure this tier
+// does not carry, and the capture is refused - naming the enclosing closure's
+// own reason, because that is the obstacle. Once the enclosing function IS
+// lifted, lift() has rewritten the load to its capture parameter: an entry-block
+// argument in [3, 3 + ctnative.captures) holding the initial of a cell some
+// outer frame proved constant. A nested closure whose capture is that argument
+// captures the same constant, and passing the argument on is exact for exactly
+// the reason slice 1 is. The classify-then-lift loop is therefore a FIXPOINT:
+// an outer closure lifts in one round and the closure nested in it is judged
+// again in the next, against the rewritten operand. This is what a UMD bundle
+// is made of - the module body is the factory's frame, so every closure inside
+// a nested function reaches a module binding this way - and it was 15 of the 19
+// callees a direct call reaches in bootstrap before this slice.
 
 // The function index the importer put after the last `$` of the symbol. The
 // same reading ResolveGlobals does, and the only link there is between a
@@ -599,21 +611,86 @@ struct closureLifter {
         return std::nullopt;
     }
 
+    // THE VALUE A LIFTED CALL PASSES FOR A CAPTURE OPERAND, or null when the
+    // operand is neither shape a lift carries. Two shapes, and both hold the
+    // VALUE of a binding, never the box:
+    //
+    //   * a ctjs.create_cell of this frame: its initial. A read of the capture
+    //     in the target is a read of that value, because ctjs.load_upvalue reads
+    //     THROUGH the cell (run_loop.cpp, get_upvalue: `reg = cell->slot`), and
+    //     isConstantCell has to prove nothing ever wrote it.
+    //   * PHASE 59 SLICE 1b: a capture parameter of the ENCLOSING function - an
+    //     entry-block argument in [3, 3 + ctnative.captures) of a function that
+    //     carries `ctnative.captures`, i.e. one lift() has already rewritten.
+    //     lift() put the operand there itself, replacing the importer's
+    //     ctjs.load_upvalue, and the argument holds the initial of a cell an
+    //     outer frame proved constant. Passing it on is passing the same value.
+    //
+    // NOTHING ELSE. A parameter of the enclosing function (index at or past
+    // 3 + captures) is not a capture and cannot appear here - a captured
+    // parameter is boxed, so its operand is the cell; %arg0-2 never are; and a
+    // block argument of a lowered block is not this frame's binding at all.
+    mlir::Value capturedValue(ctjs::CreateClosureOp c, mlir::Value operand) {
+        if (auto cell = operand.getDefiningOp<ctjs::CreateCellOp>()) { return cell.getInitial(); }
+        auto argument = llvm::dyn_cast<mlir::BlockArgument>(operand);
+        if (!argument) { return {}; }
+        auto enclosing = c->getParentOfType<ctjs::FuncOp>();
+        if (!enclosing || enclosing.getBody().empty() ||
+            argument.getOwner() != &enclosing.getBody().front()) {
+            return {};
+        }
+        const auto captures = enclosing->getAttrOfType<mlir::IntegerAttr>("ctnative.captures");
+        if (!captures) { return {}; }
+        const unsigned index = argument.getArgNumber();
+        if (index < 3 || index >= 3 + static_cast<unsigned>(captures.getInt())) { return {}; }
+        return argument;
+    }
+
+    // The same, after admission: anything else here is a rule that let one
+    // through, which this file reports as a named fatal and never as a number.
+    mlir::Value liftedCapture(ctjs::CreateClosureOp c, mlir::Value operand) {
+        if (const mlir::Value value = capturedValue(c, operand)) { return value; }
+        llvm::report_fatal_error(
+            "ctnative lowering: a capture admitted by whyCapturesDoNotLift is neither a constant "
+            "cell of its frame nor a lifted capture parameter of the enclosing function - the "
+            "admission and the call-site rewrite have drifted apart");
+    }
+
+    // A CAPTURE THE ENCLOSING CLOSURE FILLS, WHILE THAT CLOSURE IS UNLIFTED:
+    // the importer's ctjs.load_upvalue of the enclosing function's own closure,
+    // which lift() has not rewritten because the enclosing function was not
+    // lifted. The closure is refused for it, and run() appends the ENCLOSING
+    // closure's own reason to the sentence once the fixpoint has settled it -
+    // which is why this map exists: the reason cannot be known here.
+    llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> chainedThrough;
+
     std::optional<std::string> whyCapturesDoNotLift(ctjs::CreateClosureOp c) {
         if (const std::optional<std::string> why = whyTargetIsNotLiftable(c)) { return why; }
         const auto captures = static_cast<unsigned>(c.getUpvalues().size());
-        // A capture is a constant box in this frame, or it is not liftable.
+        auto enclosing = c->getParentOfType<ctjs::FuncOp>();
+        // A capture is a constant box in this frame, or a lifted capture
+        // parameter of the enclosing function, or it is not liftable.
         for (unsigned i = 0; i < captures; ++i) {
-            auto cell = c.getUpvalues()[i].getDefiningOp<ctjs::CreateCellOp>();
-            if (!cell) {
-                return "capture " + std::to_string(i) +
-                       " is not a cell of this frame - it is filled from the enclosing closure, "
-                       "which slice 1 does not carry";
+            const mlir::Value operand = c.getUpvalues()[i];
+            if (auto cell = operand.getDefiningOp<ctjs::CreateCellOp>()) {
+                if (!isConstantCell(cell)) {
+                    return "capture " + std::to_string(i) +
+                           " is a binding that is reassigned - a shared cell is Phase 59 slice 2";
+                }
+                continue;
             }
-            if (!isConstantCell(cell)) {
+            if (capturedValue(c, operand)) { continue; }
+            if (auto read = operand.getDefiningOp<ctjs::LoadUpvalueOp>();
+                read && enclosing && !enclosing.getBody().empty() &&
+                enclosing.getBody().front().getNumArguments() >= 3 &&
+                read.getClosure() == enclosing.getBody().front().getArgument(2)) {
+                chainedThrough[c.getOperation()] = enclosing;
                 return "capture " + std::to_string(i) +
-                       " is a binding that is reassigned - a shared cell is Phase 59 slice 2";
+                       " is filled from the enclosing closure, which did not lift";
             }
+            return "capture " + std::to_string(i) +
+                   " is neither a cell of this frame nor a capture parameter of the enclosing "
+                   "function";
         }
         return std::nullopt;
     }
@@ -1755,84 +1832,180 @@ struct closureLifter {
         argumentCensus();
         methodCensus();
         liftReport out;
-        // Per target: the closures that name it, and the first reason any of
-        // them could not be lifted. A target's signature changes for the whole
-        // program, so ONE unliftable creation site blocks every other.
-        llvm::MapVector<mlir::Operation *, llvm::SmallVector<ctjs::CreateClosureOp>> byTarget;
-        llvm::DenseMap<mlir::Operation *, std::string> blocked;
         llvm::DenseMap<mlir::Operation *, std::string> reasonOf; // closure -> its own reason
+        llvm::DenseSet<mlir::Operation *> lifted;                // closures lift() has taken
+        // THE CLOSURE THAT NAMES EACH FUNCTION, for the chained reason below:
+        // a capture filled from the enclosing closure is refused with THAT
+        // closure's reason, and the enclosing function's closure is the one
+        // create_closure whose target it is.
+        llvm::DenseMap<mlir::Operation *, ctjs::CreateClosureOp> closureOf;
         for (ctjs::CreateClosureOp c : closures) {
-            // A DECLARATION IS A BINDING, NOT A VALUE, and lowers to nothing
-            // already. Leave it to admission::isDeclarationClosure.
-            if (admissionIsDeclaration(c)) { continue; }
-            ctjs::FuncOp target = targetOf(c);
-            // A METHOD FIELD IS A DIFFERENT ADMISSION, NOT A SPECIAL CASE OF
-            // THE OTHER ONE. Its closure value is never called - it is STORED,
-            // which whyNotLiftable refuses by name - and the calls that reach
-            // it come through a `get_property` on the object. So the two rules
-            // are asked separately and share their capture clauses.
-            // AND A CONSTRUCTOR IS A THIRD ADMISSION. Its closure value is
-            // never called and never stored - it is the callee of a
-            // `ctjs.construct` - so neither of the other two rules describes
-            // it, and `whyNotLiftable` refuses it by name ("it is used as a
-            // constructor") for the MIXED case this set deliberately excludes:
-            // one ctjs.func is one C++ signature, and a body that is a free
-            // function at one site and a constructor at another needs two.
-            const std::optional<std::string> why =
-                constructorClosures.contains(c.getOperation()) ? whyNotLiftableConstructor(c)
-                : methodClosures.contains(c.getOperation())    ? whyNotLiftableMethod(c)
-                                                               : whyNotLiftable(c);
-            if (why) {
-                reasonOf[c.getOperation()] = *why;
-                if (target) { blocked.try_emplace(target.getOperation(), *why); }
-                continue;
-            }
-            byTarget[target.getOperation()].push_back(c);
+            if (ctjs::FuncOp target = targetOf(c)) { closureOf[target.getOperation()] = c; }
         }
-        // TWO REFUSALS WERE HERE AND ARE GONE, BECAUSE THEY WERE DECORATION.
-        // Both asked what happens when two ctjs.create_closures name ONE
-        // ctjs.func - a target that is a method field at one site and a plain
-        // closure at another, whose receiver would be an argument in one call
-        // and not the other; and a method created twice with captures, whose
-        // two capture lists cannot both be one parameter list. Neither is
-        // reachable: `compiler_impl` emits exactly one `op::closure` per
-        // function proto, so a proto has exactly one creation site, and a
-        // probe counting `made.size() > 1` measured ZERO across bootstrap, p5
-        // and phaser (13,053 functions) and all three native fixtures.
-        // Removing them changed nothing anywhere, so they are not here.
+        // CLASSIFY, LIFT, REPEAT - PHASE 59 SLICE 1b. One pass was enough for
+        // slice 1 because every capture it carries is a cell of the closure's
+        // own frame, decided before any rewrite. A capture filled from the
+        // enclosing closure is decided BY a rewrite: it is the importer's
+        // ctjs.load_upvalue until the enclosing function lifts, and that
+        // function's capture parameter afterwards. So a closure nested one
+        // level in is refused in the round its enclosing function lifts and
+        // admitted in the next, and a chain of N levels settles in N rounds.
+        // Every closure still unlifted is judged again each round - a full
+        // re-classification, measured on phaser (7,725 functions) to cost
+        // nothing a reader would notice - and the loop stops at the first
+        // round that lifts nothing. That round's verdicts are the final ones,
+        // and they are the reasons written below.
         //
-        // WHAT IS HERE IS THE INVARIANT ITSELF, as a named fatal rather than a
-        // refusal, which is this file's idiom for "a rule let one through"
-        // (carrierType, memberName, shapeAt, eraseIfUnused). If the reasoning
-        // above is ever wrong, lift() would cast a ctjs.set_property to a
-        // ctjs.call and crash with no message; this says which claim failed.
-        for (auto & [target, made] : byTarget) {
-            if (made.size() > 1) {
+        // THE BOUND IS THE INVARIANT: a productive round lifts at least one
+        // closure and nothing is ever unlifted, so there are at most as many
+        // productive rounds as closures, plus the empty one that ends it. A
+        // round past that is a rule admitting a closure it does not lift, and
+        // this file reports that as a named fatal rather than looping.
+        for (unsigned round = 0;; ++round) {
+            if (round > closures.size()) {
                 llvm::report_fatal_error(
-                    llvm::Twine("ctnative lowering: `") +
-                    llvm::cast<ctjs::FuncOp>(target).getSymName() +
-                    "` is named by more than one ctjs.create_closure - one function proto has "
-                    "one `closure` opcode, and the receiver lift's capture list and its method "
-                    "test both assume it");
+                    "ctnative lowering: the closure lift ran more rounds than there are closures "
+                    "- a round that lifts nothing ends the fixpoint and every other round lifts "
+                    "at least one closure it never unlifts, so a rule is admitting a closure "
+                    "that lift() then leaves in place");
             }
-        }
-        for (auto & [target, made] : byTarget) {
-            if (blocked.contains(target)) {
-                for (ctjs::CreateClosureOp c : made) {
-                    reasonOf[c.getOperation()] =
-                        "the function it names is also made somewhere this tier cannot lift: " +
-                        blocked.lookup(target);
+            // Per target: the closures that name it, and the first reason any
+            // of them could not be lifted. A target's signature changes for the
+            // whole program, so ONE unliftable creation site blocks every other.
+            llvm::MapVector<mlir::Operation *, llvm::SmallVector<ctjs::CreateClosureOp>> byTarget;
+            llvm::DenseMap<mlir::Operation *, std::string> blocked;
+            reasonOf.clear();
+            chainedThrough.clear();
+            for (ctjs::CreateClosureOp c : closures) {
+                // A DECLARATION IS A BINDING, NOT A VALUE, and lowers to
+                // nothing already. Leave it to admission::isDeclarationClosure.
+                if (admissionIsDeclaration(c)) { continue; }
+                if (lifted.contains(c.getOperation())) { continue; }
+                ctjs::FuncOp target = targetOf(c);
+                // A METHOD FIELD IS A DIFFERENT ADMISSION, NOT A SPECIAL CASE
+                // OF THE OTHER ONE. Its closure value is never called - it is
+                // STORED, which whyNotLiftable refuses by name - and the calls
+                // that reach it come through a `get_property` on the object.
+                // So the two rules are asked separately and share their
+                // capture clauses.
+                // AND A CONSTRUCTOR IS A THIRD ADMISSION. Its closure value is
+                // never called and never stored - it is the callee of a
+                // `ctjs.construct` - so neither of the other two rules
+                // describes it, and `whyNotLiftable` refuses it by name ("it is
+                // used as a constructor") for the MIXED case this set
+                // deliberately excludes: one ctjs.func is one C++ signature,
+                // and a body that is a free function at one site and a
+                // constructor at another needs two.
+                const std::optional<std::string> why =
+                    constructorClosures.contains(c.getOperation()) ? whyNotLiftableConstructor(c)
+                    : methodClosures.contains(c.getOperation())    ? whyNotLiftableMethod(c)
+                                                                   : whyNotLiftable(c);
+                if (why) {
+                    reasonOf[c.getOperation()] = *why;
+                    if (target) { blocked.try_emplace(target.getOperation(), *why); }
+                    continue;
                 }
-                continue;
+                byTarget[target.getOperation()].push_back(c);
             }
-            lift(llvm::cast<ctjs::FuncOp>(target), made, out);
+            // TWO REFUSALS WERE HERE AND ARE GONE, BECAUSE THEY WERE
+            // DECORATION. Both asked what happens when two ctjs.create_closures
+            // name ONE ctjs.func - a target that is a method field at one site
+            // and a plain closure at another, whose receiver would be an
+            // argument in one call and not the other; and a method created
+            // twice with captures, whose two capture lists cannot both be one
+            // parameter list. Neither is reachable: `compiler_impl` emits
+            // exactly one `op::closure` per function proto, so a proto has
+            // exactly one creation site, and a probe counting `made.size() > 1`
+            // measured ZERO across bootstrap, p5 and phaser (13,053 functions)
+            // and all three native fixtures. Removing them changed nothing
+            // anywhere, so they are not here.
+            //
+            // WHAT IS HERE IS THE INVARIANT ITSELF, as a named fatal rather
+            // than a refusal, which is this file's idiom for "a rule let one
+            // through" (carrierType, memberName, shapeAt, eraseIfUnused). If
+            // the reasoning above is ever wrong, lift() would cast a
+            // ctjs.set_property to a ctjs.call and crash with no message; this
+            // says which claim failed.
+            for (auto & [target, made] : byTarget) {
+                if (made.size() > 1) {
+                    llvm::report_fatal_error(
+                        llvm::Twine("ctnative lowering: `") +
+                        llvm::cast<ctjs::FuncOp>(target).getSymName() +
+                        "` is named by more than one ctjs.create_closure - one function proto "
+                        "has one `closure` opcode, and the receiver lift's capture list and its "
+                        "method test both assume it");
+                }
+            }
+            unsigned liftedThisRound = 0;
+            for (auto & [target, made] : byTarget) {
+                if (blocked.contains(target)) {
+                    for (ctjs::CreateClosureOp c : made) {
+                        reasonOf[c.getOperation()] =
+                            "the function it names is also made somewhere this tier cannot "
+                            "lift: " +
+                            blocked.lookup(target);
+                    }
+                    continue;
+                }
+                lift(llvm::cast<ctjs::FuncOp>(target), made, out);
+                for (ctjs::CreateClosureOp c : made) { lifted.insert(c.getOperation()); }
+                ++liftedThisRound;
+            }
+            if (liftedThisRound == 0) { break; }
         }
+        // THE CHAINED REASON, written only now that the fixpoint has settled
+        // every verdict. A closure refused for a capture the enclosing closure
+        // fills is refused BECAUSE the enclosing function did not lift, and the
+        // sentence a reader can act on names why THAT did not: its own
+        // closure's reason, which may itself be chained one level further out.
+        // The recursion walks outward through strictly enclosing functions, so
+        // it ends; the guard says so as a fatal, not a hang, if it does not.
+        llvm::DenseMap<mlir::Operation *, std::string> settled;
+        auto finalReason = [&](auto & self, mlir::Operation * op, unsigned depth) -> std::string {
+            if (const auto done = settled.find(op); done != settled.end()) { return done->second; }
+            if (depth > closures.size()) {
+                llvm::report_fatal_error(
+                    "ctnative lowering: a chain of `filled from the enclosing closure` reasons is "
+                    "longer than the module has closures - the enclosing-function walk has cycled");
+            }
+            std::string why = reasonOf.lookup(op);
+            if (const auto through = chainedThrough.find(op); through != chainedThrough.end()) {
+                ctjs::FuncOp enclosing = through->second;
+                const auto maker = closureOf.find(enclosing.getOperation());
+                if (maker == closureOf.end()) {
+                    why += ": no ctjs.create_closure in this module names `" +
+                           enclosing.getSymName().str() + "`";
+                } else if (lifted.contains(maker->second.getOperation())) {
+                    // THE FIXPOINT'S OWN INVARIANT. A closure is chained
+                    // through its enclosing function only while that function
+                    // is unlifted, and the last round lifted nothing - so the
+                    // enclosing function of every chained closure is unlifted
+                    // when this runs. One that IS lifted was lifted AFTER the
+                    // closure inside it was last judged: the loop stopped one
+                    // round early and is about to refuse, with a stale reason,
+                    // a closure the next round would have lifted. Cut the
+                    // fixpoint back to one pass and this is what fires.
+                    llvm::report_fatal_error(
+                        llvm::Twine("ctnative lowering: `") + enclosing.getSymName() +
+                        "` was lifted after the closure inside it was last judged - the "
+                        "classify-then-lift fixpoint stopped before it settled");
+                } else if (admissionIsDeclaration(maker->second)) {
+                    why += ": `" + enclosing.getSymName().str() +
+                           "` is bound to a global by a declaration, which is not lifted";
+                } else {
+                    why += ": " + self(self, maker->second.getOperation(), depth + 1);
+                }
+            }
+            settled[op] = why;
+            return why;
+        };
         // The reasons, onto the closures that kept them, so that the function
         // holding one is refused by name. A method field says so, because "a
         // closure used as a value" is a true sentence about `{f: function(){}}`
         // that sends a reader to the wrong slice.
         for (const auto & [op, why] : reasonOf) {
-            op->setAttr("ctnative.closure_reason", mlir::StringAttr::get(context, why));
+            op->setAttr("ctnative.closure_reason",
+                        mlir::StringAttr::get(context, finalReason(finalReason, op, 0)));
             if (methodClosures.contains(op)) {
                 op->setAttr("ctnative.method_refusal", mlir::UnitAttr::get(context));
             }
@@ -1962,8 +2135,8 @@ struct closureLifter {
             }
             llvm::SmallVector<mlir::Value> captured;
             ctjs::CreateClosureOp only = made.front();
-            for (mlir::Value cell : only.getUpvalues()) {
-                captured.push_back(cell.getDefiningOp<ctjs::CreateCellOp>().getInitial());
+            for (mlir::Value operand : only.getUpvalues()) {
+                captured.push_back(liftedCapture(only, operand));
             }
             for (ctjs::ConstructOp built : constructsOfTarget[target.getOperation()]) {
                 mlir::OpBuilder at(built);
@@ -2013,8 +2186,8 @@ struct closureLifter {
             }
             ctjs::CreateClosureOp only = made.front();
             llvm::SmallVector<mlir::Value> captured;
-            for (mlir::Value cell : only.getUpvalues()) {
-                captured.push_back(cell.getDefiningOp<ctjs::CreateCellOp>().getInitial());
+            for (mlir::Value operand : only.getUpvalues()) {
+                captured.push_back(liftedCapture(only, operand));
             }
             for (methodCall at : callsOfTarget[target.getOperation()]) {
                 mlir::OpBuilder builder(at.call);
@@ -2069,9 +2242,12 @@ struct closureLifter {
         }
 
         for (ctjs::CreateClosureOp c : made) {
+            // THE VALUE, NOT THE CELL, in both shapes: a constant cell's
+            // initial, or the enclosing function's capture parameter passed
+            // as it is - it already holds the value (slice 1b).
             llvm::SmallVector<mlir::Value> captured;
-            for (mlir::Value cell : c.getUpvalues()) {
-                captured.push_back(cell.getDefiningOp<ctjs::CreateCellOp>().getInitial());
+            for (mlir::Value operand : c.getUpvalues()) {
+                captured.push_back(liftedCapture(c, operand));
             }
             // BOTH SHAPES OF CALL SITE, because --ctjs-resolve-globals may have
             // named this one already. `whyNotLiftable` admits a ctjs.call at

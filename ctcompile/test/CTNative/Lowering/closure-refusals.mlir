@@ -39,16 +39,25 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enclosing.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=ENCLOSING
-// AND THE SAME PROGRAM WITH THE LOWERING RUN TWICE, which is the only way to
-// reach the "its target is already called by symbol" guard: after one run,
-// `mid` is a lifted target that a ctjs.call_direct names, and lifting it again
-// would insert a second capture parameter that the existing call does not
-// pass. MLIR verifies after every pass, so without the guard this line fails
-// with CallDirectOp's operand-count error instead of the refusal below.
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enclosing.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enclosing3.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=CHAIN3
+// AND A PROGRAM WITH THE LOWERING RUN TWICE. After one run `mid` is a lifted
+// target that a ctjs.call_direct names, with `ctnative.captures` on it and an
+// extra entry-block argument; a second run meets that closure with ONE capture
+// operand against a target whose upvalue_count is now 0 and refuses it by the
+// descriptor mismatch - it never inserts a second capture parameter the
+// existing call does not pass. MLIR verifies after every pass, so a lift that
+// ran again here would fail this line with CallDirectOp's operand-count error
+// rather than the refusal below. `deep` is refused for a reason that does not
+// change between runs, so the SAME pins hold for both.
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/relift.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=RELIFT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/relift.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:              --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=ENCLOSING
+// RUN:   | FileCheck %s --check-prefix=RELIFT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/arrowthis.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=ARROWTHIS
@@ -116,22 +125,54 @@
 // PASSED: ctjs.func {{.*}}@run$2
 // PASSED-SAME: ctnative.not_native = "a closure used as a value: it is passed as an argument - lifting has no call site to move the captures to, so this needs a specialised callee (Phase 63), not a lift"
 
-// --- CONDITION 1: A CAPTURE THAT IS NOT A CELL OF THIS FRAME ---------------
+// --- CONDITION 1, SLICE 1b: A CAPTURE FILLED FROM AN ENCLOSING CLOSURE THAT
+// --- DID NOT LIFT ----------------------------------------------------------
 //
 // `deep` names `k`, which belongs to `outer` and not to `mid`, so the compiler
 // marks `deep`'s descriptor NOT from_parent_local and the VM fills that slot
-// from the enclosing closure instead of from the operand. The importer pushes
-// `undefined` as a placeholder for exactly those (BytecodeImport.cpp,
-// op::closure), so lifting one would capture `undefined` where the program
-// captured a binding. Requiring every capture to be a cell of THIS frame is
-// what makes the rewrite sound, not a convenience.
+// from the enclosing closure. The importer writes that operand as a
+// ctjs.load_upvalue of `mid`'s own closure (BytecodeImport.cpp, op::closure),
+// and the lift carries it ONLY once `mid` is lifted and the load has become
+// `mid`'s capture parameter - which is the whole of slice 1b, and what
+// nested-closure-lift.mlir and native-nested-closure-fixture.js exercise.
 //
-// `mid` itself IS lifted - it captures `k` legally - so the refusal lands in
-// `mid`'s body, where `deep` is made, and reaches `outer` through the
-// call-graph fixpoint.
+// Here `mid` does NOT lift: `outer` writes `k` after making `mid`, so the cell
+// is shared mutable state and `mid`'s capture is refused as reassigned. `deep`'s
+// capture is then a read of a closure this tier does not carry, and the refusal
+// says so AND says why `mid` did not lift - the chained sentence is the one a
+// reader can act on, and it is only knowable after the fixpoint has settled
+// `mid`'s verdict. Write the reasons inside the loop instead of after it and
+// the suffix is gone: this line pins that.
 //
+// ENCLOSING: ctjs.func {{.*}}@outer$1
+// ENCLOSING-SAME: ctnative.not_native = "a closure used as a value: capture 0 is a binding that is reassigned - a shared cell is Phase 59 slice 2"
 // ENCLOSING: ctjs.func {{.*}}@mid$2
-// ENCLOSING-SAME: ctnative.not_native = "a closure used as a value: capture 0 is not a cell of this frame - it is filled from the enclosing closure, which slice 1 does not carry"
+// ENCLOSING-SAME: ctnative.not_native = "a closure used as a value: capture 0 is filled from the enclosing closure, which did not lift: capture 0 is a binding that is reassigned - a shared cell is Phase 59 slice 2"
+// And `deep` keeps the old sentence, which is the right one for it: it really
+// does read its own closure, with ctjs.load_upvalue, because nothing lifted it.
+// ENCLOSING: ctjs.func {{.*}}@deep$3
+// ENCLOSING-SAME: ctnative.not_native = "uses its own closure"
+
+// --- THE SAME, ONE LEVEL DEEPER: THE CHAIN IS SPELLED ALL THE WAY OUT --------
+//
+// `inner`'s capture is filled from `mid`'s closure, whose own capture is filled
+// from `outer`'s, whose binding is reassigned. Each level appends the next, so
+// the sentence on `inner`'s closure walks the whole chain to the obstacle.
+//
+// CHAIN3: ctjs.func {{.*}}@mid$2
+// CHAIN3-SAME: ctnative.not_native = "a closure used as a value: capture 0 is filled from the enclosing closure, which did not lift: capture 0 is a binding that is reassigned - a shared cell is Phase 59 slice 2"
+// CHAIN3: ctjs.func {{.*}}@inner$3
+// CHAIN3-SAME: ctnative.not_native = "a closure used as a value: capture 0 is filled from the enclosing closure, which did not lift: capture 0 is filled from the enclosing closure, which did not lift: capture 0 is a binding that is reassigned - a shared cell is Phase 59 slice 2"
+
+// --- AN ENCLOSING FUNCTION THAT LIFTS, AND A NESTED CLOSURE THAT STILL DOES NOT
+//
+// `mid` lifts - `k` is a constant cell of `outer`'s frame - so `deep`'s capture
+// IS `mid`'s parameter after round one, and condition 1 is satisfied. What
+// refuses `deep` is condition 4: it is returned. The refusal names THAT and not
+// the capture, which is what shows the slice-1b clause admitted the operand.
+//
+// RELIFT: ctjs.func {{.*}}@mid$2
+// RELIFT-SAME: ctnative.not_native = "a closure used as a value: it is returned - Phase 59 slice 2"
 
 // --- STAGE 59B: AN ARROW THAT READS ITS LEXICAL `this` ----------------------
 //
@@ -207,7 +248,32 @@ function outer(k) {
         function deep() { return k; }
         return deep();
     }
+    k = k + 1;
     return mid();
+}
+var r = outer(5);
+
+//--- enclosing3.js
+function outer(k) {
+    function mid() {
+        function inner() {
+            function deep() { return k; }
+            return deep();
+        }
+        return inner();
+    }
+    k = k + 1;
+    return mid();
+}
+var r = outer(5);
+
+//--- relift.js
+function outer(k) {
+    function mid() {
+        function deep() { return k; }
+        return deep;
+    }
+    return mid()();
 }
 var r = outer(5);
 
