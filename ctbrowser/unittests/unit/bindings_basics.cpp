@@ -546,6 +546,33 @@ void test_the_constructible_dom() {
     check(log[6] == "clone=list,0,8,true", "cloneNode is shallow or deep, and detached: " + log[6]);
 }
 
+// `document.implementation`, whose absence cost 136 assertions in one WPT file
+// and reported none of them by name.
+void test_document_implementation() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body><script>
+        var impl = document.implementation;
+        // TRUE FOR EVERYTHING, which is what the DOM standard defines rather
+        // than what this engine could honestly claim.
+        console.log('feature=' + impl.hasFeature() + ',' + impl.hasFeature('Core', '2.0') +
+                    ',' + impl.hasFeature('nonsense') +
+                    ',' + (typeof impl.hasFeature.apply));
+        var dt = impl.createDocumentType('html', '', '');
+        console.log('doctype=' + dt.name + ',' + (dt.publicId === '') + ',' + dt.nodeType);
+        // Named absences, so a page can detect them rather than get a lie.
+        console.log('absent=' + (impl.createHTMLDocument === undefined) +
+                    ',' + (impl.createDocument === undefined));
+      </script></body></html>)");
+    check(page.script_error().empty(), "the implementation script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() == 3, "every line was logged");
+    check(log[0] == "feature=true,true,true,function", "hasFeature is always true: " + log[0]);
+    check(log[1] == "doctype=html,true,10",
+          "createDocumentType carries its three strings: " + log[1]);
+    check(log[2] == "absent=true,true",
+          "the two that need a second Document are absent: " + log[2]);
+}
+
 // The canvas additions p5.js draws through: the transform family, ellipse and
 // Path2D. A Path2D is a RECORDING - built once and replayed by fill(path) or
 // stroke(path), which is how p5 draws every 2D shape.
@@ -2703,6 +2730,7 @@ int main() {
     test_events_travel_the_whole_path();
     test_a_standalone_event_target();
     test_the_constructible_dom();
+    test_document_implementation();
     test_canvas_transform_and_paths();
     test_window_is_the_global_object();
     test_class_list_edits_the_attribute();

@@ -413,6 +413,48 @@ void dom_bindings::install_document(context & cx) {
             return value::undefined();
         })));
 
+    // `document.implementation`, WHICH DID NOT EXIST.
+    //
+    // Its absence was worth 136 failing assertions in one file, and the failure
+    // message named none of them: `document.implementation` read undefined, so
+    // `document.implementation.hasFeature` read undefined, and the test's own
+    // `.apply(...)` on it reported "`apply` is not a function" - forty lines
+    // from the cause and about a method nobody was missing.
+    {
+        auto * implementation = static_cast<script::object_object *>(cx.make_object().as_heap());
+        const auto method = [&](std::string name, script::native_fn fn) {
+            implementation->set(
+                name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+        };
+        // ALWAYS TRUE, and that is the specification rather than a shortcut.
+        // hasFeature was a way to ask whether a DOM module was supported, the
+        // answers were never reliable, and the DOM standard now defines it to
+        // return true for every argument so that the feature-detection idiom
+        // stops steering pages down worse paths. Returning false, or the truth
+        // about this engine, would be the wrong answer to the question actually
+        // being asked.
+        method("hasFeature", [](context &, std::span<value>) { return value::boolean(true); });
+        // A DocumentType is three strings and no behaviour. It is not a node
+        // here - there is no Document node for one to hang off - so it is a
+        // plain object carrying exactly what a page reads off one.
+        method("createDocumentType", [this](context & c, std::span<value> args) {
+            auto * doctype = static_cast<script::object_object *>(c.make_object().as_heap());
+            doctype->set("name", c.string(arg_string(c, args, 0)));
+            doctype->set("publicId", c.string(arg_string(c, args, 1)));
+            doctype->set("systemId", c.string(arg_string(c, args, 2)));
+            doctype->set("nodeType", value::number(10));
+            doctype->set("nodeName", c.string(arg_string(c, args, 0)));
+            (void)this;
+            return value::object(doctype);
+        });
+        // `createHTMLDocument` and `createDocument` are ABSENT, deliberately and
+        // by name. Both return a SECOND Document, and this engine has one: the
+        // bindings hold a single `document *`, and every element wrapper is
+        // keyed on a node id that only means anything against it. Returning
+        // something document-shaped that shares this document's nodes would be
+        // a worse answer than the missing method a page can detect.
+        doc->set("implementation", value::object(implementation));
+    }
     doc->set("body", wrap(cx, find_by_tag("body")));
     // `document.head`, which was missing beside its two neighbours. It is where
     // a page appends a <style> or a <script> it built, and where any code that
