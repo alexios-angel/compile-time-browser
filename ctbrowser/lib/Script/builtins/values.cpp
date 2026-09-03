@@ -17,8 +17,8 @@ void install_math(context & cx, std::uint64_t seed) {
     // waiting to be wrong, and one that is wrong in its last few places is
     // invisible: it agrees with every printed value a test is likely to check
     // and disagrees with the real one by an amount that accumulates.
-    math->set("PI", value::number(std::numbers::pi));
-    math->set("E", value::number(std::numbers::e));
+    detail::constant(math, "PI", value::number(std::numbers::pi));
+    detail::constant(math, "E", value::number(std::numbers::e));
     // A MATH ARGUMENT, WHERE A MISSING ONE IS NaN AND NOT ZERO.
     //
     // Every Math function's step 1 is `Let n be ? ToNumber(x)`, an absent
@@ -38,7 +38,7 @@ void install_math(context & cx, std::uint64_t seed) {
             return value::number(fn(math_arg(c, a, 0)));
         });
     };
-    math->set("SQRT2", value::number(std::numbers::sqrt2));
+    detail::constant(math, "SQRT2", value::number(std::numbers::sqrt2));
     // <numbers> has no SQRT1_2 or LN10, so those two are DERIVED rather than
     // transcribed - neither can be typed wrong.
     //
@@ -50,11 +50,11 @@ void install_math(context & cx, std::uint64_t seed) {
     // 21.3.1.8 asks for the Number value NEAREST the true root, which makes it
     // an exact requirement rather than an approximation; the engine used to
     // disagree with its own `Math.sqrt(0.5)`.
-    math->set("SQRT1_2", value::number(std::numbers::sqrt2 / 2.0));
-    math->set("LN2", value::number(std::numbers::ln2));
-    math->set("LN10", value::number(std::numbers::ln10));
-    math->set("LOG2E", value::number(std::numbers::log2e));
-    math->set("LOG10E", value::number(std::numbers::log10e));
+    detail::constant(math, "SQRT1_2", value::number(std::numbers::sqrt2 / 2.0));
+    detail::constant(math, "LN2", value::number(std::numbers::ln2));
+    detail::constant(math, "LN10", value::number(std::numbers::ln10));
+    detail::constant(math, "LOG2E", value::number(std::numbers::log2e));
+    detail::constant(math, "LOG10E", value::number(std::numbers::log10e));
     // THE EXACT ROOT WHEN THERE IS ONE. glibc's `cbrt` is up to an ulp out on a
     // perfect cube - `cbrt(27)` is 3.0000000000000004 and `cbrt(216)` is
     // 6.0000000000000009 - where V8 returns 3 and 6. That was invisible while
@@ -249,8 +249,8 @@ void install_boolean(context & cx) {
     // Boolean(x)` evaluates to the converted value here rather than to a wrapper
     // object; before the flag it evaluated to an empty object and the value was
     // gone.
-    boolean_ctor->set("__conversion", value::boolean(true));
-    boolean_ctor->set("prototype", value::object(boolean_proto));
+    detail::constant(boolean_ctor, "__conversion", value::boolean(true));
+    detail::constant(boolean_ctor, "prototype", value::object(boolean_proto));
     link_constructor(cx, boolean_proto, "Boolean", value::object(boolean_ctor));
     cx.define_global("Boolean", value::object(boolean_ctor));
 }
@@ -279,9 +279,9 @@ void install_number(context & cx) {
     // Number(x)` evaluates to the converted value here rather than to a wrapper
     // object; before the flag it evaluated to an empty object and the value was
     // gone.
-    number_ctor->set("__conversion", value::boolean(true));
+    detail::constant(number_ctor, "__conversion", value::boolean(true));
     const auto constant = [&](const char * name, double v) {
-        number_ctor->set(name, value::number(v));
+        detail::constant(number_ctor, name, value::number(v));
     };
     constant("EPSILON", 2.220446049250313e-16);
     constant("MAX_SAFE_INTEGER", 9007199254740991.0);
@@ -397,7 +397,7 @@ void install_number(context & cx) {
         // `(1.5).toPrecision(3)` is "1.50" - and writes two exponent digits.
         return c.string(number_to_precision(v, digits));
     });
-    number_ctor->set("prototype", value::object(number_proto));
+    detail::constant(number_ctor, "prototype", value::object(number_proto));
     link_constructor(cx, number_proto, "Number", value::object(number_ctor));
     cx.set_prototype(context::proto_kind::number, number_proto);
 }
@@ -553,11 +553,15 @@ void install_date(context & cx) {
             // context's clock - see context::set_clock. It used to be the literal
             // epoch, so every page here believed it was 1970.
             if (a.empty()) { ms = c.clock_ms(); }
-            made->set("__ms", value::number(ms));
+            // NON-ENUMERABLE, like every other internal slot this engine
+            // spells as a property: a Date has no own enumerable property in
+            // the specification, and `Object.defineProperties(obj, new Date)`
+            // handed this Number over as a descriptor and threw.
+            made->define("__ms", value::number(ms), attr_builtin);
             return self;
         });
-    ctor->set("prototype", value::object(date_proto));
-    date_proto->set("constructor", value::object(ctor));
+    detail::constant(ctor, "prototype", value::object(date_proto));
+    link_constructor(cx, date_proto, "Date", value::object(ctor));
     method(cx, ctor, "now",
            [](context & c, std::span<value>) { return value::number(c.clock_ms()); });
     method(cx, ctor, "UTC", [days_from_civil](context & c, std::span<value> a) {

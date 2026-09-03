@@ -118,8 +118,10 @@ otherwise, so the run is about 1.8 processes per test.
 | `built-ins/JSON` | 165 | 31 | 130 | 0 | 2 | 0 | 2 | **19.0%** | 4.6 s |
 | **total** | **32,927** | **9,314** | **23,466** | **2** | **77** | **4** | **64** | **28.3%** | **5m 03s** |
 
-**9,314 of the 32,863 tests that ran passed: 28.3%.** That is the number, and it
-is not a good one — nor should it look like one. The engine is a deliberate
+**9,314 of the 32,863 tests that ran passed: 28.3%.** (Two later measurements
+supersede this: 9,380 after the crash fixes below, and **10,813 - 32.9%** after
+property attributes, measured 2026-09-03 and tabulated at the bottom of this
+file.) That is the number, and it is not a good one — nor should it look like one. The engine is a deliberate
 subset (`docs/script.md` says which), and this is the first measurement of how
 large the rest is.
 
@@ -310,10 +312,12 @@ Ranked by how many tests each accounts for, from the run above.
    this engine runs it. `var var var;` parses and executes here. Everything
    under `test/language/eval-code` (7 of 347 pass), `global-code` (5 of 42) and
    `directive-prologue` (23 of 62) is mostly this.
-2. **No property attributes.** There is no writable / enumerable /
-   configurable, so `Object.getOwnPropertyDescriptor` cannot answer and
-   `verifyProperty` — used by 13,621 tests across the corpus — fails on contact.
-   This is why `built-ins/Object` reads 20.7% while `Math` reads 47.7%.
+2. ~~**No property attributes.**~~ **CLOSED 2026-09-03** - see the section at the
+   bottom of this file. There was no writable / enumerable / configurable, so
+   `Object.getOwnPropertyDescriptor` could not answer and `verifyProperty` —
+   used by 13,621 tests across the corpus — failed on contact. That is why
+   `built-ins/Object` read 20.7% while `Math` read 47.7%; it now reads 50.0%
+   and Math 60.9%.
 3. **Missing methods, ~3,400 tests.** `TypeError: X is undefined, not a
    function`, spread across every built-in.
 4. **The error constructors are not real constructors.** `TypeError.name` is
@@ -394,6 +398,144 @@ kill a process rather than print a wrong answer, and a net for them has to run
 with `ctest` rather than behind a 273 MB opt-in corpus. Each of the three was
 proved load-bearing by reverting it and watching that file go red - exit 139 for
 the recursion, 134 for both the array and the pad.
+
+## Property attributes - 2026-09-03
+
+**The second measurement, and the largest single move so far: 9,380 -> 10,813,
+28.5% -> 32.9% of the ten areas.** `[[Writable]]`, `[[Enumerable]]`,
+`[[Configurable]]` and `[[Extensible]]` are gap 2 in the list above, and closing
+it moved every area in the table rather than one, which is what "it gates
+thousands of tests across every built-in area" meant.
+
+Same corpus (pinned hash above), same devbox, same flags (4 workers, 10 s
+timeout, 2 GB address-space cap). Both runs are the ten baseline areas.
+
+| area | tests | pass before | pass after | delta | PASS -> FAIL |
+|---|---:|---:|---:|---:|---:|
+| `test/language` | 23,726 | 6,915 | **7,202** | +287 | 6 |
+| `built-ins/Array` | 3,082 | 651 | **689** | +38 | 0 |
+| `built-ins/Object` | 3,411 | 707 | **1,706** | +999 | 9 |
+| `built-ins/Number` | 340 | 180 | **205** | +25 | 0 |
+| `built-ins/Math` | 327 | 156 | **199** | +43 | 0 |
+| `built-ins/String` | 1,223 | 566 | **584** | +18 | 0 |
+| `built-ins/Boolean` | 51 | 17 | **20** | +3 | 0 |
+| `built-ins/Function` | 509 | 145 | **155** | +10 | 0 |
+| `built-ins/Error` | 93 | 12 | **14** | +2 | 0 |
+| `built-ins/JSON` | 165 | 31 | **39** | +8 | 0 |
+| **total** | **32,927** | **9,380** | **10,813** | **+1,433** | **15** |
+
+CRASH stayed at 7, TIMEOUT at 0, HOST at 4 and SKIP at 64. The comparison is
+**per test, not per total**: the runner's `--tsv` was captured before and after
+and diffed row by row, because a total that rises can hide a test that fell.
+1,448 tests went FAIL -> PASS and 15 went PASS -> FAIL.
+
+### What was implemented
+
+* Three attribute bits per property, in a vector PARALLEL to each property
+  table and grown lazily, so an object whose properties all have the default
+  attributes carries no extra memory and the property-store fast path is one
+  hash lookup rather than the two it was. All four tables have them:
+  `object_object`, `closure_object` (a class's statics), `native_object` (a
+  built-in's statics), and - as three bools rather than three bits per element -
+  `array_object`.
+* `context::own_property` / `define_own_property` / `delete_own_property` /
+  `is_extensible` / `prevent_extensions`: one [[GetOwnProperty]] and one
+  [[DefineOwnProperty]] over all four tables plus the synthesised slots (an
+  array's `length` and indices, a string's `length` and characters, a function's
+  `name`, `length` and `prototype`, a native's `name`). `defineProperty`,
+  `getOwnPropertyDescriptor(s)`, `getOwnPropertyNames`, `hasOwnProperty`,
+  `hasOwn`, `propertyIsEnumerable`, `freeze`, `seal`, `preventExtensions`,
+  `isFrozen`, `isSealed`, `isExtensible` and five `Reflect` methods are now that
+  one answer rather than twelve separate ones against `object_object` alone.
+* 10.1.6.3 ValidateAndApplyPropertyDescriptor, with the absent-field rules that
+  make `defineProperty`'s defaults the opposite of a literal's.
+* Enumerability honoured by `Object.keys`/`values`/`entries`, `for-in`,
+  `JSON.stringify`, `Object.assign` and object spread - with symbol keys kept in
+  the last two, which is the one place OwnPropertyKeys and EnumerableOwnProperties
+  differ and which cost four tests before it was noticed.
+* Writability and extensibility honoured by assignment, including an INHERITED
+  non-writable data property, which is the half of 10.1.9 that surprises people.
+* Enumeration order: integer-index keys first and ascending (6.1.7.1), behind a
+  flag so an object with no index-shaped key takes the straight-line walk it did.
+* Clause 17 applied to the standard library: every built-in method is
+  `{ true, false, true }`, every built-in value property (`Math.PI`,
+  `Number.MAX_VALUE`, `X.prototype`, the well-known symbols) is
+  `{ false, false, false }`, and `X.prototype.constructor` and `F.prototype` are
+  no longer enumerable. `Object.keys(Math)` was 44 entries.
+
+Three defects were found on the way and are fixed here because the measurement
+would otherwise be reporting them as progress:
+
+* **`in` answered about own data properties only.** `'toString' in {}` was
+  false, so was `'length' in [1]`, and so was any accessor - and
+  ToPropertyDescriptor is specified in terms of HasProperty, so a descriptor
+  object that INHERITED its `writable` described nothing at all. `has_property`
+  is now `own_property` walked up the explicit chain, then the implicit tables,
+  then a function's static chain.
+* **A function's prototype chain stopped at `Function.prototype`.**
+  `f.hasOwnProperty` was undefined on every function, which is the gap numbers,
+  booleans and strings had until they were fixed and functions were left out of.
+* **A labelled `break` could cross a function boundary in the COMPILER.**
+  `lib/Script/compile/statements.cpp` kept one `loops_` stack for the whole
+  compilation, and its own comment said the invariant was worth checking rather
+  than inheriting. It was checked and it was wrong: `L: do { (function(){ break
+  L; })(); } while(0)` pushed a jump site onto the enclosing function's break
+  list, which was then patched with the OUTER proto's offsets into the INNER
+  proto's code. test262's `language/statements/break/S12.8_A6.js` landed on a
+  `load_string` with an out-of-range slot and allocated until `std::bad_alloc`
+  killed the process. `loops_` is now swapped at a function boundary, the same
+  fix the optional chain and the open `finally` beside it already had.
+  **This is the only change outside `lib/Script/vm`, `lib/Script/builtins` and
+  the headers**, and it is named here because a strict-mode agent will be in
+  that file next.
+
+### What was deliberately NOT implemented
+
+* **Strict mode, still.** A write to a non-writable property, a `delete` of a
+  non-configurable one and an addition to a non-extensible object are each
+  SILENT here. That is correct sloppy behaviour and it is what
+  `unittests/js/property_attributes.cpp` asserts; the three `return`s where a
+  strict mode throws instead are marked `TODO(strict)` in
+  `lib/Script/vm/objects.cpp`.
+* **Per-element attributes on an array.** `array_object` holds its elements in a
+  `std::vector<value>` with nowhere to put three bits each, so it carries
+  `extensible`, `elements_writable` and `elements_configurable` instead - enough
+  for `freeze`, `seal` and their queries, and not enough for
+  `Object.defineProperty(a, 0, {writable: false})`, which stores the value and
+  drops the attributes.
+* **An accessor on an array or on a native.** Neither has an accessor table.
+  `Object.defineProperty(arr, "0", {get() {...}})` is a no-op that answers true,
+  which is what it has always been; answering FALSE instead was measured and
+  cost 6 tests that had been passing, so the previous behaviour is kept and
+  named rather than changed.
+* **A native's `length`.** A `native_fn` takes a span and its declared arity is
+  recorded nowhere, so `Object.getOwnPropertyDescriptor(Object.keys, 'length')`
+  is `undefined` rather than wrong.
+* **Class methods are still enumerable.** `class C { m(){} }` puts `m` on the
+  prototype through the ordinary property-store opcode, so `Object.keys(C.prototype)`
+  reports it where the specification says it must not. Fixing it needs a
+  `is_method` flag through the compiler, which is a strict-mode-shaped change to
+  `lib/Script/compile/`.
+
+### The 15 that went PASS -> FAIL, each diagnosed
+
+None is an attribute answering wrongly; every one is a DIFFERENT gap that the
+new behaviour now reaches. They are listed rather than summarised because "the
+total went up" is not an answer to "did anything break".
+
+| count | tests | why |
+|---:|---|---|
+| 9 | `eval-code/{direct,indirect}/non-definable-global-var`, `global-code/unscopables-ignored`, `Object/isFrozen/15.2.3.12-3-1`, `Object/defineProperties/15.2.3.7-5-b-{188,190,248}`, `Object/keys/15.2.3.14-5-{15,16}` | **there is no global object and no String wrapper.** `this` at top level is `undefined` here, so `Object.defineProperty(this, ...)` is now the TypeError the spec requires and `Object.isExtensible(this)` is now the `false` the spec requires - both of which these tests read as "the global object is non-extensible" and proceed on. Each passed before by calling a method that did nothing. |
+| 2 | `class/elements/private-method-is-not-a-own-property` (both forms) | **a private method is an ordinary property named `"#m"`.** `"#m" in this` is now true because `in` walks the prototype chain, which it must. The bug is the private-field model, not the operator. |
+| 1 | `Object/isFrozen/15.2.3.12-3-18` | `RegExp.prototype` is not exposed, so `Object.isFrozen(undefined)` is `true` - correct for the argument it was given. |
+| 1 | `Object/prototype/toString/symbol-tag-non-str-bigint` | `BigInt.prototype[Symbol.toStringTag]` does not exist, so the test's first `defineProperty` CREATES it non-configurable and its second is correctly refused. |
+| 1 | `object/method-definition/name-prototype-prop` | a method gets a synthesised `prototype` descriptor; see "class methods" above. |
+| 1 | `Object/defineProperties/15.2.3.7-5-a-16` | an Error instance's `stack` is still enumerable. Fixed by the error-prototype work below. |
+
+`unittests/js/property_attributes.cpp` is the engine's own regression net for
+all of this - 90 assertions, in the suite, no corpus needed.
+
+---
 
 `docs/script.md` is the engine's own account of what it implements and what it
 refuses by name; this file is the independent measurement of the same thing.

@@ -441,7 +441,7 @@ void install_array(context & cx) {
         }
         return c.current_this();
     });
-    array_ctor->set("prototype", value::object(array_proto));
+    detail::constant(array_ctor, "prototype", value::object(array_proto));
     // `Array.prototype.toString` IS join(','). The C++ conversion always knew
     // that; the prototype did not, so once conversion started going through an
     // object's own toString an array fell back to Object.prototype's and
@@ -616,7 +616,7 @@ void install_collections(context & cx) {
         // parent prototype's `constructor` - absent, and the class could not be
         // instantiated at all.
         proto->set("constructor", value::object(ctor));
-        ctor->set("prototype", value::object(proto));
+        detail::constant(ctor, "prototype", value::object(proto));
         cx.set_prototype(keyed ? context::proto_kind::map : context::proto_kind::set, proto);
         cx.define_global(name, value::object(ctor));
         return proto;
@@ -942,7 +942,7 @@ void install_typed_arrays(context & cx) {
             }
             return out;
         });
-        ctor->set("BYTES_PER_ELEMENT", value::number(each.bytes));
+        detail::constant(ctor, "BYTES_PER_ELEMENT", value::number(each.bytes));
 
         // `Float32Array.from` and `.of`, WHICH ARE NOT THE SAME FUNCTIONS AS
         // `Array.from` and `.of`: they coerce into this view's element kind, so

@@ -48,7 +48,8 @@ void install_promise(context & cx) {
     // and settling run this library's own logic, queue included.
     cx.set_pending_promise_factory([](context & c) {
         const value made = detail::make_promise(c, value::undefined(), false);
-        static_cast<object_object *>(made.as_heap())->set("__settled", value::boolean(false));
+        static_cast<object_object *>(made.as_heap())
+            ->define("__settled", value::boolean(false), attr_builtin);
         return made;
     });
     cx.set_promise_settler([](context & c, value promise, value with, bool rejected) {
@@ -98,7 +99,8 @@ void install_promise(context & cx) {
     auto * promise_new = cx.allocate<native_object>("Promise", [](context & c, std::span<value> a) {
         const value promise = detail::make_promise(c, value::undefined(), false);
         auto * made = static_cast<object_object *>(promise.as_heap());
-        made->set("__settled", value::boolean(false)); // pending until told otherwise
+        made->define("__settled", value::boolean(false),
+                     attr_builtin); // pending until told otherwise
         if (a.empty() || !a[0].is_callable()) { return promise; }
         // A `value` CAPTURED BY A C++ LAMBDA IS INVISIBLE TO THE COLLECTOR.
         //
@@ -129,8 +131,8 @@ void install_promise(context & cx) {
                 detail::settle(inner, promise, args.empty() ? value::undefined() : args[0], true);
                 return value::undefined();
             });
-        resolve_fn->set("__promise", promise);
-        reject_fn->set("__promise", promise);
+        resolve_fn->define("__promise", promise, attr_builtin);
+        reject_fn->define("__promise", promise, attr_builtin);
         const value resolve = value::object(resolve_fn);
         const value reject = value::object(reject_fn);
         const value args[2] = {resolve, reject};
@@ -138,7 +140,7 @@ void install_promise(context & cx) {
         return promise;
     });
     for (const auto & [key, item] : promise_ctor->props) { promise_new->set(key, item); }
-    promise_new->set("prototype", value::object(detail::promise_prototype(cx)));
+    detail::constant(promise_new, "prototype", value::object(detail::promise_prototype(cx)));
     cx.define_global("Promise", value::object(promise_new));
 
     cx.define_native("isNaN", [](context &, std::span<value> a) {
@@ -172,7 +174,7 @@ void install_promise(context & cx) {
         // String(x)` evaluates to the converted value here rather than to a wrapper
         // object; before the flag it evaluated to an empty object and the value was
         // gone.
-        string_ctor->set("__conversion", value::boolean(true));
+        detail::constant(string_ctor, "__conversion", value::boolean(true));
         const auto stat = [&](const char * name, native_fn fn) {
             string_ctor->set(name, value::object(cx.allocate<native_object>(name, std::move(fn))));
         };
@@ -209,7 +211,7 @@ void install_promise(context & cx) {
             return c.string(out);
         });
         if (object_object * table = cx.prototype(context::proto_kind::string)) {
-            string_ctor->set("prototype", value::object(table));
+            detail::constant(string_ctor, "prototype", value::object(table));
             link_constructor(cx, table, "String", value::object(string_ctor));
         }
         cx.define_global("String", value::object(string_ctor));

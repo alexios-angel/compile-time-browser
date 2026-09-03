@@ -504,8 +504,12 @@ value context::ensure_prototype(value fn) {
     // An arrow is not a constructor and never needs one.
     if (closure->proto != nullptr && closure->proto->is_arrow) { return value::undefined(); }
     value made = make_object();
-    static_cast<object_object *>(made.as_heap())->set("constructor", fn);
-    closure->set("prototype", made);
+    // 10.2.5 / 15.7.14: `F.prototype` is { true, false, false } on an ordinary
+    // function and `F.prototype.constructor` is { true, false, true }. Both
+    // were enumerable, so `constructor` turned up in `Object.keys(C.prototype)`
+    // and in a `{...instance}` spread of anything that inherited it.
+    static_cast<object_object *>(made.as_heap())->define("constructor", fn, attr_builtin);
+    closure->define("prototype", made, attr_writable);
     return made;
 }
 

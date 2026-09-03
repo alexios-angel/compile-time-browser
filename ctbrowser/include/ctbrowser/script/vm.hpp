@@ -90,6 +90,11 @@ struct native_object final : heap_object {
     // one since classes needed somewhere for their statics; this is the same
     // need arriving for the built-ins.
     std::vector<std::pair<std::string, value>> props;
+    // Parallel to `props`, grown lazily - see the long note on
+    // object_object::attrs. A built-in constructor's statics are here, and the
+    // specification says none of them is enumerable.
+    std::vector<std::uint8_t> attrs;
+    bool extensible = true;
 
     [[nodiscard]] value * find(std::string_view key) {
         for (auto & [k, item] : props) {
@@ -97,12 +102,44 @@ struct native_object final : heap_object {
         }
         return nullptr;
     }
+    [[nodiscard]] std::size_t position(std::string_view key) const {
+        for (std::size_t i = 0; i < props.size(); ++i) {
+            if (props[i].first == key) { return i; }
+        }
+        return props.size();
+    }
+    [[nodiscard]] std::uint8_t attrs_of(std::string_view key) const {
+        const std::size_t at = position(key);
+        return at < attrs.size() ? attrs[at] : attr_default;
+    }
+    void set_attrs(std::string_view key, std::uint8_t a) {
+        const std::size_t at = position(key);
+        if (at >= props.size()) { return; }
+        if (a == attr_default && attrs.empty()) { return; }
+        if (attrs.size() < props.size()) { attrs.resize(props.size(), attr_default); }
+        attrs[at] = a;
+    }
     void set(std::string_view key, value v) {
+        if (!attrs.empty() && attrs.size() != props.size()) {
+            attrs.resize(props.size(), attr_default);
+        }
         if (value * existing = find(key)) {
             *existing = v;
             return;
         }
         props.emplace_back(std::string{key}, v);
+        if (!attrs.empty()) { attrs.push_back(attr_default); }
+    }
+    void define(std::string_view key, value v, std::uint8_t a) {
+        set(key, v);
+        set_attrs(key, a);
+    }
+    bool erase(std::string_view key) {
+        const std::size_t at = position(key);
+        if (at >= props.size()) { return false; }
+        props.erase(props.begin() + static_cast<std::ptrdiff_t>(at));
+        if (at < attrs.size()) { attrs.erase(attrs.begin() + static_cast<std::ptrdiff_t>(at)); }
+        return true;
     }
 
     native_object(std::string n, native_fn f)
@@ -124,6 +161,11 @@ struct closure_object final : heap_object {
     //
     // Linear on purpose - see the note above `native_object`.
     std::vector<std::pair<std::string, value>> props;
+    // Parallel to `props`, grown lazily - see object_object::attrs. A class's
+    // statics live here, and `C.prototype` is { writable: false, enumerable:
+    // false, configurable: false } on one.
+    std::vector<std::uint8_t> attrs;
+    bool extensible = true;
 
     [[nodiscard]] value * find(std::string_view name) {
         for (auto & [key, item] : props) {
@@ -131,12 +173,44 @@ struct closure_object final : heap_object {
         }
         return nullptr;
     }
+    [[nodiscard]] std::size_t position(std::string_view name) const {
+        for (std::size_t i = 0; i < props.size(); ++i) {
+            if (props[i].first == name) { return i; }
+        }
+        return props.size();
+    }
+    [[nodiscard]] std::uint8_t attrs_of(std::string_view name) const {
+        const std::size_t at = position(name);
+        return at < attrs.size() ? attrs[at] : attr_default;
+    }
+    void set_attrs(std::string_view name, std::uint8_t a) {
+        const std::size_t at = position(name);
+        if (at >= props.size()) { return; }
+        if (a == attr_default && attrs.empty()) { return; }
+        if (attrs.size() < props.size()) { attrs.resize(props.size(), attr_default); }
+        attrs[at] = a;
+    }
     void set(std::string_view name, value v) {
+        if (!attrs.empty() && attrs.size() != props.size()) {
+            attrs.resize(props.size(), attr_default);
+        }
         if (value * existing = find(name)) {
             *existing = v;
             return;
         }
         props.emplace_back(std::string{name}, v);
+        if (!attrs.empty()) { attrs.push_back(attr_default); }
+    }
+    void define(std::string_view name, value v, std::uint8_t a) {
+        set(name, v);
+        set_attrs(name, a);
+    }
+    bool erase(std::string_view name) {
+        const std::size_t at = position(name);
+        if (at >= props.size()) { return false; }
+        props.erase(props.begin() + static_cast<std::ptrdiff_t>(at));
+        if (at < attrs.size()) { attrs.erase(attrs.begin() + static_cast<std::ptrdiff_t>(at)); }
+        return true;
     }
 
     // A CLASS IS A CLOSURE, so `static get w()` has nowhere else to go. Same
@@ -146,8 +220,9 @@ struct closure_object final : heap_object {
     [[nodiscard]] accessor_entry * find_accessor(std::string_view name) {
         return accessors.find(name);
     }
-    void define_accessor(std::string_view name, value getter, value setter) {
-        accessors.define(name, getter, setter);
+    void define_accessor(std::string_view name, value getter, value setter,
+                         std::uint8_t a = attr_enumerable | attr_configurable) {
+        accessors.define(name, getter, setter, 0, a);
     }
 
     // The function's OWN [[Prototype]] - what `Object.getPrototypeOf(F)`
@@ -1099,6 +1174,83 @@ public:
     [[nodiscard]] bool has_property(value target, value key);
     [[nodiscard]] bool instance_of(value target, value ctor);
     void delete_index(value target, value key);
+
+    // --- PROPERTY DESCRIPTORS, one shape for every kind of value -----------
+    //
+    // A property lives in four different tables here - object_object's, a
+    // closure's statics, a native's statics, and an array's elements - plus a
+    // handful of synthesised ones (`length` on an array or a string, `name` on
+    // a function). Every operation that has to REASON about a property rather
+    // than read it - getOwnPropertyDescriptor, defineProperty, freeze, seal,
+    // hasOwnProperty, propertyIsEnumerable - needs the same answer from all of
+    // them, and each of those was written separately against object_object
+    // alone before this existed.
+    //
+    // `has_*` says which fields the descriptor MENTIONS, which is the whole
+    // difference between "define x as undefined" and "change only x's
+    // attributes": ValidateAndApplyPropertyDescriptor (10.1.6.3) is written in
+    // terms of absent fields, and writing undefined for an absent one is what
+    // made `Object.defineProperty(C, "prototype", {writable: false})` wipe a
+    // transpiled class's prototype.
+    struct property_descriptor {
+        bool has_value = false;
+        bool has_get = false;
+        bool has_set = false;
+        bool has_writable = false;
+        bool has_enumerable = false;
+        bool has_configurable = false;
+        value held = value::undefined();
+        value getter = value::undefined();
+        value setter = value::undefined();
+        bool writable = false;
+        bool enumerable = false;
+        bool configurable = false;
+        // A SYNTHESISED property - an array's `length`, a string's `length`, a
+        // native's `name`. It can be read and it can be enumerated, but there
+        // is no slot to redefine or delete, so the operations that would write
+        // one refuse rather than pretending.
+        bool virtual_slot = false;
+
+        [[nodiscard]] bool is_accessor() const noexcept { return has_get || has_set; }
+        [[nodiscard]] bool is_data() const noexcept { return has_value || has_writable; }
+        [[nodiscard]] std::uint8_t attrs() const noexcept {
+            return static_cast<std::uint8_t>((writable ? attr_writable : 0) |
+                                             (enumerable ? attr_enumerable : 0) |
+                                             (configurable ? attr_configurable : 0));
+        }
+        static property_descriptor data(value v, std::uint8_t a) {
+            property_descriptor d;
+            d.has_value = d.has_writable = d.has_enumerable = d.has_configurable = true;
+            d.held = v;
+            d.writable = (a & attr_writable) != 0;
+            d.enumerable = (a & attr_enumerable) != 0;
+            d.configurable = (a & attr_configurable) != 0;
+            return d;
+        }
+    };
+
+    // [[GetOwnProperty]]. False when the property is not an OWN one - the
+    // prototype chain is not consulted, which is the point.
+    [[nodiscard]] bool own_property(value target, const std::string & name,
+                                    property_descriptor & out);
+    // Does `target` have an own property `name` at all? The question
+    // hasOwnProperty, Object.hasOwn and verifyProperty all ask.
+    [[nodiscard]] bool has_own_property(value target, const std::string & name);
+
+    // [[DefineOwnProperty]], with 10.1.6.3's validation. False means REJECTED -
+    // the caller decides whether that is a TypeError (Object.defineProperty) or
+    // silence (Reflect.defineProperty answers false).
+    [[nodiscard]] bool define_own_property(value target, const std::string & name,
+                                           const property_descriptor & wanted);
+
+    // [[Delete]]. False when the property exists and is not configurable, which
+    // is what makes Object.freeze and Object.seal observable. Sloppy-mode
+    // `delete` discards the answer; a strict-mode one would throw on false.
+    bool delete_own_property(value target, const std::string & name);
+
+    // [[PreventExtensions]] / [[IsExtensible]], across all four table kinds.
+    void prevent_extensions(value target);
+    [[nodiscard]] bool is_extensible(value target);
 
     // PUSH ONE ELEMENT ONTO AN ARRAY LITERAL UNDER CONSTRUCTION.
     //

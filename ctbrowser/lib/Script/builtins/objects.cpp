@@ -8,6 +8,159 @@
 
 namespace ctbrowser::script::builtins_detail {
 
+namespace {
+
+// A context::property_descriptor AS JAVASCRIPT SEES IT (6.2.6.4,
+// FromPropertyDescriptor). Four callers needed the same object and each built
+// its own, which is why three of them reported `writable: true` for every
+// property whether or not it was one.
+[[nodiscard]] object_object * descriptor_object(context & cx,
+                                                const context::property_descriptor & from) {
+    object_object * out = detail::new_table(cx);
+    if (from.is_accessor()) {
+        out->set("get", from.getter);
+        out->set("set", from.setter);
+    } else {
+        out->set("value", from.held);
+        out->set("writable", value::boolean(from.writable));
+    }
+    out->set("enumerable", value::boolean(from.enumerable));
+    out->set("configurable", value::boolean(from.configurable));
+    return out;
+}
+
+// EVERY OWN STRING KEY OF ANY VALUE, including the synthesised ones. An array
+// has `length` and its indices, a string has `length` and its characters, a
+// function has `name`, `length` and `prototype` - and getOwnPropertyNames
+// reported none of them because it only knew about object_object.
+[[nodiscard]] std::vector<std::string> own_property_names(context & cx, value of) {
+    std::vector<std::string> out;
+    if (of.is_object()) {
+        static_cast<object_object *>(of.as_heap())->each_own_string_key([&](const std::string & k) {
+            out.push_back(k);
+        });
+        return out;
+    }
+    if (of.is_array()) {
+        auto * arr = static_cast<array_object *>(of.as_heap());
+        for (std::size_t i = 0; i < arr->length(); ++i) { out.push_back(std::to_string(i)); }
+        for (const auto & [at, held] : arr->sparse) {
+            (void)held;
+            out.push_back(std::to_string(at));
+        }
+        out.emplace_back("length");
+        return out;
+    }
+    if (of.is_string()) {
+        const std::size_t n = static_cast<string_object *>(of.as_heap())->text.size();
+        for (std::size_t i = 0; i < n; ++i) { out.push_back(std::to_string(i)); }
+        out.emplace_back("length");
+        return out;
+    }
+    if (of.is_kind(heap_kind::native)) {
+        auto * fn = static_cast<native_object *>(of.as_heap());
+        bool named = false;
+        for (const auto & [key, held] : fn->props) {
+            (void)held;
+            out.push_back(key);
+            named = named || key == "name";
+        }
+        if (!named) { out.emplace_back("name"); }
+        return out;
+    }
+    if (of.is_kind(heap_kind::function)) {
+        auto * closure = static_cast<closure_object *>(of.as_heap());
+        if (cx.has_own_property(of, "prototype")) { out.emplace_back("prototype"); }
+        for (const auto & [key, held] : closure->props) {
+            (void)held;
+            if (key != "prototype") { out.push_back(key); }
+        }
+        for (const accessor_entry & entry : closure->accessors.entries) {
+            out.push_back(entry.key);
+        }
+        // An arrow has neither, and a closure with no compiled proto has
+        // neither: ask rather than assert.
+        if (cx.has_own_property(of, "name")) { out.emplace_back("name"); }
+        if (cx.has_own_property(of, "length")) { out.emplace_back("length"); }
+        return out;
+    }
+    return out;
+}
+
+// 7.3.15 SetIntegrityLevel. `frozen` false is "sealed": configurable off
+// everywhere, writable left alone.
+inline void set_integrity(context & cx, value target, bool frozen) {
+    cx.prevent_extensions(target);
+    if (target.is_object()) {
+        auto * obj = static_cast<object_object *>(target.as_heap());
+        obj->normalise();
+        if (obj->attrs.size() < obj->props.size()) {
+            obj->attrs.resize(obj->props.size(), attr_default);
+        }
+        for (std::uint8_t & a : obj->attrs) {
+            a = static_cast<std::uint8_t>(a & ~attr_configurable);
+            if (frozen) { a = static_cast<std::uint8_t>(a & ~attr_writable); }
+        }
+        for (accessor_entry & entry : obj->accessors.entries) {
+            entry.attrs = static_cast<std::uint8_t>(entry.attrs & ~attr_configurable);
+        }
+        return;
+    }
+    if (target.is_array()) {
+        auto * arr = static_cast<array_object *>(target.as_heap());
+        arr->elements_configurable = false;
+        if (frozen) { arr->elements_writable = false; }
+        return;
+    }
+    if (target.is_kind(heap_kind::native)) {
+        auto * fn = static_cast<native_object *>(target.as_heap());
+        if (fn->attrs.size() < fn->props.size()) {
+            fn->attrs.resize(fn->props.size(), attr_default);
+        }
+        for (std::uint8_t & a : fn->attrs) {
+            a = static_cast<std::uint8_t>(a & ~attr_configurable);
+            if (frozen) { a = static_cast<std::uint8_t>(a & ~attr_writable); }
+        }
+        return;
+    }
+    if (target.is_kind(heap_kind::function)) {
+        auto * closure = static_cast<closure_object *>(target.as_heap());
+        if (closure->attrs.size() < closure->props.size()) {
+            closure->attrs.resize(closure->props.size(), attr_default);
+        }
+        for (std::uint8_t & a : closure->attrs) {
+            a = static_cast<std::uint8_t>(a & ~attr_configurable);
+            if (frozen) { a = static_cast<std::uint8_t>(a & ~attr_writable); }
+        }
+        for (accessor_entry & entry : closure->accessors.entries) {
+            entry.attrs = static_cast<std::uint8_t>(entry.attrs & ~attr_configurable);
+        }
+    }
+}
+
+// 7.3.16 TestIntegrityLevel. A PRIMITIVE IS FROZEN AND SEALED - 19.1.2.15 says
+// isFrozen(1) is true, because there is nothing about it to change.
+[[nodiscard]] inline bool test_integrity(context & cx, value target, bool frozen) {
+    if (!target.is_object_like()) { return true; }
+    if (cx.is_extensible(target)) { return false; }
+    // AN ARRAY ANSWERS FROM ITS TWO BOOLS rather than from a walk: a million
+    // elements would otherwise mean a million descriptor objects to answer one
+    // question about all of them.
+    if (target.is_array()) {
+        auto * arr = static_cast<array_object *>(target.as_heap());
+        return !arr->elements_configurable && (!frozen || !arr->elements_writable);
+    }
+    for (const std::string & key : own_property_names(cx, target)) {
+        context::property_descriptor found;
+        if (!cx.own_property(target, key, found)) { continue; }
+        if (found.configurable) { return false; }
+        if (frozen && !found.is_accessor() && found.writable) { return false; }
+    }
+    return true;
+}
+
+} // namespace
+
 void install_object(context & cx) {
     using detail::method;
     using detail::new_table;
@@ -50,11 +203,13 @@ void install_object(context & cx) {
             return value::boolean(failed == std::errc{} && stopped == key.data() + key.size() &&
                                   at >= 0 && at < static_cast<double>(arr->items.size()));
         }
-        if (self.is_kind(heap_kind::function)) {
-            return value::boolean(static_cast<closure_object *>(self.as_heap())->find(key) !=
-                                  nullptr);
-        }
-        return value::boolean(false);
+        // A FUNCTION, A NATIVE AND A STRING each have own properties too -
+        // `f.name`, `f.length`, `Array.prototype` and `"abc".length` among
+        // them - and answering false about all of them is what made
+        // test262's verifyProperty report "should be an own property" for
+        // every built-in it looked at. context::has_own_property is the one
+        // answer all four tables share.
+        return value::boolean(c.has_own_property(self, key));
     });
     // `[object Type]`, for whatever the receiver actually is.
     //
@@ -102,10 +257,11 @@ void install_object(context & cx) {
         return value::boolean(false);
     });
     method(cx, object_proto, "propertyIsEnumerable", [](context & c, std::span<value> a) {
-        const value self = c.current_this();
-        if (!self.is_object()) { return value::boolean(false); }
-        return value::boolean(static_cast<object_object *>(self.as_heap())->find(str_at(c, a, 0)) !=
-                              nullptr);
+        context::property_descriptor found;
+        if (!c.own_property(c.current_this(), str_at(c, a, 0), found)) {
+            return value::boolean(false);
+        }
+        return value::boolean(found.enumerable);
     });
     cx.set_prototype(context::proto_kind::object, object_proto);
 
@@ -133,16 +289,10 @@ void install_object(context & cx) {
     //
     // It is the same object lookup uses, so a page that adds to it is seen by
     // every object, which is what a page doing that expects.
-    object_ctor->set("prototype", value::object(object_proto));
+    detail::constant(object_ctor, "prototype", value::object(object_proto));
     link_constructor(cx, object_proto, "Object", value::object(object_ctor));
     method(cx, object_ctor, "hasOwn", [](context & c, std::span<value> a) {
-        const value target = arg_at(a, 0);
-        const std::string key = str_at(c, a, 1);
-        if (target.is_object()) {
-            auto * obj = static_cast<object_object *>(target.as_heap());
-            return value::boolean(obj->find(key) != nullptr || obj->find_accessor(key) != nullptr);
-        }
-        return value::boolean(false);
+        return value::boolean(c.has_own_property(arg_at(a, 0), str_at(c, a, 1)));
     });
 
     // `Object.defineProperty(o, key, descriptor)` - 51 uses in p5.js, and the
@@ -150,36 +300,56 @@ void install_object(context & cx) {
     // data (`value`) or accessor (`get`/`set`); the two are the same property
     // described two ways, so defining one removes the other.
     method(cx, object_ctor, "defineProperty", [](context & c, std::span<value> a) {
-        if (!arg_at(a, 2).is_object()) { return arg_at(a, 0); }
-        auto * descriptor = static_cast<object_object *>(a[2].as_heap());
-        define_one(c, arg_at(a, 0), c.to_string(arg_at(a, 1)), descriptor);
-        return arg_at(a, 0);
-    });
-    method(cx, object_ctor, "defineProperties", [](context & c, std::span<value> a) {
-        if (!arg_at(a, 1).is_object()) { return arg_at(a, 0); }
-        for (const auto & [key, descriptor] : static_cast<object_object *>(a[1].as_heap())->props) {
-            if (!descriptor.is_object()) { continue; }
-            define_one(c, arg_at(a, 0), key, static_cast<object_object *>(descriptor.as_heap()));
-        }
-        return arg_at(a, 0);
-    });
-    method(cx, object_ctor, "getOwnPropertyDescriptor", [](context & c, std::span<value> a) {
-        if (!arg_at(a, 0).is_object()) { return value::undefined(); }
-        auto * target = static_cast<object_object *>(a[0].as_heap());
-        const std::string key = c.to_string(arg_at(a, 1));
-        object_object * out = new_table(c);
-        if (accessor_entry * entry = target->find_accessor(key)) {
-            out->set("get", entry->getter);
-            out->set("set", entry->setter);
-        } else if (value * held = target->find(key)) {
-            out->set("value", *held);
-            out->set("writable", value::boolean(true));
-        } else {
+        // A NON-OBJECT TARGET IS A TypeError (19.1.2.4 step 1) and so is a
+        // non-object descriptor (10.1.6.3 via ToPropertyDescriptor). Returning
+        // the argument instead is how `Object.defineProperty(undefined, ...)`
+        // looked like it had worked.
+        if (!arg_at(a, 0).is_object_like()) {
+            c.throw_error("TypeError", "Object.defineProperty called on non-object");
             return value::undefined();
         }
-        out->set("enumerable", value::boolean(true));
-        out->set("configurable", value::boolean(true));
-        return value::object(out);
+        if (!arg_at(a, 2).is_object()) {
+            c.throw_error("TypeError", "Property description must be an object");
+            return value::undefined();
+        }
+        if (!define_one(c, a[0], c.to_string(arg_at(a, 1)), a[2])) {
+            c.throw_error("TypeError", "Cannot redefine property: " + c.to_string(arg_at(a, 1)));
+            return value::undefined();
+        }
+        return a[0];
+    });
+    method(cx, object_ctor, "defineProperties", [](context & c, std::span<value> a) {
+        if (!arg_at(a, 0).is_object_like()) {
+            c.throw_error("TypeError", "Object.defineProperties called on non-object");
+            return value::undefined();
+        }
+        if (!arg_at(a, 1).is_object()) { return a[0]; }
+        // ENUMERABLE OWN KEYS ONLY (7.3.7 step 3 walks OwnPropertyKeys and
+        // skips a non-enumerable one), and a snapshot first because defining
+        // can run a getter that mutates the source.
+        auto * from = static_cast<object_object *>(a[1].as_heap());
+        std::vector<std::pair<std::string, value>> wanted;
+        from->each_own_enumerable_key([&](const std::string & key) {
+            if (value * held = from->find(key)) { wanted.emplace_back(key, *held); }
+        });
+        for (const auto & [key, descriptor] : wanted) {
+            if (!descriptor.is_object()) {
+                c.throw_error("TypeError", "Property description must be an object");
+                return value::undefined();
+            }
+            if (!define_one(c, a[0], key, descriptor)) {
+                c.throw_error("TypeError", "Cannot redefine property: " + key);
+                return value::undefined();
+            }
+        }
+        return a[0];
+    });
+    method(cx, object_ctor, "getOwnPropertyDescriptor", [](context & c, std::span<value> a) {
+        context::property_descriptor found;
+        if (!c.own_property(arg_at(a, 0), c.to_string(arg_at(a, 1)), found)) {
+            return value::undefined();
+        }
+        return value::object(descriptor_object(c, found));
     });
     // `Object.create(proto)` and the two prototype accessors. A real chain has
     // existed since `extends`; what was missing was any way for a page to reach
@@ -236,30 +406,19 @@ void install_object(context & cx) {
     method(cx, object_ctor, "getOwnPropertyNames", [](context & c, std::span<value> a) {
         value out = c.make_array();
         auto * result = static_cast<array_object *>(out.as_heap());
-        if (arg_at(a, 0).is_object()) {
-            static_cast<object_object *>(a[0].as_heap())
-                ->each_own_string_key(
-                    [&](const std::string & k) { result->items.push_back(c.string(k)); });
+        for (const std::string & key : own_property_names(c, arg_at(a, 0))) {
+            result->items.push_back(c.string(key));
         }
         return out;
     });
     method(cx, object_ctor, "getOwnPropertyDescriptors", [](context & c, std::span<value> a) {
         object_object * out = new_table(c);
-        if (arg_at(a, 0).is_object()) {
-            auto * from = static_cast<object_object *>(a[0].as_heap());
-            from->each_own_key([&](const std::string & key) {
-                object_object * d = new_table(c);
-                if (accessor_entry * entry = from->find_accessor(key)) {
-                    d->set("get", entry->getter);
-                    d->set("set", entry->setter);
-                } else if (value * held = from->find(key)) {
-                    d->set("value", *held);
-                    d->set("writable", value::boolean(true));
-                }
-                d->set("enumerable", value::boolean(true));
-                d->set("configurable", value::boolean(true));
-                out->set(key, value::object(d));
-            });
+        const value from = arg_at(a, 0);
+        for (const std::string & key : own_property_names(c, from)) {
+            context::property_descriptor found;
+            if (c.own_property(from, key, found)) {
+                out->set(key, value::object(descriptor_object(c, found)));
+            }
         }
         return value::object(out);
     });
@@ -274,12 +433,34 @@ void install_object(context & cx) {
         }
         return value::object(out);
     });
-    // Not modelled: this engine has no writability, so a frozen object is not
-    // actually protected. Returning the object keeps the idiom working; saying
-    // so here is better than a page believing it did something.
-    method(cx, object_ctor, "freeze", [](context &, std::span<value> a) { return arg_at(a, 0); });
-    method(cx, object_ctor, "isFrozen",
-           [](context &, std::span<value>) { return value::boolean(false); });
+    // --- INTEGRITY LEVELS, which used to be theatre ----------------------
+    //
+    // `freeze` returned its argument and did nothing; `isFrozen` answered false
+    // about everything, including an object it had just been asked to freeze.
+    // Both now do what 7.3.15/7.3.16 say: seal clears [[Configurable]] on every
+    // own property and [[Extensible]] on the object; freeze clears
+    // [[Writable]] as well, except on an accessor, which has none.
+    method(cx, object_ctor, "freeze", [](context & c, std::span<value> a) {
+        set_integrity(c, arg_at(a, 0), true);
+        return arg_at(a, 0);
+    });
+    method(cx, object_ctor, "seal", [](context & c, std::span<value> a) {
+        set_integrity(c, arg_at(a, 0), false);
+        return arg_at(a, 0);
+    });
+    method(cx, object_ctor, "preventExtensions", [](context & c, std::span<value> a) {
+        c.prevent_extensions(arg_at(a, 0));
+        return arg_at(a, 0);
+    });
+    method(cx, object_ctor, "isFrozen", [](context & c, std::span<value> a) {
+        return value::boolean(test_integrity(c, arg_at(a, 0), true));
+    });
+    method(cx, object_ctor, "isSealed", [](context & c, std::span<value> a) {
+        return value::boolean(test_integrity(c, arg_at(a, 0), false));
+    });
+    method(cx, object_ctor, "isExtensible", [](context & c, std::span<value> a) {
+        return value::boolean(c.is_extensible(arg_at(a, 0)));
+    });
     // SameValue, 7.2.11 - which is `===` except that it separates the two
     // zeros and calls NaN equal to itself. Those are exactly the two questions
     // `===` cannot answer, which is why every test in this directory that cares
@@ -303,9 +484,11 @@ void install_object(context & cx) {
         auto * result = static_cast<array_object *>(out.as_heap());
         if (arg_at(a, 0).is_object()) {
             // An accessor IS a property, and definition order is observable.
-            // STRING keys only - a symbol-keyed property is invisible here.
+            // STRING keys only - a symbol-keyed property is invisible here -
+            // and ENUMERABLE ones only, which is the half that did not exist
+            // before there were attributes.
             static_cast<object_object *>(a[0].as_heap())
-                ->each_own_string_key(
+                ->each_own_enumerable_key(
                     [&](const std::string & k) { result->items.push_back(c.string(k)); });
         }
         return out;
@@ -314,10 +497,10 @@ void install_object(context & cx) {
         value out = c.make_array();
         auto * result = static_cast<array_object *>(out.as_heap());
         if (arg_at(a, 0).is_object()) {
-            for (const auto & [key, item] : static_cast<object_object *>(a[0].as_heap())->props) {
-                if (key.starts_with(symbol_key_prefix)) { continue; } // string keys only
-                result->items.push_back(item);
-            }
+            auto * from = static_cast<object_object *>(a[0].as_heap());
+            from->each_own_enumerable_key([&](const std::string & key) {
+                result->items.push_back(c.lookup_property(a[0], key));
+            });
         }
         return out;
     });
@@ -325,27 +508,38 @@ void install_object(context & cx) {
         value out = c.make_array();
         auto * result = static_cast<array_object *>(out.as_heap());
         if (arg_at(a, 0).is_object()) {
-            for (const auto & [key, item] : static_cast<object_object *>(a[0].as_heap())->props) {
+            auto * from = static_cast<object_object *>(a[0].as_heap());
+            from->each_own_enumerable_key([&](const std::string & key) {
                 value pair = c.make_array();
                 auto * entry = static_cast<array_object *>(pair.as_heap());
                 entry->items.push_back(c.string(key));
-                entry->items.push_back(item);
+                entry->items.push_back(c.lookup_property(a[0], key));
                 result->items.push_back(pair);
-            }
+            });
         }
         return out;
     });
     method(cx, object_ctor, "assign", [](context & c, std::span<value> a) {
         const value target = arg_at(a, 0);
         if (!target.is_object()) { return target; }
-        auto * into = static_cast<object_object *>(target.as_heap());
         for (std::size_t i = 1; i < a.size(); ++i) {
             if (!a[i].is_object()) { continue; }
-            for (const auto & [key, item] : static_cast<object_object *>(a[i].as_heap())->props) {
-                into->set(key, item);
-            }
+            // A SNAPSHOT, because storing into the target can run a setter that
+            // mutates the source; ENUMERABLE own keys only (7.3.24 step 5);
+            // and through store_property rather than set(), because
+            // Object.assign is specified as [[Set]] and a frozen target must
+            // therefore reject the write.
+            auto * from = static_cast<object_object *>(a[i].as_heap());
+            std::vector<std::pair<std::string, value>> entries;
+            from->each_own_entry([&](const std::string & key, std::uint8_t attrs) {
+                // SYMBOL KEYS INCLUDED: 7.3.24 walks OwnPropertyKeys, which
+                // reports them - the same exception object spread needs.
+                if ((attrs & attr_enumerable) != 0) {
+                    entries.emplace_back(key, c.lookup_property(a[i], key));
+                }
+            });
+            for (const auto & [key, item] : entries) { c.store_property(target, key, item); }
         }
-        (void)c;
         return target;
     });
     cx.define_global("Object", value::object(object_ctor));
@@ -472,6 +666,30 @@ void install_proxy(context & cx) {
             });
         }
         return out;
+    });
+    // The un-throwing halves of Object.defineProperty and friends: Reflect
+    // ANSWERS FALSE where Object throws, which is the whole difference between
+    // the two namespaces.
+    method(cx, reflect, "defineProperty", [](context & c, std::span<value> a) {
+        if (!arg_at(a, 2).is_object()) { return value::boolean(false); }
+        return value::boolean(define_one(c, arg_at(a, 0), c.to_string(arg_at(a, 1)), a[2]));
+    });
+    method(cx, reflect, "getOwnPropertyDescriptor", [](context & c, std::span<value> a) {
+        context::property_descriptor found;
+        if (!c.own_property(arg_at(a, 0), c.to_string(arg_at(a, 1)), found)) {
+            return value::undefined();
+        }
+        return value::object(descriptor_object(c, found));
+    });
+    method(cx, reflect, "deleteProperty", [](context & c, std::span<value> a) {
+        return value::boolean(c.delete_own_property(arg_at(a, 0), c.to_string(arg_at(a, 1))));
+    });
+    method(cx, reflect, "isExtensible", [](context & c, std::span<value> a) {
+        return value::boolean(c.is_extensible(arg_at(a, 0)));
+    });
+    method(cx, reflect, "preventExtensions", [](context & c, std::span<value> a) {
+        c.prevent_extensions(arg_at(a, 0));
+        return value::boolean(true);
     });
     method(cx, reflect, "getPrototypeOf", [](context &, std::span<value> a) {
         if (!arg_at(a, 0).is_object()) { return value::null(); }

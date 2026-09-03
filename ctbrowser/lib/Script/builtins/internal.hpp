@@ -181,14 +181,35 @@ namespace detail {
     return cx.allocate<native_object>(std::move(name), std::move(fn));
 }
 
+// `attr_builtin` - { writable: true, enumerable: FALSE, configurable: true } -
+// because clause 17 says so of every method in clauses 19 through 28, and
+// because an enumerable one is visible to `for (k in Math)`, to
+// `Object.keys(Array.prototype)` and to `JSON.stringify` of anything that
+// inherits it. That is not a detail: a page that spreads or serialises an
+// object was getting the standard library's own methods mixed into its data.
+// A BUILT-IN VALUE PROPERTY: `Math.PI`, `Number.MAX_VALUE`, `X.prototype` -
+// { writable: false, enumerable: false, configurable: false } for all of them
+// (21.3.1, 21.1.2, and each constructor's own clause). Enumerable is what put
+// `PI` and `LN2` in `Object.keys(Math)`, which is how
+// `Object.defineProperties(obj, Math)` came to be handed a Number as a
+// descriptor and throw.
+inline void constant(object_object * table, std::string_view name, value v) {
+    table->define(name, v, attr_none);
+}
+inline void constant(native_object * table, std::string_view name, value v) {
+    table->define(name, v, attr_none);
+}
+
 inline void method(context & cx, object_object * table, std::string name, native_fn fn) {
-    table->set(name, value::object(cx.allocate<native_object>(name, std::move(fn))));
+    table->define(name, value::object(cx.allocate<native_object>(name, std::move(fn))),
+                  attr_builtin);
 }
 // The same, on a NATIVE. A built-in that is both callable and a namespace -
 // `Object(x)` coerces and `Object.keys` is a static - has to be a native
 // carrying properties, and its statics are installed exactly like a table's.
 inline void method(context & cx, native_object * table, std::string name, native_fn fn) {
-    table->set(name, value::object(cx.allocate<native_object>(name, std::move(fn))));
+    table->define(name, value::object(cx.allocate<native_object>(name, std::move(fn))),
+                  attr_builtin);
 }
 
 // --- promises ---------------------------------------------------------------
@@ -321,9 +342,9 @@ inline void settle(context & cx, value promise, value with, bool rejected) {
     auto * p = static_cast<object_object *>(promise.as_heap());
     value * already = p->find("__settled");
     if (already != nullptr && context::truthy(*already)) { return; } // settle once
-    p->set("__value", with);
-    p->set("__rejected", value::boolean(rejected));
-    p->set("__settled", value::boolean(true));
+    p->define("__value", with, attr_builtin);
+    p->define("__rejected", value::boolean(rejected), attr_builtin);
+    p->define("__settled", value::boolean(true), attr_builtin);
     value * handlers = p->find("__handlers");
     if (handlers == nullptr || !handlers->is_array()) { return; }
     // COPIED before draining: a handler may register another on this same
@@ -350,7 +371,8 @@ inline value settle_with(context & cx, value on_ok, value on_err,
     auto * promise = static_cast<object_object *>(self.as_heap());
 
     const value next = make_promise(cx, value::undefined(), false);
-    static_cast<object_object *>(next.as_heap())->set("__settled", value::boolean(false));
+    static_cast<object_object *>(next.as_heap())
+        ->define("__settled", value::boolean(false), attr_builtin);
     object_object * record = new_table(cx);
     record->set("ok", on_ok);
     record->set("err", on_err);
@@ -401,10 +423,10 @@ inline value settle_with(context & cx, value on_ok, value on_err,
 [[nodiscard]] inline value make_promise(context & cx, value v, bool rejected) {
     object_object * promise = new_table(cx);
     promise->prototype = value::object(promise_prototype(cx));
-    promise->set("__value", v);
-    promise->set("__rejected", value::boolean(rejected));
-    promise->set("__settled", value::boolean(true));
-    promise->set("__handlers", cx.make_array());
+    promise->define("__value", v, attr_builtin);
+    promise->define("__rejected", value::boolean(rejected), attr_builtin);
+    promise->define("__settled", value::boolean(true), attr_builtin);
+    promise->define("__handlers", cx.make_array(), attr_builtin);
     return value::object(promise);
 }
 
@@ -446,24 +468,25 @@ inline void write_json(context & cx, value v, std::string & out) {
     }
     if (v.is_object()) {
         out += '{';
-        const auto & props = static_cast<object_object *>(v.as_heap())->props;
+        auto * obj = static_cast<object_object *>(v.as_heap());
         bool first = true;
-        for (const auto & [key, item] : props) {
+        // ENUMERABLE OWN KEYS ONLY. SerializeJSONObject (25.5.2.5) walks
+        // EnumerableOwnProperties, and a symbol key is filtered out by
+        // each_own_enumerable_key for the same reason it always was: this
+        // engine spells one "@@sym:N:description" and keeps it in the ordinary
+        // property table, so without the filter the internal spelling was
+        // serialised into the page's own data.
+        obj->each_own_enumerable_key([&](const std::string & key) {
+            const value item = cx.lookup_property(v, key);
             // undefined and functions are OMITTED from an object, per spec -
             // which is why round-tripping a value through JSON can lose fields.
-            if (item.is_undefined() || item.is_callable()) { continue; }
-            // A SYMBOL-KEYED PROPERTY IS INVISIBLE TO JSON. This engine spells
-            // a symbol key as "@@sym:N:description" and keeps it in the ordinary
-            // property table, so the prefix is what identifies one here - and
-            // without this the internal spelling was serialised into the page's
-            // own data.
-            if (key.starts_with(symbol_key_prefix)) { continue; }
+            if (item.is_undefined() || item.is_callable()) { return; }
             if (!first) { out += ','; }
             first = false;
             write_json(cx, cx.string(key), out);
             out += ':';
             write_json(cx, item, out);
-        }
+        });
         out += '}';
         return;
     }
@@ -694,18 +717,28 @@ void install_generator(context & cx);
 // undefined it is being tested against and reports a false match.
 inline void link_constructor(context & cx, object_object * table, const char * name, value ctor) {
     if (table == nullptr) { return; }
-    table->set("constructor", ctor);
+    // `X.prototype.constructor` is { true, false, true } (clause 17), and
+    // `X.name` is { false, false, true } (10.2.5). Enumerable in either place
+    // is what put "constructor" in `Object.keys(SomeClass.prototype)`.
+    table->define("constructor", ctor, attr_builtin);
     if (ctor.is_kind(heap_kind::native)) {
-        static_cast<native_object *>(ctor.as_heap())->set("name", cx.string(name));
+        static_cast<native_object *>(ctor.as_heap())
+            ->define("name", cx.string(name), attr_configurable);
     } else if (ctor.is_object()) {
-        static_cast<object_object *>(ctor.as_heap())->set("name", cx.string(name));
+        static_cast<object_object *>(ctor.as_heap())
+            ->define("name", cx.string(name), attr_configurable);
     }
 }
 
 // Object
 // One `Object.defineProperty`, used by both it and defineProperties.
 //
-// Two things it has to get right, and both were wrong:
+// It is now a READER: it turns a JavaScript descriptor object into a
+// context::property_descriptor and hands it to context::define_own_property,
+// which is where 10.1.6.3's validation and the four property tables live. What
+// this function still has to get right is the difference between a field that
+// is ABSENT and one that is present-and-undefined, because the whole of
+// ValidateAndApplyPropertyDescriptor is written in those terms:
 //
 // A descriptor with NO `value`, `get` or `set` describes ATTRIBUTES ONLY, and
 // must leave the existing value alone. Writing undefined instead is how
@@ -716,39 +749,43 @@ inline void link_constructor(context & cx, object_object * table, const char * n
 // And a FUNCTION IS AN OBJECT. Babel defines onto the constructor as well as
 // onto its prototype, and `is_object()` is false for a closure, so half of
 // every transpiled class was silently dropped.
-inline void define_one(context & cx, value target, const std::string & key,
-                       object_object * descriptor) {
-    value * getter = descriptor->find("get");
-    value * setter = descriptor->find("set");
-    value * held = descriptor->find("value");
-    const bool describes_a_value = getter != nullptr || setter != nullptr || held != nullptr;
+// HasProperty AND Get, NOT a lookup in the descriptor's own table.
+//
+// 6.2.6.5 reads each field with HasProperty followed by Get, both of which walk
+// the PROTOTYPE CHAIN and both of which run an accessor. Reading `from->find()`
+// instead sees only own data properties - so a descriptor built by
+// `new Con()` over a prototype carrying a `writable` getter described nothing
+// at all. test262 devotes ~250 files in built-ins/Object/defineProperties to
+// exactly that shape (15.2.3.7-5-b-*), and each one names the property it
+// inherits.
+[[nodiscard]] inline context::property_descriptor read_descriptor(context & cx, value from) {
+    context::property_descriptor out;
+    const auto field = [&](const char * name, bool & has, value & into) {
+        if (cx.has_property(from, cx.string(name))) {
+            has = true;
+            into = cx.lookup_property(from, name);
+        }
+    };
+    const auto flag = [&](const char * name, bool & has, bool & into) {
+        value held = value::undefined();
+        bool present = false;
+        field(name, present, held);
+        if (present) {
+            has = true;
+            into = cx.truthy(held);
+        }
+    };
+    field("value", out.has_value, out.held);
+    field("get", out.has_get, out.getter);
+    field("set", out.has_set, out.setter);
+    flag("writable", out.has_writable, out.writable);
+    flag("enumerable", out.has_enumerable, out.enumerable);
+    flag("configurable", out.has_configurable, out.configurable);
+    return out;
+}
 
-    if (target.is_object()) {
-        auto * obj = static_cast<object_object *>(target.as_heap());
-        if (getter != nullptr || setter != nullptr) {
-            obj->define_accessor(key, getter == nullptr ? value::undefined() : *getter,
-                                 setter == nullptr ? value::undefined() : *setter);
-        } else if (held != nullptr) {
-            obj->erase_accessor(key);
-            obj->set(key, *held);
-        }
-        return;
-    }
-    if (target.is_kind(heap_kind::function)) {
-        auto * closure = static_cast<closure_object *>(target.as_heap());
-        if (getter != nullptr || setter != nullptr) {
-            closure->define_accessor(key, getter == nullptr ? value::undefined() : *getter,
-                                     setter == nullptr ? value::undefined() : *setter);
-        } else if (held != nullptr) {
-            closure->set(key, *held);
-        }
-        return;
-    }
-    if (target.is_kind(heap_kind::native) && held != nullptr) {
-        static_cast<native_object *>(target.as_heap())->set(key, *held);
-    }
-    (void)cx;
-    (void)describes_a_value;
+inline bool define_one(context & cx, value target, const std::string & key, value descriptor) {
+    return cx.define_own_property(target, key, read_descriptor(cx, descriptor));
 }
 
 } // namespace builtins_detail

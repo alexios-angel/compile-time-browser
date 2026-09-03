@@ -106,3 +106,11 @@ set_tests_properties(bindings_basics PROPERTIES ENVIRONMENT
 # printing a mismatch, which is a different kind of test from a differential
 # one. See docs/test262.md and the file's own header.
 ctbrowser_test(js/crash_guards)
+
+# --- property attributes, the largest non-crash gap test262 found -----------
+# Its own file for the same reason crash_guards has one: it is about the SHAPE
+# of a property rather than about the value an expression computes, so it does
+# not belong in the per-type differential suites - and it would otherwise be
+# measured only by test262, which is opt-in, needs a 273 MB corpus that is not
+# in the repository, and takes five minutes.
+ctbrowser_test(js/property_attributes)

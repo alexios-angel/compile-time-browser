@@ -865,11 +865,28 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     std::vector<finally_context> saved_finallies;
     saved_finallies.swap(finallies_);
     // A loop and a handler stop at a function boundary for the same reason: a
-    // `break` or a `pop_handler` cannot cross one. `loops_` is left alone here
-    // because `loop_for` is only reached from `break`/`continue`, which the
-    // parser refuses outside a loop - but that is an argument about the parser
-    // rather than an invariant this file enforces, and it is worth someone
-    // checking rather than inheriting.
+    // `break` or a `pop_handler` cannot cross one.
+    //
+    // `loops_` USED TO BE LEFT ALONE HERE, on the argument that `loop_for` is
+    // only reached from `break`/`continue` and that the parser refuses those
+    // outside a loop. The comment said it was worth someone checking rather
+    // than inheriting; it was checked, and it is WRONG. A LABELLED break
+    // inside a nested function - `L: do { (function(){ break L; })(); }
+    // while(0)` - reaches loop_for, finds the ENCLOSING function's loop, and
+    // pushes a jump site onto its `breaks` list. That site is an index into
+    // this proto's code array and is later patched using the OUTER proto's
+    // offsets, so the inner function jumps to an instruction chosen at random:
+    // test262's language/statements/break/S12.8_A6.js landed on a `load_string`
+    // with an out-of-range slot and allocated until std::bad_alloc killed the
+    // process (SIGABRT, measured 2026-09-03).
+    //
+    // Swapping the vector is the same fix the chain and the finally above
+    // already use, and it makes `break L` across a function boundary the
+    // compile refusal it should always have been - which is the early error
+    // 13.9.1 requires, arriving as a refusal rather than a SyntaxError because
+    // this engine has no early-error pass (docs/test262.md).
+    std::vector<loop_context> saved_loops;
+    saved_loops.swap(loops_);
     const std::size_t saved_handler_depth = handler_depth_;
     handler_depth_ = 0;
     // Which of this body's names some nested function mentions has to be
@@ -991,6 +1008,7 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     frames_.pop_back();
     in_chain_ = saved_in_chain;
     finallies_.swap(saved_finallies);
+    loops_.swap(saved_loops);
     handler_depth_ = saved_handler_depth;
     optional_exits_.swap(saved_exits);
     return index;
