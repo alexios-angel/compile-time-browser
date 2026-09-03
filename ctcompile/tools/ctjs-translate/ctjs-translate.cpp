@@ -61,6 +61,22 @@ void record_skipped(mlir::ModuleOp module,
                 "offset", builder.getI32IntegerAttr(static_cast<std::int32_t>(one.bc_offset))),
             builder.getNamedAttr("opcode", builder.getStringAttr(one.opcode)),
             builder.getNamedAttr("reason", builder.getStringAttr(one.reason)),
+            // AND WHAT THE DROPPED BODY CAN STILL DO TO THE GLOBALS TABLE.
+            // `stores` is the exact set of names its `op::set_global`s name -
+            // recoverable from the bytecode without lowering a line of it -
+            // and `opaque` is non-empty when that set does not bound the body.
+            // --ctjs-resolve-globals refuses those NAMES rather than every
+            // name in the program, which is the difference between 0 and 72
+            // resolved globals on phaser.
+            //
+            // BOTH ARE ALWAYS WRITTEN, empty or not. A row whose summary is
+            // missing is a row from a translator that did not compute one, and
+            // the pass treats an absent key as opaque - so writing the empty
+            // string here rather than nothing is what says "computed, and it
+            // found nothing".
+            builder.getNamedAttr("stores", builder.getStrArrayAttr(std::vector<llvm::StringRef>(
+                                               one.stores.begin(), one.stores.end()))),
+            builder.getNamedAttr("opaque", builder.getStringAttr(one.opaque)),
         }));
         // ON A LOCATION, NOT ON THE MODULE. `module.emitWarning()` attaches the
         // module as the diagnostic's current operation, so every warning prints

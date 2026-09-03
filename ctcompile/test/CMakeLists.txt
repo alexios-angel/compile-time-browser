@@ -1271,8 +1271,25 @@ add_test(NAME ctcompile_deduction_probe
 # The corpora are the four Phase 54B and 55O already use. The two large
 # bundles take about eight seconds and 1.5 GB each; that is the price of
 # measuring the roadmap on real code rather than on the fixture.
+#
+# AND THE CEILING, WHICH THE THREE BUCKETS COULD NOT SEE. Two closed-world
+# rules landed sound and far too coarse and took every global on every real
+# corpus with them - bootstrap 0 of 37, p5 0 of 101, phaser 0 of 72, and not
+# one ctjs.call_direct anywhere. This check did not move, because the
+# functions that stopped being reachable were the ones that take a parameter
+# and those were never claimed. It now reads --ctjs-resolve-globals' own
+# counters, and prints the per-name refusal reasons as the roadmap for them.
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Python3_EXECUTABLE)
-  function(ctcompile_add_native_claims name js floor)
+  # `resolved` and `direct` are floors under the closed world. They are 0 on
+  # the three real corpora and that is the MEASURED TRUTH rather than a gap in
+  # the gate: all three are genuinely open programs - bootstrap's UMD header
+  # passes `globalThis`/`self` into the factory it calls, p5 constructs
+  # `Function`, phaser calls `eval` with a computed string - and the window
+  # proxy's `set` trap really does define_global (Shell/bindings/window.cpp:
+  # 911-923), so none of those refusals may be relaxed. A zero floor still
+  # bites the day one of them earns a number: raising it is then a visible act
+  # in the commit that earns it.
+  function(ctcompile_add_native_claims name js floor resolved direct)
     add_test(NAME ctcompile_native_claims_${name}
              COMMAND ${Python3_EXECUTABLE}
                      ${CTBROWSER_MONOREPO_ROOT}/tools/check/native-claims.py
@@ -1281,16 +1298,28 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
                      --corpus ${js}
                      --name ${name}
                      --json ${CMAKE_CURRENT_BINARY_DIR}/native-claims-${name}.json
-                     --min-claimed ${floor})
+                     --min-claimed ${floor}
+                     --min-resolved ${resolved}
+                     --min-direct ${direct})
   endfunction()
   # THE FIXTURE IS THE VACUITY CHECK: 9 of 9, so a run that reports nothing
   # claimed anywhere is not mistaken for a clean sheet.
-  ctcompile_add_native_claims(fixture "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.js" 9)
+  ctcompile_add_native_claims(fixture "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.js" 9 8 16)
+  # TWO CLOSED PROGRAMS, ADDED BECAUSE THE FLOORS ABOVE ARE NOT ENOUGH.
+  # differential.js and launcher.js are already compiled through the EmitC
+  # backend by the blocks further up this file, so they cost nothing to fetch
+  # and they are the only corpora here whose globals actually resolve: 56 of 72
+  # and 9 of 10. A closed-world clause widened by one term takes those to zero
+  # and this fails, which is precisely what did NOT happen when two of them
+  # were - the three vendor bundles were already at zero and had nothing left
+  # to lose.
+  ctcompile_add_native_claims(differential "${CMAKE_CURRENT_SOURCE_DIR}/differential.js" 2 56 9)
+  ctcompile_add_native_claims(launcher "${CMAKE_CURRENT_SOURCE_DIR}/launcher.js" 0 9 9)
   ctcompile_add_native_claims(bootstrap
-    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 4)
-  ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 37)
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 4 0 0)
+  ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 37 0 0)
   ctcompile_add_native_claims(phaser
-    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 43)
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 43 0 0)
 
   # BOTH TEETH, PROVED. Each runs the same check as a child and passes only
   # when that child failed for the stated reason - not ctest's WILL_FAIL,
@@ -1314,6 +1343,21 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   ctcompile_add_native_claims_negative(silent_drop_caught
     "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
     --mutate-drop-one-reason "--expect-failure=were dropped silently")
+  # 3: the CLOSED-WORLD floor bites too. The fixture resolves 8 globals; a
+  # floor of 9 must fail, and with the message that names the closed world
+  # rather than the claimed set - the two are different numbers and a check
+  # that confused them would have missed the regression this floor exists for.
+  ctcompile_add_native_claims_negative(resolved_floor_bites
+    "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.js"
+    --min-claimed 9 --min-resolved 9 --min-direct 16
+    "--expect-failure=the CLOSED WORLD NARROWED")
+  # 4: and the pass cannot report a rewrite it did not make. Every
+  # ctjs.call_direct is renamed before counting, so the remark says 16 and the
+  # IR holds none.
+  ctcompile_add_native_claims_negative(call_direct_counter_agrees
+    "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.js"
+    --mutate-drop-call-direct
+    "--expect-failure=the counter and the rewrite disagree")
 endif()
 
 # ============================================================================
