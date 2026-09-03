@@ -847,7 +847,9 @@ public:
                 // A calc that does not evaluate keeps its text here, and falls
                 // through to the keyword branch below - which is right for a font
                 // size, because a keyword is a real answer for one.
-                if (css::may_have_calc(value)) { value = css::fold_calc(value, ctx).text; }
+                if (css::may_have_math(value)) {
+                    value = css::fold_math(value, ctx, css::math_context::length).text;
+                }
                 const std::optional<float> px = css::length_text_to_px(value, ctx);
                 // A percentage font size is the parent's, scaled - the one relative
                 // form that is not a length and still has an answer here.
@@ -929,8 +931,14 @@ public:
             // Bootstrap's calcs are `-1 * var(x)`, so before substitution there is
             // no arithmetic to do, and `border: calc(var(w) * 2) solid red` cannot
             // be split into longhands until its components are single tokens.
-            if (css::may_have_calc(value)) {
-                css::folded_value done = css::fold_calc(value, lengths);
+            if (css::may_have_math(value)) {
+                // WHAT THE PROPERTY WILL TAKE, passed down, because the evaluator
+                // answers with numbers now and only the cascade knows whether one
+                // is a value here. `opacity: calc(2 / 4)` is `0.5`; `width:
+                // calc(2 * 3)` is a syntax error, and both used to be thrown away
+                // for want of somewhere to ask the question.
+                css::folded_value done =
+                    css::fold_math(value, lengths, css::math_context_of(property));
                 if (!done.ok) {
                     // A CALC THAT DOES NOT EVALUATE IS NOT A VALUE, and the
                     // declaration is invalid. WHICH KIND of invalid depends on where
@@ -946,7 +954,9 @@ public:
                     // `0` is a number times a number, which is a NUMBER, and a
                     // number is not a length. Chrome reports the initial `0px`;
                     // keeping the text reported `auto`, on 24 elements of one
-                    // fixture.
+                    // fixture. That case still lands here, but by the
+                    // math_context::length rule rather than by the evaluator
+                    // refusing to answer with a number at all.
                     if (had_var) { unset(); }
                     return;
                 }

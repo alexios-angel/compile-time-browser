@@ -117,7 +117,75 @@ Two specific things gate most of both suites:
 None of those three is in the CSS engine. The style front end computes an
 answer that the CSSOM layer then cannot be asked for.
 
-## 5. Re-running this
+## 5. What was fixed in the CSS engine, and what it was worth
+
+Two real defects in `lib/Style/css/calc.cpp`, both found by reading these
+failures rather than by guessing. Both are proved by
+`unittests/unit/style_basics.cpp`, and neither moved a render golden.
+
+### `calc()` may resolve to a `<number>` — CSS Values 3 §8.1
+
+The evaluator answered "no value" for any expression that came out a number, the
+fold read that as "invalid", and the cascade **deleted the declaration**. So
+`opacity: calc(2 / 4)`, `z-index: calc(1 + 1)`, `tab-size: calc(2 * 3)`,
+`font-feature-settings: "vert" calc(1 + 1)` and `rgb(calc(0), calc(255 + 0),
+calc(140 - 139 - 1))` each produced nothing at all.
+
+The reason it was written that way is real and is kept: a number is **not** a
+length, and `width: calc(2 * 3)` must stay invalid. What was missing was
+somewhere to ask which of the two the property wanted — `math_context_of`, a
+short table of the properties whose entire value is lengths. Everything else
+accepts a number, because guessing "length" for an unknown property would
+silently reject values that are fine.
+
+### `min()`, `max()` and `clamp()` — CSS Values 4 §10.3
+
+Absent entirely. `width: clamp(1rem, 2vw, 3rem)` reached layout as text,
+`parse_length` gave up on the leading `c`, and the box got a zero. Bootstrap
+uses none of the three, which is why a corpus of one never noticed.
+
+The addition has a third outcome besides "folded" and "invalid", and it is what
+makes it safe: `min(10px, 5%)` is 10px on a wide containing block and 5% of it
+on a narrow one, so there is no answer at computed-value time and §10.11 says
+the computed value is the function as written. That is `unresolved` — the text
+survives and the declaration lives. **A comparison function never condemns a
+declaration**, because before this file could parse the three at all they were
+kept verbatim, so keeping them is the one answer that cannot regress a page.
+
+### It works, and WPT cannot see it
+
+Driven through `ctdrive` against a page that sets these from a **stylesheet**,
+`getComputedStyle` now answers:
+
+    styled: opacity=[0.5] z-index=[2] tab-size=[6] color=[rgb(0, 255, 0)]
+    clamp(1rem, 2vw, 3rem) => 20.484375px   max(10px, 4px) => 10px
+    min(3rem, 2rem) => 32px                 width: calc(2 * 3) => still invalid
+
+Every one of those was empty before. And the suites did not move by a single
+subtest, before or after, measured 2026-09-03:
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP |
+|---|---:|---:|---:|---:|---:|---:|
+| `css/cssom` before / after | 8 / 8 | 148 / 148 | 15 / 15 | 0 / 0 | 21 / 21 | 29 / 29 |
+| `css/css-values` before / after | 16 / 16 | 211 / 211 | 2 / 2 | 0 / 0 | 42 / 42 | 237 / 237 |
+
+Per **test** and per **subtest** the two runs are byte-identical — no
+regressions, and no gains. The reason is §4, and one more thing the same probe
+shows, which is worth stating precisely because it is the single cheapest fix
+left in either suite:
+
+    before: keys=11 opacity=[undefined]
+    attr=[opacity: calc(2 / 4); ]          <- el.style.setProperty landed
+    after : keys=11 opacity=[undefined]    <- and getComputedStyle cannot see it
+
+**`getComputedStyle` does not flush a pending style recalculation.** The object
+it returns is built from the style map resolved at load, so a script that writes
+`el.style` and reads the computed value back in the same turn — which is what
+*every* test in `css/css-values` does — reads the state before its own write.
+That, and the camelCase spelling above it, are why a correct answer inside the
+style engine is invisible to this corpus.
+
+## 6. Re-running this
 
 ```bash
 tools/wpt/fetch-wpt.sh                       # once; now includes css/support/

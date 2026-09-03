@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -76,18 +77,29 @@ class evaluator {
 public:
     evaluator(const token_stream & tokens, const length_context & ctx) : t_(tokens), ctx_(ctx) {}
 
-    [[nodiscard]] std::optional<calc_result> run() {
+    [[nodiscard]] math_answer run() {
         const std::optional<term> value = sum();
         skip_whitespace();
+        // UNRESOLVED WINS OVER INVALID. A comparison that could not be decided
+        // here stopped the parse the same way an error does, so the latch has to
+        // be read before the missing value is: `min(10px, 5%)` is a valid
+        // declaration and reporting it as a syntax error would delete it.
+        if (unresolved_) { return math_answer{math_outcome::unresolved, {}}; }
         // A trailing token means the expression did not consume its input -
         // `calc(1px 2px)` - which is an error and not a partial answer.
-        if (!ok_ || !value || !at_end()) { return std::nullopt; }
-        if (value->is_number) { return std::nullopt; } // calc() of a bare number is not a length
+        if (!ok_ || !value || !at_end()) { return math_answer{math_outcome::invalid, {}}; }
         calc_result out;
-        out.px = value->px;
+        // A NUMBER IS AN ANSWER. `calc()` of a bare number used to be reported as
+        // no answer at all, which the cascade read as an invalid declaration and
+        // threw away - so `opacity: calc(2 / 4)` and `rgb(calc(0), calc(255),
+        // calc(0))` produced nothing. CSS Values 3 §8.1 says a math function may
+        // resolve to a <number>; whether the PROPERTY accepts one is a separate
+        // question, and math_context is where it is asked.
+        out.is_number = value->is_number;
+        out.px = value->is_number ? value->number : value->px;
         out.percent = value->percent;
         out.has_percent = value->has_percent;
-        return out;
+        return math_answer{math_outcome::resolved, out};
     }
 
 private:
@@ -170,12 +182,18 @@ private:
             return out;
         }
         case token_type::open_paren: return nested();
-        case token_type::function:
+        case token_type::function: {
             // A NESTED CALC, which Bootstrap writes eight times over
-            // (`calc(1em + .5rem + calc(var(x) * 2))`). Any other function - one
-            // this does not evaluate - is an error rather than a guess.
-            if (!ascii_iequals(t_.text_of(tok), "calc(")) { return fail(); }
-            return nested();
+            // (`calc(1em + .5rem + calc(var(x) * 2))`), and the three comparison
+            // functions. Any other function - one this does not evaluate - is an
+            // error rather than a guess.
+            const std::string_view name = t_.text_of(tok);
+            if (ascii_iequals(name, "calc(")) { return nested(); }
+            if (ascii_iequals(name, "min(")) { return comparison(compare::smallest); }
+            if (ascii_iequals(name, "max(")) { return comparison(compare::largest); }
+            if (ascii_iequals(name, "clamp(")) { return comparison(compare::clamped); }
+            return fail();
+        }
         default: return fail();
         }
     }
@@ -191,8 +209,91 @@ private:
         return inner;
     }
 
+    enum class compare : std::uint8_t {
+        smallest,
+        largest,
+        clamped
+    };
+
+    // min( sum [, sum]* ) | max( sum [, sum]* ) | clamp( sum, sum, sum )
+    //
+    // CSS Values 4 §10.3. Two things make this more than a fold over `sum()`:
+    //
+    // EVERY ARGUMENT MUST BE THE SAME TYPE. `min(1px, 2)` compares a length with
+    // a number and has no meaning, exactly as `1px + 2` has none.
+    //
+    // A PERCENTAGE ANYWHERE MAKES THE COMPARISON UNDECIDABLE HERE. `min(10px,
+    // 5%)` is 10px on a 200px containing block and 5% of it on a 100px one -
+    // there is no answer until layout, and §10.11 says so: the computed value of
+    // a math function whose percentages did not resolve is the function itself.
+    // That is `unresolved`, NOT an error, and the difference is a declaration
+    // kept versus a declaration deleted.
+    [[nodiscard]] std::optional<term> comparison(compare kind) {
+        ++at_; // the function token, `(` included
+        std::vector<term> args;
+        for (;;) {
+            const std::optional<term> one = sum();
+            if (!one) { return std::nullopt; }
+            args.push_back(*one);
+            skip_whitespace();
+            if (peek().type == token_type::comma) {
+                ++at_;
+                continue;
+            }
+            break;
+        }
+        if (peek().type != token_type::close_paren) { return fail(); }
+        ++at_;
+        if (args.empty()) { return fail(); }
+        // `clamp()` takes exactly three arguments and the others take at least
+        // one. An arity error is a syntax error, not an undecidable comparison.
+        if (kind == compare::clamped && args.size() != 3) { return fail(); }
+        for (const term & one : args) {
+            if (one.is_number != args.front().is_number) { return fail(); }
+            if (one.has_percent) { return unresolvable(); }
+        }
+        const auto value_of = [](const term & one) { return one.is_number ? one.number : one.px; };
+        if (kind == compare::clamped) {
+            // clamp(low, value, high) is max(low, min(value, high)) - and the
+            // spec's order matters when low > high: the LOW bound wins, because
+            // the min is taken first.
+            const float low = value_of(args[0]);
+            const float mid = value_of(args[1]);
+            const float high = value_of(args[2]);
+            return with_value(args[1], std::max(low, std::min(mid, high)));
+        }
+        float best = value_of(args.front());
+        for (const term & one : args) {
+            const float v = value_of(one);
+            best = kind == compare::smallest ? std::min(best, v) : std::max(best, v);
+        }
+        return with_value(args.front(), best);
+    }
+
+    // A term of the same TYPE as `like`, carrying `value`. The type is what the
+    // caller has already checked is uniform across the argument list; only the
+    // number changes.
+    [[nodiscard]] static term with_value(const term & like, float value) {
+        term out;
+        out.is_number = like.is_number;
+        if (like.is_number) {
+            out.number = value;
+        } else {
+            out.px = value;
+        }
+        return out;
+    }
+
     [[nodiscard]] std::optional<term> fail() {
         ok_ = false;
+        return std::nullopt;
+    }
+
+    // Well formed, and without an answer here. It stops the parse like an error
+    // does - there is nothing to carry upwards - but `run()` reads this latch
+    // first, so the caller is told to keep the text rather than to drop it.
+    [[nodiscard]] std::optional<term> unresolvable() {
+        unresolved_ = true;
         return std::nullopt;
     }
 
@@ -200,6 +301,7 @@ private:
     const length_context & ctx_;
     std::size_t at_ = 0;
     bool ok_ = true;
+    bool unresolved_ = false;
 };
 
 // Trailing zeros off a float, so a folded `12px` is not `12.000000px`. CSS
@@ -245,10 +347,110 @@ std::optional<float> unit_to_px(float value, std::string_view unit, const length
     return std::nullopt;
 }
 
-std::optional<calc_result> evaluate_calc(std::string_view expression, const length_context & ctx) {
+math_answer evaluate_math(std::string_view expression, const length_context & ctx) {
     const token_stream tokens = tokenize(expression);
     evaluator run{tokens, ctx};
     return run.run();
+}
+
+std::optional<calc_result> evaluate_calc(std::string_view expression, const length_context & ctx) {
+    const math_answer answer = evaluate_math(expression, ctx);
+    if (answer.outcome != math_outcome::resolved || answer.value.is_number) { return std::nullopt; }
+    return answer.value;
+}
+
+// THE PROPERTIES WHOSE WHOLE VALUE IS LENGTHS. Sorted and searched linearly,
+// because the list is short and this runs once per math function rather than
+// once per declaration.
+//
+// The rule for being ON it is narrow on purpose: every component of the value
+// must be a <length>, a <percentage> or a keyword, so that a <number> answer
+// from a math function can only ever be a syntax error. Anything compound -
+// `box-shadow`, `background-position`, `transform`, `border` - is deliberately
+// absent, because math_context applies to EVERY math function in the value and
+// one of them may legitimately be a number (`transform: scale(calc(1 / 2))`).
+//
+// `line-height` is the one that looks like it belongs here and does not: a
+// unitless `line-height: 1.5` is a number and is the commonest spelling of it.
+math_context math_context_of(std::string_view property) noexcept {
+    static constexpr std::string_view lengths[] = {
+        "block-size",
+        "border-bottom-left-radius",
+        "border-bottom-right-radius",
+        "border-bottom-width",
+        "border-end-end-radius",
+        "border-end-start-radius",
+        "border-left-width",
+        "border-radius",
+        "border-right-width",
+        "border-spacing",
+        "border-start-end-radius",
+        "border-start-start-radius",
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-top-width",
+        "border-width",
+        "bottom",
+        "column-gap",
+        "column-rule-width",
+        "column-width",
+        "flex-basis",
+        "font-size",
+        "gap",
+        "height",
+        "inline-size",
+        "inset",
+        "inset-block",
+        "inset-block-end",
+        "inset-block-start",
+        "inset-inline",
+        "inset-inline-end",
+        "inset-inline-start",
+        "left",
+        "letter-spacing",
+        "margin",
+        "margin-block",
+        "margin-block-end",
+        "margin-block-start",
+        "margin-bottom",
+        "margin-inline",
+        "margin-inline-end",
+        "margin-inline-start",
+        "margin-left",
+        "margin-right",
+        "margin-top",
+        "max-block-size",
+        "max-height",
+        "max-inline-size",
+        "max-width",
+        "min-block-size",
+        "min-height",
+        "min-inline-size",
+        "min-width",
+        "outline-offset",
+        "outline-width",
+        "padding",
+        "padding-block",
+        "padding-block-end",
+        "padding-block-start",
+        "padding-bottom",
+        "padding-inline",
+        "padding-inline-end",
+        "padding-inline-start",
+        "padding-left",
+        "padding-right",
+        "padding-top",
+        "right",
+        "row-gap",
+        "text-indent",
+        "top",
+        "width",
+        "word-spacing",
+    };
+    for (const std::string_view one : lengths) {
+        if (ascii_iequals(one, property)) { return math_context::length; }
+    }
+    return math_context::any;
 }
 
 namespace {
@@ -286,6 +488,10 @@ std::optional<float> length_text_to_px(std::string_view text, const length_conte
 }
 
 std::string serialize_calc(const calc_result & value) {
+    // A NUMBER HAS NO UNIT. `opacity: calc(2 / 4)` is `0.5`, and appending `px`
+    // to it would be a different kind of wrong from dropping it - a value layout
+    // and the cascade would both happily misread.
+    if (value.is_number) { return format_number(value.px); }
     if (!value.has_percent) { return format_number(value.px) + "px"; }
     if (value.px == 0.0f) { return format_number(value.percent) + "%"; }
     // The two-term canonical form, with the sign folded into the operator the way
@@ -295,34 +501,53 @@ std::string serialize_calc(const calc_result & value) {
            format_number(negative ? -value.px : value.px) + "px)";
 }
 
-bool may_have_calc(std::string_view value) noexcept {
-    for (std::size_t i = 0; i + 5 <= value.size(); ++i) {
-        if (ascii_iequals(value.substr(i, 5), "calc(")) { return true; }
+namespace {
+
+// The four function names this folds, longest first so that a scan which stops
+// at the first match cannot mistake `min(` for the start of `minmax(` - which it
+// cannot anyway, because `minmax(` fails the identifier-boundary test below, but
+// the ordering costs nothing and states the intent.
+constexpr std::string_view math_names[] = {"clamp(", "calc(", "min(", "max("};
+
+// A `(`-terminated function name AT `at`, or an empty view. The boundary test is
+// the whole point: `-webkit-calc(` and a custom property called `--my-calc` both
+// contain the five bytes of `calc(` and neither is one, and `minmax(100px, 1fr)`
+// contains `max(` three bytes in.
+[[nodiscard]] std::string_view math_name_at(std::string_view value, std::size_t at) noexcept {
+    const auto name_char = [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+               c == '-' || c == '_';
+    };
+    if (at != 0 && name_char(value[at - 1])) { return {}; }
+    for (const std::string_view name : math_names) {
+        if (ascii_iequals(value.substr(at, name.size()), name)) { return name; }
+    }
+    return {};
+}
+
+} // namespace
+
+bool may_have_math(std::string_view value) noexcept {
+    for (std::size_t i = 0; i < value.size(); ++i) {
+        if (!math_name_at(value, i).empty()) { return true; }
     }
     return false;
 }
 
-folded_value fold_calc(std::string_view value, const length_context & ctx) {
+folded_value fold_math(std::string_view value, const length_context & ctx, math_context accepts) {
     std::string out;
     bool ok = true;
     std::size_t at = 0;
     while (at < value.size()) {
-        // A `calc(` that starts a FUNCTION, which means it is not preceded by an
-        // identifier character - `-webkit-calc(` and a custom property called
-        // `--my-calc` both contain the five bytes and neither is a calc.
-        const auto name_char = [](char c) {
-            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                   c == '-' || c == '_';
-        };
-        const bool boundary = at == 0 || !name_char(value[at - 1]);
-        if (!boundary || !ascii_iequals(value.substr(at, 5), "calc(")) {
+        const std::string_view name = math_name_at(value, at);
+        if (name.empty()) {
             out.push_back(value[at]);
             ++at;
             continue;
         }
         // Match the parenthesis, skipping quoted runs so a `)` inside a string
         // cannot end the expression early.
-        std::size_t scan = at + 5;
+        std::size_t scan = at + name.size();
         int depth = 1;
         char quote = 0;
         while (scan < value.size() && depth > 0) {
@@ -342,21 +567,49 @@ folded_value fold_calc(std::string_view value, const length_context & ctx) {
             }
             ++scan;
         }
+        const std::string_view whole = value.substr(at, scan - at);
         if (depth != 0) { // unterminated: leave the rest of the value alone
             out.append(value.substr(at));
             ok = false;
             break;
         }
-        const std::string_view body = value.substr(at + 5, scan - at - 6);
-        const std::optional<calc_result> answer = evaluate_calc(body, ctx);
+        // The WHOLE function, name included, for everything but `calc(`: the
+        // evaluator reads `min(...)` as a term, and handing it only the argument
+        // list would turn `min(1px, 2px)` into the comma-separated nonsense
+        // `1px, 2px`.
+        const bool is_calc = ascii_iequals(name, "calc(");
+        const std::string_view body = is_calc ? value.substr(at + 5, scan - at - 6) : whole;
+        const math_answer answer = evaluate_math(body, ctx);
+        // A NUMBER WHERE THE PROPERTY WANTS A LENGTH IS A SYNTAX ERROR. This is
+        // the guard that makes it safe for the evaluator to answer with numbers
+        // at all: `width: calc(2 * 3)` stays invalid, as CSS says and as this
+        // engine already behaved, while `opacity: calc(2 * 3)` becomes `6`.
+        const bool wrong_kind = answer.outcome == math_outcome::resolved &&
+                                answer.value.is_number && accepts == math_context::length;
+        if (answer.outcome == math_outcome::resolved && !wrong_kind) {
+            out.append(serialize_calc(answer.value));
+            at = scan;
+            continue;
+        }
         // AN INVALID CALC KEEPS ITS TEXT AND SAYS SO. Keeping the text is what
         // lets a caller with no better answer carry on; saying so is what lets the
         // cascade do the right thing instead, which is to treat the declaration as
         // invalid. Layout reading the text was the wrong outcome: parse_length
         // cannot read `calc(-1 * 0)` and answers `auto`, where CSS says the
         // property takes its initial value.
-        if (!answer) { ok = false; }
-        out.append(answer ? serialize_calc(*answer) : std::string{value.substr(at, scan - at)});
+        //
+        // A COMPARISON FUNCTION NEVER SAYS SO. `min()`, `max()` and `clamp()`
+        // were kept verbatim by every version of this file before they could be
+        // parsed, so "keep the text, do not condemn the declaration" is the one
+        // answer that cannot regress a page - and for `min(10px, 5%)` it is also
+        // the answer CSS Values 4 §10.11 gives.
+        if (!is_calc || answer.outcome == math_outcome::unresolved) {
+            out.append(whole);
+            at = scan;
+            continue;
+        }
+        ok = false;
+        out.append(whole);
         at = scan;
     }
     return folded_value{std::move(out), ok};
