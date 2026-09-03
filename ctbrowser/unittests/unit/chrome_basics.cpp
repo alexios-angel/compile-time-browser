@@ -102,6 +102,10 @@ void check(bool ok, std::string_view what) {
     const auto * state = page.control_state_of(find_id(page, id));
     return state == nullptr ? 0 : state->caret;
 }
+[[nodiscard]] std::string value_of(browser & page, std::string_view id) {
+    const auto * state = page.control_state_of(find_id(page, id));
+    return state == nullptr ? std::string{} : state->value;
+}
 [[nodiscard]] std::pair<std::size_t, std::size_t> selection_of(browser & page,
                                                                std::string_view id) {
     const auto * state = page.control_state_of(find_id(page, id));
@@ -1710,6 +1714,54 @@ void test_cut_removes_what_it_copied() {
           "cut empties the field");
 }
 
+// A `cut` LISTENER THAT CREATES CONTROLS, which is the ordinary shape of a
+// clipboard handler in a page that builds UI, and which used to leave the
+// engine writing through a freed pointer.
+//
+// `clipboard_verb` took a `control_state *` into the form store, dispatched
+// `cut` to the page, and then used the pointer. The store is a
+// boost::unordered_flat_map - open addressing, no reference stability - so a
+// listener that seeds even one new control can rehash it and move every entry.
+// Reading `.value` of a control is what seeds it, and creating one is what a
+// listener like this does.
+//
+// THE ASSERTION IS THE FIELD'S VALUE, not a sanitizer report, so this is red
+// without ASan too: the deletion went to the FREED table, leaving the live
+// entry - the one the rest of the engine reads - untouched at "cutme".
+void test_a_cut_listener_may_create_controls() {
+    browser page{browser_options{600, 400}};
+    page.load_html(R"(<body><input id=a type=text value=cutme><input id=seen type=text>
+        <div id=more></div>
+        <script>
+        document.getElementById('a').addEventListener('cut', function () {
+            var host = document.getElementById('more');
+            var made = 0;
+            for (var i = 0; i < 96; i++) {
+                var f = document.createElement('input');
+                f.setAttribute('type', 'text');
+                host.appendChild(f);
+                // READING `.value` SEEDS THE CONTROL - one insertion into the
+                // form store apiece, and the rehash that moves everything.
+                if (f.value === '') { made = made + 1; }
+            }
+            document.getElementById('seen').value = String(made);
+        });
+        </script></body>)");
+    check(page.frame().has_value(), "the page renders");
+
+    const rect box = box_of(page, "a");
+    (void)page.handle(input_event::mouse_down_at(box.x + 5, box.y + 5));
+    (void)page.handle(input_event::mouse_up_at(box.x + 5, box.y + 5));
+    (void)page.handle(input_event::key_press("KeyA", false, true)); // Ctrl+A
+    (void)page.handle(input_event::key_press("KeyX", false, true)); // Ctrl+X
+
+    // THE MUTATION LANDED. Without this the case passes when the listener never
+    // ran, which is exactly how a page whose script failed to compile looks -
+    // and then the whole test measures nothing.
+    check(value_of(page, "seen") == "96", "the cut listener created 96 controls");
+    check(value_of(page, "a").empty(), "Cut empties the field the listener did not touch");
+}
+
 void test_the_cursor_follows_the_element() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><a href='#' id=link>a link</a><input id=field type=text>"
@@ -1941,6 +1993,7 @@ int main() {
     test_a_page_can_take_over_the_context_menu();
     test_clipboard_round_trip();
     test_cut_removes_what_it_copied();
+    test_a_cut_listener_may_create_controls();
     test_the_cursor_follows_the_element();
     test_dragging_selects_text();
     test_selection_is_drawn();

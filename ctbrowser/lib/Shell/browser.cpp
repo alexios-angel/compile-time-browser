@@ -2006,9 +2006,10 @@ void browser::run_clipboard_verb(std::string_view verb) {
 }
 
 void browser::clipboard_verb(std::string_view verb) {
-    control_state * control = editable_focus();
     if (verb == "Select All") {
-        if (control != nullptr) {
+        // THE ONE VERB THAT DOES NOT DISPATCH, so this arm may hold a pointer
+        // into the form store: nothing runs between fetching it and using it.
+        if (control_state * control = editable_focus(); control != nullptr) {
             forms_.select_all(*control);
             mark(dirty::paint);
             return;
@@ -2025,6 +2026,32 @@ void browser::clipboard_verb(std::string_view verb) {
     }
     const std::string type = verb == "Copy" ? "copy" : verb == "Cut" ? "cut" : "paste";
     if (focused_ && bindings_->dispatch(type, focused_)) { return; } // cancelled
+
+    // AFTER THE DISPATCH, NOT BEFORE IT. The control used to be fetched at the
+    // top of this function and used down here, across page JavaScript.
+    //
+    // `form_store::states_` is a boost::unordered_flat_map - open addressing,
+    // no reference stability - and a control's state is SEEDED the first time
+    // anything asks for it, which reading `.value` from script does. So a
+    // `cut` or `copy` listener that touches a control the page has not touched
+    // before rehashes the table and moves every entry, and the pointer held
+    // here became a pointer into the freed bucket array. Reproduced with a
+    // listener that creates 96 inputs: `form_store::selected_text` segfaulted
+    // constructing a std::string from the freed state, and the two writes
+    // below - insert_text for Paste, delete_selection for Cut - landed in
+    // freed memory, leaving the live control untouched. Ctrl+X is the trigger.
+    //
+    // RE-FETCHING IS THE FIX, NOT A NODE-BASED MAP, and the difference matters:
+    // reference stability would answer the rehash and nothing else. A listener
+    // may also blur the field, focus another one, remove it from the document,
+    // or navigate - and `browser::load_html` calls `forms_.clear()`. A stable
+    // node would then be a freed node, or worse, a LIVE pointer to the wrong
+    // control that Cut would happily empty. Asking again re-validates all of
+    // it: that something is still focused, that it is still editable, and that
+    // it is the control the page left focused rather than the one it started
+    // with. run_clipboard_verb above already re-fetches after calling this,
+    // for the same reason; this matches it.
+    control_state * control = editable_focus();
     if (control == nullptr) {
         // No editable focused: Copy takes the PAGE selection. Cut and paste
         // have nowhere to act, and a page is not editable.
