@@ -84,10 +84,14 @@ public:
         // here stopped the parse the same way an error does, so the latch has to
         // be read before the missing value is: `min(10px, 5%)` is a valid
         // declaration and reporting it as a syntax error would delete it.
-        if (unresolved_) { return math_answer{math_outcome::unresolved, {}}; }
+        if (unresolved_) {
+            return math_answer{math_outcome::unresolved, {}};
+        }
         // A trailing token means the expression did not consume its input -
         // `calc(1px 2px)` - which is an error and not a partial answer.
-        if (!ok_ || !value || !at_end()) { return math_answer{math_outcome::invalid, {}}; }
+        if (!ok_ || !value || !at_end()) {
+            return math_answer{math_outcome::invalid, {}};
+        }
         calc_result out;
         // A NUMBER IS AN ANSWER. `calc()` of a bare number used to be reported as
         // no answer at all, which the cascade read as an invalid declaration and
