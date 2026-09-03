@@ -374,6 +374,7 @@ struct closureLifter {
     // --- the receiver lift's census ---------------------------------------
     llvm::SmallVector<ctjs::CreateObjectOp> objects;
     llvm::SmallVector<ctjs::CallOp> allCalls;
+    llvm::SmallVector<ctjs::CallDirectOp> allDirectCalls;
     // The single closure a literal's key holds, per literal, per key.
     struct methodField {
         ctjs::SetPropertyOp store;
@@ -426,6 +427,65 @@ struct closureLifter {
         return byIndex.lookup(static_cast<unsigned>(c.getFunction()));
     }
 
+    // ONE CALL SITE OF A CLOSURE, IN EITHER OF THE TWO SHAPES IT NOW HAS.
+    //
+    // --ctjs-resolve-globals names a ctjs.call whose callee is a
+    // ctjs.create_closure result, so by the time this pass runs the SAME site
+    // is either a ctjs.call with the closure at operand 0 and its arguments
+    // from operand 2, or a ctjs.call_direct with the closure at operand 2
+    // (`$callee_value`) and its arguments from operand 3 - because
+    // call_direct's operands ARE the callee's entry block in order.
+    //
+    // FOUR SEPARATE CENSUSES IN THIS FILE ASKED THAT QUESTION BY CASTING TO
+    // ctjs::CallOp, and every one of them silently answered "not a call" for a
+    // named site. Measured: with the naming in place and this abstraction
+    // absent, native-object-argument-fixture.js stopped being native at all -
+    // "an object literal passed to a direct call as an argument". The two
+    // shapes are one question, so they are asked in one place.
+    struct closureCall {
+        mlir::Operation * op = nullptr;
+        mlir::ValueRange args;
+        mlir::Value receiver;
+        explicit operator bool() const { return op != nullptr; }
+    };
+
+    closureCall callSiteOf(mlir::OpOperand & use, ctjs::FuncOp target) {
+        mlir::Operation * user = use.getOwner();
+        if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
+            if (use.getOperandNumber() != 0) { return {}; }
+            return {user, call.getArgs(), call.getReceiver()};
+        }
+        if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
+            // THE SYMBOL MUST BE THIS CLOSURE'S OWN TARGET. A call_direct whose
+            // callee value is this closure but whose symbol is another function
+            // is not a call of it, and the resolver never builds one - asking
+            // is what keeps that an invariant rather than an assumption.
+            if (use.getOperandNumber() != 2 || !target ||
+                direct.getCallee() != target.getSymName()) {
+                return {};
+            }
+            return {user, direct.getArgs(), direct.getReceiver()};
+        }
+        return {};
+    }
+
+    // The closure a call site dispatches on, in either shape, or null.
+    static ctjs::CreateClosureOp closureCalledBy(mlir::Operation * user) {
+        if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
+            return call.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
+        }
+        if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
+            return direct.getCalleeValue().getDefiningOp<ctjs::CreateClosureOp>();
+        }
+        return {};
+    }
+
+    // Its arguments, and the operand number argument 0 sits at.
+    static mlir::ValueRange argsOfCallSite(mlir::Operation * user) {
+        if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) { return call.getArgs(); }
+        return llvm::cast<ctjs::CallDirectOp>(user).getArgs();
+    }
+
     void census() {
         module.walk([&](ctjs::FuncOp fn) {
             if (const std::optional<unsigned> index = functionIndexOf(fn)) {
@@ -444,6 +504,12 @@ struct closureLifter {
                 objects.push_back(object);
             } else if (auto call = llvm::dyn_cast<ctjs::CallOp>(o)) {
                 allCalls.push_back(call);
+            } else if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(o)) {
+                // THE SITES --ctjs-resolve-globals ALREADY NAMED, kept beside
+                // the unnamed ones because the object-argument census has to
+                // reach both: a literal handed to a named call is in exactly
+                // the position a literal handed to an unnamed one is.
+                allDirectCalls.push_back(direct);
             }
         });
         // The fixpoint over the closure-target graph.
@@ -582,6 +648,31 @@ struct closureLifter {
         if (c.getResult().use_empty()) { return "nothing calls it"; }
         for (mlir::OpOperand & use : c.getResult().getUses()) {
             mlir::Operation * user = use.getOwner();
+            // A CALL THE CLOSED WORLD ALREADY NAMED, WHICH IS THE SAME CALL
+            // SITE ONE OPERAND ALONG.
+            //
+            // --ctjs-resolve-globals rewrites a ctjs.call whose callee is a
+            // ctjs.create_closure result into a ctjs.call_direct, where the
+            // closure is `$callee_value` at operand 2 rather than the callee at
+            // operand 0. Without this arm that use falls to the "it is passed
+            // as an argument" refusal below and the lift is LOST on exactly the
+            // closures the closed world just proved - measured, before this arm
+            // existed, as 3 lifted closures on bootstrap, 27 on p5 and 3 on
+            // phaser going to zero.
+            //
+            // THE ARITY NEEDS NO CHECK HERE. CallDirectOp::verifySymbolUses
+            // holds the operand count equal to the entry block's, so a
+            // call_direct that verifies passes exactly `parameters` arguments -
+            // the resolver padded a short call and refused a long one.
+            if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user);
+                direct && use.getOperandNumber() == 2 &&
+                direct.getCallee() == target.getSymName()) {
+                auto caller = direct->getParentOfType<ctjs::FuncOp>();
+                if (caller && passesNewTarget.contains(caller.getOperation())) {
+                    return "a call of it sits in a function that passes new.target";
+                }
+                continue;
+            }
             auto call = llvm::dyn_cast<ctjs::CallOp>(user);
             if (!call || use.getOperandNumber() != 0) {
                 if (llvm::isa<ctjs::StoreGlobalOp>(user)) {
@@ -684,6 +775,18 @@ struct closureLifter {
                 }
                 return false;
             }
+            // THE SAME TWO QUESTIONS AT THE POSITIONS call_direct PUTS THEM.
+            // Its operands are the callee's entry block in order, so argument i
+            // is operand 3 + i rather than 2 + i. Without this arm a literal
+            // handed to a call the closed world had already named read as an
+            // OPEN shape, and the object-argument lift lost it.
+            if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
+                if (use.getOperandNumber() >= 3) {
+                    auto made = direct.getCalleeValue().getDefiningOp<ctjs::CreateClosureOp>();
+                    if (made && slotCarriesAnObject(made, use.getOperandNumber() - 3)) { continue; }
+                }
+                return false;
+            }
             return false;
         }
         return true;
@@ -776,14 +879,25 @@ struct closureLifter {
         }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
             if (n == 0) { return "call.as-callee"; }
-            if (n >= 2) { return "call.argument." + argumentDetail(call, n); }
+            if (n >= 2) { return "call.argument." + argumentDetail(user, n - 2); }
             auto load = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
             if (!load) { return "call.receiver-callee-not-a-load"; }
             if (load.getObject() != object) { return "call.receiver-callee-off-another-object"; }
             return "call.receiver-dynamic-key";
         }
         if (llvm::isa<ctjs::CallDirectOp>(user)) {
-            return n == 0 ? "call_direct.receiver" : "call_direct.argument";
+            // A SITE THE CLOSED WORLD NAMED IS STILL THE SAME SITE. This census
+            // is what the plan's next lever gets chosen from, so a ctjs.call
+            // that --ctjs-resolve-globals turned into a ctjs.call_direct must
+            // not silently change bucket from `call.argument.<detail>` to an
+            // undifferentiated `call_direct.argument` - that would have erased
+            // the very `callee-known` / `callee-opaque` distinction the census
+            // exists to draw.
+            if (n == 0) { return "call_direct.receiver"; }
+            if (n >= 3 && closureCalledBy(user)) {
+                return "call.argument." + argumentDetail(user, n - 3);
+            }
+            return "call_direct.argument";
         }
         if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(user)) {
             if (n == 0) { return "construct.callee"; }
@@ -802,15 +916,16 @@ struct closureLifter {
     // IS THE CALLEE ONE FUNCTION, AND DOES IT ONLY READ THE ARGUMENT? Exactly
     // the question the receiver lift asks of `this`, asked of an argument
     // position - because if the answer is yes the carrier is the same one.
-    std::string argumentDetail(ctjs::CallOp call, unsigned n) {
-        auto made = call.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
+    std::string argumentDetail(mlir::Operation * call, unsigned j) {
+        ctjs::CreateClosureOp made = closureCalledBy(call);
         if (!made) { return "callee-opaque"; }
         ctjs::FuncOp target = targetOf(made);
         if (!target || target.getBody().empty()) { return "callee-not-imported"; }
         mlir::Block & entry = target.getBody().front();
-        // operand 0 is the callee, 1 the receiver, so argument i is operand
-        // i + 2 and lands on entry argument i + 3.
-        const unsigned slot = n + 1;
+        // `j` IS THE JAVASCRIPT ARGUMENT INDEX, not an operand number, because
+        // the two call shapes number their operands differently and the entry
+        // block does not: argument j always lands on entry argument j + 3.
+        const unsigned slot = j + 3;
         if (slot >= entry.getNumArguments()) { return "argument-has-no-parameter"; }
         return onlyConstantKeyAccess(entry.getArgument(slot)) ? "parameter-is-read-only"
                                                               : "parameter-escapes";
@@ -887,8 +1002,8 @@ struct closureLifter {
         if (3 + j >= entry.getNumArguments()) { return false; }
         bool called = false;
         for (mlir::OpOperand & use : c.getResult().getUses()) {
-            auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-            if (!call || use.getOperandNumber() != 0) { return false; }
+            const closureCall site = callSiteOf(use, target);
+            if (!site) { return false; }
             called = true;
             // A SHORT CALL IS NOT A CANDIDATE, and this half is load-bearing
             // twice over: the lift pads a missing argument with `undefined`,
@@ -902,7 +1017,7 @@ struct closureLifter {
             // the first round anyway. Removed, `take(o) + take(2)` refuses with
             // the same sentence, from the same place, and the whole suite stays
             // green - which is the definition of decoration.
-            if (j >= call.getArgs().size()) { return false; }
+            if (j >= site.args.size()) { return false; }
         }
         const mlir::Value parameter = entry.getArgument(3 + j);
         return called && !parameter.use_empty() && onlyConstantKeyAccess(parameter);
@@ -946,9 +1061,11 @@ struct closureLifter {
                 llvm::SmallVector<unsigned, 2> kept;
                 for (unsigned j : at->second) {
                     bool ok = true;
-                    for (mlir::Operation * user : c.getResult().getUsers()) {
-                        auto call = llvm::dyn_cast<ctjs::CallOp>(user);
-                        if (call && !closedAfterLift(call.getArgs()[j])) { ok = false; }
+                    for (mlir::OpOperand & use : c.getResult().getUses()) {
+                        const closureCall site = callSiteOf(use, targetOf(c));
+                        if (site && j < site.args.size() && !closedAfterLift(site.args[j])) {
+                            ok = false;
+                        }
                     }
                     if (ok) { kept.push_back(j); }
                 }
@@ -967,16 +1084,19 @@ struct closureLifter {
         // property of the CALLEE - which parameter, read how, called from
         // where - and the use-list walk that meets the escape has none of it.
         // Same idiom as `ctnative.closure_reason` and `ctnative.cell_reason`.
-        for (ctjs::CallOp call : allCalls) {
-            auto made = call.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
-            for (auto [j, argument] : llvm::enumerate(call.getArgs())) {
+        llvm::SmallVector<mlir::Operation *> sites;
+        for (ctjs::CallOp call : allCalls) { sites.push_back(call.getOperation()); }
+        for (ctjs::CallDirectOp direct : allDirectCalls) { sites.push_back(direct.getOperation()); }
+        for (mlir::Operation * site : sites) {
+            ctjs::CreateClosureOp made = closureCalledBy(site);
+            for (auto [j, argument] : llvm::enumerate(argsOfCallSite(site))) {
                 mlir::Operation * literal = argument.getDefiningOp();
                 if (!llvm::isa_and_nonnull<ctjs::CreateObjectOp>(literal)) { continue; }
                 if (made && slotCarriesAnObject(made, static_cast<unsigned>(j))) { continue; }
                 literal->setAttr(
                     "ctnative.object_reason",
                     mlir::StringAttr::get(context,
-                                          whyNotAnObjectArgument(call, static_cast<unsigned>(j))));
+                                          whyNotAnObjectArgument(site, static_cast<unsigned>(j))));
             }
         }
     }
@@ -984,8 +1104,8 @@ struct closureLifter {
     // WHY AN OBJECT PASSED TO A CALL IS NOT A PARAMETER, in one sentence per
     // condition. Asked only where the object really is an argument, so "it is
     // passed to a call" is never the answer on its own.
-    std::string whyNotAnObjectArgument(ctjs::CallOp call, unsigned j) {
-        auto made = call.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
+    std::string whyNotAnObjectArgument(mlir::Operation * call, unsigned j) {
+        ctjs::CreateClosureOp made = closureCalledBy(call);
         if (!made) {
             return "it is passed to a call whose callee is not one function this rewrite can "
                    "name, so there is no parameter to give the object's address to";
@@ -1012,8 +1132,8 @@ struct closureLifter {
             return "it is passed to a parameter that reaches it through something other than a "
                    "constant key - that needs an owner, and this slice introduces none";
         }
-        for (mlir::Operation * user : made.getResult().getUsers()) {
-            auto other = llvm::dyn_cast<ctjs::CallOp>(user);
+        for (mlir::OpOperand & use : made.getResult().getUses()) {
+            const closureCall other = callSiteOf(use, target);
             // A SENTENCE FOR "THE CLOSURE IS USED AS A VALUE ELSEWHERE" WAS
             // HERE AND IS GONE, BECAUSE NO PROGRAM REACHES IT. Every use of a
             // closure that is not a call of it is already refused by
@@ -1022,7 +1142,7 @@ struct closureLifter {
             // which says "a closure used as a value: it is stored to a global"
             // and never asks this question. The cast still needs an else.
             if (!other) { continue; }
-            const auto args = other.getArgs();
+            const mlir::ValueRange args = other.args;
             if (j >= args.size() || !args[j].getDefiningOp<ctjs::CreateObjectOp>()) {
                 return "it is passed to a parameter that is an object literal at this call and "
                        "something else at another, so the parameter has no single C++ type";
@@ -1603,23 +1723,32 @@ struct closureLifter {
             for (mlir::Value cell : c.getUpvalues()) {
                 captured.push_back(cell.getDefiningOp<ctjs::CreateCellOp>().getInitial());
             }
-            llvm::SmallVector<ctjs::CallOp> calls;
-            for (mlir::Operation * user : c.getResult().getUsers()) {
-                calls.push_back(llvm::cast<ctjs::CallOp>(user));
-            }
-            for (ctjs::CallOp call : calls) {
-                mlir::OpBuilder at(call);
+            // BOTH SHAPES OF CALL SITE, because --ctjs-resolve-globals may have
+            // named this one already. `whyNotLiftable` admits a ctjs.call at
+            // operand 0 and a ctjs.call_direct at operand 2; the difference
+            // between them is where the receiver and the arguments are read
+            // from, and nothing else - the captures still have to be prepended,
+            // which is the whole reason the lift re-writes an already-direct
+            // call rather than leaving it alone.
+            llvm::SmallVector<mlir::Operation *> calls(c.getResult().getUsers().begin(),
+                                                       c.getResult().getUsers().end());
+            for (mlir::Operation * user : calls) {
+                auto call = llvm::dyn_cast<ctjs::CallOp>(user);
+                auto named = llvm::dyn_cast<ctjs::CallDirectOp>(user);
+                mlir::OpBuilder at(user);
                 const mlir::Value undefined = ctjs::ConstantOp::create(
-                    at, call.getLoc(), valueType, ctjs::UndefinedAttr::get(context));
+                    at, user->getLoc(), valueType, ctjs::UndefinedAttr::get(context));
                 llvm::SmallVector<mlir::Value> arguments(captured);
-                arguments.append(call.getArgs().begin(), call.getArgs().end());
+                const mlir::ValueRange supplied = call ? call.getArgs() : named.getArgs();
+                arguments.append(supplied.begin(), supplied.end());
                 // The resolver's own padding rule: op::call fills a missing
                 // parameter with undefined, so a short call becomes a full one.
                 while (arguments.size() < captures + parameters) { arguments.push_back(undefined); }
                 auto direct = ctjs::CallDirectOp::create(
-                    at, call.getLoc(), valueType,
-                    mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()), call.getReceiver(),
-                    undefined, c.getResult(), arguments,
+                    at, user->getLoc(), valueType,
+                    mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
+                    call ? call.getReceiver() : named.getReceiver(), undefined, c.getResult(),
+                    arguments,
                     /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
                 // ON THE CALL AS WELL AS THE CALLEE, for the reason the
                 // receiver mark is: `TypeInference::hasClosedShape` is asked
@@ -1629,8 +1758,8 @@ struct closureLifter {
                     direct->setAttr("ctnative.object_args",
                                     mlir::Builder(context).getDenseI32ArrayAttr(objectArgs));
                 }
-                call.getResult().replaceAllUsesWith(direct.getResult());
-                call.erase();
+                user->getResult(0).replaceAllUsesWith(direct.getResult());
+                user->erase();
                 ++out.calls;
             }
             c->setAttr("ctnative.lifted", mlir::UnitAttr::get(context));

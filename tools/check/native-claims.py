@@ -120,6 +120,11 @@ _CLOSED_WORLD = re.compile(
 # on the remark: the two must agree, and a disagreement is a pass that reports
 # what it did not do.
 _CALL_DIRECT = re.compile(r"\bctjs\.call_direct\b")
+# --ctnative-lower-to-emitc=report=true, as a remark on the module. `rewrote N
+# call(s)` is the closure lift's OWN count of the ctjs.call_direct it made -
+# the second stage at which a callee gets named, and the one this check used to
+# be blind to.
+_LIFT_REPORT = re.compile(r"ctnative: lifted \d+ closure\(s\).*?rewrote (\d+) call\(s\)")
 # `ctjs.globals = [{name = "x", reason = "...", resolved = ..., stores = N}]`,
 # the per-name verdict the pass writes on the module. The REASONS are the
 # roadmap for the ceiling in exactly the way `ctnative.not_native` is the
@@ -189,7 +194,7 @@ def run(argv: argparse.Namespace) -> dict:
         [
             argv.opt,
             "--ctjs-lift-to-scf",
-            "--ctnative-lower-to-emitc",
+            "--ctnative-lower-to-emitc=report=true",
         ],
         input=closed.stdout,
         capture_output=True,
@@ -200,6 +205,34 @@ def run(argv: argparse.Namespace) -> dict:
             f"native-claims ({argv.name}): the lowering failed on {argv.corpus}\n"
             + lower.stderr.decode("utf-8", "replace")[:4000]
         )
+
+    # THE SECOND STAGE AT WHICH A DIRECT CALL IS MADE, AND THE INSTRUMENT WAS
+    # BLIND TO IT.
+    #
+    # `direct` above counts ctjs.call_direct after --ctjs-resolve-globals, and
+    # that number was 0 on all three vendor bundles - which was read, in this
+    # file and in the CMakeLists floors and in a survey written for a human, as
+    # "no direct call is ever made inside a bundle". It is not what it means.
+    # --ctnative-lower-to-emitc's own closure lift ALSO turns a call whose
+    # callee is a ctjs.create_closure result into a ctjs.call_direct, later in
+    # the pipeline, and it was doing so all along: measured on 2026-09-03 at 3
+    # calls on bootstrap, 47 on p5 and 3 on phaser. Counting one stage and
+    # reporting the total is how a capability that already exists gets built a
+    # second time.
+    #
+    # So both stages are read, from each pass's own `report` remark, and both
+    # are printed. They are DIFFERENT NUMBERS measuring different rewrites -
+    # the resolver names a call and leaves the closure alone, the lift also
+    # moves the captures into leading parameters - so they are not summed.
+    lift_remark = _LIFT_REPORT.search(lower.stderr.decode("utf-8", "replace"))
+    if not lift_remark:
+        sys.exit(
+            f"native-claims ({argv.name}): --ctnative-lower-to-emitc=report=true emitted no "
+            "remark, so the direct calls the closure lift makes cannot be counted. Counting "
+            "only the resolver's stage is what made three bundles read as 0 for a rewrite "
+            "that was happening."
+        )
+    lifted_direct = int(lift_remark.group(1))
 
     module = lower.stdout.decode("utf-8", "replace")
     if argv.mutate_drop_one_reason:
@@ -253,6 +286,7 @@ def run(argv: argparse.Namespace) -> dict:
         "globals": globals_total,
         "globals_resolved": globals_resolved,
         "call_direct": globals_rewritten,
+        "lifted_call_direct": lifted_direct,
         "closed_functions": globals_closed,
         "global_reasons": global_reasons.most_common(),
     }
@@ -268,6 +302,10 @@ def report(result: dict, top: int) -> None:
         f"    closed world: {result['globals_resolved']} of {result['globals']} global(s) "
         f"resolved, {result['call_direct']} ctjs.call_direct, "
         f"{result['closed_functions']} function(s) closed"
+    )
+    print(
+        f"    closure lift: {result['lifted_call_direct']} more ctjs.call_direct made inside "
+        "--ctnative-lower-to-emitc (a stage this line did not used to measure)"
     )
     for reason, count in result["refusals"][:top]:
         print(f"    {count:6d}  {reason}")
@@ -303,6 +341,12 @@ def main() -> None:
         "--min-direct",
         type=int,
         help="fail if fewer ctjs.call_direct are emitted than this",
+    )
+    parser.add_argument(
+        "--min-lifted-direct",
+        type=int,
+        help="fail if the closure lift makes fewer ctjs.call_direct than this - the floor "
+        "under the SECOND stage, which the resolver's count cannot see",
     )
     parser.add_argument(
         "--mutate-drop-one-reason",
@@ -352,6 +396,8 @@ def main() -> None:
             child_argv += ["--min-resolved", str(argv.min_resolved)]
         if argv.min_direct is not None:
             child_argv += ["--min-direct", str(argv.min_direct)]
+        if argv.min_lifted_direct is not None:
+            child_argv += ["--min-lifted-direct", str(argv.min_lifted_direct)]
         if argv.mutate_drop_one_reason:
             child_argv.append("--mutate-drop-one-reason")
         if argv.mutate_drop_call_direct:
@@ -402,6 +448,17 @@ def main() -> None:
         sys.exit(
             f"native-claims ({result['name']}): emitted {result['call_direct']} "
             f"ctjs.call_direct, floor is {argv.min_direct} - the CLOSED WORLD NARROWED."
+        )
+    if (
+        argv.min_lifted_direct is not None
+        and result["lifted_call_direct"] < argv.min_lifted_direct
+    ):
+        sys.exit(
+            f"native-claims ({result['name']}): the closure lift made "
+            f"{result['lifted_call_direct']} ctjs.call_direct, floor is "
+            f"{argv.min_lifted_direct} - the CLOSURE LIFT NARROWED. This is a different "
+            "number from the resolver's and a different rewrite; a regression here is "
+            "invisible to --min-direct."
         )
 
 

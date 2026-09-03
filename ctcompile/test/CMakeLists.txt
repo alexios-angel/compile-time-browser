@@ -1302,15 +1302,28 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   # really does define_global (Shell/bindings/window.cpp:880-892) - it says
   # clause 5 is not where a vendor bundle is lost.
   #
-  # WHAT WOULD MOVE THESE NUMBERS is the OTHER half of known_callee(): a
-  # ctjs.call whose callee is a ctjs.create_closure result is provably that
-  # function without any global name at all, and rewriting those to
-  # ctjs.call_direct is the only path to a direct call inside a bundle. There
-  # are 21 such sites in bootstrap, 42 in p5 and 50 in phaser.
+  # THAT OTHER HALF OF known_callee() IS NOW TAKEN, and `direct` is no longer 0
+  # on any of them: --ctjs-resolve-globals rewrites a ctjs.call whose callee is
+  # a ctjs.create_closure result, which needs no global name and therefore no
+  # clause of the per-name census. Measured 2026-09-03: bootstrap 0 -> 21, p5
+  # 0 -> 41, phaser 0 -> 48, of 21 / 42 / 50 such sites (the shortfall is the
+  # arity and new.target guards, which are load-bearing).
+  #
+  # AND `claimed` DID NOT MOVE - 4, 37 and 43 before and after. Naming a callee
+  # is upstream of admission, not admission: the functions those calls reach are
+  # refused for their own reasons, which the census below prints. Said here
+  # because a floor that rises while the number it exists for does not is
+  # exactly the kind of green gate this file has been burned by.
+  #
+  # THE FOURTH FLOOR IS `lifted`, AND IT EXISTS BECAUSE THIS CHECK WAS BLIND.
+  # --ctnative-lower-to-emitc's closure lift ALSO makes ctjs.call_direct - 3 on
+  # bootstrap, 47 on p5, 3 on phaser - and always did. Counting only the
+  # resolver's stage is what let "not one ctjs.call_direct emitted anywhere" be
+  # written above about a pipeline that was emitting them.
   #
   # A zero floor still bites the day one of them earns a number: raising it is
   # then a visible act in the commit that earns it.
-  function(ctcompile_add_native_claims name js floor resolved direct)
+  function(ctcompile_add_native_claims name js floor resolved direct lifted)
     add_test(NAME ctcompile_native_claims_${name}
              COMMAND ${Python3_EXECUTABLE}
                      ${CTBROWSER_MONOREPO_ROOT}/tools/check/native-claims.py
@@ -1321,11 +1334,12 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
                      --json ${CMAKE_CURRENT_BINARY_DIR}/native-claims-${name}.json
                      --min-claimed ${floor}
                      --min-resolved ${resolved}
-                     --min-direct ${direct})
+                     --min-direct ${direct}
+                     --min-lifted-direct ${lifted})
   endfunction()
   # THE FIXTURE IS THE VACUITY CHECK: 9 of 9, so a run that reports nothing
   # claimed anywhere is not mistaken for a clean sheet.
-  ctcompile_add_native_claims(fixture "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.js" 9 8 16)
+  ctcompile_add_native_claims(fixture "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.js" 9 8 16 0)
   # TWO CLOSED PROGRAMS, ADDED BECAUSE THE FLOORS ABOVE ARE NOT ENOUGH.
   # differential.js and launcher.js are already compiled through the EmitC
   # backend by the blocks further up this file, so they cost nothing to fetch
@@ -1334,13 +1348,13 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   # and this fails, which is precisely what did NOT happen when two of them
   # were - the three vendor bundles were already at zero and had nothing left
   # to lose.
-  ctcompile_add_native_claims(differential "${CMAKE_CURRENT_SOURCE_DIR}/differential.js" 2 56 9)
-  ctcompile_add_native_claims(launcher "${CMAKE_CURRENT_SOURCE_DIR}/launcher.js" 0 9 9)
+  ctcompile_add_native_claims(differential "${CMAKE_CURRENT_SOURCE_DIR}/differential.js" 2 56 10 0)
+  ctcompile_add_native_claims(launcher "${CMAKE_CURRENT_SOURCE_DIR}/launcher.js" 0 9 9 0)
   ctcompile_add_native_claims(bootstrap
-    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 4 0 0)
-  ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 37 0 0)
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 4 0 21 3)
+  ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 37 0 41 47)
   ctcompile_add_native_claims(phaser
-    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 43 0 0)
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 43 0 48 3)
 
   # BOTH TEETH, PROVED. Each runs the same check as a child and passes only
   # when that child failed for the stated reason - not ctest's WILL_FAIL,
@@ -1643,12 +1657,15 @@ endif()
 # the top level, nine that make a closure, and ten closures. A change that
 # stops lifting one of them fails HERE even if the fixture above were deleted,
 # which is what --min-claimed is for. `resolved` and `direct` are the closed
-# world's own counters and the lift does not move them - it emits its
-# ctjs.call_direct inside --ctnative-lower-to-emitc, after
-# --ctjs-resolve-globals has already been counted.
+# world's own counters. THE LIFT'S OWN ctjs.call_direct ARE A FOURTH NUMBER,
+# `lifted`, because they are made inside --ctnative-lower-to-emitc and the
+# resolver's count cannot see them: reading one stage and reporting the total
+# is what made three vendor bundles read as 0 for a rewrite that was happening.
+# `direct` moved too, because --ctjs-resolve-globals now names a call whose
+# callee is a create_closure result - which these fixtures are full of.
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(closures
-                              "${CMAKE_CURRENT_SOURCE_DIR}/native-closure-fixture.js" 20 9 9)
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-closure-fixture.js" 20 9 23 17)
 endif()
 
 # ============================================================================
@@ -1680,12 +1697,15 @@ endif()
 # the top level, seven that build a method table, and eight methods. A change
 # that stops lifting one of them fails HERE even if the fixture above were
 # deleted, which is what --min-claimed is for. `resolved` and `direct` are the
-# closed world's own counters and the receiver lift does not move them - it
-# emits its ctjs.call_direct inside --ctnative-lower-to-emitc, after
-# --ctjs-resolve-globals has already been counted.
+# world's own counters. THE LIFT'S OWN ctjs.call_direct ARE A FOURTH NUMBER,
+# `lifted`, because they are made inside --ctnative-lower-to-emitc and the
+# resolver's count cannot see them: reading one stage and reporting the total
+# is what made three vendor bundles read as 0 for a rewrite that was happening.
+# `direct` moved too, because --ctjs-resolve-globals now names a call whose
+# callee is a create_closure result - which these fixtures are full of.
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(receivers
-                              "${CMAKE_CURRENT_SOURCE_DIR}/native-receiver-fixture.js" 16 7 8)
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-receiver-fixture.js" 16 7 8 10)
 endif()
 
 # ============================================================================
@@ -1737,11 +1757,14 @@ endif()
 # the top level, seven that build a literal, and seven callees - `both()` making
 # two. A change that stops lifting one of them fails HERE even if the fixture
 # above were deleted, which is what --min-claimed is for. `resolved` and
-# `direct` are the closed world's own counters and this lift does not move them:
-# it emits its ctjs.call_direct inside --ctnative-lower-to-emitc, after
-# --ctjs-resolve-globals has already been counted.
+# world's own counters. THE LIFT'S OWN ctjs.call_direct ARE A FOURTH NUMBER,
+# `lifted`, because they are made inside --ctnative-lower-to-emitc and the
+# resolver's count cannot see them: reading one stage and reporting the total
+# is what made three vendor bundles read as 0 for a rewrite that was happening.
+# `direct` moved too, because --ctjs-resolve-globals now names a call whose
+# callee is a create_closure result - which these fixtures are full of.
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(object_arguments
                               "${CMAKE_CURRENT_SOURCE_DIR}/native-object-argument-fixture.js"
-                              15 7 7)
+                              16 7 15 9)
 endif()

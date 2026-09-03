@@ -64,6 +64,11 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-surplus.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERSURPLUS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/self-write.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=SELFWRITE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/closed.js 2>/dev/null | ctjs-opt '--ctjs-resolve-globals=report=true' 2>&1 >/dev/null | FileCheck %s --check-prefix=REPORT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/closure-callee.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=IIFE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/closure-callee.js 2>/dev/null | ctjs-opt '--ctjs-resolve-globals=report=true' 2>&1 >/dev/null | FileCheck %s --check-prefix=IIFEREPORT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/closure-surplus.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=CLOSURESURPLUS
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/closure-arguments.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=CLOSUREARGS
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/name-arguments.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=NAMEARGS
 
 // --- THE POSITIVE CASE: the MVP program ---------------------------------------
 //
@@ -483,6 +488,60 @@
 // this line to put a floor under the closed world on the real corpora.
 //
 // REPORT: resolved 2 global(s), rewrote 3 call(s), closed 2 function(s) over 5 name(s)
+// AND THE SECOND SHAPE'S COUNTER IS ITS OWN, which this program earns nothing
+// of: every call in it goes through a global name.
+// REPORT-SAME: named 0 closure call(s)
+
+// --- THE SECOND SHAPE: A CALL WHOSE CALLEE IS THE CLOSURE ---------------------
+//
+// NO GLOBAL NAME IS INVOLVED, WHICH IS THE WHOLE POINT. Clauses 1-3 need a name
+// bound once in the hoisting prologue, and a vendor bundle binds no globals at
+// all - each hands a factory's result to one property of the window - so
+// `resolved` is 0 on bootstrap, p5 and phaser before any other clause is asked.
+// A ctjs.create_closure result names its function index outright, so calling it
+// enters that function whatever the globals table does. Measured on the corpora
+// the day this landed: bootstrap 0 -> 21 ctjs.call_direct, p5 0 -> 41, phaser
+// 0 -> 48.
+//
+// THE OPERANDS ARE THE ENTRY BLOCK IN ORDER: receiver, new.target, the closure
+// VALUE (kept - the boxed tier dispatches on it), then the two arguments.
+//
+// IIFE-LABEL: ctjs.func @_script_$0(
+// IIFE: %[[FN:.*]] = ctjs.create_closure
+// IIFE-NOT: ctjs.call %
+// IIFE: ctjs.call_direct @fn$1(%{{.*}}, %{{.*}}, %[[FN]], %{{.*}}, %{{.*}})
+// IIFE-NOT: ctjs.call %
+// IIFEREPORT: named 1 closure call(s)
+
+// A SURPLUS IS REFUSED, and it has to be refused HERE rather than left to fail:
+// CallDirectOp::verifySymbolUses holds the operand count equal to the entry
+// block's, so emitting one would be a hard verifier error and not a wrong
+// answer. Three arguments, two parameters - the call stays a ctjs.call.
+//
+// CLOSURESURPLUS-LABEL: ctjs.func @_script_$0(
+// CLOSURESURPLUS: ctjs.call %
+// CLOSURESURPLUS-NOT: ctjs.call_direct
+
+// AND A SHORT CALL INTO A BODY THAT READS ITS RAW ARGUMENT WINDOW. The pad this
+// rewrite adds is what VM_CASE(call) does to the callee's REGISTERS and NOT
+// what op::call does to `arguments`: make_arguments_object copies the raw
+// window, whose length is argc. `(function (a, b) { return arguments.length;
+// })(1)` is 1 in the VM, and the boxed tier parks getArgs() as that window - so
+// padding this site would make it 2.
+//
+// CLOSUREARGS-LABEL: ctjs.func @_script_$0(
+// CLOSUREARGS: ctjs.call %
+// CLOSUREARGS-NOT: ctjs.call_direct
+
+// THE SAME HOLE ON THE PER-NAME PATH, WHICH HAD NO SUCH CLAUSE AT ALL. `two` is
+// bound once in the prologue to one closure and passes clauses 1-6; the call is
+// short and the body reads `arguments`, so it is now left alone. Before this
+// clause the pass rewrote it and `arguments.length` came out 2.
+//
+// NAMEARGS: {name = "two", reason = "open: a call passes 1 argument(s) to 2 parameter(s) and the callee reads its raw argument window, which the pad would lengthen ({{[^)]*}}); 0 call(s) rewritten"
+// NAMEARGS-LABEL: ctjs.func @_script_$0(
+// NAMEARGS: ctjs.call %
+// NAMEARGS-NOT: ctjs.call_direct
 
 //--- closed.js
 function add(a, b) { return a + b; }
@@ -674,3 +733,29 @@ function add(a, b) { return a + b; }
 // was missing. `(function (global_scope) { ... }(self))` is testharness.js.
 self.injected = 1;
 var z = add(1, 2);
+
+//--- closure-callee.js
+// THE SECOND SHAPE, AND THE ONLY ONE A VENDOR BUNDLE HAS. No global name is
+// involved at all: the callee is the closure two tokens back, which names its
+// function index outright. This is what a UMD header is.
+var out = (function (a, b) { return a + b; })(1, 2);
+
+//--- closure-surplus.js
+// Two parameters, three arguments. CallDirectOp::verifySymbolUses holds the
+// operand count equal to the entry block's, so the surplus cannot be dropped
+// and cannot be passed - it is refused here rather than failing the verifier.
+var out = (function (a, b) { return a + b; })(1, 2, 3);
+
+//--- closure-arguments.js
+// A SHORT call into a body that reads its raw argument window. The pad the
+// rewrite would add is invisible to registers and VISIBLE to `arguments`:
+// op::call fills registers with undefined but make_arguments_object copies the
+// raw window, whose length is argc. Padding this would make `arguments.length`
+// 2 where the VM says 1.
+var out = (function (a, b) { return arguments.length; })(1);
+
+//--- name-arguments.js
+// THE SAME HOLE ON THE PER-NAME PATH, which had no such clause at all. `two(1)`
+// is one argument to two parameters, and `two` reads its raw window.
+function two(a, b) { return arguments.length; }
+var out = two(1);
