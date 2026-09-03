@@ -225,8 +225,36 @@ private:
         bool repeating = false;
         bool cancelled = false;
     };
+    // WHICH EVENT TARGET A LISTENER IS ON. Two of the three are not nodes, and
+    // they used to share one bucket - `target` empty meant "the document or the
+    // window, we cannot tell". That was harmless while an event carried no
+    // `currentTarget`, and wrong the moment it did: a page that listens on both
+    // saw the same object reported for each, and `removeEventListener` on one
+    // could take the other's listener away.
+    enum class listen_on : std::uint8_t {
+        node,     // an element; `target` names it
+        document, // document.addEventListener
+        window,   // window.addEventListener, and the bare global spelling
+        // `new EventTarget()`, and anything that inherits from one. It has no
+        // node and no place in the tree, so it is identified by the OBJECT -
+        // `host` below - and its path is itself and nothing else.
+        object
+    };
+
+    // One stop on the path an event travels. A node, one of the two event
+    // targets that have no node, or a standalone EventTarget.
+    struct path_step {
+        node_id node;                    // empty unless `on` is `node`
+        listen_on on = listen_on::node;  // which kind of target this is
+        value host = value::undefined(); // set only when `on` is `object`
+    };
+
     struct listener {
-        node_id target; // empty = document/window
+        node_id target; // set only when `on` is `node`
+        listen_on on = listen_on::node;
+        // The standalone EventTarget this listener is on, when `on` is `object`.
+        // A GC root: nothing else may be holding it while a listener is.
+        value host = value::undefined();
         std::string type;
         value callback;
         // The AbortSignal this listener was registered with, if any. Aborting
@@ -303,7 +331,18 @@ private:
     // One reading of addEventListener's third argument, shared by the element,
     // document and window registrations - three copies is three chances for
     // `once` to work on one of them and not the others.
-    [[nodiscard]] listener make_listener(context & cx, node_id target, std::span<value> args);
+    [[nodiscard]] listener make_listener(context & cx, path_step target, std::span<value> args);
+    // Register one, UNLESS AN EQUAL ONE IS ALREADY THERE. The DOM defines a
+    // listener's identity as (type, callback, capture) on one target and says a
+    // second addEventListener with all three the same does nothing - which is
+    // what a page relies on when it registers defensively in a function it calls
+    // more than once. Every addEventListener goes through here so the rule holds
+    // for elements, the document, the window and a standalone EventTarget alike.
+    void add_listener(listener made);
+    // Drop the listeners a `once` fired, but ONLY when no dispatch is running:
+    // erasing from the vector a dispatch is indexing is how the listener after
+    // the removed one gets skipped, and a listener may dispatch another event.
+    void reap_spent_listeners();
     // `innerHTML`. Setting one PARSES: the markup becomes real nodes under the
     // element, replacing whatever was there. It used to be a plain property on
     // the wrapper, so assigning markup stored a string, rendered nothing, and
@@ -314,6 +353,26 @@ private:
     // The scratch document a fragment is parsed into shares this atom table, so
     // a tag or attribute name needs no remapping.
     node_id copy_subtree(const read_txn & from, node_id node, node_id parent);
+    // `cloneNode(deep)`: a DETACHED copy, which is what makes it different from
+    // copy_subtree above - that one exists to move a parsed fragment into this
+    // document and needs somewhere to put it.
+    node_id clone_node(const read_txn & from, node_id source, bool deep);
+    // Insert `child` into `parent`, before `before` or at the end when `before`
+    // is empty, FLATTENING a DocumentFragment: inserting one moves its children
+    // and leaves the fragment itself empty and parentless. Every insertion
+    // method goes through here, because a fragment is legal at every one of them
+    // and handling it at four call sites is three chances to forget.
+    bool insert_node(node_id parent, node_id child, node_id before);
+    // One argument of append/prepend/before/after/replaceWith, as a node. A
+    // wrapper resolves to its node; ANYTHING ELSE becomes a Text node, which is
+    // what makes `el.append("hello")` work and is the whole reason those methods
+    // are nicer than appendChild.
+    [[nodiscard]] node_id node_from(context & cx, value v);
+    // THE EXACT NAMESPACE OF AN ELEMENT, as a string. Derived from `element_ns`
+    // for everything the parser built - there are only two answers there - and
+    // read from `namespaces_` for an element `createElementNS` put in some other
+    // one. Empty means the null namespace, which reports as `null`.
+    [[nodiscard]] std::string namespace_of(node_id id) const;
     [[nodiscard]] std::string text_content(node_id target) const;
     void write_location_parts(context & cx, script::object_object & loc);
     // `element.style` and `element.classList` - the two views onto an element
@@ -614,15 +673,33 @@ private:
     // --- events -----------------------------------------------------------
 
     [[nodiscard]] value make_event(context & cx, std::string_view type, node_id target);
+    // The shared Event builder: everything `new Event`, `document.createEvent`
+    // and the engine's own input events have in common. `bubbles` and
+    // `cancelable` are the two flags that change what dispatch does.
+    [[nodiscard]] value make_event_object(context & cx, std::string_view type, bool bubbles,
+                                          bool cancelable);
+    // `Event`, `CustomEvent` and `EventTarget` as globals, and the prototype an
+    // event object is linked to so `instanceof` and the phase constants work.
+    void install_event_interfaces(context & cx);
+    // THE DISPATCH ALGORITHM, over a path rather than over a node chain. See the
+    // definition: capture from the window down, then bubble back up, with
+    // `currentTarget` and `eventPhase` set for each step and the propagation
+    // flags checked between them. Returns whether a listener cancelled it.
+    bool dispatch_to(value event, path_step at);
+    // Where an event aimed at `at` travels: the node and its ancestors, then the
+    // document, then the window - innermost first.
+    [[nodiscard]] std::vector<path_step> propagation_path(path_step at) const;
+    // The JavaScript object for one step, which is what `currentTarget` reports
+    // and what an `on<type>` handler property is looked up on.
+    [[nodiscard]] value object_of_step(context & cx, path_step step);
 
     [[nodiscard]] static bool prevented(value event);
 
-    void fire_at(node_id target, std::string_view type, value event, bool capturing);
+    void fire_at(path_step step, std::string_view type, value event, bool capturing);
 
     // `onclick`, `onload` - the handler PROPERTY, run after the listeners.
     void fire_handler_property(value target, std::string_view type, value event);
     [[nodiscard]] value value_of_wrapper(node_id id) const;
-    void fire_global(std::string_view type, value event, bool capturing);
 
     // --- lookups ----------------------------------------------------------
 
@@ -631,6 +708,32 @@ private:
     [[nodiscard]] node_id find_by_tag(std::string_view tag);
     // Every element with this tag, in document order; "*" means all of them.
     [[nodiscard]] std::vector<node_id> all_by_tag(std::string_view tag);
+    // Every element below `root` whose class attribute holds every one of
+    // `tokens`, in document order. An EMPTY `root` means the whole document and
+    // includes the document's own root element - which is `<html>` here, this
+    // tree builder having no Document node above it. A given `root` is an
+    // element and is excluded, a search being over descendants. An empty
+    // `tokens` matches nothing, which is what the ordered set parser leaves
+    // behind for an all-whitespace argument and what the DOM says the answer is.
+    [[nodiscard]] std::vector<node_id> all_by_class(node_id root,
+                                                    const std::vector<std::string> & tokens);
+    // Every HTML element in the document whose `name` attribute is exactly
+    // `name`, in document order. HTML only: `document.getElementsByName` is an
+    // HTML method and an SVG element carrying `name=` is not one of its answers.
+    [[nodiscard]] std::vector<node_id> all_by_name(std::string_view name);
+    // The DOM's ORDERED SET PARSER: split on ASCII whitespace - space, tab, LF,
+    // FF and CR, all five - and drop duplicates. `split` above splits on spaces
+    // alone, which is right for nothing in particular and wrong for a class
+    // attribute written across two lines.
+    [[nodiscard]] static std::vector<std::string> ordered_set(std::string_view text);
+    // A COLLECTION THAT IS LIVE, which is the whole difficulty. `getElementsBy*`
+    // returns a view of the document rather than a snapshot of it: a page takes
+    // the collection, appends an element, and reads `length` again expecting the
+    // new number. An array cannot answer that, so this is a Proxy whose `get`
+    // and `has` traps re-run `members` on every read - the same mechanism the
+    // `window` proxy already uses, and the reason a second one is cheap.
+    [[nodiscard]] value make_live_collection(context & cx,
+                                             std::function<std::vector<node_id>()> members);
     // Compound selectors only - see the definition.
     [[nodiscard]] std::vector<node_id> query(std::string_view selector, node_id within = node_id{});
     // The document's own live properties - title and activeElement.
@@ -650,9 +753,18 @@ private:
         std::string value;
         bool checked = false;
     };
+    // WHERE AN ARBITRARY NAMESPACE URI LIVES. `node` carries a three-valued
+    // `node_ns` and not a URI, for the size reason written down beside the
+    // enumerator; the handful of elements a page creates with createElementNS in
+    // a namespace that is neither HTML nor SVG keep their URI here, keyed the
+    // same way a wrapper is.
+    flat_map<std::uint64_t, std::string> namespaces_;
     flat_map<std::uint64_t, script::object_object *> wrappers_;
     flat_map<std::uint64_t, property_mirror> mirrors_;
     bool wrote_to_control_ = false;
+    // How many dispatches are on the stack. A listener may dispatch, and the
+    // inner dispatch must not compact the listener list the outer one is walking.
+    std::size_t dispatch_depth_ = 0;
     // What the browser last told us has focus, for document.activeElement.
     node_id focused_;
     std::string location_href_;
@@ -686,6 +798,15 @@ private:
     // that prototype linked. See interface_prototype().
     value canvas_element_prototype_;
     value image_element_prototype_;
+    // `Event.prototype` and `CustomEvent.prototype`. Every event object this
+    // engine makes is linked to one, which is what carries `e.constructor`,
+    // `e instanceof Event` and the four phase constants a page reads as
+    // `e.AT_TARGET` rather than as `Event.AT_TARGET`.
+    value event_prototype_;
+    value custom_event_prototype_;
+    // `EventTarget.prototype`, where the three methods a standalone target
+    // inherits live.
+    value event_target_prototype_;
     value canvas2d_prototype_;
     value webgl_prototype_;
     // A SEPARATE INTERFACE, not a subclass. `WebGL2RenderingContext` does not

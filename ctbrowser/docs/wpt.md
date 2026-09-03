@@ -14,80 +14,106 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
-## The baseline — 2026-09-02
+## The baseline — 2026-09-03
 
-**1,632 tests, 223.6 s, four workers, and not one crash.** Measured on the
+**1,632 tests, 275.6 s, four workers, and still not one crash.** Measured on the
 devbox against WPT `3f6b09ae`, engine at this branch.
 
 | suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `dom/nodes` | 14 | 215 | 29 | 0 | 51 | 53 | 362 |
-| `dom/events` | 6 | 62 | 10 | 0 | 13 | 85 | 176 |
-| `html/dom` | 11 | 135 | 7 | 0 | 74 | 138 | 365 |
-| `css/cssom` | 8 | 148 | 15 | 0 | 21 | 29 | 221 |
-| `css/css-values` | 13 | 128 | 2 | 0 | 128 | 237 | 508 |
-| **total** | **52** | **688** | **63** | **0** | **287** | **542** | **1,632** |
+| `dom/nodes` | 42 | 199 | 32 | 0 | 36 | 53 | 362 |
+| `dom/events` | 24 | 45 | 11 | 0 | 11 | 85 | 176 |
+| `html/dom` | 27 | 126 | 19 | 0 | 55 | 138 | 365 |
+| `css/cssom` | 10 | 145 | 17 | 0 | 20 | 29 | 221 |
+| `css/css-values` | 16 | 213 | 3 | 0 | 39 | 237 | 508 |
+| **total** | **119** | **728** | **82** | **0** | **161** | **542** | **1,632** |
 
-Subtests, which are the finer measure: **632 PASS, 6,336 FAIL, 725 NOTRUN,
-89 TIMEOUT.**
+Subtests: **2,262 PASS, 16,331 FAIL, 746 NOTRUN, 92 TIMEOUT.**
 
-**The engine is a long way from passing WPT, and the numbers say so plainly:**
-52 of 1,090 tests that ran, which is 4.8%. That is the honest starting point.
-Nothing here is tuned to look better than it is — every skip names a missing
-feature, and the 287 harness errors are counted as failures rather than
-excluded.
+**119 of 1,090 tests that ran, which is 10.9%.** The first measurement, one day
+earlier, was 52 of 1,090 — 4.8%. What moved it is in the next section and every
+number in it was measured rather than estimated.
 
-**Zero crashes in 1,090 executed tests** is the one number that is genuinely
-good, and it is worth stating because it was the thing most likely to be bad:
-the engine is being fed thousands of pages written to break browsers, under a
-4 GB `ulimit -v`, and it did not once segfault, abort, or exhaust the cap.
+**Zero crashes** again, now over a much larger executed surface: the suites run
+thousands of pages written to break browsers under a 4 GB `ulimit -v`, and the
+engine has never once segfaulted, aborted or exhausted the cap.
 
-### What is actually failing
+### The previous baseline, 2026-09-02, for comparison
 
-The failures are dominated by **missing DOM API surface**, not by wrong answers.
-The top causes across all five suites:
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP |
+|---|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 14 | 215 | 29 | 0 | 51 | 53 |
+| `dom/events` | 6 | 62 | 10 | 0 | 13 | 85 |
+| `html/dom` | 11 | 135 | 7 | 0 | 74 | 138 |
+| `css/cssom` | 8 | 148 | 15 | 0 | 21 | 29 |
+| `css/css-values` | 13 | 128 | 2 | 0 | 128 | 237 |
+| **total** | **52** | **688** | **63** | **0** | **287** | **542** |
+
+**Two of the columns are not comparable across the two tables, and saying which
+is the point of keeping both.**
+
+- **`css/css-values` moved for a reason that is not the engine.** `css/support/`
+  was not in the sparse checkout on 2026-09-02, so 94 of that suite's 128
+  harness errors were one missing helper file each. It is fetched now, which
+  converted 84 of them into real failures and three into passes with the engine
+  UNCHANGED between the two runs. FAIL going up by 84 is the instrument working.
+- **HARNESS_ERROR falling and TIMEOUT rising is mostly the same story.** A test
+  that used to die on the first missing function now runs. `html/dom`'s eight
+  `reflection-*.html` files each run thousands of subtests and run out of clock;
+  three `NodeList-static-length-getter-tampered` files reach far enough to hang.
+  Both were failing before and are failing now, differently and more usefully.
+
+### What moved, and what it cost
+
+Measured one API at a time, each with its own commit and its own before/after:
+
+| change | measured effect |
+|---|---|
+| `getElementsByClassName`, `getElementsByName` — **live** collections through a Proxy | `dom/nodes` 14 → 38, `html/dom` 11 → 26. **39 files** FAIL → PASS |
+| the event **path**: `createEvent`, `dispatchEvent`, `currentTarget`, `eventPhase`, the propagation flags, `Event`/`CustomEvent` | `dom/events` 6 → 19 PASS, subtests 28 → 139 |
+| `new EventTarget()`, and the duplicate-listener rule | `dom/events` 19 → 23 |
+| fragments, comments, `append`/`prepend`/`before`/`after`/`replaceWith`, `cloneNode` | `dom/nodes` 38 → 41, twelve files converted from HARNESS_ERROR to a measurement |
+| `document.implementation` + `hasFeature` | one file, **136 assertions**, FAIL → PASS |
+| `createElementNS` and the namespace an element remembers | `dom/nodes` subtests 340 → 486; no new file passes |
+
+### What is actually failing now
 
 | count | cause |
 |---:|---|
-| 1,009 | `assert_equals: expected (string) … but got (undefined) undefined` |
-| 229 | `assert_equals: expected … but got …` |
-| 194 | `assert_approx_equals` — numeric, mostly `css/css-values` |
-| 170 | `background-position` raw inline style declaration |
-| 163 | `assert_true: expected true got false` |
-| 144 | `createElementNS` is not a function |
-| 136 | `apply` is not a function, from `hasFeature` |
-| 133 | `getElementsByClassName` is not a function |
-| 123 | `createHTMLDocument` is not a function |
-| 113 | `createProcessingInstruction` is not a function |
-| 110 | `assert_throws_dom` on `createElementNS` |
-| 101 | `dispatchEvent` is not a function |
+| 121 | `assert_equals: expected (string) … but got (undefined)` — mostly CSS values |
+| 85 | `assert_equals: expected … but got …` — wrong answers, not missing ones |
+| 50 | `assert_true: expected true got false` |
+| 39 | `document.write`, from `generateParserDelay` |
+| 32 | `assert_false: expected false got true` |
+| 27 | `createHTMLDocument` |
+| 19 | `assert_array_equals: value is …, expected array` — see below |
+| 18 | `new MutationObserver` |
+| 17 | `createDocument` |
+| 14 | `attachShadow` |
+| 14 | `setProperty` on a Web Animations keyframe |
+| 11 | `new CSSStyleSheet` |
+| 10 | `setAttributeNS` |
 
-and the harness errors, which are whole files lost to one missing name:
+**Three of these are worth naming precisely, because each is one defect standing
+in front of many tests:**
 
-| count | cause |
-|---:|---|
-| 38 | `document.write` is not a function (`generateParserDelay`) |
-| 18 | `test_specified_serialization` — the `css/support` helper it needs |
-| 12 | a parse error in the test's own JavaScript |
-| 12, 11, 9, 9, 9 | `test_math_used`, `test_valid_value`, `test_computed_value`, `test_interpolation`, `test_invalid_value` — all the same shape |
-| 7 | `new MutationObserver` |
-| 6 | `customElements.define` |
-
-**Read together these say one thing:** the constructible-DOM surface is the gap.
-`document.createElementNS`, `createComment`, `createProcessingInstruction`,
-`createHTMLDocument`, `getElementsByClassName`, `getElementsByName`,
-`dispatchEvent`, `new Event`/`new MouseEvent`/`new EventTarget`,
-`MutationObserver`, `customElements` and `document.write` are each worth many
-tests, and several are worth a whole directory. The engine builds its DOM from
-parsed HTML and exposes very little of the API a script uses to build one
-itself — which is exactly the half a conformance suite exercises hardest.
-
-The `css/css-values` harness errors are a different and cheaper story: 94 of
-them are one missing helper file each (`test_valid_value` and friends live in
-`css/support/`, which is not in the sparse checkout). Fetching `css/support/`
-would convert most of those from HARNESS_ERROR into real measurements. It is
-left out of this baseline deliberately so the number is not quietly improved
-between the measurement and the table.
+- **`"length" in []` is FALSE in this engine** while `[].hasOwnProperty("length")`
+  is true — measured through `ctdrive`, not inferred. `context::has_property` in
+  `lib/Script/vm/objects.cpp` parses an array key as an index and never answers
+  `"length"`. `assert_array_equals` opens with `"length" in actual`, so **every
+  comparison against an array a page built fails before it compares anything**.
+  It is the sole remaining cause in eleven `dom/events` files and in eight more
+  elsewhere.
+- **A native cannot throw a DOMException.** `assert_throws_dom` requires the
+  thrown object's `code` and `name` AND `e.constructor === DOMException`. The
+  only way to throw from a native here is `context::throw_error(kind, message)`,
+  which builds an Error with the right `name`, no `code`, and Error.prototype.
+  A `throw_value(value)` on the context would make `createElementNS`'s 110
+  throwing assertions, `createProcessingInstruction`'s eight and every other
+  `assert_throws_dom` reachable.
+- **`createHTMLDocument` and `createDocument` need a SECOND Document**, which
+  the bindings cannot hold: there is one `document *` and every element wrapper
+  is keyed on a node id that means nothing against any other. 27 files.
 
 ### Skips, all 542 of them
 
@@ -112,7 +138,7 @@ Fetched by `tools/wpt/fetch-wpt.sh` into `~/.cache/wpt` (`$WPT_DIR` overrides),
 |---|---|
 | pin | `3f6b09ae3ed55280074645ce38e9002f52fc60a8` |
 | where | `~/.cache/wpt`, outside the source tree |
-| size | ~41 MB, 2,400 files on disk out of WPT's 162,834 |
+| size | ~47 MB, 2,465 files on disk out of WPT's 162,834 |
 | verify | `tools/wpt/fetch-wpt.sh --verify` — checks the SHA *and* that the sparse patterns matched something |
 
 Vendoring it was never on the table: WPT is ~1.5 million files, it changes every
@@ -120,6 +146,16 @@ day, and what has to be reproducible is the **commit**, not a copy of the bytes.
 `~/.cache` rather than `build/` because a reconfigure wipes the build tree and
 re-downloading a corpus because somebody deleted a `CMakeCache.txt` is a bad
 trade.
+
+**THE CHECKOUT IS SHARED, on the devbox.** One `~/.cache/wpt` serves every agent
+and every worktree on that machine, and it is not covered by the per-directory
+isolation that keeps two builds apart. On 2026-09-03 one agent added
+`/css/support/` to it and another agent's next measurement moved by 87 files in
+a suite its change could not have touched. **If a number moves in a suite the
+change cannot explain, check `.git/info/sparse-checkout` and its mtime before
+believing the engine did it** — that is what identified this one. The fetch list
+in `fetch-wpt.sh` and the expectations file are kept in step deliberately so a
+fresh checkout and a shared one agree.
 
 `--verify` checks two things and the second is the one that matters: a sparse
 checkout whose patterns matched nothing leaves a directory that exists, has the
@@ -143,6 +179,7 @@ finding.
 | `html/dom/` | reflection: does `el.id = "x"` change the attribute, and back |
 | `css/cssom/` | `getComputedStyle` and the style declaration objects, which `lib/Shell/bindings/computed_style.cpp` answers and `tools/check/css-parity.py` already measures against Chrome a different way |
 | `css/css-values/` | value parsing and computation — `calc()`, lengths, units — against the CSS Syntax Level 3 front end in `lib/Style/css/` |
+| `css/support/` | the helpers the two `css/` suites import. **Not optional either**: `test_valid_value`, `test_computed_value`, `test_math_used`, `test_interpolation` and `test_specified_serialization` all live here, and a test that cannot load one reports HARNESS_ERROR without running a subtest. Adding it on 2026-09-03 converted 87 harness errors into real measurements |
 
 **Left out on purpose**, and each for a reason rather than a score: everything
 needing a network origin (`fetch/`, `xhr/`, `service-workers/` — the runner has
@@ -222,6 +259,34 @@ FAILURE MESSAGES were gibberish.
 | `window.parent` was undefined | there are no iframes, so nothing had ever needed the browsing-context chain | testharness walks `[self … top, opener]` to broadcast state. With `parent` undefined the walk ran one step past the end and called `postMessage` on `undefined` — **inside a completion callback**, and `notify_complete` runs those in a bare `forEach` with no try/catch, so the throw killed every later callback including the one that reports results. Every test that ran perfectly reported nothing and was recorded as a TIMEOUT. `parent`/`top` are now this window and `opener` is null, which is what the spec says a top-level browsing context reports |
 | a thrown script left the VM refusing to run | `run()` leaves `failed_` set, and every C++ entry into JavaScript declines while it is | so dispatching the new `error` event ran **no listener at all**, reported the original error a second time as a "callback fault", and left the page believing nothing had gone wrong. The harness then finished normally and **a page that threw during load was reported as a PASS** — the single worst answer this instrument can give. The fault is now taken before the event is dispatched: `script_error_` already holds the text, and the page cannot be handed anything while the VM is refusing to run its code |
 | `\uXXXX` and `\xHH` in a regex were not decoded | `rx_escape_char` fell through to "the char itself", so `\u` was the letter `u` and the four hex digits became four more class members. `[\udc00-\udfff]` parsed as `{u,d,c,0,f}` plus the **range `'0'`–`'u'`** | which matches most of ASCII, silently. testharness sanitises every test **name** and every assertion **message** through `str.replace(/([\ud800-\udbff]+)…/g, …)`, so that bogus range hit nearly every character of every string the harness had to say: 2,343 failing subtests in `dom/nodes` came back with their names rewritten into runs of `U+61U+73U+73…`. A corpus-wide corruption of the **results**, from one escape. Now decoded; above `0xFF` the byte-based matcher refuses the pattern rather than approximating it, which makes the sanitiser the no-op it should always have been |
+
+### And six more, found in the second pass
+
+The gaps above stopped the corpus running at all. These were found by reading
+what it then said, one API at a time — each is measured in the table further up,
+and each has a commit of its own.
+
+| | what was wrong | what it looked like |
+|---|---|---|
+| `getElementsByClassName` did not exist | neither did `getElementsByName`, `removeAttribute`, `hasAttribute`, `nodeName`, `nodeType` or `localName` | 39 test files, and it was the largest single cause in the first baseline. The hard half was not the search but the COLLECTION: `getElementsBy*` returns a live view, and five of the suite's own tests take one, mutate the document and read it again |
+| the document and the window were ONE listener bucket | `listener::target` empty meant "one of the two, we cannot tell" | invisible until an event carried `currentTarget`, and then both reported the same object. `removeEventListener` on one could take the other's listener away |
+| dispatch had no path, no phase and no flags | it fired the global bucket, walked the ancestors, and fired the global bucket again | `currentTarget` and `eventPhase` read `undefined`, `stopPropagation` was a no-op, and nothing a page CONSTRUCTED could be dispatched at all — `document.createEvent` and `dispatchEvent` did not exist |
+| a `once` listener was reaped during a NESTED dispatch | the compaction ran at the end of every dispatch, including one started inside a listener | it shifts the vector the outer dispatch is indexing, so the listener after the removed one is skipped. Reproduced by `AddEventListenerOptions-once.any.js`, whose second case dispatches from inside a `once` listener that re-registers itself |
+| a listener registered twice was registered twice | the DOM says (type, callback, capture) on one target is a listener's IDENTITY | a page that registers defensively in a function it calls twice got two calls per event, and a `once` listener registered twice fired twice |
+| `document.implementation` did not exist | so `hasFeature` did not, and the test's `.apply(...)` on `undefined` did not either | 136 assertions in one file, reported as "`apply` is not a function" — a message about a method nobody was missing, forty lines from the cause |
+
+### And two that are NOT fixed, both outside the DOM
+
+Named here because each stands in front of many tests and neither is a DOM gap:
+
+- **`"length" in []` is false.** `context::has_property` parses an array key as
+  an index and never answers `"length"`, while `hasOwnProperty("length")`
+  answers true — measured through `ctdrive`. `assert_array_equals` opens with
+  exactly that test, so no comparison against a page-built array can pass.
+- **A native cannot throw a DOMException.** `context::throw_error(kind, message)`
+  is the only way to throw from one, and it builds an Error: right `name`, no
+  `code`, `constructor === Error`. `assert_throws_dom` checks all three.
+
 
 ## Running it
 
@@ -356,20 +421,30 @@ never reads them off a table.
     throws-on-load.html         HARNESS_ERROR  HARNESS_ERROR   0                ok
     no-harness.html             HARNESS_ERROR  HARNESS_ERROR   0                ok
 
-**All five reported the outcome they must**, measured 2026-09-02. Three of them
-did not, the first time they were run, and each miss was a real engine defect —
-see the table above.
+**All five reported the outcome they must**, measured 2026-09-02 and again on
+2026-09-03 after six DOM changes. Three of them did not, the first time they
+were run, and each miss was a real engine defect — see the table above.
 
 ### And the gate itself, proved both ways
 
-A gate nobody has watched fail is not a gate. Measured on the same day, on the
-`--gate` subset (48 files, **10.5 s**):
+A gate nobody has watched fail is not a gate. Re-proved on 2026-09-03 against
+the current expectations file, on the `--gate` subset:
 
 | what was done to `expectations.txt` | gate says | exit |
 |---|---|---:|
 | nothing | `matches expectations.txt exactly` | 0 |
-| deleted the line for a test that fails | `1 UNEXPECTED FAILURE(S): + dom/events/Event-constants.html HARNESS_ERROR` | 1 |
-| added a `FAIL` line for a test that passes | `1 UNEXPECTED PASS(ES): - dom/events/Event-dispatch-throwing-multiple-globals.html FAIL` | 1 |
+| deleted one SUBTEST line of a test that fails | `+ dom/events/Event-dispatch-click.html SUBTEST FAIL "basic with click()"` | 1 |
+| added a `FAIL` line for a test that passes | `1 UNEXPECTED PASS(ES): - dom/events/Event-type.html FAIL` | 1 |
+| restored | `matches expectations.txt exactly` | 0 |
+
+**A line that names a test outside the `--gate` subset proves nothing**, which
+the first attempt at this found: deleting
+`dom/events/AddEventListenerOptions-passive.any.js FAIL` left the gate green,
+because `--check` and `--gate` scope the comparison to the tests the run
+actually ran. That is the documented behaviour and it is what lets one file
+serve both the two-minute gate and a full-suite sweep — but it means a
+falsification has to pick a line the gate will actually visit, or it silently
+asserts nothing.
 
 
 `tools/wpt/selftest/README.md` says what each one is for. The two that matter

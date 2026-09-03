@@ -283,6 +283,357 @@ void test_tree_navigation() {
     check(log[4] == "self=1", "remove() takes an element out itself: " + log[4]);
 }
 
+// getElementsByClassName and getElementsByName, and the property that makes
+// them hard: they are LIVE. A page takes the collection, mutates the document
+// and reads the collection AGAIN, expecting the new answer - which a snapshot
+// array cannot give, and which is what five of web-platform-tests' own
+// getElementsByClassName tests do. Asserted here rather than only there because
+// WPT is opt-in, needs a 40 MB corpus, and takes four minutes.
+void test_element_collections_are_live() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html class="a"><body class="a">
+      <p id=p1 class="x  y"></p><input id=i1 name=q><script>
+        const all = document.getElementsByClassName('a');
+        console.log('n=' + all.length + ',' + all[0].tagName + ',' + all[1].tagName);
+        // THE ORDERED SET PARSER: split on all five ASCII whitespace
+        // characters, a repeat asks for the class once, an all-whitespace
+        // argument matches nothing, and the match is case-SENSITIVE.
+        console.log('tokens=' + document.getElementsByClassName('\ty\n x\r').length +
+                    ',' + document.getElementsByClassName('x x').length +
+                    ',' + document.getElementsByClassName('   ').length +
+                    ',' + document.getElementsByClassName('X').length);
+        const made = document.createElement('span');
+        made.className = 'a';
+        document.body.appendChild(made);
+        console.log('grew=' + all.length);
+        document.body.removeAttribute('class');
+        console.log('shrank=' + all.length);
+        // What assert_array_equals checks before it compares one element.
+        console.log('own=' + all.hasOwnProperty(0) + ',' + all.hasOwnProperty(9) +
+                    ',' + ('length' in all) + ',' + (typeof all));
+        // Scoped to a subtree, and the element is never one of its own results.
+        console.log('scoped=' + document.body.getElementsByClassName('a').length);
+        // getElementsByName is keyed on the name ATTRIBUTE, never on id.
+        console.log('named=' + document.getElementsByName('q').length +
+                    ',' + document.getElementsByName('i1').length +
+                    ',' + document.getElementsByName('q')[0].id);
+        console.log('nodes=' + made.nodeName + ',' + made.nodeType + ',' + made.localName);
+        console.log('attr=' + document.getElementById('p1').hasAttribute('class') +
+                    ',' + document.body.hasAttribute('class'));
+      </script></body></html>)");
+    check(page.script_error().empty(), "the collection script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() == 9, "every line was logged");
+    check(log[0] == "n=2,HTML,BODY", "document order, elements only: " + log[0]);
+    check(log[1] == "tokens=1,1,0,0", "the ordered set parser: " + log[1]);
+    check(log[2] == "grew=3", "an appended element joins the collection: " + log[2]);
+    check(log[3] == "shrank=2", "a removed class leaves it: " + log[3]);
+    check(log[4] == "own=true,false,true,object", "the collection is array-shaped: " + log[4]);
+    check(log[5] == "scoped=1", "an element's search is its descendants: " + log[5]);
+    check(log[6] == "named=1,0,i1", "getElementsByName reads `name`: " + log[6]);
+    check(log[7] == "nodes=SPAN,1,span", "nodeName, nodeType and localName: " + log[7]);
+    check(log[8] == "attr=true,false", "hasAttribute after removeAttribute: " + log[8]);
+}
+
+// An event travelling its whole path, which is the part that was missing.
+//
+// Dispatch used to be three lines: fire the global bucket, walk the ancestors,
+// fire the global bucket again. Nothing carried `currentTarget`, nothing carried
+// `eventPhase`, `stopPropagation` was a no-op, the document and the window were
+// one indistinguishable bucket, and nothing a page CONSTRUCTED could be
+// dispatched at all. Every one of those is asserted here.
+void test_events_travel_the_whole_path() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body><div id=outer><div id=inner></div></div><script>
+        var outer = document.getElementById('outer');
+        var inner = document.getElementById('inner');
+        var seen = [];
+        function note(name) {
+          return function (e) {
+            var where = e.currentTarget === window ? 'window'
+                      : e.currentTarget === document ? 'document'
+                      : e.currentTarget.id;
+            seen.push(name + ':' + e.eventPhase + ':' + where);
+          };
+        }
+        window.addEventListener('poke', note('w-cap'), true);
+        document.addEventListener('poke', note('d-cap'), true);
+        outer.addEventListener('poke', note('o-cap'), true);
+        inner.addEventListener('poke', note('i-cap'), true);
+        inner.addEventListener('poke', note('i'), false);
+        outer.addEventListener('poke', note('o'), false);
+        document.addEventListener('poke', note('d'), false);
+        window.addEventListener('poke', note('w'), false);
+
+        var evt = document.createEvent('Event');
+        console.log('fresh=' + evt.type + ',' + evt.bubbles + ',' + evt.cancelable +
+                    ',' + evt.eventPhase);
+        evt.initEvent('poke', true, true);
+        var ok = inner.dispatchEvent(evt);
+        console.log('path=' + seen.join('|'));
+        console.log('after=' + ok + ',' + evt.eventPhase + ',' + (evt.currentTarget === null) +
+                    ',' + evt.target.id + ',' + (evt.srcElement === evt.target));
+
+        // A NON-BUBBLING event still captures all the way down; only the bubble
+        // pass is cut to the target.
+        seen.length = 0;
+        inner.dispatchEvent(new Event('poke'));
+        console.log('nobubble=' + seen.join('|'));
+
+        // preventDefault needs `cancelable`, and dispatchEvent reports it.
+        inner.addEventListener('stop', function (e) { e.preventDefault(); }, false);
+        console.log('cancel=' + inner.dispatchEvent(new Event('stop', {cancelable: true})) +
+                    ',' + inner.dispatchEvent(new Event('stop')));
+
+        // stopPropagation ends the path after the step it was called on.
+        seen.length = 0;
+        inner.addEventListener('halt', note('i-halt'), false);
+        inner.addEventListener('halt', function (e) { e.stopPropagation(); }, false);
+        outer.addEventListener('halt', note('o-halt'), false);
+        inner.dispatchEvent(new Event('halt', {bubbles: true}));
+        console.log('halted=' + seen.join('|'));
+
+        // ... and stopImmediatePropagation ends it DURING the step.
+        seen.length = 0;
+        inner.addEventListener('halt2', function (e) { e.stopImmediatePropagation(); }, false);
+        inner.addEventListener('halt2', note('i-halt2'), false);
+        inner.dispatchEvent(new Event('halt2', {bubbles: true}));
+        console.log('immediate=' + seen.length);
+
+        var custom = new CustomEvent('mine', {detail: 7, bubbles: true});
+        var got = 0;
+        document.addEventListener('mine', function (e) { got = e.detail; });
+        inner.dispatchEvent(custom);
+        console.log('custom=' + got + ',' + (custom instanceof Event) +
+                    ',' + (custom.constructor === CustomEvent));
+        console.log('kinds=' + (evt instanceof Event) + ',' + (evt.constructor === Event) +
+                    ',' + Event.AT_TARGET + ',' + evt.BUBBLING_PHASE);
+      </script></body></html>)");
+    check(page.script_error().empty(), "the event script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() == 9, "every line was logged");
+    check(log[0] == "fresh=,false,false,0",
+          "createEvent hands back an uninitialised event: " + log[0]);
+    check(log[1] == "path=w-cap:1:window|d-cap:1:document|o-cap:1:outer|i-cap:2:inner|"
+                    "i:2:inner|o:3:outer|d:3:document|w:3:window",
+          "capture down to the target, then bubble back to the window: " + log[1]);
+    check(log[2] == "after=true,0,true,inner,true",
+          "the event stops travelling when the dispatch ends: " + log[2]);
+    check(log[3] == "nobubble=w-cap:1:window|d-cap:1:document|o-cap:1:outer|i-cap:2:inner|"
+                    "i:2:inner",
+          "a non-bubbling event reaches the target and stops: " + log[3]);
+    check(log[4] == "cancel=false,true", "preventDefault needs cancelable: " + log[4]);
+    check(log[5] == "halted=i-halt:2:inner", "stopPropagation ends the path: " + log[5]);
+    check(log[6] == "immediate=0", "stopImmediatePropagation ends the step: " + log[6]);
+    check(log[7] == "custom=7,true,true", "CustomEvent carries detail: " + log[7]);
+    check(log[8] == "kinds=true,true,2,3", "Event identity and the phase constants: " + log[8]);
+}
+
+// `new EventTarget()` - a listener list with no node under it, and the three
+// methods a subclass inherits. Also the DOM's duplicate rule, which applies
+// everywhere and was implemented nowhere: registering the same
+// (type, callback, capture) twice must do nothing.
+void test_a_standalone_event_target() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body><script>
+        var et = new EventTarget();
+        var n = 0;
+        function once() { n += 100; }
+        function each() { n += 1; }
+        et.addEventListener('go', once, {once: true});
+        et.addEventListener('go', each);
+        et.addEventListener('go', each);   // the same three: must be ignored
+        et.dispatchEvent(new Event('go'));
+        et.dispatchEvent(new Event('go'));
+        console.log('counts=' + n);
+
+        // A standalone target IS its whole path: nothing reaches the document.
+        var leaked = 0;
+        document.addEventListener('go', function () { leaked++; });
+        et.dispatchEvent(new Event('go'));
+        console.log('leak=' + leaked);
+
+        // preventDefault reaches dispatchEvent's answer here too.
+        et.addEventListener('no', function (e) { e.preventDefault(); });
+        console.log('cancel=' + et.dispatchEvent(new Event('no', {cancelable: true})));
+
+        // The three methods are on the PROTOTYPE, so a subclass has them and
+        // `this` is the instance rather than the base.
+        class Nicer extends EventTarget {
+          fire(d) { this.dispatchEvent(new CustomEvent('x', {detail: d})); }
+        }
+        var sub = new Nicer();
+        var got = 0;
+        sub.addEventListener('x', function (e) { got = e.detail; });
+        sub.fire(9);
+        console.log('sub=' + got + ',' + (sub instanceof EventTarget));
+      </script></body></html>)");
+    check(page.script_error().empty(), "the EventTarget script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() == 4, "every line was logged");
+    check(log[0] == "counts=102", "once fires once and a duplicate is not added: " + log[0]);
+    check(log[1] == "leak=0", "a standalone target does not reach the document: " + log[1]);
+    check(log[2] == "cancel=false", "preventDefault reaches dispatchEvent: " + log[2]);
+    check(log[3] == "sub=9,true", "a subclass inherits the three methods: " + log[3]);
+}
+
+// The rest of the constructible DOM: a comment, a fragment, the five insertion
+// methods that take any number of arguments, cloneNode and contains. A page
+// could make an element and a text node and nothing else before this.
+void test_the_constructible_dom() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body><ul id=list><li id=b>B</li></ul><script>
+        function ids(el) {
+          var out = [];
+          for (var i = 0; i < el.children.length; i++) { out.push(el.children[i].id); }
+          return out.join('');
+        }
+        var list = document.getElementById('list');
+        var b = document.getElementById('b');
+
+        // A FRAGMENT IS FLATTENED BY INSERTION: its children move and it does
+        // not, which is the whole reason to build one.
+        var frag = document.createDocumentFragment();
+        var one = document.createElement('li'); one.id = 'c';
+        var two = document.createElement('li'); two.id = 'd';
+        frag.append(one, two);
+        console.log('frag=' + frag.nodeType + ',' + frag.nodeName + ',' +
+                    frag.childNodes.length);
+        list.append(frag);
+        console.log('flat=' + ids(list) + ',' + frag.childNodes.length +
+                    ',' + (list.contains(one)) + ',' + (list.contains(list)));
+
+        // prepend keeps the ARGUMENT order, and a string becomes a Text node.
+        var a = document.createElement('li'); a.id = 'a';
+        list.prepend(a, 'loose');
+        console.log('prepend=' + ids(list) + ',' + list.childNodes[1].nodeType +
+                    ',' + list.childNodes[1].data);
+
+        // before / after / replaceWith, relative to a child.
+        var z = document.createElement('li'); z.id = 'z';
+        b.before(z);
+        var y = document.createElement('li'); y.id = 'y';
+        b.after(y);
+        console.log('around=' + ids(list));
+        var w = document.createElement('li'); w.id = 'w';
+        y.replaceWith(w);
+        console.log('replaced=' + ids(list));
+
+        // A comment is a node with data, and it is not an element.
+        var note = document.createComment('hi');
+        list.append(note);
+        console.log('comment=' + note.nodeType + ',' + note.nodeName + ',' + note.data +
+                    ',' + (b.data === null) + ',' + list.children.length +
+                    ',' + list.childNodes.length);
+
+        // cloneNode: shallow keeps the attributes only, deep keeps the subtree,
+        // and neither is attached to anything.
+        var shallow = list.cloneNode(false);
+        var deep = list.cloneNode(true);
+        console.log('clone=' + shallow.id + ',' + shallow.childNodes.length +
+                    ',' + deep.childNodes.length + ',' + (deep.parentNode === null));
+      </script></body></html>)");
+    check(page.script_error().empty(), "the constructible-DOM script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() == 7, "every line was logged");
+    check(log[0] == "frag=11,#document-fragment,2", "a fragment holds nodes: " + log[0]);
+    check(log[1] == "flat=bcd,0,true,true", "inserting a fragment moves its children: " + log[1]);
+    check(log[2] == "prepend=abcd,3,loose", "prepend keeps argument order: " + log[2]);
+    check(log[3] == "around=azbycd", "before and after place a sibling: " + log[3]);
+    check(log[4] == "replaced=azbwcd", "replaceWith swaps one for another: " + log[4]);
+    check(log[5] == "comment=8,#comment,hi,true,6,8",
+          "a comment is a node and not an element: " + log[5]);
+    check(log[6] == "clone=list,0,8,true", "cloneNode is shallow or deep, and detached: " + log[6]);
+}
+
+// `document.implementation`, whose absence cost 136 assertions in one WPT file
+// and reported none of them by name.
+void test_document_implementation() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body><script>
+        var impl = document.implementation;
+        // TRUE FOR EVERYTHING, which is what the DOM standard defines rather
+        // than what this engine could honestly claim.
+        console.log('feature=' + impl.hasFeature() + ',' + impl.hasFeature('Core', '2.0') +
+                    ',' + impl.hasFeature('nonsense') +
+                    ',' + (typeof impl.hasFeature.apply));
+        var dt = impl.createDocumentType('html', '', '');
+        console.log('doctype=' + dt.name + ',' + (dt.publicId === '') + ',' + dt.nodeType);
+        // Named absences, so a page can detect them rather than get a lie.
+        console.log('absent=' + (impl.createHTMLDocument === undefined) +
+                    ',' + (impl.createDocument === undefined));
+      </script></body></html>)");
+    check(page.script_error().empty(), "the implementation script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() == 3, "every line was logged");
+    check(log[0] == "feature=true,true,true,function", "hasFeature is always true: " + log[0]);
+    check(log[1] == "doctype=html,true,10",
+          "createDocumentType carries its three strings: " + log[1]);
+    check(log[2] == "absent=true,true",
+          "the two that need a second Document are absent: " + log[2]);
+}
+
+// `createElementNS`, and the round trip that has to survive it: the exact
+// namespace, the qualified name, the prefix and the local part, none of them
+// case-folded. A createElementNS that lost the namespace would be worse than
+// none - a page would build an SVG element that styled and painted as HTML.
+void test_create_element_ns() {
+    browser page{browser_options{400, 300}};
+    page.load_html(R"(<html><body><svg id=s><rect/></svg><script>
+        var HTML = 'http://www.w3.org/1999/xhtml';
+        var SVG  = 'http://www.w3.org/2000/svg';
+        var MINE = 'http://example.com/ns';
+
+        var h = document.createElementNS(HTML, 'div');
+        var v = document.createElementNS(SVG, 'linearGradient');
+        var m = document.createElementNS(MINE, 'pre:fix');
+        console.log('html=' + h.namespaceURI + ',' + h.tagName + ',' + h.localName +
+                    ',' + (h.prefix === null));
+        // NOT case-folded, and an HTML-namespace tagName still uppercases.
+        console.log('svg=' + v.namespaceURI + ',' + v.tagName + ',' + v.localName);
+        console.log('mine=' + m.namespaceURI + ',' + m.tagName + ',' + m.prefix +
+                    ',' + m.localName);
+        // The parser's own elements answer the same three questions.
+        var s = document.getElementById('s');
+        console.log('parsed=' + s.namespaceURI + ',' + document.body.namespaceURI);
+        // A clone keeps the namespace: it is not on the node, so this is the
+        // one that would silently regress.
+        console.log('clone=' + m.cloneNode(false).namespaceURI);
+        // The null namespace is null, not the empty string.
+        console.log('nullns=' + (document.createElementNS(null, 'x').namespaceURI === null));
+        // The prefix rules, which are what make a prefix mean anything.
+        function threw(fn) { try { fn(); return 'no'; } catch (e) { return e.name; } }
+        console.log('errors=' + threw(function () { document.createElementNS(null, 'p:q'); }) +
+                    ',' + threw(function () { document.createElementNS(MINE, 'xml:q'); }) +
+                    ',' + threw(function () { document.createElementNS(MINE, 'xmlns'); }) +
+                    ',' + threw(function () { document.createElementNS(MINE, ':q'); }) +
+                    ',' + threw(function () { document.createElementNS(MINE, 'q:'); }));
+        // getElementsByTagNameNS matches on the namespace AND the local part.
+        document.body.appendChild(v);
+        // Three SVG elements by then: <svg>, its <rect>, and the appended one.
+        console.log('bytag=' + document.getElementsByTagNameNS(SVG, '*').length +
+                    ',' + document.getElementsByTagNameNS(HTML, 'div').length +
+                    ',' + document.getElementsByTagNameNS('*', 'linearGradient').length);
+      </script></body></html>)");
+    check(page.script_error().empty(), "the createElementNS script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() == 8, "every line was logged");
+    check(log[0] == "html=http://www.w3.org/1999/xhtml,DIV,div,true",
+          "an HTML-namespace element uppercases tagName only: " + log[0]);
+    check(log[1] == "svg=http://www.w3.org/2000/svg,linearGradient,linearGradient",
+          "createElementNS does not case-fold: " + log[1]);
+    check(log[2] == "mine=http://example.com/ns,pre:fix,pre,fix",
+          "the qualified name splits at the first colon: " + log[2]);
+    check(log[3] == "parsed=http://www.w3.org/2000/svg,http://www.w3.org/1999/xhtml",
+          "the parser's elements know their namespace too: " + log[3]);
+    check(log[4] == "clone=http://example.com/ns", "a clone keeps the namespace: " + log[4]);
+    check(log[5] == "nullns=true", "the null namespace reports null: " + log[5]);
+    check(log[6] == "errors=NamespaceError,NamespaceError,NamespaceError,"
+                    "InvalidCharacterError,InvalidCharacterError",
+          "the prefix rules are enforced: " + log[6]);
+    check(log[7] == "bytag=3,0,1", "getElementsByTagNameNS matches both halves: " + log[7]);
+}
+
 // The canvas additions p5.js draws through: the transform family, ellipse and
 // Path2D. A Path2D is a RECORDING - built once and replayed by fill(path) or
 // stroke(path), which is how p5 draws every 2D shape.
@@ -2436,6 +2787,12 @@ int main() {
     test_text_alignment();
     test_reflected_attributes();
     test_tree_navigation();
+    test_element_collections_are_live();
+    test_events_travel_the_whole_path();
+    test_a_standalone_event_target();
+    test_the_constructible_dom();
+    test_document_implementation();
+    test_create_element_ns();
     test_canvas_transform_and_paths();
     test_window_is_the_global_object();
     test_class_list_edits_the_attribute();

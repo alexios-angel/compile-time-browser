@@ -257,7 +257,10 @@ void dom_bindings::settle_image(context & cx, const pending_image & waiting) {
         }
         cx.settle_promise(waiting.promise, outcome, !ok);
     }
-    fire_at(waiting.id, ok ? "load" : "error", as_event, false);
+    // At the <img> ITSELF and nowhere else: an image's load event does not
+    // bubble, so this fires the element's own listeners rather than dispatching
+    // along a path.
+    fire_at(path_step{waiting.id, listen_on::node}, ok ? "load" : "error", as_event, false);
     // A LOADED IMAGE CHANGES WHAT IS DRAWN. Without this an <img> appended
     // before its bytes arrived kept its empty box until something else happened
     // to invalidate the page.

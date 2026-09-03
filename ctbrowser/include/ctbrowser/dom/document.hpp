@@ -124,6 +124,9 @@ public:
     [[nodiscard]] node_id create_element(atom tag, node_ns ns = node_ns::html);
     [[nodiscard]] node_id create_text(std::string_view value);
     [[nodiscard]] node_id create_comment(std::string_view value);
+    // A DocumentFragment. Detached like everything else here, and it stays
+    // detached: inserting one moves its children, never the fragment.
+    [[nodiscard]] node_id create_fragment();
 
     // --- structural writes (document-wide mutex) ---------------------------
     std::expected<void, dom_error> append_child(node_id parent, node_id child);

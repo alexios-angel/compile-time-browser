@@ -9,7 +9,11 @@
 #include <ctbrowser/shell/bindings.hpp>
 #include <ctbrowser/shell/net/url.hpp>
 
+#include <algorithm>
+#include <charconv>
+#include <memory>
 #include <numbers>
+#include <optional>
 
 // dom_bindings' method bodies - the API a page's script actually calls.
 //
@@ -37,6 +41,30 @@ namespace {
 // apart, drifted apart - and nothing compared them because nothing could.
 //
 // shell/net/url.hpp parses once now, for both.
+
+// The four namespaces the DOM names by URI. Spelled out rather than derived,
+// because getting one character wrong makes a NamespaceError fire on the valid
+// case and not on the invalid one, and nothing about the failure would say so.
+constexpr std::string_view html_namespace = "http://www.w3.org/1999/xhtml";
+constexpr std::string_view svg_namespace = "http://www.w3.org/2000/svg";
+constexpr std::string_view xml_namespace = "http://www.w3.org/XML/1998/namespace";
+constexpr std::string_view xmlns_namespace = "http://www.w3.org/2000/xmlns/";
+
+// The prefix and the local part of a qualified name, split at the FIRST colon.
+// `a:b:c` is prefix `a` and local `b:c`, which is what the DOM says and is not
+// what the XML QName production says - the two disagree and the DOM is what a
+// page is measured against.
+struct qualified_name {
+    std::string_view prefix; // empty when there is no colon
+    std::string_view local;
+    bool has_colon = false;
+};
+
+[[nodiscard]] qualified_name split_qualified(std::string_view name) {
+    const std::size_t colon = name.find(':');
+    if (colon == std::string_view::npos) { return qualified_name{{}, name, false}; }
+    return qualified_name{name.substr(0, colon), name.substr(colon + 1), true};
+}
 
 } // namespace
 
@@ -72,6 +100,10 @@ void dom_bindings::register_roots(context & cx) {
         for (const listener & l : listeners_) {
             mark(l.callback);
             mark(l.abort_signal);
+            // A STANDALONE EventTarget can be reachable from nowhere else: a
+            // page may `new EventTarget()`, register on it and drop the
+            // variable, and the listener is then the only reference there is.
+            mark(l.host);
         }
         for (const timer & t : timers_) { mark(t.callback); }
         // A QUEUED FETCH holds the only reference to the promise a page is
@@ -106,6 +138,12 @@ void dom_bindings::register_roots(context & cx) {
             if (obj != nullptr) { mark(value::object(obj)); }
         }
         mark(blob_prototype_);
+        // Event.prototype and CustomEvent.prototype, for the same reason
+        // Blob.prototype is here: they are held on a global a page can delete,
+        // and an event whose prototype was collected stops being an Event.
+        mark(event_prototype_);
+        mark(custom_event_prototype_);
+        mark(event_target_prototype_);
         mark(location_);
         mark(document_);
         mark(window_);
@@ -119,6 +157,9 @@ void dom_bindings::install(context & cx) {
     location_ = make_location(cx);
     install_document(cx);
     install_window(cx);
+    // AFTER install_window, which is where `window_` is assigned: this puts
+    // `dispatchEvent` on the window object.
+    install_event_interfaces(cx);
     // AFTER install_window: it defines the `window` proxy whose handler falls
     // back to the globals, which is what makes one bare global answer both
     // `getComputedStyle(el)` and `window.getComputedStyle(el)`.
@@ -212,8 +253,94 @@ void dom_bindings::install_document(context & cx) {
     method("createTextNode", [this](context & c, std::span<value> args) {
         return wrap(c, doc_->create_text(arg_string(c, args, 0)));
     });
+    // `createComment` and `createDocumentFragment` - the two other node
+    // constructors, and the DOM has had them since the first version. The
+    // document could make an element and a text node and nothing else, so a page
+    // could not annotate what it built and could not batch what it inserted.
+    // `document.createElementNS(namespace, qualifiedName)`.
+    //
+    // WHAT IT MUST GET RIGHT is the round trip: the element remembers the exact
+    // namespace it was given, `tagName` is the qualified name, `prefix` is the
+    // part before the first colon and `localName` the part after, and NONE of it
+    // is case-folded - createElement lowercases for an HTML document and this
+    // deliberately does not.
+    //
+    // The namespace ERRORS are the rules that make a prefix mean something:
+    // a prefix with no namespace, `xml:` outside the XML namespace, and `xmlns`
+    // anywhere but the XMLNS namespace (and that namespace used for anything
+    // else) are all NamespaceError.
+    method("createElementNS", [this](context & c, std::span<value> args) {
+        // A NULLABLE DOMString: null and undefined are both the null namespace,
+        // and so is the empty string. The qualified name is an ordinary
+        // DOMString, so null there is the four characters "null".
+        const value given = arg(args, 0);
+        const std::string ns =
+            given.is_null() || given.is_undefined() ? std::string{} : arg_string(c, args, 0);
+        const std::string qualified =
+            args.size() > 1 ? c.to_string(args[1]) : std::string{"undefined"};
+        const qualified_name split = split_qualified(qualified);
+        // An empty name, an empty prefix (":x") and an empty local part ("x:")
+        // are the three shapes that cannot name anything.
+        if (qualified.empty() ||
+            (split.has_colon && (split.prefix.empty() || split.local.empty()))) {
+            c.throw_error("InvalidCharacterError",
+                          "createElementNS: '" + qualified + "' is not a qualified name");
+            return value::undefined();
+        }
+        const bool prefixed = split.has_colon;
+        const auto fail = [&c](const std::string & why) {
+            c.throw_error("NamespaceError", "createElementNS: " + why);
+            return value::undefined();
+        };
+        if (prefixed && ns.empty()) { return fail("a prefix needs a namespace"); }
+        if (split.prefix == "xml" && ns != xml_namespace) {
+            return fail("the xml prefix belongs to the XML namespace");
+        }
+        if ((qualified == "xmlns" || split.prefix == "xmlns") && ns != xmlns_namespace) {
+            return fail("xmlns belongs to the XMLNS namespace");
+        }
+        if (ns == xmlns_namespace && qualified != "xmlns" && split.prefix != "xmlns") {
+            return fail("the XMLNS namespace is only for xmlns");
+        }
+        const node_ns kind = ns == html_namespace  ? node_ns::html
+                             : ns == svg_namespace ? node_ns::svg
+                                                   : node_ns::other;
+        // INTERNED AS WRITTEN, not lowercased: the qualified name IS the tag
+        // here, and folding it would lose the case an XML document depends on.
+        const node_id made = doc_->create_element(atoms_->intern(qualified), kind);
+        if (kind == node_ns::other || ns.empty()) { namespaces_.emplace(pack(made), ns); }
+        return wrap(c, made);
+    });
+    // `getElementsByTagNameNS(namespace, localName)`, with "*" meaning any on
+    // either half. Live, like its two siblings.
+    method("getElementsByTagNameNS", [this](context & c, std::span<value> args) {
+        const value given = arg(args, 0);
+        const std::string ns =
+            given.is_null() || given.is_undefined() ? std::string{} : arg_string(c, args, 0);
+        const std::string local = arg_string(c, args, 1);
+        return make_live_collection(c, [this, ns, local] {
+            const auto txn = doc_->read();
+            std::vector<node_id> found;
+            const auto walk = [&](auto && self, node_id at) -> void {
+                if (txn.tag(at).has_value()) {
+                    const std::string_view name = atoms_->text(txn.tag(at).value_or(atom{}));
+                    const bool name_fits = local == "*" || split_qualified(name).local == local;
+                    const bool ns_fits = ns == "*" || namespace_of(at) == ns;
+                    if (name_fits && ns_fits) { found.push_back(at); }
+                }
+                for (const node_id child : txn.children(at)) { self(self, child); }
+            };
+            walk(walk, txn.root());
+            return found;
+        });
+    });
+    method("createComment", [this](context & c, std::span<value> args) {
+        return wrap(c, doc_->create_comment(arg_string(c, args, 0)));
+    });
+    method("createDocumentFragment",
+           [this](context & c, std::span<value>) { return wrap(c, doc_->create_fragment()); });
     method("addEventListener", [this](context & c, std::span<value> args) {
-        listeners_.push_back(make_listener(c, node_id{}, args));
+        add_listener(make_listener(c, path_step{node_id{}, listen_on::document}, args));
         return value::undefined();
     });
     // THE OTHER HALF, WHICH THE DOCUMENT DID NOT HAVE.
@@ -231,7 +358,8 @@ void dom_bindings::install_document(context & cx) {
         const std::string type = arg_string(c, args, 0);
         const value callback = arg(args, 1);
         std::erase_if(listeners_, [&](const listener & l) {
-            return !l.target && l.type == type && l.callback.bits() == callback.bits();
+            return l.on == listen_on::document && l.type == type &&
+                   l.callback.bits() == callback.bits();
         });
         return value::undefined();
     });
@@ -246,6 +374,47 @@ void dom_bindings::install_document(context & cx) {
         }
         list->set("length", value::number(static_cast<double>(found.size())));
         return value::object(list);
+    });
+    // LIVE, unlike getElementsByTagName above, and the difference is not
+    // decoration: five of the suite's own tests take the collection, mutate the
+    // document and read the collection again. See make_live_collection.
+    method("getElementsByClassName", [this](context & c, std::span<value> args) {
+        const std::vector<std::string> tokens = ordered_set(arg_string(c, args, 0));
+        return make_live_collection(c, [this, tokens] { return all_by_class(node_id{}, tokens); });
+    });
+    // `document.getElementsByName`, which is keyed on the `name` ATTRIBUTE and
+    // not on `id`. It is HTML's, not the DOM's - hence the document only, and
+    // hence HTML elements only.
+    method("getElementsByName", [this](context & c, std::span<value> args) {
+        const std::string name = arg_string(c, args, 0);
+        return make_live_collection(c, [this, name] { return all_by_name(name); });
+    });
+
+    // `document.createEvent(interface)` - the OLDER way to make an event, and
+    // still the way most of the DOM's own test suite makes one. It hands back an
+    // UNINITIALISED event: type "", bubbles false, cancelable false, to be given
+    // all three by `initEvent`. The interface name is matched loosely on
+    // purpose - "Event", "Events", "HTMLEvents", "UIEvents", "MouseEvent" and a
+    // dozen more all produce an Event here, because this engine has one event
+    // class and pretending otherwise would mean an interface hierarchy nothing
+    // reads. "CustomEvent" is the exception, because `detail` is observable.
+    method("createEvent", [this](context & c, std::span<value> args) {
+        const std::string want = ascii_lower_copy(arg_string(c, args, 0));
+        value made = make_event_object(c, "", false, false);
+        if (want == "customevent") {
+            auto * object = static_cast<script::object_object *>(made.as_heap());
+            object->prototype = custom_event_prototype_;
+            object->set("detail", value::null());
+        }
+        return made;
+    });
+    // `document.dispatchEvent`. The document is a stop on every path, so this
+    // runs the document's listeners and then the window's - which is what
+    // dispatching AT the document means.
+    method("dispatchEvent", [this](context &, std::span<value> args) {
+        const value event = arg(args, 0);
+        if (!event.is_object()) { return value::boolean(true); }
+        return value::boolean(!dispatch_to(event, path_step{node_id{}, listen_on::document}));
     });
 
     method("querySelector", [this](context & c, std::span<value> args) {
@@ -345,7 +514,55 @@ void dom_bindings::install_document(context & cx) {
             return value::undefined();
         })));
 
+    // `document.implementation`, WHICH DID NOT EXIST.
+    //
+    // Its absence was worth 136 failing assertions in one file, and the failure
+    // message named none of them: `document.implementation` read undefined, so
+    // `document.implementation.hasFeature` read undefined, and the test's own
+    // `.apply(...)` on it reported "`apply` is not a function" - forty lines
+    // from the cause and about a method nobody was missing.
+    {
+        auto * implementation = static_cast<script::object_object *>(cx.make_object().as_heap());
+        const auto method = [&](std::string name, script::native_fn fn) {
+            implementation->set(
+                name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+        };
+        // ALWAYS TRUE, and that is the specification rather than a shortcut.
+        // hasFeature was a way to ask whether a DOM module was supported, the
+        // answers were never reliable, and the DOM standard now defines it to
+        // return true for every argument so that the feature-detection idiom
+        // stops steering pages down worse paths. Returning false, or the truth
+        // about this engine, would be the wrong answer to the question actually
+        // being asked.
+        method("hasFeature", [](context &, std::span<value>) { return value::boolean(true); });
+        // A DocumentType is three strings and no behaviour. It is not a node
+        // here - there is no Document node for one to hang off - so it is a
+        // plain object carrying exactly what a page reads off one.
+        method("createDocumentType", [this](context & c, std::span<value> args) {
+            auto * doctype = static_cast<script::object_object *>(c.make_object().as_heap());
+            doctype->set("name", c.string(arg_string(c, args, 0)));
+            doctype->set("publicId", c.string(arg_string(c, args, 1)));
+            doctype->set("systemId", c.string(arg_string(c, args, 2)));
+            doctype->set("nodeType", value::number(10));
+            doctype->set("nodeName", c.string(arg_string(c, args, 0)));
+            (void)this;
+            return value::object(doctype);
+        });
+        // `createHTMLDocument` and `createDocument` are ABSENT, deliberately and
+        // by name. Both return a SECOND Document, and this engine has one: the
+        // bindings hold a single `document *`, and every element wrapper is
+        // keyed on a node id that only means anything against it. Returning
+        // something document-shaped that shares this document's nodes would be
+        // a worse answer than the missing method a page can detect.
+        doc->set("implementation", value::object(implementation));
+    }
     doc->set("body", wrap(cx, find_by_tag("body")));
+    // `document.head`, which was missing beside its two neighbours. It is where
+    // a page appends a <style> or a <script> it built, and where any code that
+    // walks the document from the top starts - and an undefined one is a
+    // TypeError on the first property read, not a missing feature a page can
+    // detect.
+    doc->set("head", wrap(cx, find_by_tag("head")));
     doc->set("documentElement", wrap(cx, find_by_tag("html")));
     document_ = value::object(doc);
     cx.define_global("document", document_);
@@ -415,6 +632,68 @@ node_id dom_bindings::copy_subtree(const read_txn & from, node_id node, node_id 
     (void)doc_->append_child(parent, made);
     for (const node_id child : from.children(node)) { copy_subtree(from, child, made); }
     return made;
+}
+
+node_id dom_bindings::clone_node(const read_txn & from, node_id source, bool deep) {
+    node_id made;
+    switch (from.kind(source).value_or(node_kind::element)) {
+    case node_kind::text: made = doc_->create_text(from.text(source)); break;
+    case node_kind::comment: made = doc_->create_comment(from.text(source)); break;
+    case node_kind::document_fragment: made = doc_->create_fragment(); break;
+    // A document has no clone that means anything here - there is one document -
+    // so it is treated as the element it actually is: this tree builder makes
+    // `<html>` the root and nothing sits above it.
+    case node_kind::document:
+    case node_kind::element:
+        made = doc_->create_element(from.tag(source).value_or(atom{}), from.element_ns(source));
+        // AND ITS NAMESPACE, which is not on the node: a clone of an element
+        // createElementNS made must report the same namespaceURI, and reading
+        // it off `element_ns` alone would answer for the wrong one.
+        if (const auto it = namespaces_.find(pack(source)); it != namespaces_.end()) {
+            namespaces_.emplace(pack(made), it->second);
+        }
+        for (const attribute & held : from.attributes(source)) {
+            (void)doc_->set_attribute(made, held.name, held.value);
+        }
+        break;
+    }
+    if (deep) {
+        for (const node_id child : from.children(source)) {
+            (void)doc_->append_child(made, clone_node(from, child, true));
+        }
+    }
+    return made;
+}
+
+bool dom_bindings::insert_node(node_id parent, node_id child, node_id before) {
+    if (!parent || !child) { return false; }
+    bool fragment = false;
+    std::vector<node_id> moving;
+    {
+        const auto txn = doc_->read();
+        fragment = txn.kind(child).value_or(node_kind::element) == node_kind::document_fragment;
+        if (fragment) {
+            // COPIED FIRST. `children()` is a view onto the live child list and
+            // every move rewrites it, so walking it while inserting is a
+            // use-after-free waiting for the second child.
+            for (const node_id held : txn.children(child)) { moving.push_back(held); }
+        }
+    }
+    if (!fragment) { moving.push_back(child); }
+    for (const node_id one : moving) {
+        if (before) {
+            (void)doc_->insert_before(parent, one, before);
+        } else {
+            (void)doc_->append_child(parent, one);
+        }
+    }
+    mutated();
+    return true;
+}
+
+node_id dom_bindings::node_from(context & cx, value v) {
+    if (const node_id held = handle_of(v)) { return held; }
+    return doc_->create_text(cx.to_string(v));
 }
 
 // PARSE THE MARKUP, do not store it.
@@ -634,6 +913,170 @@ node_id dom_bindings::find_by_tag(std::string_view tag) {
     };
     walk(walk, txn.root());
     return found;
+}
+
+namespace {
+
+// ASCII whitespace, as the DOM defines it: TAB, LF, FF, CR and SPACE. Not
+// `isspace`, which is locale-dependent and includes vertical tab.
+constexpr std::string_view dom_whitespace = "\t\n\f\r ";
+
+// A property key that is a whole non-negative integer and nothing else. "1x" is
+// not index 1, and neither is " 1", "+1" or "1.0" - a collection has to say no
+// to those or `hasOwnProperty` starts agreeing to keys nobody indexed.
+[[nodiscard]] std::optional<std::size_t> whole_index(std::string_view key) {
+    if (key.empty() || (key.size() > 1 && key.front() == '0')) { return std::nullopt; }
+    std::size_t at = 0;
+    const char * first = key.data();
+    const char * last = first + key.size();
+    const auto [stopped, failed] = std::from_chars(first, last, at);
+    if (failed != std::errc{} || stopped != last) { return std::nullopt; }
+    return at;
+}
+
+} // namespace
+
+std::string dom_bindings::namespace_of(node_id id) const {
+    if (const auto it = namespaces_.find(pack(id)); it != namespaces_.end()) { return it->second; }
+    switch (doc_->read().element_ns(id)) {
+    case node_ns::svg: return std::string{svg_namespace};
+    case node_ns::html: return std::string{html_namespace};
+    // An `other` element with no recorded URI cannot happen - the only thing
+    // that makes one records it - but a stale handle resolves to `html` and
+    // then to this, and the null namespace is the honest answer for a node that
+    // is not there any more.
+    case node_ns::other: break;
+    }
+    return {};
+}
+
+std::vector<std::string> dom_bindings::ordered_set(std::string_view text) {
+    std::vector<std::string> out;
+    for (std::size_t at = 0; at < text.size();) {
+        const std::size_t start = text.find_first_not_of(dom_whitespace, at);
+        if (start == std::string_view::npos) { break; }
+        std::size_t end = text.find_first_of(dom_whitespace, start);
+        if (end == std::string_view::npos) { end = text.size(); }
+        std::string token{text.substr(start, end - start)};
+        // AN ORDERED *SET*: "a a" asks for one class twice, and a duplicate in
+        // the wanted list is a match requirement that is already satisfied.
+        if (std::ranges::find(out, token) == out.end()) { out.push_back(std::move(token)); }
+        at = end;
+    }
+    return out;
+}
+
+std::vector<node_id> dom_bindings::all_by_class(node_id root,
+                                                const std::vector<std::string> & tokens) {
+    if (tokens.empty()) { return {}; }
+    const auto txn = doc_->read();
+    const atom class_attribute = atoms_->intern("class");
+    std::vector<node_id> found;
+    const auto has_every = [&](node_id at) {
+        // CASE-SENSITIVE, which is the standards-mode rule. A quirks-mode
+        // document matches ASCII-case-insensitively; this engine does not carry
+        // the document's mode past the tree builder yet, so the standards answer
+        // is the one given - it is the right one for every document with a
+        // doctype, which is every document a test suite writes on purpose.
+        const std::vector<std::string> held = ordered_set(txn.attribute_value(at, class_attribute));
+        return std::ranges::all_of(tokens, [&](const std::string & want) {
+            return std::ranges::find(held, want) != held.end();
+        });
+    };
+    const auto walk = [&](auto && self, node_id at, bool include) -> void {
+        // ELEMENTS ONLY, and never the element the search started from: a search
+        // rooted at an element looks at its DESCENDANTS.
+        if (include && txn.tag(at).has_value() && has_every(at)) { found.push_back(at); }
+        for (const node_id child : txn.children(at)) { self(self, child, true); }
+    };
+    // THE DOCUMENT'S ROOT IS THE <html> ELEMENT, not a Document node - this
+    // tree builder makes `<html>` and calls set_root with it, and there is no
+    // node above it. So a document-wide search must INCLUDE the root, or
+    // `document.getElementsByClassName` silently cannot return the one element
+    // that is most often given a class. An element-rooted search excludes it.
+    walk(walk, root ? root : txn.root(), !root);
+    return found;
+}
+
+std::vector<node_id> dom_bindings::all_by_name(std::string_view name) {
+    const auto txn = doc_->read();
+    const atom key = atoms_->intern("name");
+    std::vector<node_id> found;
+    const auto walk = [&](auto && self, node_id at) -> void {
+        if (txn.tag(at).has_value() && txn.element_ns(at) == node_ns::html &&
+            txn.has_attribute(at, key) && txn.attribute_value(at, key) == name) {
+            found.push_back(at);
+        }
+        for (const node_id child : txn.children(at)) { self(self, child); }
+    };
+    walk(walk, txn.root());
+    return found;
+}
+
+// THE LIVE COLLECTION. Three things have to be true at once and only a proxy
+// gets all three: `length` is recomputed on every read, `collection[i]` is
+// recomputed on every read, and `collection.hasOwnProperty(i)` agrees with both
+// - which is exactly what `assert_array_equals` checks before it compares a
+// single element.
+//
+// `item` and `namedItem` are ordinary properties of the TARGET rather than
+// answers the trap fabricates, so they keep their identity across reads and so
+// the trap's fallback - an ordinary lookup on the target - finds them along with
+// everything Object.prototype provides.
+value dom_bindings::make_live_collection(context & cx,
+                                         std::function<std::vector<node_id>()> members) {
+    auto * target = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+    // Shared rather than copied into each trap: `members` walks the document, and
+    // three copies of the same walk is three chances for them to disagree.
+    const auto live = std::make_shared<std::function<std::vector<node_id>()>>(std::move(members));
+
+    const auto native = [&](std::string name, script::native_fn fn) {
+        return value::object(cx.allocate<script::native_object>(std::move(name), std::move(fn)));
+    };
+    target->set("item", native("item", [this, live](context & c, std::span<value> a) {
+                    const std::vector<node_id> found = (*live)();
+                    const double at = arg_number(a, 0);
+                    if (at < 0 || at >= static_cast<double>(found.size())) { return value::null(); }
+                    return wrap(c, found[static_cast<std::size_t>(at)]);
+                }));
+    target->set("namedItem", native("namedItem", [this, live](context & c, std::span<value> a) {
+                    const std::string want = arg_string(c, a, 0);
+                    const auto txn = doc_->read();
+                    const atom id = atoms_->intern("id");
+                    const atom name = atoms_->intern("name");
+                    for (const node_id at : (*live)()) {
+                        if (txn.attribute_value(at, id) == want ||
+                            txn.attribute_value(at, name) == want) {
+                            return wrap(c, at);
+                        }
+                    }
+                    return value::null();
+                }));
+
+    handler->set("get", native("get", [this, live](context & c, std::span<value> args) {
+                     if (args.size() < 2) { return value::undefined(); }
+                     const std::string key = c.to_string(args[1]);
+                     if (key == "length") {
+                         return value::number(static_cast<double>((*live)().size()));
+                     }
+                     if (const std::optional<std::size_t> at = whole_index(key)) {
+                         const std::vector<node_id> found = (*live)();
+                         return *at < found.size() ? wrap(c, found[*at]) : value::undefined();
+                     }
+                     return c.lookup_property(args[0], key);
+                 }));
+    handler->set("has", native("has", [live](context & c, std::span<value> args) {
+                     if (args.size() < 2) { return value::boolean(false); }
+                     const std::string key = c.to_string(args[1]);
+                     if (key == "length") { return value::boolean(true); }
+                     if (const std::optional<std::size_t> at = whole_index(key)) {
+                         return value::boolean(*at < (*live)().size());
+                     }
+                     return value::boolean(!c.lookup_property(args[0], key).is_undefined());
+                 }));
+    return value::object(
+        cx.allocate<script::proxy_object>(value::object(target), value::object(handler)));
 }
 
 } // namespace ctbrowser::shell

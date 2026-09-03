@@ -40,7 +40,13 @@ enum class node_kind : std::uint8_t {
     document,
     element,
     text,
-    comment
+    comment,
+    // A DocumentFragment: a parentless bag of nodes that a script fills and
+    // then inserts, at which point its CHILDREN move and the fragment itself
+    // does not. It never reaches style or layout - insertion flattens it - so
+    // nothing downstream has to learn about it; what it buys is the one idiom
+    // that makes building a list cheap, `frag.append(a, b, c); ul.append(frag)`.
+    document_fragment
 };
 
 // Which language an element is written in. HTML and SVG share a document but
@@ -54,7 +60,16 @@ enum class node_kind : std::uint8_t {
 // unittests/unit/dom_basics asserts sizeof(node) did not move.
 enum class node_ns : std::uint8_t {
     html,
-    svg
+    svg,
+    // NEITHER, which `document.createElementNS` can ask for and the parser
+    // never produces. The exact URI is not here - it lives beside the element
+    // wrapper, because putting a fourth field on `node` would take it from 40
+    // bytes to 48 and this is the most replicated object in the engine. What
+    // the enumerator buys is the distinction every consumer actually tests for:
+    // `element_ns == html` gates script execution, <style> collection and the
+    // tagName case fold, and an element in some page-invented namespace must
+    // fail all three.
+    other
 };
 
 struct attribute {

@@ -81,6 +81,60 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
             }
         }
         obj.set("tagName", cx.string(tag_name));
+        // `nodeName` AND `nodeType`, which every tree-walking page reads and
+        // this wrapper did not have. They are not aliases of `tagName`: a
+        // wrapper is made for text and comment nodes too - `childNodes` hands
+        // them out - and for those the tag is empty, so `tagName` is "" and
+        // `nodeName` is "#text". A page that switches on nodeType to decide
+        // whether to recurse got `undefined` and took no branch at all.
+        const node_kind kind = txn.kind(id).value_or(node_kind::element);
+        switch (kind) {
+        case node_kind::element:
+            obj.set("nodeName", cx.string(tag_name));
+            obj.set("nodeType", value::number(1));
+            break;
+        case node_kind::text:
+            obj.set("nodeName", cx.string("#text"));
+            obj.set("nodeType", value::number(3));
+            break;
+        case node_kind::comment:
+            obj.set("nodeName", cx.string("#comment"));
+            obj.set("nodeType", value::number(8));
+            break;
+        case node_kind::document:
+            obj.set("nodeName", cx.string("#document"));
+            obj.set("nodeType", value::number(9));
+            break;
+        case node_kind::document_fragment:
+            obj.set("nodeName", cx.string("#document-fragment"));
+            obj.set("nodeType", value::number(11));
+            break;
+        }
+        // `localName`, `prefix` and `namespaceURI` - the three halves of a
+        // qualified name, and the pair `tagName` is compared against.
+        //
+        // localName is the tag WITHOUT the case fold and WITHOUT the prefix:
+        // `createElementNS(ns, "a:b")` has tagName "a:b" and localName "b", and
+        // reporting the whole qualified name for both makes the two
+        // indistinguishable. prefix is null when there is no colon, which is
+        // every element the parser builds.
+        if (kind == node_kind::element) {
+            const std::string_view qualified = atoms_->text(txn.tag(id).value_or(atom{}));
+            const std::size_t colon = qualified.find(':');
+            if (colon == std::string_view::npos) {
+                obj.set("localName", cx.string(std::string{qualified}));
+                obj.set("prefix", value::null());
+            } else {
+                obj.set("localName", cx.string(std::string{qualified.substr(colon + 1)}));
+                obj.set("prefix", cx.string(std::string{qualified.substr(0, colon)}));
+            }
+            const std::string ns = namespace_of(id);
+            obj.set("namespaceURI", ns.empty() ? value::null() : cx.string(ns));
+        } else {
+            obj.set("localName", value::undefined());
+            obj.set("prefix", value::null());
+            obj.set("namespaceURI", value::null());
+        }
     }
     // `id`, `className`, `width` and `height` are NOT set here: they are
     // accessors over the attributes, installed once in install_element_views.
@@ -395,6 +449,31 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             set_inner_html(id, arg_string(c, a, 0));
             return value::undefined();
         });
+    // `data` AND `nodeValue` - the text a Text or Comment node holds, which is
+    // the one thing those two nodes are FOR. `childNodes` has handed them out
+    // all along and there was no way to read what was in one: `.data` was
+    // undefined, `.nodeValue` was undefined, and the only spelling that worked
+    // was textContent, which is the same answer by accident and a different
+    // question. Both are accessors, both write through, and on an element they
+    // are null - which is what the DOM says and is not the same as absent.
+    for (const char * spelling : {"data", "nodeValue"}) {
+        tree_property(
+            spelling,
+            [this, id](context & c, std::span<value>) {
+                const auto txn = doc_->read();
+                const node_kind kind = txn.kind(id).value_or(node_kind::element);
+                if (kind != node_kind::text && kind != node_kind::comment) { return value::null(); }
+                return c.string(std::string{txn.text(id)});
+            },
+            [this, id](context & c, std::span<value> a) {
+                const auto kind = doc_->read().kind(id).value_or(node_kind::element);
+                if (kind == node_kind::text || kind == node_kind::comment) {
+                    (void)doc_->set_text(id, arg_string(c, a, 0));
+                    mutated();
+                }
+                return value::undefined();
+            });
+    }
     tree_property(
         "textContent",
         [this, id](context & c, std::span<value>) { return c.string(text_content(id)); },
@@ -754,6 +833,26 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         if (!txn.has_attribute(id, name)) { return value::null(); }
         return c.string(std::string{txn.attribute_value(id, name)});
     });
+    // THE OTHER TWO HALVES OF THE ATTRIBUTE API. `setAttribute` and
+    // `getAttribute` were here and these were not, so an attribute could be
+    // written and read and never taken away: `el.removeAttribute('class')` was a
+    // TypeError, and `el.hasAttribute('disabled')` - the correct way to ask
+    // about a boolean attribute - did not exist at all, leaving `getAttribute()
+    // !== null` as the only spelling and undefined behaviour for the page that
+    // did not know it.
+    method("removeAttribute", [this](context & c, std::span<value> args) {
+        const node_id id = receiver(c);
+        if (!id) { return value::undefined(); }
+        (void)doc_->remove_attribute(id, atoms_->intern_lower(arg_string(c, args, 0)));
+        mutated();
+        return value::undefined();
+    });
+    method("hasAttribute", [this](context & c, std::span<value> args) {
+        const node_id id = receiver(c);
+        if (!id) { return value::boolean(false); }
+        return value::boolean(
+            doc_->read().has_attribute(id, atoms_->intern_lower(arg_string(c, args, 0))));
+    });
     method("setText", [this](context & c, std::span<value> args) {
         set_text(id_or_nothing(c), arg_string(c, args, 0));
         return value::undefined();
@@ -851,16 +950,10 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         const node_id parent = receiver(c);
         const node_id child = handle_of(arg(args, 0));
         const node_id before = handle_of(arg(args, 1));
-        if (parent && child) {
-            // A null reference node means "at the end", which is what makes
-            // `insertBefore(node, null)` a documented spelling of appendChild.
-            if (before) {
-                (void)doc_->insert_before(parent, child, before);
-            } else {
-                (void)doc_->append_child(parent, child);
-            }
-            mutated();
-        }
+        // A null reference node means "at the end", which is what makes
+        // `insertBefore(node, null)` a documented spelling of appendChild -
+        // insert_node reads an empty handle the same way.
+        (void)insert_node(parent, child, before);
         return arg(args, 0);
     });
     // WHERE THE ELEMENT IS ON SCREEN. A page turns a pointer event's viewport
@@ -906,6 +999,103 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         walk(walk, from, false);
         return out;
     });
+    // `element.getElementsByClassName(names)`, scoped to this subtree and LIVE
+    // for the same reason the document's is - see make_live_collection. The
+    // element is not one of its own results.
+    method("getElementsByClassName", [this](context & c, std::span<value> args) {
+        const node_id from = receiver(c);
+        const std::vector<std::string> tokens = ordered_set(arg_string(c, args, 0));
+        return make_live_collection(c, [this, from, tokens] {
+            return from ? all_by_class(from, tokens) : std::vector<node_id>{};
+        });
+    });
+    // THE ParentNode AND ChildNode INSERTION METHODS, none of which existed.
+    //
+    // They are what modern code writes instead of appendChild/insertBefore, and
+    // they differ in two ways that matter: they take ANY NUMBER of arguments,
+    // and a STRING argument becomes a Text node - so `el.append("x", node)` is
+    // one call where the old spelling is three lines and a createTextNode. WPT
+    // reaches for them constantly, and so does every library written since 2016.
+    const auto parent_of = [this](node_id id) { return doc_->read().parent(id); };
+    method("append", [this](context & c, std::span<value> args) {
+        const node_id self = receiver(c);
+        for (const value & one : args) { (void)insert_node(self, node_from(c, one), node_id{}); }
+        return value::undefined();
+    });
+    method("prepend", [this](context & c, std::span<value> args) {
+        const node_id self = receiver(c);
+        if (!self) { return value::undefined(); }
+        // BEFORE THE FIRST CHILD, and the arguments keep their order because
+        // each is inserted before the SAME reference node rather than before
+        // the one just added.
+        node_id first;
+        {
+            const auto txn = doc_->read();
+            const auto children = txn.children(self);
+            if (!children.empty()) { first = children.front(); }
+        }
+        for (const value & one : args) { (void)insert_node(self, node_from(c, one), first); }
+        return value::undefined();
+    });
+    method("before", [this, parent_of](context & c, std::span<value> args) {
+        const node_id self = receiver(c);
+        const node_id parent = parent_of(self);
+        for (const value & one : args) { (void)insert_node(parent, node_from(c, one), self); }
+        return value::undefined();
+    });
+    method("after", [this, parent_of](context & c, std::span<value> args) {
+        const node_id self = receiver(c);
+        const node_id parent = parent_of(self);
+        if (!parent) { return value::undefined(); }
+        // The reference is the NEXT sibling, and an empty one means "at the
+        // end" - which is exactly what insert_node does with an empty handle.
+        node_id next;
+        {
+            const auto txn = doc_->read();
+            const auto children = txn.children(parent);
+            for (std::size_t i = 0; i + 1 < children.size(); ++i) {
+                if (children[i] == self) { next = children[i + 1]; }
+            }
+        }
+        for (const value & one : args) { (void)insert_node(parent, node_from(c, one), next); }
+        return value::undefined();
+    });
+    method("replaceWith", [this, parent_of](context & c, std::span<value> args) {
+        const node_id self = receiver(c);
+        const node_id parent = parent_of(self);
+        if (!parent) { return value::undefined(); }
+        for (const value & one : args) { (void)insert_node(parent, node_from(c, one), self); }
+        (void)doc_->remove_child(self);
+        mutated();
+        return value::undefined();
+    });
+    method("replaceChild", [this](context & c, std::span<value> args) {
+        const node_id parent = receiver(c);
+        const node_id fresh = handle_of(arg(args, 0));
+        const node_id stale = handle_of(arg(args, 1));
+        if (!parent || !fresh || !stale) { return arg(args, 1); }
+        (void)insert_node(parent, fresh, stale);
+        (void)doc_->remove_child(stale);
+        mutated();
+        return arg(args, 1);
+    });
+    // `cloneNode(deep)` - a DETACHED copy, and without it there is no way at all
+    // to duplicate a template, which is how a page builds a list from one row.
+    method("cloneNode", [this](context & c, std::span<value> args) {
+        const node_id self = receiver(c);
+        if (!self) { return value::null(); }
+        const bool deep = !args.empty() && context::truthy(args[0]);
+        const auto txn = doc_->read();
+        return wrap(c, clone_node(txn, self, deep));
+    });
+    // `contains` INCLUDES THE NODE ITSELF, which is the part that is easy to get
+    // wrong: `el.contains(el)` is true in every browser.
+    method("contains", [this](context & c, std::span<value> args) {
+        const node_id self = receiver(c);
+        const node_id other = handle_of(arg(args, 0));
+        if (!self || !other) { return value::boolean(false); }
+        return value::boolean(doc_->read().is_ancestor_of(self, other));
+    });
     method("getBoundingClientRect", [this](context & c, std::span<value>) {
         const rect box = box_of(receiver(c));
         auto * out = static_cast<script::object_object *>(c.make_object().as_heap());
@@ -925,12 +1115,9 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         return value::object(out);
     });
     method("appendChild", [this](context & c, std::span<value> args) {
-        const node_id parent = receiver(c);
-        const node_id child = handle_of(arg(args, 0));
-        if (parent && child) {
-            (void)doc_->append_child(parent, child);
-            mutated();
-        }
+        // THROUGH insert_node, which is where a DocumentFragment is flattened:
+        // appending one must move its children and leave the fragment behind.
+        (void)insert_node(receiver(c), handle_of(arg(args, 0)), node_id{});
         return arg(args, 0);
     });
     method("removeChild", [this](context &, std::span<value> args) {
@@ -943,7 +1130,7 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
     });
     method("addEventListener", [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
-        if (id) { listeners_.push_back(make_listener(c, id, args)); }
+        if (id) { add_listener(make_listener(c, path_step{id, listen_on::node}, args)); }
         return value::undefined();
     });
     // The other half. The WINDOW could remove a listener and an element could
@@ -951,6 +1138,20 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
     // it is removed - threw instead. (The comment here used to say the document
     // could too. It could not, and that was found the same way, one corpus
     // later: see install_document.)
+    // `element.dispatchEvent(event)` - the third of the three EventTarget
+    // methods, and the one that was missing. addEventListener and
+    // removeEventListener were here; nothing a page constructed could ever be
+    // sent anywhere, so a page could only ever RECEIVE events the engine made.
+    //
+    // It returns whether the event was NOT cancelled, which is the opposite of
+    // what the internal dispatch reports and is how a caller learns that a
+    // listener refused the default action.
+    method("dispatchEvent", [this](context & c, std::span<value> args) {
+        const node_id id = receiver(c);
+        const value event = arg(args, 0);
+        if (!id || !event.is_object()) { return value::boolean(true); }
+        return value::boolean(!dispatch_to(event, path_step{id, listen_on::node}));
+    });
     method("removeEventListener", [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         const std::string type = arg_string(c, args, 0);

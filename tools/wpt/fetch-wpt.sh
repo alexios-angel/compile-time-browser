@@ -40,14 +40,17 @@ SPARSE_PATHS=(
   /html/dom/           # reflection, and the document's own interface
   /css/cssom/          # getComputedStyle, style declarations, stylesheets
   /css/css-values/     # value parsing and computation - calc, lengths, units
-  # THE HELPERS THE CSS SUITES IMPORT, and they are not optional. Almost every
-  # file in css/css-values is four lines long and calls test_valid_value,
-  # test_computed_value or test_math_used - all of which live in
-  # css/support/*.js. Without this line 94 of that suite's 508 files reported
-  # HARNESS_ERROR for a MISSING FILE rather than for anything about the engine,
-  # which is a measurement that cannot move no matter what is fixed. It is a
-  # SKIP_DIR_PARTS directory in run-wpt.py, so nothing here is ever collected as
-  # a test - it is imported, never run.
+  # THE HELPERS THE css/ SUITES IMPORT, and leaving them out was not a saving.
+  # `test_valid_value`, `test_computed_value`, `test_math_used`,
+  # `test_interpolation` and `test_specified_serialization` all live in
+  # css/support/*.js, and a test that cannot load one reports HARNESS_ERROR
+  # before it runs a single subtest - a measurement that cannot move no matter
+  # what the engine does. 94 of css/css-values' 128 harness errors were exactly
+  # that on 2026-09-02; adding this directory converted 87 into real results,
+  # 84 FAIL and 3 PASS. The score got worse and the instrument got honest.
+  #
+  # It is a SKIP_DIR_PARTS directory in run-wpt.py, so nothing here is ever
+  # collected as a test: it is imported, never run.
   /css/support/        # parsing-, computed-, numeric-testcommon.js and friends
 )
 
