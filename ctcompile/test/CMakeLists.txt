@@ -1344,6 +1344,22 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   #
   # A zero floor still bites the day one of them earns a number: raising it is
   # then a visible act in the commit that earns it.
+  #
+  # PHASE 59 SLICE 1b MOVED NONE OF THESE EITHER, measured 2026-09-03 before
+  # and after in one build directory: claimed 4 / 37 / 43, resolved 0 / 0 / 0,
+  # direct 21 / 41 / 48, lifted 3 / 47 / 3 on bootstrap / p5 / phaser -
+  # identical to the number. The slice carries a capture filled from the
+  # enclosing closure only once the enclosing function has lifted, and the
+  # refusal now spells the chain out to whatever stopped that. Walked closure
+  # by closure over the callees a ctjs.call_direct reaches: bootstrap's 19 are
+  # 3 lifted and 16 whose chain ends in a cell written EXACTLY ONCE from a
+  # constant undefined - the hoisted `var`/`const` shape closure-refusals.mlir
+  # pins as HOISTED; phaser's 40 are 2 lifted, 1 arrow reading `this`, and 37
+  # of the same shape; p5's 26 are 12 lifted, 7 of that shape and 7 other.
+  # Module-wide, 250 of bootstrap's 271 closures refused for a reassigned
+  # capture have that shape. So these floors stay where they are, on purpose,
+  # and the next lever is a binding's single dominating write (part 24 Phase
+  # 59 step 3), not another level of nesting.
   function(ctcompile_add_native_claims name js floor resolved direct lifted)
     add_test(NAME ctcompile_native_claims_${name}
              COMMAND ${Python3_EXECUTABLE}
