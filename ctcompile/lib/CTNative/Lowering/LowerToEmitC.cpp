@@ -84,12 +84,19 @@ namespace pdll {
 // THE KIND TEST FOR UnaryPlusIsIdentity.pdll. It is C++ rather than an
 // attribute literal in the pattern because the literal does not work: mlir-pdll
 // cannot parse `attr<"#ctjs.unary_kind<plus>">` without our dialect registered,
-// and it drops the constraint and exits 0 rather than saying so. The dyn_cast
-// is not redundant with `op<ctjs.unary>` - a native constraint receives an
-// `Operation *` and nothing in the generated wrapper has narrowed it.
-mlir::LogicalResult isUnaryPlus(mlir::PatternRewriter &, mlir::Operation * o) {
-    auto unary = llvm::dyn_cast<ctjs::UnaryOp>(o);
-    return mlir::success(unary && unary.getKind() == ctjs::UnaryKind::Plus);
+// and it drops the constraint and exits 0 rather than saying so.
+//
+// IT TAKES A ctjs::UnaryOp, NOT AN Operation *, and the pattern's
+// `Op<ctjs.unary>` parameter is what does that. The reference's "Native
+// Constraint Type Translations" says a NAMED operation constraint whose ODS has
+// been included translates to the qualified C++ class rather than to
+// `::mlir::Operation *`, and the generated wrapper here is
+// `IsUnaryPlusPDLFn(::mlir::PatternRewriter &, ::ctcompile::ctjs::UnaryOp)`.
+// The framework has already checked the type by then - ProcessDerivedPDLValue's
+// verifyAsArg is a TypeSwitch that fails the constraint on a mismatch - so
+// there is nothing left here to dyn_cast and nothing to null-check.
+mlir::LogicalResult isUnaryPlus(mlir::PatternRewriter &, ctjs::UnaryOp o) {
+    return mlir::success(o.getKind() == ctjs::UnaryKind::Plus);
 }
 
 } // namespace pdll

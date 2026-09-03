@@ -1890,26 +1890,39 @@ and `${PROJECT_BINARY_DIR}/include` to every `add_mlir_pdll_library` beside
 `${MLIR_INCLUDE_DIRS}`, spelled the way `ctcompile_target()` spells them for
 C++, so a `.td` and a `.h` are included by the same project path.
 
-### 2. Two ways for `mlir-pdll` to succeed while lying — both now build failures
+### 2. Two things it accepts at exit 0 — one a trap, one a documented feature
 
-**An attribute literal of our dialect is dropped.** As above: stderr says
-*"'none' attribute created with unregistered dialect"*, the exit status is
-**0**, and the emitted pattern's `kind` is a bare `%1 = attribute` with no
-constraint. `mlir-pdll --help` has no dialect-registration flag; its only inputs
-are `-I` and the ODS it parses.
+**An attribute literal of our dialect is dropped, and this one IS a trap.** As
+above: stderr says *"'none' attribute created with unregistered dialect"*, the
+exit status is **0**, and the emitted pattern's `kind` is a bare
+`%1 = attribute` with no constraint. The reference specifies `attr<"…">` as the
+textual form of that attribute, parsed when the pattern is compiled, and
+`mlir-pdll --help` has no dialect-registration flag — its only inputs are `-I`
+and the ODS it parses. Nothing about the outcome is intended.
 
-**An operation name ODS does not know is not diagnosed at all.** This one the
-earlier spike had backwards, and `PruneDeadStores.pdll` said so in a comment:
+**An operation name ODS does not know is accepted BY DESIGN.** The earlier spike
+had this backwards, and so did a comment in `PruneDeadStores.pdll` claiming the
+ODS include made the name checked. It does not:
 
 ```
 #include "ctcompile/CTJS/IR/CTJSOps.td"
 Pattern P { let root = op<ctjs.binry>; replace root with root; }
 ```
 
-is **exit 0 with an empty stderr**. So is the same file with the `#include`
-deleted. The name is taken as an unchecked string and the pattern never fires.
+is **exit 0 with an empty stderr**, and so is the same file with the `#include`
+deleted. That is not a hole: the language reference has a section titled
+*Unregistered Operations* in which a variable of an unregistered operation is
+deliberately supported, with result access falling back to numeric indexing. A
+misspelling and an intentionally-unregistered operation are the same thing to
+the tool, and it has no way to tell them apart.
 
-`ctcompile/utils/pdll-strict.sh` closes both. It is installed as
+**So the guard closes a trap and OPTS OUT OF A FEATURE**, and the second half is
+a project decision rather than a bug report. This tree has no unregistered
+operation it wants to match and every reason to want a misspelling to fail, so
+it declines the freedom — which is also why the guard's own test is written the
+way it is, below.
+
+`ctcompile/utils/pdll-strict.sh` refuses both. It is installed as
 `MLIR_PDLL_TABLEGEN_EXE` in `ctcompile/CMakeLists.txt` — the variable
 `AddMLIR.cmake`'s `_pdll_tablegen` reads — as the two-element list *(guard, real
 tool)*, so every `add_mlir_pdll_library` in the tree goes through it and no
@@ -1923,9 +1936,13 @@ target can opt out. It does two things:
 
 `test/check-pdll-guard.cmake` (ctest: `ctcompile_pdll_guard`, ~70 ms) runs it
 over three fixtures in `test/PDLL/` that nothing compiles, and asserts **both
-sides** of each: that the raw `mlir-pdll` accepts the two bad ones — so the day
-upstream closes a hole the gate says which — and that the guard refuses them,
-naming *"unregistered dialect"* and *"ctjs.binry"* respectively. The accepted
+sides** of each: that the raw `mlir-pdll` accepts the two bad ones, and that the
+guard refuses them, naming *"unregistered dialect"* and *"ctjs.binry"*
+respectively. The raw-acceptance half is what keeps the gate honest, and it
+matters more for the misspelling than for the literal: we are overriding
+documented behaviour there, so the day the tool changes — a trap closed, or the
+unregistered-operation feature withdrawn — the assertion that the raw tool still
+accepts the input is the one that fails first, and it says which. The accepted
 fixture must pass and its output must contain `operation "ctjs.binary"`, so a
 guard that simply refused everything fails here.
 
@@ -1948,6 +1965,25 @@ Pattern UnaryPlusIsIdentity {
 ```
 
 Unlike the literal, `UnaryKind::Pluss` here is a C++ compile error.
+
+**What a native body can and cannot do, corrected against the reference.** A
+native constraint takes any number of matched entities — `Attr`, `Op`, `Type`,
+`TypeRange`, `Value`, `ValueRange` — and a *named* `Op<dialect.name>` parameter
+is translated to the CONCRETE C++ op class once the ODS is included. That is why
+the constraint above is declared `Constraint IsUnaryPlus(op: Op<ctjs.unary>)`:
+the generated wrapper is
+`IsUnaryPlusPDLFn(::mlir::PatternRewriter &, ::ctcompile::ctjs::UnaryOp)`, the
+framework type-checks the argument before calling
+(`ProcessDerivedPDLValue::verifyAsArg` is a `TypeSwitch` that fails the
+constraint on a mismatch), and the body needs no `dyn_cast` and no null check.
+Native **rewrites** go further still: they may return values, several at once,
+and build operations.
+
+Two limits are real, and both are narrower than "a plain function pointer that
+captures nothing". **Constraints cannot return values at all** — the reference
+marks it a TODO — so a constraint can never compute a carrier, only accept or
+reject. And **every argument comes from the match**, which is the next section.
+
 `test/CTNative/Lowering/unary-plus.mlir` asserts that the pattern fires *and*
 that `ctjs.unary neg` in the next function is untouched — which is exactly what
 a dropped kind constraint would break.
@@ -1978,8 +2014,10 @@ Every other arm builds an EmitC operation over `f64`/`i1`, and that is only
 correct **after** `retype()` has rewritten each value's type from the
 `DataFlowSolver` lattice. Two things follow:
 
-* a native constraint captures nothing, so it cannot read the lattice or the
-  pass-local `shapes` / `accessKey` / `keyConstants` / `names`; and
+* **every argument of a native body comes from the match**, so nothing
+  pass-local reaches one: not the `DataFlowSolver` lattice, not `shapes`,
+  `accessKey`, `keyConstants` or `names`. A global or a `thread_local` is the
+  only route, and it is worse than the switch it would replace; and
 * after `retype()` a `ctjs.unary` has an `f64` operand where its ODS declares
   `CTJS_ValueType`, so **the function no longer verifies** and is no place to
   point a pattern driver at all.
@@ -1999,6 +2037,26 @@ this pass has `eraseIfUnused()` as a fatal invariant. And because PDL reports
 nothing on a non-match, `replace()` keeps a `UnaryKind::Plus` arm that calls
 `report_fatal_error` naming the `.pdll` — a pattern that silently stopped firing
 would otherwise reach `default:` and blame admission.
+
+### Precedence is expressible; the first-failing-thing diagnostic is not
+
+The section above this one summarises `admission` as beyond PDLL because the
+language has *"no `otherwise`, no way to order which predicate reports first,
+and no way to reach the lattice the predicates read"*. **The middle clause is
+too strong and is corrected here.** A pattern's benefit defaults to the number
+of operations its match section names and can be set explicitly in the pattern's
+metadata, so ordering BETWEEN patterns is expressible — "an if-chain encodes an
+order that patterns lose" is only half true, and any design decision resting on
+the stronger claim should be re-read.
+
+What is genuinely not expressible is the **diagnostic**. A non-match is silent,
+there is no `otherwise`, and a native constraint cannot report the failure
+either: constraints run only after the structural predicates have matched, so
+the case that matters — *this operation is not one we handle* — never reaches
+C++. `admission`'s entire output is a refusal string naming the first thing that
+failed, so it stays C++ for that reason and for the lattice, not for the
+ordering. The same silence is why `replace()` keeps a `UnaryKind::Plus` arm that
+`report_fatal_error`s: it is the only way a pattern that stopped firing says so.
 
 ### Is a forked `ctjs-pdll` worth it? No.
 
@@ -2025,8 +2083,10 @@ function. Against that:
   function a capture.
 
 The verdict holds unless upstream exposes the driver as a library, at which
-point the trade is worth re-measuring — and the guard stays either way, because
-an unchecked operation name is orthogonal to dialect registration.
+point the trade is worth re-measuring — and the guard stays either way. Half of
+what it refuses has nothing to do with our dialect being out of tree:
+unregistered-operation support is a feature of the language, and registering
+`ctjs` would not withdraw it.
 
 ## The ladder ahead
 

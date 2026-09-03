@@ -17,19 +17,24 @@
 #   registers an out-of-tree dialect: its only inputs are -I and the ODS it
 #   parses.
 #
-#   AN OPERATION NAME THAT ODS DOES NOT KNOW IS NOT DIAGNOSED AT ALL.
+#   AN OPERATION NAME THAT ODS DOES NOT KNOW IS ACCEPTED BY DESIGN.
 #     #include "ctcompile/CTJS/IR/CTJSOps.td"
 #     Pattern P { let root = op<ctjs.binry>; replace root with root; }
-#   compiles with exit 0 and an EMPTY stderr. The ODS include does buy
-#   checking - `op<ctjs.unary>(a: Value, b: Value)` is a hard error naming the
-#   record - but only for an operation whose name ODS recognises. An unknown
-#   name is taken as an unchecked string, and the pattern never fires. A
-#   forgotten `#include` has exactly the same shape.
+#   compiles with exit 0 and an EMPTY stderr, and so does the same file with the
+#   #include deleted. That is NOT a bug: the PDLL reference has a section
+#   "Unregistered Operations" in which a variable of an unregistered operation is
+#   deliberately supported, with result access falling back to numeric indexing.
+#   A misspelling and an intentionally-unregistered operation are the same thing
+#   to the tool. The ODS include still buys shape checking on a name it does
+#   recognise - `op<ctjs.unary>(a: Value, b: Value)` is a hard error naming the
+#   record - but nothing at all on a name it does not.
 #
 # SO THE WRAPPER DOES TWO THINGS. It refuses any run that printed a diagnostic
 # even though it succeeded, and it re-runs the tool with --dump-ods to check
 # that every operation the emitted pattern NAMES is an operation some ODS file
-# on the include path defines. The second run costs about 11 ms and needs no
+# on the include path defines. The second half is this project OPTING OUT OF A
+# LANGUAGE FEATURE, not patching a bug: there is no unregistered operation this
+# tree wants to match, and every reason to want a misspelling to fail. The second run costs about 11 ms and needs no
 # argument parsing: mlir-pdll's -o, -d and -x are ordinary cl::opt scalars, so
 # the copies appended after "$@" win.
 #
@@ -93,9 +98,9 @@ unknown=$(comm -23 "$work/named" "$work/known")
 
 if [ -n "$unknown" ]; then
     echo "pdll-strict.sh: this pattern names operations no ODS file on the include" >&2
-    echo "pdll-strict.sh: path defines, and mlir-pdll does not diagnose that - it" >&2
-    echo "pdll-strict.sh: takes the name as an unchecked string and the pattern then" >&2
-    echo "pdll-strict.sh: never fires:" >&2
+    echo "pdll-strict.sh: path defines. mlir-pdll accepts that deliberately - an" >&2
+    echo "pdll-strict.sh: unregistered operation is a supported variable - so this" >&2
+    echo "pdll-strict.sh: project, which has no such operation, refuses it here:" >&2
     echo "$unknown" | sed 's/^/pdll-strict.sh:     /' >&2
     echo "pdll-strict.sh: fix the spelling, or #include the .td that defines it." >&2
     exit 1

@@ -35,12 +35,14 @@
 
 // OUR OWN ODS, WHICH IS THE POINT OF THE FILE. With it, `op<ctjs.unary>` is
 // checked for operand and result shape against CTJSOps.td - naming two
-// operands is a hard error quoting the record. It does NOT check the NAME
-// (measured: `op<ctjs.binry>` is exit 0 and silence), and it does not make
+// operands is a hard error quoting the record - and `Op<ctjs.unary>` in the
+// constraint below translates to the concrete C++ class. It does NOT check the
+// NAME: `op<ctjs.binry>` is exit 0 and silence, and that is DELIBERATE - the
+// reference supports unregistered operations on purpose. And it does not make
 // `attr<"#ctjs.unary_kind<plus>">` parse - that prints "'none' attribute
-// created with unregistered dialect", exits 0, and drops the constraint.
-// utils/pdll-strict.sh turns both into build failures; the kind test below is
-// native for the same reason.
+// created with unregistered dialect", exits 0, and drops the constraint, which
+// IS a trap. utils/pdll-strict.sh fails the build on both; the kind test below
+// is native because of the second.
 #include "ctcompile/CTJS/IR/CTJSOps.td"
 
 //===- The native constraint ----------------------------------------------===//
@@ -58,7 +60,13 @@
 // is threaded through because mlir-pdll generates the wrapper with that
 // parameter whether the body wants it or not, and an unused parameter is a
 // build failure here.
-Constraint IsUnaryPlus(op: Op) [{
+//
+// `Op<ctjs.unary>` AND NOT A BARE `Op`, which is not decoration: a NAMED
+// operation constraint whose ODS has been included translates to the CONCRETE
+// C++ class, so isUnaryPlus receives a `ctcompile::ctjs::UnaryOp` and needs no
+// dyn_cast. A bare `Op` would hand it an `::mlir::Operation *` and put the
+// narrowing back in C++, where it is one more thing to get wrong.
+Constraint IsUnaryPlus(op: Op<ctjs.unary>) [{
   return ::ctcompile::ctnative::pdll::isUnaryPlus(rewriter, op);
 }];
 

@@ -5,10 +5,15 @@
 # quietly stops guarding when the tool's output changes - and this one keys off
 # text the tool prints - so every case here is asserted TWICE:
 #
-#   the RAW tool must accept the bad file    (the hole is real; the test is not
-#                                             vacuous, and the day upstream
-#                                             fixes it this line says so)
+#   the RAW tool must accept the bad file    (the behaviour is real; the test is
+#                                             not vacuous, and the day the tool
+#                                             changes this line says so)
 #   the GUARD must refuse it, with a reason  (the guard has teeth)
+#
+# For misspelled-operation.pdll the raw half is the load-bearing one: accepting
+# an unregistered operation name is a DOCUMENTED FEATURE of PDLL, so the guard
+# is overriding the language rather than catching a bug, and the assertion that
+# the raw tool still accepts the file is what notices if that ever changes.
 #
 # and the accepted file must pass BOTH, so that a guard which simply refused
 # everything would fail here rather than pass three ways.
@@ -85,9 +90,11 @@ foreach(case IN LISTS cases)
 
   pdll_run(r text COMMAND "${PDLL}" FIXTURE "${fixture}" OUTPUT "raw-${fixture}.inc")
   if(NOT r EQUAL 0)
-    message(FATAL_ERROR "pdll-guard: the RAW mlir-pdll refused ${fixture}. That is good news for "
-                        "upstream and it makes this case vacuous - the guard is no longer what "
-                        "catches it. Re-read utils/pdll-strict.sh before deleting anything:\n${text}")
+    message(FATAL_ERROR "pdll-guard: the RAW mlir-pdll refused ${fixture}, which it used to "
+                        "accept. This case is now vacuous - the guard is no longer what catches "
+                        "it - and for the unregistered-operation fixture it also means a "
+                        "documented feature changed. Re-read utils/pdll-strict.sh before deleting "
+                        "anything:\n${text}")
   endif()
 
   pdll_run(r text COMMAND "${GUARD}" "${PDLL}" FIXTURE "${fixture}" OUTPUT "${fixture}.inc")
