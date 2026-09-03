@@ -52,7 +52,9 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
   }];
   let options = [
     Option<"report", "report", "bool", /*default=*/"false",
-           "Emit the Phase 59 lift counts as a remark (the release LLVM package compiles pass statistics out)">
+           "Emit the Phase 59 lift counts as a remark (the release LLVM package compiles pass statistics out)">,
+    Option<"census", "census", "bool", /*default=*/"false",
+           "Emit, as a remark, why each method-bearing object literal is NOT a closed shape - one bucket per blocking use, and the objects a single bucket alone blocks">
   ];
   // pdl AND pdl_interp ARE NOT AN EMITTED DIALECT, THEY ARE THE PATTERN'S
   // RUNTIME. `+x` on a proved number is erased by UnaryPlusIsIdentity.pdll, and

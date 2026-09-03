@@ -137,4 +137,4 @@ var s = shared();
 // asserts nothing. The `report` option is the escape hatch --ctjs-resolve-globals
 // and --ctjs-lift-to-scf already ship, and this is a number a test can pin.
 //
-// REPORT: remark: ctnative: lifted 3 closure(s) over 0 capture(s) into 3 function(s), rewrote 4 call(s), unboxed 0 cell(s), 3 method(s) of which 3 take a receiver
+// REPORT: remark: ctnative: lifted 3 closure(s) over 0 capture(s) into 3 function(s), rewrote 4 call(s), unboxed 0 cell(s), 3 method(s) of which 3 take a receiver, 0 object parameter(s)

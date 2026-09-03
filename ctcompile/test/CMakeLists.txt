@@ -1687,3 +1687,61 @@ if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(receivers
                               "${CMAKE_CURRENT_SOURCE_DIR}/native-receiver-fixture.js" 16 7 8)
 endif()
+
+# ============================================================================
+# === PART 24: AN ARGUMENT IS A PARAMETER TOO - the object carrier at any index
+# ============================================================================
+# native-object-argument-fixture.js is seven functions whose closed-shape
+# literals are PASSED to a call rather than (or as well as) called on. The
+# receiver lift made a literal reach a function as a `ctn_x *` and its fields as
+# `self->x`; nothing in that carrier was about operand 0, so the same proof
+# carries an argument - and `closedAfterLift` stops treating "it is passed to a
+# call" as an escape when the callee is one function this rewrite makes direct
+# and the parameter is only ever read through constant keys.
+#
+# WHY IT IS A `this` CHANGE. A method table that was ALSO passed anywhere had an
+# open shape, and an open shape refused every method on it by name. `both()` is
+# that program.
+#
+# MEASURED, AND THE NUMBER DID NOT MOVE ON THE CORPORA. All 51 method-bearing
+# literals that bootstrap, p5 and phaser block on an argument use pass to an
+# OPAQUE callee - `--ctnative-lower-to-emitc=census=1` prints the distribution -
+# so the 249 refusals reading "a method field of an object whose shape is not
+# closed" are 249 before and after. The fixture is what shows the carrier works;
+# the census is what says why the bundles do not benefit.
+#
+# THE GATE IS THE POINT, NOT THE IR - AND THE PREDICTION HERE WAS WRONG, WHICH
+# IS WORTH RECORDING. The expectation was that passing the object BY VALUE would
+# verify, compile clean and print 8 where the interpreter prints 40, because the
+# write in `mutated()` would never reach the caller. Measured by deleting the
+# address-of at the call site: EmitC will not express it at all. `emitc.func`
+# rejects an lvalue parameter type and `emitc.call` rejects an lvalue operand
+# ("operand #0 must be variadic of type supported by EmitC, but got
+# `!emitc.lvalue<!emitc.opaque<"ctn_x">>`"), so the by-value lift is a hard
+# verifier error and not a wrong number. What the differential gate DOES catch
+# here is the index: an object handed to the wrong parameter position, or a
+# receiver and an argument swapped in `both()`, both verify and print wrongly.
+#
+# THE REFUSALS ARE NOT HERE, and cannot be: native-pipeline.cmake refuses to
+# write a module while any function carries `ctnative.not_native`, and a refusal
+# is contagious in both directions anyway. They are one program apiece in
+# CTNative/Lowering/object-argument-refusals.mlir, under split-file, with the
+# census remark asserted alongside them.
+#
+# One appended block, per part 23 Appendix A.3.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(object_arguments
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-object-argument-fixture.js")
+endif()
+# AND THE CLAIMED COUNT, AS A FLOOR. Fifteen functions and all of them claimed:
+# the top level, seven that build a literal, and seven callees - `both()` making
+# two. A change that stops lifting one of them fails HERE even if the fixture
+# above were deleted, which is what --min-claimed is for. `resolved` and
+# `direct` are the closed world's own counters and this lift does not move them:
+# it emits its ctjs.call_direct inside --ctnative-lower-to-emitc, after
+# --ctjs-resolve-globals has already been counted.
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(object_arguments
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-object-argument-fixture.js"
+                              15 7 7)
+endif()
