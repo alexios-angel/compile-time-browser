@@ -1405,3 +1405,87 @@ if(CTCOMPILE_ENABLE_MLIR)
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/check-pdll-guard.cmake)
 endif()
+
+# === THE DIFFERENTIAL GATE COMPARES VALUES THAT ARE NOT NUMBERS ===
+#
+# One appended block, per part 23's Appendix A.3. Everything it needs is its
+# own file: native-values-fixture.js (a program with a Number, a Boolean, a
+# String, `null` and `undefined` in its globals) and
+# native-values-fixture.emitc.mlir (the hand-written EmitC module that is the
+# SPECIFICATION of what the lowering has to emit for it - including the
+# `ctnative::print_*` helpers, which LowerToEmitC.cpp does not emit yet).
+#
+# WHY A HAND-WRITTEN MODULE and not the pipeline: the same reason
+# native-fixture.emitc.mlir is hand-written. The gate is what defines the tier,
+# so it is proved on something BEFORE there is a lowering to gate - otherwise
+# the first program with a Boolean global would arrive with the gate and the
+# lowering both unproven, and neither could be blamed. When the lowering learns
+# these forms, its output for native-values-fixture.js should be this module up
+# to value names, and nothing here has to change.
+if(COMMAND ctcompile_add_native_unit AND COMMAND ctcompile_add_compile_clean)
+  set(_values_module "${CMAKE_CURRENT_SOURCE_DIR}/native-values-fixture.emitc.mlir")
+  set(_values_js "${CMAKE_CURRENT_SOURCE_DIR}/native-values-fixture.js")
+
+  # THE GATE, over all five kinds at once.
+  ctcompile_add_native_unit(values "${_values_module}" "${_values_js}")
+
+  # ONE NEGATIVE PROOF PER KIND, because a mutation that suits a Number suits
+  # nothing else: `<g> = <g> + 1` does not compile on a bool, has no meaning on
+  # a std::string, and has nothing to act on for a global whose proven type is
+  # `undefined` or `null` - those have no storage. Each of these must FAIL, and
+  # must fail NAMING ITS GLOBAL; the driver's EXPECT_FAILURE is what asserts
+  # the second half. See check-native-unit.cmake's MUTATE_AS block.
+  #
+  # `third` AND NOT `answer` FOR THE NUMBER, and that is a fact about the
+  # mechanism rather than a preference: the number mutation is an insertion in
+  # front of the first print, so it is invisible to a global the printing has
+  # already read - which the FIRST global in sorted order always has been. The
+  # driver now refuses that case by name, and the next test is the proof.
+  ctcompile_add_native_unit(values_number "${_values_module}" "${_values_js}"
+    -DMUTATE=third -DMUTATE_AS=number "-DEXPECT_FAILURE=global 'third' differs")
+  ctcompile_add_native_unit(values_boolean "${_values_module}" "${_values_js}"
+    -DMUTATE=no -DMUTATE_AS=boolean "-DEXPECT_FAILURE=global 'no' differs")
+  ctcompile_add_native_unit(values_string "${_values_module}" "${_values_js}"
+    -DMUTATE=greeting -DMUTATE_AS=string "-DEXPECT_FAILURE=global 'greeting' differs")
+  ctcompile_add_native_unit(values_undefined "${_values_module}" "${_values_js}"
+    -DMUTATE=missing -DMUTATE_AS=undefined "-DEXPECT_FAILURE=global 'missing' differs")
+  ctcompile_add_native_unit(values_null "${_values_module}" "${_values_js}"
+    -DMUTATE=nothing -DMUTATE_AS=null "-DEXPECT_FAILURE=global 'nothing' differs")
+
+  # AND THE GUARD ON THE MUTATION ITSELF. Mutating the first global in sorted
+  # order used to PASS - the off-by-one landed after the printing had read the
+  # value, so the binary printed the right answer and the negative test could
+  # say only "the gate PASSED where it had to fail". This asserts the driver
+  # now refuses that mutation and says why, so the next author does not spend
+  # the afternoon the last one did.
+  ctcompile_add_native_unit(values_vacuous_mutation "${_values_module}" "${_values_js}"
+    -DMUTATE=answer -DMUTATE_AS=number
+    "-DEXPECT_FAILURE=VACUOUS")
+
+  # THE SYMBOL CHECK, on a binary built from THIS module. The nm check knows
+  # nothing about values, so one control per module is all it can prove and
+  # five copies of it would be five copies of one proof; this is the module's
+  # own C++ plus one object that reaches the interpreter, and the gate must
+  # reject it.
+  set(_values_cpp "${CMAKE_CURRENT_BINARY_DIR}/native-values-fixture.generated.cpp")
+  add_custom_command(
+    OUTPUT "${_values_cpp}"
+    COMMAND $<TARGET_FILE:ctjs-translate> --mlir-to-cpp "${_values_module}" -o "${_values_cpp}"
+    DEPENDS "${_values_module}" ctjs-translate
+    COMMENT "Emitting native-values-fixture.emitc.mlir to C++ for the VM-linked control"
+    VERBATIM)
+  add_executable(ctcompile-test-native-values-vm-linked NativeVmLinked.cpp "${_values_cpp}")
+  target_link_libraries(ctcompile-test-native-values-vm-linked PRIVATE ctbrowser::ctbrowser)
+  target_compile_features(ctcompile-test-native-values-vm-linked PRIVATE cxx_std_23)
+  target_compile_options(ctcompile-test-native-values-vm-linked PRIVATE
+    -O2 -Wall -Wextra -Werror -pedantic -ffp-contract=off)
+  ctcompile_add_native_unit(values_vm_linked "${_values_module}" "${_values_js}"
+    -DPREBUILT=$<TARGET_FILE:ctcompile-test-native-values-vm-linked>
+    "-DEXPECT_FAILURE=reaches the interpreter")
+
+  # PHASE 63 STEP 7 over the same module: the value-printing helpers the
+  # lowering has to emit must compile clean on BOTH toolchains, not just on the
+  # one the gate happens to use, and every definition must carry its
+  # provenance comment.
+  ctcompile_add_compile_clean(values "${_values_module}")
+endif()
