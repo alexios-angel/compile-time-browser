@@ -915,35 +915,52 @@ void install_symbol(context & cx) {
     // give, that a key looked up twice is the same symbol, was the one it did
     // not keep. The shared_ptr is captured by both `for` and `keyFor`, which is
     // what lets the second answer questions about the first.
-    auto registry = std::make_shared<std::vector<std::pair<std::string, value>>>();
-    symbol->define("for",
-                   value::object(cx.allocate<native_object>(
-                       "for",
-                       [registry](context & c, std::span<value> a) {
-                           const std::string d = a.empty() ? std::string{} : c.to_string(a[0]);
-                           for (const auto & [key, made] : *registry) {
-                               if (key == d) { return made; }
-                           }
-                           const value made =
-                               value::object(c.allocate<symbol_object>(d, "@@for:" + d));
-                           registry->emplace_back(d, made);
-                           return made;
-                       })),
-                   attr_builtin);
+    //
+    // AND THE SYMBOLS THEMSELVES HAVE TO LIVE IN A HEAP OBJECT, not in the
+    // capture. They were `value`s inside the shared_ptr, and a `value` in a C++
+    // capture is invisible to the precise collector: the KEYS survived a
+    // collection - they are std::strings, which nothing collects - and every
+    // symbol they named was freed while the registry went on listing it.
+    // `Symbol.for('KEY')` then handed back a pointer into a freed cell, and
+    // once another symbol was allocated over it, `Symbol.for('KEY').description`
+    // came back as that other symbol's description. Measured, not reasoned:
+    // 'recycled'.
+    //
+    // So the keys stay in C++, where they are safe by construction, and the
+    // symbols move into an ARRAY, which mark_object traces like any other -
+    // which means the registry roots itself AS IT GROWS, where a snapshot into
+    // native_object::retained would only root what was registered by the time
+    // the native was built. Both natives retain the one array handle, so
+    // neither can be left reading the other's freed entries.
+    auto keys = std::make_shared<std::vector<std::string>>();
+    const value registry = cx.make_array();
+    auto * symbol_for =
+        cx.allocate<native_object>("for", [keys, registry](context & c, std::span<value> a) {
+            const std::string d = a.empty() ? std::string{} : c.to_string(a[0]);
+            auto * held = static_cast<array_object *>(registry.as_heap());
+            for (std::size_t i = 0; i < keys->size() && i < held->items.size(); ++i) {
+                if ((*keys)[i] == d) { return held->items[i]; }
+            }
+            const value made = value::object(c.allocate<symbol_object>(d, "@@for:" + d));
+            keys->push_back(d);
+            held->items.push_back(made);
+            return made;
+        });
+    symbol_for->retained.push_back(registry);
+    symbol->define("for", value::object(symbol_for), attr_builtin);
     // The inverse: the key a registered symbol was made under, or undefined for
     // one that never went through the registry.
-    symbol->define(
-        "keyFor",
-        value::object(cx.allocate<native_object>("keyFor",
-                                                 [registry](context & c, std::span<value> a) {
-                                                     const value want = arg_at(a, 0);
-                                                     for (const auto & [key, made] : *registry) {
-                                                         if (made == want) { return c.string(key); }
-                                                     }
-                                                     (void)c;
-                                                     return value::undefined();
-                                                 })),
-        attr_builtin);
+    auto * symbol_key_for =
+        cx.allocate<native_object>("keyFor", [keys, registry](context & c, std::span<value> a) {
+            const value want = arg_at(a, 0);
+            auto * held = static_cast<array_object *>(registry.as_heap());
+            for (std::size_t i = 0; i < keys->size() && i < held->items.size(); ++i) {
+                if (held->items[i] == want) { return c.string((*keys)[i]); }
+            }
+            return value::undefined();
+        });
+    symbol_key_for->retained.push_back(registry);
+    symbol->define("keyFor", value::object(symbol_key_for), attr_builtin);
     // `Symbol.prototype` is reachable from the constructor, like every other
     // built-in's - a page that walks it found undefined.
     detail::constant(symbol, "prototype", value::object(symbol_proto));

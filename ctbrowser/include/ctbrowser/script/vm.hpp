@@ -96,6 +96,28 @@ struct native_object final : heap_object {
     std::vector<std::uint8_t> attrs;
     bool extensible = true;
 
+    // WHAT THIS NATIVE'S C++ LAMBDA IS HOLDING - the one root the collector
+    // could not otherwise have.
+    //
+    // A `value` captured by a C++ lambda is invisible to a precise collector:
+    // `mark_object` walks an object's fields, and a capture is not a field of
+    // anything it knows about. `each_root` has no inventory of captures and
+    // cannot have one - the captures live inside a std::function's erased
+    // storage. So every native that closed over a value was holding a pointer
+    // the sweep was free to invalidate, and did.
+    //
+    // `new Promise` hit this first and was fixed by putting the promise in a
+    // PROPERTY, which works because props are traced - but a property is
+    // observable (`Object.getOwnPropertyNames` sees it), costs a name string,
+    // and is walked by every `find` on that native. This is the same fix
+    // without those three costs, and it says what it is. Anything that
+    // captures a value in a native lambda belongs here.
+    //
+    // A vector<value>, so a capture that GROWS can be rooted too - though the
+    // better answer for a growing set is to make the set itself a heap object
+    // and retain that one handle, which is what `Symbol.for`'s registry does.
+    std::vector<value> retained;
+
     [[nodiscard]] value * find(std::string_view key) {
         for (auto & [k, item] : props) {
             if (k == key) { return &item; }

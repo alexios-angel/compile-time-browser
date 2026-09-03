@@ -118,9 +118,13 @@ void install_promise(context & cx) {
         // frame never came back. Every p5 loader awaits twice.
         //
         // The fix is to make the reference REACHABLE rather than to stop
-        // capturing: a native's props are traced, so a property the page never
-        // reads is exactly the root this needs. Anything else that captures a
-        // value in a native lambda needs the same treatment.
+        // capturing. That was first done with a PROPERTY, `__promise`, because
+        // a native's props are traced - and the mechanism it asked for in this
+        // comment now exists: `native_object::retained` is a traced list that
+        // is not a property, so it costs no name, is not walked by `find` on
+        // every lookup, and - the reason this migrated rather than being left
+        // alone - is not visible to `Object.getOwnPropertyNames(resolve)`,
+        // which `__promise` was.
         auto * resolve_fn =
             c.allocate<native_object>("resolve", [promise](context & inner, std::span<value> args) {
                 detail::settle(inner, promise, args.empty() ? value::undefined() : args[0], false);
@@ -131,8 +135,8 @@ void install_promise(context & cx) {
                 detail::settle(inner, promise, args.empty() ? value::undefined() : args[0], true);
                 return value::undefined();
             });
-        resolve_fn->define("__promise", promise, attr_builtin);
-        reject_fn->define("__promise", promise, attr_builtin);
+        resolve_fn->retained.push_back(promise);
+        reject_fn->retained.push_back(promise);
         const value resolve = value::object(resolve_fn);
         const value reject = value::object(reject_fn);
         const value args[2] = {resolve, reject};

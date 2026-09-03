@@ -102,6 +102,12 @@ void context::trace_object(heap_object * o) {
     case heap_kind::native: {
         auto * fn = static_cast<native_object *>(o);
         for (const auto & [name, v] : fn->props) { edge(v); }
+        // ...AND WHAT ITS C++ LAMBDA CAPTURED. A capture is invisible to a
+        // precise collector - it lives inside a std::function's erased
+        // storage, which no root walk can reach - so a native that closed over
+        // a value held a pointer the sweep was free to free. See
+        // native_object::retained.
+        for (const value & v : fn->retained) { edge(v); }
         // ...AND ITS OWN [[Prototype]]. `TypeError.__proto__` is `Error`, and a
         // constructor reachable only through another one would otherwise be
         // swept out from under it.

@@ -70,6 +70,68 @@ void expect_gc(std::string_view what, const std::string & source, std::string_vi
     }
 }
 
+// --- native lambda captures ------------------------------------------------
+//
+// A `value` captured by a C++ lambda inside a native is invisible to the
+// collector: `mark_object`'s native arm walks `props` and nothing else, and
+// `each_root` has no inventory of captures. `new Promise` was fixed by rooting
+// its captures in a property; these two were not.
+
+// `Function.prototype.bind` captures THREE values - the target closure, the
+// receiver and the bound arguments - and roots none of them. The IIFE is what
+// makes the capture the only reference there is: after it returns, `target` and
+// `tag` are reachable from the bound native's C++ lambda and from nowhere else.
+void test_bind_captures_survive_a_collection() {
+    expect_gc("bind's target and bound args survive gc", R"(
+        var g = (function () {
+            var tag = { name: 'bound' };
+            function target(a, b) { return a.name + '/' + b.name; }
+            return target.bind(null, tag);
+        })();
+        gc();
+        // Allocate over the freed cells, so a stale pointer reads somebody
+        // else's object rather than merely reading memory nobody rewrote.
+        var filler = [];
+        for (var i = 0; i < 400; i++) { filler.push({ name: 'filler' }); }
+        gc();
+        return g({ name: 'late' });
+    )",
+              "bound/late");
+}
+
+// `Symbol.for`'s registry is a shared_ptr<vector<pair<string, value>>> captured
+// by `for` and by `keyFor`. The KEYS are C++ strings and survive; the SYMBOLS
+// are values in a capture, so a collection frees them while the registry still
+// lists them - and `Symbol.for` then hands back a pointer into a recycled cell.
+void test_symbol_registry_survives_a_collection() {
+    expect_gc("Symbol.for's registry survives gc", R"(
+        var s = Symbol.for('KEY');
+        s = null;
+        gc();
+        var filler = [];
+        for (var i = 0; i < 400; i++) { filler.push(Symbol('recycled')); }
+        return Symbol.for('KEY').description;
+    )",
+              "KEY");
+    expect_gc("Symbol.keyFor's registry survives gc", R"(
+        var s = Symbol.for('OTHER');
+        s = null;
+        gc();
+        var filler = [];
+        for (var i = 0; i < 400; i++) { filler.push(Symbol('recycled')); }
+        return Symbol.keyFor(Symbol.for('OTHER'));
+    )",
+              "OTHER");
+    // AND IDENTITY, which is the one guarantee the registry exists to give.
+    expect_gc("Symbol.for interns across a gc", R"(
+        var a = Symbol.for('SAME');
+        a = null;
+        gc();
+        return String(Symbol.for('SAME') === Symbol.for('SAME'));
+    )",
+              "true");
+}
+
 // --- the mark phase --------------------------------------------------------
 
 // `mark_object` recursed once per EDGE, with no depth bound and no worklist, so
@@ -118,6 +180,8 @@ int main(int argc, char ** argv) {
     const auto run = [&](std::string_view name, void (*body)()) {
         if (only.empty() || name.find(only) != std::string_view::npos) { body(); }
     };
+    run("bind", &test_bind_captures_survive_a_collection);
+    run("symbol", &test_symbol_registry_survives_a_collection);
     run("chain", &test_a_deep_chain_does_not_exhaust_the_stack);
     REPORT("script_gc");
 }

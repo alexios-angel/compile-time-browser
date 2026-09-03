@@ -285,21 +285,28 @@ void dom_bindings::install_window(context & cx) {
         signal->set("reason", value::undefined());
         const value signal_value = value::object(signal);
         controller->set("signal", signal_value);
-        controller->set("abort",
-                        value::object(c.allocate<script::native_object>(
-                            "abort", [this, signal_value](context & inner, std::span<value> args) {
-                                auto * s =
-                                    static_cast<script::object_object *>(signal_value.as_heap());
-                                s->set("aborted", value::boolean(true));
-                                s->set("reason", arg(args, 0));
-                                // Every listener registered with this signal goes.
-                                std::erase_if(listeners_, [&](const listener & l) {
-                                    return l.abort_signal.is_heap() &&
-                                           l.abort_signal.as_heap() == signal_value.as_heap();
-                                });
-                                (void)inner;
-                                return value::undefined();
-                            })));
+        auto * abort = c.allocate<script::native_object>(
+            "abort", [this, signal_value](context & inner, std::span<value> args) {
+                auto * s = static_cast<script::object_object *>(signal_value.as_heap());
+                s->set("aborted", value::boolean(true));
+                s->set("reason", arg(args, 0));
+                // Every listener registered with this signal goes.
+                std::erase_if(listeners_, [&](const listener & l) {
+                    return l.abort_signal.is_heap() &&
+                           l.abort_signal.as_heap() == signal_value.as_heap();
+                });
+                (void)inner;
+                return value::undefined();
+            });
+        // THE SIGNAL IS IN A C++ CAPTURE AND NOWHERE ELSE THE COLLECTOR LOOKS.
+        // It is a property of the CONTROLLER, so the pair survives as long as
+        // the controller does - but a page that keeps only `abort` (or only
+        // the signal and `abort`, having dropped the controller) leaves this
+        // lambda holding the sole reference, and abort() then writes `aborted`
+        // into freed memory. Found by the sweep of every native capture list,
+        // not by a failing test. See native_object::retained.
+        abort->retained.push_back(signal_value);
+        controller->set("abort", value::object(abort));
         return value::object(controller);
     });
 
@@ -481,20 +488,31 @@ void dom_bindings::install_window(context & cx) {
                         return value::undefined();
                     }};
             };
+            // EVERY ONE OF THESE CAPTURES `self`, and a value in a C++ capture
+            // is not a root - see native_object::retained. The reader is alive
+            // while a read is pending (`reads_` is an external root) and while
+            // the page holds it, so the exposure is a page that keeps a
+            // detached method - `const read = new FileReader().readAsText` -
+            // but the fix is one line and the failure is a write through freed
+            // memory. Found by the sweep of native capture lists.
+            const auto install = [&](const std::string & name, const script::native_fn & fn) {
+                auto * made = c.allocate<script::native_object>(name, fn);
+                made->retained.push_back(self);
+                reader->set(name, value::object(made));
+            };
             for (const auto & [name, fn] :
                  {read("readAsText", read_kind::text), read("readAsDataURL", read_kind::data_url),
                   read("readAsArrayBuffer", read_kind::array_buffer),
                   read("readAsBinaryString", read_kind::binary_string)}) {
-                reader->set(name, value::object(c.allocate<script::native_object>(name, fn)));
+                install(name, fn);
             }
-            reader->set("abort", value::object(c.allocate<script::native_object>(
-                                     "abort", [this, self](context &, std::span<value>) {
-                                         std::erase_if(reads_, [&](const pending_read & r) {
-                                             return r.reader.is_object() && self.is_object() &&
-                                                    r.reader.as_heap() == self.as_heap();
-                                         });
-                                         return value::undefined();
-                                     })));
+            install("abort", [this, self](context &, std::span<value>) {
+                std::erase_if(reads_, [&](const pending_read & r) {
+                    return r.reader.is_object() && self.is_object() &&
+                           r.reader.as_heap() == self.as_heap();
+                });
+                return value::undefined();
+            });
             return self;
         });
     }

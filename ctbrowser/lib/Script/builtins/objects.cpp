@@ -764,12 +764,29 @@ void install_function(context & cx) {
         // just a receiver change.
         const auto bound =
             std::make_shared<std::vector<value>>(a.begin() + (a.empty() ? 0 : 1), a.end());
-        return value::object(detail::cx_native(
+        auto * fn = detail::cx_native(
             c, "bound", [self, receiver, bound](context & inner, std::span<value> later) {
                 std::vector<value> args = *bound;
                 args.insert(args.end(), later.begin(), later.end());
                 return inner.call(self, args, receiver);
-            }));
+            });
+        // THREE VALUES IN A C++ CAPTURE, AND THE COLLECTOR COULD SEE NONE.
+        //
+        // A bound function is often the ONLY reference to its target: the
+        // ordinary `return target.bind(null, arg)` out of a factory drops both
+        // the target and the argument on the way out. The capture is not a
+        // root, so a collection freed them and the next call ran `inner.call`
+        // on a freed closure_object - a heap-use-after-free reproduced under
+        // the asan preset, reading the target's kind byte out of poisoned
+        // memory.
+        //
+        // A SNAPSHOT IS EXACT HERE, unlike a registry that grows: `*bound` is
+        // fixed at bind time and neither it nor `self` and `receiver` can
+        // change afterwards.
+        fn->retained.push_back(self);
+        fn->retained.push_back(receiver);
+        fn->retained.insert(fn->retained.end(), bound->begin(), bound->end());
+        return value::object(fn);
     });
     // TODO: return the REAL source. p5's Friendly Error System parses a sketch
     // with `f.toString()` and gets "[native code]", which is where the ratchet
