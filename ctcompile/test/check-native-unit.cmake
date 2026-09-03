@@ -247,9 +247,32 @@ else()
         message(FATAL_ERROR "${NAME}: cannot mutate - no `int32_t main() {` in the emitted C++, the output convention has changed under this script")
       endif()
       string(SUBSTRING "${_cpp}" ${_main_at} -1 _from_main)
-      string(FIND "${_from_main}" "std::printf(" _relative)
+      # THE CALL, QUALIFIED OR NOT - and that this anchor took only the
+      # qualified spelling is why no PIPELINE program has ever taken the
+      # negative proof this driver exists to provide.
+      #
+      # The hand-written native-fixture.emitc.mlir prints with `std::printf(`.
+      # A module the pipeline GENERATED prints with a bare `printf(`, because
+      # the two preludes were written years apart by different hands. So
+      # -DMUTATE aborted with "cannot mutate" on every generated program, and
+      # the abort is a FATAL_ERROR at generate time rather than a red test -
+      # which is why it read as "this gate has no negative proof registered"
+      # rather than as a broken driver. Measured 2026-09-02, fixed 2026-09-03.
+      string(FIND "${_from_main}" "printf(" _relative)
       if(_relative EQUAL -1)
-        message(FATAL_ERROR "${NAME}: cannot mutate - no std::printf( inside main in the emitted C++, the output convention has changed under this script")
+        message(FATAL_ERROR "${NAME}: cannot mutate - no printf( inside main in the emitted C++, the output convention has changed under this script")
+      endif()
+      # AND THE INSERTION GOES BEFORE THE QUALIFIER. Splitting `std::printf`
+      # down the middle would emit `std::<assignment>printf(`, which fails to
+      # COMPILE - and a mutation that does not build is a negative proof that
+      # passes for the wrong reason, since the gate would report a failure
+      # either way.
+      if(NOT _relative LESS 5)
+        math(EXPR _qualifier_at "${_relative} - 5")
+        string(SUBSTRING "${_from_main}" ${_qualifier_at} 5 _qualifier)
+        if(_qualifier STREQUAL "std::")
+          set(_relative ${_qualifier_at})
+        endif()
       endif()
       math(EXPR _at "${_main_at} + ${_relative}")
       string(SUBSTRING "${_cpp}" 0 ${_at} _head)
@@ -268,20 +291,35 @@ else()
       #
       # The load is `<type> vN = <g>;`, so "is this global still read after the
       # insertion point" is the question `= <g>;` answers.
-      if(NOT _tail MATCHES "= ${MUTATE};")
+      #
+      # UNDER WHICHEVER NAME THE EMITTER GAVE IT. A generated module spells the
+      # global `g_total`; the hand-written native-fixture.emitc.mlir spells it
+      # `total`. Asking only the unprefixed name made every generated program
+      # answer "VACUOUS - the printing has already read it", which is a true
+      # sentence about a load that does not exist under that name and a
+      # thoroughly misleading one about this fixture: the prelude interleaves
+      # `double vN = g_x;` with its printf exactly as the hand-written one
+      # does, so the ORDERING the message blames was never the problem. Same
+      # shape as the `std::printf(` anchor above - one convention assumed where
+      # there are two. Measured 2026-09-03.
+      set(_symbol "${MUTATE}")
+      if(_cpp MATCHES "= g_${MUTATE};")
+        set(_symbol "g_${MUTATE}")
+      endif()
+      if(NOT _tail MATCHES "= ${_symbol};")
         # ONE WORD IS THE ANCHOR, and that is not a stylistic choice either:
         # message() REWRAPS its text, so a multi-word EXPECT_FAILURE pattern can
         # be split across a line break and stop matching for no reason but the
         # length of ${NAME}. This one was, first time out. A single word cannot
         # be.
         message(FATAL_ERROR
-          "${NAME}: VACUOUS - mutating ${MUTATE} here would change nothing the binary prints, "
+          "${NAME}: VACUOUS - mutating ${_symbol} here would change nothing the binary prints, "
           "because the printing has already read it above the insertion point. Mutate a "
           "global that sorts later than the first one printed, or use a name-directed "
           "-DMUTATE_AS=.")
       endif()
-      set(_cpp "${_head}${MUTATE} = ${MUTATE} + 1;\n  ${_tail}")
-      if(NOT _cpp MATCHES "${MUTATE} = ${MUTATE} \\+ 1;")
+      set(_cpp "${_head}${_symbol} = ${_symbol} + 1;\n  ${_tail}")
+      if(NOT _cpp MATCHES "${_symbol} = ${_symbol} \\+ 1;")
         message(FATAL_ERROR "${NAME}: the mutation of ${MUTATE} did not apply")
       endif()
       message(STATUS "${NAME}: MUTATED - ${MUTATE} is one more than the program computed")

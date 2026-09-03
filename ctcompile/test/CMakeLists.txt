@@ -1191,6 +1191,27 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
       COMMENT "Lowering ${name} through the native pipeline")
     add_custom_target(ctcompile-native-pipeline-${name} ALL DEPENDS "${_module}")
     ctcompile_add_native_unit(pipeline_${name} "${_module}" "${js}")
+    # AND THE NEGATIVE PROOF, when the caller names a global to break.
+    #
+    # Every gate here asserts that a GENERATED module agrees with the
+    # interpreter; none of them asserted that the comparison can still fail.
+    # It could not be registered before 2026-09-03: check-native-unit.cmake
+    # anchored its off-by-one on the literal `std::printf(`, which only the
+    # hand-written native-fixture.emitc.mlir emits, so -DMUTATE aborted at
+    # generate time on every pipeline program. That abort is a FATAL_ERROR
+    # rather than a red test, which is why the absence read as a gate nobody
+    # had got round to rather than as a driver that could not do it.
+    #
+    # The global must be one the printing prelude loads AFTER the first
+    # printf; the driver checks that itself and says so, because a mutation
+    # inserted after the load is invisible and would pass for the wrong
+    # reason.
+    if(ARGN)
+      list(GET ARGN 0 _mutate_global)
+      ctcompile_add_native_unit(pipeline_${name}_off_by_one "${_module}" "${js}"
+        -DMUTATE=${_mutate_global}
+        "-DEXPECT_FAILURE=global '${_mutate_global}' differs")
+    endif()
     # PHASE 62½-E: the same module with the printing policy applied goes
     # through the same gate (62½-D stays green), and the printing gate proves
     # the rest: auto and pins pair up, the two files differ only in spelling,
@@ -1224,13 +1245,13 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/check-print-deduced.cmake)
   endfunction()
   # numbers and booleans, no functions
-  ctcompile_add_native_pipeline(numeric "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline-fixture.js")
+  ctcompile_add_native_pipeline(numeric "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline-fixture.js" total)
   # the gate's own eight functions: recursion, loops, a boolean predicate
-  ctcompile_add_native_pipeline(functions "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.js")
+  ctcompile_add_native_pipeline(functions "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.js" sum100)
   # Phase 56: object literals with closed shapes, on the stack
-  ctcompile_add_native_pipeline(structs "${CMAKE_CURRENT_SOURCE_DIR}/native-struct-fixture.js")
+  ctcompile_add_native_pipeline(structs "${CMAKE_CURRENT_SOURCE_DIR}/native-struct-fixture.js" swap_answer)
   # Phase 57A: dense, uniformly numeric array literals, as std::vector<double>
-  ctcompile_add_native_pipeline(arrays "${CMAKE_CURRENT_SOURCE_DIR}/native-array-fixture.js")
+  ctcompile_add_native_pipeline(arrays "${CMAKE_CURRENT_SOURCE_DIR}/native-array-fixture.js" sum)
 endif()
 
 # === PART 24 §3.3: the deduction probe ===
@@ -1597,13 +1618,19 @@ if(COMMAND ctcompile_add_native_pipeline)
   # whoever fixed it is made to come back and update ND-8. See
   # native-index-truncation-fixture.js and ctcompile/docs/native-divergences.md.
   #
-  # WHY NOT THE DRIVER'S OWN -DMUTATE, which is how every other native unit
-  # takes its negative proof: it anchors the off-by-one on the literal text
-  # `std::printf(`, and the emitter writes that only for the HAND-WRITTEN
-  # native-fixture.emitc.mlir. A generated module gets a bare `printf(`, so
-  # -DMUTATE aborts with "cannot mutate" on every pipeline program. That is
-  # recorded rather than repaired here because check-native-unit.cmake is not
-  # this block's to edit; measured on the box, 2026-09-02.
+  # WHY THIS WITNESS AND NOT JUST THE DRIVER'S -DMUTATE. Until 2026-09-03 the
+  # answer was that -DMUTATE could not run here at all: it anchored the
+  # off-by-one on the literal `std::printf(`, which only the HAND-WRITTEN
+  # native-fixture.emitc.mlir emits, so it aborted with "cannot mutate" on
+  # every generated program. That is fixed - the anchor takes the bare
+  # `printf(` a generated module writes, and the four base pipeline programs
+  # now carry a `_off_by_one` proof each.
+  #
+  # This witness stays, because it proves something -DMUTATE cannot: -DMUTATE
+  # breaks the C++ ON PURPOSE and asks whether the comparison notices. This
+  # asks whether the comparison notices a divergence the compiler produces on
+  # its own, from unmodified sources, which is the failure the gate actually
+  # exists to catch.
   set(_defect_js "${CMAKE_CURRENT_SOURCE_DIR}/native-index-truncation-fixture.js")
   set(_defect_module "${CMAKE_CURRENT_BINARY_DIR}/index-truncation.pipeline.emitc.mlir")
   add_custom_command(
