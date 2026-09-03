@@ -1789,6 +1789,8 @@ private:
     }
 
     void mark(value v);
+    // Marks `o` and everything reachable from it. Iterative - see
+    // `mark_worklist_`; the depth of the object graph is not a stack cost.
     void mark_object(heap_object * o);
     void sweep_all();
 
@@ -1901,6 +1903,36 @@ private:
     void mark_roots(std::size_t register_limit);
     [[nodiscard]] std::size_t sweep();
     void unmark_all();
+
+    // THE GREY SET, and why the mark phase is a loop rather than a recursion.
+    //
+    // `mark_object` used to call itself once per EDGE, with no depth bound: the
+    // C++ stack had to be as deep as the object graph is LONG. Two frames per
+    // link at ~100 bytes apiece put the ceiling somewhere around 130,000 links
+    // on the default 8 MiB stack, and `head = { next: head }` in a loop is a
+    // shape a page writes on purpose - a list, a parser's node chain, a
+    // linked queue. 200,000 of them was exit 139 with `mark_object` all the way
+    // up the backtrace: not a wrong answer, a dead browser, from a plain
+    // <script> with nothing exotic in it.
+    //
+    // Tri-colour in the classic sense: `marked` is the black/grey bit, set the
+    // moment an object is discovered so a cycle terminates, and this vector is
+    // the grey set waiting to have its edges walked. `push_mark` greys;
+    // `trace_object` blackens one object by greying its children. Held as a
+    // MEMBER rather than a local so its capacity survives between collections -
+    // a long-lived page collects many times and would otherwise regrow it every
+    // time.
+    std::vector<heap_object *> mark_worklist_;
+    // Grey one object: set the bit and queue it. Never walks edges, so it
+    // cannot recurse.
+    void push_mark(heap_object * o) {
+        if (o == nullptr || o->marked) { return; }
+        o->marked = true;
+        mark_worklist_.push_back(o);
+    }
+    // Blacken one object: grey everything it points at. THE ONLY PLACE THAT
+    // KNOWS THE PER-KIND EDGES - the switch that used to be mark_object's body.
+    void trace_object(heap_object * o);
 
     // --- THE ESCAPE ORACLE'S HOOKS, ctcompile Phase 55O - type_record.cpp ---
     //

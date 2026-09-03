@@ -23,6 +23,13 @@ ctbrowser_test(unit/page_scripts)
 # about the SHAPE of a compiled program rather than about running one, and it
 # carries the corpus measurement behind CTBROWSER_DEBUG_TABLE_COST=1.
 ctbrowser_test(unit/script_debug)
+# THE COLLECTOR, FORCED TO RUN WHERE A PAGE CANNOT MAKE IT RUN. Its own file
+# because every case in it needs `gc()` inside a callback - which no shipped
+# page can do, `collect_if_due` being once per tick - and because what it
+# measures is a POINTER staying valid rather than an expression's value. That
+# is the class of defect test262 and WPT cannot see: they measure conformance
+# from outside, and a use-after-free the corpus never triggers looks green.
+ctbrowser_test(unit/script_gc)
 # THE IMAGE AS AN UNTRUSTED FILE. `ctcompile/test/ProgramImage.cpp` asks whether
 # an image round-trips and whether a corrupt one is refused; this asks the
 # narrower question the round-trip cannot see - whether a constant that is a

@@ -33,64 +33,85 @@ namespace ctbrowser::script {
 
 // ===================== gc ================================================
 
+// THE MARK PHASE, AS A LOOP. `push_mark` greys and `trace_object` blackens;
+// neither can call the other, so the C++ stack is O(1) in the shape of the
+// object graph rather than O(its longest chain). See mark_worklist_ in vm.hpp
+// for what that cost was.
+//
+// The drain is here rather than in the header because trace_object is: one
+// copy of the per-kind edge table, and nothing else in the engine may have an
+// opinion about what an object points at.
 void context::mark_object(heap_object * o) {
-    if (o == nullptr || o->marked) { return; }
-    o->marked = true;
+    push_mark(o);
+    while (!mark_worklist_.empty()) {
+        heap_object * grey = mark_worklist_.back();
+        mark_worklist_.pop_back();
+        trace_object(grey);
+    }
+}
+
+void context::trace_object(heap_object * o) {
+    // EVERY EDGE GOES THROUGH push_mark, NOT THROUGH mark_object. mark_object
+    // drains, so calling it from here would put the whole recursion back one
+    // level down and the fix would measure as working while doing nothing.
+    const auto edge = [this](value v) {
+        if (v.is_heap()) { push_mark(v.as_heap()); }
+    };
     switch (o->kind) {
     case heap_kind::array: {
         auto * arr = static_cast<array_object *>(o);
-        for (const value & v : arr->items) { mark(v); }
+        for (const value & v : arr->items) { edge(v); }
         // AND THE SPARSE HALF. An element that is only reachable through
         // `sparse` is reachable, and a collector that walked `items` alone
         // would free it under a page that can still read it by index.
-        for (const auto & [index, v] : arr->sparse) { mark(v); }
-        mark(arr->viewed);
-        mark(arr->index);
-        mark(arr->input);
-        mark(arr->groups);
+        for (const auto & [index, v] : arr->sparse) { edge(v); }
+        edge(arr->viewed);
+        edge(arr->index);
+        edge(arr->input);
+        edge(arr->groups);
         break;
     }
     case heap_kind::object: {
         auto * obj = static_cast<object_object *>(o);
-        for (const auto & [name, v] : obj->props) { mark(v); }
+        for (const auto & [name, v] : obj->props) { edge(v); }
         for (const accessor_entry & entry : obj->accessors.entries) {
-            mark(entry.getter);
-            mark(entry.setter);
+            edge(entry.getter);
+            edge(entry.setter);
         }
-        mark(obj->prototype);
+        edge(obj->prototype);
         break;
     }
-    case heap_kind::cell: mark(static_cast<cell_object *>(o)->slot); break;
+    case heap_kind::cell: edge(static_cast<cell_object *>(o)->slot); break;
     case heap_kind::function: {
         auto * closure = static_cast<closure_object *>(o);
         // A closure OWNS its upvalue cells. Missing this frees a captured
         // variable while the closure that captured it is still reachable.
-        for (const value & up : closure->upvalues) { mark(up); }
+        for (const value & up : closure->upvalues) { edge(up); }
         // ...and its own properties, which is where a class keeps its statics
         // and its prototype.
-        for (const auto & [name, v] : closure->props) { mark(v); }
+        for (const auto & [name, v] : closure->props) { edge(v); }
         for (const accessor_entry & entry : closure->accessors.entries) {
-            mark(entry.getter);
-            mark(entry.setter);
+            edge(entry.getter);
+            edge(entry.setter);
         }
         // ...and an arrow's captured `this`, which nothing else can reach.
-        mark(closure->captured_this);
-        mark(closure->proto_link);
+        edge(closure->captured_this);
+        edge(closure->proto_link);
         break;
     }
     case heap_kind::native: {
         auto * fn = static_cast<native_object *>(o);
-        for (const auto & [name, v] : fn->props) { mark(v); }
+        for (const auto & [name, v] : fn->props) { edge(v); }
         // ...AND ITS OWN [[Prototype]]. `TypeError.__proto__` is `Error`, and a
         // constructor reachable only through another one would otherwise be
         // swept out from under it.
-        mark(fn->proto_link);
+        edge(fn->proto_link);
         break;
     }
     case heap_kind::proxy: {
         auto * proxy = static_cast<proxy_object *>(o);
-        mark(proxy->target);
-        mark(proxy->handler);
+        edge(proxy->target);
+        edge(proxy->handler);
         break;
     }
     case heap_kind::coroutine: {
@@ -99,10 +120,10 @@ void context::mark_object(heap_object * o) {
         // out of the register stack the collector normally walks - so without
         // this every local of every waiting function is freed.
         auto * saved = static_cast<coroutine_object *>(o);
-        for (const value & v : saved->window) { mark(v); }
-        mark(saved->receiver);
-        mark(saved->promise);
-        if (saved->closure != nullptr) { mark_object(saved->closure); }
+        for (const value & v : saved->window) { edge(v); }
+        edge(saved->receiver);
+        edge(saved->promise);
+        push_mark(saved->closure);
         break;
     }
     default: break; // strings and symbols own no values
