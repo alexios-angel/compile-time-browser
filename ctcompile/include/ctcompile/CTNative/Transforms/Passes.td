@@ -40,7 +40,20 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
 
     Runs AFTER --ctjs-resolve-globals and --ctjs-lift-to-scf; a function that
     still carries `cf` branches is refused as unstructured.
+
+    PHASE 59 SLICE 1 RUNS FIRST, INSIDE THIS PASS: closure conversion by
+    LAMBDA LIFTING. A `ctjs.create_closure` whose every use is a call, whose
+    captures are all immutable cells, and whose target is not already reached
+    another way, is rewritten so the captured VALUES become extra LEADING
+    parameters of the target and each call becomes a `ctjs.call_direct`
+    passing them. The closure then allocates nothing, owns nothing and needs
+    no functor - which is why it is the right first carrier for a tier with no
+    collector. Anything else is refused by name and left for slice 2.
   }];
+  let options = [
+    Option<"report", "report", "bool", /*default=*/"false",
+           "Emit the Phase 59 lift counts as a remark (the release LLVM package compiles pass statistics out)">
+  ];
   // pdl AND pdl_interp ARE NOT AN EMITTED DIALECT, THEY ARE THE PATTERN'S
   // RUNTIME. `+x` on a proved number is erased by UnaryPlusIsIdentity.pdll, and
   // mlir-pdll does not compile a matcher: it emits PDL TEXT that MLIRParser

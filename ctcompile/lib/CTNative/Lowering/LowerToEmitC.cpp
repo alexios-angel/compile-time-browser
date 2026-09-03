@@ -60,6 +60,7 @@
 
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
@@ -68,6 +69,7 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -194,6 +196,461 @@ std::string printed(mlir::Type type) {
     return out;
 }
 
+// --- PHASE 59 SLICE 1: A CLOSURE CARRIES BY LIFTING, NOT BY ALLOCATING ----------
+//
+// A JavaScript closure is a function plus the bindings it captured. The obvious
+// C++ for it is a lambda with a capture list, or a `std::function` where the
+// callee is not known - and both of those own storage, which is the one thing a
+// tier with no collector has to be most careful about. So this slice does not
+// build a closure at all. It LIFTS: the captured values become extra LEADING
+// parameters of the target function, `ctjs.load_upvalue i` inside it becomes a
+// reference to parameter i, `ctjs.create_closure` lowers to nothing exactly as a
+// declaration closure already does, and each call passes the captured values as
+// ordinary arguments. Zero allocation, no functor, no ownership question.
+//
+// IT IS AN IR REWRITE THAT RUNS BEFORE THE SOLVE, and that is what makes it
+// cheap rather than a second dataflow analysis. Once a closure call is a
+// `ctjs.call_direct`, every piece of machinery this file already has works
+// unchanged: MLIR's CallOpInterface makes the target reachable to
+// DeadCodeAnalysis (an uncalled private function is dead and its types read
+// `<unvisited>`), TypeInference propagates each capture's proved type into the
+// leading parameter it became, and the call-graph fixpoint in runOnOperation
+// closes over the new edge in both directions. The lowering below needed no new
+// arm for the call and no new carrier.
+//
+// WHAT THE IR ACTUALLY DOES, AND WHERE THE BRIEF FOR THIS WORK WAS WRONG.
+// "Captures are parent-frame VALUES at construction" is not what the bytecode
+// emits: `compiler_impl::is_captured` sets `local::boxed` for a local MENTIONED
+// inside a nested function, mutated or not, and `op::new_cell` then boxes it -
+// so EVERY from_parent_local capture operand is a `ctjs.create_cell` result and
+// none of them has a carrier. Taken literally the admission rule "every
+// capture's value has a carrier" would lift nothing at all. What is true is the
+// sentence after it: a cell nothing ever writes is a constant box, so this
+// unboxes exactly those - every use a `ctjs.cell_get` or a capture of a lifted
+// closure, no `ctjs.cell_set`, and no `ctjs.store_upvalue` anywhere the cell can
+// reach - and the carrier check then applies to what the cell HOLDS.
+//
+// AND A CAPTURE THAT IS NOT A CELL IS THE PLACEHOLDER. The importer pushes
+// `undefined` for every descriptor that is not from_parent_local, because the VM
+// fills those from the enclosing closure and never looks at the operand
+// (BytecodeImport.cpp, op::closure). Lifting one would capture `undefined` where
+// the program captured a binding, so requiring every capture to be a cell of
+// THIS frame is not a convenience: it is what makes the rewrite sound.
+
+// The function index the importer put after the last `$` of the symbol. The
+// same reading ResolveGlobals does, and the only link there is between a
+// `ctjs.create_closure`'s `$function` attribute and the `ctjs.func` it names.
+std::optional<unsigned> functionIndexOf(ctjs::FuncOp fn) {
+    const llvm::StringRef name = fn.getSymName();
+    const std::size_t dollar = name.rfind('$');
+    if (dollar == llvm::StringRef::npos) { return std::nullopt; }
+    unsigned index = 0;
+    if (name.substr(dollar + 1).getAsInteger(10, index)) { return std::nullopt; }
+    return index;
+}
+
+// Where a `ctjs.create_closure`'s captures start: after $enclosing_closure and
+// $enclosing_this, which are operands and not attributes.
+constexpr unsigned kFirstCapture = 2;
+
+bool isUndefinedConstant(mlir::Value v) {
+    auto k = v.getDefiningOp<ctjs::ConstantOp>();
+    return k && llvm::isa<ctjs::UndefinedAttr>(k.getValue());
+}
+
+// What the rewrite did, for the `report` remark. Pass statistics are compiled
+// out of the LLVM package this builds against, so a counter that is asserted
+// has to be printed.
+struct liftReport {
+    unsigned functions = 0; // ctjs.funcs whose captures became parameters
+    unsigned closures = 0;  // ctjs.create_closures that now lower to nothing
+    unsigned captures = 0;  // capture operands turned into arguments
+    unsigned calls = 0;     // ctjs.calls rewritten to ctjs.call_direct
+    unsigned cells = 0;     // ctjs.create_cells proved constant and unboxed
+};
+
+struct closureLifter {
+    mlir::ModuleOp module;
+    mlir::MLIRContext * context;
+
+    llvm::DenseMap<unsigned, ctjs::FuncOp> byIndex;
+    // A function that may write one of its OWN upvalue slots, transitively
+    // through the closures it makes. `ctjs.store_upvalue %arg2[j]` inside G
+    // writes the cell that G's creator put in slot j, so a cell captured into
+    // any such G is not constant - and a cell captured into G and re-captured
+    // by an H that writes it is not either, which is why this is a fixpoint
+    // and not a one-line test.
+    llvm::DenseSet<mlir::Operation *> mutatesUpvalue;
+    // A call inside one of these may not become a ctjs.call_direct: op::call
+    // pushes its frame with the PENDING new.target, and call_direct
+    // materialises undefined for it. ResolveGlobals refuses the same shape.
+    llvm::DenseSet<mlir::Operation *> passesNewTarget;
+    // THERE IS NO "ALREADY CALLED BY SYMBOL" GUARD, and there was one until it
+    // was tested. It refused to lift a target a ctjs.call_direct already
+    // names, on the grounds that such a call passes exactly the entry block's
+    // operands and inserting capture parameters would break it. No program
+    // reaches it: --ctjs-resolve-globals resolves only a global bound in the
+    // top level's prologue to a create_closure, and that closure's single use
+    // is the store - which isDeclarationClosure exempts before this rewrite
+    // looks at it - while a source function compiles to exactly one `closure`
+    // opcode, so no ctjs.func is both. Running the pass TWICE, which is the
+    // one shape that could, is already idempotent for two independent reasons
+    // the double run in closure-refusals.mlir pins: `upvalue_count` is set to
+    // 0 by the first lift, so the second sees a capture list that disagrees
+    // with the descriptors, and a lifted closure's only remaining use is a
+    // call_direct's callee value, which is not a call this rewrite lowers.
+    // Removing the guard and running the lowering twice changed nothing, so it
+    // was decoration and is gone. If the reasoning above is wrong the failure
+    // is CallDirectOp::verifySymbolUses on an operand count - a hard verifier
+    // error, not a wrong answer.
+
+    llvm::SmallVector<ctjs::CreateClosureOp> closures;
+
+    explicit closureLifter(mlir::ModuleOp m) : module(m), context(m.getContext()) {}
+
+    ctjs::FuncOp targetOf(ctjs::CreateClosureOp c) {
+        return byIndex.lookup(static_cast<unsigned>(c.getFunction()));
+    }
+
+    void census() {
+        module.walk([&](ctjs::FuncOp fn) {
+            if (const std::optional<unsigned> index = functionIndexOf(fn)) {
+                byIndex.try_emplace(*index, fn);
+            }
+        });
+        module.walk([&](mlir::Operation * o) {
+            auto holder = o->getParentOfType<ctjs::FuncOp>();
+            if (llvm::isa<ctjs::StoreUpvalueOp>(o)) {
+                if (holder) { mutatesUpvalue.insert(holder.getOperation()); }
+            } else if (llvm::isa<ctjs::PassNewTargetOp>(o)) {
+                if (holder) { passesNewTarget.insert(holder.getOperation()); }
+            } else if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(o)) {
+                closures.push_back(made);
+            }
+        });
+        // The fixpoint over the closure-target graph.
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (ctjs::CreateClosureOp c : closures) {
+                ctjs::FuncOp target = targetOf(c);
+                if (!target || !mutatesUpvalue.contains(target.getOperation())) { continue; }
+                auto maker = c->getParentOfType<ctjs::FuncOp>();
+                if (!maker) { continue; }
+                changed |= mutatesUpvalue.insert(maker.getOperation()).second;
+            }
+        }
+    }
+
+    // A CELL NOTHING EVER WRITES, which is the whole of the immutability proof.
+    // Every use is a read or a capture into a function that writes no upvalue;
+    // a `ctjs.cell_set`, or any use this does not name, fails it.
+    bool isConstantCell(ctjs::CreateCellOp cell) {
+        for (mlir::OpOperand & use : cell.getResult().getUses()) {
+            mlir::Operation * user = use.getOwner();
+            if (llvm::isa<ctjs::CellGetOp>(user) && use.getOperandNumber() == 0) { continue; }
+            auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(user);
+            if (!made || use.getOperandNumber() < kFirstCapture) { return false; }
+            ctjs::FuncOp target = targetOf(made);
+            if (!target || mutatesUpvalue.contains(target.getOperation())) { return false; }
+        }
+        return true;
+    }
+
+    // The four admission conditions of slice 1, as one sentence each. The
+    // reason is written onto the closure so that the function containing it is
+    // refused by NAME rather than by "`ctjs.create_closure` is not native yet".
+    std::optional<std::string> whyNotLiftable(ctjs::CreateClosureOp c) {
+        ctjs::FuncOp target = targetOf(c);
+        if (!target) {
+            return "its target emitted no ctjs.func - the importer refused it (ctjs.skipped)";
+        }
+        if (target.getBody().empty() || target.getBody().front().getNumArguments() < 3) {
+            return "its target has no body";
+        }
+        mlir::Block & entry = target.getBody().front();
+        const unsigned parameters = entry.getNumArguments() - 3;
+        const auto captures = static_cast<unsigned>(c.getUpvalues().size());
+        if (captures != static_cast<unsigned>(target.getUpvalueCount())) {
+            return "its capture list disagrees with the descriptors of the function it names";
+        }
+        // AN ARROW'S `this` IS LEXICAL, and after the importer's correction the
+        // presence of a non-undefined $enclosing_this is the only place the IR
+        // says a target is one. A lifted call passes the CALL's receiver as
+        // %arg0, which for an arrow is not what the interpreter reads - so an
+        // arrow may be lifted only when it never looks.
+        if (!isUndefinedConstant(c.getEnclosingThis()) && !entry.getArgument(0).use_empty()) {
+            return "it is an arrow function that reads its lexical `this` - Stage 59B";
+        }
+        // CONDITION 1 and CONDITION 2, which are one test on the cell: a
+        // capture is a constant box in this frame, or it is not liftable.
+        for (unsigned i = 0; i < captures; ++i) {
+            auto cell = c.getUpvalues()[i].getDefiningOp<ctjs::CreateCellOp>();
+            if (!cell) {
+                return "capture " + std::to_string(i) +
+                       " is not a cell of this frame - it is filled from the enclosing closure, "
+                       "which slice 1 does not carry";
+            }
+            if (!isConstantCell(cell)) {
+                return "capture " + std::to_string(i) +
+                       " is a binding that is reassigned - a shared cell is Phase 59 slice 2";
+            }
+        }
+        // CONDITION 4: every use of the closure VALUE is a call this lowers.
+        if (c.getResult().use_empty()) { return "nothing calls it"; }
+        for (mlir::OpOperand & use : c.getResult().getUses()) {
+            mlir::Operation * user = use.getOwner();
+            auto call = llvm::dyn_cast<ctjs::CallOp>(user);
+            if (!call || use.getOperandNumber() != 0) {
+                if (llvm::isa<ctjs::StoreGlobalOp>(user)) {
+                    return "it is stored to a global - Phase 59 slice 2";
+                }
+                if (llvm::isa<ctjs::ReturnOp>(user)) { return "it is returned - Phase 59 slice 2"; }
+                if (llvm::isa<ctjs::SetPropertyOp, ctjs::CreateObjectOp, ctjs::AppendOp,
+                              ctjs::CreateArrayOp>(user)) {
+                    return "it is stored into an object or an array - Phase 59 slice 2";
+                }
+                if (llvm::isa<ctjs::ConstructOp>(user) && use.getOperandNumber() == 0) {
+                    return "it is used as a constructor - Phase 60 owns `new`";
+                }
+                if (call || llvm::isa<ctjs::CallDirectOp, ctjs::ConstructOp>(user)) {
+                    // PASSING A CLOSURE IS NOT A LIFT, and this is the one
+                    // place the brief for this work asked for something the
+                    // mechanism cannot give. Lifting moves captures to the
+                    // CALL SITE; a callee that receives a function value has
+                    // no call site to move them to, and lowering it needs the
+                    // callee specialised per closure - Phase 63's monomorphism
+                    // proof, not this.
+                    return "it is passed as an argument - lifting has no call site to move the "
+                           "captures to, so this needs a specialised callee (Phase 63), not a "
+                           "lift";
+                }
+                return ("it reaches `" + user->getName().getStringRef() +
+                        "`, which slice 1 does "
+                        "not lower")
+                    .str();
+            }
+            if (call.getArgs().size() > parameters) {
+                return "a call passes " + std::to_string(call.getArgs().size()) +
+                       " argument(s) to " + std::to_string(parameters) +
+                       " parameter(s) - the surplus has frame semantics";
+            }
+            auto caller = call->getParentOfType<ctjs::FuncOp>();
+            if (caller && passesNewTarget.contains(caller.getOperation())) {
+                return "a call of it sits in a function that passes new.target";
+            }
+        }
+        // THE TARGET'S OWN CLOSURE FEEDS NOTHING BUT NESTED CLOSURES AND
+        // UPVALUE READS, which is ResolveGlobals' clause 4 word for word and
+        // is here for its reason: the lift marks the target `private`, and
+        // `private` is the claim that EVERY caller is visible. A target that
+        // leaks its own closure value can be called through that value by
+        // something this IR cannot see, and the claim would be false.
+        for (mlir::OpOperand & use : entry.getArgument(2).getUses()) {
+            mlir::Operation * user = use.getOwner();
+            if (use.getOperandNumber() == 0 &&
+                llvm::isa<ctjs::CreateClosureOp, ctjs::LoadUpvalueOp, ctjs::StoreUpvalueOp>(user)) {
+                continue;
+            }
+            return ("its target's own closure escapes into `" + user->getName().getStringRef() +
+                    "`, so a call of it may come from somewhere this rewrite cannot see")
+                .str();
+        }
+        // CONDITION 3 is the existing call-graph fixpoint's, not this one's -
+        // but the target's own upvalue reads have to be the shape the rewrite
+        // replaces, or a load would be left naming a closure that is gone.
+        std::optional<std::string> bad;
+        target.getBody().walk([&](mlir::Operation * o) {
+            if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(o)) {
+                if (read.getClosure() != entry.getArgument(2) ||
+                    static_cast<unsigned>(read.getIndex()) >= captures) {
+                    bad = "its target reads an upvalue this rewrite cannot name";
+                }
+            }
+            if (llvm::isa<ctjs::StoreUpvalueOp>(o)) {
+                bad = "its target reassigns a captured binding - a shared cell is Phase 59 "
+                      "slice 2";
+            }
+        });
+        return bad;
+    }
+
+    liftReport run() {
+        census();
+        liftReport out;
+        // Per target: the closures that name it, and the first reason any of
+        // them could not be lifted. A target's signature changes for the whole
+        // program, so ONE unliftable creation site blocks every other.
+        llvm::MapVector<mlir::Operation *, llvm::SmallVector<ctjs::CreateClosureOp>> byTarget;
+        llvm::DenseMap<mlir::Operation *, std::string> blocked;
+        llvm::DenseMap<mlir::Operation *, std::string> reasonOf; // closure -> its own reason
+        for (ctjs::CreateClosureOp c : closures) {
+            // A DECLARATION IS A BINDING, NOT A VALUE, and lowers to nothing
+            // already. Leave it to admission::isDeclarationClosure.
+            if (admissionIsDeclaration(c)) { continue; }
+            ctjs::FuncOp target = targetOf(c);
+            const std::optional<std::string> why = whyNotLiftable(c);
+            if (why) {
+                reasonOf[c.getOperation()] = *why;
+                if (target) { blocked.try_emplace(target.getOperation(), *why); }
+                continue;
+            }
+            byTarget[target.getOperation()].push_back(c);
+        }
+        for (auto & [target, made] : byTarget) {
+            if (blocked.contains(target)) {
+                for (ctjs::CreateClosureOp c : made) {
+                    reasonOf[c.getOperation()] =
+                        "the function it names is also made somewhere this tier cannot lift: " +
+                        blocked.lookup(target);
+                }
+                continue;
+            }
+            lift(llvm::cast<ctjs::FuncOp>(target), made, out);
+        }
+        // The reasons, onto the closures that kept them, so that the function
+        // holding one is refused by name.
+        for (const auto & [op, why] : reasonOf) {
+            op->setAttr("ctnative.closure_reason", mlir::StringAttr::get(context, why));
+        }
+        unboxCells(out);
+        return out;
+    }
+
+    // isDeclarationClosure, spelled here because admission is declared below
+    // and this rewrite runs before it. Kept to one line so the two cannot
+    // drift into disagreeing about what a declaration is.
+    static bool admissionIsDeclaration(ctjs::CreateClosureOp c) {
+        return c.getResult().hasOneUse() &&
+               llvm::isa<ctjs::StoreGlobalOp>(*c.getResult().getUsers().begin());
+    }
+
+    void lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosureOp> made, liftReport & out) {
+        mlir::Block & entry = target.getBody().front();
+        const auto valueType = ctjs::ValueType::get(context);
+        const unsigned captures = static_cast<unsigned>(target.getUpvalueCount());
+        const unsigned parameters = entry.getNumArguments() - 3;
+
+        // THE CAPTURES BECOME LEADING PARAMETERS, inserted after the three
+        // implicit arguments so that ctjs.call_direct's operand order - which
+        // IS the entry block's argument order - still lines up, and so that
+        // lower()'s existing `for (i = 3; ...)` picks them up with no change.
+        for (unsigned i = 0; i < captures; ++i) {
+            entry.insertArgument(3 + i, valueType, target.getLoc());
+        }
+        llvm::SmallVector<mlir::Type> inputs(entry.getNumArguments(), valueType);
+        target.setFunctionTypeAttr(
+            mlir::TypeAttr::get(mlir::FunctionType::get(context, inputs, {valueType})));
+
+        llvm::SmallVector<ctjs::LoadUpvalueOp> reads;
+        target.getBody().walk([&](ctjs::LoadUpvalueOp read) { reads.push_back(read); });
+        for (ctjs::LoadUpvalueOp read : reads) {
+            read.getResult().replaceAllUsesWith(
+                entry.getArgument(3 + static_cast<unsigned>(read.getIndex())));
+            read.erase();
+        }
+        // NO UPVALUES LEFT, and the attribute says so: after this the function
+        // reads its bindings out of its own frame like any other parameter.
+        target->setAttr("upvalue_count", mlir::Builder(context).getI32IntegerAttr(0));
+        target->setAttr("ctnative.captures",
+                        mlir::Builder(context).getI32IntegerAttr(static_cast<int>(captures)));
+        // PRIVATE, AND IT IS NOT COSMETIC. MLIR's DeadCodeAnalysis gives a
+        // PUBLIC symbol unknown predecessors, so TypeInference falls back to
+        // setToEntryState and every parameter - captures included - reads
+        // `!ctnative.boxed` however many call sites the module holds. That was
+        // measured here: the whole lift worked and every lifted function was
+        // then refused with "capture 0 is !ctnative.boxed - no caller proves
+        // it". ResolveGlobals sets the same bit for the same reason, and gates
+        // it on the same claim: every caller of this function is visible,
+        // which the conditions above have just established.
+        mlir::SymbolTable::setSymbolVisibility(target, mlir::SymbolTable::Visibility::Private);
+        ++out.functions;
+
+        for (ctjs::CreateClosureOp c : made) {
+            llvm::SmallVector<mlir::Value> captured;
+            for (mlir::Value cell : c.getUpvalues()) {
+                captured.push_back(cell.getDefiningOp<ctjs::CreateCellOp>().getInitial());
+            }
+            llvm::SmallVector<ctjs::CallOp> calls;
+            for (mlir::Operation * user : c.getResult().getUsers()) {
+                calls.push_back(llvm::cast<ctjs::CallOp>(user));
+            }
+            for (ctjs::CallOp call : calls) {
+                mlir::OpBuilder at(call);
+                const mlir::Value undefined = ctjs::ConstantOp::create(
+                    at, call.getLoc(), valueType, ctjs::UndefinedAttr::get(context));
+                llvm::SmallVector<mlir::Value> arguments(captured);
+                arguments.append(call.getArgs().begin(), call.getArgs().end());
+                // The resolver's own padding rule: op::call fills a missing
+                // parameter with undefined, so a short call becomes a full one.
+                while (arguments.size() < captures + parameters) { arguments.push_back(undefined); }
+                auto direct = ctjs::CallDirectOp::create(
+                    at, call.getLoc(), valueType,
+                    mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()), call.getReceiver(),
+                    undefined, c.getResult(), arguments,
+                    /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
+                call.getResult().replaceAllUsesWith(direct.getResult());
+                call.erase();
+                ++out.calls;
+            }
+            c->setAttr("ctnative.lifted", mlir::UnitAttr::get(context));
+            ++out.closures;
+            out.captures += captures;
+        }
+    }
+
+    // A CELL WHOSE EVERY CLOSURE IS LIFTED holds a value nobody can change, so
+    // a read of it IS that value and the box is not built at all. Done after
+    // every lift, because a cell captured by one lifted and one unlifted
+    // closure must stay a cell for the unlifted one - which is refused, but
+    // whose IR this pass has no business falsifying.
+    void unboxCells(liftReport & out) {
+        llvm::SmallVector<ctjs::CreateCellOp> cells;
+        module.walk([&](ctjs::CreateCellOp cell) { cells.push_back(cell); });
+        for (ctjs::CreateCellOp cell : cells) {
+            std::optional<std::string> why;
+            for (mlir::OpOperand & use : cell.getResult().getUses()) {
+                mlir::Operation * user = use.getOwner();
+                if (llvm::isa<ctjs::CellGetOp>(user) && use.getOperandNumber() == 0) { continue; }
+                if (llvm::isa<ctjs::CreateClosureOp>(user) &&
+                    use.getOperandNumber() >= kFirstCapture) {
+                    if (user->hasAttr("ctnative.lifted")) { continue; }
+                    auto reason = user->getAttrOfType<mlir::StringAttr>("ctnative.closure_reason");
+                    why = "the closure that captures it is not lifted" +
+                          (reason ? " - " + reason.getValue().str() : std::string{});
+                    break;
+                }
+                if (llvm::isa<ctjs::CellSetOp>(user)) {
+                    why = "it is assigned after it was boxed, so its value is not the one the "
+                          "cell was built with";
+                    break;
+                }
+                why = ("it reaches `" + user->getName().getStringRef() + "`").str();
+                break;
+            }
+            // A REASON ON THE BOX ITSELF, because the box is what admission
+            // meets first: `op::new_cell` runs in the prologue, before the
+            // `closure` opcode that captures it, so a walk in program order
+            // reaches the cell and would otherwise refuse the function with
+            // "`ctjs.create_cell` is not native yet" - a sentence that names
+            // neither the binding nor what is wrong with it.
+            if (why) {
+                cell->setAttr("ctnative.cell_reason", mlir::StringAttr::get(context, *why));
+                continue;
+            }
+            llvm::SmallVector<ctjs::CellGetOp> reads;
+            for (mlir::Operation * user : cell.getResult().getUsers()) {
+                if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(user)) { reads.push_back(read); }
+            }
+            for (ctjs::CellGetOp read : reads) {
+                read.getResult().replaceAllUsesWith(cell.getInitial());
+                read.erase();
+            }
+            cell->setAttr("ctnative.unboxed", mlir::UnitAttr::get(context));
+            ++out.cells;
+        }
+    }
+};
+
 // --- the admission check --------------------------------------------------------
 
 struct admission {
@@ -251,6 +708,33 @@ struct admission {
     static bool isDeclarationStore(mlir::Operation * o) {
         auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(o);
         return store && isDeclarationClosure(store.getValue().getDefiningOp());
+    }
+
+    // PHASE 59 SLICE 1. The lift above already moved this closure's captures
+    // to the call sites and rewrote every call to a ctjs.call_direct; what is
+    // left of it is the `$callee_value` operand, which the call arm drops -
+    // so, exactly like a declaration closure, it lowers to nothing. The cell
+    // it captured is the same story one step down: the box was proved
+    // constant, every read of it is already the value, and what remains is the
+    // capture operand of a closure that is about to go.
+    static bool isLiftedClosure(mlir::Operation * o) {
+        return llvm::isa_and_nonnull<ctjs::CreateClosureOp>(o) && o->hasAttr("ctnative.lifted");
+    }
+    static bool isUnboxedCell(mlir::Operation * o) {
+        return llvm::isa_and_nonnull<ctjs::CreateCellOp>(o) && o->hasAttr("ctnative.unboxed");
+    }
+    static bool closureLowersToNothing(mlir::Operation * o) {
+        return isDeclarationClosure(o) || isLiftedClosure(o);
+    }
+    // WHY THIS CLOSURE IS NOT ONE OF THOSE, in the words the lift wrote onto
+    // it. Spelled once because it is asked in two places that used to give
+    // different answers: at the operation, and at the `%arg2` operand it takes
+    // - and the operand's answer was "uses its own closure", which is a
+    // sentence about the ENCLOSING function reading a value it never reads.
+    static std::string closureRefusal(mlir::Operation * o) {
+        auto why = o->getAttrOfType<mlir::StringAttr>("ctnative.closure_reason");
+        return why ? ("a closure used as a value: " + why.getValue()).str()
+                   : std::string{"a closure used as a value - Phase 59"};
     }
 
     // THE CALLEE VALUE OF A DIRECT CALL lowers to nothing: the call names its
@@ -593,6 +1077,7 @@ struct admission {
         }
         mlir::Operation * o = v.getDefiningOp();
         if (isDeclarationClosure(o) || isKeyOnlyString(o) || isVectorKeyString(o)) { return true; }
+        if (isLiftedClosure(o) || isUnboxedCell(o)) { return true; }
         if (o->getName().getStringRef() == "ub.poison") { return true; }
         return llvm::isa<ctjs::LoadGlobalOp>(o) && feedsOnlyDirectCallees(v);
     }
@@ -736,6 +1221,18 @@ struct admission {
             return true;
         }
         if (isDeclarationClosure(o) || isDeclarationStore(o)) { return true; }
+        // PHASE 59 SLICE 1. A lifted closure and the constant cell it captured
+        // are both gone by the time the emitter sees anything; a closure that
+        // could NOT be lifted carries the reason the lift wrote onto it, which
+        // is what turns "`ctjs.create_closure` is not native yet" - a name for
+        // a whole phase - into a work item.
+        if (isLiftedClosure(o) || isUnboxedCell(o)) { return true; }
+        if (llvm::isa<CreateClosureOp>(o)) { return refuse(closureRefusal(o)); }
+        if (llvm::isa<CreateCellOp>(o)) {
+            auto why = o->getAttrOfType<mlir::StringAttr>("ctnative.cell_reason");
+            return refuse(why ? ("a captured binding that stays a cell: " + why.getValue()).str()
+                              : std::string{"a captured binding that stays a cell - Phase 59"});
+        }
         // THE LIFT'S UNDEFINED VALUE for a block argument no predecessor sets:
         // never read on any executed path, and carried as NaN - the double
         // that is also undefined's carrier - so it needs no proof.
@@ -846,14 +1343,42 @@ struct admission {
         // native carrier and must be unused.
         for (unsigned i = 0; i < 3 && i < entry.getNumArguments(); ++i) {
             for (mlir::Operation * user : entry.getArgument(i).getUsers()) {
-                if (isDeclarationClosure(user)) { continue; } // lowers to nothing
+                // A closure that lowers to nothing does not READ these: a
+                // declaration's pair is erased with its store, and a LIFTED
+                // one's `$enclosing_closure` and `$enclosing_this` operands go
+                // with the ctjs.call_direct that replaced its calls.
+                // ResolveGlobals makes the same exemption on the same operand
+                // (own_closure_escapes), for the same reason.
+                if (closureLowersToNothing(user)) { continue; }
+                // AND A CLOSURE THIS TIER CANNOT CARRY IS NOT THE SAME THING
+                // as a function that reads its own closure. Both are uses of
+                // %arg2, and this check runs before the body walk, so every
+                // one of the 2,426 `uses its own closure` refusals measured
+                // over the corpora was reported with the message for the wrong
+                // one - on functions whose only crime is declaring a nested
+                // function. The reason the lift wrote onto the closure is the
+                // one a reader can act on. (A genuine reader of %arg2 - a
+                // named function expression calling itself, a ctjs.load_upvalue
+                // in a function nothing lifted - still gets the old sentence,
+                // which is what refusal-corpus-shapes.mlir pins.)
+                if (llvm::isa<ctjs::CreateClosureOp>(user)) { return refuse(closureRefusal(user)); }
                 return refuse(i == 0   ? "uses `this`"
                               : i == 1 ? "uses new.target"
                                        : "uses its own closure");
             }
         }
+        // PHASE 59 SLICE 1: THE LEADING PARAMETERS ARE CAPTURES, and the
+        // diagnostic has to say so or it names a parameter the JavaScript does
+        // not have. `ctnative.captures` is written by the lift; it is 0 on
+        // every function that was not lifted, which is the shape below
+        // unchanged.
+        const auto capturesAttr = fn->getAttrOfType<mlir::IntegerAttr>("ctnative.captures");
+        const unsigned captures = capturesAttr ? static_cast<unsigned>(capturesAttr.getInt()) : 0u;
         for (unsigned i = 3; i < entry.getNumArguments(); ++i) {
             const mlir::Type t = typeOf(entry.getArgument(i));
+            const bool isCapture = i - 3 < captures;
+            const std::string which = isCapture ? "capture " + std::to_string(i - 3)
+                                                : "parameter " + std::to_string(i - 3 - captures);
             if (carrierOf(t) == carrier::none) {
                 // TWO CAUSES, AND THEY SEND A READER TO DIFFERENT PLACES. This
                 // said "no caller proves it (a closed-world call is Phase
@@ -870,11 +1395,10 @@ struct admission {
                 // that kind, so the corpus numbers do not move; only the proved
                 // and uncarried case gets the new sentence.
                 if (t == nullptr || llvm::isa<BoxedType>(t)) {
-                    return refuse("parameter " + std::to_string(i - 3) + " is " + printed(t) +
+                    return refuse(which + " is " + printed(t) +
                                   " - no caller proves it (a closed-world call is Phase 62½-A)");
                 }
-                return refuse("parameter " + std::to_string(i - 3) + " is " + printed(t) +
-                              ", which has no native carrier yet");
+                return refuse(which + " is " + printed(t) + ", which has no native carrier yet");
             }
         }
         bool ok = true;
@@ -886,7 +1410,7 @@ struct admission {
             // A declaration closure's result is dropped with its store, and
             // so is a load_global that only names a direct call's callee;
             // neither has a carrier and neither needs one.
-            if (isDeclarationClosure(o)) { return; }
+            if (isDeclarationClosure(o) || isLiftedClosure(o) || isUnboxedCell(o)) { return; }
             if (o->getName().getStringRef() == "ub.poison") { return; }
             if (llvm::isa<ctjs::CreateObjectOp>(o) || isKeyOnlyString(o) || isVectorKeyString(o)) {
                 return;
@@ -1899,8 +2423,15 @@ struct lowering {
         // constant whose only user was another dead constant goes too.
         llvm::SmallVector<mlir::Operation *> dead;
         made.getBody().walk([&](mlir::Operation * o) {
+            // PHASE 59 SLICE 1 ADDS TWO, AND THE REVERSE ORDER IS WHY THEY
+            // WORK. A lifted ctjs.create_closure loses its last use when the
+            // call arm drops the call_direct's callee value; the constant
+            // ctjs.create_cell it captured loses ITS last use when that
+            // closure goes. Program order puts the cell first, so the reversed
+            // sweep erases the closure, then the cell, then the `undefined`
+            // constant the importer made for its `$enclosing_this`.
             if (llvm::isa<ec::ConstantOp, ec::LiteralOp, ctjs::FrameEnterOp, ctjs::LoadGlobalOp,
-                          ctjs::ConstantOp>(o)) {
+                          ctjs::ConstantOp, ctjs::CreateClosureOp, ctjs::CreateCellOp>(o)) {
                 dead.push_back(o);
             }
         });
@@ -1995,6 +2526,21 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
 
     void runOnOperation() override {
         mlir::ModuleOp module = getOperation();
+
+        // PHASE 59 SLICE 1, AND IT RUNS BEFORE THE SOLVE. Lifting turns a
+        // closure call into a ctjs.call_direct, which is what makes the target
+        // reachable to DeadCodeAnalysis at all - an uncalled private function
+        // is dead, and every type in it reads `<unvisited>` - and what lets
+        // TypeInference carry each capture's proved type into the leading
+        // parameter it became. Doing it after the solve would need a second
+        // one.
+        const liftReport lifted = closureLifter{module}.run();
+        if (report) {
+            module.emitRemark() << "ctnative: lifted " << lifted.closures << " closure(s) over "
+                                << lifted.captures << " capture(s) into " << lifted.functions
+                                << " function(s), rewrote " << lifted.calls << " call(s), unboxed "
+                                << lifted.cells << " cell(s)";
+        }
 
         // All three, and none optional - TypeInference.h says why.
         mlir::DataFlowSolver solver;
