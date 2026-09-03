@@ -78,9 +78,15 @@ void context::mark_object(heap_object * o) {
         mark(closure->proto_link);
         break;
     }
-    case heap_kind::native:
-        for (const auto & [name, v] : static_cast<native_object *>(o)->props) { mark(v); }
+    case heap_kind::native: {
+        auto * fn = static_cast<native_object *>(o);
+        for (const auto & [name, v] : fn->props) { mark(v); }
+        // ...AND ITS OWN [[Prototype]]. `TypeError.__proto__` is `Error`, and a
+        // constructor reachable only through another one would otherwise be
+        // swept out from under it.
+        mark(fn->proto_link);
         break;
+    }
     case heap_kind::proxy: {
         auto * proxy = static_cast<proxy_object *>(o);
         mark(proxy->target);
@@ -194,9 +200,15 @@ void context::store_index(value target, value key, value v) {
         if (i >= 0) {
             const auto index = static_cast<std::uint64_t>(i);
             if (index < arr->items.size()) {
+                // FROZEN MEANS FROZEN. Silently in sloppy mode - TODO(strict):
+                // this is a TypeError under "use strict", which the engine does
+                // not have (docs/test262.md names the gap).
+                if (!arr->elements_writable) { return; }
                 arr->items[static_cast<std::size_t>(index)] = v;
                 return;
             }
+            // A SEALED OR FROZEN ARRAY GAINS NO ELEMENTS.
+            if (!arr->extensible) { return; }
             // HOW MANY SLOTS THIS ONE WRITE WOULD MATERIALISE. `a[4294967295]
             // = "x"` asked for 34 GB and std::bad_alloc ended the process; the
             // test is on the SIZE OF THE JUMP so that a sequential fill, whose
@@ -222,7 +234,11 @@ void context::pass_new_target(value from) {
 }
 
 void context::delete_named(value target, const std::string & name) {
-    if (target.is_object()) { (void)static_cast<object_object *>(target.as_heap())->erase(name); }
+    // TODO(strict): a false answer here is a TypeError under "use strict". The
+    // engine has no strict mode, and sloppy `delete` evaluates to false without
+    // throwing - which is what the compiler emits today (a constant `true`; see
+    // the note on delete_own_property).
+    (void)delete_own_property(target, name);
 }
 
 value context::own_keys(value source) {
@@ -231,9 +247,11 @@ value context::own_keys(value source) {
     if (source.is_object()) {
         // In DEFINITION ORDER, data and accessors interleaved - which is what a
         // page sees from for-in and has to match Object.keys. for-in
-        // enumerates STRING keys only.
+        // enumerates STRING keys only, and ENUMERABLE ones only: 13.7.5.15
+        // filters on [[Enumerable]], which is why a built-in method never turns
+        // up in a `for (k in Math)`.
         static_cast<object_object *>(source.as_heap())
-            ->each_own_string_key(
+            ->each_own_enumerable_key(
                 [&](const std::string & name) { keys->items.push_back(string(name)); });
     } else if (source.is_array()) {
         const std::size_t n = static_cast<array_object *>(source.as_heap())->items.size();
@@ -257,8 +275,25 @@ void context::copy_own_properties(value target, value source) {
     if (source.is_object()) {
         // A COPY OF THE SOURCE'S ENTRIES FIRST: `set` can reallocate the
         // target's storage, and target and source may be the same object.
-        const std::vector<std::pair<std::string, value>> entries =
-            static_cast<object_object *>(source.as_heap())->props;
+        //
+        // ENUMERABLE OWN PROPERTIES ONLY. `{...o}` is CopyDataProperties
+        // (7.3.25), which skips a non-enumerable one - so spreading a class
+        // instance no longer drags its prototype's plumbing along.
+        //
+        // A SYMBOL KEY IS COPIED, unlike in Object.keys or for-in:
+        // CopyDataProperties takes OwnPropertyKeys, which reports both. That is
+        // the one place the enumerable walk must NOT filter symbols, and
+        // filtering them cost four tests (…/spread-obj-symbol-property.js).
+        //
+        // ...and an accessor is READ rather than copied: the spec does a Get,
+        // so what lands on the target is the getter's answer as a data property.
+        std::vector<std::pair<std::string, value>> entries;
+        auto * from = static_cast<object_object *>(source.as_heap());
+        from->each_own_entry([&](const std::string & name, std::uint8_t attrs) {
+            if ((attrs & attr_enumerable) != 0) {
+                entries.emplace_back(name, lookup_property(source, name));
+            }
+        });
         for (const auto & [name, item] : entries) { into->set(name, item); }
     } else if (source.is_array()) {
         const std::vector<value> items = static_cast<array_object *>(source.as_heap())->items;
@@ -286,19 +321,48 @@ bool context::has_property(value target, value key) {
         }
         return !lookup_property(p->target, to_string(key)).is_undefined();
     }
+    // --- HasProperty, 7.3.11: THE WHOLE CHAIN, not the own table ----------
+    //
+    // `in` used to answer about own DATA properties of an object_object and
+    // about array indices, and about nothing else - so `'toString' in {}` was
+    // false, `'x' in obj` was false for an accessor, `'length' in [1]` was
+    // false, and an inherited property was invisible to the operator whose
+    // entire job is to see one. It is also what ToPropertyDescriptor asks with,
+    // which is how a descriptor object built by `new Con()` over a prototype
+    // carrying a `writable` getter described nothing at all.
+    //
+    // own_property is the shared [[GetOwnProperty]] over all four tables, so
+    // this is that walked up the chain: the explicit prototype links first,
+    // then the implicit tables property lookup falls back to.
     const std::string name = to_string(key);
-    if (target.is_object()) {
-        return static_cast<object_object *>(target.as_heap())->find(name) != nullptr;
+    property_descriptor found;
+    if (own_property(target, name, found)) { return true; }
+    value link = target.is_object() ? static_cast<object_object *>(target.as_heap())->prototype
+                                    : value::undefined();
+    // A depth cap because a page can make the chain cyclic, exactly as
+    // lookup_property does.
+    for (int depth = 0; depth < 64 && link.is_object(); ++depth) {
+        if (own_property(link, name, found)) { return true; }
+        link = static_cast<object_object *>(link.as_heap())->prototype;
     }
-    if (target.is_array()) {
-        // `0 in [7, 8]` asks about an INDEX, so the key has to be a whole
-        // number and the WHOLE key - "1x" is not index 1.
-        std::size_t index = 0;
-        const char * first = name.data();
-        const char * last = first + name.size();
-        const auto [stopped, failed] = std::from_chars(first, last, index);
-        return failed == std::errc{} && stopped == last &&
-               index < static_cast<array_object *>(target.as_heap())->items.size();
+    for (object_object * table : implicit_prototypes(target)) {
+        if (table != nullptr &&
+            (table->find(name) != nullptr || table->find_accessor(name) != nullptr)) {
+            return true;
+        }
+    }
+    // ...and a function's STATIC chain, which is a third kind of link again.
+    for (value up = target; up.is_callable();) {
+        if (up.is_kind(heap_kind::function)) {
+            auto * fn = static_cast<closure_object *>(up.as_heap());
+            up = fn->proto_link;
+        } else if (up.is_kind(heap_kind::native)) {
+            up = value::null();
+        } else {
+            break;
+        }
+        if (!up.is_callable()) { break; }
+        if (own_property(up, name, found)) { return true; }
     }
     return false;
 }
@@ -347,9 +411,7 @@ bool context::instance_of(value target, value ctor) {
 }
 
 void context::delete_index(value target, value key) {
-    if (target.is_object()) {
-        (void)static_cast<object_object *>(target.as_heap())->erase(to_string(key));
-    }
+    (void)delete_own_property(target, to_string(key));
 }
 
 void context::store_property(value target, const std::string & name, value v) {
@@ -367,9 +429,39 @@ void context::store_property(value target, const std::string & name, value v) {
         return;
     }
     if (target.is_object()) {
-        if (!assign_through_accessor(target, name, v)) {
-            static_cast<object_object *>(target.as_heap())->set(name, v);
+        if (assign_through_accessor(target, name, v)) { return; }
+        auto * obj = static_cast<object_object *>(target.as_heap());
+        // --- [[Set]], 10.1.9, AND THE THREE BITS IT CONSULTS ---------------
+        //
+        // An assignment is not a definition. An own data property that is not
+        // writable rejects the write; so does an INHERITED one, which is the
+        // half that surprises people - `Object.freeze(proto)` stops a write
+        // through every instance. And a fresh property needs the receiver to be
+        // extensible.
+        //
+        // TODO(strict): each of these three is a TypeError under "use strict".
+        // This engine has no strict mode at all (docs/test262.md names the gap
+        // and the 678 onlyStrict tests it silently runs sloppy), so the write
+        // is DISCARDED, which is exactly what sloppy mode does. When a strict
+        // mode arrives, these three `return`s are where it throws.
+        // ONE HASH LOOKUP ON THE HIT PATH, not two: `find` then `set` would
+        // hash the name twice, and this is the hottest write in the engine.
+        obj->normalise();
+        if (const auto it = obj->index.find(name); it != obj->index.end()) {
+            if ((obj->attrs_at(it->second) & attr_writable) == 0) { return; }
+            obj->props[it->second].second = v;
+            return;
         }
+        for (value up = obj->prototype; up.is_object();) {
+            auto * parent = static_cast<object_object *>(up.as_heap());
+            if (parent->find(name) != nullptr) {
+                if ((parent->attrs_of(name) & attr_writable) == 0) { return; }
+                break;
+            }
+            up = parent->prototype;
+        }
+        if (!obj->extensible) { return; }
+        obj->set(name, v);
         return;
     }
     // `a.length = n` RESIZES THE ARRAY, and dropping the write silently is not
@@ -401,7 +493,15 @@ void context::store_property(value target, const std::string & name, value v) {
         return;
     }
     if (target.is_kind(heap_kind::native)) {
-        static_cast<native_object *>(target.as_heap())->set(name, v);
+        auto * fn = static_cast<native_object *>(target.as_heap());
+        // The same three checks as an object's - see above, TODO(strict) and
+        // all. `Array.prototype = x` is the one every page tries by accident.
+        if (fn->find(name) != nullptr) {
+            if ((fn->attrs_of(name) & attr_writable) == 0) { return; }
+        } else if (!fn->extensible) {
+            return;
+        }
+        fn->set(name, v);
         return;
     }
     if (target.is_kind(heap_kind::function)) {
@@ -411,6 +511,11 @@ void context::store_property(value target, const std::string & name, value v) {
             const value args[1] = {v};
             (void)call(entry->setter, args, target);
         } else {
+            if (closure->find(name) != nullptr) {
+                if ((closure->attrs_of(name) & attr_writable) == 0) { return; }
+            } else if (!closure->extensible) {
+                return;
+            }
             closure->set(name, v);
         }
     }
@@ -438,6 +543,391 @@ bool context::assign_through_accessor(value target, const std::string & name, va
         }
         obj = obj->prototype.is_object() ? static_cast<object_object *>(obj->prototype.as_heap())
                                          : nullptr;
+    }
+    return false;
+}
+
+namespace {
+
+// SameValue (7.2.11) - `===` except that it separates the two zeros and calls
+// NaN equal to itself, which is what ValidateAndApplyPropertyDescriptor
+// compares descriptor fields with.
+[[nodiscard]] bool descriptor_same_value(value a, value b) {
+    if (a.is_number() && b.is_number()) {
+        const double x = a.as_number();
+        const double y = b.as_number();
+        if (std::isnan(x) && std::isnan(y)) { return true; }
+        return x == y && std::signbit(x) == std::signbit(y);
+    }
+    return a.strict_equals(b);
+}
+
+// Is this key an index into `items`, and which one?
+[[nodiscard]] bool index_key(const std::string & name, std::uint32_t & out) {
+    return object_object::array_index_key(name, out);
+}
+
+} // namespace
+
+// --- [[GetOwnProperty]] ---------------------------------------------------
+//
+// FOUR TABLES AND A HANDFUL OF SYNTHESISED SLOTS, behind one answer. Before
+// this, `Object.getOwnPropertyDescriptor` handled object_object and nothing
+// else, so it answered undefined for `Array.prototype.indexOf.name`, for
+// `[1,2].length` and for every static on a built-in constructor - which is the
+// first thing test262's verifyProperty asks about any of them.
+bool context::own_property(value target, const std::string & name, property_descriptor & out) {
+    out = property_descriptor{};
+
+    // A proxy has no ownKeys/getOwnPropertyDescriptor trap here, so the
+    // question goes to the target - the same fall-through every other absent
+    // trap takes.
+    if (target.is_kind(heap_kind::proxy)) {
+        return own_property(static_cast<proxy_object *>(target.as_heap())->target, name, out);
+    }
+
+    if (target.is_object()) {
+        // DATA FIRST, then the accessor table - the order lookup_property uses,
+        // so a descriptor can never describe a property `.` would not read.
+        auto * obj = static_cast<object_object *>(target.as_heap());
+        if (value * held = obj->find(name)) {
+            out = property_descriptor::data(*held, obj->attrs_of(name));
+            return true;
+        }
+        if (accessor_entry * entry = obj->find_accessor(name)) {
+            out.has_get = out.has_set = true;
+            out.getter = entry->getter;
+            out.setter = entry->setter;
+            out.has_enumerable = out.has_configurable = true;
+            out.enumerable = (entry->attrs & attr_enumerable) != 0;
+            out.configurable = (entry->attrs & attr_configurable) != 0;
+            return true;
+        }
+        return false;
+    }
+
+    if (target.is_array()) {
+        auto * arr = static_cast<array_object *>(target.as_heap());
+        if (name == "length") {
+            // 10.4.2: { [[Writable]]: true, [[Enumerable]]: false,
+            // [[Configurable]]: false }. Freezing clears the writable bit.
+            out = property_descriptor::data(value::number(static_cast<double>(arr->js_length())),
+                                            arr->elements_writable ? attr_writable : attr_none);
+            out.virtual_slot = true;
+            return true;
+        }
+        std::uint32_t at = 0;
+        if (index_key(name, at)) {
+            const std::uint8_t a = static_cast<std::uint8_t>(
+                attr_enumerable | (arr->elements_writable ? attr_writable : 0) |
+                (arr->elements_configurable ? attr_configurable : 0));
+            if (arr->is_view()) {
+                if (at < arr->length()) {
+                    out = property_descriptor::data(value::number(view_get(*arr, at)), a);
+                    out.virtual_slot = true;
+                    return true;
+                }
+                return false;
+            }
+            if (at < arr->items.size()) {
+                out = property_descriptor::data(arr->items[at], a);
+                out.virtual_slot = true;
+                return true;
+            }
+            if (value * found = arr->find_sparse(at)) {
+                out = property_descriptor::data(*found, a);
+                out.virtual_slot = true;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if (target.is_string()) {
+        const std::string & text = static_cast<string_object *>(target.as_heap())->text;
+        if (name == "length") {
+            // 10.4.3.5: a String exotic object's length is { false, false, false }.
+            out = property_descriptor::data(value::number(static_cast<double>(text.size())),
+                                            attr_none);
+            out.virtual_slot = true;
+            return true;
+        }
+        std::uint32_t at = 0;
+        if (index_key(name, at) && at < text.size()) {
+            out = property_descriptor::data(string(std::string{text[at]}), attr_enumerable);
+            out.virtual_slot = true;
+            return true;
+        }
+        return false;
+    }
+
+    if (target.is_kind(heap_kind::native)) {
+        auto * fn = static_cast<native_object *>(target.as_heap());
+        if (value * held = fn->find(name)) {
+            out = property_descriptor::data(*held, fn->attrs_of(name));
+            return true;
+        }
+        // A built-in function's `name` is { false, false, true } (10.2.5) and
+        // lives on the C++ object rather than in the table, so it is
+        // synthesised here. `length` is NOT: a native_fn takes a span and its
+        // declared arity is not recorded anywhere, so this engine cannot answer
+        // for it and says so by leaving the property absent.
+        if (name == "name") {
+            out = property_descriptor::data(string(fn->name), attr_configurable);
+            out.virtual_slot = true;
+            return true;
+        }
+        return false;
+    }
+
+    if (target.is_kind(heap_kind::function)) {
+        auto * closure = static_cast<closure_object *>(target.as_heap());
+        if (value * held = closure->find(name)) {
+            out = property_descriptor::data(*held, closure->attrs_of(name));
+            return true;
+        }
+        if (accessor_entry * entry = closure->find_accessor(name)) {
+            out.has_get = out.has_set = true;
+            out.getter = entry->getter;
+            out.setter = entry->setter;
+            out.has_enumerable = out.has_configurable = true;
+            out.enumerable = (entry->attrs & attr_enumerable) != 0;
+            out.configurable = (entry->attrs & attr_configurable) != 0;
+            return true;
+        }
+        if (name == "prototype") {
+            const value made = ensure_prototype(target);
+            if (made.is_undefined()) { return false; } // an arrow has none
+            out = property_descriptor::data(made, attr_writable);
+            return true;
+        }
+        if (closure->proto != nullptr) {
+            // 10.2.5 again: both are { false, false, true }.
+            if (name == "name") {
+                out = property_descriptor::data(string(closure->proto->name), attr_configurable);
+                out.virtual_slot = true;
+                return true;
+            }
+            if (name == "length") {
+                out = property_descriptor::data(value::number(closure->proto->param_count),
+                                                attr_configurable);
+                out.virtual_slot = true;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    return false;
+}
+
+bool context::has_own_property(value target, const std::string & name) {
+    property_descriptor found;
+    return own_property(target, name, found);
+}
+
+bool context::is_extensible(value target) {
+    if (target.is_object()) { return static_cast<object_object *>(target.as_heap())->extensible; }
+    if (target.is_array()) { return static_cast<array_object *>(target.as_heap())->extensible; }
+    if (target.is_kind(heap_kind::native)) {
+        return static_cast<native_object *>(target.as_heap())->extensible;
+    }
+    if (target.is_kind(heap_kind::function)) {
+        return static_cast<closure_object *>(target.as_heap())->extensible;
+    }
+    if (target.is_kind(heap_kind::proxy)) {
+        return is_extensible(static_cast<proxy_object *>(target.as_heap())->target);
+    }
+    // A primitive is not extensible, and Object.isExtensible(1) is false rather
+    // than an error (19.1.2.13 returns false for a non-object).
+    return false;
+}
+
+void context::prevent_extensions(value target) {
+    if (target.is_object()) {
+        static_cast<object_object *>(target.as_heap())->extensible = false;
+    } else if (target.is_array()) {
+        static_cast<array_object *>(target.as_heap())->extensible = false;
+    } else if (target.is_kind(heap_kind::native)) {
+        static_cast<native_object *>(target.as_heap())->extensible = false;
+    } else if (target.is_kind(heap_kind::function)) {
+        static_cast<closure_object *>(target.as_heap())->extensible = false;
+    } else if (target.is_kind(heap_kind::proxy)) {
+        prevent_extensions(static_cast<proxy_object *>(target.as_heap())->target);
+    }
+}
+
+// --- [[Delete]] -----------------------------------------------------------
+bool context::delete_own_property(value target, const std::string & name) {
+    if (target.is_kind(heap_kind::proxy)) {
+        return delete_own_property(static_cast<proxy_object *>(target.as_heap())->target, name);
+    }
+    if (target.is_object()) {
+        auto * obj = static_cast<object_object *>(target.as_heap());
+        if (accessor_entry * entry = obj->find_accessor(name)) {
+            if ((entry->attrs & attr_configurable) == 0) { return false; }
+            return obj->erase_accessor(name);
+        }
+        if (obj->find(name) == nullptr) { return true; } // absent: delete succeeds
+        if ((obj->attrs_of(name) & attr_configurable) == 0) { return false; }
+        return obj->erase(name);
+    }
+    if (target.is_kind(heap_kind::native)) {
+        auto * fn = static_cast<native_object *>(target.as_heap());
+        if (fn->find(name) == nullptr) { return true; }
+        if ((fn->attrs_of(name) & attr_configurable) == 0) { return false; }
+        return fn->erase(name);
+    }
+    if (target.is_kind(heap_kind::function)) {
+        auto * closure = static_cast<closure_object *>(target.as_heap());
+        if (closure->find(name) == nullptr) { return true; }
+        if ((closure->attrs_of(name) & attr_configurable) == 0) { return false; }
+        return closure->erase(name);
+    }
+    // AN ARRAY ELEMENT IS NOT DELETED, and never was: `items` is a dense
+    // std::vector with no way to spell a hole, so removing one would shift
+    // every element after it and `delete a[0]` would change a.length. The
+    // answer is true - which is what sloppy `delete` yields anyway, and what
+    // `length` (non-configurable, and correctly rejected above by falling
+    // through to here... ) - see the note in docs/test262.md.
+    return true;
+}
+
+// --- [[DefineOwnProperty]] ------------------------------------------------
+//
+// 10.1.6.3 ValidateAndApplyPropertyDescriptor, which is the whole reason
+// `Object.freeze` and `verifyProperty` can mean anything. False is REJECT; the
+// caller turns that into a TypeError (Object.defineProperty) or a false
+// (Reflect.defineProperty).
+bool context::define_own_property(value target, const std::string & name,
+                                  const property_descriptor & wanted) {
+    if (target.is_kind(heap_kind::proxy)) {
+        return define_own_property(static_cast<proxy_object *>(target.as_heap())->target, name,
+                                   wanted);
+    }
+
+    property_descriptor current;
+    const bool exists = own_property(target, name, current);
+
+    if (!exists && !is_extensible(target)) { return false; }
+
+    if (exists && !current.configurable) {
+        if (wanted.has_configurable && wanted.configurable) { return false; }
+        if (wanted.has_enumerable && wanted.enumerable != current.enumerable) { return false; }
+        // A non-configurable property cannot change between data and accessor.
+        if (wanted.is_accessor() && !current.is_accessor()) { return false; }
+        if (wanted.is_data() && current.is_accessor()) { return false; }
+        if (current.is_accessor()) {
+            if (wanted.has_get && !descriptor_same_value(wanted.getter, current.getter)) {
+                return false;
+            }
+            if (wanted.has_set && !descriptor_same_value(wanted.setter, current.setter)) {
+                return false;
+            }
+        } else if (!current.writable) {
+            if (wanted.has_writable && wanted.writable) { return false; }
+            if (wanted.has_value && !descriptor_same_value(wanted.held, current.held)) {
+                return false;
+            }
+        }
+    }
+
+    // WHAT THE PROPERTY ENDS UP AS. An absent field means "unchanged" on an
+    // existing property and "false" on a new one - which is the difference
+    // between `defineProperty(o, 'x', {value: 1})` making a frozen-shaped
+    // property (correct) and an ordinary one (what every engine that skips this
+    // step produces).
+    const bool making_accessor =
+        wanted.is_accessor() || (exists && current.is_accessor() && !wanted.is_data());
+    const bool enumerable =
+        wanted.has_enumerable ? wanted.enumerable : (exists && current.enumerable);
+    const bool configurable =
+        wanted.has_configurable ? wanted.configurable : (exists && current.configurable);
+    const bool writable = wanted.has_writable
+                              ? wanted.writable
+                              : (exists && !current.is_accessor() && current.writable);
+
+    const auto attrs = static_cast<std::uint8_t>((writable ? attr_writable : 0) |
+                                                 (enumerable ? attr_enumerable : 0) |
+                                                 (configurable ? attr_configurable : 0));
+    const std::uint8_t accessor_attrs = static_cast<std::uint8_t>(
+        (enumerable ? attr_enumerable : 0) | (configurable ? attr_configurable : 0));
+
+    if (making_accessor) {
+        const value getter =
+            wanted.has_get
+                ? wanted.getter
+                : (exists && current.is_accessor() ? current.getter : value::undefined());
+        const value setter =
+            wanted.has_set
+                ? wanted.setter
+                : (exists && current.is_accessor() ? current.setter : value::undefined());
+        if (target.is_object()) {
+            static_cast<object_object *>(target.as_heap())
+                ->define_accessor(name, getter, setter, accessor_attrs);
+            return true;
+        }
+        if (target.is_kind(heap_kind::function)) {
+            static_cast<closure_object *>(target.as_heap())
+                ->define_accessor(name, getter, setter, accessor_attrs);
+            return true;
+        }
+        // AN ARRAY AND A NATIVE HAVE NOWHERE TO PUT ONE, and answer true.
+        //
+        // Neither carries an accessor table: an array's elements are a
+        // std::vector and a native's statics are a flat list of data
+        // properties. Answering FALSE here would turn what has always been a
+        // silent no-op into a TypeError - `Object.defineProperty(arr, "0",
+        // {get() {...}})` is real test262 code and real library code - so this
+        // keeps the previous behaviour and names it. Measured: answering false
+        // cost 6 tests that had passed (built-ins/Array/prototype/indexOf,
+        // reduce, flatMap and Function/prototype/bind), which is how the gap
+        // was found rather than argued about.
+        return true;
+    }
+
+    const value held = wanted.has_value
+                           ? wanted.held
+                           : (exists && !current.is_accessor() ? current.held : value::undefined());
+    if (target.is_object()) {
+        auto * obj = static_cast<object_object *>(target.as_heap());
+        obj->erase_accessor(name);
+        obj->define(name, held, attrs);
+        return true;
+    }
+    if (target.is_kind(heap_kind::native)) {
+        static_cast<native_object *>(target.as_heap())->define(name, held, attrs);
+        return true;
+    }
+    if (target.is_kind(heap_kind::function)) {
+        static_cast<closure_object *>(target.as_heap())->define(name, held, attrs);
+        return true;
+    }
+    if (target.is_array()) {
+        auto * arr = static_cast<array_object *>(target.as_heap());
+        if (name == "length") {
+            if (!wanted.has_value) { return true; }
+            return arr->set_js_length(to_number(held));
+        }
+        std::uint32_t at = 0;
+        if (index_key(name, at)) {
+            // THE ATTRIBUTES ARE DROPPED, deliberately: an array's elements
+            // live in a std::vector with no room for three bits each (see
+            // array_object's integrity note). The VALUE is stored, which is
+            // what `Object.defineProperty(a, 0, {value: x})` is nearly always
+            // for; a per-element writable/enumerable/configurable is not
+            // modelled and this returns true rather than pretending otherwise
+            // in either direction.
+            if (wanted.has_value) { store_index(target, value::number(at), held); }
+            return true;
+        }
+        // A NAMED PROPERTY ON AN ARRAY IS DROPPED AND ANSWERS TRUE. An array
+        // here has no property table at all, so there is nowhere to put one -
+        // and answering false would turn `Object.defineProperty(a, 'x', ...)`
+        // from the silent no-op it has always been into a TypeError, which is a
+        // behaviour change unrelated to attributes. Stated rather than
+        // discovered; see docs/test262.md.
+        return true;
     }
     return false;
 }
@@ -594,11 +1084,42 @@ value context::lookup_property(value target, const std::string & name) {
         return value::undefined();
     }
     if (target.is_kind(heap_kind::native)) {
-        if (value * found = static_cast<native_object *>(target.as_heap())->find(name)) {
-            return *found;
+        auto * fn = static_cast<native_object *>(target.as_heap());
+        if (value * found = fn->find(name)) { return *found; }
+        // A BUILT-IN FUNCTION HAS A NAME, and it was undefined for every one
+        // that is not a constructor - so test262's own assert.throws printed
+        // "Expected a undefined to be thrown", 2,670 times, because it builds
+        // its message out of `expectedErrorConstructor.name`. It lives on the
+        // C++ object rather than in the table, which is why it is answered here
+        // rather than installed on 400 natives.
+        if (name == "name") { return string(fn->name); }
+        // STATIC INHERITANCE through the constructor's own [[Prototype]] - the
+        // same walk a closure does. `TypeError.__proto__` is `Error`, so a
+        // static installed on Error is found through all six NativeErrors.
+        for (value up = fn->proto_link; up.is_object() || up.is_callable();) {
+            if (up.is_kind(heap_kind::native)) {
+                auto * parent = static_cast<native_object *>(up.as_heap());
+                if (value * found = parent->find(name)) { return *found; }
+                up = parent->proto_link;
+                continue;
+            }
+            if (up.is_object()) {
+                if (value * found = static_cast<object_object *>(up.as_heap())->find(name)) {
+                    return *found;
+                }
+            }
+            break;
         }
         // ...then Function.prototype, so `nativeFn.call(...)` works too.
         if (object_object * table = prototype(proto_kind::function)) {
+            if (value * found = table->find(name)) { return *found; }
+        }
+        // ...AND THEN Object.prototype, because Function.prototype's own
+        // [[Prototype]] is Object.prototype. Without it `f.hasOwnProperty` and
+        // `f.propertyIsEnumerable` were undefined on every function, which is
+        // the same gap numbers, booleans and strings had until they were fixed
+        // and functions were left out of.
+        if (object_object * table = prototype(proto_kind::object)) {
             if (value * found = table->find(name)) { return *found; }
         }
         return value::undefined();
@@ -653,8 +1174,12 @@ value context::lookup_property(value target, const std::string & name) {
         }
         // A FUNCTION IS AN OBJECT WITH A PROTOTYPE OF ITS OWN. `call`, `apply`
         // and `bind` live there, and p5.js cannot install a single event
-        // listener without bind.
+        // listener without bind. Then Object.prototype, which is
+        // Function.prototype's own [[Prototype]] - see the native arm above.
         if (object_object * table = prototype(proto_kind::function)) {
+            if (value * found = table->find(name)) { return *found; }
+        }
+        if (object_object * table = prototype(proto_kind::object)) {
             if (value * found = table->find(name)) { return *found; }
         }
     }

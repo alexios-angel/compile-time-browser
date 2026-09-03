@@ -4,11 +4,10 @@
 # Every line is a test that does NOT pass; anything absent is expected to pass, so
 # a fix that makes one of these pass FAILS the gate until the line is removed. That
 # is deliberate - see the note on gate() in the runner.
-# Recorded 2026-09-02 against the pinned corpus in tools/fetch-test262.sh.
+# Recorded 2026-09-03 against the pinned corpus in tools/fetch-test262.sh.
 
 FAIL test/built-ins/Boolean/S15.6.2.1_A1.js
 FAIL test/built-ins/Boolean/S15.6.2.1_A2.js
-FAIL test/built-ins/Boolean/S15.6.3_A1.js
 FAIL test/built-ins/Boolean/S15.6.3_A2.js
 FAIL test/built-ins/Boolean/S15.6.3_A3.js
 FAIL test/built-ins/Boolean/S9.2_A1_T1.js
@@ -16,9 +15,7 @@ FAIL test/built-ins/Boolean/S9.2_A6_T1.js
 FAIL test/built-ins/Boolean/prop-desc.js
 SKIP test/built-ins/Boolean/proto-from-ctor-realm.js
 FAIL test/built-ins/Boolean/prototype/S15.6.3.1_A1.js
-FAIL test/built-ins/Boolean/prototype/S15.6.3.1_A2.js
 FAIL test/built-ins/Boolean/prototype/S15.6.3.1_A3.js
-FAIL test/built-ins/Boolean/prototype/S15.6.3.1_A4.js
 FAIL test/built-ins/Boolean/prototype/S15.6.4_A2.js
 FAIL test/built-ins/Boolean/prototype/toString/S15.6.4.2_A1_T1.js
 FAIL test/built-ins/Boolean/prototype/toString/S15.6.4.2_A1_T2.js
@@ -40,14 +37,11 @@ FAIL test/built-ins/Boolean/prototype/valueOf/S15.6.4.3_A2_T5.js
 FAIL test/built-ins/Boolean/prototype/valueOf/length.js
 FAIL test/built-ins/Boolean/prototype/valueOf/name.js
 FAIL test/built-ins/Boolean/prototype/valueOf/not-a-constructor.js
-FAIL test/built-ins/JSON/stringify/builtin.js
 FAIL test/built-ins/JSON/stringify/length.js
 FAIL test/built-ins/JSON/stringify/name.js
 FAIL test/built-ins/JSON/stringify/not-a-constructor.js
-FAIL test/built-ins/JSON/stringify/prop-desc.js
 FAIL test/built-ins/JSON/stringify/property-order.js
 FAIL test/built-ins/JSON/stringify/replacer-array-abrupt.js
-FAIL test/built-ins/JSON/stringify/replacer-array-duplicates.js
 FAIL test/built-ins/JSON/stringify/replacer-array-empty.js
 FAIL test/built-ins/JSON/stringify/replacer-array-number-object.js
 FAIL test/built-ins/JSON/stringify/replacer-array-order.js
@@ -82,7 +76,6 @@ FAIL test/built-ins/JSON/stringify/value-bigint.js
 FAIL test/built-ins/JSON/stringify/value-boolean-object.js
 FAIL test/built-ins/JSON/stringify/value-function.js
 FAIL test/built-ins/JSON/stringify/value-number-object.js
-FAIL test/built-ins/JSON/stringify/value-object-abrupt.js
 CRASH test/built-ins/JSON/stringify/value-object-circular.js
 FAIL test/built-ins/JSON/stringify/value-object-proxy-revoked.js
 FAIL test/built-ins/JSON/stringify/value-object-proxy.js
@@ -93,13 +86,11 @@ FAIL test/built-ins/JSON/stringify/value-symbol.js
 FAIL test/built-ins/JSON/stringify/value-tojson-abrupt.js
 FAIL test/built-ins/JSON/stringify/value-tojson-arguments.js
 FAIL test/built-ins/JSON/stringify/value-tojson-array-circular.js
-FAIL test/built-ins/JSON/stringify/value-tojson-not-function.js
 FAIL test/built-ins/JSON/stringify/value-tojson-object-circular.js
 FAIL test/built-ins/JSON/stringify/value-tojson-result.js
 FAIL test/built-ins/Math/abs/length.js
 FAIL test/built-ins/Math/abs/name.js
 FAIL test/built-ins/Math/abs/not-a-constructor.js
-FAIL test/built-ins/Math/abs/prop-desc.js
 FAIL test/built-ins/Number/isInteger/arg-is-not-number.js
 FAIL test/built-ins/Number/isInteger/length.js
 FAIL test/built-ins/Number/isInteger/name.js
@@ -201,4 +192,3 @@ FAIL test/language/statements/if/tco-if-body.js
 FAIL test/language/types/boolean/S8.3_A2.1.js
 FAIL test/language/types/boolean/S8.3_A2.2.js
 FAIL test/language/types/null/S8.2_A2.js
-FAIL test/language/types/number/S8.5_A9.js

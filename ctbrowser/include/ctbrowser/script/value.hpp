@@ -522,6 +522,21 @@ struct array_object final : heap_object {
     value index;
     value input;
     value groups;
+
+    // --- INTEGRITY, as much of it as a std::vector can carry ---------------
+    //
+    // An array has no property table, so its elements cannot each hold three
+    // attribute bits the way an object's do. What Object.freeze and
+    // Object.seal actually need of one is coarser than that and fits in two
+    // bools: nothing may be ADDED (extensible), nothing may be OVERWRITTEN
+    // (elements_writable) and nothing may be REMOVED or reshaped
+    // (elements_configurable) - which is exactly the difference between seal
+    // and freeze. Element-by-element attributes are the part this does not
+    // model, and `Object.defineProperty(a, 0, {writable: false})` is therefore
+    // still ignored - stated here rather than discovered.
+    bool extensible = true;
+    bool elements_writable = true;
+    bool elements_configurable = true;
     array_object() : heap_object(heap_kind::array) {}
 };
 
@@ -604,6 +619,37 @@ inline void view_set(array_object & view, std::size_t i, double v) noexcept {
 //
 // Shared by objects and closures because a CLASS is a closure: `static get w()`
 // has to go somewhere, and that somewhere is the constructor.
+// --- PROPERTY ATTRIBUTES -------------------------------------------------
+//
+// [[Writable]], [[Enumerable]] and [[Configurable]], three bits per property.
+// The engine had none of them, which is what made `Object.defineProperty(o,
+// "x", {enumerable: false})` a lie, `Object.freeze` a no-op that returned its
+// argument, and every built-in method turn up in `Object.keys` and `for-in`
+// where the specification says none of them may. test262 measures that gap
+// through `verifyProperty`, which 13,621 of its files call.
+//
+// A byte rather than three bools because it is stored per property in a vector
+// PARALLEL to the property table (see object_object::attrs) rather than inside
+// it: widening `std::pair<std::string, value>` into a descriptor struct would
+// break every `for (const auto & [key, item] : obj->props)` in the engine, the
+// DOM bindings and the Shell - which is exactly the reason the accessor table
+// sits beside the data properties instead of inside them.
+inline constexpr std::uint8_t attr_writable = 1;
+inline constexpr std::uint8_t attr_enumerable = 2;
+inline constexpr std::uint8_t attr_configurable = 4;
+
+// WHAT AN ORDINARY ASSIGNMENT AND AN OBJECT LITERAL PRODUCE: all three. This is
+// the default for object_object::set(), so every existing caller in the engine
+// - the DOM bindings above all, which are written as a periodic re-`set()` of a
+// plain data property - keeps exactly the behaviour it had.
+inline constexpr std::uint8_t attr_default = attr_writable | attr_enumerable | attr_configurable;
+// WHAT A BUILT-IN METHOD GETS (17, "Every other data property described in
+// clauses 19 through 28 ... has the attributes { [[Writable]]: true,
+// [[Enumerable]]: false, [[Configurable]]: true }").
+inline constexpr std::uint8_t attr_builtin = attr_writable | attr_configurable;
+// WHAT `Object.defineProperty` GIVES A FIELD IT WAS NOT TOLD ABOUT: nothing.
+inline constexpr std::uint8_t attr_none = 0;
+
 struct accessor_entry {
     std::string key;
     value getter;
@@ -614,6 +660,10 @@ struct accessor_entry {
     // tables lose the interleaving. Recording the position restores it without
     // giving every data property a sequence number it would otherwise not need.
     std::uint32_t after = 0;
+    // An accessor has no [[Writable]]: `set` present or absent IS the writable
+    // question. Only the other two bits are meaningful, and the default is what
+    // `get x() {}` in a class or object literal produces.
+    std::uint8_t attrs = attr_enumerable | attr_configurable;
 };
 
 struct accessor_table {
@@ -629,13 +679,15 @@ struct accessor_table {
         }
         return nullptr;
     }
-    void define(std::string_view name, value getter, value setter, std::uint32_t after = 0) {
+    void define(std::string_view name, value getter, value setter, std::uint32_t after = 0,
+                std::uint8_t attrs = attr_enumerable | attr_configurable) {
         if (accessor_entry * existing = find(name)) {
             if (!getter.is_undefined()) { existing->getter = getter; }
             if (!setter.is_undefined()) { existing->setter = setter; }
+            existing->attrs = attrs;
             return;
         }
-        entries.push_back(accessor_entry{std::string{name}, getter, setter, after});
+        entries.push_back(accessor_entry{std::string{name}, getter, setter, after, attrs});
         any = true;
     }
     bool erase(std::string_view name) {
@@ -657,7 +709,53 @@ struct object_object final : heap_object {
 
     accessor_table accessors;
 
+    // --- the attribute bits, PARALLEL to `props` and usually EMPTY ---------
+    //
+    // Entry i describes props[i]. It is grown lazily: an object all of whose
+    // properties have the default attributes carries no vector at all, which is
+    // every object a page makes with a literal or an assignment. That is what
+    // keeps the memory and the property-store fast path exactly where they were
+    // - and it is also why `attrs_at` answers `attr_default` for an index the
+    // vector does not reach rather than indexing it.
+    //
+    // ONE PLACE IN THE ENGINE MUTATES `props` DIRECTLY past this class:
+    // lib/Shell/bindings/window.cpp clears a localStorage table. `normalise()`
+    // below is what makes that safe - every mutator calls it, so a vector left
+    // longer than the table it describes is trimmed before it can answer for
+    // the wrong property.
+    std::vector<std::uint8_t> attrs;
+
+    // [[Extensible]]. False after Object.preventExtensions / seal / freeze.
+    bool extensible = true;
+
+    // Does any own key look like an array index? Enumeration order depends on
+    // it and almost no object has one, so recording the answer keeps the walk
+    // that every for-in performs a straight line.
+    bool indexed = false;
+
     object_object() : heap_object(heap_kind::object) {}
+
+    void normalise() {
+        if (!attrs.empty() && attrs.size() != props.size()) {
+            attrs.resize(props.size(), attr_default);
+        }
+    }
+    [[nodiscard]] std::uint8_t attrs_at(std::size_t i) const noexcept {
+        return i < attrs.size() ? attrs[i] : attr_default;
+    }
+    [[nodiscard]] std::uint8_t attrs_of(std::string_view name) const {
+        const auto it = index.find(name);
+        return it == index.end() ? attr_default : attrs_at(it->second);
+    }
+    void set_attrs_at(std::size_t i, std::uint8_t a) {
+        if (a == attr_default && attrs.empty()) { return; }
+        if (attrs.size() < props.size()) { attrs.resize(props.size(), attr_default); }
+        if (i < attrs.size()) { attrs[i] = a; }
+    }
+    void set_attrs(std::string_view name, std::uint8_t a) {
+        const auto it = index.find(name);
+        if (it != index.end()) { set_attrs_at(it->second, a); }
+    }
 
     [[nodiscard]] value * find(std::string_view name) {
         // NO TEMPORARY. This used to be `index.find(std::string{name})`, which
@@ -678,27 +776,76 @@ struct object_object final : heap_object {
     }
     // Defining an accessor removes any data property of the same name: they are
     // the same property, described two ways.
-    void define_accessor(std::string_view name, value getter, value setter) {
+    void define_accessor(std::string_view name, value getter, value setter,
+                         std::uint8_t a = attr_enumerable | attr_configurable) {
         (void)erase(name);
-        accessors.define(name, getter, setter, static_cast<std::uint32_t>(props.size()));
+        accessors.define(name, getter, setter, static_cast<std::uint32_t>(props.size()), a);
+        std::uint32_t at = 0;
+        if (!indexed && array_index_key(name, at)) { indexed = true; }
     }
     bool erase_accessor(std::string_view name) { return accessors.erase(name); }
 
-    // Every own property name, in the order they were defined. The one place
-    // that knows how the two tables interleave, so Object.keys, for-in and
-    // getOwnPropertyNames cannot disagree about it.
-    template <typename Fn> void each_own_key(Fn && visit) const {
-        std::size_t emitted = 0;
+    // The straight-line walk: definition order, data and accessors interleaved.
+    template <typename Fn> void each_own_entry_in_order(Fn && visit) const {
         for (std::size_t i = 0; i <= props.size(); ++i) {
             for (const accessor_entry & entry : accessors.entries) {
-                if (entry.after == i) {
-                    visit(entry.key);
-                    ++emitted;
-                }
+                if (entry.after == i) { visit(entry.key, entry.attrs); }
             }
-            if (i < props.size()) { visit(props[i].first); }
+            if (i < props.size()) { visit(props[i].first, attrs_at(i)); }
         }
-        (void)emitted;
+    }
+
+    // Is this key an ARRAY INDEX - 0 .. 2^32-2, spelled canonically? "01" and
+    // "1.0" are ordinary string keys, and getting that wrong would move a
+    // property a page can see.
+    [[nodiscard]] static bool array_index_key(std::string_view key, std::uint32_t & out) noexcept {
+        if (key.empty() || key.size() > 10) { return false; }
+        if (key.size() > 1 && key[0] == '0') { return false; }
+        std::uint64_t at = 0;
+        for (const char c : key) {
+            if (c < '0' || c > '9') { return false; }
+            at = at * 10 + static_cast<std::uint64_t>(c - '0');
+        }
+        if (at > 4294967294ull) { return false; }
+        out = static_cast<std::uint32_t>(at);
+        return true;
+    }
+
+    // Every own property, key AND attributes, in the order
+    // OrdinaryOwnPropertyKeys reports them. The one place that knows how the
+    // two tables interleave, so Object.keys, for-in and getOwnPropertyNames
+    // cannot disagree about it.
+    //
+    // INTEGER-INDEX KEYS COME FIRST, ascending, then everything else in
+    // insertion order (6.1.7.1). `{2: 'a', b: 'b', 1: 'c'}` enumerates
+    // "1","2","b" in every browser, and this table is insertion-ordered, so the
+    // reordering has to happen here. It costs a copy and a sort - and only on
+    // an object that HAS an index-shaped key, which `indexed` records as
+    // properties are added, so the overwhelming majority of objects take the
+    // straight-line walk they always did.
+    template <typename Fn> void each_own_entry(Fn && visit) const {
+        if (!indexed) {
+            each_own_entry_in_order(std::forward<Fn>(visit));
+            return;
+        }
+        std::vector<std::pair<std::uint32_t, std::pair<std::string, std::uint8_t>>> at_index;
+        std::vector<std::pair<std::string, std::uint8_t>> named;
+        each_own_entry_in_order([&](const std::string & key, std::uint8_t a) {
+            std::uint32_t at = 0;
+            if (array_index_key(key, at)) {
+                at_index.emplace_back(at, std::pair{key, a});
+            } else {
+                named.emplace_back(key, a);
+            }
+        });
+        std::sort(at_index.begin(), at_index.end(),
+                  [](const auto & x, const auto & y) { return x.first < y.first; });
+        for (const auto & entry : at_index) { visit(entry.second.first, entry.second.second); }
+        for (const auto & entry : named) { visit(entry.first, entry.second); }
+    }
+
+    template <typename Fn> void each_own_key(Fn && visit) const {
+        each_own_entry([&](const std::string & key, std::uint8_t) { visit(key); });
     }
 
     // A SYMBOL KEY IS NOT A STRING KEY, and almost nothing that enumerates an
@@ -712,25 +859,56 @@ struct object_object final : heap_object {
     // keys as well, and Reflect.ownKeys reports them, so those keep the
     // unfiltered walk.
     template <typename Fn> void each_own_string_key(Fn && visit) const {
-        each_own_key([&](const std::string & key) {
+        each_own_entry([&](const std::string & key, std::uint8_t) {
             if (!key.starts_with(symbol_key_prefix)) { visit(key); }
         });
     }
+
+    // THE SAME WALK, ENUMERABLE ONLY - what Object.keys/values/entries, for-in,
+    // Object.assign, object spread and JSON.stringify are each specified to
+    // see, and what none of them could distinguish before there were
+    // attributes. getOwnPropertyNames and Reflect.ownKeys keep the unfiltered
+    // walks above, because those two report every own property by definition.
+    template <typename Fn> void each_own_enumerable_key(Fn && visit) const {
+        each_own_entry([&](const std::string & key, std::uint8_t a) {
+            if ((a & attr_enumerable) != 0 && !key.starts_with(symbol_key_prefix)) { visit(key); }
+        });
+    }
+    // AN EXISTING PROPERTY KEEPS ITS ATTRIBUTES; a new one gets `attr_default`.
+    // That is what an ordinary assignment does (`o.x = 1` on an existing
+    // non-writable x is NOT this function's problem - see
+    // context::store_property, which is [[Set]] and does the checking) and it
+    // is why every caller in the engine, the DOM and the Shell keeps the
+    // behaviour it had before attributes existed.
     void set(std::string_view name, value v) {
+        normalise();
         if (value * existing = find(name)) {
             *existing = v;
             return;
         }
         index.emplace(std::string{name}, static_cast<std::uint32_t>(props.size()));
         props.emplace_back(std::string{name}, v);
+        if (!attrs.empty()) { attrs.push_back(attr_default); }
+        std::uint32_t at = 0;
+        if (!indexed && array_index_key(name, at)) { indexed = true; }
+    }
+    // [[DefineOwnProperty]] with the attributes stated - what a built-in
+    // installation and Object.defineProperty both need, and what `set` above
+    // deliberately is not.
+    void define(std::string_view name, value v, std::uint8_t a) {
+        set(name, v);
+        set_attrs(name, a);
     }
     // `delete o.x`. The index maps names to POSITIONS in props, so removing one
     // shifts every position after it - the index is rebuilt rather than patched,
     // because delete is rare and a half-updated index is a silent wrong answer.
     bool erase(std::string_view name) {
+        normalise();
         const auto it = index.find(name);
         if (it == index.end()) { return false; }
-        props.erase(props.begin() + static_cast<std::ptrdiff_t>(it->second));
+        const auto at = static_cast<std::ptrdiff_t>(it->second);
+        props.erase(props.begin() + at);
+        if (!attrs.empty()) { attrs.erase(attrs.begin() + at); }
         index.clear();
         for (std::uint32_t i = 0; i < props.size(); ++i) { index.emplace(props[i].first, i); }
         return true;

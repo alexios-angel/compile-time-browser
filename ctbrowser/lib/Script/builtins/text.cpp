@@ -842,14 +842,21 @@ void install_regexp(context & cx) {
         value out = c.make_object();
         auto * o = static_cast<object_object *>(out.as_heap());
         const std::shared_ptr<rx::rx_prog> program = compiled(cache, source, flags);
-        o->set("source", c.string(source));
-        o->set("flags", c.string(flags));
-        o->set("global", value::boolean(program->global));
-        o->set("ignoreCase", value::boolean(program->icase));
-        o->set("multiline", value::boolean(program->multi));
-        o->set("sticky", value::boolean(program->sticky));
-        o->set("lastIndex", value::number(0));
-        o->set("__regex", value::boolean(true));
+        // NONE OF THESE IS ENUMERABLE. The specification puts source, flags
+        // and the four mode flags on RegExp.prototype as ACCESSORS and gives
+        // the instance only `lastIndex`, { writable: true, enumerable: false,
+        // configurable: false } (22.2.6). They are own data properties here,
+        // which is a stated shortcut - but enumerable own data properties made
+        // `Object.keys(/x/)` report six and `Object.defineProperties(obj, /x/)`
+        // throw on the first one it was handed as a descriptor.
+        o->define("source", c.string(source), attr_builtin);
+        o->define("flags", c.string(flags), attr_builtin);
+        o->define("global", value::boolean(program->global), attr_builtin);
+        o->define("ignoreCase", value::boolean(program->icase), attr_builtin);
+        o->define("multiline", value::boolean(program->multi), attr_builtin);
+        o->define("sticky", value::boolean(program->sticky), attr_builtin);
+        o->define("lastIndex", value::number(0), attr_writable);
+        o->define("__regex", value::boolean(true), attr_builtin);
         if (object_object * table = c.prototype(context::proto_kind::regexp)) {
             o->prototype = value::object(table);
         }
@@ -891,8 +898,11 @@ void install_symbol(context & cx) {
                 std::string{symbol_key_prefix} + std::to_string((*counter)++) + ":" + description;
             return value::object(c.allocate<symbol_object>(description, key));
         });
+    // { false, false, false } - a well-known symbol is not writable and not
+    // configurable (20.4.2), and enumerable would put `iterator` in
+    // `Object.keys(Symbol)`.
     const auto well_known = [&](const char * name, const char * key) {
-        symbol->set(name, value::object(cx.allocate<symbol_object>(name, key)));
+        symbol->define(name, value::object(cx.allocate<symbol_object>(name, key)), attr_none);
     };
     well_known("iterator", "@@iterator");
     well_known("asyncIterator", "@@asyncIterator");
@@ -906,31 +916,37 @@ void install_symbol(context & cx) {
     // not keep. The shared_ptr is captured by both `for` and `keyFor`, which is
     // what lets the second answer questions about the first.
     auto registry = std::make_shared<std::vector<std::pair<std::string, value>>>();
-    symbol->set("for", value::object(cx.allocate<native_object>(
-                           "for", [registry](context & c, std::span<value> a) {
-                               const std::string d = a.empty() ? std::string{} : c.to_string(a[0]);
-                               for (const auto & [key, made] : *registry) {
-                                   if (key == d) { return made; }
-                               }
-                               const value made =
-                                   value::object(c.allocate<symbol_object>(d, "@@for:" + d));
-                               registry->emplace_back(d, made);
-                               return made;
-                           })));
+    symbol->define("for",
+                   value::object(cx.allocate<native_object>(
+                       "for",
+                       [registry](context & c, std::span<value> a) {
+                           const std::string d = a.empty() ? std::string{} : c.to_string(a[0]);
+                           for (const auto & [key, made] : *registry) {
+                               if (key == d) { return made; }
+                           }
+                           const value made =
+                               value::object(c.allocate<symbol_object>(d, "@@for:" + d));
+                           registry->emplace_back(d, made);
+                           return made;
+                       })),
+                   attr_builtin);
     // The inverse: the key a registered symbol was made under, or undefined for
     // one that never went through the registry.
-    symbol->set("keyFor", value::object(cx.allocate<native_object>(
-                              "keyFor", [registry](context & c, std::span<value> a) {
-                                  const value want = arg_at(a, 0);
-                                  for (const auto & [key, made] : *registry) {
-                                      if (made == want) { return c.string(key); }
-                                  }
-                                  (void)c;
-                                  return value::undefined();
-                              })));
+    symbol->define(
+        "keyFor",
+        value::object(cx.allocate<native_object>("keyFor",
+                                                 [registry](context & c, std::span<value> a) {
+                                                     const value want = arg_at(a, 0);
+                                                     for (const auto & [key, made] : *registry) {
+                                                         if (made == want) { return c.string(key); }
+                                                     }
+                                                     (void)c;
+                                                     return value::undefined();
+                                                 })),
+        attr_builtin);
     // `Symbol.prototype` is reachable from the constructor, like every other
     // built-in's - a page that walks it found undefined.
-    symbol->set("prototype", value::object(symbol_proto));
+    detail::constant(symbol, "prototype", value::object(symbol_proto));
     cx.define_global("Symbol", value::object(symbol));
 
     // --- BigInt --------------------------------------------------------------
@@ -979,7 +995,7 @@ void install_symbol(context & cx) {
         }
         return value::object(c.allocate<bigint_object>(*parsed));
     });
-    bigint_ctor->set("prototype", value::object(bigint_proto));
+    detail::constant(bigint_ctor, "prototype", value::object(bigint_proto));
     link_constructor(cx, bigint_proto, "BigInt", value::object(bigint_ctor));
     cx.define_global("BigInt", value::object(bigint_ctor));
 }

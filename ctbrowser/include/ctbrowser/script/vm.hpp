@@ -90,6 +90,11 @@ struct native_object final : heap_object {
     // one since classes needed somewhere for their statics; this is the same
     // need arriving for the built-ins.
     std::vector<std::pair<std::string, value>> props;
+    // Parallel to `props`, grown lazily - see the long note on
+    // object_object::attrs. A built-in constructor's statics are here, and the
+    // specification says none of them is enumerable.
+    std::vector<std::uint8_t> attrs;
+    bool extensible = true;
 
     [[nodiscard]] value * find(std::string_view key) {
         for (auto & [k, item] : props) {
@@ -97,13 +102,51 @@ struct native_object final : heap_object {
         }
         return nullptr;
     }
+    [[nodiscard]] std::size_t position(std::string_view key) const {
+        for (std::size_t i = 0; i < props.size(); ++i) {
+            if (props[i].first == key) { return i; }
+        }
+        return props.size();
+    }
+    [[nodiscard]] std::uint8_t attrs_of(std::string_view key) const {
+        const std::size_t at = position(key);
+        return at < attrs.size() ? attrs[at] : attr_default;
+    }
+    void set_attrs(std::string_view key, std::uint8_t a) {
+        const std::size_t at = position(key);
+        if (at >= props.size()) { return; }
+        if (a == attr_default && attrs.empty()) { return; }
+        if (attrs.size() < props.size()) { attrs.resize(props.size(), attr_default); }
+        attrs[at] = a;
+    }
     void set(std::string_view key, value v) {
+        if (!attrs.empty() && attrs.size() != props.size()) {
+            attrs.resize(props.size(), attr_default);
+        }
         if (value * existing = find(key)) {
             *existing = v;
             return;
         }
         props.emplace_back(std::string{key}, v);
+        if (!attrs.empty()) { attrs.push_back(attr_default); }
     }
+    void define(std::string_view key, value v, std::uint8_t a) {
+        set(key, v);
+        set_attrs(key, a);
+    }
+    bool erase(std::string_view key) {
+        const std::size_t at = position(key);
+        if (at >= props.size()) { return false; }
+        props.erase(props.begin() + static_cast<std::ptrdiff_t>(at));
+        if (at < attrs.size()) { attrs.erase(attrs.begin() + static_cast<std::ptrdiff_t>(at)); }
+        return true;
+    }
+
+    // THE FUNCTION'S OWN [[Prototype]], which a closure has had since Babel's
+    // `_inherits` needed one. A NativeError constructor's is %Error% (20.5.6.2)
+    // rather than Function.prototype, so `Object.getPrototypeOf(TypeError)` is
+    // `Error` and a static on Error is inherited by all six.
+    value proto_link = value::null();
 
     native_object(std::string n, native_fn f)
         : heap_object(heap_kind::native), name(std::move(n)), fn(std::move(f)) {}
@@ -124,6 +167,11 @@ struct closure_object final : heap_object {
     //
     // Linear on purpose - see the note above `native_object`.
     std::vector<std::pair<std::string, value>> props;
+    // Parallel to `props`, grown lazily - see object_object::attrs. A class's
+    // statics live here, and `C.prototype` is { writable: false, enumerable:
+    // false, configurable: false } on one.
+    std::vector<std::uint8_t> attrs;
+    bool extensible = true;
 
     [[nodiscard]] value * find(std::string_view name) {
         for (auto & [key, item] : props) {
@@ -131,12 +179,44 @@ struct closure_object final : heap_object {
         }
         return nullptr;
     }
+    [[nodiscard]] std::size_t position(std::string_view name) const {
+        for (std::size_t i = 0; i < props.size(); ++i) {
+            if (props[i].first == name) { return i; }
+        }
+        return props.size();
+    }
+    [[nodiscard]] std::uint8_t attrs_of(std::string_view name) const {
+        const std::size_t at = position(name);
+        return at < attrs.size() ? attrs[at] : attr_default;
+    }
+    void set_attrs(std::string_view name, std::uint8_t a) {
+        const std::size_t at = position(name);
+        if (at >= props.size()) { return; }
+        if (a == attr_default && attrs.empty()) { return; }
+        if (attrs.size() < props.size()) { attrs.resize(props.size(), attr_default); }
+        attrs[at] = a;
+    }
     void set(std::string_view name, value v) {
+        if (!attrs.empty() && attrs.size() != props.size()) {
+            attrs.resize(props.size(), attr_default);
+        }
         if (value * existing = find(name)) {
             *existing = v;
             return;
         }
         props.emplace_back(std::string{name}, v);
+        if (!attrs.empty()) { attrs.push_back(attr_default); }
+    }
+    void define(std::string_view name, value v, std::uint8_t a) {
+        set(name, v);
+        set_attrs(name, a);
+    }
+    bool erase(std::string_view name) {
+        const std::size_t at = position(name);
+        if (at >= props.size()) { return false; }
+        props.erase(props.begin() + static_cast<std::ptrdiff_t>(at));
+        if (at < attrs.size()) { attrs.erase(attrs.begin() + static_cast<std::ptrdiff_t>(at)); }
+        return true;
     }
 
     // A CLASS IS A CLOSURE, so `static get w()` has nowhere else to go. Same
@@ -146,8 +226,9 @@ struct closure_object final : heap_object {
     [[nodiscard]] accessor_entry * find_accessor(std::string_view name) {
         return accessors.find(name);
     }
-    void define_accessor(std::string_view name, value getter, value setter) {
-        accessors.define(name, getter, setter);
+    void define_accessor(std::string_view name, value getter, value setter,
+                         std::uint8_t a = attr_enumerable | attr_configurable) {
+        accessors.define(name, getter, setter, 0, a);
     }
 
     // The function's OWN [[Prototype]] - what `Object.getPrototypeOf(F)`
@@ -431,18 +512,51 @@ public:
     [[nodiscard]] value make_error(std::string_view kind, std::string message) {
         value made = make_object();
         auto * o = static_cast<object_object *>(made.as_heap());
-        o->set("name", string(std::string{kind}));
+        // ON THE PROTOTYPE THE KIND NAMES, not on Error's.
+        //
+        // Every error the engine raised used to land on Error.prototype, so a
+        // VM-raised TypeError had `name === "TypeError"` and
+        // `constructor === Error`. test262 counted 336 tests failing on exactly
+        // that - `assert.throws(TypeError, ...)` compares the CONSTRUCTOR - and
+        // tools/check/test262.py carries a stated leniency because of it.
+        //
+        // `name` is NOT written as an own property any more: 20.5.6.5 puts it
+        // on the prototype, and writing one here would make
+        // `Object.keys(e)` report it and `e.hasOwnProperty('name')` true.
+        object_object * table = error_prototype(kind);
+        if (table == nullptr) {
+            // A KIND WITH NO CONSTRUCTOR - "DataCloneError" is a DOMException
+            // name rather than an ECMAScript one, and this engine has no
+            // DOMException. Error.prototype plus an own `name` is the honest
+            // fallback: the name is still right and `e instanceof Error` holds.
+            table = prototype(proto_kind::error);
+            o->set("name", string(std::string{kind}));
+        }
         o->set("message", string(message));
         // The frames it happened on, exactly as a constructed Error gets them -
         // a page catching a TypeError the VM raised should be able to report
         // where as easily as one it threw itself.
         o->set("stack", string(std::string{kind} + ": " + message + current_stack()));
-        // On the Error prototype, so `e instanceof Error` and `e.toString()`
-        // work on a thrown one exactly as on `new TypeError(...)`.
-        if (object_object * table = prototype(proto_kind::error)) {
-            o->prototype = value::object(table);
-        }
+        if (table != nullptr) { o->prototype = value::object(table); }
         return made;
+    }
+
+    // --- ONE PROTOTYPE PER ERROR KIND ------------------------------------
+    //
+    // `proto_kind` is a fixed enum over the value KINDS property lookup falls
+    // back to, and the error types are not that: they are seven ordinary
+    // objects chained to one another, and the runtime only ever looks one up by
+    // the name a throw site wrote. A small keyed list rather than seven more
+    // enumerators keeps the fallback array - which every property read on a
+    // primitive indexes - exactly the size it was.
+    void register_error_prototype(std::string kind, object_object * table) {
+        error_prototypes_.emplace_back(std::move(kind), table);
+    }
+    [[nodiscard]] object_object * error_prototype(std::string_view kind) const {
+        for (const auto & [name, table] : error_prototypes_) {
+            if (name == kind) { return table; }
+        }
+        return nullptr;
     }
 
     void throw_error(std::string_view kind, std::string message) {
@@ -1100,6 +1214,83 @@ public:
     [[nodiscard]] bool instance_of(value target, value ctor);
     void delete_index(value target, value key);
 
+    // --- PROPERTY DESCRIPTORS, one shape for every kind of value -----------
+    //
+    // A property lives in four different tables here - object_object's, a
+    // closure's statics, a native's statics, and an array's elements - plus a
+    // handful of synthesised ones (`length` on an array or a string, `name` on
+    // a function). Every operation that has to REASON about a property rather
+    // than read it - getOwnPropertyDescriptor, defineProperty, freeze, seal,
+    // hasOwnProperty, propertyIsEnumerable - needs the same answer from all of
+    // them, and each of those was written separately against object_object
+    // alone before this existed.
+    //
+    // `has_*` says which fields the descriptor MENTIONS, which is the whole
+    // difference between "define x as undefined" and "change only x's
+    // attributes": ValidateAndApplyPropertyDescriptor (10.1.6.3) is written in
+    // terms of absent fields, and writing undefined for an absent one is what
+    // made `Object.defineProperty(C, "prototype", {writable: false})` wipe a
+    // transpiled class's prototype.
+    struct property_descriptor {
+        bool has_value = false;
+        bool has_get = false;
+        bool has_set = false;
+        bool has_writable = false;
+        bool has_enumerable = false;
+        bool has_configurable = false;
+        value held = value::undefined();
+        value getter = value::undefined();
+        value setter = value::undefined();
+        bool writable = false;
+        bool enumerable = false;
+        bool configurable = false;
+        // A SYNTHESISED property - an array's `length`, a string's `length`, a
+        // native's `name`. It can be read and it can be enumerated, but there
+        // is no slot to redefine or delete, so the operations that would write
+        // one refuse rather than pretending.
+        bool virtual_slot = false;
+
+        [[nodiscard]] bool is_accessor() const noexcept { return has_get || has_set; }
+        [[nodiscard]] bool is_data() const noexcept { return has_value || has_writable; }
+        [[nodiscard]] std::uint8_t attrs() const noexcept {
+            return static_cast<std::uint8_t>((writable ? attr_writable : 0) |
+                                             (enumerable ? attr_enumerable : 0) |
+                                             (configurable ? attr_configurable : 0));
+        }
+        static property_descriptor data(value v, std::uint8_t a) {
+            property_descriptor d;
+            d.has_value = d.has_writable = d.has_enumerable = d.has_configurable = true;
+            d.held = v;
+            d.writable = (a & attr_writable) != 0;
+            d.enumerable = (a & attr_enumerable) != 0;
+            d.configurable = (a & attr_configurable) != 0;
+            return d;
+        }
+    };
+
+    // [[GetOwnProperty]]. False when the property is not an OWN one - the
+    // prototype chain is not consulted, which is the point.
+    [[nodiscard]] bool own_property(value target, const std::string & name,
+                                    property_descriptor & out);
+    // Does `target` have an own property `name` at all? The question
+    // hasOwnProperty, Object.hasOwn and verifyProperty all ask.
+    [[nodiscard]] bool has_own_property(value target, const std::string & name);
+
+    // [[DefineOwnProperty]], with 10.1.6.3's validation. False means REJECTED -
+    // the caller decides whether that is a TypeError (Object.defineProperty) or
+    // silence (Reflect.defineProperty answers false).
+    [[nodiscard]] bool define_own_property(value target, const std::string & name,
+                                           const property_descriptor & wanted);
+
+    // [[Delete]]. False when the property exists and is not configurable, which
+    // is what makes Object.freeze and Object.seal observable. Sloppy-mode
+    // `delete` discards the answer; a strict-mode one would throw on false.
+    bool delete_own_property(value target, const std::string & name);
+
+    // [[PreventExtensions]] / [[IsExtensible]], across all four table kinds.
+    void prevent_extensions(value target);
+    [[nodiscard]] bool is_extensible(value target);
+
     // PUSH ONE ELEMENT ONTO AN ARRAY LITERAL UNDER CONSTRUCTION.
     //
     // SILENT ON A NON-ARRAY, which is the row's (0, 0, 0) rather than an
@@ -1678,6 +1869,13 @@ private:
         for (object_object * table : prototypes_) {
             if (table != nullptr) { visit(root_label::prototypes, value::object(table)); }
         }
+        // ...and the six NativeError prototypes, for the same reason: an
+        // engine-raised error is put on one, and a page that never mentions
+        // `RangeError` holds no other reference to its table.
+        for (const auto & [kind, table] : error_prototypes_) {
+            (void)kind;
+            if (table != nullptr) { visit(root_label::prototypes, value::object(table)); }
+        }
         // The per-function string cache. These are live `value`s held by the
         // context itself and referenced from nowhere else - a sweep without
         // them frees a string literal that a running loop is about to read
@@ -1765,6 +1963,8 @@ private:
     // able to find a handler several frames up.
     std::vector<handler> handlers_;
     std::array<object_object *, static_cast<std::size_t>(proto_kind::count_)> prototypes_{};
+    // Seven entries, scanned linearly: see register_error_prototype.
+    std::vector<std::pair<std::string, object_object *>> error_prototypes_;
     std::function<value(context &, value, bool)> promise_factory_;
     // Making a PENDING promise and settling one. The VM can read a promise's
     // state - `await` already did - but creating and settling run the standard
