@@ -4162,15 +4162,28 @@ struct admission {
             // get(); } var out = pick(-1);` once slice 2 step 2 stopped
             // refusing a carried cell.
             //
-            // AND IT COSTS NOTHING NOW, WHICH IT DID WHEN IT WAS MEASURED.
-            // Asked on its own this clause refused 7 globals across 5 fixtures
-            // and 11 across 4 lit tests, because a value returned through a
-            // carried cell was `opt<num>` FLOW-INSENSITIVELY - the box is
-            // emitted holding its hoisted `undefined` and the type said so at
-            // every read. Slice 2 step 3 narrows that type where a write
-            // dominates every read (`kAssignedBeforeRead`), which is exactly
-            // the population those refusals were, and leaves `pick` - whose
-            // write dominates nothing - `opt<num>` and refused.
+            // AND IT COSTS TWO COERCIONS NOW, WHERE IT COST TEN. Measured by
+            // stubbing both narrowings and walking every fixture and lit
+            // program: on its own this clause refuses 8 globals across 5
+            // fixtures - `shared17`, `loop20`, `twice2`, `mutated40`,
+            // `mutated9`, `accumulated15`, `idx_in_range`, `defaulted5` - and
+            // 9 lit programs across the 4 files named below, because a value
+            // returned through a CARRIED CELL or a CLOSED-SHAPE FIELD is
+            // `opt<num>` FLOW-INSENSITIVELY: the box is emitted holding its
+            // hoisted `undefined`, and a field read is seeded with `undefined`
+            // "because nothing orders the read after a store".
+            //
+            // Slice 2 step 3 narrows both where a write DOMINATES the read -
+            // `kAssignedBeforeRead` for the cell, `fieldIsAssignedBefore` for
+            // the field - and pays for six of the eight and all nine lit
+            // programs (CTNative/Lowering/{native-struct, one-shape-one-
+            // definition, receiver-lift, shape-field-names}.mlir). The two
+            // left are real possibilities and not imprecision: `idx_in_range`
+            // reads a dense array at an unproved index, which past the end
+            // really is `undefined`, and `defaulted5`'s only store of the field
+            // is inside a constructor - a different `ctjs.func`, which needs a
+            // callee summary rather than a wider dominance query. And `pick`,
+            // whose write dominates nothing, stays `opt<num>` and refused.
             const std::string where = ("store to global `" + store.getName() + "`").str();
             return numeric(store.getValue(), where) && printable(store.getValue(), where);
         }

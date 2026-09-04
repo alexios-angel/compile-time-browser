@@ -546,8 +546,13 @@ each by name:
   printed `out=nan`. Both are refused now and both are pinned in
   `CTNative/Lowering/global-undefined.mlir`.
 
-  **What made it affordable is the narrowing beside it.** Asked on its own the
-  clause refused 7 globals across 5 fixtures and 11 across 4 lit tests, because
+  **What made it affordable is the narrowing beside it.** Measured by stubbing
+  both narrowings and walking every fixture and lit program: on its own the
+  clause refuses **8 globals across 5 fixtures** — `shared17`, `loop20`,
+  `twice2`, `mutated40`, `mutated9`, `accumulated15`, `idx_in_range`,
+  `defaulted5` — and **9 lit programs across 4 files**
+  (`CTNative/Lowering/{native-struct, one-shape-one-definition, receiver-lift,
+  shape-field-names}.mlir`), because
   a value returned through a carried cell or a closed-shape field was
   `opt<num>` FLOW-INSENSITIVELY — the box is emitted holding its hoisted
   `undefined` and a field read is seeded with `undefined` "because nothing
