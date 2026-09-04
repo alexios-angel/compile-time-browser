@@ -1395,11 +1395,18 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   # to lose.
   ctcompile_add_native_claims(differential "${CMAKE_CURRENT_SOURCE_DIR}/differential.js" 2 56 10 0)
   ctcompile_add_native_claims(launcher "${CMAKE_CURRENT_SOURCE_DIR}/launcher.js" 0 9 9 0)
+  # THE LAST FIELD ROSE WITH PHASE 59 SLICE 2 STEP 4, from 4 / 101 / 53. A
+  # local binding that holds a function is now a direct call, and the lowering
+  # makes one per read; the claimed counts did not move, which is the finding
+  # and not a rounding error. The three figures are the ones MEASURED on the
+  # day the step landed, and they are a LOWER bound on what the tree emits: the
+  # measurement was taken before the pass folded the calls it writes in another
+  # frame into the same counter, and that fold can only add.
   ctcompile_add_native_claims(bootstrap
-    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 4 0 21 4)
-  ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 37 0 41 101)
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 4 0 21 16)
+  ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 37 0 41 105)
   ctcompile_add_native_claims(phaser
-    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 43 0 48 53)
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 43 0 48 54)
 
   # BOTH TEETH, PROVED. Each runs the same check as a child and passes only
   # when that child failed for the stated reason - not ctest's WILL_FAIL,
@@ -2059,4 +2066,61 @@ if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(shared_cells
                               "${CMAKE_CURRENT_SOURCE_DIR}/native-shared-cell-fixture.js"
                               25 10 28 20)
+endif()
+
+# ============================================================================
+# === PART 24 PHASE 59 SLICE 2 STEP 4: a local binding that holds a function ==
+# ============================================================================
+# native-local-function-fixture.js is eight functions whose helpers live in
+# LOCAL BINDINGS rather than in globals. `var f = function () { ... };` inside a
+# function body is a hoisted local, and `compiler_impl::declare_local` boxes it
+# exactly when a nested function mentions the name (`is_captured`) - so the
+# helper a bundle keeps private is a `ctjs.create_cell`, a
+# `ctjs.create_closure`, a `ctjs.cell_set` and then a `ctjs.cell_get` here or a
+# `ctjs.load_upvalue` one frame in. Slice 1 refused that closure by the
+# MECHANISM: "it reaches `ctjs.cell_set`, which slice 1 does not lower", 87 of
+# bootstrap's closure refusals and the terminal of 9 of the 19 chains a
+# ctjs.call_direct reaches.
+#
+# A BINDING WRITTEN ONCE WITH A CLOSURE, AND ONLY EVER CALLED THROUGH, IS THAT
+# FUNCTION - the declaration case one scope in. The box, its store and its reads
+# lower to nothing and each call through the name becomes a ctjs.call_direct of
+# the target, so the helper costs no allocation and no indirection.
+#
+# EVERY BINDING IN THE FIXTURE IS READ FROM ANOTHER FRAME, which is forced and
+# not chosen: a local is a box only when a nested function mentions it, and this
+# rule admits a mention only when it is a call. `recur15` is the recursive case
+# - the one capture is the binding being defined - and `chain27` is the
+# composition, a binding whose function closes over another binding.
+#
+# THE GATE IS THE ANSWER, NOT THE IR. A rewrite that called the wrong function,
+# dropped a call, or removed the wrong capture slot produces a module that
+# verifies, compiles clean under -Werror and prints a wrong number - which only
+# the interpreter can say. The `_off_by_one` proof (trailing argument) asserts
+# that the comparison can still fail, on a global the printing prelude loads
+# after the first one it prints.
+#
+# THE REFUSED SHAPES ARE NOT HERE, and cannot be: native-pipeline.cmake refuses
+# to write a module while any function carries `ctnative.not_native`. A name
+# assigned twice, a name called before it is assigned, a name that is returned
+# rather than called, a name a closure ASSIGNS, a name whose function closes
+# over a data binding, a name read two frames in, and mutual recursion are one
+# program apiece in CTNative/Lowering/closure-refusals.mlir, under split-file.
+#
+# One appended block, per part 23 Appendix A.3.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(local_functions
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-local-function-fixture.js"
+                                recur15)
+endif()
+# AND THE CLAIMED COUNT, AS A FLOOR: the four numbers are the MEASURED ones on
+# the day this landed - 28 of 28 functions claimed, 8 globals resolved, 16
+# ctjs.call_direct from the resolver and 23 more from the lowering (13 of those
+# written by this step, in a frame where the closure value is not in scope) - so
+# a change that stops calling a local binding directly fails HERE even if the
+# fixture above were deleted.
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(local_functions
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-local-function-fixture.js"
+                              28 8 16 23)
 endif()

@@ -312,6 +312,8 @@ struct liftReport {
     unsigned constructors = 0; // `new X(...)` sites turned into a frame-scope struct
     unsigned carried = 0;      // capture slots that became a pointer to a frame-local cell
     unsigned locals = 0;       // ctjs.create_cells that became a frame-local variable
+    unsigned bindings = 0;     // local bindings that held a function and lowered to nothing
+    unsigned bound = 0;        // of `calls`, the ones made direct from another frame
 };
 
 // --- THE RECEIVER IS A PARAMETER ------------------------------------------------
@@ -557,6 +559,108 @@ struct closureLifter {
     // the `ctjs.store_upvalue` a callee makes is left to the type join.
     llvm::DenseSet<mlir::Operation *> assignedBeforeRead;
 
+    // --- PHASE 59 SLICE 2 STEP 4: A LOCAL BINDING THAT HOLDS A FUNCTION ----
+    //
+    // `var f = function () { ... };` inside a function body is a hoisted local,
+    // and it is BOXED exactly when some nested function mentions the name -
+    // `compiler_impl::declare_local` asks `is_captured` (capture.cpp) and
+    // `predeclare_locals` emits `op::new_cell` only for the answer yes. So the
+    // shape this step is about is a `ctjs.create_cell` of `undefined`, a
+    // `ctjs.create_closure`, a `ctjs.cell_set` putting the second in the first,
+    // and then a `ctjs.cell_get` in this frame or a `ctjs.load_upvalue` in a
+    // nested one wherever the name is used. Slice 1 refused the closure by the
+    // MECHANISM - "it reaches `ctjs.cell_set`, which slice 1 does not lower" -
+    // which is 87 of bootstrap's closure refusals and the terminal of 9 of the
+    // 19 chains a `ctjs.call_direct` can reach.
+    //
+    // A BINDING WRITTEN ONCE WITH A CLOSURE, AND ONLY EVER CALLED THROUGH, IS
+    // THAT FUNCTION. That is the DECLARATION case one scope in:
+    // `isDeclarationClosure` already lowers a create_closure whose one use is a
+    // `ctjs.store_global` to nothing, because the closed world names the callee
+    // and every call of it is direct. The box adds nothing a call needs, so the
+    // box, its store and its reads all lower to nothing and each call through
+    // the name becomes a `ctjs.call_direct` of the target.
+    //
+    // THE CONDITIONS, each a named refusal when it fails (`bindingClosures` is
+    // where the admitted ones end up):
+    //
+    //  1. ONE STORE, HOLDING A CLOSURE MADE HERE AND USED FOR NOTHING ELSE.
+    //     Two stores make the binding a variable again and which function a
+    //     call reaches depends on the path to it; a closure with a second use
+    //     is a value as well as a name, and that use is what the other rules
+    //     are for.
+    //  2. EVERY OTHER USE OF THE BOX IS A READ OR A CAPTURE. A box stored into
+    //     an object, put in another box, returned or passed is one something
+    //     else holds, and a name that lowers to nothing cannot stand in for it.
+    //  3. THE STORE REACHES EVERY READ - `writeReachesEveryRead`, the same
+    //     function slice 2 steps 1 and 3 ask, and the same two clauses: it
+    //     dominates every `ctjs.cell_get` of the box, and it dominates every
+    //     CALL of every closure that captured it. A read before it yields the
+    //     `undefined` the binding was hoisted with, which is not a function.
+    //  4. EVERY READ IS A CALL THIS TIER LOWERS. In this frame that is a
+    //     `ctjs.call` at operand 0 of a `ctjs.cell_get` result; in a nested
+    //     function it is a `ctjs.call` at operand 0 of a `ctjs.load_upvalue`
+    //     result. A read used for anything else - compared, stored, passed -
+    //     is a function VALUE, and this step makes no value.
+    //  5. AND THE CAPTURES REACH THE CALLS THIS STEP WRITES ITSELF. A call in
+    //     ANOTHER function is one lifting has nothing to prepend at - the
+    //     METHODCAP argument, one binding along - so a binding read from a
+    //     nested function may hold only a closure whose every capture is
+    //     ITSELF a binding this step erases. That is not the empty condition
+    //     it looks like: a bundle's helpers close over each other, and the
+    //     recursive `var f = function () { ... f(); }` is exactly the case
+    //     where the one capture is the binding being defined.
+    //
+    // RECURSION IS ADMITTED, AND IT IS THE SHAPE THE RULE IS BUILT AROUND.
+    // `f` names itself, so the closure captures the very box it is written
+    // into; condition 5 sees a capture that is a binding this step erases and
+    // takes it, and the `ctjs.load_upvalue` inside the body becomes a
+    // `ctjs.call_direct` of the target it sits in. Condition 3 needs one
+    // sentence for it, and it is beside the clause in `writeReachesEveryRead`:
+    // the closure's only use is the store, and a store is not a call, so
+    // asking it to dominate itself asks the wrong question - a read of the
+    // binding inside that function happens when the function RUNS, and every
+    // call of it is one of the reads this walk has already checked.
+    //
+    // THE CAPTURE SLOT IS REMOVED, WHICH IS THE ONLY IR SURGERY HERE. A slot
+    // holding a binding that lowers to nothing has no value to pass, so the
+    // operand goes, `enclosing_indices` shortens with it, the target's
+    // `upvalue_count` drops and every `ctjs.load_upvalue` index past the hole
+    // is renumbered. A nested closure that names the removed slot through its
+    // own `enclosing_indices` is refused rather than renumbered - that is the
+    // binding travelling two frames in, and there is no call site out here to
+    // move anything to.
+    //
+    // IT RUNS BEFORE `census()`, and it has to: the censuses record the uses of
+    // every cell, and this erases cells, stores, reads and calls. It is the
+    // same ordering rule the three censuses state about `lift()`.
+    //
+    // AND IT IS `--ctjs-resolve-globals` FOR LOCALS, which is why so little of
+    // the machinery below had to change. The resolver turns a global bound once
+    // in the prologue to a closure into a symbol every call names; this turns a
+    // LOCAL bound once in a frame into the same thing. What is left for the
+    // ordinary lift is a `ctjs.create_closure` whose every use is a call, which
+    // is slice 1's own shape.
+    //
+    // AND CONDITION 3 IS CONSERVATIVE ABOUT SOURCE ORDER, WHICH IS WHERE THIS
+    // RULE STOPS. `writeReachesEveryRead` asks that the store dominate every
+    // USE of every closure that captured the box, not every CALL of one - it
+    // cannot ask about calls, because a closure whose own value goes into a box
+    // has no call site at all until this very rewrite makes one. That is sound:
+    // a call of a closure happens at or after some use of its value, so a store
+    // dominating every use ran before any call could. It also refuses
+    // `function g() { f(); } function f() {}` written in that order, because
+    // g's own store comes first - a real shape, and this rule's next lever.
+    // The closures the admitted bindings held. Condition 4 of `whyNotLiftable` asks
+    // that SOMETHING call the closure, and for one of these the calls may all
+    // be `ctjs.call_direct`s in other frames that this step wrote - which are
+    // not uses of the closure value at all.
+    llvm::DenseSet<mlir::Operation *> bindingClosures;
+    // Why a box that holds a function is not one, for the diagnostic. Written
+    // for every cell whose `ctjs.cell_set` stores a `ctjs.create_closure`, so
+    // that "it reaches `ctjs.cell_set`" is replaced by the clause that failed.
+    llvm::DenseMap<mlir::Operation *, std::string> whyNotAFunctionBinding;
+
     // ONE PER LIFTER, and it stays valid across the classify-then-lift
     // fixpoint: lift() inserts entry-block ARGUMENTS and erases and creates
     // operations, and neither changes the block structure a dominator tree is
@@ -699,12 +803,25 @@ struct closureLifter {
         return llvm::cast<ctjs::CallDirectOp>(user).getArgs();
     }
 
-    void census() {
+    // THE TWO WALKS BOTH RULES NEED. `targetOf` reads `byIndex` and the
+    // local-function rule asks `passesNewTarget` of every call site it writes,
+    // and it runs before census() - so the two are here rather than inline, and
+    // census() calls this rather than repeating it.
+    void indexAndNewTargets() {
         module.walk([&](ctjs::FuncOp fn) {
             if (const std::optional<unsigned> index = functionIndexOf(fn)) {
                 byIndex.try_emplace(*index, fn);
             }
         });
+        module.walk([&](ctjs::PassNewTargetOp o) {
+            if (auto holder = o->getParentOfType<ctjs::FuncOp>()) {
+                passesNewTarget.insert(holder.getOperation());
+            }
+        });
+    }
+
+    void census() {
+        indexAndNewTargets();
         module.walk([&](mlir::Operation * o) {
             auto holder = o->getParentOfType<ctjs::FuncOp>();
             if (llvm::isa<ctjs::StoreUpvalueOp>(o)) {
@@ -928,6 +1045,17 @@ struct closureLifter {
                 // all of them is the same set, asked without waiting for a
                 // verdict that does not exist yet.
                 for (mlir::Operation * at : user->getResult(0).getUsers()) {
+                    // THE STORE IS NOT A CALL - PHASE 59 SLICE 2 STEP 4.
+                    // `var f = function () { ... f(); };` captures the very box
+                    // it is then written into, so this store IS one of the
+                    // closure's users and asking it to dominate itself asks the
+                    // wrong question: a read of the binding inside that
+                    // function happens when the function RUNS, and every call
+                    // of it is a read of the box that this same walk has
+                    // already required the store to dominate. Without this
+                    // clause the recursive local function is refused by
+                    // arithmetic rather than by an argument.
+                    if (at == store.getOperation()) { continue; }
                     if (at->getParentOfType<ctjs::FuncOp>() != owner) { return false; }
                     if (!dominance.properlyDominates(store.getOperation(), at)) { return false; }
                 }
@@ -947,6 +1075,475 @@ struct closureLifter {
     // over the module.
     bool isAssignedBeforeRead(ctjs::CreateCellOp cell) const {
         return assignedBeforeRead.contains(cell.getOperation());
+    }
+
+    // --- PHASE 59 SLICE 2 STEP 4: THE RULE ---------------------------------
+
+    // What the check found, so that it and the rewrite cannot disagree about
+    // which operations they mean. `examineFunctionBinding` fills it and
+    // `bindLocalFunctions` reads it; nothing else constructs one.
+    struct functionBinding {
+        ctjs::CreateCellOp cell;
+        ctjs::CellSetOp store;
+        ctjs::CreateClosureOp closure;
+        ctjs::FuncOp target;
+        ctjs::FuncOp owner;
+        // The reads in the frame that owns the box.
+        llvm::SmallVector<ctjs::CellGetOp> reads;
+        // And the closures that carry it into another frame, with the slot
+        // each one holds it at.
+        llvm::SmallVector<std::pair<ctjs::CreateClosureOp, unsigned>> slots;
+        unsigned calls = 0;
+    };
+
+    // DOES THIS BOX EVER HOLD A FUNCTION? The cheap half of the question, asked
+    // first so that a box holding a number never collects a diagnostic about
+    // closures - and so that `whyNotAFunctionBinding` has an entry for every
+    // cell the refusal below can land on.
+    static bool holdsAFunction(ctjs::CreateCellOp cell) {
+        for (mlir::OpOperand & use : cell.getResult().getUses()) {
+            auto write = llvm::dyn_cast<ctjs::CellSetOp>(use.getOwner());
+            if (write != nullptr && use.getOperandNumber() == 0 &&
+                write.getValue().getDefiningOp<ctjs::CreateClosureOp>() != nullptr) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // A BODY THAT READS ITS RAW ARGUMENT WINDOW, which is the one thing the pad
+    // below may not change: `op::call` fills a short call's REGISTERS with
+    // undefined, and `make_arguments_object` copies the raw window whose length
+    // is argc - so `function f(a, b) { return arguments.length; } f(1)` is 1 in
+    // the interpreter and would be 2 through a padded direct call. The same
+    // question ResolveGlobals asks (`reads_raw_arguments`), asked here because
+    // this step writes call sites of its own.
+    static bool readsRawArguments(ctjs::FuncOp target) {
+        bool reads = false;
+        target.walk([&](mlir::Operation * o) {
+            if (llvm::isa<ctjs::MakeArgumentsOp, ctjs::GatherRestOp>(o)) {
+                reads = true;
+                return mlir::WalkResult::interrupt();
+            }
+            return mlir::WalkResult::advance();
+        });
+        return reads;
+    }
+
+    // CONDITION 4, ASKED OF ONE READ. `read` is the value the binding was read
+    // into - a `ctjs.cell_get` result in the frame that owns the box, a
+    // `ctjs.load_upvalue` result one frame in - and every use of it has to be a
+    // call this step can write, at an arity the callee's entry block accepts.
+    std::optional<std::string> whyReadIsNotACall(mlir::Value read, ctjs::FuncOp target,
+                                                 unsigned & calls) {
+        const unsigned parameters = target.getBody().front().getNumArguments() - 3;
+        for (mlir::OpOperand & use : read.getUses()) {
+            auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+            if (!call || use.getOperandNumber() != 0) {
+                return ("the name reaches `" + use.getOwner()->getName().getStringRef() +
+                        "`, so the binding holds a function VALUE and this step makes none")
+                    .str();
+            }
+            // ARITY IS A HARD VERIFIER FAILURE AND NOT A LATER REFUSAL.
+            // CallDirectOp::verifySymbolUses holds the operand count equal to
+            // the entry block's, so a surplus call has to be refused HERE; a
+            // short one is padded, as VM_CASE(call) pads.
+            if (call.getArgs().size() > parameters) {
+                return "a call passes " + std::to_string(call.getArgs().size()) +
+                       " argument(s) to " + std::to_string(parameters) +
+                       " parameter(s) - the surplus has frame semantics";
+            }
+            if (call.getArgs().size() < parameters && readsRawArguments(target)) {
+                return "a call passes " + std::to_string(call.getArgs().size()) +
+                       " argument(s) to " + std::to_string(parameters) +
+                       " parameter(s) and the callee reads its raw argument window, which the "
+                       "pad would lengthen";
+            }
+            auto caller = call->getParentOfType<ctjs::FuncOp>();
+            if (caller && passesNewTarget.contains(caller.getOperation())) {
+                return std::string{"a call of it sits in a function that passes new.target"};
+            }
+            ++calls;
+        }
+        return std::nullopt;
+    }
+
+    // CONDITIONS 1 TO 4 OF THE RULE STATED BESIDE `bindingClosures`, one
+    // sentence each, over one box. Condition 5 is the fixpoint in
+    // `bindLocalFunctions`, because it is a question about the OTHER boxes.
+    std::optional<std::string> examineFunctionBinding(ctjs::CreateCellOp cell,
+                                                      functionBinding & plan) {
+        plan.cell = cell;
+        plan.owner = cell->getParentOfType<ctjs::FuncOp>();
+        if (!plan.owner) { return std::string{"it is not inside a ctjs.func"}; }
+        // CONDITIONS 1 AND 2, IN ONE WALK, because condition 1 is only known
+        // when the walk ends.
+        for (mlir::OpOperand & use : cell.getResult().getUses()) {
+            mlir::Operation * user = use.getOwner();
+            if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(user)) {
+                // THE BOX, NOT THE VALUE PUT IN ONE - the same line the two
+                // censuses above draw, and for the same reason.
+                if (use.getOperandNumber() != 0) {
+                    return std::string{"the box itself is put inside another binding"};
+                }
+                if (plan.store) { return std::string{"it is assigned more than once"}; }
+                plan.store = write;
+                continue;
+            }
+            if (llvm::isa<ctjs::CellGetOp>(user) && use.getOperandNumber() == 0) {
+                plan.reads.push_back(llvm::cast<ctjs::CellGetOp>(user));
+                continue;
+            }
+            if (llvm::isa<ctjs::CreateClosureOp>(user) && use.getOperandNumber() >= kFirstCapture) {
+                plan.slots.emplace_back(llvm::cast<ctjs::CreateClosureOp>(user),
+                                        use.getOperandNumber() - kFirstCapture);
+                continue;
+            }
+            return ("the box reaches `" + user->getName().getStringRef() +
+                    "`, so something other than a name holds it")
+                .str();
+        }
+        if (!plan.store) { return std::string{"nothing is ever assigned to it"}; }
+        plan.closure = plan.store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+        if (!plan.closure) {
+            return std::string{
+                "what is assigned to it is not a ctjs.create_closure of this frame"};
+        }
+        // AND THE CLOSURE IS THE BINDING AND NOTHING ELSE. A second use is a
+        // function VALUE - stored, returned, passed - and one of the other
+        // rules owns that, with a sentence that names it.
+        if (!plan.closure.getResult().hasOneUse()) {
+            return std::string{"the closure it holds is used as a value somewhere else as well"};
+        }
+        if (const std::optional<std::string> why = whyTargetIsNotLiftable(plan.closure)) {
+            return why;
+        }
+        plan.target = targetOf(plan.closure);
+        // CONDITION 3, and it is `writeReachesEveryRead` unchanged: the same
+        // two clauses slice 2 steps 1 and 3 ask of the same use list with the
+        // same DominanceInfo. Step 1 asks them to replace a read with the
+        // store's operand and step 3 asks them to drop the box's initial from a
+        // type; this asks them to replace a read with a CALL, and all three
+        // rest on the one fact - no read of the binding can happen on a path
+        // that skipped the store.
+        if (!writeReachesEveryRead(cell, plan.store)) {
+            return std::string{
+                "its one assignment does not reach every read of it, and a read before it "
+                "yields the undefined the binding was hoisted with"};
+        }
+        for (ctjs::CellGetOp read : plan.reads) {
+            if (const std::optional<std::string> why =
+                    whyReadIsNotACall(read.getResult(), plan.target, plan.calls)) {
+                return why;
+            }
+        }
+        // CONDITION 4, ONE FRAME IN, plus the two clauses the SLOT itself has
+        // to satisfy for this step to be able to remove it.
+        for (const auto & [made, slot] : plan.slots) {
+            ctjs::FuncOp holder = targetOf(made);
+            if (!holder || holder.getBody().empty() ||
+                holder.getBody().front().getNumArguments() < 3) {
+                return "capture " + std::to_string(slot) +
+                       " of it is taken by a closure whose target this tier cannot see";
+            }
+            mlir::Block & entry = holder.getBody().front();
+            std::optional<std::string> bad;
+            holder.getBody().walk([&](mlir::Operation * o) {
+                if (auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(o)) {
+                    if (write.getClosure() != entry.getArgument(2)) {
+                        bad = std::string{
+                            "a function that reads it writes an upvalue this step cannot name"};
+                    } else if (static_cast<unsigned>(write.getIndex()) == slot) {
+                        bad = std::string{"a function that reads it ASSIGNS the binding, so the "
+                                          "name holds a variable and not one function"};
+                    }
+                    return;
+                }
+                if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(o)) {
+                    if (read.getClosure() != entry.getArgument(2)) {
+                        bad = std::string{
+                            "a function that reads it reads an upvalue this step cannot name"};
+                    } else if (static_cast<unsigned>(read.getIndex()) == slot) {
+                        if (const std::optional<std::string> why =
+                                whyReadIsNotACall(read.getResult(), plan.target, plan.calls)) {
+                            bad = why;
+                        }
+                    }
+                    return;
+                }
+                // AND NOBODY MAY NAME THE SLOT FROM TWO FRAMES IN. Removing it
+                // renumbers every capture past it, and a nested closure that
+                // fills a slot from THIS one (slice 1b's `enclosing_indices`)
+                // is the binding travelling further inward - where there is no
+                // call site out here to move anything to.
+                if (auto nested = llvm::dyn_cast<ctjs::CreateClosureOp>(o)) {
+                    const mlir::DenseI32ArrayAttr indices = nested.getEnclosingIndicesAttr();
+                    if (indices && llvm::is_contained(indices.asArrayRef(),
+                                                      static_cast<std::int32_t>(slot))) {
+                        bad = std::string{
+                            "a function two frames in names the binding through its enclosing "
+                            "closure, and this step has no call site out here for it"};
+                    }
+                }
+            });
+            if (bad) { return bad; }
+        }
+        // A NAME NOTHING CALLS IS NOT WORTH ERASING A BOX FOR, and lifting its
+        // target would mark private a function with no visible caller - which
+        // DeadCodeAnalysis reads as dead and every type in it as `<unvisited>`.
+        if (plan.calls == 0) { return std::string{"nothing calls it"}; }
+        return std::nullopt;
+    }
+
+    // THE CALL A NAME MAKES, WRITTEN IN A FRAME THE CLOSURE VALUE CANNOT REACH.
+    //
+    // `$callee_value` is `undefined`, as it is in the method and constructor
+    // arms and here for a second reason on top of theirs: the closure is
+    // defined in ANOTHER ctjs.func and naming it from this one is not something
+    // SSA allows at all. So `lift()` never sees this site - it walks the uses
+    // of the closure value - and that is sound only because condition 5 has
+    // proved the callee has no capture left for a lift to prepend.
+    void makeBoundCallDirect(ctjs::CallOp call, ctjs::FuncOp target) {
+        const unsigned parameters = target.getBody().front().getNumArguments() - 3;
+        mlir::OpBuilder at(call);
+        const auto valueType = ctjs::ValueType::get(context);
+        const mlir::Value undefined = ctjs::ConstantOp::create(at, call.getLoc(), valueType,
+                                                               ctjs::UndefinedAttr::get(context));
+        llvm::SmallVector<mlir::Value> arguments(call.getArgs());
+        while (arguments.size() < parameters) { arguments.push_back(undefined); }
+        auto direct = ctjs::CallDirectOp::create(
+            at, call.getLoc(), valueType, mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
+            call.getReceiver(), undefined, undefined, arguments,
+            /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
+        call.getResult().replaceAllUsesWith(direct.getResult());
+        call.erase();
+    }
+
+    // AND THE CAPTURE SLOTS THE BINDING OCCUPIED, REMOVED IN PLACE.
+    //
+    // IN PLACE, NOT REBUILT, and that is not a style choice: `plans` and
+    // `bindingClosures` hold ctjs.create_closure pointers, and a rebuilt
+    // operation is a different one - every reader would then be holding a
+    // dangling closure and the fixpoint's verdicts would be about operations
+    // that no longer exist.
+    //
+    // FOUR THINGS MOVE TOGETHER, and leaving any one of them behind is a
+    // verifier error rather than a wrong answer: the operand, the parallel
+    // `enclosing_indices` entry, the target's `upvalue_count`, and every
+    // upvalue index past the hole - in the target's own reads and writes and in
+    // the `enclosing_indices` of the closures it makes.
+    void removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<unsigned> slots) {
+        ctjs::FuncOp target = targetOf(c);
+        const auto captures = static_cast<unsigned>(c.getUpvalues().size());
+        llvm::SmallVector<bool> gone(captures, false);
+        for (const unsigned slot : slots) { gone[slot] = true; }
+        llvm::SmallVector<std::int32_t> renumbered(captures, -1);
+        unsigned kept = 0;
+        for (unsigned i = 0; i < captures; ++i) {
+            if (!gone[i]) { renumbered[i] = static_cast<std::int32_t>(kept++); }
+        }
+        if (const mlir::DenseI32ArrayAttr indices = c.getEnclosingIndicesAttr()) {
+            llvm::SmallVector<std::int32_t> rest;
+            for (unsigned i = 0; i < captures; ++i) {
+                if (!gone[i]) { rest.push_back(indices[i]); }
+            }
+            if (rest.empty()) {
+                c->removeAttr("enclosing_indices");
+            } else {
+                c->setAttr("enclosing_indices", mlir::Builder(context).getDenseI32ArrayAttr(rest));
+            }
+        }
+        llvm::BitVector drop(c->getNumOperands(), false);
+        for (unsigned i = 0; i < captures; ++i) {
+            if (gone[i]) { drop.set(kFirstCapture + i); }
+        }
+        c->eraseOperands(drop);
+        target->setAttr("upvalue_count",
+                        mlir::Builder(context).getI32IntegerAttr(static_cast<int>(kept)));
+        const auto move = [&](std::int32_t index) -> std::int32_t {
+            if (index < 0 || static_cast<unsigned>(index) >= captures ||
+                renumbered[static_cast<unsigned>(index)] < 0) {
+                llvm::report_fatal_error(
+                    llvm::Twine("ctnative lowering: `") + target.getSymName() +
+                    "` still names upvalue " + llvm::Twine(index) +
+                    ", which the local-function rule removed - examineFunctionBinding admitted a "
+                    "read of the binding that the rewrite did not replace");
+            }
+            return renumbered[static_cast<unsigned>(index)];
+        };
+        target.getBody().walk([&](mlir::Operation * o) {
+            if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(o)) {
+                o->setAttr("index", mlir::Builder(context).getI32IntegerAttr(
+                                        move(static_cast<std::int32_t>(read.getIndex()))));
+                return;
+            }
+            if (auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(o)) {
+                o->setAttr("index", mlir::Builder(context).getI32IntegerAttr(
+                                        move(static_cast<std::int32_t>(write.getIndex()))));
+                return;
+            }
+            if (auto nested = llvm::dyn_cast<ctjs::CreateClosureOp>(o)) {
+                const mlir::DenseI32ArrayAttr indices = nested.getEnclosingIndicesAttr();
+                if (!indices) { return; }
+                llvm::SmallVector<std::int32_t> moved;
+                for (const std::int32_t index : indices.asArrayRef()) {
+                    moved.push_back(index < 0 ? index : move(index));
+                }
+                o->setAttr("enclosing_indices", mlir::Builder(context).getDenseI32ArrayAttr(moved));
+            }
+        });
+    }
+
+    // THE WHOLE OF STEP 4, RUN ONCE AND BEFORE `census()`.
+    void bindLocalFunctions(liftReport & out) {
+        llvm::MapVector<mlir::Operation *, functionBinding> plans;
+        module.walk([&](ctjs::CreateCellOp cell) {
+            if (!holdsAFunction(cell)) { return; }
+            functionBinding plan;
+            if (const std::optional<std::string> why = examineFunctionBinding(cell, plan)) {
+                whyNotAFunctionBinding[cell.getOperation()] = *why;
+                return;
+            }
+            plans.insert({cell.getOperation(), plan});
+        });
+        // CONDITION 5, AS A GREATEST FIXPOINT: start by believing every
+        // candidate and drop the ones whose closure closes over something this
+        // step does not erase. Greatest, and not least, because MUTUAL
+        // recursion is two bindings each of which needs the other - `var a =
+        // function () { b(); }; var b = function () { a(); };` - and a least
+        // fixpoint takes neither.
+        //
+        // ONLY A BINDING READ FROM ANOTHER FRAME IS ASKED. A name called only
+        // where it was written keeps its closure value in scope, so slice 1's
+        // own rule prepends the captures at those calls and any capture it can
+        // carry is fine.
+        llvm::DenseSet<mlir::Operation *> taken;
+        for (const auto & entry : plans) { taken.insert(entry.first); }
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (auto & entry : plans) {
+                if (!taken.contains(entry.first)) { continue; }
+                functionBinding & plan = entry.second;
+                if (plan.slots.empty()) { continue; }
+                const auto captures = static_cast<unsigned>(plan.closure.getUpvalues().size());
+                for (unsigned j = 0; j < captures; ++j) {
+                    auto held = plan.closure.getUpvalues()[j].getDefiningOp<ctjs::CreateCellOp>();
+                    if (held && taken.contains(held.getOperation())) { continue; }
+                    whyNotAFunctionBinding[entry.first] =
+                        "it is read from inside another function, and capture " +
+                        std::to_string(j) +
+                        " of the function it holds is not a binding this step erases - a call out "
+                        "there has nothing to prepend the capture at";
+                    taken.erase(entry.first);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        // PASS A: EVERY READ BECOMES A CALL OF THE TARGET.
+        llvm::MapVector<mlir::Operation *, llvm::SmallVector<unsigned>> removals;
+        for (auto & entry : plans) {
+            if (!taken.contains(entry.first)) { continue; }
+            functionBinding & plan = entry.second;
+            bindingClosures.insert(plan.closure.getOperation());
+            // IN THE FRAME THAT OWNS THE BOX THE CLOSURE VALUE IS IN SCOPE, so
+            // the read is simply replaced by it and slice 1's own rule takes
+            // the call - captures, arity, new.target and all. That is why this
+            // arm writes no ctjs.call_direct of its own, and why a binding
+            // called only here may hold a closure with captures.
+            for (ctjs::CellGetOp read : plan.reads) {
+                read.getResult().replaceAllUsesWith(plan.closure.getResult());
+                read.erase();
+            }
+            for (auto & [made, slot] : plan.slots) {
+                ctjs::FuncOp holder = targetOf(made);
+                llvm::SmallVector<ctjs::LoadUpvalueOp> named;
+                holder.getBody().walk([&](ctjs::LoadUpvalueOp read) {
+                    if (static_cast<unsigned>(read.getIndex()) == slot) { named.push_back(read); }
+                });
+                for (ctjs::LoadUpvalueOp read : named) {
+                    llvm::SmallVector<mlir::Operation *> sites(read.getResult().getUsers().begin(),
+                                                               read.getResult().getUsers().end());
+                    for (mlir::Operation * site : sites) {
+                        // EVERY USE IS A CALL, BECAUSE CONDITION 4 SAID SO -
+                        // and this says which claim failed when it is not. An
+                        // `llvm::cast` was here, which in a Release build is
+                        // unchecked: the same shape that made a relaxed
+                        // condition 4 SEGFAULT the plain lift rather than say
+                        // anything (see the note beside its own fatal).
+                        auto call = llvm::dyn_cast<ctjs::CallOp>(site);
+                        if (!call) {
+                            llvm::report_fatal_error(
+                                llvm::Twine("ctnative lowering: a local binding holding `") +
+                                plan.target.getSymName() + "` reaches `" +
+                                site->getName().getStringRef() +
+                                "`, which is not a call - whyReadIsNotACall admitted a use of the "
+                                "name that this step cannot rewrite, and the binding is a "
+                                "function VALUE this tier cannot spell");
+                        }
+                        makeBoundCallDirect(call, plan.target);
+                        // BOTH COUNTERS, and `calls` is the load-bearing one:
+                        // tools/check/native-claims.py reads "rewrote N call(s)"
+                        // out of the remark as the number of ctjs.call_direct
+                        // this pass made, and a stage that makes them without
+                        // counting them is exactly the blindness that file's
+                        // own comment is about.
+                        ++out.calls;
+                        ++out.bound;
+                    }
+                    read.erase();
+                }
+                removals[made.getOperation()].push_back(slot);
+            }
+            ++out.bindings;
+        }
+        // PASS B: AND THE SLOTS THOSE READS CAME THROUGH, one rewrite per
+        // closure however many of its slots held a binding.
+        for (auto & entry : removals) {
+            removeCaptureSlots(llvm::cast<ctjs::CreateClosureOp>(entry.first), entry.second);
+        }
+        // PASS C: the store and the box, which nothing uses now.
+        for (auto & entry : plans) {
+            if (!taken.contains(entry.first)) { continue; }
+            functionBinding & plan = entry.second;
+            // THE STORE FIRST, because it is itself a use of the box - and then
+            // the box has to have none left, which is the claim conditions 1
+            // and 2 make and this is where it is asserted rather than assumed.
+            plan.store.erase();
+            if (!plan.cell.getResult().use_empty()) {
+                llvm::report_fatal_error(
+                    "ctnative lowering: a local function binding still has a use after its reads "
+                    "and its capture slots were rewritten - examineFunctionBinding admitted a use "
+                    "the rewrite does not remove");
+            }
+            plan.cell.erase();
+        }
+    }
+
+    // WHY A CLOSURE PUT INTO A LOCAL BINDING IS NOT A DIRECT CALL, which is
+    // `whyNotAMethodField` one binding along: "it reaches `ctjs.cell_set`"
+    // names the mechanism and not the obstacle, and the obstacle is always one
+    // of the clauses above.
+    std::string whyNotABoundFunction(ctjs::CellSetOp store) {
+        auto cell = store.getCell().getDefiningOp<ctjs::CreateCellOp>();
+        if (!cell) {
+            // NOT A `ctjs.create_cell` OF THIS FRAME, which after slice 2 step
+            // 2 has one meaning: the box is a POINTER parameter and this is a
+            // write through it - `lift()` turns a `ctjs.store_upvalue` into
+            // exactly this shape. A binding something writes through a pointer
+            // is a variable, not one function.
+            return "it is written into a binding this tier carries by pointer, so the name holds "
+                   "a variable and not one function";
+        }
+        const auto found = whyNotAFunctionBinding.find(cell.getOperation());
+        if (found == whyNotAFunctionBinding.end()) {
+            llvm::report_fatal_error(
+                "ctnative lowering: a ctjs.create_closure is stored into a ctjs.create_cell for "
+                "which the local-function rule wrote no reason - bindLocalFunctions and this "
+                "refusal have drifted apart");
+        }
+        return "it is the value of a local binding this tier cannot call directly: " +
+               found->second;
     }
 
     // WOULD THE BY-VALUE PATH REACH EVERY CALL? The question
@@ -1402,7 +1999,41 @@ struct closureLifter {
         mlir::Block & entry = target.getBody().front();
         const unsigned parameters = entry.getNumArguments() - 3;
         // CONDITION 4: every use of the closure VALUE is a call this lowers.
-        if (c.getResult().use_empty()) { return "nothing calls it"; }
+        //
+        // A NAME'S CLOSURE MAY HAVE NO USES AT ALL - PHASE 59 SLICE 2 STEP 4.
+        // A local binding read only from inside another function has every one
+        // of its calls written as a `ctjs.call_direct` in that other frame, and
+        // such a site carries `undefined` as its callee value because the
+        // closure is not in scope there. So the closure value can be used by
+        // nothing and still be called by several things, and
+        // `bindLocalFunctions` has already proved at least one call exists
+        // ("nothing calls it" is one of its own refusals).
+        if (c.getResult().use_empty() && !bindingClosures.contains(c.getOperation())) {
+            return "nothing calls it";
+        }
+        // A NAME FIRST, WHATEVER ELSE THE VALUE REACHES - PHASE 59 SLICE 2
+        // STEP 4. A closure put into a local binding IS that binding, and the
+        // sentence a reader can act on is the one saying which clause of the
+        // binding rule failed. "it reaches `ctjs.cell_set`" named the mechanism
+        // and was the terminal of 9 of the 19 chains a ctjs.call_direct reaches
+        // on bootstrap; the clause is the next lever.
+        //
+        // ASKED BEFORE THE LOOP, AND THAT IS NOT TIDINESS. A binding step 4
+        // refused keeps its box, the capture of that box is then read as a
+        // constant cell and lifted BY VALUE, and the closure acquires a SECOND
+        // use - a `ctjs.call_direct` argument. Left to the loop, which returns
+        // on the first refusing use, the answer would depend on the order of
+        // the use list and would usually be "it is passed as an argument": a
+        // true sentence about a consequence, and no help at all about the
+        // obstacle. Measured on three of the witnesses in closure-refusals.mlir
+        // (BOUNDVALUE, BOUNDDATA and BOUNDDEEP), which named that instead of
+        // their own clause until this moved.
+        for (mlir::OpOperand & use : c.getResult().getUses()) {
+            if (auto into = llvm::dyn_cast<ctjs::CellSetOp>(use.getOwner());
+                into && use.getOperandNumber() == 1) {
+                return whyNotABoundFunction(into);
+            }
+        }
         for (mlir::OpOperand & use : c.getResult().getUses()) {
             mlir::Operation * user = use.getOwner();
             // A CALL THE CLOSED WORLD ALREADY NAMED, WHICH IS THE SAME CALL
@@ -2495,6 +3126,14 @@ struct closureLifter {
     }
 
     liftReport run() {
+        liftReport out;
+        // PHASE 59 SLICE 2 STEP 4, BEFORE EVERYTHING. It erases boxes, stores,
+        // reads and calls, and the three censuses below record the uses of
+        // every cell - so a verdict taken before this rewrite would be about
+        // operations it has since removed. It needs two of census()'s own
+        // walks, which is why they are a function of their own now.
+        indexAndNewTargets();
+        bindLocalFunctions(out);
         census();
         // THE ARGUMENT SLOTS FIRST, because `closedAfterLift` reads them and
         // `methodCensus` reads `closedAfterLift`. Both censuses run before any
@@ -2512,7 +3151,6 @@ struct closureLifter {
         constructorCensus();
         argumentCensus();
         methodCensus();
-        liftReport out;
         llvm::DenseMap<mlir::Operation *, std::string> reasonOf; // closure -> its own reason
         llvm::DenseSet<mlir::Operation *> lifted;                // closures lift() has taken
         // THE CLOSURE THAT NAMES EACH FUNCTION, for the chained reason below:
@@ -5751,7 +6389,9 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                                 << " object parameter(s), " << lifted.constructors
                                 << " constructor site(s), " << lifted.locals
                                 << " shared cell(s) made a frame-local variable carried through "
-                                << lifted.carried << " pointer parameter(s)";
+                                << lifted.carried << " pointer parameter(s), " << lifted.bindings
+                                << " local binding(s) that held a function, of whose calls "
+                                << lifted.bound << " were made direct from another frame";
         }
 
         // THE ALIAS GROUPS, once the lift has written its attributes and before

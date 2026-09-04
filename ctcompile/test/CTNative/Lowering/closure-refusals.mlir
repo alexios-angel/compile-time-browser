@@ -67,6 +67,27 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/decl.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=DECL
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boundtwice.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=BOUNDTWICE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boundearly.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=BOUNDEARLY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boundvalue.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=BOUNDVALUE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bounddata.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=BOUNDDATA
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bounddeep.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=BOUNDDEEP
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boundwrite.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=BOUNDWRITE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boundmutual.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=BOUNDMUTUAL
 
 // --- WHAT SLICE 2 STEP 2 TOOK, AND WHAT IS LEFT OF THIS SECTION ------------
 //
@@ -295,6 +316,121 @@
 // DECL: ctjs.func {{.*}}@outerdecl$1
 // DECL-SAME: ctnative.not_native = "a captured binding that stays a cell: the closure that captures it is not lifted"
 
+// --- SLICE 2 STEP 4: WHAT A LOCAL BINDING THAT HOLDS A FUNCTION IS NOT ------
+//
+// `var f = function () { ... };` in a function body is a hoisted local, boxed
+// when a nested function mentions the name, and step 4 makes every call through
+// that name a `ctjs.call_direct` of the function it holds - so the box, the
+// store and the reads lower to nothing. `native-local-function-fixture.js` runs
+// eight of them against the interpreter. These are the seven shapes it refuses,
+// one clause apiece, and each program fails ONLY the clause it is named for:
+// an earlier clause firing first would make the pin measure nothing, which is
+// what the `loopwrite` / `outerstore` note further up this file is about.
+//
+// THE REASON IS THE BINDING'S AND NOT THE VALUE'S, and `whyNotLiftable` asks
+// for it before it walks the use list. A binding step 4 refused keeps its box;
+// the capture of that box is then read as a constant cell and lifted BY VALUE,
+// and the closure acquires a second use - a `ctjs.call_direct` argument - whose
+// own refusal is "it is passed as an argument". Four of the seven below said
+// exactly that until the question moved in front of the loop: a true sentence
+// about a consequence, and no help at all about the obstacle.
+
+// --- CONDITION 1: A NAME ASSIGNED TWICE ------------------------------------
+//
+// Which function `use()` reaches depends on the path taken to it, so there is
+// no one function the name IS. Relax this and the rewrite takes the first
+// closure and the second `ctjs.cell_set` is left naming a box nothing else
+// uses - the named fatal in `bindLocalFunctions`, which is what the pass says
+// rather than calling the wrong function.
+//
+// BOUNDTWICE: ctjs.func {{.*}}@twice_bound$1
+// BOUNDTWICE-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: it is assigned more than once"
+
+// --- CONDITION 3: A NAME CALLED BEFORE IT IS ASSIGNED -----------------------
+//
+// `use` is built and called ABOVE the assignment, so there is a path to the
+// read on which the box still holds the `undefined` the hoist put in it -
+// which is a TypeError in the interpreter and would be a direct call to `fn$2`
+// here. `writeReachesEveryRead` is the same function slice 2 steps 1 and 3 ask,
+// and this is its first clause: the store dominates every use of every closure
+// that captured the box.
+//
+// THE CALL IS GUARDED SO THAT ONLY THE DOMINANCE CLAUSE CAN FAIL. `early(-1)`
+// never enters the `if`, so nothing about this program is a throw or an arity
+// or an escape; the only thing wrong with it is that a call site is not
+// dominated by the store.
+//
+// BOUNDEARLY: ctjs.func {{.*}}@early$1
+// BOUNDEARLY-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: its one assignment does not reach every read of it, and a read before it yields the undefined the binding was hoisted with"
+
+// --- CONDITION 4: A NAME THAT IS RETURNED RATHER THAN CALLED ----------------
+//
+// `use` hands the binding OUT. A name this step erases has no value to hand
+// out - there is no closure object, no functor and no pointer - so a read used
+// for anything but a call is refused, and the sentence says that the binding
+// holds a function VALUE rather than naming the operation it reached.
+//
+// BOUNDVALUE: ctjs.func {{.*}}@passed_name$1
+// BOUNDVALUE-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: the name reaches `ctjs.return`, so the binding holds a function VALUE and this step makes none"
+
+// --- CONDITION 5: A NAME WHOSE FUNCTION CLOSES OVER A DATA BINDING ----------
+//
+// `f` closes over `step`, a number of `data_capture`'s frame, and the call of
+// `f` is inside `use` - a DIFFERENT ctjs.func, where `step` does not exist.
+// Lifting prepends the captured value at the CALL and there is nothing to
+// prepend it at, which is the METHODCAP argument one binding along. A capture
+// that is itself a binding this step erases is fine, and that is `chain27` and
+// `recur15` in the fixture; a capture that carries a VALUE is not.
+//
+// BOUNDDATA: ctjs.func {{.*}}@data_capture$1
+// BOUNDDATA-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: it is read from inside another function, and capture 0 of the function it holds is not a binding this step erases - a call out there has nothing to prepend the capture at"
+
+// --- THE SLOT CLAUSE: A NAME READ TWO FRAMES IN -----------------------------
+//
+// `deep` names `f`, which belongs to `two_frames`; the compiler marks `deep`'s
+// descriptor NOT from_parent_local and the VM fills that slot from `mid`'s
+// closure, with the index on `enclosing_indices` (slice 1b). Step 4 removes the
+// slot `mid` holds the box at, and removing it renumbers every capture past it
+// - including the one `deep` names through the attribute. Refused rather than
+// renumbered: the binding is travelling further inward and there is no call
+// site out here for it. This is the largest bucket left over bootstrap's 19
+// reachable callees, at 5 of them.
+//
+// BOUNDDEEP: ctjs.func {{.*}}@two_frames$1
+// BOUNDDEEP-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: a function two frames in names the binding through its enclosing closure, and this step has no call site out here for it"
+
+// --- THE SLOT CLAUSE: A CLOSURE THAT ASSIGNS THE NAME -----------------------
+//
+// `flip` writes the binding with a `ctjs.store_upvalue`, so the box has ONE
+// `ctjs.cell_set` and is still a variable: `use()` answers 2 after `flip()` has
+// run and 1 before it. Condition 1 counts stores in this frame and cannot see
+// that one, so the slot walk asks it - and this is the clause whose relaxation
+// gives a WRONG ANSWER rather than a refusal, because the rewrite would call
+// the first closure at a site the interpreter reaches the second at.
+//
+// BOUNDWRITE: ctjs.func {{.*}}@reassigns$1
+// BOUNDWRITE-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: a function that reads it ASSIGNS the binding, so the name holds a variable and not one function"
+
+// --- CONDITION 3 ACROSS TWO NAMES: MUTUAL RECURSION -------------------------
+//
+// `even_ish` calls `odd_ish` and `odd_ish` calls `even_ish`, so one of the two
+// stores has to come second - and `writeReachesEveryRead` asks that the store
+// dominate every USE of every closure that captured the box, which for a name
+// includes the `ctjs.cell_set` that puts the other closure in ITS box. It
+// cannot ask about calls instead: a closure whose value goes into a box of its
+// own has no call site at all until this very rewrite makes one. So the second
+// name is refused for dominance and the first for condition 5, because the
+// capture it needs is the name that was just refused.
+//
+// THIS IS THE RULE'S CONSERVATISM AND NOT A SOUNDNESS CLAUSE, and it is the
+// same conservatism that refuses `function g() { f(); } function f() {}`
+// written in that order. Following a closure's value through its own box, one
+// hop out, is what would admit both - and is the next lever after the slot
+// clause above.
+//
+// BOUNDMUTUAL: ctjs.func {{.*}}@mutual$1
+// BOUNDMUTUAL-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: its one assignment does not reach every read of it, and a read before it yields the undefined the binding was hoisted with"
+
 //--- sharedreturn.js
 function maker() {
     var n = 0;
@@ -446,3 +582,67 @@ function outerdecl(k) {
     return 1;
 }
 var r = outerdecl(2);
+
+//--- boundtwice.js
+function twice_bound() {
+    var f = function () { return 1; };
+    f = function () { return 2; };
+    var use = function () { return f(); };
+    return use();
+}
+var r = twice_bound();
+
+//--- boundearly.js
+function early(k) {
+    var use = function () { return f(); };
+    var hit = 0;
+    if (k > 0) { hit = use(); }
+    var f = function () { return 7; };
+    return hit;
+}
+var r = early(-1);
+
+//--- boundvalue.js
+function passed_name() {
+    var f = function () { return 1; };
+    var use = function () { return f; };
+    return use()();
+}
+var r = passed_name();
+
+//--- bounddata.js
+function data_capture(k) {
+    var step = k * 2;
+    var f = function (n) { return n + step; };
+    var use = function (n) { return f(n); };
+    return use(1);
+}
+var r = data_capture(3);
+
+//--- bounddeep.js
+function two_frames() {
+    var f = function () { return 1; };
+    var mid = function () {
+        var deep = function () { return f(); };
+        return deep();
+    };
+    return mid();
+}
+var r = two_frames();
+
+//--- boundwrite.js
+function reassigns() {
+    var f = function () { return 1; };
+    var flip = function () { f = function () { return 2; }; return 0; };
+    var use = function () { return f(); };
+    return flip() + use();
+}
+var r = reassigns();
+
+//--- boundmutual.js
+function mutual(k) {
+    var even_ish = function (n) { if (n <= 0) { return 1; } return odd_ish(n - 1); };
+    var odd_ish = function (n) { if (n <= 0) { return 0; } return even_ish(n - 1); };
+    return even_ish(k) * 10 + odd_ish(k);
+}
+var r = mutual(3);
