@@ -1206,8 +1206,7 @@ struct closureLifter {
         if (!plan.store) { return std::string{"nothing is ever assigned to it"}; }
         plan.closure = plan.store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
         if (!plan.closure) {
-            return std::string{
-                "what is assigned to it is not a ctjs.create_closure of this frame"};
+            return std::string{"what is assigned to it is not a ctjs.create_closure of this frame"};
         }
         // AND THE CLOSURE IS THE BINDING AND NOTHING ELSE. A second use is a
         // function VALUE - stored, returned, passed - and one of the other
@@ -1278,8 +1277,8 @@ struct closureLifter {
                 // call site out here to move anything to.
                 if (auto nested = llvm::dyn_cast<ctjs::CreateClosureOp>(o)) {
                     const mlir::DenseI32ArrayAttr indices = nested.getEnclosingIndicesAttr();
-                    if (indices && llvm::is_contained(indices.asArrayRef(),
-                                                      static_cast<std::int32_t>(slot))) {
+                    if (indices &&
+                        llvm::is_contained(indices.asArrayRef(), static_cast<std::int32_t>(slot))) {
                         bad = std::string{
                             "a function two frames in names the binding through its enclosing "
                             "closure, and this step has no call site out here for it"};
