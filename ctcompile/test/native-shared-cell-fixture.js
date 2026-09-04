@@ -58,18 +58,19 @@
 // observable again: a global prints a Number with `%.17g`, so undefined-as-NaN
 // prints `nan` where the interpreter prints `undefined`.
 //
-// SO THIS STEP WIDENS A KNOWN WRONG ANSWER, and that is recorded rather than
-// hidden. `function pick(k) { var v; if (k > 0) { v = 5; } function get() {
-// return v; } return get(); } var out = pick(-1);` is refused before this step
-// and compiles to `out=nan` after it. The CLASS is older than any closure rule
-// - `var u; var z = u;` leaks the same NaN with no closure in the file - and
-// requiring the stored value to be `defined()` was measured as the sound fix
-// and as too blunt to land here: 7 globals across 5 fixtures and 11 across 4
-// lit tests, because any value returned through a struct field or a carried
-// cell is `opt<num>` flow-insensitively. Narrowing that type once a write
-// dominates every read costs none of them and still refuses `pick`. That is
-// the follow-up; none of the ten programs below reaches it, which is why this
-// file is green and why the gate could not see it.
+// SO THIS STEP WIDENED A KNOWN WRONG ANSWER, AND STEP 3 CLOSED IT.
+// `function pick(k) { var v; if (k > 0) { v = 5; } function get() { return v;
+// } return get(); } var out = pick(-1);` was refused before step 2 and
+// compiled to `out=nan` after it. The CLASS is older than any closure rule -
+// `var u; var z = u;` leaks the same NaN with no closure in the file - and a
+// `ctjs.store_global` now refuses an `opt` by name
+// (`admission::printable`), which is what both of those programs are.
+// CTNative/Lowering/global-undefined.mlir pins the two of them plus the
+// OUTERSTORE shape, and the DOMINATES program in the same file is the
+// narrowing that makes the refusal cost nothing here.
+//
+// THE COERCIONS THAT CAME WITH STEP 2 ARE GONE, and their absence is the
+// assertion - see the note over the globals at the foot of this file.
 //
 // THE REFUSED SHAPES ARE NOT HERE, and cannot be: native-pipeline.cmake
 // refuses to write a module while any function carries `ctnative.not_native`.
@@ -240,23 +241,39 @@ function loop_after(n) {
     return 7;
 }
 
+// NOT ONE `+ 0` HERE, AND THAT IS THE ASSERTION - part 24 Phase 59 slice 2
+// step 3. THREE of these globals carried one until the narrowing landed:
+// `shared17`, `loop20` and `twice2` are a carried binding returned straight
+// out of its frame, and the binding's type was `opt<num>` FLOW-INSENSITIVELY -
+// the variable is emitted holding the box's hoisted `undefined`, so the type
+// said "may be undefined" at a read a write dominates just as loudly as at one
+// it does not. A global is where a value becomes an observable again and the
+// print convention is `%.17g` of the double, which cannot spell `undefined`,
+// so `admission::printable` refuses an `opt` there and these three were
+// refused. `+ 0` bought a `num` and said so in a comment.
+//
+// THE NARROWING PAID FOR THEM INSTEAD. `var acc = start`, `var total = 0` and
+// the pair of assignments in `twice_written` each dominate every read of their
+// binding - the frame's own reads and every call of every closure over it - so
+// the box's initial is unobservable and the type is the join of the WRITES.
+// Removing the coercions is what makes this file a gate on that: with the
+// narrowing stubbed out these three globals are refused by name and the
+// pipeline step below fails before any binary is built.
+//
+// AND THE FOUR THAT NEVER NEEDED ONE STILL DO NOT. `earlyread5`, `cond12` and
+// `loopafter38` are the shapes where NO write dominates the read - a read
+// before the store, a store on one path of an `if`, a store inside a loop -
+// so their bindings stay `opt<num>`, which is correct: the variable really is
+// NaN on those paths. Each of the three reaches its global through arithmetic
+// or a comparison, where the representation is exact, so the refusal never
+// fires and the honest `undefined` is never printed.
 var counter122 = counter();
-// `+ 0` COERCES THE CARRIER, and it is the tier's precision showing rather
-// than this program's meaning changing. A carried binding's variable is
-// emitted holding the hoisted `undefined`, so its type stays `opt<num>`
-// even where an assignment dominates every read; a global is where a value
-// becomes an observable again, and `opt<num>` carries undefined AS NaN, so
-// the print cannot spell the difference. Adding 0 gives `num`, which is
-// what the value already is here. Narrowing this flow-sensitively is the
-// real fix and is not this slice's.
-var shared17 = shared_two(5) + 0;
-// `+ 0` for the carrier, as the globals above - see the note there.
-var loop20 = loop_sum(5) + 0;
+var shared17 = shared_two(5);
+var loop20 = loop_sum(5);
 var readwrite30 = read_and_write(4);
 var mixed25065 = mixed(5);
 var nested204103 = nested_two();
-// `+ 0` for the carrier, as the globals above.
-var twice2 = twice_written() + 0;
+var twice2 = twice_written();
 var earlyread5 = early_read();
 var cond12 = conditional(3) + conditional(-1);
 var loopafter38 = loop_after(4) + loop_after(0);

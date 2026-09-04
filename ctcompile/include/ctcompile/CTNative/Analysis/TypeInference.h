@@ -36,14 +36,35 @@
 
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Analysis/DataFlowFramework.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringRef.h"
 
 namespace ctcompile::ctnative {
+
+/// PHASE 59 SLICE 2 STEP 3: THE ATTRIBUTE THAT SAYS A CARRIED BINDING'S
+/// HOISTED `undefined` CANNOT BE READ.
+///
+/// `--ctnative-lower-to-emitc`'s closure lift writes it onto a
+/// `ctjs.create_cell` it also marked `ctnative.carried` when one
+/// `ctjs.cell_set` of that box properly dominates every read of the binding -
+/// every `ctjs.cell_get` in the owning frame, and every CALL of every closure
+/// that captured it. `cellTypeOf` then joins the WRITES alone and leaves the
+/// cell's initial out, which is what takes `var n = 0; function tick() { n = n
+/// + 1; }` from `opt<num>` to `num`.
+///
+/// THE PROOF IS THE LIFT'S AND NOT THIS ANALYSIS'S, deliberately. It is a
+/// dominance question over the `ctjs.call`s of the capturing closures, and
+/// `lift()` erases every one of them before the solver runs - so the only
+/// place it can be asked is where slice 2 step 1 already asks it. Spelled once,
+/// here, because the writer and the reader are in different translation units
+/// and a mistyped attribute name is a silent narrowing that nothing verifies.
+inline constexpr llvm::StringLiteral kAssignedBeforeRead = "ctnative.assigned_before_read";
 
 // One SSA value's inferred type, as a lattice element.
 //
@@ -199,6 +220,24 @@ private:
     // closed-shape objects only; built in initialize().
     llvm::DenseMap<std::pair<mlir::Value, llvm::StringRef>, llvm::SmallVector<mlir::Value, 2>>
         fieldStores_;
+    /// PHASE 59 SLICE 2 STEP 3, THE FIELD HALF: the same key, indexed by the
+    /// STORE'S OWN object value and holding the `ctjs.set_property` OPERATIONS
+    /// rather than the values they wrote.
+    ///
+    /// NOT OVER THE GROUP, AND THAT IS THE WHOLE SOUNDNESS OF IT. `fieldStores_`
+    /// above is over the group because a store made through a lifted method's
+    /// `%arg0` is a store the caller's read has to SEE - joining more values in
+    /// is always safe. Ordering is the opposite: a store to one member of a
+    /// group says nothing about when another member's field was written, and
+    /// `{}` and `{n: 1}` reached through one parameter are one group. So this
+    /// index is keyed on the exact SSA value, which is one object.
+    llvm::DenseMap<std::pair<mlir::Value, llvm::StringRef>, llvm::SmallVector<mlir::Operation *, 2>>
+        fieldStoreSites_;
+    /// For the dominance question above. Built lazily per region by MLIR and
+    /// valid for the whole solve, because nothing mutates the IR while the
+    /// solver runs - the closure lift and every rewrite in
+    /// `--ctnative-lower-to-emitc` happen before it is loaded.
+    mlir::DominanceInfo dominance_{nullptr};
     // array value -> everything ever appended to it, in source order, for
     // dense vector sites only; built in initialize() beside fieldStores_.
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> appends_;
@@ -219,6 +258,31 @@ private:
     /// reason: a store made through the pointer is a store the owning frame's
     /// read has to see. Keyed by every member, so either end asks once.
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> cellStores_;
+
+    /// PHASE 59 SLICE 2 STEP 3, THE FIELD HALF: does a store of `key` to THIS
+    /// object come before this read on every path that reaches it?
+    ///
+    /// A closed-shape field read is the join over the stores of that key
+    /// STARTING FROM `undefined`, because nothing orders a read after a store -
+    /// so `var p = { n: 8 }; return p.n;` is `opt<num>` and a
+    /// `ctjs.store_global` of it is refused for a `nan` it can never print.
+    /// When a `ctjs.set_property` of the same key, on the SAME SSA value, in
+    /// the SAME `ctjs.func`, properly dominates the read, every execution that
+    /// reaches the read has already written the field on this object and the
+    /// `undefined` seed is dropped.
+    ///
+    /// THREE CONDITIONS AND EACH ONE IS LOAD-BEARING. The same VALUE, because
+    /// a store to another member of the alias group is a store to another
+    /// object. The same FUNCTION, because `builtin.module`'s body is a graph
+    /// region in which `properlyDominates` answers yes for every pair, so a
+    /// store inside a lifted method would "dominate" a read in its caller.
+    /// And DOMINANCE and not program order, so a store on one arm of an `if`
+    /// or inside a loop body does not count - `read_before_write` in
+    /// native-struct-fixture.js is the read that must keep its `undefined`.
+    ///
+    /// THE SEED IS ALL THIS DROPS. The join itself stays over the whole group:
+    /// what the field may HOLD is still everything anyone ever stored in it.
+    bool fieldIsAssignedBefore(mlir::Value object, llvm::StringRef key, mlir::Operation * read);
 
     /// The type a carried binding holds: the join over its initial and every
     /// value ever assigned to it, anywhere in the program. FROM THE INITIAL

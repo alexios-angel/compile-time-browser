@@ -547,6 +547,26 @@ mlir::Type TypeInference::elementTypeOf(mlir::Operation * op, mlir::Value array)
     return element;
 }
 
+// PHASE 59 SLICE 2 STEP 3, THE FIELD HALF. The three conditions and the reason
+// for each are in TypeInference.h; this is the query.
+bool TypeInference::fieldIsAssignedBefore(mlir::Value object, llvm::StringRef key,
+                                          mlir::Operation * read) {
+    const auto sites = fieldStoreSites_.find({object, key});
+    if (sites == fieldStoreSites_.end()) { return false; }
+    auto * owner = read->getParentOfType<ctjs::FuncOp>().getOperation();
+    for (mlir::Operation * store : sites->second) {
+        // THE SAME FUNCTION FIRST, THEN DOMINANCE. Asked in this order because
+        // the second question is meaningless without the first: two operations
+        // in different `ctjs.func`s sit in `builtin.module`'s body, which is a
+        // GRAPH region, and MLIR answers "dominates" for every pair in one.
+        // The closure lift's `byValueMissesACall` compares the two functions
+        // for exactly this reason and says so in the same words.
+        if (store->getParentOfType<ctjs::FuncOp>().getOperation() != owner) { continue; }
+        if (dominance_.properlyDominates(store, read)) { return true; }
+    }
+    return false;
+}
+
 mlir::Type TypeInference::cellTypeOf(mlir::Operation * op, mlir::Value cell) {
     // FROM THE INITIAL, and the start is the whole soundness of the rule: a
     // read of a shared binding on a path that reached no assignment yields
@@ -556,6 +576,13 @@ mlir::Type TypeInference::cellTypeOf(mlir::Operation * op, mlir::Value cell) {
     // truthiness, refused at equality by `defined()`. Step 1 needed two
     // dominance proofs to make the initial unobservable; step 2 needs none,
     // because it does not replace the box - it emits it.
+    //
+    // UNLESS THERE IS NO SUCH PATH - PHASE 59 SLICE 2 STEP 3. When the lift
+    // proved a write dominates every read of the binding it wrote
+    // `kAssignedBeforeRead` onto the cell and `initialize()` left the initial
+    // out of `cellStores_`, so this join is over the WRITES alone and a hoisted
+    // `var` that is assigned before it is read is `num` rather than `opt<num>`.
+    // The set is the input; nothing here has a second opinion about it.
     mlir::Type held{};
     const auto stored = cellStores_.find(cell);
     if (stored == cellStores_.end()) { return BoxedType::get(op->getContext()); }
@@ -575,6 +602,7 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     globalStores_.clear();
     globalsAreDynamic_ = false;
     fieldStores_.clear();
+    fieldStoreSites_.clear();
     appends_.clear();
     cellStores_.clear();
     // THE FIELD INDEX IS OVER THE GROUP, NOT OVER ONE VALUE, and that is the
@@ -588,6 +616,11 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     top->walk([&](ctjs::SetPropertyOp store) {
         if (!hasClosedShape(store.getObject())) { return; }
         const llvm::StringRef key = constantKey(store.getKey());
+        // PHASE 59 SLICE 2 STEP 3, THE FIELD HALF: the store SITE, on its own
+        // object and not on the group's. Beside the value index rather than in
+        // a second walk, so the two cannot disagree about which stores exist -
+        // they differ only in what they are keyed on, and the header says why.
+        fieldStoreSites_[{store.getObject(), key}].push_back(store.getOperation());
         const auto group = groups.find(store.getObject());
         if (group == groups.end()) {
             fieldStores_[{store.getObject(), key}].push_back(store.getValue());
@@ -622,6 +655,16 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     const auto cells = groupCells(top);
     top->walk([&](ctjs::CreateCellOp cell) {
         if (!cell->hasAttr("ctnative.carried")) { return; }
+        // PHASE 59 SLICE 2 STEP 3: AND THE INITIAL IS LEFT OUT WHEN NO READ CAN
+        // SEE IT. The lift proved one `ctjs.cell_set` of this box properly
+        // dominates every `ctjs.cell_get` of it AND every call of every closure
+        // that captured it, so from that store onwards the binding holds a
+        // stored value on every path that reaches any read - and the hoisted
+        // `undefined` the box was built with is unreachable. Dropping it here
+        // rather than in `cellTypeOf` keeps the join in one place: the type is
+        // still "everything this binding can hold", over a set the lift made
+        // one element smaller. `kAssignedBeforeRead` says what the lift proved.
+        if (cell->hasAttr(kAssignedBeforeRead)) { return; }
         const auto group = cells.find(cell.getResult());
         if (group == cells.end()) {
             cellStores_[cell.getResult()].push_back(cell.getInitial());
@@ -789,9 +832,20 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     bool fieldKnown = false;
     if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
         if (hasClosedShape(get.getObject())) {
+            const llvm::StringRef key = constantKey(get.getKey());
             fieldKnown = true;
-            field = absentType(c);
-            const auto stores = fieldStores_.find({get.getObject(), constantKey(get.getKey())});
+            // AND THE SEED IS DROPPED WHERE A STORE DOMINATES - PHASE 59 SLICE
+            // 2 STEP 3, the field half. "Nothing orders the read after a store"
+            // is true of a field in general and false of THIS read when a
+            // `ctjs.set_property` of this key on this object comes before it on
+            // every path. `var p = { n: 8 }; return p.n;` is then `num` rather
+            // than `opt<num>`, which is what lets a `ctjs.store_global` of it
+            // through: a global is printed as `%.17g` and cannot spell
+            // `undefined`. The join below is unchanged and still over the whole
+            // alias group - this drops what the field cannot hold, not what it
+            // can.
+            field = fieldIsAssignedBefore(get.getObject(), key, op) ? mlir::Type{} : absentType(c);
+            const auto stores = fieldStores_.find({get.getObject(), key});
             if (stores != fieldStores_.end()) {
                 for (mlir::Value stored : stores->second) {
                     const TypeLattice * lattice =
@@ -800,6 +854,14 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                     field = meet(field, lattice->getValue().getType());
                 }
             }
+            // AN EMPTY JOIN IS "NOT YET", NOT `boxed` - the reason spelled at
+            // the carried cell below, and reachable here for the same reason:
+            // with the `undefined` seed dropped, every member of this join is a
+            // stored value the solver may not have visited yet. A closed shape
+            // can never also be a dense array (`hasClosedShape` demands a
+            // `ctjs.create_object` or an object parameter), so returning here
+            // skips no other row.
+            if (field == nullptr) { return mlir::success(); }
         }
     }
 
@@ -846,6 +908,16 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         if (made->hasAttr("ctnative.carried")) {
             cellKnown = true;
             cell = cellTypeOf(op, made.getResult());
+            // AND AN EMPTY JOIN IS "NOT YET", NOT `boxed` - the same
+            // distinction the operand loop at the top of this function draws,
+            // and it became reachable with slice 2 step 3. While the initial
+            // was always in the set, one member of the join was an OPERAND of
+            // this op and so was guaranteed visited; a cell whose initial is
+            // left out can be visited before any of its assignments is. Falling
+            // through would answer `boxed`, which absorbs, and the binding
+            // would never recover - `n = n + 1` is exactly the cycle, since the
+            // stored value reads the box.
+            if (cell == nullptr) { return mlir::success(); }
         }
     } else if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(op)) {
         // THE OPERAND'S OWN TYPE, not a second join: `operands[0]` is the box

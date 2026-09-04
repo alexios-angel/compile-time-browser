@@ -278,10 +278,37 @@ int main() {
         // An object literal used only through constant keys: a read of a key
         // is the join of its stores, from undefined. Any other use opens the
         // shape and every read is boxed.
-        {"a closed object's field reads as its store, or undefined",
+        //
+        // AND THE undefined SEED IS DROPPED WHERE A STORE DOMINATES THE READ -
+        // part 24 Phase 59 slice 2 step 3, the field half. "Nothing orders the
+        // read after a store" is a statement about fields in general and false
+        // of a particular read that a `ctjs.set_property` of the same key, on
+        // the same value, in the same `ctjs.func`, properly dominates. The next
+        // three rows are that rule and its two negatives, and the negatives are
+        // the load-bearing half: narrowing a value that CAN be undefined is a
+        // WRONG ANSWER rather than a refusal, because a global is printed as
+        // `%.17g` of a double and undefined-as-NaN spells `nan` there.
+        {"a closed object's field reads as its store where the store dominates the read",
          five + "  %o = ctjs.create_object\n"
                 "  %k = ctjs.constant #ctjs.string<\"x\">\n"
                 "  ctjs.set_property %o[%k], %a\n"
+                "  %k2 = ctjs.constant #ctjs.string<\"x\">\n"
+                "  %r = ctjs.get_property %o[%k2] {check}\n",
+         "!ctnative.num<i32>"},
+        {"a read BEFORE the store keeps the undefined the field started with",
+         five + "  %o = ctjs.create_object\n"
+                "  %k2 = ctjs.constant #ctjs.string<\"x\">\n"
+                "  %r = ctjs.get_property %o[%k2] {check}\n"
+                "  %k = ctjs.constant #ctjs.string<\"x\">\n"
+                "  ctjs.set_property %o[%k], %a\n",
+         "!ctnative.opt<!ctnative.num<i32>>"},
+        {"a store on one arm of an scf.if dominates nothing after it",
+         five + "  %o = ctjs.create_object\n"
+                "  %t = ctjs.truthy %p\n"
+                "  scf.if %t {\n"
+                "    %k = ctjs.constant #ctjs.string<\"x\">\n"
+                "    ctjs.set_property %o[%k], %a\n"
+                "  }\n"
                 "  %k2 = ctjs.constant #ctjs.string<\"x\">\n"
                 "  %r = ctjs.get_property %o[%k2] {check}\n",
          "!ctnative.opt<!ctnative.num<i32>>"},
@@ -290,6 +317,36 @@ int main() {
          "  %k = ctjs.constant #ctjs.string<\"x\">\n"
          "  %r = ctjs.get_property %o[%k] {check}\n",
          "!ctnative.opt<!ctnative.bottom>"},
+        // --- THE CARRIED CELL (part 24 Phase 59 slice 2, steps 2 and 3) ------
+        //
+        // The closure lift makes a shared binding a frame-scope variable and
+        // marks the `ctjs.create_cell` `ctnative.carried`; its type is then the
+        // join over the box's INITIAL and every value ever assigned to it,
+        // because a read on a path that reached no assignment loads what the
+        // variable was built with. `compiler_impl::predeclare_locals` builds it
+        // with `undefined`, so a hoisted `var` is `opt<num>`.
+        //
+        // AND `ctnative.assigned_before_read` IS THE LIFT SAYING THERE IS NO
+        // SUCH PATH. It is written only when one `ctjs.cell_set` properly
+        // dominates every read of the binding - every `ctjs.cell_get` here, and
+        // every CALL of every closure that captured it, which is a question
+        // about operations the lift erases and so cannot be asked in this file.
+        // These two rows are the contract between the two translation units:
+        // the attribute is spelled once, in TypeInference.h, and its whole
+        // observable effect is the difference between them.
+        {"a carried cell holds its initial as well as its stores",
+         five + "  %u = ctjs.constant #ctjs.undefined\n"
+                "  %c = ctjs.create_cell %u {ctnative.carried}\n"
+                "  ctjs.cell_set %c, %a\n"
+                "  %r = ctjs.cell_get %c {check}\n",
+         "!ctnative.opt<!ctnative.num<i32>>"},
+        {"a carried cell the lift proved assigned before every read holds only its stores",
+         five + "  %u = ctjs.constant #ctjs.undefined\n"
+                "  %c = ctjs.create_cell %u {ctnative.assigned_before_read, ctnative.carried}\n"
+                "  ctjs.cell_set %c, %a\n"
+                "  %r = ctjs.cell_get %c {check}\n",
+         "!ctnative.num<i32>"},
+
         {"a dynamic key opens the shape: every read is boxed",
          five + "  %o = ctjs.create_object\n"
                 "  %k = ctjs.constant #ctjs.string<\"x\">\n"

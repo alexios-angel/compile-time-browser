@@ -133,6 +133,19 @@ function counted(n) {
 var built7 = built();
 var pair34 = pair();
 var shared66 = shared();
-var defaulted5 = defaulted();
+// `+ 0` FOR THE PRINT, AND THE ONE FIELD READ THE NARROWING CANNOT PAY FOR.
+// `defaulted` returns `d.v`, and a closed-shape field's type starts from
+// `undefined` because nothing orders a read after a store - so a
+// `ctjs.store_global` of it is refused (Phase 59 slice 2 step 3,
+// `admission::printable`). Step 3's field half drops that seed when a
+// `ctjs.set_property` of the key, on the same value, in the same `ctjs.func`,
+// dominates the read - which is what `mutated40` and `mutated9` in the sibling
+// fixtures rely on. Here the ONLY store of `v` is `this.v = 5` inside the
+// constructor, a different `ctjs.func` from the read, and "the same function"
+// is exactly the condition that keeps the query out of `builtin.module`'s graph
+// region. Paying for it needs a callee summary - `Def` stores `v`
+// unconditionally, and the receiver call dominates the read - and that is a
+// different proof, not a wider dominance query.
+var defaulted5 = defaulted() + 0;
 var method25 = method_on_instance();
 var counted6 = counted(4);

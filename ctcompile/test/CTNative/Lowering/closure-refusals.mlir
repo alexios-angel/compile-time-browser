@@ -139,11 +139,18 @@
 // clause standing in front of it. That is what makes this a witness for this
 // clause and for no other.
 //
+// THE TYPE IN THE MESSAGE LOST ITS `opt` AT SLICE 2 STEP 3, and the refusal did
+// not move. `var s = "a"` is a write that dominates every read of the binding,
+// so the box's hoisted `undefined` is unobservable and the narrowing drops it
+// from the join - `opt<str<utf8>>` becomes `str<utf8>`. Neither has a C++
+// carrier, which is what this program is about; the change is the narrowing
+// showing through a diagnostic, not a change of verdict.
+//
 // SHAREDSTRING: ctjs.func {{.*}}@tag$1
-// SHAREDSTRING-SAME: ctnative.not_native = "a shared binding of type !ctnative.opt<!ctnative.str<utf8>>, which has no native carrier - a variable this tier cannot spell is not one it may point at"
+// SHAREDSTRING-SAME: ctnative.not_native = "a shared binding of type !ctnative.str<utf8>, which has no native carrier - a variable this tier cannot spell is not one it may point at"
 // SHAREDSTRING: ctjs.func {{.*}}@grow$2
 // SHAREDSTRING-SAME: ctnative.cell_args = array<i32: 3>
-// SHAREDSTRING-SAME: ctnative.not_native = "shared capture 0 is !ctnative.opt<!ctnative.str<utf8>>, which has no native carrier yet"
+// SHAREDSTRING-SAME: ctnative.not_native = "shared capture 0 is !ctnative.str<utf8>, which has no native carrier yet"
 
 // --- CONDITION 3 ACROSS FUNCTIONS: A METHOD CALLED FROM ANOTHER METHOD -----
 //

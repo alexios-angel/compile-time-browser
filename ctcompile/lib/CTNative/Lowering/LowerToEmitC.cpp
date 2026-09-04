@@ -511,6 +511,52 @@ struct closureLifter {
     // structural clause can fail here; the carrier is admission's question.
     llvm::DenseMap<mlir::Operation *, std::string> whyNotCarried;
 
+    // --- PHASE 59 SLICE 2 STEP 3: PAST THE HOISTED `undefined` -------------
+    //
+    // Step 2 emits the box as a frame-scope variable ASSIGNED THE INITIAL, so
+    // `TypeInference::cellTypeOf` joins that initial into the binding's type at
+    // every read and a hoisted `var` is `opt<num>` however the program uses it.
+    // That is flow-INSENSITIVE, and it is the whole cost of step 2: `opt<num>`
+    // carries undefined as NaN, and at a `ctjs.store_global` - the one place a
+    // value becomes an observable - the print convention spells a Number
+    // `%.17g`, so such a binding prints `nan` where the interpreter prints
+    // `undefined`.
+    //
+    // A WRITE THAT DOMINATES EVERY READ MAKES THE INITIAL UNOBSERVABLE, and
+    // the type at every read is then the join of the WRITES alone.
+    // `var n = 0; function tick() { n = n + 1; }` - the declaration is a write
+    // dominating everything, so `n` is `num`. `var v; if (k > 0) { v = 5; }` -
+    // no write dominates the read in `get`, so `v` stays `opt<num>` and every
+    // use where the difference shows is refused.
+    //
+    // THE TWO CONDITIONS ARE CONDITIONS 2 AND 3 OF STEP 1, WORD FOR WORD, and
+    // `writeReachesEveryRead` is where the two rules are one function rather
+    // than two answers. Step 1 asks them to REPLACE a read with the store's
+    // operand; this asks them to DROP the box's initial from that read's type.
+    // Both rest on the same fact - no read of the binding, in this frame or in
+    // a closure over it, can happen on a path that skipped the store - and
+    // step 1's own comment beside `writtenOnce` is the argument for it.
+    //
+    // WHERE THE TWO DELIBERATELY PART: step 1 also needs the stored VALUE to
+    // dominate each call (`byValueMissesACall`), because it copies that value
+    // into a parameter. This copies nothing - the pointer is passed and the
+    // callee loads through it - so only the STORE has to dominate. That is why
+    // the OUTERSTORE shape (`var t = k*2; if (k>0) { v = t; }`), whose value
+    // dominates every call and whose store dominates none, is carried by step
+    // 2 and REFUSED narrowing by this one. Asking about the value here would
+    // have admitted exactly the wrong answer step 1 shipped once already.
+    //
+    // AND NO CALLEE WRITE IS NEEDED, which is the interprocedural question this
+    // rule could have got wrong. In `function counter() { var n = 0; function
+    // tick() { n = n + 1; } tick(); return n; }` the write inside `tick`
+    // dominates the read in `counter` in no single CFG - and it does not have
+    // to, because `var n = 0` already dominates both the frame's own read and
+    // every call of `tick`. A callee's write can only ADD a value to the join;
+    // it can never put the initial back. So this rule asks only about writes in
+    // the box's OWN frame, which is exactly the set `ctjs.cell_set` names, and
+    // the `ctjs.store_upvalue` a callee makes is left to the type join.
+    llvm::DenseSet<mlir::Operation *> assignedBeforeRead;
+
     // ONE PER LIFTER, and it stays valid across the classify-then-lift
     // fixpoint: lift() inserts entry-block ARGUMENTS and erases and creates
     // operations, and neither changes the block structure a dominator tree is
@@ -817,7 +863,90 @@ struct closureLifter {
                 return;
             }
             carriedCells.insert(cell.getOperation());
+            // AND WHETHER ITS HOISTED INITIAL CAN STILL BE READ - slice 2 step
+            // 3, the argument stated beside `assignedBeforeRead`. Asked HERE,
+            // before any rewrite, for the reason the two censuses above are:
+            // the question is about the `ctjs.call`s of the closures that
+            // capture the cell, and `lift()` erases every one of them.
+            if (dominatingWriteOf(cell)) { assignedBeforeRead.insert(cell.getOperation()); }
         });
+    }
+
+    // THE WRITE THAT MAKES THE BOX'S INITIAL UNOBSERVABLE, or null. A cell may
+    // have several `ctjs.cell_set`s and it is enough that ONE of them comes
+    // before every read: from there on the box holds a stored value, and which
+    // of the stores it holds only widens the join.
+    ctjs::CellSetOp dominatingWriteOf(ctjs::CreateCellOp cell) {
+        for (mlir::OpOperand & use : cell.getResult().getUses()) {
+            auto write = llvm::dyn_cast<ctjs::CellSetOp>(use.getOwner());
+            if (!write || use.getOperandNumber() != 0) { continue; }
+            if (writeReachesEveryRead(cell, write)) { return write; }
+        }
+        return {};
+    }
+
+    // DOES THIS STORE COME BEFORE EVERY READ OF THE BINDING? Two halves, and
+    // they are conditions 2 and 3 of slice 2 step 1 asked of the same use list
+    // with the same `DominanceInfo`:
+    //
+    //   2. it properly dominates every `ctjs.cell_get` of the box - the reads
+    //      in the frame that owns it, which is every read of the SSA value
+    //      because a `ctjs.func` body is the region the cell is defined in;
+    //   3. and it properly dominates every CALL of every closure that captured
+    //      it. THE CALL AND NOT THE `ctjs.create_closure`: a function
+    //      declaration is hoisted, so its closure is built in the prologue
+    //      before any store, and the interpreter reads the box when the closure
+    //      RUNS (run_loop.cpp, VM_CASE(get_upvalue)). A read through the
+    //      pointer, at any nesting depth, happens inside one of those calls -
+    //      the capture cannot escape (whyNotLiftable condition 4) and the
+    //      pointer cannot either (whyUpvalueReadsDoNotLift), so there is no
+    //      other way to reach the storage.
+    //
+    // A USE IN ANOTHER `ctjs.func` FAILS OUTRIGHT rather than being dominated,
+    // and the reason is the same one `byValueMissesACall` gives: builtin.
+    // module's body is a graph region, in which `properlyDominates` answers yes
+    // for every pair of operations, so a bare dominance question about a call
+    // in another frame is not a question at all. That is the METHODCAP shape.
+    bool writeReachesEveryRead(ctjs::CreateCellOp cell, ctjs::CellSetOp store) {
+        auto owner = cell->getParentOfType<ctjs::FuncOp>();
+        if (!owner || store->getParentOfType<ctjs::FuncOp>() != owner) { return false; }
+        for (mlir::OpOperand & use : cell.getResult().getUses()) {
+            mlir::Operation * user = use.getOwner();
+            if (llvm::isa<ctjs::CellGetOp>(user) && use.getOperandNumber() == 0) {
+                // CONDITION 2.
+                if (!dominance.properlyDominates(store.getOperation(), user)) { return false; }
+                continue;
+            }
+            // ANOTHER WRITE ONLY WIDENS THE JOIN. It cannot restore the initial,
+            // so it is not asked to follow anything.
+            if (llvm::isa<ctjs::CellSetOp>(user) && use.getOperandNumber() == 0) { continue; }
+            if (llvm::isa<ctjs::CreateClosureOp>(user) && use.getOperandNumber() >= kFirstCapture) {
+                // CONDITION 3, over every use of the closure VALUE and not only
+                // over the calls. This census runs before `whyNotLiftable` has
+                // said which of those uses are calls at all, and a use that is
+                // not one refuses the lift - so requiring the store to dominate
+                // all of them is the same set, asked without waiting for a
+                // verdict that does not exist yet.
+                for (mlir::Operation * at : user->getResult(0).getUsers()) {
+                    if (at->getParentOfType<ctjs::FuncOp>() != owner) { return false; }
+                    if (!dominance.properlyDominates(store.getOperation(), at)) { return false; }
+                }
+                continue;
+            }
+            // EVERY OTHER USE IS ONE sharedCellCensus HAS ALREADY REFUSED, so
+            // this arm is unreachable from that caller - and it answers `false`
+            // rather than trusting that, because the whole of this rule is that
+            // there is no way to the storage it has not looked at.
+            return false;
+        }
+        return true;
+    }
+
+    // IS THIS CELL'S HOISTED INITIAL UNREADABLE? Keyed on the operation, like
+    // `isCarried`, because the census and the stamp are in different passes
+    // over the module.
+    bool isAssignedBeforeRead(ctjs::CreateCellOp cell) const {
+        return assignedBeforeRead.contains(cell.getOperation());
     }
 
     // WOULD THE BY-VALUE PATH REACH EVERY CALL? The question
@@ -3024,6 +3153,15 @@ struct closureLifter {
                     continue;
                 }
                 cell->setAttr("ctnative.carried", mlir::UnitAttr::get(context));
+                // PHASE 59 SLICE 2 STEP 3: AND WHETHER ITS INITIAL IS STILL
+                // READABLE. The verdict is the census's - taken before the
+                // lift, where the calls it asks about still exist - and this
+                // is where it is written onto the IR, because
+                // `TypeInference::cellTypeOf` is what consumes it and the
+                // solve runs after this pass's rewrites.
+                if (isAssignedBeforeRead(cell)) {
+                    cell->setAttr(kAssignedBeforeRead, mlir::UnitAttr::get(context));
+                }
                 ++out.locals;
                 continue;
             }
@@ -3155,6 +3293,26 @@ struct admission {
         if (mayBeUndefined(typeOf(v))) {
             return refuse((where + " on a value that may be undefined - NaN would not "
                                    "compare the way undefined does")
+                              .str());
+        }
+        return true;
+    }
+    // AND A VALUE THAT MUST NOT BE UNDEFINED BECAUSE IT WILL BE PRINTED.
+    // `defined()` above refuses an `opt` where EQUALITY reads it; this refuses
+    // one where the PRINT does, and the two sentences are different because the
+    // reasons are: equality is a comparison NaN gets wrong, and printing is a
+    // CONVENTION - `%.17g` of the double - that has no spelling for undefined
+    // at all. Every other use of an `opt` in this tier is exact (arithmetic,
+    // relational, truthiness), which is why a global is the one place this has
+    // to be asked. ND-7's printing row in ctcompile/docs/native-divergences.md
+    // is this refusal; it was an obligation on the harness there until it
+    // became a rule here.
+    bool printable(mlir::Value v, llvm::StringRef where) {
+        if (mayBeUndefined(typeOf(v))) {
+            return refuse((where + " may be undefined, and a global is where a value becomes an "
+                                   "observable: this tier prints a Number as `%.17g` of the "
+                                   "double, so undefined carried as NaN prints `nan` where the "
+                                   "interpreter prints `undefined`")
                               .str());
         }
         return true;
@@ -3990,23 +4148,31 @@ struct admission {
             return true;
         }
         if (auto store = llvm::dyn_cast<StoreGlobalOp>(o)) {
-            // A KNOWN WRONG ANSWER LIVES HERE, and it is older than any closure
-            // rule: `numeric` admits an `opt` row, and the printing convention
-            // spells a Number `%.17g` while `opt<num>` carries undefined AS
-            // NaN - so a global holding a value that may be undefined prints
-            // `nan` where the interpreter prints `undefined`. `var u; var z =
-            // u;`, with no closure anywhere, reproduces it.
+            // THE WRONG ANSWER THAT LIVED HERE IS REFUSED - PHASE 59 SLICE 2
+            // STEP 3. `numeric` admits an `opt` row, because NaN is exact
+            // everywhere this tier reads one: arithmetic, relational
+            // comparison, truthiness. A GLOBAL IS NOT ONE OF THOSE PLACES. It
+            // is where a value stops being an intermediate and becomes an
+            // observable, and the observation is a print convention - `%.17g`
+            // of the double - with no spelling for undefined, so a global
+            // holding a possibly-undefined value printed `nan` where the
+            // interpreter printed `undefined`. `var u; var z = u;`, with no
+            // closure anywhere, reproduced it; so did `function pick(k) { var
+            // v; if (k > 0) { v = 5; } function get() { return v; } return
+            // get(); } var out = pick(-1);` once slice 2 step 2 stopped
+            // refusing a carried cell.
             //
-            // REQUIRING `defined()` HERE IS SOUND AND WAS MEASURED TO BE TOO
-            // BLUNT TO LAND WITH THIS SLICE: it refuses 7 globals across 5
-            // fixtures and 11 across 4 lit tests, because ANY value returned
-            // through a struct field or a carried cell is `opt<num>`
-            // flow-insensitively. The precise fix is to narrow that type once a
-            // write dominates every read - the same dominance question slice 2
-            // step 1 already computes - which would cost none of them and would
-            // still refuse the wrong-answer shape. That is its own task; see
-            // the plan's Phase 63 open-defect list.
-            return numeric(store.getValue(), ("store to global `" + store.getName() + "`").str());
+            // AND IT COSTS NOTHING NOW, WHICH IT DID WHEN IT WAS MEASURED.
+            // Asked on its own this clause refused 7 globals across 5 fixtures
+            // and 11 across 4 lit tests, because a value returned through a
+            // carried cell was `opt<num>` FLOW-INSENSITIVELY - the box is
+            // emitted holding its hoisted `undefined` and the type said so at
+            // every read. Slice 2 step 3 narrows that type where a write
+            // dominates every read (`kAssignedBeforeRead`), which is exactly
+            // the population those refusals were, and leaves `pick` - whose
+            // write dominates nothing - `opt<num>` and refused.
+            const std::string where = ("store to global `" + store.getName() + "`").str();
+            return numeric(store.getValue(), where) && printable(store.getValue(), where);
         }
         if (auto ret = llvm::dyn_cast<ReturnOp>(o)) {
             const carrier c = carrierOf(typeOf(ret.getValue()));

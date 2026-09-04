@@ -136,7 +136,17 @@ function element(i) {
     var a = [10, 20, 30];
     return a[i];
 }
-var idx_in_range = element(1);
+// `+ 0` FOR THE PRINT, AND THIS ONE THE COMPILER CANNOT AVOID. A
+// `ctjs.store_global` refuses a value that may be undefined (Phase 59 slice 2
+// step 3, `admission::printable`) because the print convention is `%.17g` of
+// the double and has no spelling for `undefined`. A dense array's element type
+// starts from `undefined` - an index past the end, negative or fractional is
+// undefined, which is the ND-8 guard three lines up - and `i` is a parameter
+// nothing bounds, so `a[i]` is `opt<num>` however this function is called. No
+// dominance fact removes that: it is a real possibility, not imprecision. The
+// five below already carried a `+ 0` for the same reason under the old harness
+// rule; this one did not, because its value is in range.
+var idx_in_range = element(1) + 0;
 var idx_past_end = element(7) + 0;
 var idx_at_length = element(3) + 0;
 var idx_negative = element(0 - 1) + 0;

@@ -344,7 +344,7 @@ The distinction is the whole design, so it is the first column:
 | ND-4 | `native-divergence-fixture.js` (`pow_*`), `native-pipeline-fixture.js` | — |
 | ND-5 | `native-divergence-fixture.js` (`mod_*`) | — |
 | ND-6 | `native-divergence-fixture.js` (`negzero*`, `poszero*`) | — |
-| ND-7 | `native-divergence-fixture.js` (`u_*`, `b_*`); `native-struct-fixture.js` | `CTNative/Lowering/divergence-refusals.mlir` (EQUALITY, TYPEOF) |
+| ND-7 | `native-divergence-fixture.js` (`u_*`, `b_*`); `native-struct-fixture.js` | `CTNative/Lowering/divergence-refusals.mlir` (EQUALITY, TYPEOF); `global-undefined.mlir` (HOISTED, PICK, OUTERSTORE, READBEFORE, ONEPATH — the printing row, and DOMINATES / FIELD for the narrowing that pays for it) |
 | ND-8 | `native-divergence-fixture.js` (`idx_*`) | — |
 | ND-8 defect | `native-index-truncation-fixture.js`, registered to FAIL | — |
 | ND-9 | — | `divergence-refusals.mlir` (BITWISE) |
@@ -527,14 +527,38 @@ each by name:
   import as the same op with a negate flag, so one refusal covers four
   spellings.
 * `typeof` — *"typeof, void and ~ are not native yet"*.
-* printing — a global holding `undefined` is not a Number, so the differential
-  reference skips it while the binary prints `nan`, and the gate fails by
-  naming a missing line. Every native fixture assigns each global before
-  reading it for that reason. **Obligation:** this one is a property of the
-  HARNESS and not yet a rule in the compiler. The day the tier prints a
-  JavaScript value (`String(x)`, `console.log`), the printing row has to
-  become a refusal in `LowerToEmitC.cpp`, because nothing in the lowering
-  stops it today.
+* printing — `admission::printable()`, *"store to global `x` may be undefined,
+  and a global is where a value becomes an observable: this tier prints a
+  Number as `%.17g` of the double, so undefined carried as NaN prints `nan`
+  where the interpreter prints `undefined`"*. A `ctjs.store_global` is the one
+  place the tier turns a value into an observation, and it is the one use of an
+  `opt` that is refused for the REPRESENTATION rather than for a comparison —
+  which is why it has its own sentence and does not reuse `defined()`'s.
+
+  **This was an obligation on the HARNESS until Phase 59 slice 2 step 3.** The
+  paragraph here used to say so: a global holding `undefined` is not a Number,
+  the differential reference skips it, the binary prints `nan`, and the gate
+  fails by naming a missing line — so every native fixture assigned each global
+  before reading it and nothing in the LOWERING stopped a `nan`. Two programs
+  reached it anyway. `var u; var z = u;` printed `u=nan z=nan`, and once slice 2
+  step 2 stopped refusing a carried cell, `function pick(k) { var v; if (k > 0)
+  { v = 5; } function get() { return v; } return get(); } var out = pick(-1);`
+  printed `out=nan`. Both are refused now and both are pinned in
+  `CTNative/Lowering/global-undefined.mlir`.
+
+  **What made it affordable is the narrowing beside it.** Asked on its own the
+  clause refused 7 globals across 5 fixtures and 11 across 4 lit tests, because
+  a value returned through a carried cell or a closed-shape field was
+  `opt<num>` FLOW-INSENSITIVELY — the box is emitted holding its hoisted
+  `undefined` and a field read is seeded with `undefined` "because nothing
+  orders the read after a store". Slice 2 step 3 drops each of those where a
+  write DOMINATES the read, which is the population those refusals were. What
+  is left is two coercions, both of them real possibilities rather than
+  imprecision: `idx_in_range` in `native-divergence-fixture.js` (a dense
+  array's element type — an index past the end really is `undefined`, ND-8) and
+  `defaulted5` in `native-constructor-fixture.js` (the only store of the field
+  is inside the constructor, a different `ctjs.func` from the read, so it needs
+  a callee summary and not a dominance query).
 
 ### The test
 
