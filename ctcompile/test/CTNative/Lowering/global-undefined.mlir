@@ -92,8 +92,17 @@
 // IT IS PINNED HERE SEPARATELY FROM PICK because the two fail different
 // clauses of the same rule. PICK has no value dominating anything either, so a
 // narrowing that asked the OLD, wrong question would still refuse PICK and be
-// green on it - a guard passing on a witness that cannot fail it, which is the
-// mistake `LOOPWRITE` made in closure-refusals.mlir.
+// green on it - a guard passing on a witness that cannot fail it.
+//
+// THAT MISTAKE HAS A NAME AND THIS CITATION USED TO GET IT WRONG. It was the
+// `loopwrite` program in closure-refusals.mlir, whose pin named a dominance
+// condition and passed while that condition was a no-op, because it stored a
+// value defined INSIDE the loop body and so tripped the earlier
+// value-dominates clause first. `outerstore` - a value computed ABOVE the
+// branch - is what only the store clause can refuse. Both moved into
+// native-shared-cell-fixture.js when slice 2 step 2 made them compile, so
+// neither is a check-prefix in closure-refusals.mlir any more; the lesson is
+// why this file pins PICK and OUTERSTORE separately.
 //
 // OUTERSTORE: ctnative.not_native = "store to global `out2` may be undefined, and a global is where a value becomes an observable: this tier prints a Number as `%.17g` of the double, so undefined carried as NaN prints `nan` where the interpreter prints `undefined`"
 

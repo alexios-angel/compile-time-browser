@@ -4184,6 +4184,27 @@ struct admission {
             // is inside a constructor - a different `ctjs.func`, which needs a
             // callee summary rather than a wider dominance query. And `pick`,
             // whose write dominates nothing, stays `opt<num>` and refused.
+            //
+            // A THIRD SOURCE OF THE SAME IMPRECISION IS STILL HERE, AND THE
+            // TWO COUNTS ABOVE DO NOT INCLUDE IT. `TypeInference` seeds a
+            // `ctjs.load_global` with `undefined` for word-for-word the reason
+            // it seeded the cell and the field, so `var a = 5; var b = a;` -
+            // CLAIMED before this clause, both globals agreeing with the
+            // interpreter - is refused by it. No fixture holds that shape and
+            // the three bundles' `_script_$0` is refused for a dozen other
+            // reasons, so neither the fixture walk nor the corpus figures can
+            // see the class: "the corpora do not narrow" is true here and
+            // close to vacuous. Found by review, 2026-09-04.
+            //
+            // IT IS A COVERAGE LOSS, NOT A WRONG ANSWER - refusing is always
+            // safe - which is why it is recorded rather than rushed. And it is
+            // NOT the one-line analogue of the other two: a global is writable
+            // by any callee, so a `store_global` dominating a `load_global`
+            // does not prove the value at the load the way a dominating write
+            // proves a frame-local cell or a field of an object that never
+            // leaves the frame. Paying for it needs the closed world's
+            // per-name store set (ResolveGlobals already computes one), not a
+            // wider dominance query.
             const std::string where = ("store to global `" + store.getName() + "`").str();
             return numeric(store.getValue(), where) && printable(store.getValue(), where);
         }
