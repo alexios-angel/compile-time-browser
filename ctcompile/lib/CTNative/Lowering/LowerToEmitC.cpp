@@ -1006,9 +1006,9 @@ struct closureLifter {
         auto enclosing = c->getParentOfType<ctjs::FuncOp>();
         if (!enclosing) { return false; }
         auto listed = enclosing->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.cell_args");
-        return listed && llvm::is_contained(listed.asArrayRef(),
-                                            static_cast<int32_t>(
-                                                captureArgument(static_cast<unsigned>(k))));
+        return listed &&
+               llvm::is_contained(listed.asArrayRef(),
+                                  static_cast<int32_t>(captureArgument(static_cast<unsigned>(k))));
     }
 
     // THE VALUE EVERY READ OF A CONSTANT CELL YIELDS. The cell's initial when
@@ -2733,8 +2733,7 @@ struct closureLifter {
         // parameters are so the two cannot drift.
         llvm::SmallVector<int32_t> cellArgs;
         for (unsigned i = 0; i < captures; ++i) {
-            if (llvm::all_of(made,
-                             [&](ctjs::CreateClosureOp c) { return slotIsCarried(c, i); })) {
+            if (llvm::all_of(made, [&](ctjs::CreateClosureOp c) { return slotIsCarried(c, i); })) {
                 cellArgs.push_back(static_cast<int32_t>(captureArgument(i)));
             }
         }
@@ -3108,8 +3107,7 @@ struct closureLifter {
             if (llvm::isa<ctjs::CellGetOp>(user) && use.getOperandNumber() == 0) { continue; }
             if (llvm::isa<ctjs::CellSetOp>(user) && use.getOperandNumber() == 0) { continue; }
             if (llvm::isa<ctjs::CallDirectOp>(user) && namesACellArgument(user, use)) { continue; }
-            if (llvm::isa<ctjs::CreateClosureOp>(user) &&
-                use.getOperandNumber() >= kFirstCapture) {
+            if (llvm::isa<ctjs::CreateClosureOp>(user) && use.getOperandNumber() >= kFirstCapture) {
                 if (user->hasAttr("ctnative.lifted")) { continue; }
                 auto reason = user->getAttrOfType<mlir::StringAttr>("ctnative.closure_reason");
                 return "the closure that shares it is not lifted, so the binding needs a real "
@@ -4296,11 +4294,10 @@ struct admission {
             // second condition of the carried-cell rule asked at the callee -
             // the same question `op` asks of the box in the owning frame, in
             // the function that reads it through the pointer.
-            const std::string kind =
-                !isCapture ? "parameter " : isCellArg(fn.getOperation(), i) ? "shared capture "
-                                                                            : "capture ";
-            const std::string which =
-                kind + std::to_string(isCapture ? i - 3 : i - 3 - captures);
+            const std::string kind = !isCapture                        ? "parameter "
+                                     : isCellArg(fn.getOperation(), i) ? "shared capture "
+                                                                       : "capture ";
+            const std::string which = kind + std::to_string(isCapture ? i - 3 : i - 3 - captures);
             if (carrierOf(t) == carrier::none) {
                 // TWO CAUSES, AND THEY SEND A READER TO DIFFERENT PLACES. This
                 // said "no caller proves it (a closed-world call is Phase
@@ -5205,9 +5202,8 @@ struct lowering {
         }
         if (auto get = llvm::dyn_cast<CellGetOp>(o)) {
             mlir::Value place = cellPlace(b, where, get.getCell());
-            swap(ec::LoadOp::create(b, where,
-                                    llvm::cast<ec::LValueType>(place.getType()).getValueType(),
-                                    place));
+            swap(ec::LoadOp::create(
+                b, where, llvm::cast<ec::LValueType>(place.getType()).getValueType(), place));
             return;
         }
         if (auto set = llvm::dyn_cast<CellSetOp>(o)) {
@@ -5408,8 +5404,7 @@ struct lowering {
                 // LAMBDA: `&n` for the variable in this frame, and the pointer
                 // unchanged when this function received one itself - which is
                 // how a binding two levels out reaches the innermost closure.
-                const bool byAddress =
-                    admission::isObjectArg(o, i) || admission::isCellArg(o, i);
+                const bool byAddress = admission::isObjectArg(o, i) || admission::isCellArg(o, i);
                 args.push_back(byAddress ? asPointer(operands[i]) : operands[i]);
             }
             const auto named = names.find(call.getCallee());

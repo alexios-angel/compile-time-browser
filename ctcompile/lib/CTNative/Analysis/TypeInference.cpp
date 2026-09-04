@@ -930,9 +930,9 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         }
     }
 
-    const mlir::Type fromOperation = cellKnown    ? cell
-                                     : vectorKnown  ? vector
-                                     : fieldKnown ? field
+    const mlir::Type fromOperation = cellKnown     ? cell
+                                     : vectorKnown ? vector
+                                     : fieldKnown  ? field
                                      : globalKnown
                                          ? global
                                          : (numeric != nullptr ? numeric : staticResultType(op));
