@@ -2893,6 +2893,30 @@ struct closureLifter {
             for (mlir::Operation * user : calls) {
                 auto call = llvm::dyn_cast<ctjs::CallOp>(user);
                 auto named = llvm::dyn_cast<ctjs::CallDirectOp>(user);
+                // EVERY USE IS A CALL, BECAUSE CONDITION 4 SAID SO - and this
+                // says which claim failed when it is not.
+                //
+                // `whyNotLiftable`'s condition 4 admits a closure only when
+                // every use of its value is a ctjs.call at operand 0 or a
+                // ctjs.call_direct at operand 2, so `call` and `named` cannot
+                // both be null here. Without this the next line dereferenced
+                // the null one and ctjs-opt SEGFAULTED - measured by relaxing
+                // condition 4, on the new fixture and on bootstrap, p5, phaser,
+                // differential and launcher alike. A crash names nothing, and
+                // the comment on the SHAREDRETURN pin said the failure was a
+                // C++ compile error, which it is not: no C++ is emitted at all.
+                // This file's idiom for "a rule let one through" is a named
+                // fatal, and condition 4 is the rule that keeps a pointer to
+                // this frame from leaving it, so its violation is worth saying
+                // out loud rather than discovering in a debugger.
+                if (!call && !named) {
+                    llvm::report_fatal_error(
+                        llvm::Twine("ctnative lowering: `") + target.getSymName() +
+                        "` is lifted but its closure reaches `" + user->getName().getStringRef() +
+                        "`, which is not a call - whyNotLiftable's condition 4 admitted a use it "
+                        "should have refused, and for a carried binding that use is what would "
+                        "take the address of this frame out of it");
+                }
                 mlir::OpBuilder at(user);
                 const mlir::Value undefined = ctjs::ConstantOp::create(
                     at, user->getLoc(), valueType, ctjs::UndefinedAttr::get(context));
@@ -3966,6 +3990,22 @@ struct admission {
             return true;
         }
         if (auto store = llvm::dyn_cast<StoreGlobalOp>(o)) {
+            // A KNOWN WRONG ANSWER LIVES HERE, and it is older than any closure
+            // rule: `numeric` admits an `opt` row, and the printing convention
+            // spells a Number `%.17g` while `opt<num>` carries undefined AS
+            // NaN - so a global holding a value that may be undefined prints
+            // `nan` where the interpreter prints `undefined`. `var u; var z =
+            // u;`, with no closure anywhere, reproduces it.
+            //
+            // REQUIRING `defined()` HERE IS SOUND AND WAS MEASURED TO BE TOO
+            // BLUNT TO LAND WITH THIS SLICE: it refuses 7 globals across 5
+            // fixtures and 11 across 4 lit tests, because ANY value returned
+            // through a struct field or a carried cell is `opt<num>`
+            // flow-insensitively. The precise fix is to narrow that type once a
+            // write dominates every read - the same dominance question slice 2
+            // step 1 already computes - which would cost none of them and would
+            // still refuse the wrong-answer shape. That is its own task; see
+            // the plan's Phase 63 open-defect list.
             return numeric(store.getValue(), ("store to global `" + store.getName() + "`").str());
         }
         if (auto ret = llvm::dyn_cast<ReturnOp>(o)) {

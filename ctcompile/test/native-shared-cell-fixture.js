@@ -46,10 +46,30 @@
 // read with the stored value, so it had to prove no read could see the
 // hoisted `undefined`; this one does not replace the box, it EMITS it. A read
 // on a path that reached no assignment loads the NaN the variable was
-// initialised with, which is exactly what the interpreter answers - so
-// `early_read`, `conditional` and `loop_after` below, all three of them
-// refusals pinned in closure-refusals.mlir until this step, are now programs
-// that compile and agree.
+// initialised with - so `early_read`, `conditional` and `loop_after` below,
+// all three of them refusals pinned in closure-refusals.mlir until this step,
+// are now programs that compile and agree.
+//
+// AND NaN IS NOT undefined EVERYWHERE, WHICH THIS PARAGRAPH USED TO CLAIM.
+// The sentence "which is exactly what the interpreter answers" stood here, in
+// the commit message and in closure-refusals.mlir. It is true in arithmetic,
+// in ordering and in truthiness - `defined()` already refuses the other place
+// they part company, equality. It is FALSE at the one place a value becomes an
+// observable again: a global prints a Number with `%.17g`, so undefined-as-NaN
+// prints `nan` where the interpreter prints `undefined`.
+//
+// SO THIS STEP WIDENS A KNOWN WRONG ANSWER, and that is recorded rather than
+// hidden. `function pick(k) { var v; if (k > 0) { v = 5; } function get() {
+// return v; } return get(); } var out = pick(-1);` is refused before this step
+// and compiles to `out=nan` after it. The CLASS is older than any closure rule
+// - `var u; var z = u;` leaks the same NaN with no closure in the file - and
+// requiring the stored value to be `defined()` was measured as the sound fix
+// and as too blunt to land here: 7 globals across 5 fixtures and 11 across 4
+// lit tests, because any value returned through a struct field or a carried
+// cell is `opt<num>` flow-insensitively. Narrowing that type once a write
+// dominates every read costs none of them and still refuses `pick`. That is
+// the follow-up; none of the ten programs below reaches it, which is why this
+// file is green and why the gate could not see it.
 //
 // THE REFUSED SHAPES ARE NOT HERE, and cannot be: native-pipeline.cmake
 // refuses to write a module while any function carries `ctnative.not_native`.
@@ -221,12 +241,22 @@ function loop_after(n) {
 }
 
 var counter122 = counter();
-var shared17 = shared_two(5);
-var loop20 = loop_sum(5);
+// `+ 0` COERCES THE CARRIER, and it is the tier's precision showing rather
+// than this program's meaning changing. A carried binding's variable is
+// emitted holding the hoisted `undefined`, so its type stays `opt<num>`
+// even where an assignment dominates every read; a global is where a value
+// becomes an observable again, and `opt<num>` carries undefined AS NaN, so
+// the print cannot spell the difference. Adding 0 gives `num`, which is
+// what the value already is here. Narrowing this flow-sensitively is the
+// real fix and is not this slice's.
+var shared17 = shared_two(5) + 0;
+// `+ 0` for the carrier, as the globals above - see the note there.
+var loop20 = loop_sum(5) + 0;
 var readwrite30 = read_and_write(4);
 var mixed25065 = mixed(5);
 var nested204103 = nested_two();
-var twice2 = twice_written();
+// `+ 0` for the carrier, as the globals above.
+var twice2 = twice_written() + 0;
 var earlyread5 = early_read();
 var cond12 = conditional(3) + conditional(-1);
 var loopafter38 = loop_after(4) + loop_after(0);

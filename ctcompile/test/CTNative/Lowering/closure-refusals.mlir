@@ -102,9 +102,16 @@
 // tier would carry by pointer, and it is RETURNED - so a call of it can happen
 // after `maker`'s frame is gone, and `&n` would then name a dead stack slot.
 // Condition 4 of whyNotLiftable refuses the closure ("it is returned"), which
-// is what stops the pointer being taken at all; measured by relaxing it, the
-// emitted C++ returns a function pointer and there is nothing to return it as,
-// so the refusal is what keeps the address in the frame that owns it.
+// is what stops the pointer being taken at all.
+//
+// WHAT RELAXING IT ACTUALLY DOES, corrected: ctjs-opt SEGFAULTS. It does not
+// emit C++ that fails to compile, which this comment claimed and which would
+// have been a second line of defence; no C++ is emitted at all. lift() walked
+// every user of the closure result and read `call ? call.getArgs() :
+// named.getArgs()` with both null for a ctjs.return. That is now a named fatal
+// saying which claim failed, so a regression here reports condition 4 rather
+// than dying in a debugger - but the refusal below is still the whole of the
+// defence, and this pin is what holds it.
 //
 // SHAREDRETURN: ctjs.func {{.*}}@maker$1
 // SHAREDRETURN-SAME: ctnative.not_native = "a closure used as a value: it is returned - Phase 59 slice 2"

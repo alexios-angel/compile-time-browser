@@ -1396,10 +1396,10 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   ctcompile_add_native_claims(differential "${CMAKE_CURRENT_SOURCE_DIR}/differential.js" 2 56 10 0)
   ctcompile_add_native_claims(launcher "${CMAKE_CURRENT_SOURCE_DIR}/launcher.js" 0 9 9 0)
   ctcompile_add_native_claims(bootstrap
-    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 4 0 21 3)
-  ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 37 0 41 82)
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 4 0 21 4)
+  ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 37 0 41 101)
   ctcompile_add_native_claims(phaser
-    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 43 0 48 46)
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 43 0 48 53)
 
   # BOTH TEETH, PROVED. Each runs the same check as a child and passes only
   # when that child failed for the stated reason - not ctest's WILL_FAIL,
