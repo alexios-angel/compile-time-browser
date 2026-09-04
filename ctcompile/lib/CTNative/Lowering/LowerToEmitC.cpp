@@ -310,6 +310,8 @@ struct liftReport {
     unsigned receivers = 0;    // of those, the ones whose `this` became a parameter
     unsigned objects = 0;      // parameters that became a pointer to a closed shape
     unsigned constructors = 0; // `new X(...)` sites turned into a frame-scope struct
+    unsigned carried = 0;      // capture slots that became a pointer to a frame-local cell
+    unsigned locals = 0;       // ctjs.create_cells that became a frame-local variable
 };
 
 // --- THE RECEIVER IS A PARAMETER ------------------------------------------------
@@ -458,6 +460,57 @@ struct closureLifter {
     // means the cell has no ctjs.cell_set at all, which is slice 1's shape and
     // whose refusal - if any - is about a store_upvalue somewhere instead.
     llvm::DenseMap<mlir::Operation *, std::string> whyNotWrittenOnce;
+
+    // --- PHASE 59 SLICE 2 STEP 2: A SHARED MUTABLE CELL, CARRIED BY POINTER -
+    //
+    // The cells step 1 CANNOT take: written twice, written on only one path,
+    // or - the shape that dominates the reachable set - written by a closure
+    // with `ctjs.store_upvalue`, which `mutatesUpvalue` marks and
+    // `isConstantCell` refuses. There is no single value to copy into a
+    // parameter, so nothing this tier does by VALUE can be right.
+    //
+    // SO THE BOX BECOMES AN ORDINARY FRAME-LOCAL VARIABLE AND THE CAPTURE
+    // BECOMES A POINTER TO IT. `ctjs.create_cell` lowers to an
+    // `emitc.variable` of the carrier, `ctjs.cell_get` to a load of it and
+    // `ctjs.cell_set` to an assign; a lifted target takes `double *` for that
+    // slot instead of `double`, its `ctjs.load_upvalue` and
+    // `ctjs.store_upvalue` become a cell_get and a cell_set THROUGH the
+    // pointer, and each call site passes the variable's address. That is the
+    // receiver lift's convention exactly (`ctnative.receiver` emits
+    // `ctn_x * self`), one operand along.
+    //
+    // WHY THE POINTER CANNOT DANGLE, which is the only question worth asking:
+    //
+    //   1. THE CLOSURE CANNOT OUTLIVE THE FRAME. Condition 4 of whyNotLiftable
+    //      admits a closure only when EVERY use of its value is a call this
+    //      rewrite lowers - a ctjs.call at operand 0, or a ctjs.call_direct at
+    //      operand 2 the closed world named. Stored, returned or passed, it is
+    //      refused by name. A closure that can be reached from nowhere but a
+    //      call in this frame cannot be called after the frame is gone.
+    //   2. AND EVERY CALL IS IN THE FRAME THAT OWNS THE VARIABLE.
+    //      whyCapturesDoNotReach compares the ctjs.func the captured value
+    //      lives in with the ctjs.func the call sits in, and refuses when they
+    //      differ - which is the METHODCAP program in closure-refusals.mlir,
+    //      and the one case where a bare dominance question answers "yes"
+    //      because builtin.module's body is a graph region. It then asks that
+    //      the cell properly dominate the call, so the variable is in scope in
+    //      the emitted C++ at the point its address is taken.
+    //   3. AND THE POINTER GOES NOWHERE ELSE. After the lift, the only uses of
+    //      the parameter are the cell_get and cell_set that replaced the
+    //      upvalue read and write - whyUpvalueReadsDoNotLift refuses a target
+    //      whose load or store names anything but `%arg2` at an index this
+    //      rewrite carries - plus its re-appearance at a nested lifted call,
+    //      which is the same three conditions one level in.
+    //
+    // WHAT IS NOT PROVED HERE IS THE CARRIER, and it cannot be: this runs
+    // BEFORE the type solve. `admission::function` asks it of the parameter
+    // and `admission::op` of the box, both after the solve, and a cell of a
+    // type with no C++ carrier is refused there - never pointed at.
+    llvm::DenseSet<mlir::Operation *> carriedCells;
+    // Why a cell is not carried either, for the diagnostic. Only the
+    // structural clause can fail here; the carrier is admission's question.
+    llvm::DenseMap<mlir::Operation *, std::string> whyNotCarried;
+
     // ONE PER LIFTER, and it stays valid across the classify-then-lift
     // fixpoint: lift() inserts entry-block ARGUMENTS and erases and creates
     // operations, and neither changes the block structure a dominator tree is
@@ -642,6 +695,10 @@ struct closureLifter {
         // AND THE CELLS WITH ONE DOMINATING WRITE, LAST, because condition 4
         // asks `mutatesUpvalue` and the fixpoint above is what settles it.
         singleWriteCensus();
+        // AND THE SHARED ONES AFTER THAT, because the by-value path has first
+        // refusal: a cell singleWriteCensus took is copied into a parameter,
+        // which costs no pointer and no indirection.
+        sharedCellCensus();
     }
 
     // WHICH CELLS ARE CONSTANT AFTER ONE WRITE - part 24 Phase 59 slice 2 step
@@ -706,6 +763,123 @@ struct closureLifter {
             }
             writtenOnce[cell.getOperation()] = store;
         });
+    }
+
+    // WHICH CELLS BECOME A FRAME-LOCAL VARIABLE - part 24 Phase 59 slice 2
+    // step 2, the argument stated beside `carriedCells`. Run once, before any
+    // rewrite, for the reason singleWriteCensus is: the verdict a closure is
+    // judged on in round 3 of the lift's fixpoint has to be the one it was
+    // judged on in round 1, and lift() ADDS a use of the cell (its address, at
+    // each call site it rewrites) that a later walk would see and this one
+    // must not.
+    //
+    // ONE STRUCTURAL CLAUSE, AND IT IS THE WHOLE OF IT: every use of the box
+    // is a read of it, a write of it, or a capture. A cell stored into an
+    // object, put in another cell, returned or passed is a box something else
+    // holds a reference to, and a stack variable cannot stand in for one.
+    //
+    // NOTHING HERE ASKS WHO CAPTURES IT. A capturing closure that does not
+    // lift is refused by name, and `carriedCellReason` - run after the
+    // fixpoint, where the verdicts are - is what turns that into the cell's
+    // own diagnostic. Asking here would be asking before the answer exists.
+    void sharedCellCensus() {
+        module.walk([&](ctjs::CreateCellOp cell) {
+            // THE BY-VALUE PATH HAS FIRST REFUSAL - WHERE IT ACTUALLY WORKS.
+            // A cell it takes is copied into a parameter: no pointer, no
+            // indirection, and no aliasing question at all. But "it takes it"
+            // is TWO questions and only one of them is isConstantCell:
+            // whyCapturesDoNotReach then asks, at each call site, whether the
+            // value and the assignment reach it, and a cell that fails THAT
+            // was refused outright rather than carried. Both halves are asked
+            // here so that ONE verdict per cell decides the path, and the
+            // OUTERSTORE and LOOPWRITE programs - a store on one path, a store
+            // in a loop whose call is after it - become pointers instead of
+            // refusals.
+            if (isConstantCell(cell) && !byValueMissesACall(cell)) { return; }
+            for (mlir::OpOperand & use : cell.getResult().getUses()) {
+                mlir::Operation * user = use.getOwner();
+                if (llvm::isa<ctjs::CellGetOp>(user) && use.getOperandNumber() == 0) { continue; }
+                // THE CELL AS THE BOX, NOT AS THE VALUE PUT IN ONE - the same
+                // distinction singleWriteCensus draws, and for a stronger
+                // reason here: `ctjs.cell_set %other, %cell` puts this box
+                // inside another one, where a pointer to this frame would
+                // outlive the frame.
+                if (llvm::isa<ctjs::CellSetOp>(user) && use.getOperandNumber() == 0) { continue; }
+                if (llvm::isa<ctjs::CreateClosureOp>(user) &&
+                    use.getOperandNumber() >= kFirstCapture) {
+                    continue;
+                }
+                whyNotCarried[cell.getOperation()] =
+                    ("it reaches `" + user->getName().getStringRef() +
+                     "`, so something other than this frame holds the box and a local variable "
+                     "cannot stand in for it")
+                        .str();
+                return;
+            }
+            carriedCells.insert(cell.getOperation());
+        });
+    }
+
+    // WOULD THE BY-VALUE PATH REACH EVERY CALL? The question
+    // whyCapturesDoNotReach asks per call site, asked here per CELL, because
+    // the choice between copying a binding and pointing at it has to be made
+    // once for the whole program: capturedValue, the call-site rewrite and the
+    // parameter's type all read it, and two of them disagreeing is a pointer
+    // passed where a double is expected.
+    //
+    // ONLY THE CALLS IN THE CELL'S OWN FUNCTION, and that restriction is the
+    // point. A call in another ctjs.func is the METHODCAP refusal - lifting
+    // has nothing to prepend there - and carrying cannot help it: the variable
+    // is not in that frame either. Comparing the functions first also keeps
+    // `properlyDominates` honest, since builtin.module's body is a graph
+    // region in which every operation dominates every other.
+    bool byValueMissesACall(ctjs::CreateCellOp cell) {
+        auto owner = cell->getParentOfType<ctjs::FuncOp>();
+        const mlir::Value value = constantValueOf(cell);
+        ctjs::CellSetOp write = writtenOnce.lookup(cell.getOperation());
+        for (mlir::OpOperand & use : cell.getResult().getUses()) {
+            auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
+            if (!made || use.getOperandNumber() < kFirstCapture) { continue; }
+            for (mlir::Operation * at : made.getResult().getUsers()) {
+                if (at->getParentOfType<ctjs::FuncOp>() != owner) { continue; }
+                if (!dominance.properlyDominates(value, at)) { return true; }
+                if (write && !dominance.properlyDominates(write.getOperation(), at)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // IS THIS CELL CARRIED BY POINTER? Spelled as a function because the
+    // census's set is keyed on the operation and three callers ask.
+    bool isCarried(ctjs::CreateCellOp cell) const {
+        return carriedCells.contains(cell.getOperation());
+    }
+
+    // AND IS CAPTURE SLOT i OF THIS CLOSURE ONE? Two shapes, exactly the two
+    // `capturedValue` carries: the operand is a carried cell of this frame, or
+    // the slot is filled from the ENCLOSING closure's upvalue k and that
+    // function's own capture parameter 3 + k is already a pointer (slice 1b,
+    // carried outward). The second row is what makes a shared binding reach a
+    // closure two levels in, and it is read off the attribute the enclosing
+    // lift wrote rather than re-derived.
+    //
+    // IT IS A PROPERTY OF THE SLOT AND NOT OF THE TARGET, deliberately. A
+    // target that only READS a capture still takes a pointer when the operand
+    // is a pointer - the alternative is one ctjs.func with two signatures.
+    bool slotIsCarried(ctjs::CreateClosureOp c, unsigned i) {
+        if (auto cell = c.getUpvalues()[i].getDefiningOp<ctjs::CreateCellOp>()) {
+            return isCarried(cell);
+        }
+        const std::int32_t k = enclosingIndex(c, i);
+        if (k < 0) { return false; }
+        auto enclosing = c->getParentOfType<ctjs::FuncOp>();
+        if (!enclosing) { return false; }
+        auto listed = enclosing->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.cell_args");
+        return listed && llvm::is_contained(listed.asArrayRef(),
+                                            static_cast<int32_t>(
+                                                captureArgument(static_cast<unsigned>(k))));
     }
 
     // THE VALUE EVERY READ OF A CONSTANT CELL YIELDS. The cell's initial when
@@ -841,6 +1015,12 @@ struct closureLifter {
     // capture range does not cover names an upvalue the lift did not carry.
     mlir::Value capturedValue(ctjs::CreateClosureOp c, unsigned i) {
         if (auto cell = c.getUpvalues()[i].getDefiningOp<ctjs::CreateCellOp>()) {
+            // PHASE 59 SLICE 2 STEP 2: THE BOX ITSELF, when it is carried. The
+            // call site takes its ADDRESS - `replace()` does that, from the
+            // `ctnative.cell_args` index, through the same `asPointer` the
+            // receiver uses - so what has to be in scope and dominating at the
+            // call is the variable, and that is what this hands back.
+            if (isCarried(cell)) { return cell.getResult(); }
             return constantValueOf(cell);
         }
         const std::int32_t k = enclosingIndex(c, i);
@@ -932,7 +1112,17 @@ struct closureLifter {
             // question the comment above and the refusal below both describe -
             // does the ASSIGNMENT dominate the call - is now the question the
             // code asks.
-            if (auto cell = c.getUpvalues()[i].getDefiningOp<ctjs::CreateCellOp>()) {
+            // AND NOT OF A CARRIED ONE - PHASE 59 SLICE 2 STEP 2. This
+            // question is the by-VALUE path's: it asks whether the one value a
+            // copy would carry has been stored by the time the call runs. A
+            // binding carried BY POINTER copies nothing; the callee reads the
+            // variable when it runs, and on a path where nothing was stored it
+            // reads the NaN the variable was initialised with, which is the
+            // `undefined` the interpreter reads. `writtenOnce` still holds
+            // such a cell - it has one ctjs.cell_set - so the test is on the
+            // path and not on the map.
+            if (auto cell = c.getUpvalues()[i].getDefiningOp<ctjs::CreateCellOp>();
+                cell && !isCarried(cell)) {
                 if (ctjs::CellSetOp write = writtenOnce.lookup(cell.getOperation())) {
                     if (!dominance.properlyDominates(write.getOperation(), at)) {
                         return "capture " + std::to_string(i) +
@@ -964,23 +1154,32 @@ struct closureLifter {
         for (unsigned i = 0; i < captures; ++i) {
             const mlir::Value operand = c.getUpvalues()[i];
             if (auto cell = operand.getDefiningOp<ctjs::CreateCellOp>()) {
-                if (!isConstantCell(cell)) {
-                    // THE SENTENCE THE CENSUS WROTE, WHEN IT HAS ONE. A cell
-                    // with no ctjs.cell_set at all keeps the slice-1 sentence:
-                    // what is wrong with it is a ctjs.store_upvalue in a
-                    // closure, not an assignment in this frame, and slice 2's
-                    // shared cell is still what carries it.
-                    const auto named = whyNotWrittenOnce.find(cell.getOperation());
-                    if (named != whyNotWrittenOnce.end()) {
-                        return "capture " + std::to_string(i) +
-                               " is a binding whose single write "
-                               "does not carry it: " +
-                               named->second;
-                    }
-                    return "capture " + std::to_string(i) +
-                           " is a binding that is reassigned - a shared cell is Phase 59 slice 2";
+                // PHASE 59 SLICE 2 STEP 2, ASKED SECOND. A cell the
+                // immutability proof takes is copied into a parameter; one it
+                // does not is a frame-local variable this call passes a
+                // POINTER to. Only when neither holds is the capture refused,
+                // and then the box itself is the problem.
+                if (isConstantCell(cell) || isCarried(cell)) { continue; }
+                // THREE SENTENCES WERE HERE AND TWO ARE GONE. "a binding that
+                // is reassigned - a shared cell is Phase 59 slice 2" and "its
+                // one assignment does not dominate every read" were slice 1's
+                // and step 1's refusals for exactly the shapes step 2 carries;
+                // both now lift, and native-shared-cell-fixture.js runs them
+                // against the interpreter. What is left is the one clause
+                // sharedCellCensus can fail, and it has a sentence for every
+                // cell isConstantCell refused - so an absent one is a rule
+                // that let a cell past both censuses, which is a fatal here
+                // and not a number anywhere.
+                const auto shared = whyNotCarried.find(cell.getOperation());
+                if (shared == whyNotCarried.end()) {
+                    llvm::report_fatal_error(
+                        "ctnative lowering: a cell is neither constant nor carried and the "
+                        "shared-cell census wrote no reason for it - sharedCellCensus and "
+                        "isConstantCell have drifted apart");
                 }
-                continue;
+                return "capture " + std::to_string(i) +
+                       " is a shared binding this tier cannot make a frame-local variable: " +
+                       shared->second;
             }
             if (capturedValue(c, i)) { continue; }
             if (enclosingIndex(c, i) >= 0 && enclosing &&
@@ -1018,7 +1217,29 @@ struct closureLifter {
 
     // The target's own upvalue reads have to be the shape the rewrite replaces,
     // or a load would be left naming a closure that is gone.
-    std::optional<std::string> whyUpvalueReadsDoNotLift(ctjs::FuncOp target) {
+    //
+    // AND ITS WRITES, WHICH IS WHERE SLICE 2 STEP 2 RELAXES EXACTLY ONE
+    // CLAUSE AND NOT A LINE MORE. This refused ANY `ctjs.store_upvalue`,
+    // unconditionally - "its target reassigns a captured binding". A write is
+    // now admitted when, and only when, the SLOT it names is one this closure
+    // carries by pointer: `slotIsCarried(c, k)`, which is true for a carried
+    // cell of the creating frame and for a slot filled from an enclosing
+    // capture that is already a pointer. A write to any other slot is still
+    // refused, and by name - a by-value capture of a mutated binding would
+    // give every call its own copy, which is the wrong answer COUNTER in
+    // closure-refusals.mlir was pinned for.
+    //
+    // THE CLOSURE IS A PARAMETER NOW, AND IT HAS TO BE: "is this slot
+    // carried" is a question about the CREATION SITE's operands, not about
+    // the target, and the target is what the three callers share.
+    //
+    // THE INDEX CHECK IS THE SAME ONE THE READ GETS, and it was not there for
+    // writes at all. A store naming something other than `%arg2`, or an index
+    // past the capture list, is a write this rewrite cannot place - and
+    // leaving it would put a ctjs.store_upvalue in a function whose closure
+    // operand is about to be erased.
+    std::optional<std::string> whyUpvalueReadsDoNotLift(ctjs::CreateClosureOp c,
+                                                        ctjs::FuncOp target) {
         mlir::Block & entry = target.getBody().front();
         const auto captures = static_cast<unsigned>(target.getUpvalueCount());
         std::optional<std::string> bad;
@@ -1029,9 +1250,15 @@ struct closureLifter {
                     bad = "its target reads an upvalue this rewrite cannot name";
                 }
             }
-            if (llvm::isa<ctjs::StoreUpvalueOp>(o)) {
-                bad = "its target reassigns a captured binding - a shared cell is Phase 59 "
-                      "slice 2";
+            if (auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(o)) {
+                const auto k = static_cast<unsigned>(write.getIndex());
+                if (write.getClosure() != entry.getArgument(2) || k >= captures) {
+                    bad = "its target writes an upvalue this rewrite cannot name";
+                } else if (!slotIsCarried(c, k)) {
+                    bad = "its target reassigns capture " + std::to_string(k) +
+                          ", which is not a binding this tier carries by pointer - copying it "
+                          "would give every call its own";
+                }
             }
         });
         return bad;
@@ -1140,7 +1367,7 @@ struct closureLifter {
             return escapes;
         }
         // CONDITION 3 is the existing call-graph fixpoint's, not this one's.
-        return whyUpvalueReadsDoNotLift(target);
+        return whyUpvalueReadsDoNotLift(c, target);
     }
 
     // --- the receiver lift --------------------------------------------------
@@ -1931,7 +2158,7 @@ struct closureLifter {
         if (const std::optional<std::string> escapes = whyOwnClosureEscapes(target)) {
             return escapes;
         }
-        return whyUpvalueReadsDoNotLift(target);
+        return whyUpvalueReadsDoNotLift(c, target);
     }
 
     // --- the constructor lift -----------------------------------------------
@@ -2135,7 +2362,7 @@ struct closureLifter {
         if (const std::optional<std::string> escapes = whyOwnClosureEscapes(target)) {
             return escapes;
         }
-        return whyUpvalueReadsDoNotLift(target);
+        return whyUpvalueReadsDoNotLift(c, target);
     }
 
     liftReport run() {
@@ -2368,6 +2595,24 @@ struct closureLifter {
             }
         }
 
+        // PHASE 59 SLICE 2 STEP 2: WHICH CAPTURES ARRIVE AS A POINTER, read
+        // before the arguments shift for the same reason `objectArgs` is, and
+        // recorded in ENTRY-BLOCK indices because that is what
+        // ctjs.call_direct's operands are. `made` holds exactly one closure -
+        // the named fatal in run() enforces it - so `all_of` here is one
+        // question asked of one creation site, spelled the way the object
+        // parameters are so the two cannot drift.
+        llvm::SmallVector<int32_t> cellArgs;
+        for (unsigned i = 0; i < captures; ++i) {
+            if (llvm::all_of(made,
+                             [&](ctjs::CreateClosureOp c) { return slotIsCarried(c, i); })) {
+                cellArgs.push_back(static_cast<int32_t>(captureArgument(i)));
+            }
+        }
+        const auto carriedSlot = [&](unsigned k) {
+            return llvm::is_contained(cellArgs, static_cast<int32_t>(captureArgument(k)));
+        };
+
         // THE CAPTURES BECOME LEADING PARAMETERS, inserted after the three
         // implicit arguments so that ctjs.call_direct's operand order - which
         // IS the entry block's argument order - still lines up, and so that
@@ -2378,13 +2623,57 @@ struct closureLifter {
         llvm::SmallVector<mlir::Type> inputs(entry.getNumArguments(), valueType);
         target.setFunctionTypeAttr(
             mlir::TypeAttr::get(mlir::FunctionType::get(context, inputs, {valueType})));
+        // THE ATTRIBUTE BEFORE THE REWRITE, because a nested closure inside
+        // this body is judged in a LATER round and `slotIsCarried` reads it
+        // off this function to decide whether its own slot is a pointer -
+        // slice 1b, one indirection out.
+        if (!cellArgs.empty()) {
+            target->setAttr("ctnative.cell_args",
+                            mlir::Builder(context).getDenseI32ArrayAttr(cellArgs));
+            out.carried += static_cast<unsigned>(cellArgs.size());
+        }
 
         llvm::SmallVector<ctjs::LoadUpvalueOp> reads;
         target.getBody().walk([&](ctjs::LoadUpvalueOp read) { reads.push_back(read); });
         for (ctjs::LoadUpvalueOp read : reads) {
-            read.getResult().replaceAllUsesWith(
-                entry.getArgument(captureArgument(static_cast<unsigned>(read.getIndex()))));
+            const auto k = static_cast<unsigned>(read.getIndex());
+            const mlir::Value slot = entry.getArgument(captureArgument(k));
+            if (carriedSlot(k)) {
+                // A READ THROUGH THE POINTER. The parameter holds the ADDRESS
+                // of the owning frame's variable, so the value is one
+                // indirection away - which is exactly what ctjs.cell_get says
+                // and what the emitter turns into `*p`. The interpreter reads
+                // the box when the closure runs (run_loop.cpp, get_upvalue:
+                // `reg = cell->slot`); this reads it when the call runs, which
+                // is the same moment.
+                mlir::OpBuilder at(read);
+                auto through = ctjs::CellGetOp::create(at, read.getLoc(), valueType, slot);
+                read.getResult().replaceAllUsesWith(through.getResult());
+            } else {
+                read.getResult().replaceAllUsesWith(slot);
+            }
             read.erase();
+        }
+        // AND THE WRITES, WHICH ARE THE WHOLE OF THIS STEP.
+        // whyUpvalueReadsDoNotLift has already refused any target whose store
+        // names a slot this closure does not carry, so every one of these is a
+        // pointer - and reaching one that is not means that rule and this
+        // rewrite have drifted, which is a fatal and never a number.
+        llvm::SmallVector<ctjs::StoreUpvalueOp> writes;
+        target.getBody().walk([&](ctjs::StoreUpvalueOp write) { writes.push_back(write); });
+        for (ctjs::StoreUpvalueOp write : writes) {
+            const auto k = static_cast<unsigned>(write.getIndex());
+            if (!carriedSlot(k)) {
+                llvm::report_fatal_error(
+                    llvm::Twine("ctnative lowering: `") + target.getSymName() +
+                    "` writes capture " + llvm::Twine(k) +
+                    ", which the lift did not carry by pointer - whyUpvalueReadsDoNotLift "
+                    "admitted a store the rewrite cannot place");
+            }
+            mlir::OpBuilder at(write);
+            ctjs::CellSetOp::create(at, write.getLoc(), entry.getArgument(captureArgument(k)),
+                                    write.getValue());
+            write.erase();
         }
         // NO UPVALUES LEFT, and the attribute says so: after this the function
         // reads its bindings out of its own frame like any other parameter.
@@ -2482,6 +2771,14 @@ struct closureLifter {
                 if (carriesReceiver) {
                     direct->setAttr("ctnative.receiver", mlir::UnitAttr::get(context));
                 }
+                // AND WHICH OF ITS ARGUMENTS IS AN ADDRESS. On the CALL as
+                // well as the callee, for the reason the receiver mark is on
+                // both: `replace()` reads it once per operand and a symbol
+                // lookup there would be a lookup per argument per call.
+                if (!cellArgs.empty()) {
+                    direct->setAttr("ctnative.cell_args",
+                                    mlir::Builder(context).getDenseI32ArrayAttr(cellArgs));
+                }
                 // AND `new` EVALUATES TO THE INSTANCE, NOT TO THE CALL. That is
                 // the whole of context::construct's last line for a body this
                 // rule admits: `produced.is_object_like() ? produced : self`,
@@ -2541,6 +2838,14 @@ struct closureLifter {
                     /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
                 if (carriesReceiver) {
                     direct->setAttr("ctnative.receiver", mlir::UnitAttr::get(context));
+                }
+                // AND WHICH OF ITS ARGUMENTS IS AN ADDRESS. On the CALL as
+                // well as the callee, for the reason the receiver mark is on
+                // both: `replace()` reads it once per operand and a symbol
+                // lookup there would be a lookup per argument per call.
+                if (!cellArgs.empty()) {
+                    direct->setAttr("ctnative.cell_args",
+                                    mlir::Builder(context).getDenseI32ArrayAttr(cellArgs));
                 }
                 at.call.getResult().replaceAllUsesWith(direct.getResult());
                 at.call.erase();
@@ -2611,6 +2916,10 @@ struct closureLifter {
                     direct->setAttr("ctnative.object_args",
                                     mlir::Builder(context).getDenseI32ArrayAttr(objectArgs));
                 }
+                if (!cellArgs.empty()) {
+                    direct->setAttr("ctnative.cell_args",
+                                    mlir::Builder(context).getDenseI32ArrayAttr(cellArgs));
+                }
                 user->getResult(0).replaceAllUsesWith(direct.getResult());
                 user->erase();
                 ++out.calls;
@@ -2619,6 +2928,46 @@ struct closureLifter {
             ++out.closures;
             out.captures += captures;
         }
+    }
+
+    // WHY A CARRIED CELL CANNOT BE A FRAME-LOCAL VARIABLE AFTER ALL, or
+    // nothing. Asked once, after the lift's fixpoint has settled every verdict.
+    //
+    // THE USE LIST IS THE CENSUS'S PLUS ONE: lift() added the cell as an
+    // ARGUMENT of every ctjs.call_direct it wrote, at an index
+    // `ctnative.cell_args` lists - the address the callee reads through. That
+    // use did not exist when sharedCellCensus ran and is the reason the census
+    // cannot simply be re-run here.
+    // `ctnative.cell_args` ON A CALL, ASKED HERE. admission has the same
+    // predicate and is declared below this struct, so this is the one line of
+    // it that has to be spelled twice - kept to one line for the reason
+    // admissionIsDeclaration is: two copies of a rule drift, two copies of a
+    // lookup cannot.
+    static bool namesACellArgument(mlir::Operation * call, mlir::OpOperand & use) {
+        auto listed = call->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.cell_args");
+        return listed && llvm::is_contained(listed.asArrayRef(),
+                                            static_cast<int32_t>(use.getOperandNumber()));
+    }
+
+    std::optional<std::string> whyCarriedCellStaysABox(ctjs::CreateCellOp cell) {
+        for (mlir::OpOperand & use : cell.getResult().getUses()) {
+            mlir::Operation * user = use.getOwner();
+            if (llvm::isa<ctjs::CellGetOp>(user) && use.getOperandNumber() == 0) { continue; }
+            if (llvm::isa<ctjs::CellSetOp>(user) && use.getOperandNumber() == 0) { continue; }
+            if (llvm::isa<ctjs::CallDirectOp>(user) && namesACellArgument(user, use)) { continue; }
+            if (llvm::isa<ctjs::CreateClosureOp>(user) &&
+                use.getOperandNumber() >= kFirstCapture) {
+                if (user->hasAttr("ctnative.lifted")) { continue; }
+                auto reason = user->getAttrOfType<mlir::StringAttr>("ctnative.closure_reason");
+                return "the closure that shares it is not lifted, so the binding needs a real "
+                       "box and not a variable in this frame" +
+                       (reason ? " - " + reason.getValue().str() : std::string{});
+            }
+            return ("it reaches `" + user->getName().getStringRef() +
+                    "` after the lift, which is not a use of a frame-local variable")
+                .str();
+        }
+        return std::nullopt;
     }
 
     // A CELL WHOSE EVERY CLOSURE IS LIFTED holds a value nobody can change, so
@@ -2630,6 +2979,30 @@ struct closureLifter {
         llvm::SmallVector<ctjs::CreateCellOp> cells;
         module.walk([&](ctjs::CreateCellOp cell) { cells.push_back(cell); });
         for (ctjs::CreateCellOp cell : cells) {
+            // PHASE 59 SLICE 2 STEP 2: A CARRIED CELL IS NOT UNBOXED. There is
+            // no one value to write over its reads - that is why it is
+            // carried - so the box stays in the IR and becomes an
+            // `emitc.variable` of its carrier, with every read a load of it,
+            // every write an assign to it, and every lifted call passing its
+            // address.
+            //
+            // WHAT HAS TO BE ASKED HERE AND NOWHERE ELSE: that every closure
+            // capturing it actually lifted. The census could not ask - the
+            // verdicts did not exist yet - and it is the condition the whole
+            // pointer argument rests on, because an UNLIFTED closure over this
+            // binding is a real ctjs.create_closure that needs a real box, and
+            // a stack variable is not one. The function is refused either way
+            // (an unlifted closure has no lowering), but the sentence has to
+            // name the binding rather than the operation.
+            if (isCarried(cell)) {
+                if (const std::optional<std::string> why = whyCarriedCellStaysABox(cell)) {
+                    cell->setAttr("ctnative.cell_reason", mlir::StringAttr::get(context, *why));
+                    continue;
+                }
+                cell->setAttr("ctnative.carried", mlir::UnitAttr::get(context));
+                ++out.locals;
+                continue;
+            }
             // PHASE 59 SLICE 2 STEP 1: THE ONE WRITE THIS CELL IS ALLOWED, or
             // null. The census proved it dominates every read and every
             // capture, so from it onwards the box holds one value and the box
@@ -2836,6 +3209,35 @@ struct admission {
     }
     static bool isObjectArg(mlir::Operation * o, unsigned index) {
         return llvm::is_contained(objectArgsOf(o), static_cast<int32_t>(index));
+    }
+    // AND THE ONES THAT CARRY A `double *` - PHASE 59 SLICE 2 STEP 2. Same
+    // shape, same two places, same reason: the shared binding's box is a
+    // variable in the CALLER's frame and the callee reads and writes it
+    // through a pointer.
+    static llvm::ArrayRef<int32_t> cellArgsOf(mlir::Operation * o) {
+        auto listed = o->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.cell_args");
+        return listed ? listed.asArrayRef() : llvm::ArrayRef<int32_t>{};
+    }
+    static bool isCellArg(mlir::Operation * o, unsigned index) {
+        return llvm::is_contained(cellArgsOf(o), static_cast<int32_t>(index));
+    }
+    // A `ctjs.create_cell` the lift made a frame-local variable.
+    static bool isCarriedCell(mlir::Operation * o) {
+        return llvm::isa_and_nonnull<ctjs::CreateCellOp>(o) && o->hasAttr("ctnative.carried");
+    }
+    // A capture parameter that arrived as one - an entry-block argument of a
+    // ctjs.func whose `ctnative.cell_args` lists its number.
+    static bool isCellParameter(mlir::Value v) {
+        auto arg = llvm::dyn_cast<mlir::BlockArgument>(v);
+        if (!arg || !arg.getOwner()->isEntryBlock()) { return false; }
+        auto fn = llvm::dyn_cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
+        return fn && isCellArg(fn.getOperation(), arg.getArgNumber());
+    }
+    // WHERE A SHARED BINDING IS REACHED FROM: the variable in this frame, or
+    // the pointer a lifted call handed this one. Both are lvalues after
+    // lowering, and every rule below that asks about a cell asks about either.
+    static bool namesASharedCell(mlir::Value v) {
+        return isCarriedCell(v.getDefiningOp()) || isCellParameter(v);
     }
     static llvm::StringRef keyOf(mlir::Value key) {
         auto constant = key.getDefiningOp<ctjs::ConstantOp>();
@@ -3411,6 +3813,25 @@ struct admission {
                     }
                     continue;
                 }
+                // A SHARED BINDING IS NOT A NUMBER EITHER: what is passed is
+                // the ADDRESS of a variable in this frame, so what has to hold
+                // is that the variable is still one this tier can spell and
+                // that the operand still names it. A carrier of `none` is
+                // refused at the box itself; this catches the operand that
+                // stopped being a box at all, which would be the lift and this
+                // check disagreeing.
+                if (isCellArg(o, i)) {
+                    if (!namesASharedCell(operands[i])) {
+                        return refuse("it passes something that is not a shared binding of this "
+                                      "frame to a parameter this tier gave a pointer");
+                    }
+                    if (carrierOf(typeOf(operands[i])) == carrier::none) {
+                        return refuse("it passes a shared binding of type " +
+                                      printed(typeOf(operands[i])) +
+                                      ", which has no native carrier");
+                    }
+                    continue;
+                }
                 if (!numeric(operands[i], "argument")) { return false; }
             }
             return true;
@@ -3423,6 +3844,40 @@ struct admission {
         // a whole phase - into a work item.
         if (isLiftedClosure(o) || isUnboxedCell(o)) { return true; }
         if (llvm::isa<CreateClosureOp>(o)) { return refuse(closureRefusal(o)); }
+        // PHASE 59 SLICE 2 STEP 2: THE SHARED BINDING'S BOX IS A VARIABLE IN
+        // THIS FRAME, and this is where its carrier is proved. The lift ran
+        // before the solve and could not ask; nothing else between here and
+        // the emitter does. A cell of a type with no C++ representation is
+        // refused HERE, so no pointer to one is ever taken - which is the
+        // second of the three conditions the design rests on, and the only one
+        // that cannot be asked at the lift.
+        if (auto cell = llvm::dyn_cast<CreateCellOp>(o); cell && isCarriedCell(o)) {
+            if (carrierOf(typeOf(cell.getResult())) == carrier::none) {
+                return refuse("a shared binding of type " + printed(typeOf(cell.getResult())) +
+                              ", which has no native carrier - a variable this tier cannot "
+                              "spell is not one it may point at");
+            }
+            return true;
+        }
+        // A READ AND A WRITE OF ONE, in this frame or through the pointer a
+        // lifted call handed us. The read's result carrier is asked by the
+        // per-result walk in function(); what is asked here is that the write
+        // stores the carrier the variable holds - two carriers in one variable
+        // is a `double` assigned a `bool`, and the join that produced the
+        // cell's type would have had no carrier at all, so this is belt to
+        // that brace and names the store rather than the box.
+        if (auto get = llvm::dyn_cast<CellGetOp>(o); get && namesASharedCell(get.getCell())) {
+            return true;
+        }
+        if (auto set = llvm::dyn_cast<CellSetOp>(o); set && namesASharedCell(set.getCell())) {
+            const carrier held = carrierOf(typeOf(set.getCell()));
+            const carrier stored = carrierOf(typeOf(set.getValue()));
+            if (held == carrier::none || stored != held) {
+                return refuse("an assignment of " + printed(typeOf(set.getValue())) +
+                              " to a shared binding of type " + printed(typeOf(set.getCell())));
+            }
+            return true;
+        }
         if (llvm::isa<CreateCellOp>(o)) {
             auto why = o->getAttrOfType<mlir::StringAttr>("ctnative.cell_reason");
             return refuse(why ? ("a captured binding that stays a cell: " + why.getValue()).str()
@@ -3596,8 +4051,16 @@ struct admission {
             }
             const mlir::Type t = typeOf(entry.getArgument(i));
             const bool isCapture = i - 3 < captures;
-            const std::string which = isCapture ? "capture " + std::to_string(i - 3)
-                                                : "parameter " + std::to_string(i - 3 - captures);
+            // PHASE 59 SLICE 2 STEP 2: A SHARED CAPTURE SAYS SO. Its carrier
+            // is the one the POINTER points at, and the refusal below is the
+            // second condition of the carried-cell rule asked at the callee -
+            // the same question `op` asks of the box in the owning frame, in
+            // the function that reads it through the pointer.
+            const std::string kind =
+                !isCapture ? "parameter " : isCellArg(fn.getOperation(), i) ? "shared capture "
+                                                                            : "capture ";
+            const std::string which =
+                kind + std::to_string(isCapture ? i - 3 : i - 3 - captures);
             if (carrierOf(t) == carrier::none) {
                 // TWO CAUSES, AND THEY SEND A READER TO DIFFERENT PLACES. This
                 // said "no caller proves it (a closed-world call is Phase
@@ -4307,6 +4770,22 @@ struct lowering {
             // A closed object keeps its ctjs type until its shape is known
             // below; everything else takes its carrier now.
             if (admission::isClosedObject(v)) { return; }
+            // PHASE 59 SLICE 2 STEP 2: A SHARED BINDING IS NOT ITS CARRIER, it
+            // is a PLACE holding one. The box in the owning frame becomes an
+            // `emitc.lvalue` - the type an emitc.variable has, which load and
+            // assign both take - and the capture parameter that reaches it
+            // from a lifted call becomes an `emitc.ptr` to the same carrier,
+            // which is the receiver's convention (`ctn_x * self`) one operand
+            // along. Both are asked BEFORE the scalar row below, because the
+            // lattice type of either is the carrier of what is INSIDE.
+            if (admission::isCarriedCell(v.getDefiningOp())) {
+                v.setType(ec::LValueType::get(carrierType(context, carrierOf(typeOf(v)))));
+                return;
+            }
+            if (admission::isCellParameter(v)) {
+                v.setType(ec::PointerType::get(carrierType(context, carrierOf(typeOf(v)))));
+                return;
+            }
             const carrier c = carrierOf(typeOf(v));
             // A DENSE ARRAY TAKES ITS OWN CARRIER, which is not one of the two
             // scalars carrierType() can spell: `std::vector<double>`, by value,
@@ -4403,6 +4882,20 @@ struct lowering {
     // receiver arrived as a pointer and takes `emitc.member_of_ptr` through the
     // local `lower()` made for it. Both give an lvalue, so the read and the
     // write above are the same two lines either way.
+    // `v` OR `*p`, DECIDED BY WHAT THE BINDING IS - the exact shape of
+    // memberAccess one level down, and here for the same reason: a read and a
+    // write of a shared binding are the same two lines whichever side of the
+    // call they are on. The variable in the owning frame is already an lvalue;
+    // a capture parameter is a pointer, and `emitc.dereference` is the lvalue
+    // one indirection through it.
+    static mlir::Value cellPlace(mlir::OpBuilder & b, mlir::Location where, mlir::Value cell) {
+        if (auto pointer = llvm::dyn_cast<ec::PointerType>(cell.getType())) {
+            return ec::DereferenceOp::create(b, where, ec::LValueType::get(pointer.getPointee()),
+                                             cell);
+        }
+        return cell;
+    }
+
     mlir::Value memberAccess(mlir::OpBuilder & b, mlir::Location where, mlir::Value object,
                              llvm::StringRef member, mlir::Type type) {
         if (!receiverArgs.contains(object)) {
@@ -4452,6 +4945,34 @@ struct lowering {
         if (llvm::isa<FrameEnterOp>(o)) { return; }
         if (o->getName().getStringRef() == "ub.poison") {
             swap(f64Constant(b, where, std::numeric_limits<double>::quiet_NaN()));
+            return;
+        }
+        // PHASE 59 SLICE 2 STEP 2: THE SHARED BINDING, AS A VARIABLE AND TWO
+        // ACCESSES OF IT.
+        //
+        // `ctjs.create_cell` is a `double v;` in this frame, assigned the
+        // box's INITIAL - which for a hoisted `var` is the `undefined` the
+        // compiler boxed, carried as NaN. That assignment is not decoration:
+        // a read on a path that reaches no `ctjs.cell_set` yields exactly what
+        // the interpreter yields, which is the whole reason this rule needs no
+        // dominance proof where step 1 needed two.
+        if (auto cell = llvm::dyn_cast<CreateCellOp>(o); cell && admission::isCarriedCell(o)) {
+            mlir::Value local = ec::VariableOp::create(b, where, cell.getResult().getType(),
+                                                       ec::OpaqueAttr::get(context, ""));
+            ec::AssignOp::create(b, where, local, cell.getInitial());
+            swap(local);
+            return;
+        }
+        if (auto get = llvm::dyn_cast<CellGetOp>(o)) {
+            mlir::Value place = cellPlace(b, where, get.getCell());
+            swap(ec::LoadOp::create(b, where,
+                                    llvm::cast<ec::LValueType>(place.getType()).getValueType(),
+                                    place));
+            return;
+        }
+        if (auto set = llvm::dyn_cast<CellSetOp>(o)) {
+            ec::AssignOp::create(b, where, cellPlace(b, where, set.getCell()), set.getValue());
+            eraseIfUnused(o);
             return;
         }
         if (auto object = llvm::dyn_cast<CreateObjectOp>(o)) {
@@ -4643,7 +5164,13 @@ struct lowering {
             // lambda above - so the receiver and an argument cannot drift into
             // two different ways of taking one address.
             for (unsigned i = 3; i < operands.size(); ++i) {
-                args.push_back(admission::isObjectArg(o, i) ? asPointer(operands[i]) : operands[i]);
+                // AND A SHARED BINDING GOES THE SAME WAY, THROUGH THE SAME
+                // LAMBDA: `&n` for the variable in this frame, and the pointer
+                // unchanged when this function received one itself - which is
+                // how a binding two levels out reaches the innermost closure.
+                const bool byAddress =
+                    admission::isObjectArg(o, i) || admission::isCellArg(o, i);
+                args.push_back(byAddress ? asPointer(operands[i]) : operands[i]);
             }
             const auto named = names.find(call.getCallee());
             const std::string target =
@@ -4987,7 +5514,9 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                                 << " method(s) of which " << lifted.receivers
                                 << " take a receiver, " << lifted.objects
                                 << " object parameter(s), " << lifted.constructors
-                                << " constructor site(s)";
+                                << " constructor site(s), " << lifted.locals
+                                << " shared cell(s) made a frame-local variable carried through "
+                                << lifted.carried << " pointer parameter(s)";
         }
 
         // THE ALIAS GROUPS, once the lift has written its attributes and before

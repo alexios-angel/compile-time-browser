@@ -282,6 +282,81 @@ bool TypeInference::namesAnObjectParameter(mlir::Value v) {
            llvm::is_contained(listed.asArrayRef(), static_cast<int32_t>(arg.getArgNumber()));
 }
 
+// PHASE 59 SLICE 2 STEP 2: DOES THIS VALUE NAME A SHARED BINDING THE LIFT MADE
+// A FRAME-LOCAL VARIABLE? Two spellings of one storage location - the box in
+// the frame that owns it, and the pointer parameter every lifted call handed
+// the callee - and they must answer the same type, because they are the same
+// `double`.
+bool TypeInference::namesACarriedCell(mlir::Value v) {
+    if (auto made = v.getDefiningOp<ctjs::CreateCellOp>()) {
+        return made->hasAttr("ctnative.carried");
+    }
+    auto arg = llvm::dyn_cast<mlir::BlockArgument>(v);
+    if (!arg || !arg.getOwner()->isEntryBlock()) { return false; }
+    auto fn = llvm::dyn_cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
+    if (!fn) { return false; }
+    auto listed = fn->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.cell_args");
+    return listed &&
+           llvm::is_contained(listed.asArrayRef(), static_cast<int32_t>(arg.getArgNumber()));
+}
+
+// AND WHICH OF THEM NAME ONE BOX. A union-find over the carried cells and the
+// capture parameters, joined at every `ctjs.call_direct` operand the lift
+// listed in `ctnative.cell_args` - the same walk groupReceivers makes over
+// receivers, and it has to be a fixpoint for the same reason: a pointer passed
+// on to a closure two levels in reaches the third function through the second.
+llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> TypeInference::groupCells(
+    mlir::Operation * top) {
+    llvm::DenseMap<mlir::Value, mlir::Value> parent;
+    const auto find = [&parent](mlir::Value v) {
+        mlir::Value root = v;
+        for (auto next = parent.find(root); next != parent.end() && next->second != root;
+             next = parent.find(root)) {
+            root = next->second;
+        }
+        for (mlir::Value at = v; at != root;) {
+            const mlir::Value next = parent.lookup(at);
+            parent[at] = root;
+            at = next;
+        }
+        return root;
+    };
+    const auto join = [&](mlir::Value a, mlir::Value b) {
+        parent.try_emplace(a, a);
+        parent.try_emplace(b, b);
+        const mlir::Value ra = find(a);
+        const mlir::Value rb = find(b);
+        if (ra != rb) { parent[rb] = ra; }
+    };
+    top->walk([&](ctjs::CreateCellOp cell) {
+        if (cell->hasAttr("ctnative.carried")) {
+            parent.try_emplace(cell.getResult(), cell.getResult());
+        }
+    });
+    top->walk([&](ctjs::CallDirectOp call) {
+        auto listed = call->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.cell_args");
+        if (!listed) { return; }
+        auto fn =
+            mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
+        if (!fn || fn.getBody().empty()) { return; }
+        mlir::Block & entry = fn.getBody().front();
+        for (int32_t index : listed.asArrayRef()) {
+            const auto at = static_cast<unsigned>(index);
+            if (at >= call->getNumOperands() || at >= entry.getNumArguments()) { continue; }
+            join(call->getOperand(at), entry.getArgument(at));
+        }
+    });
+    llvm::SmallVector<mlir::Value> nodes;
+    for (const auto & entry : parent) { nodes.push_back(entry.first); }
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> byRoot;
+    for (mlir::Value node : nodes) { byRoot[find(node)].push_back(node); }
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> out;
+    for (const auto & [root, members] : byRoot) {
+        for (mlir::Value member : members) { out[member] = members; }
+    }
+    return out;
+}
+
 namespace {
 // A USE THAT PASSES THE OBJECT AS A LIFTED METHOD'S `this`, which does NOT open
 // its shape: the lift proved that method reaches `this` only through constant
@@ -472,11 +547,36 @@ mlir::Type TypeInference::elementTypeOf(mlir::Operation * op, mlir::Value array)
     return element;
 }
 
+mlir::Type TypeInference::cellTypeOf(mlir::Operation * op, mlir::Value cell) {
+    // FROM THE INITIAL, and the start is the whole soundness of the rule: a
+    // read of a shared binding on a path that reached no assignment yields
+    // what the box was built with. `compiler_impl::predeclare_locals` boxes
+    // `undefined`, so that is normally `opt<>` and the join is `opt<num>` -
+    // a double whose undefined is NaN, exact in arithmetic, comparison and
+    // truthiness, refused at equality by `defined()`. Step 1 needed two
+    // dominance proofs to make the initial unobservable; step 2 needs none,
+    // because it does not replace the box - it emits it.
+    mlir::Type held{};
+    const auto stored = cellStores_.find(cell);
+    if (stored == cellStores_.end()) { return BoxedType::get(op->getContext()); }
+    for (mlir::Value value : stored->second) {
+        const TypeLattice * lattice = getLatticeElementFor(getProgramPointAfter(op), value);
+        // Not yet visited contributes nothing NOW and re-visits this when it
+        // is; never visited is dead code and never executes. `n = n + 1` is
+        // exactly the cycle that needs it - the stored value reads the box.
+        if (lattice->getValue().isUninitialized()) { continue; }
+        held = held == nullptr ? lattice->getValue().getType()
+                               : meet(held, lattice->getValue().getType());
+    }
+    return held;
+}
+
 mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     globalStores_.clear();
     globalsAreDynamic_ = false;
     fieldStores_.clear();
     appends_.clear();
+    cellStores_.clear();
     // THE FIELD INDEX IS OVER THE GROUP, NOT OVER ONE VALUE, and that is the
     // whole of what a receiver parameter costs this analysis. `this.x = 5`
     // inside a lifted method is a store the CALLER's `o.x` has to see, and
@@ -511,6 +611,36 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     top->walk([&](ctjs::AppendOp push) {
         if (!isDenseVectorSite(push.getArray())) { return; }
         appends_[push.getArray()].push_back(push.getElement());
+    });
+    // THE SHARED-BINDING INDEX, over the group and not over one value - the
+    // reason the field index is, one operand along. A `ctjs.cell_set` through
+    // a capture pointer is in a DIFFERENT ctjs.func from the box, and the
+    // owning frame's read has to see it: `var n = 0; function tick() { n = n +
+    // 1; }` writes a double from inside `tick` into a box the frame built
+    // holding `undefined`, and a rule that indexed only the frame's own store
+    // would report `opt<i32>` for a binding that holds a double.
+    const auto cells = groupCells(top);
+    top->walk([&](ctjs::CreateCellOp cell) {
+        if (!cell->hasAttr("ctnative.carried")) { return; }
+        const auto group = cells.find(cell.getResult());
+        if (group == cells.end()) {
+            cellStores_[cell.getResult()].push_back(cell.getInitial());
+            return;
+        }
+        for (mlir::Value member : group->second) {
+            cellStores_[member].push_back(cell.getInitial());
+        }
+    });
+    top->walk([&](ctjs::CellSetOp store) {
+        if (!namesACarriedCell(store.getCell())) { return; }
+        const auto group = cells.find(store.getCell());
+        if (group == cells.end()) {
+            cellStores_[store.getCell()].push_back(store.getValue());
+            return;
+        }
+        for (mlir::Value member : group->second) {
+            cellStores_[member].push_back(store.getValue());
+        }
     });
     top->walk([&](mlir::Operation * op) {
         if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op)) {
@@ -707,7 +837,29 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         }
     }
 
-    const mlir::Type fromOperation = vectorKnown  ? vector
+    // THE SHARED BINDING (part 24 Phase 59 slice 2 step 2). The box and every
+    // read of it answer the join over everything ever assigned to it, from its
+    // initial - one type for one `double`, whichever of the two spellings asks.
+    mlir::Type cell{};
+    bool cellKnown = false;
+    if (auto made = llvm::dyn_cast<ctjs::CreateCellOp>(op)) {
+        if (made->hasAttr("ctnative.carried")) {
+            cellKnown = true;
+            cell = cellTypeOf(op, made.getResult());
+        }
+    } else if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(op)) {
+        // THE OPERAND'S OWN TYPE, not a second join: `operands[0]` is the box
+        // in this frame or the pointer a lifted call handed us, and either
+        // already carries the answer the row above computed. A second walk
+        // here would be a second chance for the two to disagree.
+        if (namesACarriedCell(read.getCell())) {
+            cellKnown = true;
+            cell = operands[0]->getValue().getType();
+        }
+    }
+
+    const mlir::Type fromOperation = cellKnown    ? cell
+                                     : vectorKnown  ? vector
                                      : fieldKnown ? field
                                      : globalKnown
                                          ? global

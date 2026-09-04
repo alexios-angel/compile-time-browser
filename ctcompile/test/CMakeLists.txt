@@ -2009,3 +2009,54 @@ if(COMMAND ctcompile_add_native_claims)
                               "${CMAKE_CURRENT_SOURCE_DIR}/native-hoisted-capture-fixture.js"
                               18 7 21 14)
 endif()
+
+# ============================================================================
+# === PART 24 PHASE 59 SLICE 2 STEP 2: a shared mutable cell, by pointer =====
+# ============================================================================
+# native-shared-cell-fixture.js is ten functions whose captured binding is
+# WRITTEN - by the closure, by two closures, on one path only, inside a loop,
+# or twice in the frame. Step 1 copied a binding with one dominating write into
+# a parameter; none of these has a single value to copy, and copying the wrong
+# one compiles clean and prints a wrong number. `counter()` is the whole slice
+# in four lines: `var n = 0; function tick() { n = n + 1; return n; }` answers
+# 1 then 2 in the interpreter and 1 then 1 under any lowering that gives each
+# call its own copy.
+#
+# THE BOX BECOMES A FRAME-LOCAL VARIABLE AND THE CAPTURE A POINTER TO IT -
+# `double * n`, the receiver lift's `ctn_x * self` one operand along - so the
+# emitted callee reads and writes the caller's variable. What makes the pointer
+# safe is the escape proof the lift was already making: condition 4 of
+# `whyNotLiftable` admits a closure only when every use of its value is a call
+# this tier lowers, and `whyCapturesDoNotReach` requires the call to be in the
+# frame that owns the binding and dominated by the cell. Relax either and the
+# emitted C++ takes the address of a dead frame.
+#
+# EVERY BINDING HERE IS READ AFTER IT IS WRITTEN, in the frame or through a
+# second closure, so a lift that carried a copy, a stale value or the wrong
+# slot produces a module that verifies, compiles clean under -Werror and prints
+# a wrong number - which only the interpreter can say. The `_off_by_one` proof
+# (trailing argument) asserts that the comparison can still fail, on a global
+# the printing prelude loads after the first one it prints.
+#
+# THE REFUSED SHAPES ARE NOT HERE, and cannot be: native-pipeline.cmake refuses
+# to write a module while any function carries `ctnative.not_native`. A box
+# that escapes into an object literal, a closure over a shared binding that is
+# returned, and a target that writes a capture this tier does not carry are one
+# program apiece in CTNative/Lowering/closure-refusals.mlir, under split-file.
+#
+# One appended block, per part 23 Appendix A.3.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(shared_cells
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-shared-cell-fixture.js"
+                                twice2)
+endif()
+# AND THE CLAIMED COUNT, AS A FLOOR: the four numbers are the MEASURED ones on
+# the day this landed - 25 of 25 functions claimed, 10 globals resolved, 28
+# ctjs.call_direct from the resolver and 20 more from the lift - so a change
+# that stops carrying a shared binding fails HERE even if the fixture above
+# were deleted.
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(shared_cells
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-shared-cell-fixture.js"
+                              25 10 28 20)
+endif()

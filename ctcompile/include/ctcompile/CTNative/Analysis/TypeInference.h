@@ -178,6 +178,20 @@ public:
     /// `length` is a Number.
     static bool isDenseVectorSite(mlir::Value array);
 
+    /// A value that names a shared binding the closure lift made a
+    /// frame-local variable: the `ctjs.create_cell` it marked
+    /// `ctnative.carried`, or an entry-block argument its
+    /// `ctnative.cell_args` lists - the pointer a lifted call passed. Both
+    /// read and write the same storage, so both answer the same type.
+    static bool namesACarriedCell(mlir::Value v);
+
+    /// The values that name ONE carried binding: the cell, and every capture
+    /// parameter reached from it through a `ctnative.cell_args` operand of a
+    /// `ctjs.call_direct`. Built the way groupReceivers is and for the same
+    /// reason - a write through the pointer is a write the box has to report.
+    static llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> groupCells(
+        mlir::Operation * top);
+
 private:
     llvm::StringMap<llvm::SmallVector<mlir::Value, 4>> globalStores_;
     bool globalsAreDynamic_ = false;
@@ -194,6 +208,25 @@ private:
     /// value's lattice subscribes it and a store that widens later re-visits
     /// the read.
     mlir::Type elementTypeOf(mlir::Operation * op, mlir::Value array);
+
+    /// PHASE 59 SLICE 2 STEP 2: what a shared binding holds. The closure lift
+    /// turns a `ctjs.create_cell` it can make a frame-local variable into
+    /// `ctnative.carried` and hands its ADDRESS to each lifted call, so a
+    /// write of that binding can be in a different `ctjs.func` from the box.
+    /// This index is over the whole GROUP of values that name one box - the
+    /// cell and every capture parameter a `ctnative.cell_args` operand reaches
+    /// - which is the receiver grouping one operand along, and for the same
+    /// reason: a store made through the pointer is a store the owning frame's
+    /// read has to see. Keyed by every member, so either end asks once.
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> cellStores_;
+
+    /// The type a carried binding holds: the join over its initial and every
+    /// value ever assigned to it, anywhere in the program. FROM THE INITIAL
+    /// AND NOT FROM NOTHING - a read on a path that reaches no assignment
+    /// yields what the box was built with, which for a hoisted `var` is
+    /// `undefined`, and claiming otherwise is the one direction this lattice
+    /// cannot undo.
+    mlir::Type cellTypeOf(mlir::Operation * op, mlir::Value cell);
 
     /// ANYTHING THIS ANALYSIS DID NOT DERIVE IS `boxed`. Function parameters,
     /// values crossing a call boundary, and every operation the switch does not
