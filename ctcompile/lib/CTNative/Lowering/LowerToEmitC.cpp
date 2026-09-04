@@ -906,6 +906,43 @@ struct closureLifter {
                        "assignment does not dominate the call, so the interpreter reads the "
                        "undefined the binding was hoisted with";
             }
+            // AND THE WRITE ITSELF, NOT ONLY THE VALUE IT STORES. These are two
+            // different questions and only one of them was being asked.
+            //
+            // The clause above proves the value is IN SCOPE at the call. It
+            // does not prove the write has HAPPENED. store-dominates-call
+            // implies value-dominates-call, because the operand dominates its
+            // own store; the CONVERSE does not hold, and the gap is exactly the
+            // shape this rule exists to admit. In
+            //
+            //     function pick(k) { var v; var t = k * 2;
+            //                        if (k > 0) { v = t; }
+            //                        function get() { return v; } return get(); }
+            //
+            // `t` is computed before the branch, so it dominates every call
+            // while the `ctjs.cell_set` inside the `scf.if` dominates none.
+            // With only the value asked, `pick(-1)` compiled to -2 where the
+            // interpreter says `undefined`: `unboxCells` had replaced the read
+            // with `t` and the conditional store was erased. Three independent
+            // reviews found this within one program each, through the plain,
+            // method and constructor rules alike, and the same hole ate a
+            // `while` whose body stores a value computed above the loop.
+            //
+            // A wrong answer is the one thing this tier may not produce, so the
+            // question the comment above and the refusal below both describe -
+            // does the ASSIGNMENT dominate the call - is now the question the
+            // code asks.
+            if (auto cell = c.getUpvalues()[i].getDefiningOp<ctjs::CreateCellOp>()) {
+                if (ctjs::CellSetOp write = writtenOnce.lookup(cell.getOperation())) {
+                    if (!dominance.properlyDominates(write.getOperation(), at)) {
+                        return "capture " + std::to_string(i) +
+                               " is a binding whose single assignment does not dominate this "
+                               "call of it - the call can be reached without the assignment "
+                               "having run, and the interpreter reads the undefined the binding "
+                               "was hoisted with";
+                    }
+                }
+            }
         }
         return std::nullopt;
     }

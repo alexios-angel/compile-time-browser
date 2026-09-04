@@ -33,6 +33,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/loopwrite.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=LOOPWRITE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/outerstore.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=OUTERSTORE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/methodcap.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=METHODCAP
@@ -125,6 +128,23 @@
 //
 // EARLYREAD: ctjs.func {{.*}}@earlyread$1
 // EARLYREAD-SAME: ctnative.not_native = "a closure used as a value: capture 0 is a binding whose single write does not carry it: its one assignment does not dominate every read of it, and a read before it yields the undefined the binding was hoisted with"
+
+// --- CONDITION 3, THE HALF THE LOOP PROGRAM BELOW DOES NOT REACH ----------
+//
+// `loopwrite` stores `i`, which is defined INSIDE the loop body, so the older
+// clause - does the stored VALUE reach this call - refuses it before the store
+// clause is ever asked. That made the loop pin pass while the store clause was
+// a no-op, and it is how a real wrong answer survived three negative proofs:
+// every witness anyone built happened to store a value from inside the region.
+//
+// HERE `t` IS COMPUTED BEFORE THE BRANCH. It dominates every call, so the
+// value clause says yes; the ctjs.cell_set inside the `scf.if` dominates
+// nothing, so only asking about the STORE refuses this. Compiled without that
+// question, `outerstore(-1)` answered -2 where the interpreter says undefined -
+// the branch was folded away and every call handed `t` unconditionally.
+//
+// OUTERSTORE: ctjs.func {{.*}}@outerstore$1
+// OUTERSTORE-SAME: ctnative.not_native = "a closure used as a value: capture 0 is a binding whose single assignment does not dominate this call of it - the call can be reached without the assignment having run, and the interpreter reads the undefined the binding was hoisted with"
 
 // --- CONDITION 3: A WRITE INSIDE A LOOP, AND A CALL AFTER IT ---------------
 //
@@ -304,6 +324,16 @@ function loopwrite(n) {
     return get();
 }
 var r = loopwrite(3);
+
+//--- outerstore.js
+function outerstore(k) {
+    var v;
+    var t = k * 2;
+    if (k > 0) { v = t; }
+    function get() { return v; }
+    return get();
+}
+var r = outerstore(-1);
 
 //--- methodcap.js
 function make(k) {
