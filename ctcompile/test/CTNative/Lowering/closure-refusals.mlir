@@ -404,9 +404,18 @@
 // `flip` writes the binding with a `ctjs.store_upvalue`, so the box has ONE
 // `ctjs.cell_set` and is still a variable: `use()` answers 2 after `flip()` has
 // run and 1 before it. Condition 1 counts stores in this frame and cannot see
-// that one, so the slot walk asks it - and this is the clause whose relaxation
-// gives a WRONG ANSWER rather than a refusal, because the rewrite would call
-// the first closure at a site the interpreter reaches the second at.
+// that one, so the slot walk asks it.
+//
+// WHAT ITS RELAXATION ACTUALLY GIVES, measured rather than reasoned: a named
+// fatal. `LLVM ERROR: ctnative lowering: \`fn$3\` still names upvalue 0, which
+// the local-function rule removed`, out of removeCaptureSlots. This comment
+// used to say "a WRONG ANSWER rather than a refusal", and that is wrong twice
+// over: it is an abort, and TWO further defences stand behind it - erase the
+// surplus store and the replacement closure goes dead ("nothing calls it"),
+// and only with that relaxed too does a wrong number appear (`bw2` prints 12
+// where the interpreter prints 22). The clause IS load-bearing; the tier is
+// safer than this comment claimed, and how a guard fails is the one thing a
+// reader cannot check without running it.
 //
 // BOUNDWRITE: ctjs.func {{.*}}@reassigns$1
 // BOUNDWRITE-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: a function that reads it ASSIGNS the binding, so the name holds a variable and not one function"
