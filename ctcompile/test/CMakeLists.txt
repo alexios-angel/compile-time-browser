@@ -1354,12 +1354,20 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   # by closure over the callees a ctjs.call_direct reaches: bootstrap's 19 are
   # 3 lifted and 16 whose chain ends in a cell written EXACTLY ONCE from a
   # constant undefined - the hoisted `var`/`const` shape closure-refusals.mlir
-  # pins as HOISTED; phaser's 40 are 2 lifted, 1 arrow reading `this`, and 37
-  # of the same shape; p5's 26 are 12 lifted, 7 of that shape and 7 other.
-  # Module-wide, 250 of bootstrap's 271 closures refused for a reassigned
-  # capture have that shape. So these floors stay where they are, on purpose,
-  # and the next lever is a binding's single dominating write (part 24 Phase
-  # 59 step 3), not another level of nesting.
+  # pinned as HOISTED.
+  #
+  # THAT LEVER WAS PULLED - PART 24 PHASE 59 SLICE 2 STEP 1 - AND THE CLAIMED
+  # COUNT DID NOT MOVE. The single dominating write took the reassigned-capture
+  # refusal from 715 to 13 on phaser, 81 to 15 on p5 and 16 to 4 on bootstrap,
+  # and the LIFT widened with it: `lifted` went 3 -> 46 on phaser and 47 -> 82
+  # on p5, which is why those two floors below are raised and bootstrap's is
+  # not. `claimed` stayed at 4, 37 and 43. A lifted capture is a parameter that
+  # still needs a native carrier, and in a bundle those bindings are objects and
+  # functions - so what the corpora are refused for NOW is where they were
+  # always going to end up: on phaser, "it is stored into something that is not
+  # an object literal made here" 316 -> 744, "it is passed as an argument"
+  # 13 -> 136, "a method field of an object whose shape is not closed"
+  # 236 -> 356. Those three are the next lever, not another clause about cells.
   function(ctcompile_add_native_claims name js floor resolved direct lifted)
     add_test(NAME ctcompile_native_claims_${name}
              COMMAND ${Python3_EXECUTABLE}
@@ -1389,9 +1397,9 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   ctcompile_add_native_claims(launcher "${CMAKE_CURRENT_SOURCE_DIR}/launcher.js" 0 9 9 0)
   ctcompile_add_native_claims(bootstrap
     "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 4 0 21 3)
-  ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 37 0 41 47)
+  ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 37 0 41 82)
   ctcompile_add_native_claims(phaser
-    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 43 0 48 3)
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 43 0 48 46)
 
   # BOTH TEETH, PROVED. Each runs the same check as a child and passes only
   # when that child failed for the stated reason - not ctest's WILL_FAIL,
