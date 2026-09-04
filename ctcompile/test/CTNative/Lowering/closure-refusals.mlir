@@ -24,9 +24,18 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/counter.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=COUNTER
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/hoisted.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/twice.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=HOISTED
+// RUN:   | FileCheck %s --check-prefix=TWICE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/earlyread.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=EARLYREAD
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/loopwrite.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=LOOPWRITE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/methodcap.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=METHODCAP
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/stored.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=STORED
@@ -85,18 +94,66 @@
 // COUNTER: ctjs.func {{.*}}@tick$2
 // COUNTER-SAME: ctnative.not_native = "uses its own closure"
 
-// --- CONDITION 2 AGAIN, FROM THE OTHER SIDE: A CAPTURED `var` --------------
+// --- WHAT SLICE 2 STEP 1 TOOK, AND WHAT IS LEFT OF THIS SECTION ------------
 //
-// Nothing here reassigns anything a reader would call a variable, and the
-// program is still refused - because `compiler_impl::predeclare_locals` hoists
-// `n` to the top of the body, boxes the hoisted `undefined` on the spot, and
-// compiles `var n = 5` as a ctjs.cell_set into that box. The cell therefore IS
-// written after it was built and the tier says so. This is why every capture
-// in native-closure-fixture.js is a parameter, and it is a slice-2 work item
-// rather than a defect.
+// A CAPTURED `var` WAS PINNED HERE AS A REFUSAL AND NOW LIFTS.
+// `compiler_impl::predeclare_locals` hoists `n` to the top of the body, boxes
+// the hoisted `undefined` on the spot, and compiles `var n = 5` as a
+// ctjs.cell_set into that box - so slice 1 read every local binding in the
+// language as reassigned. Phase 59 slice 2 step 1 admits a box with ONE write
+// that dominates every read and every CALL of every closure over it, which is
+// exactly that shape; native-hoisted-capture-fixture.js is seven programs of it
+// through the compilation-unit gate. What is left here is each of the three
+// clauses failing, one program apiece.
+
+// --- CONDITION 1: A BINDING WRITTEN TWICE ----------------------------------
 //
-// HOISTED: ctjs.func {{.*}}@localvar$1
-// HOISTED-SAME: ctnative.not_native = "a closure used as a value: capture 0 is a binding that is reassigned - a shared cell is Phase 59 slice 2"
+// Two ctjs.cell_sets, so which value a capture sees depends on the path taken
+// to the call and the box is shared mutable state again. `get()` here answers
+// 2, and a rule that took the first write it found would answer 1.
+//
+// TWICE: ctjs.func {{.*}}@twice$1
+// TWICE-SAME: ctnative.not_native = "a closure used as a value: capture 0 is a binding whose single write does not carry it: it is assigned more than once"
+
+// --- CONDITION 2: A READ THE WRITE DOES NOT DOMINATE -----------------------
+//
+// `var first = n;` reads the box BEFORE `n = 5` writes it, and the honest
+// answer there is the `undefined` the hoist put in it - which is what the
+// interpreter says, and what makes `first + get()` NaN. Unbox this cell on the
+// stored value and that read becomes 5, the program answers 10, and it compiles
+// clean: the whole failure is a number. Condition 2 is what refuses it.
+//
+// EARLYREAD: ctjs.func {{.*}}@earlyread$1
+// EARLYREAD-SAME: ctnative.not_native = "a closure used as a value: capture 0 is a binding whose single write does not carry it: its one assignment does not dominate every read of it, and a read before it yields the undefined the binding was hoisted with"
+
+// --- CONDITION 3: A WRITE INSIDE A LOOP, AND A CALL AFTER IT ---------------
+//
+// The box is created in the prologue, written once per iteration, and `get()`
+// is called AFTER the loop - which the loop may not have entered at all, so
+// there is a path to that call on which nothing was ever stored. MLIR's
+// dominance says exactly that: `properlyDominates` normalises the later
+// operation into the earlier one's region, and the call is not in the body's,
+// so the store does not dominate it. The admissible shape - the write and the
+// call both inside the body, in that order - is `per_iteration` in
+// native-hoisted-capture-fixture.js.
+//
+// LOOPWRITE: ctjs.func {{.*}}@loopwrite$1
+// LOOPWRITE-SAME: ctnative.not_native = "a closure used as a value: capture 0 is a binding whose value does not reach this call of it - the assignment does not dominate the call, so the interpreter reads the undefined the binding was hoisted with"
+
+// --- CONDITION 3 ACROSS FUNCTIONS: A METHOD CALLED FROM ANOTHER METHOD -----
+//
+// `inner` captures `k`, a binding of `make`'s frame; `outer` calls
+// `this.inner()`, and the receiver lift resolves that call because `%arg0` of
+// `outer` names the same literal. So the site lift() would prepend the capture
+// at is inside `outer` - a DIFFERENT ctjs.func, where `k` does not exist.
+// Nothing in SSA forbids writing it: builtin.module's body is a GRAPH region,
+// in which every operation dominates every other, so a bare dominance question
+// answers "yes" here. whyCapturesDoNotReach compares the enclosing function
+// first, and that comparison is the only thing between this program and an
+// emitc.func referring to a value defined in another one.
+//
+// METHODCAP: ctjs.func {{.*}}@make$1
+// METHODCAP-SAME: ctnative.not_native = "a method field: capture 0 is a binding of the frame that built the closure, and this call of it is in another function - lifting prepends the captured value at the CALL, and there is nothing to prepend here"
 
 // --- CONDITION 4: A CLOSURE STORED TO A GLOBAL ------------------------------
 //
@@ -137,8 +194,11 @@
 // is the whole of slice 1b, and what nested-closure-lift.mlir and
 // native-nested-closure-fixture.js exercise.
 //
-// Here `mid` does NOT lift: `outer` writes `k` after making `mid`, so the cell
-// is shared mutable state and `mid`'s capture is refused as reassigned. `deep`'s
+// Here `mid` does NOT lift: `outer` writes `k` once, with `k = k + 1`, whose
+// own operand READS the box before that write - so the single write does not
+// dominate every read and slice 2 step 1 refuses it too. (Before that step the
+// sentence was "a binding that is reassigned"; the clause that fails is now
+// named, and it is condition 2 rather than the count of writes.) `deep`'s
 // capture is then named on a closure this tier does not carry - `mid` has no
 // `ctnative.captures` - and the refusal says so AND says why `mid` did not
 // lift - the chained sentence is the one a
@@ -147,9 +207,9 @@
 // the suffix is gone: this line pins that.
 //
 // ENCLOSING: ctjs.func {{.*}}@outer$1
-// ENCLOSING-SAME: ctnative.not_native = "a closure used as a value: capture 0 is a binding that is reassigned - a shared cell is Phase 59 slice 2"
+// ENCLOSING-SAME: ctnative.not_native = "a closure used as a value: capture 0 is a binding whose single write does not carry it: its one assignment does not dominate every read of it, and a read before it yields the undefined the binding was hoisted with"
 // ENCLOSING: ctjs.func {{.*}}@mid$2
-// ENCLOSING-SAME: ctnative.not_native = "a closure used as a value: capture 0 is filled from the enclosing closure, which did not lift: capture 0 is a binding that is reassigned - a shared cell is Phase 59 slice 2"
+// ENCLOSING-SAME: ctnative.not_native = "a closure used as a value: capture 0 is filled from the enclosing closure, which did not lift: capture 0 is a binding whose single write does not carry it: its one assignment does not dominate every read of it, and a read before it yields the undefined the binding was hoisted with"
 // And `deep` keeps the old sentence, which is the right one for it: it really
 // does read its own closure, with ctjs.load_upvalue, because nothing lifted it.
 // ENCLOSING: ctjs.func {{.*}}@deep$3
@@ -162,9 +222,9 @@
 // the sentence on `inner`'s closure walks the whole chain to the obstacle.
 //
 // CHAIN3: ctjs.func {{.*}}@mid$2
-// CHAIN3-SAME: ctnative.not_native = "a closure used as a value: capture 0 is filled from the enclosing closure, which did not lift: capture 0 is a binding that is reassigned - a shared cell is Phase 59 slice 2"
+// CHAIN3-SAME: ctnative.not_native = "a closure used as a value: capture 0 is filled from the enclosing closure, which did not lift: capture 0 is a binding whose single write does not carry it: its one assignment does not dominate every read of it, and a read before it yields the undefined the binding was hoisted with"
 // CHAIN3: ctjs.func {{.*}}@inner$3
-// CHAIN3-SAME: ctnative.not_native = "a closure used as a value: capture 0 is filled from the enclosing closure, which did not lift: capture 0 is filled from the enclosing closure, which did not lift: capture 0 is a binding that is reassigned - a shared cell is Phase 59 slice 2"
+// CHAIN3-SAME: ctnative.not_native = "a closure used as a value: capture 0 is filled from the enclosing closure, which did not lift: capture 0 is filled from the enclosing closure, which did not lift: capture 0 is a binding whose single write does not carry it: its one assignment does not dominate every read of it, and a read before it yields the undefined the binding was hoisted with"
 
 // --- AN ENCLOSING FUNCTION THAT LIFTS, AND A NESTED CLOSURE THAT STILL DOES NOT
 //
@@ -213,13 +273,47 @@ function counter(start) {
 }
 var r = counter(0);
 
-//--- hoisted.js
-function localvar() {
-    var n = 5;
+//--- twice.js
+function twice() {
+    var n = 1;
     function get() { return n; }
+    n = 2;
     return get();
 }
-var r = localvar();
+var r = twice();
+
+//--- earlyread.js
+function earlyread() {
+    var n;
+    var first = n;
+    n = 5;
+    function get() { return n; }
+    return first + get();
+}
+var r = earlyread();
+
+//--- loopwrite.js
+function loopwrite(n) {
+    var v;
+    var i = 0;
+    while (i < n) {
+        v = i;
+        i = i + 1;
+    }
+    function get() { return v; }
+    return get();
+}
+var r = loopwrite(3);
+
+//--- methodcap.js
+function make(k) {
+    var o = {
+        inner: function () { return k; },
+        outer: function () { return this.inner() + 1; }
+    };
+    return o.outer();
+}
+var r = make(5);
 
 //--- stored.js
 function make() {

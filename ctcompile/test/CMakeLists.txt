@@ -1941,3 +1941,63 @@ if(TARGET ctjs-translate)
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/check-capture-census.cmake)
 endif()
+
+# ============================================================================
+# === PART 24 PHASE 59 SLICE 2 STEP 1: a binding with one dominating write ===
+# ============================================================================
+# native-hoisted-capture-fixture.js is seven functions whose every capture is a
+# hoisted `var`. `compiler_impl::predeclare_locals` hoists each `var`/`let`/
+# `const` of a body and BOXES it up front holding `undefined`, so the
+# declaration is a `ctjs.cell_set` into an already-built cell and slice 1's
+# immutability proof - "a cell nothing ever writes" - read every local binding
+# in the language as reassigned. That refusal was 715 closures on phaser, 81 on
+# p5 and 16 on bootstrap.
+#
+# A BINDING WRITTEN ONCE IS CONSTANT AFTER THAT WRITE. The value a lifted call
+# prepends is then the STORE'S operand instead of the cell's initial, admitted
+# on three dominance clauses: exactly one `ctjs.cell_set`, dominating every
+# `ctjs.cell_get`, and dominating every CALL of every closure that captured the
+# cell.
+#
+# THE THIRD CLAUSE IS ABOUT THE CALL AND NOT ABOUT THE `ctjs.create_closure`,
+# and that is the whole of this step. A FUNCTION DECLARATION IS HOISTED, so
+# `function get() { return n; }` beside `var n = 5` emits its `op::closure` in
+# the PROLOGUE, before the store: a rule asking the store to dominate the
+# create_closure refused all seven programs here, measured. A closure reads its
+# box when it RUNS, so the point that must follow the write is the call site -
+# which is also the point lift() prepends the value at.
+#
+# THE INITIAL IS NOT CHECKED. Clauses 2 and 3 make it unobservable: nothing can
+# read the box on a path that skips the store. Requiring a constant `undefined`
+# there - the shape the census measured - would have narrowed the rule for a
+# claim it does not need.
+#
+# THE GATE IS THE POINT, NOT THE IR. Every capture is READ in the innermost
+# body, so a lift that prepended the cell's INITIAL rather than the stored value
+# verifies, compiles clean under -Werror and prints `undefined` as NaN - which
+# only the interpreter can say. The `_off_by_one` proof (trailing argument)
+# asserts the comparison can still fail; `three32` is a global the printing
+# prelude loads after the first one it prints.
+#
+# THE REFUSED CLAUSES ARE NOT HERE, and cannot be: native-pipeline.cmake refuses
+# to write a module while any function carries `ctnative.not_native`. A binding
+# written twice, a read the write does not dominate, a write inside a loop whose
+# call is after it, and a method whose call site is in another function are one
+# program apiece in CTNative/Lowering/closure-refusals.mlir, under split-file.
+#
+# One appended block, per part 23 Appendix A.3.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(hoisted_captures
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-hoisted-capture-fixture.js"
+                                three32)
+endif()
+# AND THE CLAIMED COUNT, AS A FLOOR: the four numbers are the MEASURED ones on
+# the day this landed - 18 of 18 functions claimed, 7 globals resolved, 21
+# ctjs.call_direct from the resolver and 14 more from the lift - so a change
+# that stops carrying a hoisted binding fails HERE even if the fixture above
+# were deleted.
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(hoisted_captures
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-hoisted-capture-fixture.js"
+                              18 7 21 14)
+endif()

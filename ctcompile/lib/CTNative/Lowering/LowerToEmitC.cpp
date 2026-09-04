@@ -47,6 +47,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 // mlir-pdll's output CALLS mlir::parseSourceString: a declarative pattern in
@@ -253,6 +254,17 @@ std::string printed(mlir::Type type) {
 // made of - the module body is the factory's frame, so every closure inside a
 // nested function reaches a module binding this way - and it was 15 of the 19
 // callees a direct call reaches in bootstrap before this slice.
+//
+// AND A CELL WITH ONE DOMINATING WRITE IS CONSTANT TOO - PHASE 59 SLICE 2 STEP
+// 1. `compiler_impl::predeclare_locals` boxes every `var`/`let`/`const` of a
+// body up front holding `undefined`, so a declaration is a ctjs.cell_set into
+// an already-built box and slice 1 reads every local binding in the language as
+// reassigned. A binding written ONCE is constant after that write, and the
+// carrier is then the store's operand rather than the cell's initial. The four
+// conditions, and why the initial stops being observable, are stated beside
+// `closureLifter::writtenOnce`; `constantValueOf` is the one function that
+// picks between the two values, because the admission, the call-site rewrite
+// and the unboxing have to agree or a lifted call prints `undefined`.
 
 // The function index the importer put after the last `$` of the symbol. The
 // same reading ResolveGlobals does, and the only link there is between a
@@ -388,6 +400,70 @@ struct closureLifter {
     // error, not a wrong answer.
 
     llvm::SmallVector<ctjs::CreateClosureOp> closures;
+
+    // --- PHASE 59 SLICE 2 STEP 1: A BINDING WITH ONE DOMINATING WRITE -------
+    //
+    // `compiler_impl::predeclare_locals` hoists every `var`/`let`/`const` of a
+    // body and BOXES it up front holding `undefined`, so `var n = 5` is a
+    // ctjs.create_cell of a constant undefined and a ctjs.cell_set into the box
+    // that already exists. Slice 1's immutability proof reads that as a
+    // reassigned binding and refuses it - which is most of a real program: the
+    // shape is 250 of the 271 closures bootstrap refuses for a reassigned
+    // capture, 37 of phaser's 40 reachable callees and 7 of p5's 26.
+    //
+    // A BINDING WRITTEN ONCE IS CONSTANT AFTER THAT WRITE, so a capture taken
+    // after it is exact - and "after" is dominance, not program order. The cell
+    // is admitted when, and only when:
+    //
+    //   1. it has exactly ONE ctjs.cell_set naming it as the box;
+    //   2. that store DOMINATES every ctjs.cell_get of it;
+    //   3. that store DOMINATES every CALL of every closure that captures it -
+    //      asked at the lift, by whyCapturesDoNotReach, and not here;
+    //   4. every other use is one slice 1 already admits - a read at operand 0,
+    //      or a capture of a closure whose target writes no upvalue.
+    //
+    // and its value is then the STORE'S OPERAND rather than the cell's initial.
+    // Conditions 2 and 3 are what make the initial unobservable: no read of the
+    // binding, in this frame or in a closure over it, can happen on a path that
+    // skips the store, so nothing can ever see the hoisted `undefined`. That is
+    // why any initial is admitted here and not only a constant undefined - the
+    // conservative rule the measurement suggested would have cost the shapes
+    // whose hoisted box is initialised from a parameter, and bought nothing,
+    // because condition 2 already carries the whole argument.
+    //
+    // CONDITION 3 IS ABOUT THE CALL AND NOT ABOUT THE `ctjs.create_closure`,
+    // and the difference is the whole of this step. A FUNCTION DECLARATION IS
+    // HOISTED: `function get() { return n; }` beside `var n = 5` compiles to an
+    // `op::closure` in the PROLOGUE, before the store, because that is what
+    // JavaScript does - `get` is callable on the first line of the body. So a
+    // rule that asked the store to dominate the create_closure refused the
+    // exact shape this step exists for; measured, it refused every one of them.
+    // What the lift actually does is prepend the captured VALUE at each CALL,
+    // and a closure reads the box when it RUNS - `run_loop.cpp`,
+    // VM_CASE(get_upvalue) - so the point that has to be dominated is the call
+    // site. A closure created before the store and called after it reads the
+    // stored value in the interpreter and is handed the stored value here.
+    //
+    // MLIR'S DOMINANCE IS EXACTLY THE RIGHT INSTRUMENT, INCLUDING FOR LOOPS.
+    // `properlyDominates` normalises the LATER operation into the earlier one's
+    // region, so a store inside a loop body does NOT dominate a read after the
+    // loop (there is a path around the body) and condition 2 refuses it, while
+    // a cell created inside the body is a fresh box each iteration whose store,
+    // reads and captures are all in that one region and lifts.
+    //
+    // Filled by census(), before any rewrite: every input is a use of the cell,
+    // and the lift changes none of them.
+    llvm::DenseMap<mlir::Operation *, ctjs::CellSetOp> writtenOnce;
+    // Why a cell that HAS a store is not in the map, for the diagnostic. Absent
+    // means the cell has no ctjs.cell_set at all, which is slice 1's shape and
+    // whose refusal - if any - is about a store_upvalue somewhere instead.
+    llvm::DenseMap<mlir::Operation *, std::string> whyNotWrittenOnce;
+    // ONE PER LIFTER, and it stays valid across the classify-then-lift
+    // fixpoint: lift() inserts entry-block ARGUMENTS and erases and creates
+    // operations, and neither changes the block structure a dominator tree is
+    // over. MLIR invalidates a block's operation-order cache itself on every
+    // insertion and removal, so the intra-block half is maintained too.
+    mlir::DominanceInfo dominance{nullptr};
 
     // --- the receiver lift's census ---------------------------------------
     llvm::SmallVector<ctjs::CreateObjectOp> objects;
@@ -563,15 +639,108 @@ struct closureLifter {
                 changed |= mutatesUpvalue.insert(maker.getOperation()).second;
             }
         }
+        // AND THE CELLS WITH ONE DOMINATING WRITE, LAST, because condition 4
+        // asks `mutatesUpvalue` and the fixpoint above is what settles it.
+        singleWriteCensus();
     }
 
-    // A CELL NOTHING EVER WRITES, which is the whole of the immutability proof.
-    // Every use is a read or a capture into a function that writes no upvalue;
-    // a `ctjs.cell_set`, or any use this does not name, fails it.
+    // WHICH CELLS ARE CONSTANT AFTER ONE WRITE - part 24 Phase 59 slice 2 step
+    // 1, the four conditions stated beside `writtenOnce`. Run once, before any
+    // rewrite, so that the verdict a closure is judged on in round 3 of the
+    // lift's fixpoint is the one it was judged on in round 1.
+    void singleWriteCensus() {
+        module.walk([&](ctjs::CreateCellOp cell) {
+            ctjs::CellSetOp store;
+            // Every use that must come AFTER the store for its value to be the
+            // one this cell yields: conditions 2 and 3, collected in one walk
+            // because condition 1 is only known when the walk ends.
+            llvm::SmallVector<mlir::Operation *> mustFollow;
+            for (mlir::OpOperand & use : cell.getResult().getUses()) {
+                mlir::Operation * user = use.getOwner();
+                if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(user)) {
+                    // THE CELL AS THE BOX, NOT AS THE VALUE PUT IN ONE.
+                    // `ctjs.cell_set %other, %cell` stores this cell INTO
+                    // another and is not a write of it - and it is a use this
+                    // rule does not carry, so it fails outright.
+                    if (use.getOperandNumber() != 0) { return; }
+                    // CONDITION 1: EXACTLY ONE. Two writes make the binding
+                    // shared mutable state again, and which one a capture sees
+                    // depends on the path taken to it.
+                    if (store) {
+                        whyNotWrittenOnce[cell.getOperation()] = "it is assigned more than once";
+                        return;
+                    }
+                    store = write;
+                    continue;
+                }
+                if (llvm::isa<ctjs::CellGetOp>(user) && use.getOperandNumber() == 0) {
+                    mustFollow.push_back(user);
+                    continue;
+                }
+                // CONDITION 4: the use list slice 1 already admits, word for
+                // word - isConstantCell asks the same of the same uses.
+                //
+                // AND THE CAPTURE IS NOT ASKED TO FOLLOW THE STORE. The
+                // create_closure is hoisted for a function declaration and the
+                // closure reads the box when it RUNS, so it is the CALL that
+                // has to follow - condition 3, asked by whyCapturesDoNotReach
+                // where the call sites are known.
+                auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(user);
+                if (!made || use.getOperandNumber() < kFirstCapture) { return; }
+                ctjs::FuncOp target = targetOf(made);
+                if (!target || mutatesUpvalue.contains(target.getOperation())) { return; }
+            }
+            // NO STORE AT ALL IS SLICE 1'S CELL, whose value is its initial.
+            // Nothing to record, and nothing to explain.
+            if (!store) { return; }
+            for (mlir::Operation * later : mustFollow) {
+                if (dominance.properlyDominates(store.getOperation(), later)) { continue; }
+                // CONDITION 2. A read the store does not dominate yields the
+                // `undefined` the hoist boxed - the honest answer, and the one
+                // a lift that ignored this would silently replace with the
+                // stored value.
+                whyNotWrittenOnce[cell.getOperation()] =
+                    "its one assignment does not dominate every read of it, and a read before "
+                    "it yields the undefined the binding was hoisted with";
+                return;
+            }
+            writtenOnce[cell.getOperation()] = store;
+        });
+    }
+
+    // THE VALUE EVERY READ OF A CONSTANT CELL YIELDS. The cell's initial when
+    // nothing writes it - slice 1 - and the STORE'S OPERAND when one write
+    // dominates every read and every capture, because from there on the box
+    // holds what that write put in it and no read can see anything else.
+    //
+    // ONE FUNCTION, THREE CALLERS, and that is the point: capturedValue() hands
+    // it to a lifted call site, unboxCells() writes it over every read, and
+    // isConstantCell() decides whether either may happen. They were three
+    // spellings of `cell.getInitial()` and a rule that changed the value had to
+    // change all three together or lower a program that prints undefined.
+    mlir::Value constantValueOf(ctjs::CreateCellOp cell) {
+        if (ctjs::CellSetOp write = writtenOnce.lookup(cell.getOperation())) {
+            return write.getValue();
+        }
+        return cell.getInitial();
+    }
+
+    // A CELL WHOSE VALUE IS THE SAME AT EVERY READ, which is the whole of the
+    // immutability proof. Every use is a read, or a capture into a function
+    // that writes no upvalue, or - PHASE 59 SLICE 2 STEP 1 - the ONE
+    // ctjs.cell_set that singleWriteCensus proved dominates all of them. Any
+    // other write, and any use this does not name, fails it.
     bool isConstantCell(ctjs::CreateCellOp cell) {
+        ctjs::CellSetOp write = writtenOnce.lookup(cell.getOperation());
         for (mlir::OpOperand & use : cell.getResult().getUses()) {
             mlir::Operation * user = use.getOwner();
             if (llvm::isa<ctjs::CellGetOp>(user) && use.getOperandNumber() == 0) { continue; }
+            // THE ONE DOMINATING WRITE. `writtenOnce` holds it only when the
+            // census proved conditions 1 to 4 of the rule beside it, so this
+            // arm is admitting a store that has ALREADY been shown to come
+            // before every read and every capture in the map's own walk - the
+            // two walks ask the same question of the same use list.
+            if (write && user == write.getOperation()) { continue; }
             auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(user);
             if (!made || use.getOperandNumber() < kFirstCapture) { return false; }
             ctjs::FuncOp target = targetOf(made);
@@ -672,7 +841,7 @@ struct closureLifter {
     // capture range does not cover names an upvalue the lift did not carry.
     mlir::Value capturedValue(ctjs::CreateClosureOp c, unsigned i) {
         if (auto cell = c.getUpvalues()[i].getDefiningOp<ctjs::CreateCellOp>()) {
-            return cell.getInitial();
+            return constantValueOf(cell);
         }
         const std::int32_t k = enclosingIndex(c, i);
         if (k < 0) { return {}; }
@@ -698,6 +867,49 @@ struct closureLifter {
             "admission and the call-site rewrite have drifted apart");
     }
 
+    // CONDITION 3 OF THE SINGLE-WRITE RULE, AND THE AVAILABILITY OF EVERY OTHER
+    // CAPTURE, ASKED AT ONE CALL SITE.
+    //
+    // lift() prepends `capturedValue(c, i)` at each call it rewrites, and the
+    // interpreter reads the box when the closure RUNS - so the point that has
+    // to come after the single write, and the point at which the value has to
+    // be in scope at all, is the CALL and not the ctjs.create_closure. Both
+    // halves are one dominance question and this asks it.
+    //
+    // IT IS NOT A THEOREM FOR ANY OF THE THREE RULES, and it used to look like
+    // one for two of them. A plain closure's sites are uses of `c`'s result, so
+    // `c` dominates them - but `c` is HOISTED for a function declaration and
+    // the store is not, so the value need not dominate `c` at all and the chain
+    // through it proves nothing. A method's sites are `obj.m()` calls reached
+    // through the OBJECT, which nothing orders after the ctjs.set_property that
+    // bound the field; a receiver that is another method's `%arg0` is not even
+    // in the same ctjs.func, and there a bare `properlyDominates` answers "yes"
+    // because builtin.module's body is a GRAPH region in which every operation
+    // dominates every other. So the function is compared before the dominance
+    // is, and every rule asks.
+    std::optional<std::string> whyCapturesDoNotReach(ctjs::CreateClosureOp c,
+                                                     mlir::Operation * at) {
+        auto here = at->getParentOfType<ctjs::FuncOp>();
+        for (unsigned i = 0; i < static_cast<unsigned>(c.getUpvalues().size()); ++i) {
+            mlir::Value value = capturedValue(c, i);
+            // Null is a slot no rule admits; whyCapturesDoNotLift says which.
+            if (!value) { continue; }
+            if (value.getParentRegion()->getParentOfType<ctjs::FuncOp>() != here) {
+                return "capture " + std::to_string(i) +
+                       " is a binding of the frame that built the closure, and this call of it "
+                       "is in another function - lifting prepends the captured value at the "
+                       "CALL, and there is nothing to prepend here";
+            }
+            if (!dominance.properlyDominates(value, at)) {
+                return "capture " + std::to_string(i) +
+                       " is a binding whose value does not reach this call of it - the "
+                       "assignment does not dominate the call, so the interpreter reads the "
+                       "undefined the binding was hoisted with";
+            }
+        }
+        return std::nullopt;
+    }
+
     // A CAPTURE THE ENCLOSING CLOSURE FILLS, WHILE THAT CLOSURE IS UNLIFTED:
     // `enclosing_indices` names an upvalue of a function that carries no
     // `ctnative.captures`, because it was not lifted. The closure is refused
@@ -716,6 +928,18 @@ struct closureLifter {
             const mlir::Value operand = c.getUpvalues()[i];
             if (auto cell = operand.getDefiningOp<ctjs::CreateCellOp>()) {
                 if (!isConstantCell(cell)) {
+                    // THE SENTENCE THE CENSUS WROTE, WHEN IT HAS ONE. A cell
+                    // with no ctjs.cell_set at all keeps the slice-1 sentence:
+                    // what is wrong with it is a ctjs.store_upvalue in a
+                    // closure, not an assignment in this frame, and slice 2's
+                    // shared cell is still what carries it.
+                    const auto named = whyNotWrittenOnce.find(cell.getOperation());
+                    if (named != whyNotWrittenOnce.end()) {
+                        return "capture " + std::to_string(i) +
+                               " is a binding whose single write "
+                               "does not carry it: " +
+                               named->second;
+                    }
                     return "capture " + std::to_string(i) +
                            " is a binding that is reassigned - a shared cell is Phase 59 slice 2";
                 }
@@ -864,6 +1088,15 @@ struct closureLifter {
             auto caller = call->getParentOfType<ctjs::FuncOp>();
             if (caller && passesNewTarget.contains(caller.getOperation())) {
                 return "a call of it sits in a function that passes new.target";
+            }
+        }
+        // AND THE CAPTURED VALUES REACH EVERY ONE OF THOSE SITES. The loop above
+        // has just established that every use of the closure value IS a call
+        // this rewrite lowers, so its users are exactly the sites lift() will
+        // prepend the captures at.
+        for (mlir::Operation * user : c.getResult().getUsers()) {
+            if (const std::optional<std::string> why = whyCapturesDoNotReach(c, user)) {
+                return why;
             }
         }
         if (const std::optional<std::string> escapes = whyOwnClosureEscapes(target)) {
@@ -1650,6 +1883,14 @@ struct closureLifter {
         // capture clause first answered "capture 0 is a binding that is
         // reassigned" for a program whose actual problem is the receiver.
         if (const std::optional<std::string> why = whyCapturesDoNotLift(c)) { return why; }
+        // AND THE CAPTURED VALUES REACH THE SITES THIS LIFT IS ABOUT TO
+        // REWRITE - which for a method are the calls through the object, not
+        // the uses of the closure value.
+        for (methodCall at : calls->second) {
+            if (const std::optional<std::string> why = whyCapturesDoNotReach(c, at.call)) {
+                return why;
+            }
+        }
         if (const std::optional<std::string> escapes = whyOwnClosureEscapes(target)) {
             return escapes;
         }
@@ -1847,6 +2088,13 @@ struct closureLifter {
             }
         }
         if (const std::optional<std::string> why = whyCapturesDoNotLift(c)) { return why; }
+        // AND THE CAPTURED VALUES REACH EVERY `new` SITE, which the clause
+        // above has just established are the only users of the closure value.
+        for (mlir::Operation * user : c.getResult().getUsers()) {
+            if (const std::optional<std::string> why = whyCapturesDoNotReach(c, user)) {
+                return why;
+            }
+        }
         if (const std::optional<std::string> escapes = whyOwnClosureEscapes(target)) {
             return escapes;
         }
@@ -2345,10 +2593,16 @@ struct closureLifter {
         llvm::SmallVector<ctjs::CreateCellOp> cells;
         module.walk([&](ctjs::CreateCellOp cell) { cells.push_back(cell); });
         for (ctjs::CreateCellOp cell : cells) {
+            // PHASE 59 SLICE 2 STEP 1: THE ONE WRITE THIS CELL IS ALLOWED, or
+            // null. The census proved it dominates every read and every
+            // capture, so from it onwards the box holds one value and the box
+            // itself is not needed.
+            ctjs::CellSetOp write = writtenOnce.lookup(cell.getOperation());
             std::optional<std::string> why;
             for (mlir::OpOperand & use : cell.getResult().getUses()) {
                 mlir::Operation * user = use.getOwner();
                 if (llvm::isa<ctjs::CellGetOp>(user) && use.getOperandNumber() == 0) { continue; }
+                if (write && user == write.getOperation()) { continue; }
                 if (llvm::isa<ctjs::CreateClosureOp>(user) &&
                     use.getOperandNumber() >= kFirstCapture) {
                     if (user->hasAttr("ctnative.lifted")) { continue; }
@@ -2358,8 +2612,15 @@ struct closureLifter {
                     break;
                 }
                 if (llvm::isa<ctjs::CellSetOp>(user)) {
-                    why = "it is assigned after it was boxed, so its value is not the one the "
-                          "cell was built with";
+                    // A WRITE THE RULE ABOVE DID NOT TAKE, and the census knows
+                    // which clause it failed. Without that sentence the message
+                    // is the old one, which is true of a cell with two writes
+                    // and says nothing about which of them is the problem.
+                    const auto named = whyNotWrittenOnce.find(cell.getOperation());
+                    why = named != whyNotWrittenOnce.end()
+                              ? named->second
+                              : std::string{"it is assigned after it was boxed, so its value is "
+                                            "not the one the cell was built with"};
                     break;
                 }
                 why = ("it reaches `" + user->getName().getStringRef() + "`").str();
@@ -2379,10 +2640,22 @@ struct closureLifter {
             for (mlir::Operation * user : cell.getResult().getUsers()) {
                 if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(user)) { reads.push_back(read); }
             }
+            // THE VALUE, WHICHEVER OF THE TWO IT IS. `constantValueOf` is the
+            // one place that decides, and capturedValue() has already handed
+            // the SAME value to every lifted call site of every closure that
+            // captured this cell - which is why the two cannot be allowed to
+            // disagree and are one function.
+            const mlir::Value value = constantValueOf(cell);
             for (ctjs::CellGetOp read : reads) {
-                read.getResult().replaceAllUsesWith(cell.getInitial());
+                read.getResult().replaceAllUsesWith(value);
                 read.erase();
             }
+            // AND THE WRITE GOES WITH THE BOX. There is no box left to write:
+            // every read has been replaced by what the write stored, so a
+            // ctjs.cell_set left behind would name a create_cell nothing else
+            // uses and refuse the whole function for an operation with nothing
+            // to do. Erased after the reads, because both use the cell.
+            if (write) { write.erase(); }
             cell->setAttr("ctnative.unboxed", mlir::UnitAttr::get(context));
             ++out.cells;
         }
