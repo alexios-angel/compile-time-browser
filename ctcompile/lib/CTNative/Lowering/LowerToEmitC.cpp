@@ -1240,14 +1240,12 @@ struct closureLifter {
     // read in it - so meeting one twice is the same answer twice, and a target
     // graph that led back to a closure already on the chain would otherwise
     // recurse for ever.
-    std::optional<std::string>
-    examineCapturedSlot(functionBinding & plan, ctjs::CreateClosureOp made, unsigned slot,
-                        unsigned depth,
-                        llvm::DenseSet<std::pair<mlir::Operation *, unsigned>> & examined) {
+    std::optional<std::string> examineCapturedSlot(
+        functionBinding & plan, ctjs::CreateClosureOp made, unsigned slot, unsigned depth,
+        llvm::DenseSet<std::pair<mlir::Operation *, unsigned>> & examined) {
         if (!examined.insert({made.getOperation(), slot}).second) { return std::nullopt; }
         ctjs::FuncOp holder = targetOf(made);
-        if (!holder || holder.getBody().empty() ||
-            holder.getBody().front().getNumArguments() < 3) {
+        if (!holder || holder.getBody().empty() || holder.getBody().front().getNumArguments() < 3) {
             return "capture " + std::to_string(slot) +
                    " of it is taken by a closure whose target this tier cannot see";
         }
