@@ -1609,19 +1609,71 @@ struct closureLifter {
         // rewritten FIRST, at which point its entry naming that slot is gone
         // and the outer renumbering meets only surviving indices.
         //
-        // WHY THE MINIMUM DEPTH AND NOT THE MAXIMUM, when one closure holds
-        // slots from more than one binding. Along a chain the inner pair's
-        // depth is exactly one more than the outer's, so the inner CLOSURE's
-        // shallowest slot is still deeper than the outer closure's shallowest -
-        // whereas the maximum orders on some third binding that happened to
-        // travel a long way to reach the same closure, and puts the outer
-        // rewrite first. The residual is a target named by two different
-        // `ctjs.create_closure`s, which a translated program does not produce
-        // and which `move()` would abort on rather than answer wrongly.
+        // AND THE KEY IS THE CLOSURE'S OWN NESTING DEPTH, NOT ANY SLOT'S.
+        //
+        // THIS ORDERED ON SLOT DEPTH AND BOTH CHOICES ARE WRONG. The minimum
+        // aborted the compiler on seven lines of ordinary JavaScript:
+        //
+        //     var w = function (k) { return k + 3; };
+        //     var q = function (k) { return k + 4; };
+        //     var mid = function (k) {
+        //         var p = function (j) { return j + 5; };
+        //         var inner = function (m) { return q(m) + p(m); };
+        //         return w(k) + inner(k);
+        //     };
+        //
+        // `mid` holds `w`, which stops at depth 0, and `q`, which travels on;
+        // `inner` holds the travelled `q` at depth 1 and `p`, owned in mid's
+        // own frame, at depth 0. Both closures therefore key on 0, the
+        // stable_sort tie keeps `mid` first because w's plan inserted it first,
+        // and `move()` finds no image for the slot `inner` still names:
+        // `LLVM ERROR: ... still names upvalue 0, which the local-function rule
+        // removed`. A REGRESSION FROM A REFUSAL TO AN ABORT - step 4 refused
+        // that program.
+        //
+        // AND THE MAXIMUM IS NOT THE FIX, which is why the paragraph that
+        // stood here reasoned its way to the wrong answer: a closure `a`
+        // holding one binding at depth 0 and another at depth 1, with a `b`
+        // inside a's target holding only the first at depth 1, ties under the
+        // maximum and aborts the other way round. No function of the slot
+        // depths orders these, because a slot's depth measures how far a
+        // BINDING travelled, and what the rewrite needs is how deep the CLOSURE
+        // sits.
+        //
+        // Nesting depth answers it directly: a closure made inside another
+        // closure's target is strictly deeper than one made in the frame that
+        // built it, whatever bindings either happens to hold. `ctjs.func` is
+        // IsolatedFromAbove and the functions are siblings in the module, so
+        // the nesting is the closure-creation tree - the target of a
+        // create_closure sits one frame inside the function that makes it.
+        llvm::DenseMap<mlir::Operation *, mlir::Operation *> makerOf;
+        module.walk([&](ctjs::CreateClosureOp c) {
+            ctjs::FuncOp target = targetOf(c);
+            auto in = c->getParentOfType<ctjs::FuncOp>();
+            if (target && in) { makerOf[target.getOperation()] = in.getOperation(); }
+        });
+        llvm::DenseMap<mlir::Operation *, unsigned> funcDepth;
+        const auto nestingOf = [&](mlir::Operation * made) -> unsigned {
+            auto in = made->getParentOfType<ctjs::FuncOp>();
+            if (!in) { return 0; }
+            llvm::SmallVector<mlir::Operation *> path;
+            mlir::Operation * at = in.getOperation();
+            // A CYCLE IS NOT REACHABLE and this stops rather than hangs if one
+            // ever is: the maker edge runs from a target to the function that
+            // makes it, and a function cannot be made inside itself.
+            llvm::SmallPtrSet<mlir::Operation *, 8> seen;
+            while (at && !funcDepth.count(at) && seen.insert(at).second) {
+                path.push_back(at);
+                at = makerOf.lookup(at);
+            }
+            unsigned depth = at ? funcDepth.lookup(at) : 0;
+            for (mlir::Operation * step : llvm::reverse(path)) { funcDepth[step] = ++depth; }
+            return funcDepth.lookup(in.getOperation());
+        };
         llvm::SmallVector<std::pair<mlir::Operation *, slotRemoval *>> ordered;
         for (auto & entry : removals) { ordered.emplace_back(entry.first, &entry.second); }
-        llvm::stable_sort(ordered, [](const auto & left, const auto & right) {
-            return left.second->depth > right.second->depth;
+        llvm::stable_sort(ordered, [&](const auto & left, const auto & right) {
+            return nestingOf(left.first) > nestingOf(right.first);
         });
         for (auto & [made, removal] : ordered) {
             removeCaptureSlots(llvm::cast<ctjs::CreateClosureOp>(made), removal->slots);

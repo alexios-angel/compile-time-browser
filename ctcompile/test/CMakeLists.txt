@@ -1403,10 +1403,10 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   # measurement was taken before the pass folded the calls it writes in another
   # frame into the same counter, and that fold can only add.
   ctcompile_add_native_claims(bootstrap
-    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 4 0 21 59)
-  ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 37 0 41 278)
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 4 0 21 206)
+  ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 37 0 41 328)
   ctcompile_add_native_claims(phaser
-    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 43 0 48 282)
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 43 0 48 283)
 
   # BOTH TEETH, PROVED. Each runs the same check as a child and passes only
   # when that child failed for the stated reason - not ctest's WILL_FAIL,
@@ -2158,4 +2158,13 @@ if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(deep_bindings
                                 "${CMAKE_CURRENT_SOURCE_DIR}/native-deep-binding-fixture.js"
                                 two10)
+endif()
+
+# AND THE CLAIMED COUNT, AS A FLOOR. Left out of the implementing commit on
+# purpose - it had no build and said so rather than invent four numbers, which
+# is the right call and is why these are measured here instead.
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(deep_bindings
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-deep-binding-fixture.js"
+                              44 9 29 37)
 endif()

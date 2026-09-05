@@ -154,3 +154,44 @@ var pair26 = two_names_deep(4);
 var recur21 = deep_recursion(6);
 var three16 = three_frames_in(5);
 var two10 = two_frames_in(4);
+
+// THE ORDERING TRAP, AND WHY PASS B KEYS ON NESTING DEPTH.
+//
+// `mid` holds a binding that STOPS at depth 0 (`w`) and one that TRAVELS on
+// (`q`); `inner` holds the travelled `q` at depth 1 and `p`, owned in mid's own
+// frame, at depth 0. Keyed on the MINIMUM slot depth both closures key on 0,
+// the stable_sort tie keeps `mid` first, and removeCaptureSlots' `move()` finds
+// no image for the slot `inner` still names: the compiler ABORTS on seven lines
+// of ordinary JavaScript, where step 4 merely refused them.
+function order_trap(n) {
+    var w = function (k) { return k + 3; };
+    var q = function (k) { return k + 4; };
+    var mid = function (k) {
+        var p = function (j) { return j + 5; };
+        var inner = function (m) { return q(m) + p(m); };
+        return w(k) + inner(k);
+    };
+    return mid(n);
+}
+
+// AND THE MAXIMUM IS NOT THE FIX EITHER, which is the half a reader is most
+// likely to try. `a` holds `near` at depth 0 and `far` at depth 1; `b`, made
+// inside a's target, holds only `near`, at depth 1. Under MAX both key on 1 and
+// the tie aborts the other way round - so no function of the SLOT depths orders
+// these two programs at once. A slot's depth measures how far a BINDING
+// travelled; the rewrite needs how deep the CLOSURE sits.
+function maxtrap(n) {
+    var far = function (k) { return k + 7; };
+    var outer = function (k) {
+        var near = function (j) { return j + 8; };
+        var a = function (j) {
+            var b = function (m) { return near(m); };
+            return b(j) + far(j);
+        };
+        return a(k);
+    };
+    return outer(n);
+}
+
+var trap15 = order_trap(1);
+var maxt17 = maxtrap(1);
