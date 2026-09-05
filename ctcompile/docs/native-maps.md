@@ -3,8 +3,9 @@
 The native backend can lower standard `Map` instances with one primitive key
 type and numeric values, including closed function parameters, returns and
 lifted captures. A returned handle owns its storage after the factory frame
-ends. The complete Bootstrap factory and its exported Data methods still need
-owned callable environments, object identity keys, nested Maps,
+ends. Monomorphic [returned closures](native-returned-closures.md) can also own
+Map captures after factory return. Bootstrap's exported Data methods still need
+owned method tables, object identity keys, nested Maps,
 component-instance values and host publication.
 
 ## Representation and semantics
@@ -72,7 +73,9 @@ capture cells must be erased bookkeeping for lifted closures. Reassigning a
 shared Map binding, returning a captured method table, publishing a Map in a
 global or object field, or merging Maps through structured phi values remains
 refused. This proof does not supply general builtin effect analysis or an
-owning callable representation.
+general callable representation. Proved returned closures can carry immutable
+Map bindings in owning environments; each extraction joins its own capture
+slot's schema family.
 
 Inference joins every stored value and every queried or stored key across the
 schema family. Independent allocations passed to the same formal parameter

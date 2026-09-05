@@ -159,7 +159,8 @@ void lowering::lower(ctjs::FuncOp fn) {
         mlir::OpBuilder at = mlir::OpBuilder::atBlockBegin(&body);
         for (unsigned i = 3; i < body.getNumArguments(); ++i) {
             mlir::Value arg = body.getArgument(i);
-            if (arg.use_empty() && carrierOf(typeOf(arg)) == carrier::map) {
+            if (arg.use_empty() && (carrierOf(typeOf(arg)) == carrier::map ||
+                                    carrierOf(typeOf(arg)) == carrier::closure)) {
                 ec::CallOpaqueOp::create(at, made.getLoc(), mlir::TypeRange{},
                                          at.getStringAttr("static_cast<void>"),
                                          mlir::ValueRange{arg});

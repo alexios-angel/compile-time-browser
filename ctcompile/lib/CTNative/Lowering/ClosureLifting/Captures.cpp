@@ -298,6 +298,7 @@ std::optional<std::string> closureLifter::whyUpvalueReadsDoNotLift(ctjs::CreateC
     std::optional<std::string> bad;
     target.getBody().walk([&](mlir::Operation * o) {
         if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(o)) {
+            if (read->hasAttr(kNativeEnvironmentRead)) { return; }
             if (read.getClosure() != entry.getArgument(2) ||
                 static_cast<unsigned>(read.getIndex()) >= captures) {
                 bad = "its target reads an upvalue this rewrite cannot name";

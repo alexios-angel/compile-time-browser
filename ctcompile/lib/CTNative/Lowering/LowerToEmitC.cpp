@@ -289,6 +289,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // property of every site in the program at once, so no site's type can
         // be spelled until all of them have been seen.
         lower.censusShapes(accepted);
+        lower.censusEnvironments(accepted);
 
         for (ctjs::FuncOp fn : accepted) { lower.lower(fn); }
         if (!accepted.empty()) { lower.declareGlobals(); }

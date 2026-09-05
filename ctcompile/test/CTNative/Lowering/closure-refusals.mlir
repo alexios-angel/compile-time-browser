@@ -45,15 +45,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enclosing3.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=CHAIN3
-// AND A PROGRAM WITH THE LOWERING RUN TWICE. After one run `mid` is a lifted
-// target that a ctjs.call_direct names, with `ctnative.captures` on it and an
-// extra entry-block argument; a second run meets that closure with ONE capture
-// operand against a target whose upvalue_count is now 0 and refuses it by the
-// descriptor mismatch - it never inserts a second capture parameter the
-// existing call does not pass. MLIR verifies after every pass, so a lift that
-// ran again here would fail this line with CallDirectOp's operand-count error
-// rather than the refusal below. `deep` is refused for a reason that does not
-// change between runs, so the SAME pins hold for both.
+// AND A PROGRAM WITH THE LOWERING RUN TWICE. Returned immutable environments
+// now carry the nested closure after its enclosing factory lifts. Both runs
+// must verify: a repeated pass cannot insert another capture argument.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/relift.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=RELIFT
@@ -138,7 +132,7 @@
 // defence, and this pin is what holds it.
 //
 // SHAREDRETURN: ctjs.func {{.*}}@maker$1
-// SHAREDRETURN-SAME: ctnative.not_native = "a closure used as a value: it is returned - Phase 59 slice 2"
+// SHAREDRETURN-SAME: ctnative.not_native = "a closure used as a value: returned closure escapes or is inspected through `ctjs.store_global`"
 // AND THE BOX SAYS SO TOO, in the sentence whyCarriedCellStaysABox writes: the
 // census admits a cell on its use list alone, and whether every closure that
 // SHARES it was actually lifted is only knowable after the fixpoint. A binding
@@ -147,7 +141,7 @@
 // rather than in `ctnative.not_native` because the walk in
 // admission::function meets `%arg2`'s create_closure use before the body.)
 // SHAREDRETURN: ctjs.create_cell
-// SHAREDRETURN-SAME: ctnative.cell_reason = "the closure that shares it is not lifted, so the binding needs a real box and not a variable in this frame - it is returned - Phase 59 slice 2"
+// SHAREDRETURN-SAME: ctnative.cell_reason = "the closure that shares it is not lifted, so the binding needs a real box and not a variable in this frame - returned closure escapes or is inspected through `ctjs.store_global`"
 
 // A mutable string binding now has an owning carrier and a lifted pointer.
 // The mixed-carrier refusal is covered by native-strings.mlir's SHARED-MIXED.
@@ -183,7 +177,7 @@
 // --- CONDITION 4: A CLOSURE RETURNED ---------------------------------------
 //
 // RETURNED: ctjs.func {{.*}}@maker$1
-// RETURNED-SAME: ctnative.not_native = "a closure used as a value: it is returned - Phase 59 slice 2"
+// RETURNED-SAME: ctnative.not_native = "a closure used as a value: returned closure escapes or is inspected through `ctjs.store_global`"
 
 // --- CONDITION 4: A CLOSURE PASSED AS AN ARGUMENT ---------------------------
 //
@@ -260,13 +254,14 @@
 
 // --- AN ENCLOSING FUNCTION THAT LIFTS, AND A NESTED CLOSURE THAT STILL DOES NOT
 //
-// `mid` lifts - `k` is a constant cell of `outer`'s frame - so `deep`'s capture
-// IS `mid`'s parameter after round one, and condition 1 is satisfied. What
-// refuses `deep` is condition 4: it is returned. The refusal names THAT and not
-// the capture, which is what shows the slice-1b clause admitted the operand.
+// `mid` lifts first, making its inherited capture a value parameter. The
+// returned-closure census then sees a closed factory and carries that value
+// into deep's owning environment. This checks the interaction of the two
+// rewrites, and repeating the pass must not change the capture arity.
 //
-// RELIFT: ctjs.func {{.*}}@mid$2
-// RELIFT-SAME: ctnative.not_native = "a closure used as a value: it is returned - Phase 59 slice 2"
+// RELIFT: emitc.func @mid_2({{.*}}f64) -> !emitc.opaque<"ctn_env_deep_3">
+// RELIFT: emitc.func @deep_3({{.*}}f64) -> f64
+// RELIFT-NOT: ctnative.not_native
 
 // --- STAGE 59B: AN ARROW THAT READS ITS LEXICAL `this` ----------------------
 //
@@ -353,7 +348,7 @@
 // holds a function VALUE rather than naming the operation it reached.
 //
 // BOUNDVALUE: ctjs.func {{.*}}@passed_name$1
-// BOUNDVALUE-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: the name reaches `ctjs.return`, so the binding holds a function VALUE and this step makes none"
+// BOUNDVALUE-SAME: ctnative.not_native = "a closure used as a value: returned closure escapes or is inspected through `ctjs.cell_set`"
 
 // --- CONDITION 5: A NAME WHOSE FUNCTION CLOSES OVER A DATA BINDING ----------
 //
@@ -408,7 +403,7 @@
 // inner clause as BOUNDVALUE, one frame further in.
 //
 // DEEPVALUE: ctjs.func {{.*}}@deep_value$1
-// DEEPVALUE-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: a function one frame further in names the binding through its enclosing closure, which did not lift: the name reaches `ctjs.return`, so the binding holds a function VALUE and this step makes none"
+// DEEPVALUE-SAME: ctnative.not_native = "a closure used as a value: returned closure escapes or is inspected through `ctjs.cell_set`"
 
 // --- THE SLOT CLAUSE: A CLOSURE THAT ASSIGNS THE NAME -----------------------
 //

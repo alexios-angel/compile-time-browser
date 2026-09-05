@@ -32,6 +32,7 @@
 // is the file in miniature.
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 #include "Inference/PropertyKey.h"
+#include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
@@ -348,6 +349,14 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     cellStores_.clear();
     mapKeys_.clear();
     mapValues_.clear();
+    environmentCaptures_.clear();
+    top->walk([&](ctjs::CreateClosureOp made) {
+        const auto target = environmentTarget(made);
+        if (!target.empty()) {
+            environmentCaptures_[target].assign(made.getUpvalues().begin(),
+                                                made.getUpvalues().end());
+        }
+    });
     top->walk([&](ctjs::CallOp call) {
         const llvm::StringRef action = nativeMapAction(call);
         if (action.empty()) { return; }
@@ -466,6 +475,30 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                                                   llvm::ArrayRef<const TypeLattice *> operands,
                                                   llvm::ArrayRef<TypeLattice *> results) {
     mlir::MLIRContext * c = op->getContext();
+
+    // The callable's nominal identity is known before any capture type. Its
+    // environment reads subscribe to the original captured value; requiring
+    // all capture types first would deadlock Map inference through a closure.
+    if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
+        made && !environmentTarget(op).empty()) {
+        propagateIfChanged(results[0],
+                           results[0]->join(TypeValue{ClosureType::get(c, environmentTarget(op))}));
+        return mlir::success();
+    }
+    if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op);
+        read && op->hasAttr(kNativeEnvironmentRead)) {
+        const auto at = environmentCaptures_.find(environmentTarget(op));
+        if (at == environmentCaptures_.end() || read.getIndex() < 0 ||
+            static_cast<size_t>(read.getIndex()) >= at->second.size()) {
+            return op->emitError("native environment read has no proved capture");
+        }
+        const auto * captured = getLatticeElementFor(
+            getProgramPointAfter(op), at->second[static_cast<size_t>(read.getIndex())]);
+        if (!captured->getValue().isUninitialized()) {
+            propagateIfChanged(results[0], results[0]->join(captured->getValue()));
+        }
+        return mlir::success();
+    }
 
     // AN UNINITIALIZED OPERAND MEANS "NOT YET", NOT "UNKNOWN". The framework
     // visits an operation before every value feeding it has an answer - a

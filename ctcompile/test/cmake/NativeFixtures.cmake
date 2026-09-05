@@ -553,8 +553,21 @@ if(COMMAND ctcompile_add_native_pipeline)
                                 "${CMAKE_CURRENT_SOURCE_DIR}/native-map-flow-fixture.js"
                                 lifetime42)
 endif()
+
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(map_flow
                               "${CMAKE_CURRENT_SOURCE_DIR}/native-map-flow-fixture.js"
                               29 22 44 8)
+endif()
+
+# A returned callable owns immutable captures and preserves Map aliasing.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(returned_closures
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-returned-closure-fixture.js"
+                                lifetime42)
+endif()
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(returned_closures
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-returned-closure-fixture.js"
+                              35 22 36 23)
 endif()

@@ -1,6 +1,6 @@
 //===- CTNativeTypes.td - the ctnative type lattice, as TypeDefs ----------===//
 //
-// FIFTEEN TYPES AND NO HAND-WRITTEN C++ TYPE CLASS. Part 24's Stage 53A:
+// SIXTEEN TYPES AND NO HAND-WRITTEN C++ TYPE CLASS. Part 24's Stage 53A:
 // "every one a TypeDef, no C++."
 //
 // THE ORDER OF THE FILE IS THE ORDER OF THE LATTICE, bottom to top:
@@ -324,6 +324,25 @@ def CTNative_SetType : CTNative_Type<"Set", "set"> {
   }];
   let parameters = (ins "::mlir::Type":$elementType);
   let assemblyFormat = "`<` $elementType `>`";
+}
+
+def CTNative_ClosureType : CTNative_Type<"Closure", "closure"> {
+  let summary = "A proved monomorphic callable with an owning capture environment";
+  let description = [{
+    The target is a nominal identity, not a C++ function pointer. The native
+    returned-closure proof checks every producer and use before introducing
+    this type. Calls name that target directly and unpack its environment;
+    immutable numbers, booleans, strings and owning Map handles are stored
+    by value. Function identity inspection, mixed targets and mutable binding
+    captures are refused. Stored polymorphic callables still need a concrete
+    std::function signature and are outside this representation.
+
+    Capture types are inferred from the creation site and the lifted target's
+    parameters. They are not recursively embedded in this nominal type, so a
+    recursive call graph cannot grow the type lattice indefinitely.
+  }];
+  let parameters = (ins StringRefParameter<>:$target);
+  let assemblyFormat = "`<` $target `>`";
 }
 
 //===----------------------------------------------------------------------===//

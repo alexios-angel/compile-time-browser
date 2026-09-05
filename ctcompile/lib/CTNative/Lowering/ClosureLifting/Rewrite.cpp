@@ -5,6 +5,12 @@ namespace ctcompile::ctnative::lowering_detail {
 
 liftReport closureLifter::run() {
     liftReport out;
+    // Environment annotations are conclusions of this invocation's proof,
+    // never a way for input IR to opt into an owning representation.
+    module.walk([](mlir::Operation * op) {
+        op->removeAttr(kNativeEnvironment);
+        op->removeAttr(kNativeEnvironmentRead);
+    });
     // PHASE 59 SLICE 2 STEP 4, BEFORE EVERYTHING. It erases boxes, stores,
     // reads and calls, and the three censuses below record the uses of
     // every cell - so a verdict taken before this rewrite would be about
@@ -67,6 +73,12 @@ liftReport closureLifter::run() {
                 "at least one closure it never unlifts, so a rule is admitting a closure "
                 "that lift() then leaves in place");
         }
+        // A local lift can close a factory/helper and change its signature.
+        // Rebuild returned-value flows from the current IR before deciding
+        // the next round; retaining a public-boundary refusal would miss the
+        // closure returned by a factory that just became private.
+        returnedClosures.clear();
+        returnedClosureCensus();
         // Per target: the closures that name it, and the first reason any
         // of them could not be lifted. A target's signature changes for the
         // whole program, so ONE unliftable creation site blocks every other.
@@ -95,9 +107,10 @@ liftReport closureLifter::run() {
             // and a body that is a free function at one site and a
             // constructor at another needs two.
             const std::optional<std::string> why =
-                constructorClosures.contains(c.getOperation()) ? whyNotLiftableConstructor(c)
-                : methodClosures.contains(c.getOperation())    ? whyNotLiftableMethod(c)
-                                                               : whyNotLiftable(c);
+                returnedClosures.contains(c.getOperation())      ? whyNotReturnedClosure(c)
+                : constructorClosures.contains(c.getOperation()) ? whyNotLiftableConstructor(c)
+                : methodClosures.contains(c.getOperation())      ? whyNotLiftableMethod(c)
+                                                                 : whyNotLiftable(c);
             if (why) {
                 reasonOf[c.getOperation()] = *why;
                 if (target) { blocked.try_emplace(target.getOperation(), *why); }
@@ -280,7 +293,9 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     }
 
     llvm::SmallVector<ctjs::LoadUpvalueOp> reads;
-    target.getBody().walk([&](ctjs::LoadUpvalueOp read) { reads.push_back(read); });
+    target.getBody().walk([&](ctjs::LoadUpvalueOp read) {
+        if (!read->hasAttr(kNativeEnvironmentRead)) { reads.push_back(read); }
+    });
     for (ctjs::LoadUpvalueOp read : reads) {
         const auto k = static_cast<unsigned>(read.getIndex());
         const mlir::Value slot = entry.getArgument(captureArgument(k));
@@ -342,6 +357,11 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     // which the conditions above have just established.
     mlir::SymbolTable::setSymbolVisibility(target, mlir::SymbolTable::Visibility::Private);
     ++out.functions;
+
+    if (returnedClosures.contains(made.front())) {
+        liftReturnedClosure(made.front(), target, captures, parameters, out);
+        return;
+    }
 
     // A METHOD, AND WHETHER ITS RECEIVER IS A PARAMETER AT ALL. The lift
     // marks `ctnative.receiver` only when `%arg0` is READ: a method that

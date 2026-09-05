@@ -13,7 +13,8 @@
 // commutative, associative, with `bottom` as its identity and `boxed`
 // absorbing - and those are properties, not cases. So the table is checked, and
 // then all four laws are checked exhaustively over a sample of the type
-// universe; associativity alone is 21^3 = 9261 triples.
+// universe; associativity alone is 27^3 = 19683 triples. The mutation counts
+// below were measured on the original 21-type sample (9261 triples).
 //
 // THE TWO HALVES CATCH DIFFERENT THINGS, and that was measured rather than
 // hoped for. Three guards in CTNativeLattice.cpp were removed one at a time and
@@ -182,6 +183,51 @@ const MeetRow kMeetTable[] = {
      "json absorbs everything below it - a value it could not type does not "
      "become typeable because one path was a bool"},
 
+    // --- nominal callables --------------------------------------------------
+    {"!ctnative.closure<\"get$1\">", "!ctnative.closure<\"get$1\">", "!ctnative.closure<\"get$1\">",
+     "the same target retains its nominal callable type"},
+    {"!ctnative.bottom", "!ctnative.closure<\"get$1\">", "!ctnative.closure<\"get$1\">",
+     "an unreachable path does not erase a known callable target"},
+    {"!ctnative.closure<\"get$2\">", "!ctnative.closure<\"get$1\">",
+     "!ctnative.variant<!ctnative.closure<\"get$1\">, !ctnative.closure<\"get$2\">>",
+     "distinct targets remain alternatives even when their source names match; "
+     "the type cannot promise one direct callee for both"},
+    {"!ctnative.opt<!ctnative.closure<\"get$1\">>", "!ctnative.closure<\"get$1\">",
+     "!ctnative.opt<!ctnative.closure<\"get$1\">>",
+     "an absent callable remains possible after meeting its definite target"},
+    {"!ctnative.opt<!ctnative.closure<\"get$1\">>", "!ctnative.opt<!ctnative.closure<\"get$2\">>",
+     "!ctnative.opt<!ctnative.variant<!ctnative.closure<\"get$1\">, "
+     "!ctnative.closure<\"get$2\">>>",
+     "absence is hoisted once without losing either possible target"},
+    {"!ctnative.opt<!ctnative.bottom>", "!ctnative.closure<\"get$1\">",
+     "!ctnative.opt<!ctnative.closure<\"get$1\">>",
+     "an absent value and a callable produce an optional callable"},
+    {"!ctnative.closure<\"get$1\">", "!ctnative.bool",
+     "!ctnative.variant<!ctnative.bool, !ctnative.closure<\"get$1\">>",
+     "callable truthiness is an operation, not a boolean representation"},
+    {"!ctnative.closure<\"get$1\">", "!ctnative.num<f64>",
+     "!ctnative.variant<!ctnative.closure<\"get$1\">, !ctnative.num<f64>>",
+     "a callable is not interchangeable with a numeric address"},
+    {"!ctnative.closure<\"get$1\">", "!ctnative.vec<!ctnative.num<f64>>",
+     "!ctnative.variant<!ctnative.closure<\"get$1\">, !ctnative.vec<!ctnative.num<f64>>>",
+     "a callable environment and a vector are unrelated representations"},
+    {"!ctnative.closure<\"get$1\">", "!ctnative.map<!ctnative.str<utf8>, !ctnative.num<f64>>",
+     "!ctnative.variant<!ctnative.closure<\"get$1\">, "
+     "!ctnative.map<!ctnative.str<utf8>, !ctnative.num<f64>>>",
+     "capturing a Map does not make the callable itself a Map"},
+    {"!ctnative.variant<!ctnative.closure<\"get$1\">, !ctnative.closure<\"get$2\">>",
+     "!ctnative.closure<\"get$1\">",
+     "!ctnative.variant<!ctnative.closure<\"get$1\">, !ctnative.closure<\"get$2\">>",
+     "revisiting one target cannot discard another target already seen"},
+    {"!ctnative.vec<!ctnative.closure<\"get$1\">>", "!ctnative.vec<!ctnative.closure<\"get$2\">>",
+     "!ctnative.vec<!ctnative.variant<!ctnative.closure<\"get$1\">, "
+     "!ctnative.closure<\"get$2\">>>",
+     "structural containers preserve nominal identity in their elements"},
+    {"!ctnative.closure<\"get$1\">", "!ctnative.boxed", "!ctnative.boxed",
+     "a known callable cannot recover a target from an unproved path"},
+    {"!ctnative.closure<\"get$1\">", "!ctnative.json", "!ctnative.json",
+     "the lattice's existing upper bound also absorbs nominal callables"},
+
     // --- containers ---------------------------------------------------------
     {"!ctnative.vec<!ctnative.num<i32>>", "!ctnative.vec<!ctnative.num<f64>>",
      "!ctnative.vec<!ctnative.num<f64>>", "containers meet elementwise"},
@@ -231,6 +277,12 @@ const char * const kSampleTypes[] = {
     "!ctnative.shared<!ctnative.bool>",
     "!ctnative.weak<!ctnative.bool>",
     "!ctnative.variant<!ctnative.bool, !ctnative.num<f64>>",
+    "!ctnative.closure<\"get$1\">",
+    "!ctnative.closure<\"get$2\">",
+    "!ctnative.opt<!ctnative.closure<\"get$1\">>",
+    "!ctnative.opt<!ctnative.closure<\"get$2\">>",
+    "!ctnative.variant<!ctnative.closure<\"get$1\">, !ctnative.closure<\"get$2\">>",
+    "!ctnative.vec<!ctnative.closure<\"get$1\">>",
 };
 
 //===--------------------------------------------------------------------===//
@@ -361,8 +413,8 @@ int main() {
     // members in place, so a list sorted before it is not sorted after it;
     // delete that call and `meet(set<bool>, meet(owned<bool>, shared<bool>))`
     // answers `variant<set, shared>` where the other bracketing answers
-    // `variant<shared, set>`. Four of the 9261 triples go red and every row of
-    // the hand-written table above stays green, which is why both exist.
+    // `variant<shared, set>`. Four of the original sample's 9261 triples went
+    // red while every table row stayed green, which is why both exist.
     int associateFailures = 0;
     int triples = 0;
     for (const Type a : sample) {
@@ -528,7 +580,7 @@ int main() {
     // exits 0 and looks exactly like a passing one; this is the number to
     // update when a case is added, and the reason it is here rather than a
     // lower bound is that a lower bound would not notice a case being deleted.
-    const int expectedChecks = 84;
+    const int expectedChecks = 112;
     if (checks != expectedChecks) {
         std::printf("FAILED  ran %d checks, expected %d - a case was added or lost\n", checks,
                     expectedChecks);

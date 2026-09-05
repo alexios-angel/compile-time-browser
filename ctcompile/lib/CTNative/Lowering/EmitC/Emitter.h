@@ -94,6 +94,9 @@ struct lowering {
     bool needsVector = false;
     bool needsString = false;
     bool needsMap = false;
+    llvm::SmallVector<std::string> environments;
+    void censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted);
+    bool replaceEnvironment(mlir::Operation * op);
     static const char * spelled(mlir::Type type);
 
     std::string spelling(const siteShape & site) const;

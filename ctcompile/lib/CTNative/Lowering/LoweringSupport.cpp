@@ -34,6 +34,7 @@ carrier carrierOf(mlir::Type type) {
     if (type == nullptr) { return carrier::none; }
     if (llvm::isa<BoolType>(type)) { return carrier::boolean; }
     if (llvm::isa<NumType>(type)) { return carrier::number; }
+    if (llvm::isa<ClosureType>(type)) { return carrier::closure; }
     if (auto string = llvm::dyn_cast<StrType>(type);
         string && string.getEncoding() == StrEncoding::UTF8) {
         return carrier::string;
@@ -87,6 +88,10 @@ mlir::Type mapCarrierType(MapType type) {
         ("std::shared_ptr<ctnative::number_map<" + mapKeySpelling(type.getKeyType()) + ">>").str());
 }
 
+mlir::Type closureCarrierType(ClosureType type) {
+    return ec::OpaqueType::get(type.getContext(), "ctn_env_" + cIdentifier(type.getTarget()));
+}
+
 // Can this value's carrier be undefined? True for the two `opt` rows, whose
 // NaN representation is exact only in arithmetic, comparison and truthiness.
 bool mayBeUndefined(mlir::Type type) {
@@ -105,6 +110,7 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     case carrier::string:
         return ec::OpaqueType::get(c, StrType::get(c, StrEncoding::UTF8).cppCarrier());
     case carrier::structure:
+    case carrier::closure:
     case carrier::map:
     case carrier::vector:
     case carrier::none: break;

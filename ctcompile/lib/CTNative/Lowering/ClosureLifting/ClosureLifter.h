@@ -634,6 +634,16 @@ struct closureLifter {
 
     void constructorCensus();
 
+    struct returnedClosure {
+        llvm::SmallVector<mlir::Operation *> calls;
+        std::string reason;
+    };
+    llvm::DenseMap<mlir::Operation *, returnedClosure> returnedClosures;
+    void returnedClosureCensus();
+    std::optional<std::string> whyNotReturnedClosure(ctjs::CreateClosureOp c);
+    void liftReturnedClosure(ctjs::CreateClosureOp c, ctjs::FuncOp target, unsigned captures,
+                             unsigned parameters, liftReport & out);
+
     static bool isNotObjectLike(mlir::Value v);
 
     std::optional<std::string> whyConstructorReturnsAnObject(ctjs::FuncOp target);

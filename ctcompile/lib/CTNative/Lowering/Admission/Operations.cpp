@@ -5,6 +5,23 @@ namespace ctcompile::ctnative::lowering_detail {
 
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
+    if (auto made = llvm::dyn_cast<CreateClosureOp>(o); made && !environmentTarget(o).empty()) {
+        for (mlir::Value captured : made.getUpvalues()) {
+            const auto c = carrierOf(typeOf(captured));
+            if (c != carrier::number && c != carrier::boolean && c != carrier::string &&
+                c != carrier::map) {
+                return refuse(
+                    "returned closure capture needs an owning scalar or Map carrier; got " +
+                    printed(typeOf(captured)));
+            }
+        }
+        return true;
+    }
+    if (auto read = llvm::dyn_cast<LoadUpvalueOp>(o); read && o->hasAttr(kNativeEnvironmentRead)) {
+        auto closure = llvm::dyn_cast_or_null<ClosureType>(typeOf(read.getClosure()));
+        return (closure && closure.getTarget() == environmentTarget(o)) ||
+               refuse("returned closure invocation has no single proved target");
+    }
     if (auto reason = o->getAttrOfType<mlir::StringAttr>(kNativeMapReason)) {
         return refuse(reason.getValue().str());
     }
@@ -223,7 +240,9 @@ bool admission::op(mlir::Operation * o) {
                 }
                 continue;
             }
-            if (carrierOf(typeOf(operands[i])) != carrier::string &&
+            if (carrierOf(typeOf(operands[i])) != carrier::closure &&
+                carrierOf(typeOf(operands[i])) != carrier::boolean &&
+                carrierOf(typeOf(operands[i])) != carrier::string &&
                 !(carrierOf(typeOf(operands[i])) == carrier::map &&
                   nativeMapGroup(operands[i]) >= 0) &&
                 !numeric(operands[i], "argument")) {

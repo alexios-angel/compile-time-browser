@@ -1,5 +1,6 @@
 //===- NativeMap.cpp - standard identity and instance-use proofs ---------===//
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
+#include "ctcompile/CTNative/Analysis/NativeClosure.h"
 
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
@@ -93,6 +94,18 @@ struct flowGraph {
                call->getNumOperands() == fn.getBody().front().getNumArguments();
     }
     void build(mlir::ModuleOp module) {
+        llvm::StringMap<ctjs::CreateClosureOp> environments;
+        module.walk([&](ctjs::CreateClosureOp made) {
+            if (!environmentTarget(made).empty()) { environments[environmentTarget(made)] = made; }
+        });
+        module.walk([&](ctjs::LoadUpvalueOp read) {
+            if (!read->hasAttr(kNativeEnvironmentRead)) { return; }
+            auto made = environments.lookup(environmentTarget(read));
+            if (made && read.getIndex() >= 0 &&
+                static_cast<size_t>(read.getIndex()) < made.getUpvalues().size()) {
+                join(read.getResult(), made.getUpvalues()[static_cast<size_t>(read.getIndex())]);
+            }
+        });
         module.walk([&](ctjs::FuncOp fn) {
             fn.getBody().walk([&](ctjs::ReturnOp ret) { returns[fn].push_back(ret); });
             auto & exits = returns[fn];
@@ -160,6 +173,9 @@ std::string collect(plan & out, flowGraph & graph,
             if (!get || keyOf(get.getKey()) != "set") {
                 return "native Map flow contains an unproved call result";
             }
+        } else if (auto read = object.getDefiningOp<ctjs::LoadUpvalueOp>();
+                   read && read->hasAttr(kNativeEnvironmentRead)) {
+            // The graph connected this extraction to its proved owning slot.
         } else if (!sites.contains(object.getDefiningOp())) {
             return ("native Map flow contains a non-Map producer `" +
                     object.getDefiningOp()->getName().getStringRef() + "`")
@@ -167,6 +183,10 @@ std::string collect(plan & out, flowGraph & graph,
         }
         for (mlir::OpOperand & use : object.getUses()) {
             if (erasedCapture(use)) { continue; }
+            if (llvm::isa<ctjs::CreateClosureOp>(use.getOwner()) && use.getOperandNumber() >= 2 &&
+                !environmentTarget(use.getOwner()).empty()) {
+                continue;
+            }
             if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
                 call && use.getOperandNumber() >= 3) {
                 auto fn = flowGraph::target(call);

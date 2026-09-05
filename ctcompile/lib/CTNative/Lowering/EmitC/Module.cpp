@@ -93,6 +93,12 @@ void lowering::declareGlobals() {
         }
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNativeMapHelpers));
     }
+    if (!environments.empty()) {
+        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("tuple"), b.getUnitAttr());
+        for (const std::string & definition : environments) {
+            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(definition));
+        }
+    }
     llvm::SmallVector<llvm::StringRef> names(globals.keys().begin(), globals.keys().end());
     llvm::sort(names);
     for (llvm::StringRef name : names) {

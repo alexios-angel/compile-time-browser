@@ -216,6 +216,7 @@ public:
 private:
     llvm::StringMap<llvm::SmallVector<mlir::Value, 4>> globalStores_;
     bool globalsAreDynamic_ = false;
+    llvm::StringMap<llvm::SmallVector<mlir::Value, 4>> environmentCaptures_;
     // (object value, key) -> the values ever stored under that key, for
     // closed-shape objects only; built in initialize().
     llvm::DenseMap<std::pair<mlir::Value, llvm::StringRef>, llvm::SmallVector<mlir::Value, 2>>

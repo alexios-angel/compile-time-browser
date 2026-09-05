@@ -31,6 +31,10 @@ void lowering::retype(ctjs::FuncOp fn) {
             return;
         }
         const carrier c = carrierOf(typeOf(v));
+        if (c == carrier::closure) {
+            v.setType(closureCarrierType(llvm::cast<ClosureType>(typeOf(v))));
+            return;
+        }
         if (c == carrier::map) {
             auto map = llvm::cast<MapType>(typeOf(v));
             needsMap = true;

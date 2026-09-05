@@ -28,6 +28,9 @@ bool admission::function(ctjs::FuncOp fn) {
             // ResolveGlobals makes the same exemption on the same operand
             // (own_closure_escapes), for the same reason.
             if (closureLowersToNothing(user)) { continue; }
+            if (llvm::isa<ctjs::CreateClosureOp>(user) && !environmentTarget(user).empty()) {
+                continue; // environment construction drops the two enclosing-frame operands
+            }
             // AND A CLOSURE THIS TIER CANNOT CARRY IS NOT THE SAME THING
             // as a function that reads its own closure. Both are uses of
             // %arg2, and this check runs before the body walk, so every

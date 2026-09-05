@@ -62,6 +62,7 @@ mlir::Value lowering::memberAccess(mlir::OpBuilder & b, mlir::Location where, ml
 }
 
 void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType) {
+    if (replaceEnvironment(o)) { return; }
     using namespace ctjs;
     mlir::OpBuilder b(o);
     const mlir::Location where = o->getLoc();

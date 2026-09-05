@@ -2,6 +2,7 @@
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
@@ -52,6 +53,7 @@ enum class carrier {
     number,
     string,
     map,
+    closure,
     structure,
     vector
 };
@@ -60,6 +62,7 @@ carrier carrierOf(mlir::Type type);
 mlir::Type vectorCarrierType(mlir::MLIRContext * context);
 llvm::StringRef mapKeySpelling(mlir::Type type);
 mlir::Type mapCarrierType(MapType type);
+mlir::Type closureCarrierType(ClosureType type);
 bool mayBeUndefined(mlir::Type type);
 mlir::Type carrierType(mlir::MLIRContext * context, carrier which);
 std::string printed(mlir::Type type);
