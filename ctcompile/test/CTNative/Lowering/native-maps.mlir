@@ -1,0 +1,165 @@
+// RUN: split-file %s %t
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../native-map-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prototype.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PROTOTYPE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/assigned.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ASSIGNED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/host.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=HOST
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/detached.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DETACHED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/replaced.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=REPLACED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/arity.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ARITY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/seeded.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SEEDED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/returned.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=RETURNED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/passed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PASSED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nested.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NESTED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MIXED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=OBJECT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-value.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=STRING
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-value.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=OPTIONAL
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/get-equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EQUALITY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=KEYS
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/snapshot-write.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SNAPSHOT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/snapshot-return.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SNAPSHOT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/entries.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ENTRIES
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/computed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=COMPUTED
+
+// NATIVE: emitc.include <"memory">
+// NATIVE: emitc.func @main() -> i32
+// NATIVE-DAG: call_opaque "ctnative::make_number_map<double>"
+// NATIVE-DAG: call_opaque "ctnative::make_number_map<std::string>"
+// NATIVE-DAG: call_opaque "ctnative::make_number_map<bool>"
+// NATIVE-DAG: call_opaque "ctnative::map_set"
+// NATIVE-DAG: call_opaque "ctnative::map_get"
+// NATIVE-DAG: call_opaque "ctnative::map_has"
+// NATIVE-DAG: call_opaque "ctnative::map_delete"
+// NATIVE-DAG: call_opaque "ctnative::map_clear"
+// NATIVE-DAG: call_opaque "ctnative::map_size"
+// NATIVE-DAG: call_opaque "ctnative::map_keys"
+// NATIVE-DAG: call_opaque "ctnative::map_values"
+// PROTOTYPE: ctjs.func private @probe$1
+// PROTOTYPE-SAME: ctnative.not_native = "standard Map constructor identity escapes or is inspected"
+// ASSIGNED: ctjs.func private @probe$1
+// ASSIGNED-SAME: ctnative.not_native = "standard Map binding is assigned in this program"
+// HOST: ctjs.func private @probe$1
+// HOST-SAME: ctnative.not_native = "standard Map identity is unproved with other host/global value reads"
+// DETACHED: ctjs.func private @probe$1
+// DETACHED-SAME: ctnative.not_native = "native Map method is detached, escapes, or has a different receiver"
+// REPLACED: ctjs.func private @probe$1
+// REPLACED-SAME: ctnative.not_native = "native Map instance escapes or is mutated through `ctjs.set_property`"
+// ARITY: ctjs.func private @probe$1
+// ARITY-SAME: ctnative.not_native = "native Map method requires its exact argument count"
+// SEEDED: ctjs.func private @probe$1
+// SEEDED-SAME: ctnative.not_native = "native Map requires an empty constructor"
+// RETURNED: ctjs.func private @probe$1
+// RETURNED-SAME: ctnative.not_native = "native Map instance escapes or is mutated through `ctjs.return`"
+// PASSED: ctjs.func private @probe$1
+// PASSED-SAME: ctnative.not_native = "native Map instance escapes or is mutated through `ctjs.call_direct`"
+// NESTED: ctjs.func private @probe$1
+// NESTED-SAME: ctnative.not_native = "native Map instance escapes or is mutated through `ctjs.call`"
+// MIXED: ctjs.func private @probe$1
+// MIXED-SAME: ctnative.not_native = "native Map needs one primitive key carrier and definite numeric values; inferred !ctnative.map<!ctnative.variant<
+// OBJECT: ctjs.func private @probe$1
+// OBJECT-SAME: ctnative.not_native = "native Map needs one primitive key carrier and definite numeric values; inferred !ctnative.map<!ctnative.boxed,
+// STRING: ctjs.func private @probe$1
+// STRING-SAME: ctnative.not_native = "native Map needs one primitive key carrier and definite numeric values; inferred !ctnative.map<!ctnative.str<utf8>, !ctnative.str<utf8>>"
+// OPTIONAL: ctjs.func private @probe$1
+// OPTIONAL-SAME: ctnative.not_native = "native Map needs one primitive key carrier and definite numeric values; inferred !ctnative.map<!ctnative.num<i32>, !ctnative.opt<!ctnative.num<i32>>>"
+// EQUALITY: ctjs.func private @probe$1
+// EQUALITY-SAME: ctnative.not_native = "equality on a value that may be undefined - NaN would not compare the way undefined does"
+// KEYS: ctjs.func private @probe$1
+// KEYS-SAME: ctnative.not_native = "native Map snapshot requires confined numeric elements"
+// SNAPSHOT: ctjs.func private @probe$1
+// SNAPSHOT-SAME: ctnative.not_native = "native Map snapshot requires confined numeric elements"
+// ENTRIES: ctjs.func private @probe$1
+// ENTRIES-SAME: ctnative.not_native = "native Map property is not a supported constant method or size"
+// COMPUTED: ctjs.func private @probe$1
+// COMPUTED-SAME: ctnative.not_native = "native Map property is not a supported constant method or size"
+
+//--- prototype.js
+function probe() { var map = new Map(); return map.size; }
+Map.prototype.has = 0;
+probe();
+
+//--- assigned.js
+function probe() { var map = new Map(); return map.size; }
+Map = 0;
+probe();
+
+//--- host.js
+function probe() { var map = new Map(); return map.size; }
+globalThis.Map = 0;
+probe();
+
+//--- detached.js
+function probe() { var map = new Map(); var has = map.has; return has(1); }
+probe();
+
+//--- replaced.js
+function probe() { var map = new Map(); map.has = 0; return map.size; }
+probe();
+
+//--- arity.js
+function probe() { var map = new Map(); map.set(1); return map.size; }
+probe();
+
+//--- seeded.js
+function probe() { var map = new Map([]); return map.size; }
+probe();
+
+//--- returned.js
+function probe() { return new Map(); }
+probe();
+
+//--- passed.js
+function probe() { var map = new Map(); consume(map); return map.size; }
+function consume(value) { return 1; }
+probe();
+
+//--- nested.js
+function probe() { var map = new Map(); map.set("nested", new Map()); return map.size; }
+probe();
+
+//--- mixed-keys.js
+// A read with a different primitive carrier also widens the key schema.
+function probe() { var map = new Map(); map.set(1, 2); return map.has("1"); }
+probe();
+
+//--- object-key.js
+function probe() { var map = new Map(); map.set({}, 2); return map.size; }
+probe();
+
+//--- string-value.js
+function probe() { var map = new Map(); map.set("key", "value"); return map.size; }
+probe();
+
+//--- optional-value.js
+function probe(mode) {
+    var map = new Map();
+    var value;
+    if (mode > 0) { value = 2; }
+    map.set(1, value);
+    return map.size;
+}
+probe(0);
+
+//--- get-equality.js
+function probe() { var map = new Map(); map.set(1, 2); return map.get(1) === 2; }
+probe();
+
+//--- string-keys.js
+function probe() { var map = new Map(); map.set("key", 2); var keys = map.keys(); return keys.length; }
+probe();
+
+//--- snapshot-write.js
+function probe() { var map = new Map(); map.set(1, 2); var values = map.values(); values[0] = 3; return values[0]; }
+probe();
+
+//--- snapshot-return.js
+function probe() { var map = new Map(); return map.values(); }
+probe();
+
+//--- entries.js
+function probe() { var map = new Map(); map.entries(); return map.size; }
+probe();
+
+//--- computed.js
+function probe(method) { var map = new Map(); return map[method](1); }
+probe("has");

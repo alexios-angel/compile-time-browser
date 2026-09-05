@@ -31,6 +31,7 @@
 // `(-1) >>> 0` is 4294967295, which does not fit an int32. That pair of facts
 // is the file in miniature.
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
+#include "ctcompile/CTNative/Analysis/NativeMap.h"
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
@@ -507,13 +508,15 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
 // answer: `Array.prototype[7] = x` is not a thing this tier undertakes to
 // survive, and it is recorded here rather than assumed away.
 bool TypeInference::isDenseVectorSite(mlir::Value array) {
-    if (!array.getDefiningOp<ctjs::CreateArrayOp>()) { return false; }
+    const llvm::StringRef action = nativeMapAction(array.getDefiningOp());
+    const bool snapshot = action == "keys" || action == "values";
+    if (!array.getDefiningOp<ctjs::CreateArrayOp>() && !snapshot) { return false; }
     for (mlir::OpOperand & use : array.getUses()) {
         mlir::Operation * user = use.getOwner();
         if (llvm::isa<ctjs::AppendOp>(user)) {
             // OPERAND 0 IS THE ARRAY BEING BUILT; operand 1 is the element,
             // and an array appended INTO another array has escaped into it.
-            if (use.getOperandNumber() != 0) { return false; }
+            if (use.getOperandNumber() != 0 || snapshot) { return false; }
             continue;
         }
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
@@ -535,6 +538,14 @@ mlir::Type TypeInference::elementTypeOf(mlir::Operation * op, mlir::Value array)
     // `num` would claim a number for a read the interpreter answers
     // `undefined` for, which is the one direction the lattice cannot undo.
     mlir::Type element = absentType(op->getContext());
+    if (auto call = array.getDefiningOp<ctjs::CallOp>();
+        call && (nativeMapAction(call) == "keys" || nativeMapAction(call) == "values")) {
+        const TypeLattice * lattice = getLatticeElementFor(getProgramPointAfter(op), array);
+        if (auto vector = llvm::dyn_cast_or_null<VecType>(lattice->getValue().getType())) {
+            return meet(element, vector.getElementType());
+        }
+        return element;
+    }
     const auto appended = appends_.find(array);
     if (appended == appends_.end()) { return element; }
     for (mlir::Value value : appended->second) {
@@ -598,6 +609,23 @@ mlir::Type TypeInference::cellTypeOf(mlir::Operation * op, mlir::Value cell) {
     return held;
 }
 
+mlir::Type TypeInference::mapTypeOf(mlir::Operation * op, mlir::Value map) {
+    const auto joined = [&](const auto & index) {
+        mlir::Type type = BottomType::get(op->getContext());
+        const auto found = index.find(map);
+        if (found != index.end()) {
+            for (mlir::Value value : found->second) {
+                const TypeLattice * lattice = getLatticeElementFor(getProgramPointAfter(op), value);
+                if (!lattice->getValue().isUninitialized()) {
+                    type = meet(type, lattice->getValue().getType());
+                }
+            }
+        }
+        return type;
+    };
+    return MapType::get(op->getContext(), joined(mapKeys_), joined(mapValues_));
+}
+
 mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     globalStores_.clear();
     globalsAreDynamic_ = false;
@@ -605,6 +633,18 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     fieldStoreSites_.clear();
     appends_.clear();
     cellStores_.clear();
+    mapKeys_.clear();
+    mapValues_.clear();
+    top->walk([&](ctjs::CallOp call) {
+        const llvm::StringRef action = nativeMapAction(call);
+        if (action.empty()) { return; }
+        ctjs::ConstructOp root = nativeMapRoot(call.getReceiver());
+        if (!root) { return; }
+        if (action == "set" || action == "get" || action == "has" || action == "delete") {
+            mapKeys_[root.getResult()].push_back(call.getArgs()[0]);
+        }
+        if (action == "set") { mapValues_[root.getResult()].push_back(call.getArgs()[1]); }
+    });
     // THE FIELD INDEX IS OVER THE GROUP, NOT OVER ONE VALUE, and that is the
     // whole of what a receiver parameter costs this analysis. `this.x = 5`
     // inside a lifted method is a store the CALLER's `o.x` has to see, and
@@ -727,6 +767,37 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     // boxed by whoever reads the final state.
     for (const TypeLattice * operand : operands) {
         if (operand->getValue().isUninitialized()) { return mlir::success(); }
+    }
+
+    mlir::Type mapAnswer;
+    if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op); made && made->hasAttr(kNativeMapSite)) {
+        mapAnswer = mapTypeOf(op, made.getResult());
+    } else if (const llvm::StringRef action = nativeMapAction(op); !action.empty()) {
+        if (action == "size") {
+            mapAnswer = doubleType(c);
+        } else if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
+            auto map = llvm::dyn_cast_or_null<MapType>(operands[1]->getValue().getType());
+            if (!map) { return mlir::success(); }
+            if (action == "set") {
+                mapAnswer = map;
+            } else if (action == "has" || action == "delete") {
+                mapAnswer = boolType(c);
+            } else if (action == "get") {
+                mapAnswer = meet(absentType(c), map.getValueType());
+            } else if (action == "clear") {
+                mapAnswer = absentType(c);
+            } else if (action == "keys" || action == "values") {
+                mlir::Type element = action == "keys" ? map.getKeyType() : map.getValueType();
+                if (llvm::isa<BottomType>(element)) { element = doubleType(c); }
+                mapAnswer = VecType::get(c, element);
+            }
+        }
+    }
+    if (mapAnswer) {
+        for (TypeLattice * result : results) {
+            propagateIfChanged(result, result->join(TypeValue{mapAnswer}));
+        }
+        return mlir::success();
     }
 
     // The operand-sensitive rows, which exist only because of BigInt. Each one

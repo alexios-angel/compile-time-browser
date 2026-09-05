@@ -329,7 +329,7 @@ The distinction is the whole design, so it is the first column:
 | ND-7 | `o.later + 1`, `o.later < 1`, `if (o.later)` | `NaN`, `false`, falsy | NaN arithmetic, the same | **emitted, exact** |
 | ND-7 | `o.later === 5`, `typeof o.later`, printing it | `false`, `"undefined"`, `undefined` | `NaN == 5` false, `"number"`, `nan` | **refused** |
 | ND-8 | `[10,20,30][7]`, the same `[-1]`, `[NaN]`, `[Infinity]` | `undefined` | `v[i]` is undefined behaviour | **guard** (`ctnative::vec_at`) |
-| ND-8 defect | `[10,20,30][0.5]` | `10` — the engine truncates | — | **wrong answer, OPEN** |
+| ND-8 truncation | `[10,20,30][0.5]` | `10` — the engine truncates | — | **emitted, exact** (fixed 2026-09-05) |
 | ND-9 | `2147483648 \| 0` | `-2147483648` | `static_cast<int32_t>` is UB | **refused** |
 | ND-10 | `({x:1}).constructor` | a function, truthy | an uninitialised field | **refused** |
 | ND-11 | `({class:1}).class`, `({NAN:1}).NAN` | `1` | does not compile | **refused** |
@@ -346,7 +346,7 @@ The distinction is the whole design, so it is the first column:
 | ND-6 | `native-divergence-fixture.js` (`negzero*`, `poszero*`) | — |
 | ND-7 | `native-divergence-fixture.js` (`u_*`, `b_*`); `native-struct-fixture.js` | `CTNative/Lowering/divergence-refusals.mlir` (EQUALITY, TYPEOF); `global-undefined.mlir` (HOISTED, PICK, OUTERSTORE, READBEFORE, ONEPATH — the printing row, and DOMINATES / FIELD for the narrowing that pays for it) |
 | ND-8 | `native-divergence-fixture.js` (`idx_*`) | — |
-| ND-8 defect | `native-index-truncation-fixture.js`, registered to FAIL | — |
+| ND-8 truncation | `native-index-truncation-fixture.js`, `native-map-fixture.js` | — |
 | ND-9 | — | `divergence-refusals.mlir` (BITWISE) |
 | ND-10 | `native-struct-fixture.js`, the shadowed case | `CTNative/Lowering/shape-field-names.mlir` (INHERITED) |
 | ND-11 | — | `shape-field-names.mlir` (KEYWORD, MACRO) |
@@ -357,15 +357,15 @@ The distinction is the whole design, so it is the first column:
 `native-divergence-fixture.js` goes through the Phase 62½-D gate as
 `ctcompile_native_unit_pipeline_divergence` (and its deduced twin), and
 through Phase 63 Step 7's two-toolchain compile as
-`ctcompile_compile_clean_pipeline_divergence`. Its negative proof is
-`ctcompile_native_unit_pipeline_index_truncation` — a program registered to
-**fail**, over the one guard that is measurably wrong (ND-8's defect below).
+`ctcompile_compile_clean_pipeline_divergence`. The original fractional-index defect witness now passes as
+`ctcompile_native_unit_pipeline_index_truncation`; its `_off_by_one` control
+proves the comparison still catches a wrong answer (ND-8 below).
 
 **Writing this list found two things the code did not do**, which is the
 reason part 24 §A.2 asks for a test per entry rather than a paragraph per
 entry: the fractional-index defect under ND-8, and the fact under it that the
-differential gate's own `-DMUTATE` negative proof has never run against a
-generated module.
+differential gate's own `-DMUTATE` negative proof had not run against a
+generated module. Both findings are now fixed.
 
 ---
 
@@ -592,8 +592,8 @@ mutation that turns EQUALITY's `===` into `<` fails the pin.
 `[10, 20, 30][7]` is `undefined` in JavaScript. The obvious lowering,
 `v[static_cast<size_t>(i)]` on a `std::vector<double>`, is **undefined
 behaviour** — not a different number, an unbounded one. The same is true of a
-negative index and of a fractional one, and JavaScript answers `undefined` for
-all three (`a[-1]` and `a[0.5]` are property reads that miss).
+negative index. Fractional numeric indices need special care: this
+interpreter truncates them toward zero, unlike ECMAScript property lookup.
 
 ### What the tier does about it
 
@@ -602,7 +602,8 @@ all three (`a[-1]` and `a[0.5]` are property reads that miss).
 
 ```c++
 inline double vec_at(const std::vector<double> & v, double i) {
-  if (!(i >= 0.0) || i != std::trunc(i) || i >= static_cast<double>(v.size())) {
+  i = std::trunc(i);
+  if (!(i >= 0.0) || i >= static_cast<double>(v.size())) {
     return NAN;
   }
   return v[static_cast<std::vector<double>::size_type>(i)];
@@ -627,59 +628,34 @@ and the reference would skip it (ND-7's printing row).
 `native-array-fixture.js` says in its own header why it omits this case; this
 fixture is where it is covered.
 
-### THE OPEN DEFECT THIS ENTRY FOUND — a fractional index is truncated, not missed
+### Fractional indices: fixed 2026-09-05
 
-**Status: OPEN. This is a DEFECT, not a divergence** — the standard it fails
-is the ctbrowser VM, and this file's own table says the VM wins, always.
-Found 2026-09-02 by writing the witness above and running it.
+The previous helper rejected every non-integral index. The reference truncates
+first: `[10,20,30][0.5]` is `10`, `[1.5]` is `20`, `[2.9]` is `30`, and
+`[-0.5]` is `10` because truncation produces negative zero. `[3.1]` and
+`[-1.5]` still miss. ECMAScript engines treat these as non-index properties;
+the native backend follows this project's interpreter.
 
-`vec_at`'s `i != std::trunc(i)` clause answers NaN for a non-integral index.
-**This interpreter truncates toward zero and then bounds-checks.** Measured
-with `ctcompile-test-native-reference` on the devbox, 2026-09-02:
+Map `keys()` and `values()` return array snapshots in the current interpreter.
+Adding their native lowering made the old defect a dependency of the new
+feature. The shared helper now calls `std::trunc` before testing its bounds;
+NaN and infinity still fail the guard before any integer conversion.
 
-| expression | the interpreter | `vec_at` | V8 |
-|---|---|---|---|
-| `[10,20,30][0.5]` | `10` | `NaN` | `undefined` |
-| `[10,20,30][1.5]` | `20` | `NaN` | `undefined` |
-| `[10,20,30][2.9]` | `30` | `NaN` | `undefined` |
-| `[10,20,30][-0.5]` | `10` | `NaN` | `undefined` |
-| `[10,20,30][3.1]` | `undefined` | `NaN` | `undefined` |
-| `[10,20,30][-1.5]` | `undefined` | `NaN` | `undefined` |
+`native-index-truncation-fixture.js` is retained as a passing differential
+regression, with GCC/Clang, deduced-type and off-by-one controls. The Map fixture
+also checks fractional reads through both numeric snapshots, including a
+negative fractional index and a computed parameter. This fixes the original
+2026-09-02 witness rather than preserving a known wrong answer as the
+comparison gate's negative control.
 
-`[-0.5]` is the sharpest of them: `std::trunc(-0.5)` is `-0`, and `-0 >= 0` is
-true, so the engine reads element 0.
+### The comparison gate's mutation anchor: fixed 2026-09-03
 
-So the engine diverges from ECMA-262 here (V8 reads the *property* named
-`"0.5"`, which a dense array does not have), and the native tier picked the
-standard's answer over the interpreter's. That is exactly the mistake ND-1
-warns about in the string encoding: "semantics-preserving against the
-specification" is the wrong target for a tier whose oracle is this VM.
-
-**The fix is one clause in `LowerToEmitC.cpp`'s `vec_at`** — truncate the index
-instead of rejecting it, and keep the two bounds tests — and it is NOT made
-here, because that file belongs to another agent this week. It is reported
-instead, in the form that cannot be ignored:
-
-`ctcompile/test/native-index-truncation-fixture.js` is a program registered to
-**fail** the differential gate (`ctcompile_native_unit_pipeline_index_truncation`,
-`-DEXPECT_FAILURE=global 'idx_fractional' differs`). It doubles as the negative
-proof for `native-divergence-fixture.js`: a fixture that claims every guard
-agrees is worth nothing until the gate is seen catching one that does not, on
-a module the pipeline generated. **The day `vec_at` is fixed, that test goes
-red** — because the gate will start passing — and this entry has to be
-rewritten by whoever fixed it.
-
-### A second finding, recorded where it was found
-
-`check-native-unit.cmake`'s `-DMUTATE` negative proof anchors the off-by-one
-on the literal text `std::printf(`. The emitter writes that spelling only for
-the hand-written `native-fixture.emitc.mlir`; a **generated** module gets a
-bare `printf(`. So the driver's own mutation proof has never run against
-pipeline output — it aborts with *"cannot mutate - no std::printf( in the
-emitted C++"* — and every `ctcompile_native_unit_pipeline_*` test is
-consequently a gate with no registered negative proof of its own. Changing the
-anchor to `printf(` matches both spellings and is a one-word fix;
-`check-native-unit.cmake` is not this work's to edit, so it is reported.
+The original `-DMUTATE` proof looked only for `std::printf(`, which appeared
+in the handwritten fixture but not generated C++. The gate now recognizes
+both spellings. Generated pipeline fixtures can name a numeric global for an
+off-by-one control, including the index-truncation and Map fixtures. Those
+controls must fail for the named global, rather than for a missing mutation
+anchor.
 
 ---
 

@@ -1634,52 +1634,12 @@ endif()
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(divergence
                                 "${CMAKE_CURRENT_SOURCE_DIR}/native-divergence-fixture.js")
-  # THE NEGATIVE PROOF, AND IT IS A REAL DEFECT RATHER THAN AN INJECTED ONE.
-  #
-  # The fixture above claims every emitted guard agrees with the interpreter.
-  # That claim is worth nothing until the gate is shown catching a guard that
-  # does NOT, on a module this pipeline generated. `vec_at` answers NaN for a
-  # fractional index where this interpreter truncates - `[10,20,30][0.5]` is
-  # 10 - so this program is registered to FAIL, naming the global. When
-  # LowerToEmitC.cpp is fixed the gate starts passing, THIS TEST GOES RED, and
-  # whoever fixed it is made to come back and update ND-8. See
-  # native-index-truncation-fixture.js and ctcompile/docs/native-divergences.md.
-  #
-  # WHY THIS WITNESS AND NOT JUST THE DRIVER'S -DMUTATE. Until 2026-09-03 the
-  # answer was that -DMUTATE could not run here at all: it anchored the
-  # off-by-one on the literal `std::printf(`, which only the HAND-WRITTEN
-  # native-fixture.emitc.mlir emits, so it aborted with "cannot mutate" on
-  # every generated program. That is fixed - the anchor takes the bare
-  # `printf(` a generated module writes, and the four base pipeline programs
-  # now carry a `_off_by_one` proof each.
-  #
-  # This witness stays, because it proves something -DMUTATE cannot: -DMUTATE
-  # breaks the C++ ON PURPOSE and asks whether the comparison notices. This
-  # asks whether the comparison notices a divergence the compiler produces on
-  # its own, from unmodified sources, which is the failure the gate actually
-  # exists to catch.
-  set(_defect_js "${CMAKE_CURRENT_SOURCE_DIR}/native-index-truncation-fixture.js")
-  set(_defect_module "${CMAKE_CURRENT_BINARY_DIR}/index-truncation.pipeline.emitc.mlir")
-  add_custom_command(
-    OUTPUT "${_defect_module}"
-    COMMAND ${CMAKE_COMMAND}
-            -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
-            -DOPT=$<TARGET_FILE:ctjs-opt>
-            -DSOURCE=${_defect_js}
-            -DOUTPUT=${_defect_module}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline.cmake"
-    DEPENDS "${_defect_js}" "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline.cmake"
-            ctjs-translate ctjs-opt
-    COMMENT "Lowering the index-truncation defect witness through the native pipeline")
-  add_custom_target(ctcompile-native-pipeline-index-truncation ALL DEPENDS "${_defect_module}")
-  ctcompile_add_native_unit(pipeline_index_truncation "${_defect_module}" "${_defect_js}"
-                            "-DEXPECT_FAILURE=global 'idx_fractional' differs")
-  # IT STILL HAS TO COMPILE CLEAN. A wrong answer is not a licence to emit a
-  # file Phase 63 Step 7 would reject, and this is the one program in the tree
-  # whose C++ is known to be wrong - so it is the one most worth building.
-  if(COMMAND ctcompile_add_compile_clean)
-    ctcompile_add_compile_clean(pipeline_index_truncation "${_defect_module}")
-  endif()
+  # ND-8 is now fixed: the reference truncates indices before bounds checks.
+  # Keep the original defect witness as a passing differential regression,
+  # with an injected off-by-one proving that the comparison still has teeth.
+  ctcompile_add_native_pipeline(index_truncation
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-index-truncation-fixture.js"
+                                idx_fractional)
 endif()
 
 # === PART 24 PHASE 59 SLICE 1: closures, carried by lifting ===
@@ -2186,4 +2146,18 @@ if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(strings
                               "${CMAKE_CURRENT_SOURCE_DIR}/native-string-fixture.js"
                               17 12 28 11)
+endif()
+
+# Confined standard Maps: owning identity, primitive keys and numeric values.
+# Differential execution includes NaN/signed-zero keys, mutation, aliasing,
+# ordered snapshots and argument evaluation through lifted shared cells.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(maps
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-map-fixture.js"
+                                numeric275)
+endif()
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(maps
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-map-fixture.js"
+                              22 19 23 2)
 endif()

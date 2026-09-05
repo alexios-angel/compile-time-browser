@@ -296,7 +296,7 @@ def CTNative_VecType : CTNative_Type<"Vec", "vec"> {
 }
 
 def CTNative_MapType : CTNative_Type<"Map", "map"> {
-  let summary = "`std::unordered_map<K, V>` - a JavaScript `Map`, or an open object shape";
+  let summary = "a typed JavaScript `Map`, or an open object shape";
   let description = [{
     Part 24 §8's row. Also the answer for an object whose shape Stage 56A
     could NOT close: "Anything else and it stays a map."
@@ -305,9 +305,11 @@ def CTNative_MapType : CTNative_Type<"Map", "map"> {
     HASH, and the two disagree on exactly the values this project has
     already been careful about elsewhere: `NaN` is its own key in a JS Map
     and is never equal to itself under `==`, and `0` and `-0` are the SAME
-    key in a JS Map while `Object.is` distinguishes them. Phase 61 owes a
-    key adaptor or a refusal; the type does not pretend the question is
-    settled.
+    key in a JS Map while `Object.is` distinguishes them. The first native
+    Map lowering proves confined standard instances with one primitive key
+    carrier and numeric values, using an owning insertion-ordered entry list
+    with SameValueZero lookup. Other Map schemas and open object shapes still
+    need a representation proof or a refusal; the type alone is not one.
   }];
   let parameters = (ins "::mlir::Type":$keyType, "::mlir::Type":$valueType);
   let assemblyFormat = "`<` $keyType `,` $valueType `>`";

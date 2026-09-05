@@ -34,8 +34,10 @@
 // --convert-scf-to-emitc, which already handles `scf.if`, `scf.for` and
 // `scf.while`. A TypeConverter converts by TYPE, and every JavaScript value
 // has the same type; the lattice is per VALUE.
+#include "NativeMapHelpers.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
@@ -126,6 +128,7 @@ enum class carrier {
     boolean,
     number,
     string,
+    map,
     structure,
     vector
 };
@@ -146,6 +149,14 @@ carrier carrierOf(mlir::Type type) {
         // in a branch, under `!` and as truthiness (both are falsy), refused
         // where the difference shows (equality) - the number rows' shape.
         if (llvm::isa<BoolType>(opt.getElementType())) { return carrier::boolean; }
+    }
+    if (auto map = llvm::dyn_cast<MapType>(type)) {
+        const auto key = map.getKeyType();
+        const auto string = llvm::dyn_cast<StrType>(key);
+        const bool primitiveKey = llvm::isa<BottomType, NumType, BoolType>(key) ||
+                                  (string && string.getEncoding() == StrEncoding::UTF8);
+        return primitiveKey && llvm::isa<BottomType, NumType>(map.getValueType()) ? carrier::map
+                                                                                  : carrier::none;
     }
     // PHASE 57A: A DENSE ARRAY IS A `std::vector<double>` AND NOTHING ELSE
     // YET. The element carrier decides: `vector<bool>` is a bit-packed
@@ -170,6 +181,19 @@ mlir::Type vectorCarrierType(mlir::MLIRContext * c) {
     return ec::LValueType::get(ec::OpaqueType::get(c, kVectorType));
 }
 
+llvm::StringRef mapKeySpelling(mlir::Type type) {
+    if (llvm::isa<BottomType, NumType>(type)) { return "double"; }
+    if (llvm::isa<BoolType>(type)) { return "bool"; }
+    if (llvm::isa<StrType>(type)) { return "std::string"; }
+    llvm::report_fatal_error("native Map key has no carrier; admission should refuse it");
+}
+
+mlir::Type mapCarrierType(MapType type) {
+    return ec::OpaqueType::get(
+        type.getContext(),
+        ("std::shared_ptr<ctnative::number_map<" + mapKeySpelling(type.getKeyType()) + ">>").str());
+}
+
 // Can this value's carrier be undefined? True for the two `opt` rows, whose
 // NaN representation is exact only in arithmetic, comparison and truthiness.
 bool mayBeUndefined(mlir::Type type) {
@@ -188,6 +212,7 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     case carrier::string:
         return ec::OpaqueType::get(c, StrType::get(c, StrEncoding::UTF8).cppCarrier());
     case carrier::structure:
+    case carrier::map:
     case carrier::vector:
     case carrier::none: break;
     }
@@ -4805,6 +4830,7 @@ struct admission {
                    llvm::isa<ctjs::FuncOp>(arg.getOwner()->getParentOp()) && arg.getArgNumber() < 3;
         }
         mlir::Operation * o = v.getDefiningOp();
+        if (isNativeMapBookkeeping(o)) { return true; }
         if (isDeclarationClosure(o) || isKeyOnlyString(o) || isVectorKeyString(o)) { return true; }
         if (isLiftedClosure(o) || isUnboxedCell(o)) { return true; }
         if (o->getName().getStringRef() == "ub.poison") { return true; }
@@ -4813,6 +4839,31 @@ struct admission {
 
     bool op(mlir::Operation * o) {
         using namespace ctjs;
+        if (auto reason = o->getAttrOfType<mlir::StringAttr>(kNativeMapReason)) {
+            return refuse(reason.getValue().str());
+        }
+        if (isNativeMapBookkeeping(o)) { return true; }
+        if (auto made = llvm::dyn_cast<ConstructOp>(o)) {
+            if (o->hasAttr(kNativeMapSite)) {
+                return carrierOf(typeOf(made.getResult())) == carrier::map ||
+                       refuse("native Map needs one primitive key carrier and definite numeric "
+                              "values; inferred " +
+                              printed(typeOf(made.getResult())));
+            }
+        }
+        if (const llvm::StringRef action = nativeMapAction(o); !action.empty()) {
+            if (action == "size") { return true; }
+            auto call = llvm::cast<CallOp>(o);
+            if (carrierOf(typeOf(call.getReceiver())) != carrier::map) {
+                return refuse("native Map receiver has no supported key/value carrier");
+            }
+            if (action == "keys" || action == "values") {
+                return (isVectorSite(call.getResult()) &&
+                        carrierOf(typeOf(call.getResult())) == carrier::vector) ||
+                       refuse("native Map snapshot requires confined numeric elements");
+            }
+            return true;
+        }
         if (llvm::isa<FrameEnterOp, FrameExitOp, RootOp>(o)) { return true; }
         // THE METHOD FIELD'S STORE LOWERS TO NOTHING, with the closure in it.
         // Checked before the closed-shape arms below because the value it
@@ -5333,6 +5384,7 @@ struct admission {
             // so is a load_global that only names a direct call's callee;
             // neither has a carrier and neither needs one.
             if (isDeclarationClosure(o) || isLiftedClosure(o) || isUnboxedCell(o)) { return; }
+            if (isNativeMapBookkeeping(o)) { return; }
             if (o->getName().getStringRef() == "ub.poison") { return; }
             if (llvm::isa<ctjs::CreateObjectOp>(o) || isKeyOnlyString(o) || isVectorKeyString(o)) {
                 return;
@@ -5432,8 +5484,8 @@ constexpr llvm::StringLiteral kVectorHelpers =
     "// ctcompile: `a[i]`, whose out-of-range answer is undefined, which is NaN "
     "here\n"
     "inline double vec_at(const std::vector<double> & v, double i) {\n"
-    "  if (!(i >= 0.0) || i != std::trunc(i) ||\n"
-    "      i >= static_cast<double>(v.size())) {\n"
+    "  i = std::trunc(i);\n"
+    "  if (!(i >= 0.0) || i >= static_cast<double>(v.size())) {\n"
     "    return NAN;\n"
     "  }\n"
     "  return v[static_cast<std::vector<double>::size_type>(i)];\n"
@@ -5547,6 +5599,7 @@ struct lowering {
     // on it. An empty unit emits neither.
     bool needsVector = false;
     bool needsString = false;
+    bool needsMap = false;
 
     // The C++ spelling of a field carrier, and there are two of them: a field
     // is a number or a boolean (O-2) and admission refuses everything else by
@@ -5835,9 +5888,9 @@ struct lowering {
     // The reads of one dense array, sorted into `length` and index. Keys are
     // still lowered: a constant can also be used as ordinary string data.
     // A key used only by erased accesses is removed by the final sweep.
-    void collectVector(ctjs::CreateArrayOp array) {
+    void collectVector(mlir::Value array) {
         needsVector = true;
-        for (mlir::Operation * user : array.getResult().getUsers()) {
+        for (mlir::Operation * user : array.getUsers()) {
             auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
             if (!get) { continue; }
             if (admission::keyOf(get.getKey()) == "length") {
@@ -6039,6 +6092,13 @@ struct lowering {
                 return;
             }
             const carrier c = carrierOf(typeOf(v));
+            if (c == carrier::map) {
+                auto map = llvm::cast<MapType>(typeOf(v));
+                needsMap = true;
+                needsString |= llvm::isa<StrType>(map.getKeyType());
+                v.setType(mapCarrierType(map));
+                return;
+            }
             if (c == carrier::string && admission::lowersToNothing(v)) {
                 v.setType(mlir::Float64Type::get(context));
                 return;
@@ -6120,7 +6180,11 @@ struct lowering {
         }
         // AND THE ARRAYS, whose type was taken above; what is left is which
         // reads are `length` and which are indices.
-        fn.getBody().walk([&](ctjs::CreateArrayOp array) { collectVector(array); });
+        fn.getBody().walk([&](mlir::Operation * op) {
+            if (op->getNumResults() == 1 && TypeInference::isDenseVectorSite(op->getResult(0))) {
+                collectVector(op->getResult(0));
+            }
+        });
     }
 
     // THE ONLY ERASE. An operation with uses is never erased: in a release
@@ -6191,6 +6255,48 @@ struct lowering {
             o->getResult(0).replaceAllUsesWith(with);
             eraseIfUnused(o);
         };
+
+        if (isNativeMapBookkeeping(o)) {
+            swap(f64Constant(b, where, std::numeric_limits<double>::quiet_NaN()));
+            return;
+        }
+        if (auto made = llvm::dyn_cast<ConstructOp>(o); made && o->hasAttr(kNativeMapSite)) {
+            auto map = llvm::cast<MapType>(typeOf(made.getResult()));
+            const std::string callee =
+                ("ctnative::make_number_map<" + mapKeySpelling(map.getKeyType()) + ">").str();
+            swap(ec::CallOpaqueOp::create(b, where, mlir::TypeRange{made.getResult().getType()},
+                                          b.getStringAttr(callee), mlir::ValueRange{})
+                     .getResult(0));
+            return;
+        }
+        if (const llvm::StringRef action = nativeMapAction(o); !action.empty()) {
+            llvm::SmallVector<mlir::Value> args;
+            if (auto call = llvm::dyn_cast<CallOp>(o)) {
+                args.push_back(call.getReceiver());
+                llvm::append_range(args, call.getArgs());
+            } else {
+                args.push_back(llvm::cast<GetPropertyOp>(o).getObject());
+            }
+            const auto name = b.getStringAttr(("ctnative::map_" + action).str());
+            if (action == "clear") {
+                ec::CallOpaqueOp::create(b, where, mlir::TypeRange{}, name, args);
+                swap(f64Constant(b, where, std::numeric_limits<double>::quiet_NaN()));
+            } else if (action == "keys" || action == "values") {
+                const auto type = ec::OpaqueType::get(context, kVectorType);
+                mlir::Value result =
+                    ec::CallOpaqueOp::create(b, where, mlir::TypeRange{type}, name, args)
+                        .getResult(0);
+                mlir::Value local = ec::VariableOp::create(b, where, vectorCarrierType(context),
+                                                           ec::OpaqueAttr::get(context, ""));
+                ec::AssignOp::create(b, where, local, result);
+                swap(local);
+            } else {
+                swap(ec::CallOpaqueOp::create(b, where, mlir::TypeRange{o->getResult(0).getType()},
+                                              name, args)
+                         .getResult(0));
+            }
+            return;
+        }
 
         // FRAME BOOKKEEPING LOWERS TO NOTHING - but frame_enter's result is
         // used by every frame_exit and root after it, and walk order visits
@@ -6724,6 +6830,12 @@ struct lowering {
             ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("vector"), b.getUnitAttr());
             ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kVectorHelpers));
         }
+        if (needsMap) {
+            for (llvm::StringRef header : {"memory", "utility", "vector"}) {
+                ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
+            }
+            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNativeMapHelpers));
+        }
         llvm::SmallVector<llvm::StringRef> names(globals.keys().begin(), globals.keys().end());
         llvm::sort(names);
         for (llvm::StringRef name : names) {
@@ -6761,6 +6873,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // one.
         closureLifter lifter{module, census};
         const liftReport lifted = lifter.run();
+        prepareNativeMaps(module);
         if (census) {
             // ONE LINE, DETERMINISTIC. StringMap iterates in hash order, so it
             // is sorted by count and then by name - a census whose text moves
@@ -6949,7 +7062,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             fn.getBody().walk([&](mlir::Operation * o) {
                 llvm::StringRef name;
                 if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o)) {
-                    if (callsOnly(load)) { return; }
+                    if (callsOnly(load) || isNativeMapBookkeeping(load)) { return; }
                     name = load.getName();
                 }
                 if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(o)) {

@@ -242,6 +242,12 @@ private:
     // dense vector sites only; built in initialize() beside fieldStores_.
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> appends_;
 
+    // Proved Map sites: every queried/stored key and every stored value,
+    // including through the identity-preserving result of Map.set.
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> mapKeys_;
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> mapValues_;
+    mlir::Type mapTypeOf(mlir::Operation * op, mlir::Value map);
+
     /// The element type of a dense array: the join over everything appended to
     /// it, from `undefined`. `op` is the operation asking, so every appended
     /// value's lattice subscribes it and a store that widens later re-visits

@@ -10,6 +10,7 @@
 add_mlir_library(CTNativeAnalysis
   TypeInference.cpp
   EscapeAnalysis.cpp
+  NativeMap.cpp
 
   LINK_LIBS PUBLIC
     CTNativeDialect
