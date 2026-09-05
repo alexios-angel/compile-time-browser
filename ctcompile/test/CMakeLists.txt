@@ -2104,8 +2104,11 @@ endif()
 # to write a module while any function carries `ctnative.not_native`. A name
 # assigned twice, a name called before it is assigned, a name that is returned
 # rather than called, a name a closure ASSIGNS, a name whose function closes
-# over a data binding, a name read two frames in, and mutual recursion are one
-# program apiece in CTNative/Lowering/closure-refusals.mlir, under split-file.
+# over a data binding, and mutual recursion are one program apiece in
+# CTNative/Lowering/closure-refusals.mlir, under split-file. A name read two
+# frames in was among them until slice 2 step 5, which COMPILES it - see the
+# deep_bindings block at the end of this file - and what is refused there now is
+# an inner level that fails one of the same questions.
 #
 # One appended block, per part 23 Appendix A.3.
 if(COMMAND ctcompile_add_native_pipeline)
@@ -2123,4 +2126,36 @@ if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(local_functions
                               "${CMAKE_CURRENT_SOURCE_DIR}/native-local-function-fixture.js"
                               28 8 16 23)
+endif()
+
+# === PART 24 PHASE 59 SLICE 2 STEP 5: A BINDING NAMED FROM TWO FRAMES IN ===
+#
+# Step 4 stopped one frame in. A closure made INSIDE the function that captured
+# the box can fill a slot of its own from that slot - `enclosing_indices`, slice
+# 1b - and step 4 refused that shape, on two grounds neither of which survived
+# being checked: `removeCaptureSlots` has always renumbered a nested closure's
+# `enclosing_indices`, and `makeBoundCallDirect` has written calls in frames the
+# closure value cannot reach since step 4 itself. So the binding is followed
+# inward and the slot is removed at every level it reaches, deepest first.
+#
+# THE FIXTURE IS SEVEN PROGRAMS AND SEVEN DISTINCT ANSWERS: two frames in,
+# three, an inner function that also captures data, a name called at every depth
+# it reaches, recursion through two frames, two names travelling through the
+# same two closures, and a deep name whose function closes over another binding.
+# The gate compiles it, runs it, and compares every global with the interpreter;
+# the trailing argument is the negative proof that the comparison can still
+# fail, on a global the printing prelude loads after the first one it prints.
+#
+# THE REFUSED SHAPES ARE NOT HERE, and cannot be: native-pipeline.cmake refuses
+# to write a module while any function carries `ctnative.not_native`. An inner
+# level that ASSIGNS the binding and an inner level that holds the name as a
+# VALUE are one program apiece in CTNative/Lowering/closure-refusals.mlir, under
+# split-file, and each pins the chained sentence - the outer level's refusal
+# with the inner level's reason after it.
+#
+# One appended block, per part 23 Appendix A.3.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(deep_bindings
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-deep-binding-fixture.js"
+                                two10)
 endif()

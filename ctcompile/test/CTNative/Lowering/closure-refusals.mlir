@@ -79,9 +79,12 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bounddata.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=BOUNDDATA
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/bounddeep.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/deepwrite.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=BOUNDDEEP
+// RUN:   | FileCheck %s --check-prefix=DEEPWRITE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/deepvalue.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=DEEPVALUE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boundwrite.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=BOUNDWRITE
@@ -385,19 +388,48 @@
 // BOUNDDATA: ctjs.func {{.*}}@data_capture$1
 // BOUNDDATA-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: it is read from inside another function, and capture 0 of the function it holds is not a binding this step erases - a call out there has nothing to prepend the capture at"
 
-// --- THE SLOT CLAUSE: A NAME READ TWO FRAMES IN -----------------------------
+// --- THE SLOT CLAUSE INWARD: AN INNER LEVEL THAT FAILS ----------------------
 //
-// `deep` names `f`, which belongs to `two_frames`; the compiler marks `deep`'s
-// descriptor NOT from_parent_local and the VM fills that slot from `mid`'s
-// closure, with the index on `enclosing_indices` (slice 1b). Step 4 removes the
-// slot `mid` holds the box at, and removing it renumbers every capture past it
-// - including the one `deep` names through the attribute. Refused rather than
-// renumbered: the binding is travelling further inward and there is no call
-// site out here for it. This is the largest bucket left over bootstrap's 19
-// reachable callees, at 5 of them.
+// A NAME READ TWO FRAMES IN IS NO LONGER REFUSED, and the program that was
+// pinned here is `two_frames_in` in native-deep-binding-fixture.js, compared
+// with the interpreter rather than merely diagnosed. Slice 2 step 5 follows the
+// binding inward through `enclosing_indices` and removes the slot at every
+// level, deepest first. What is left to refuse is an inner level that fails one
+// of the three questions the owning frame already asks - and the whole chain
+// then goes, because a box is one name.
 //
-// BOUNDDEEP: ctjs.func {{.*}}@two_frames$1
-// BOUNDDEEP-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: a function two frames in names the binding through its enclosing closure, and this step has no call site out here for it"
+// THE SENTENCE IS CHAINED, which is the point of both pins below: the outer
+// level says the binding travelled further in, and the inner level's own reason
+// follows it. A refusal that stopped at "a function one frame further in names
+// the binding" would name the mechanism and hide the obstacle, which is the
+// mistake every message in this file was written to stop making.
+//
+// `deep` ASSIGNS THE NAME, TWO FRAMES IN. The box still has exactly one
+// `ctjs.cell_set` in the frame that owns it, so condition 1 sees nothing wrong;
+// the `ctjs.store_upvalue` is inside a function the owner never looks at, and
+// only the walk that follows the slot inward reaches it.
+//
+// WHAT ITS RELAXATION ACTUALLY GIVES, measured rather than reasoned: a named
+// fatal out of `removeCaptureSlots`. Dropping the propagation leaves the INNER
+// slot in place and removes the outer one, so the outer renumbering meets
+// `deep`'s `enclosing_indices` entry naming a slot that no longer exists and
+// `move()` aborts - `LLVM ERROR: ctnative lowering: ... still names upvalue 0,
+// which the local-function rule removed`. It is an abort and not a wrong
+// number, and that is what a reader cannot check without running it.
+//
+// DEEPWRITE: ctjs.func {{.*}}@deep_assigns$1
+// DEEPWRITE-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: a function one frame further in names the binding through its enclosing closure, which did not lift: a function that reads it ASSIGNS the binding, so the name holds a variable and not one function"
+
+// --- THE SLOT CLAUSE INWARD: AN INNER LEVEL THAT HOLDS THE NAME AS A VALUE ---
+//
+// `deep` RETURNS the binding rather than calling it, two frames in. The read is
+// a `ctjs.load_upvalue` whose use is a `ctjs.return`, which is condition 4's own
+// refusal - asked at a depth step 4 never reached, and reported with the depth
+// in front of it. This is the second half of the chained sentence: the same
+// inner clause as BOUNDVALUE, one frame further in.
+//
+// DEEPVALUE: ctjs.func {{.*}}@deep_value$1
+// DEEPVALUE-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: a function one frame further in names the binding through its enclosing closure, which did not lift: the name reaches `ctjs.return`, so the binding holds a function VALUE and this step makes none"
 
 // --- THE SLOT CLAUSE: A CLOSURE THAT ASSIGNS THE NAME -----------------------
 //
@@ -628,16 +660,27 @@ function data_capture(k) {
 }
 var r = data_capture(3);
 
-//--- bounddeep.js
-function two_frames() {
+//--- deepwrite.js
+function deep_assigns() {
     var f = function () { return 1; };
     var mid = function () {
-        var deep = function () { return f(); };
-        return deep();
+        var deep = function () { f = function () { return 2; }; return 0; };
+        return deep() + f();
     };
     return mid();
 }
-var r = two_frames();
+var r = deep_assigns();
+
+//--- deepvalue.js
+function deep_value() {
+    var g = function () { return 3; };
+    var mid = function () {
+        var deep = function () { return g; };
+        return deep()();
+    };
+    return mid();
+}
+var r = deep_value();
 
 //--- boundwrite.js
 function reassigns() {

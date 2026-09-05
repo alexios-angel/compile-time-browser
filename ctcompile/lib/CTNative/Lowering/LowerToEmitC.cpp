@@ -601,7 +601,11 @@ struct closureLifter {
     //     `ctjs.call` at operand 0 of a `ctjs.cell_get` result; in a nested
     //     function it is a `ctjs.call` at operand 0 of a `ctjs.load_upvalue`
     //     result. A read used for anything else - compared, stored, passed -
-    //     is a function VALUE, and this step makes no value.
+    //     is a function VALUE, and this step makes no value. ASKED AT EVERY
+    //     DEPTH THE BINDING REACHES - Phase 59 slice 2 step 5: a closure made
+    //     inside one of those nested functions can fill a slot of its own from
+    //     the one holding the box (`enclosing_indices`), and then the same
+    //     three questions are asked one frame further in.
     //  5. AND THE CAPTURES REACH THE CALLS THIS STEP WRITES ITSELF. A call in
     //     ANOTHER function is one lifting has nothing to prepend at - the
     //     METHODCAP argument, one binding along - so a binding read from a
@@ -627,9 +631,11 @@ struct closureLifter {
     // operand goes, `enclosing_indices` shortens with it, the target's
     // `upvalue_count` drops and every `ctjs.load_upvalue` index past the hole
     // is renumbered. A nested closure that names the removed slot through its
-    // own `enclosing_indices` is refused rather than renumbered - that is the
-    // binding travelling two frames in, and there is no call site out here to
-    // move anything to.
+    // own `enclosing_indices` HAS ITS OWN SLOT REMOVED TOO, deepest first -
+    // Phase 59 slice 2 step 5, and the reason step 4 refused that shape does
+    // not survive step 4's own arrival: `makeBoundCallDirect` writes a
+    // `ctjs.call_direct` in a frame the closure VALUE cannot reach, so a read
+    // two frames in has the same call site as a read one frame in.
     //
     // IT RUNS BEFORE `census()`, and it has to: the censuses record the uses of
     // every cell, and this erases cells, stores, reads and calls. It is the
@@ -1090,10 +1096,35 @@ struct closureLifter {
         ctjs::FuncOp owner;
         // The reads in the frame that owns the box.
         llvm::SmallVector<ctjs::CellGetOp> reads;
-        // And the closures that carry it into another frame, with the slot
-        // each one holds it at.
-        llvm::SmallVector<std::pair<ctjs::CreateClosureOp, unsigned>> slots;
+        // And the closures of THIS frame that carry it one frame in, with the
+        // slot each one holds it at - the entries the cell's own use list
+        // names, and the roots of the walk below.
+        llvm::SmallVector<std::pair<ctjs::CreateClosureOp, unsigned>> captured;
+        // EVERY SLOT THE REWRITE HAS TO REMOVE, THE DEEP ONES INCLUDED -
+        // PHASE 59 SLICE 2 STEP 5. A closure made INSIDE one of those targets
+        // can fill a slot of its own from the enclosing closure's slot
+        // (`enclosing_indices`, slice 1b), which is the binding travelling one
+        // frame further in; `examineCapturedSlot` follows it and appends in
+        // POST-ORDER, so a slot always stands before the slot it is filled
+        // from. `depth` is 0 for a slot the owning frame filled and one more
+        // for each frame after that, and pass B sorts on it.
+        struct capturedSlot {
+            ctjs::CreateClosureOp made;
+            unsigned slot;
+            unsigned depth;
+        };
+        llvm::SmallVector<capturedSlot> slots;
         unsigned calls = 0;
+    };
+
+    // WHICH SLOTS OF ONE CLOSURE GO, AND HOW FAR IN THE SHALLOWEST OF THEM WAS.
+    // One closure can hold slots from more than one binding, so the removals
+    // are collected per closure and the whole set goes in one rewrite -
+    // `removeCaptureSlots` renumbers, and a second rewrite of the same closure
+    // would be renumbering indices the first one already moved.
+    struct slotRemoval {
+        llvm::SmallVector<unsigned> slots;
+        unsigned depth = 0;
     };
 
     // DOES THIS BOX EVER HOLD A FUNCTION? The cheap half of the question, asked
@@ -1168,6 +1199,115 @@ struct closureLifter {
         return std::nullopt;
     }
 
+    // CONDITION 4 OF ONE CAPTURE SLOT, AND OF EVERY SLOT THE BINDING TRAVELS
+    // ON TO - PHASE 59 SLICE 2 STEP 5.
+    //
+    // `made` holds the box at capture `slot`, so inside its target the binding
+    // is `ctjs.load_upvalue slot` and the same three questions apply that the
+    // owning frame already asked of its own reads: nothing ASSIGNS it, every
+    // read of it is a call this tier can write, and no read goes through a
+    // closure this step cannot name. A FOURTH ANSWER IS NEW here: a closure
+    // made inside that target may fill a slot of its OWN from this one -
+    // `enclosing_indices[i] == slot` is exactly that, slice 1b - and then the
+    // binding is one frame further in and the same questions are asked of
+    // `(nested, i)`.
+    //
+    // WHAT USED TO STAND HERE WAS A REFUSAL, ON TWO GROUNDS, AND NEITHER
+    // SURVIVED BEING CHECKED. "Removing the slot renumbers every capture past
+    // it" describes machinery `removeCaptureSlots` has had all along - its walk
+    // renumbers a nested closure's `enclosing_indices` beside the target's own
+    // reads - so renumbering was never what was missing; what actually stops a
+    // removal is that the REMOVED index has no image, which is that function's
+    // `move()` fatal and a different sentence. And "there is no call site out
+    // here to move anything to" stopped being true when step 4 landed:
+    // `makeBoundCallDirect` writes a `ctjs.call_direct` in a frame the closure
+    // VALUE cannot reach, which is what its cross-frame calls on bootstrap are.
+    //
+    // AN INNER LEVEL THAT FAILS REFUSES THE WHOLE BINDING, and names which
+    // level failed. The box is one name and the slots are one chain: a rewrite
+    // that took the outer slots and left an inner one would leave a
+    // `ctjs.load_upvalue` naming a capture that no longer exists, which is
+    // `removeCaptureSlots`'s fatal rather than an answer.
+    //
+    // CONDITION 3 IS NOT ASKED AGAIN INWARDS, AND DOES NOT NEED TO BE.
+    // `writeReachesEveryRead` requires the store to dominate every use of every
+    // closure that captured the box, and a closure made INSIDE one of those
+    // targets cannot run before its maker does - every execution of it follows
+    // a call of a closure the store already dominates.
+    //
+    // `examined` MAKES IT TERMINATE AND KEEPS THE REMOVAL LIST A SET. The pair
+    // is the whole of the question - which body is walked, and which index is
+    // read in it - so meeting one twice is the same answer twice, and a target
+    // graph that led back to a closure already on the chain would otherwise
+    // recurse for ever.
+    std::optional<std::string>
+    examineCapturedSlot(functionBinding & plan, ctjs::CreateClosureOp made, unsigned slot,
+                        unsigned depth,
+                        llvm::DenseSet<std::pair<mlir::Operation *, unsigned>> & examined) {
+        if (!examined.insert({made.getOperation(), slot}).second) { return std::nullopt; }
+        ctjs::FuncOp holder = targetOf(made);
+        if (!holder || holder.getBody().empty() ||
+            holder.getBody().front().getNumArguments() < 3) {
+            return "capture " + std::to_string(slot) +
+                   " of it is taken by a closure whose target this tier cannot see";
+        }
+        mlir::Block & entry = holder.getBody().front();
+        std::optional<std::string> bad;
+        llvm::SmallVector<std::pair<ctjs::CreateClosureOp, unsigned>> inward;
+        holder.getBody().walk([&](mlir::Operation * o) {
+            if (auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(o)) {
+                if (write.getClosure() != entry.getArgument(2)) {
+                    bad = std::string{
+                        "a function that reads it writes an upvalue this step cannot name"};
+                } else if (static_cast<unsigned>(write.getIndex()) == slot) {
+                    bad = std::string{"a function that reads it ASSIGNS the binding, so the "
+                                      "name holds a variable and not one function"};
+                }
+                return;
+            }
+            if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(o)) {
+                if (read.getClosure() != entry.getArgument(2)) {
+                    bad = std::string{
+                        "a function that reads it reads an upvalue this step cannot name"};
+                } else if (static_cast<unsigned>(read.getIndex()) == slot) {
+                    if (const std::optional<std::string> why =
+                            whyReadIsNotACall(read.getResult(), plan.target, plan.calls)) {
+                        bad = why;
+                    }
+                }
+                return;
+            }
+            // AND THE SLOT NAMED FROM ONE FRAME FURTHER IN, WHICH IS NOW A
+            // RECURSION AND NOT A REFUSAL. Collected here and walked after,
+            // because the walk is not the place to recurse: `bad` is only known
+            // when the walk ends, and an inner refusal reported before an outer
+            // one would name the wrong frame. Every entry is taken rather than
+            // the first - one nested closure may fill two of its own slots from
+            // this one, and `is_contained` answered the old question while this
+            // one needs WHICH slot.
+            if (auto nested = llvm::dyn_cast<ctjs::CreateClosureOp>(o)) {
+                const auto captures = static_cast<unsigned>(nested.getUpvalues().size());
+                for (unsigned i = 0; i < captures; ++i) {
+                    if (enclosingIndex(nested, i) == static_cast<std::int32_t>(slot)) {
+                        inward.emplace_back(nested, i);
+                    }
+                }
+            }
+        });
+        if (bad) { return bad; }
+        for (auto & [nested, index] : inward) {
+            if (const std::optional<std::string> why =
+                    examineCapturedSlot(plan, nested, index, depth + 1, examined)) {
+                return "a function one frame further in names the binding through its enclosing "
+                       "closure, which did not lift: " +
+                       *why;
+            }
+        }
+        // POST-ORDER, WHICH IS THE DEEPEST-FIRST ORDER THE REWRITE NEEDS.
+        plan.slots.push_back({made, slot, depth});
+        return std::nullopt;
+    }
+
     // CONDITIONS 1 TO 4 OF THE RULE STATED BESIDE `bindingClosures`, one
     // sentence each, over one box. Condition 5 is the fixpoint in
     // `bindLocalFunctions`, because it is a question about the OTHER boxes.
@@ -1195,8 +1335,8 @@ struct closureLifter {
                 continue;
             }
             if (llvm::isa<ctjs::CreateClosureOp>(user) && use.getOperandNumber() >= kFirstCapture) {
-                plan.slots.emplace_back(llvm::cast<ctjs::CreateClosureOp>(user),
-                                        use.getOperandNumber() - kFirstCapture);
+                plan.captured.emplace_back(llvm::cast<ctjs::CreateClosureOp>(user),
+                                           use.getOperandNumber() - kFirstCapture);
                 continue;
             }
             return ("the box reaches `" + user->getName().getStringRef() +
@@ -1236,56 +1376,14 @@ struct closureLifter {
                 return why;
             }
         }
-        // CONDITION 4, ONE FRAME IN, plus the two clauses the SLOT itself has
-        // to satisfy for this step to be able to remove it.
-        for (const auto & [made, slot] : plan.slots) {
-            ctjs::FuncOp holder = targetOf(made);
-            if (!holder || holder.getBody().empty() ||
-                holder.getBody().front().getNumArguments() < 3) {
-                return "capture " + std::to_string(slot) +
-                       " of it is taken by a closure whose target this tier cannot see";
+        // CONDITION 4, ONE FRAME IN - AND THEN ONE FRAME FURTHER FOR AS LONG AS
+        // THE BINDING TRAVELS, which is Phase 59 slice 2 step 5.
+        llvm::DenseSet<std::pair<mlir::Operation *, unsigned>> examined;
+        for (auto & [made, slot] : plan.captured) {
+            if (const std::optional<std::string> why =
+                    examineCapturedSlot(plan, made, slot, 0, examined)) {
+                return why;
             }
-            mlir::Block & entry = holder.getBody().front();
-            std::optional<std::string> bad;
-            holder.getBody().walk([&](mlir::Operation * o) {
-                if (auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(o)) {
-                    if (write.getClosure() != entry.getArgument(2)) {
-                        bad = std::string{
-                            "a function that reads it writes an upvalue this step cannot name"};
-                    } else if (static_cast<unsigned>(write.getIndex()) == slot) {
-                        bad = std::string{"a function that reads it ASSIGNS the binding, so the "
-                                          "name holds a variable and not one function"};
-                    }
-                    return;
-                }
-                if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(o)) {
-                    if (read.getClosure() != entry.getArgument(2)) {
-                        bad = std::string{
-                            "a function that reads it reads an upvalue this step cannot name"};
-                    } else if (static_cast<unsigned>(read.getIndex()) == slot) {
-                        if (const std::optional<std::string> why =
-                                whyReadIsNotACall(read.getResult(), plan.target, plan.calls)) {
-                            bad = why;
-                        }
-                    }
-                    return;
-                }
-                // AND NOBODY MAY NAME THE SLOT FROM TWO FRAMES IN. Removing it
-                // renumbers every capture past it, and a nested closure that
-                // fills a slot from THIS one (slice 1b's `enclosing_indices`)
-                // is the binding travelling further inward - where there is no
-                // call site out here to move anything to.
-                if (auto nested = llvm::dyn_cast<ctjs::CreateClosureOp>(o)) {
-                    const mlir::DenseI32ArrayAttr indices = nested.getEnclosingIndicesAttr();
-                    if (indices &&
-                        llvm::is_contained(indices.asArrayRef(), static_cast<std::int32_t>(slot))) {
-                        bad = std::string{
-                            "a function two frames in names the binding through its enclosing "
-                            "closure, and this step has no call site out here for it"};
-                    }
-                }
-            });
-            if (bad) { return bad; }
         }
         // A NAME NOTHING CALLS IS NOT WORTH ERASING A BOX FOR, and lifting its
         // target would mark private a function with no visible caller - which
@@ -1423,7 +1521,7 @@ struct closureLifter {
             for (auto & entry : plans) {
                 if (!taken.contains(entry.first)) { continue; }
                 functionBinding & plan = entry.second;
-                if (plan.slots.empty()) { continue; }
+                if (plan.captured.empty()) { continue; }
                 const auto captures = static_cast<unsigned>(plan.closure.getUpvalues().size());
                 for (unsigned j = 0; j < captures; ++j) {
                     auto held = plan.closure.getUpvalues()[j].getDefiningOp<ctjs::CreateCellOp>();
@@ -1440,7 +1538,7 @@ struct closureLifter {
             }
         }
         // PASS A: EVERY READ BECOMES A CALL OF THE TARGET.
-        llvm::MapVector<mlir::Operation *, llvm::SmallVector<unsigned>> removals;
+        llvm::MapVector<mlir::Operation *, slotRemoval> removals;
         for (auto & entry : plans) {
             if (!taken.contains(entry.first)) { continue; }
             functionBinding & plan = entry.second;
@@ -1454,7 +1552,7 @@ struct closureLifter {
                 read.getResult().replaceAllUsesWith(plan.closure.getResult());
                 read.erase();
             }
-            for (auto & [made, slot] : plan.slots) {
+            for (auto & [made, slot, depth] : plan.slots) {
                 ctjs::FuncOp holder = targetOf(made);
                 llvm::SmallVector<ctjs::LoadUpvalueOp> named;
                 holder.getBody().walk([&](ctjs::LoadUpvalueOp read) {
@@ -1492,14 +1590,41 @@ struct closureLifter {
                     }
                     read.erase();
                 }
-                removals[made.getOperation()].push_back(slot);
+                // AND THE SHALLOWEST DEPTH ANY BINDING NAMED THIS CLOSURE
+                // AT, which is the key pass B orders on.
+                slotRemoval & removal = removals[made.getOperation()];
+                removal.depth = removal.slots.empty() ? depth : std::min(removal.depth, depth);
+                removal.slots.push_back(slot);
             }
             ++out.bindings;
         }
         // PASS B: AND THE SLOTS THOSE READS CAME THROUGH, one rewrite per
-        // closure however many of its slots held a binding.
-        for (auto & entry : removals) {
-            removeCaptureSlots(llvm::cast<ctjs::CreateClosureOp>(entry.first), entry.second);
+        // closure however many of its slots held a binding - DEEPEST FIRST.
+        //
+        // THE ORDER IS A CORRECTNESS CONDITION AND NOT A TIDINESS ONE.
+        // `removeCaptureSlots` renumbers, for the closure it is given, every
+        // `enclosing_indices` entry of every closure the TARGET makes - and its
+        // `move()` has no image for an index that has just been deleted. So a
+        // closure that fills a slot from another closure's slot has to be
+        // rewritten FIRST, at which point its entry naming that slot is gone
+        // and the outer renumbering meets only surviving indices.
+        //
+        // WHY THE MINIMUM DEPTH AND NOT THE MAXIMUM, when one closure holds
+        // slots from more than one binding. Along a chain the inner pair's
+        // depth is exactly one more than the outer's, so the inner CLOSURE's
+        // shallowest slot is still deeper than the outer closure's shallowest -
+        // whereas the maximum orders on some third binding that happened to
+        // travel a long way to reach the same closure, and puts the outer
+        // rewrite first. The residual is a target named by two different
+        // `ctjs.create_closure`s, which a translated program does not produce
+        // and which `move()` would abort on rather than answer wrongly.
+        llvm::SmallVector<std::pair<mlir::Operation *, slotRemoval *>> ordered;
+        for (auto & entry : removals) { ordered.emplace_back(entry.first, &entry.second); }
+        llvm::stable_sort(ordered, [](const auto & left, const auto & right) {
+            return left.second->depth > right.second->depth;
+        });
+        for (auto & [made, removal] : ordered) {
+            removeCaptureSlots(llvm::cast<ctjs::CreateClosureOp>(made), removal->slots);
         }
         // PASS C: the store and the box, which nothing uses now.
         for (auto & entry : plans) {
