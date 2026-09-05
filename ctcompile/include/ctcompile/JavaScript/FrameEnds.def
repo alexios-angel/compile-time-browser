@@ -19,8 +19,10 @@
  *            ending here are UNCHECKED
  *   note     what ends the frame, and why the hook is or is not there
  *
- * THE TWO HOOKED ROWS COVER EVERY RETURN AND EVERY CAUGHT THROW. The six
- * unhooked ones are suspensions (the frame is copied into a coroutine and
+ * THE TWO HOOKED ROWS COVER INTERPRETED RETURNS AND CAUGHT THROWS. Compiled
+ * allocations remain UNCHECKED even when a mixed unwind crosses their frame;
+ * they carry `compiled_pc`, never a bytecode PC derived from a catch-pad id.
+ * The six unhooked paths are suspensions (the frame is copied into a coroutine and
  * comes back as a NEW frame with a serial of its own), abandonments after a
  * failure nothing caught, a fresh top level clearing a dirty stack, and the
  * compiled tier - which the oracle does not adjudicate at all: it drives the
@@ -28,21 +30,27 @@
  * at its edges.
  */
 
-CT_FRAME_END(/* name */ ret,
-             /* where */ "run_loop.cpp VM_CASE(ret)/VM_CASE(ret_undef): VM_POP_FRAME (run_loop.cpp:774)",
-             /* hooked */ 1,
-             /* note */ "after frames_.pop_back(), before the result lands in the caller's register; "
-                        "the return value is rooted by the hook through temporaries_ while it walks")
-CT_FRAME_END(/* name */ unwind,
-             /* where */ "vm.hpp context::unwind_to_handler: frames_.resize(h.frame + 1) (vm.hpp:1519)",
-             /* hooked */ 1,
-             /* note */ "before the resize, so the ending frames are inspectable; thrown_ is still set "
-                        "and is cleared only after the landing write, so it is a root here")
+CT_FRAME_END(
+    /* name */ ret,
+    /* where */ "run_loop.cpp VM_CASE(ret)/VM_CASE(ret_undef): VM_POP_FRAME (run_loop.cpp:774)",
+    /* hooked */ 1,
+    /* note */
+    "after frames_.pop_back(), before the result lands in the caller's register; "
+    "the return value is rooted by the hook through temporaries_ while it walks")
+CT_FRAME_END(
+    /* name */ unwind,
+    /* where */ "vm.hpp context::unwind_to_handler: frames_.resize(h.frame + 1) (vm.hpp:1519)",
+    /* hooked */ 1,
+    /* note */
+    "before the resize, so the ending frames are inspectable; thrown_ is still set "
+    "and is cleared only after the landing write, so it is a root here; "
+    "compiled allocations are folded as UNCHECKED")
 CT_FRAME_END(/* name */ await,
              /* where */ "run_loop.cpp VM_CASE(await_value): frames_.pop_back() (run_loop.cpp:900)",
              /* hooked */ 0,
-             /* note */ "the frame's window is copied into a coroutine_object first and is traced from "
-                        "the heap; its records stay pending and are reported UNCHECKED")
+             /* note */
+             "the frame's window is copied into a coroutine_object first and is traced from "
+             "the heap; its records stay pending and are reported UNCHECKED")
 CT_FRAME_END(/* name */ yield,
              /* where */ "run_loop.cpp VM_CASE(yield_value): frames_.pop_back() (run_loop.cpp:956)",
              /* hooked */ 0,
@@ -50,18 +58,27 @@ CT_FRAME_END(/* name */ yield,
 CT_FRAME_END(/* name */ execute_clear,
              /* where */ "call.cpp context::execute: frames_.clear() (call.cpp:381)",
              /* hooked */ 0,
-             /* note */ "a new top level clears whatever a raise() left on the stack; those frames' "
-                        "records were already pending and stay UNCHECKED")
-CT_FRAME_END(/* name */ gen_abandon,
-             /* where */ "call.cpp context::generator_resume: while (frames_.size() > stop) pop_back (call.cpp:1042)",
-             /* hooked */ 0,
-             /* note */ "a generator resumed with .throw() whose body caught nothing; the unwinder "
-                        "already ran and found no handler")
-CT_FRAME_END(/* name */ resume_abandon,
-             /* where */ "call.cpp context::resume: while (frames_.size() > stop) pop_back (call.cpp:1106)",
-             /* hooked */ 0,
-             /* note */ "a rejected await nothing caught; the async function's own promise rejects")
+             /* note */
+             "a new top level clears whatever a raise() left on the stack; those frames' "
+             "records were already pending and stay UNCHECKED")
+CT_FRAME_END(
+    /* name */ gen_abandon,
+    /* where */
+    "call.cpp context::generator_resume: while (frames_.size() > stop) pop_back (call.cpp:1042)",
+    /* hooked */ 0,
+    /* note */
+    "a generator resumed with .throw() whose body caught nothing; the unwinder "
+    "already ran and found no handler")
+CT_FRAME_END(
+    /* name */ resume_abandon,
+    /* where */ "call.cpp context::resume: while (frames_.size() > stop) pop_back (call.cpp:1106)",
+    /* hooked */ 0,
+    /* note */ "a rejected await nothing caught; the async function's own promise rejects")
 CT_FRAME_END(/* name */ aot_leave,
-             /* where */ "aot_bridge.cpp aot_frame_storage::leave: cx.frames_.resize(held.frame_index) (aot_bridge.cpp:1069)",
+             /* where */
+             "aot_bridge.cpp aot_frame_storage::leave: cx.frames_.resize(held.frame_index) "
+             "(aot_bridge.cpp:1069)",
              /* hooked */ 0,
-             /* note */ "compiled frames are not adjudicated; the oracle drives the interpreter")
+             /* note */
+             "compiled frames are not adjudicated: no source PC or returned-value handoff; "
+             "their allocations remain UNCHECKED on leave and mixed unwind")

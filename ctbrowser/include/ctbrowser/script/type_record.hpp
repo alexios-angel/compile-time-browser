@@ -271,6 +271,13 @@ static_assert(every_site_opcode_allocates,
 // so `ip - 1` has no meaning. Written as `prologue` in the file.
 inline constexpr std::uint32_t prologue_pc = 0xFFFF'FFFFu;
 
+// A compiled frame has no bytecode PC: its `ip` is either zero or an encoded
+// catch-pad id. Keep its allocations outside the bytecode inventory, even
+// when that pad's low bits happen to name a real allocation instruction.
+// Written as an ordinary numeric PC in format v2; it is always UNCLAIMED and
+// UNCHECKED until compiled entries supply source coordinates and an exit hook.
+inline constexpr std::uint32_t compiled_pc = 0xFFFF'FFFEu;
+
 struct static_site {
     std::uint32_t pc = 0;
     heap_kind kind = heap_kind::object;
@@ -396,9 +403,9 @@ public:
     void freed(heap_object * p);
     void note_pop() noexcept { ++pops_; }
     void note_unwind() noexcept { ++unwinds_; }
-    // Hand over a frame's records for adjudication, appended to `out`. Applies
-    // the budget: an over-budget frame's records are folded as UNCHECKED here
-    // and nothing is appended.
+    // Hand over a frame's records for adjudication, appended to `out`.
+    // Compiled and over-budget frames are folded as UNCHECKED here and
+    // nothing is appended.
     void begin_check(std::uint64_t serial, std::vector<escape_record> & out);
     // Fold adjudicated records into their sites. The caller has marked: a
     // record whose object is `marked` escaped by `route`, a dead one is

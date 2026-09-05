@@ -448,7 +448,11 @@ void type_recorder::begin_check(std::uint64_t serial, std::vector<escape_record>
         if (!r.dead) { alloc_.erase(r.object); }
     }
     function_observation & f = functions_[records.front().function];
-    if (budget_ != 0 && f.checks >= budget_) {
+    // A mixed unwind also ends compiled frames, but their sites have no
+    // bytecode coordinates and their normal exit cannot root the return
+    // value. Keep their observations UNCHECKED on every exit, just as on
+    // ct_aot_leave, rather than making a throw appear better covered.
+    if (records.front().pc == compiled_pc || (budget_ != 0 && f.checks >= budget_)) {
         for (const escape_record & r : records) { fold(r, root_label::globals, false, true); }
         return;
     }
@@ -525,7 +529,10 @@ void context::note_allocation(heap_object * p) {
                                 : program_;
     if (owner == nullptr) { return; }
     if (frame.serial == 0) { frame.serial = recorder_->fresh_serial(); }
-    const std::uint32_t pc = frame.ip == 0 ? prologue_pc : static_cast<std::uint32_t>(frame.ip - 1);
+    const std::uint32_t pc = frame.proto != nullptr && frame.proto->aot_entry != nullptr
+                                 ? compiled_pc
+                             : frame.ip == 0 ? prologue_pc
+                                             : static_cast<std::uint32_t>(frame.ip - 1);
     recorder_->allocated(p, owner, frame.proto, pc, frame.serial);
 #else
     (void)p;

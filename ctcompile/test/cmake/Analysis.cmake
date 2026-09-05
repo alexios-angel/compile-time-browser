@@ -302,3 +302,20 @@ if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/check-escape-claims.cmake)
   endforeach()
 endif()
+
+# A compiled frame's ip contains a catch-pad id, never a bytecode coordinate.
+# Real AOT entries cover return, caught throw and mixed AOT/VM unwind without
+# allowing their uninstrumented allocations to join native escape claims.
+add_executable(ctcompile-test-escape-oracle-aot EscapeOracleAOT.cpp)
+target_link_libraries(ctcompile-test-escape-oracle-aot PRIVATE ctbrowser::ctbrowser)
+ctcompile_target(ctcompile-test-escape-oracle-aot)
+add_test(NAME ctcompile_escape_oracle_aot COMMAND ctcompile-test-escape-oracle-aot)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME ctcompile_escape_oracle_aot_checker
+           COMMAND ${CMAKE_COMMAND}
+                   -DEXE=$<TARGET_FILE:ctcompile-test-escape-oracle-aot>
+                   -DPYTHON=${Python3_EXECUTABLE}
+                   -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/escape-oracle.py
+                   -DWORK=${CMAKE_CURRENT_BINARY_DIR}
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/check-escape-oracle-aot.cmake)
+endif()
