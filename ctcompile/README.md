@@ -8,8 +8,10 @@ and `ctjs-opt` import JavaScript and compile it through boxed or native EmitC
 pipelines. The native subset emits standalone C++ and diagnoses unsupported
 functions. Full native Bootstrap execution is not yet established.
 
-Recent native work includes [tagged optional scalars](docs/native-optional-scalars.md)
-and opt-in [partial evaluation with heap residualisation](docs/native-partial-evaluation.md).
+Recent native work includes [tagged optional scalars](docs/native-optional-scalars.md),
+[boolean/number unions for Bootstrap's getter](docs/native-scalar-unions.md),
+[Binding-Time Analysis](docs/native-binding-time.md), and opt-in
+[partial evaluation with heap residualisation](docs/native-partial-evaluation.md).
 The partial evaluator reuses ctbrowser's primitive semantics inside the compiler;
 generated native programs retain no VM dependency.
 
@@ -73,7 +75,8 @@ Engine-only builds do not require LLVM. The version is pinned in
 ## What lands next
 
 Native Bootstrap still needs component and host object representations, typed
-host publication and its library/error paths. Partial evaluation needs explicit
-effect contracts and region splitting to retain runtime work within otherwise
-static initialization. See the [Bootstrap Data probe](docs/bootstrap-data-probe.md)
+host publication and its library/error paths. Partial evaluation now preserves
+a runtime suffix after a static entry prefix. Residual closure environments,
+explicit effect contracts and splitting across regions are the next steps for
+Bootstrap initialization. See the [Bootstrap Data probe](docs/bootstrap-data-probe.md)
 for the current source-derived execution boundary.

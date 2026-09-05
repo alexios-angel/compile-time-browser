@@ -5,6 +5,7 @@
 // header has to include them.
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/Dialect/PDL/IR/PDL.h"
 #include "mlir/Dialect/PDLInterp/IR/PDLInterp.h"

@@ -3,6 +3,7 @@
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <optional>
@@ -43,6 +44,11 @@ struct snapshot {
     std::vector<node> heap;
     value result;
     unsigned steps = 0;
+    // A prefix snapshot retains this operation and everything after it. Each
+    // binding names a value defined by the removed prefix and used by that
+    // retained code, including primitive snapshots of subsequently mutable data.
+    mlir::Operation * boundary = nullptr;
+    llvm::SmallVector<std::pair<mlir::Value, value>> bindings;
 };
 
 bool sameValue(value left, value right, bool mapKey = false);
@@ -59,6 +65,8 @@ public:
     evaluator(mlir::ModuleOp module, unsigned steps, unsigned nodes, unsigned depth)
         : module(module), maxSteps(steps), maxNodes(nodes), maxDepth(depth) {}
     std::optional<snapshot> run(ctjs::FuncOp function, llvm::ArrayRef<value> args);
+    std::optional<snapshot> runPrefix(ctjs::FuncOp function, llvm::ArrayRef<value> args,
+                                      llvm::function_ref<bool(mlir::Operation *)> isStatic);
     const std::string & reason() const { return problem; }
 
 private:
@@ -89,5 +97,6 @@ private:
 // until this reachable graph check has succeeded.
 std::optional<std::vector<unsigned>> reachable(const snapshot & state);
 void residualize(ctjs::FuncOp function, const snapshot & state, llvm::ArrayRef<unsigned> live);
+bool retainedPrefixScaffolding(mlir::Operation * op);
 
 } // namespace ctcompile::ctnative::partial_eval

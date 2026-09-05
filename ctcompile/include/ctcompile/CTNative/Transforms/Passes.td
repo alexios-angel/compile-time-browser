@@ -9,12 +9,31 @@
 
 include "mlir/Pass/PassBase.td"
 
+def CTNativeBindingTimeAnalysis : Pass<"ctnative-binding-time-analysis", "mlir::ModuleOp"> {
+  let summary = "Derive static and dynamic bindings, control and heap effects";
+  let description = [{
+    Offline staging facts for native partial evaluation. Rechecks constant
+    caller arguments and tracks local heap state at each operation. Unknown
+    writes, calls and control make affected reads dynamic; constants may have
+    static values while runtime control still decides their execution.
+    Function summaries propagate static closed calls conservatively. Loops
+    remain dynamic until an invariant is proved. Fresh annotations include
+    binding-time reasons, result/argument bindings and per-function counts.
+    Input annotations are ignored. Staging facts do not replace independent
+    environment, callable, ownership and exact-evaluation checks.
+  }];
+  let options = [Option<"report", "report", "bool", "false", "Report static/dynamic binding counts">];
+  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect", "::mlir::arith::ArithDialect"];
+}
+
 def CTNativePartialEvaluate : Pass<"ctnative-partial-evaluate", "mlir::ModuleOp"> {
-  let summary = "Evaluate closed constant-input factories and residualize their reachable heap";
+  let summary = "Evaluate closed factories or static prefixes and residualize their reachable heap";
   let description = [{
     Opt-in native initialization specialization. Evaluates a private function
-    only when every visible direct caller supplies identical primitive inputs
-    and every executed effect stays within the evaluator's fresh heap.
+    when inputs are known and every executed effect stays within its fresh
+    heap. Binding-Time Analysis identifies straight-line static initialization
+    prefixes when explicit arguments or later operations remain dynamic. The
+    residual graph and live constants precede the original runtime suffix.
     Primitive operations, known branches, bounded loops, nested direct calls,
     plain objects and proved standard Maps are supported. Residual CTJS allocates
     each live node once per runtime invocation, then initializes its final
@@ -33,7 +52,7 @@ def CTNativePartialEvaluate : Pass<"ctnative-partial-evaluate", "mlir::ModuleOp"
     Option<"maxDepth", "max-depth", "unsigned", "32", "Maximum nested evaluation depth">,
     Option<"report", "report", "bool", "false", "Report evaluated functions, residual nodes and declines">
   ];
-  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect"];
+  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect", "::mlir::arith::ArithDialect"];
 }
 
 def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {

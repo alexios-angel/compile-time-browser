@@ -72,6 +72,8 @@ add_mlir_pdll_library(CTNativeUnaryPlusPDLLIncGen
 # C++ still links no ctbrowser library, as part 24 §1.2 requires.
 add_library(ctcompile-ctnative-lowering
   ../PartialEvaluation/Pass.cpp
+  ../PartialEvaluation/Prefix.cpp
+  ../BindingTime/Pass.cpp
   ../PartialEvaluation/Evaluator.cpp
   ../PartialEvaluation/Primitives.cpp
   ../PartialEvaluation/Residualize.cpp

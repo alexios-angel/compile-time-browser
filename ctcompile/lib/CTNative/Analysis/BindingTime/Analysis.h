@@ -1,0 +1,62 @@
+#pragma once
+#include "ctcompile/CTNative/Analysis/BindingTime.h"
+#include "ctcompile/CTNative/Analysis/ClosedCallable.h"
+#include "ctcompile/CTNative/Analysis/NativeMap.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
+#include <string>
+
+namespace ctcompile::ctnative {
+namespace binding_time_detail {
+struct fact {
+    enum class kind {
+        primitive,
+        object,
+        map,
+        constructor,
+        method,
+        bookkeeping,
+        unknown
+    } domain = kind::unknown;
+    BindingTime time = BindingTime::Dynamic;
+    mlir::Attribute literal;
+    llvm::SmallVector<mlir::Operation *> nodes;
+};
+struct heap {
+    bool dynamic = false;
+    llvm::StringMap<fact> fields;
+    fact contents{fact::kind::primitive, BindingTime::Static, {}, {}};
+};
+struct flow {
+    llvm::DenseMap<mlir::Value, fact> values;
+    llvm::DenseMap<mlir::Operation *, heap> heaps;
+};
+struct decision {
+    bool eligible = false;
+    std::string reason;
+};
+fact join(fact left, const fact & right, bool staticControl);
+void invalidate(flow & state);
+} // namespace binding_time_detail
+
+struct BindingTimeAnalysis::Impl {
+    using fact = binding_time_detail::fact;
+    using flow = binding_time_detail::flow;
+    using decision = binding_time_detail::decision;
+    mlir::ModuleOp module;
+    llvm::DenseMap<mlir::Value, fact> facts;
+    llvm::DenseMap<mlir::Operation *, decision> decisions;
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Attribute>> arguments;
+    llvm::DenseMap<mlir::Operation *, fact> returns;
+    llvm::DenseMap<mlir::Operation *, bool> complete;
+    explicit Impl(mlir::ModuleOp module);
+    void seedArguments();
+    void analyze(ctjs::FuncOp function);
+    bool region(mlir::Region & body, flow & state, bool staticControl,
+                llvm::ArrayRef<fact> inputs = {});
+    bool operation(mlir::Operation * op, flow & state, bool staticControl);
+    fact scalar(mlir::Operation * op, flow & state);
+    fact memory(mlir::Operation * op, flow & state, bool staticControl, bool & eligible);
+};
+} // namespace ctcompile::ctnative

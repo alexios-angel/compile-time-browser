@@ -78,7 +78,8 @@ module {
 //--- effect.mlir
 module {
   // EFFECT-LABEL: ctjs.func private @effect
-  // EFFECT-SAME: ctnative.partial_eval_reason = "unsupported or unknown operation `ctjs.store_global`"
+  // EFFECT-SAME: ctnative.partial_evaluated = {boundary = "ctjs.store_global"
+  // EFFECT-SAME: mode = "prefix"
   // EFFECT: ctjs.create_object
   // EFFECT: ctjs.set_property
   // EFFECT: ctjs.store_global "published"
@@ -219,7 +220,8 @@ module {
 //--- unknown.mlir
 module {
   // UNKNOWN-LABEL: ctjs.func private @unknown
-  // UNKNOWN-SAME: ctnative.partial_eval_reason = "unsupported or unknown operation `ctjs.compare`"
+  // UNKNOWN-SAME: ctnative.partial_evaluated = {boundary = "ctjs.compare"
+  // UNKNOWN-SAME: mode = "prefix"
   // UNKNOWN: ctjs.compare strict_eq
   ctjs.func private @unknown(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %object = ctjs.create_object

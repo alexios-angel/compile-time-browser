@@ -9,6 +9,11 @@
 # naming both dialects is its entire job.
 add_mlir_library(CTNativeAnalysis
   TypeInference.cpp
+  ClosedCallable.cpp
+  BindingTime/Analysis.cpp
+  BindingTime/Operations.cpp
+  BindingTime/Flow.cpp
+  BindingTime/Memory.cpp
   Inference/Shapes.cpp
   EscapeAnalysis.cpp
   NativeMap.cpp
@@ -19,6 +24,7 @@ add_mlir_library(CTNativeAnalysis
     CTNativeDialect
     CTJSDialect
     MLIRAnalysis
+    MLIRArithDialect
     MLIRIR
     MLIRSCFDialect
 )

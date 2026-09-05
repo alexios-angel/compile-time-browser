@@ -46,6 +46,15 @@ coverage may increase without failing the gate. The recorded census is compile
 coverage; this probe does not execute a native Bootstrap binary or establish
 full Bootstrap support.
 
+`bootstrap-data-binding-time.py` reuses the same browser source to inspect
+[Binding-Time Analysis](native-binding-time.md). It requires dynamic host reads,
+unproved calls and publication, complete operation facts, repeatable analysis
+and rejection of forged annotations. The Map initializer and three latent
+methods remain intact under partial evaluation; the imported public functions
+are outside its closed private candidate set. The companion negative control
+changes the real console-read classification and must fail with its exact
+diagnostic. These two tests add analysis evidence to the 19 browser observations.
+
 The expanded probes measured **0/7** native functions for CommonJS, **0/7** for
 the browser and **0/8** for AMD on the devbox. Every refusal has a reason and
 no source function is skipped. All 19/19/20 interpreter observations and both

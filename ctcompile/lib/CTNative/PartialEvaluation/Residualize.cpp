@@ -1,6 +1,8 @@
 #include "Heap.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/IRMapping.h"
 
 #include <functional>
 
@@ -28,82 +30,175 @@ std::optional<std::vector<unsigned>> reachable(const snapshot & state) {
         color = 2;
         return true;
     };
-    if (!visit(state.result)) { return {}; }
-    return live;
-}
-
-void residualize(ctjs::FuncOp function, const snapshot & state, llvm::ArrayRef<unsigned> live) {
-    auto * context = function.getContext();
-    const auto valueType = ctjs::ValueType::get(context);
-    mlir::Region replacement;
-    auto * block = new mlir::Block;
-    replacement.push_back(block);
-    for (mlir::BlockArgument arg : function.getBody().front().getArguments()) {
-        block->addArgument(arg.getType(), arg.getLoc());
-    }
-    mlir::OpBuilder at(context);
-    at.setInsertionPointToEnd(block);
-    const auto create = [&](llvm::StringRef name, mlir::Location location,
-                            mlir::ValueRange operands,
-                            llvm::ArrayRef<mlir::NamedAttribute> attributes, bool result = true) {
-        mlir::OperationState op(location, name);
-        op.addOperands(operands);
-        op.addAttributes(attributes);
-        if (result) { op.addTypes(valueType); }
-        return at.create(op);
-    };
-    const auto constant = [&](mlir::Attribute value, mlir::Location location) {
-        return create("ctjs.constant", location, {}, {at.getNamedAttr("value", value)})
-            ->getResult(0);
-    };
-    llvm::DenseMap<unsigned, mlir::Value> objects;
-    // Every allocation precedes every edge. This preserves sharing without
-    // depending on the traversal order used to discover the graph.
-    for (unsigned id : live) {
-        const auto & item = state.heap[id];
-        mlir::Operation * made;
-        if (item.tag == node::kind::object) {
-            made = create("ctjs.create_object", item.location, {}, {});
-        } else {
-            auto constructor = create("ctjs.load_global", item.location, {},
-                                      {at.getNamedAttr("name", at.getStringAttr("Map"))})
-                                   ->getResult(0);
-            made = create("ctjs.construct", item.location, {constructor, constructor}, {});
-        }
-        objects[id] = made->getResult(0);
-    }
-    const auto materialize = [&](value input, mlir::Location location) {
-        return input.tag == value::kind::reference ? objects.lookup(input.node)
-                                                   : constant(input.constant, location);
-    };
-    for (unsigned id : live) {
-        const auto & item = state.heap[id];
-        mlir::Value setter;
-        if (item.tag == node::kind::map && !item.entries.empty()) {
-            auto key = constant(ctjs::StringAttr::get(context, "set"), item.location);
-            setter =
-                create("ctjs.get_property", item.location, {objects[id], key}, {})->getResult(0);
-        }
-        for (const auto & [key, data] : item.entries) {
-            auto k = materialize(key, item.location), v = materialize(data, item.location);
-            if (item.tag == node::kind::object) {
-                create("ctjs.set_property", item.location, {objects[id], k, v}, {}, false);
-            } else {
-                create("ctjs.call", item.location, {setter, objects[id], k, v}, {});
+    if (!state.boundary) {
+        if (!visit(state.result)) { return {}; }
+    } else {
+        for (const auto & [original, root] : state.bindings) {
+            if (root.tag == value::kind::mapConstructor) { continue; }
+            if (root.tag == value::kind::constant &&
+                llvm::isa<mlir::IntegerType>(original.getType()) &&
+                llvm::isa<mlir::IntegerAttr, ctjs::BooleanAttr>(root.constant)) {
+                continue;
+            }
+            if (!visit(root.tag == value::kind::method ? value::reference(root.node) : root)) {
+                return {};
             }
         }
     }
-    create("ctjs.return", function.getLoc(), {materialize(state.result, function.getLoc())}, {},
-           false);
+    return live;
+}
+
+namespace {
+
+class graphEmitter {
+public:
+    graphEmitter(mlir::OpBuilder & at, const snapshot & state, llvm::ArrayRef<unsigned> live)
+        : at(at), context(at.getContext()) {
+        // Every allocation precedes every edge. Traversal order must not
+        // duplicate a shared child or change an object-valued Map key.
+        for (unsigned id : live) {
+            const auto & item = state.heap[id];
+            mlir::Operation * made;
+            if (item.tag == node::kind::object) {
+                made = create("ctjs.create_object", item.location, {}, {});
+            } else {
+                auto constructor = mapConstructor(item.location);
+                made = create("ctjs.construct", item.location, {constructor, constructor}, {});
+            }
+            objects[id] = made->getResult(0);
+        }
+        for (unsigned id : live) {
+            const auto & item = state.heap[id];
+            mlir::Value setter;
+            if (item.tag == node::kind::map && !item.entries.empty()) {
+                setter = method(id, "set", item.location);
+            }
+            for (const auto & [key, data] : item.entries) {
+                auto k = materialize(key, item.location), v = materialize(data, item.location);
+                if (item.tag == node::kind::object) {
+                    create("ctjs.set_property", item.location, {objects[id], k, v}, {}, false);
+                } else {
+                    create("ctjs.call", item.location, {setter, objects[id], k, v}, {});
+                }
+            }
+        }
+    }
+
+    mlir::Value materialize(value input, mlir::Location location, mlir::Type type = {}) {
+        if (input.tag == value::kind::reference) { return objects.lookup(input.node); }
+        if (input.tag == value::kind::mapConstructor) { return mapConstructor(location); }
+        if (input.tag == value::kind::method) { return method(input.node, input.method, location); }
+        if (auto integer = llvm::dyn_cast_or_null<mlir::IntegerType>(type)) {
+            mlir::IntegerAttr attribute;
+            if (auto original = llvm::dyn_cast<mlir::IntegerAttr>(input.constant)) {
+                attribute = mlir::IntegerAttr::get(
+                    integer, original.getValue().zextOrTrunc(integer.getWidth()));
+            } else {
+                attribute = mlir::IntegerAttr::get(
+                    integer, llvm::cast<ctjs::BooleanAttr>(input.constant).getValue());
+            }
+            return mlir::arith::ConstantOp::create(at, location, attribute);
+        }
+        return constant(input.constant, location);
+    }
+
+private:
+    mlir::OpBuilder & at;
+    mlir::MLIRContext * context;
+    llvm::DenseMap<unsigned, mlir::Value> objects;
+
+    mlir::Operation * create(llvm::StringRef name, mlir::Location location,
+                             mlir::ValueRange operands,
+                             llvm::ArrayRef<mlir::NamedAttribute> attributes, bool result = true) {
+        mlir::OperationState op(location, name);
+        op.addOperands(operands);
+        op.addAttributes(attributes);
+        if (result) { op.addTypes(ctjs::ValueType::get(context)); }
+        return at.create(op);
+    }
+    mlir::Value constant(mlir::Attribute value, mlir::Location location) {
+        return create("ctjs.constant", location, {}, {at.getNamedAttr("value", value)})
+            ->getResult(0);
+    }
+    mlir::Value mapConstructor(mlir::Location location) {
+        return create("ctjs.load_global", location, {},
+                      {at.getNamedAttr("name", at.getStringAttr("Map"))})
+            ->getResult(0);
+    }
+    mlir::Value method(unsigned id, llvm::StringRef name, mlir::Location location) {
+        auto key = constant(ctjs::StringAttr::get(context, name), location);
+        return create("ctjs.get_property", location, {objects[id], key}, {})->getResult(0);
+    }
+};
+
+void residualizePrefix(ctjs::FuncOp function, const snapshot & state, llvm::ArrayRef<unsigned> live,
+                       mlir::Region & replacement) {
+    mlir::IRMapping mapping;
+    function.getBody().cloneInto(&replacement, mapping);
+    auto * boundary = mapping.lookup(state.boundary);
+    mlir::OpBuilder at(boundary);
+    graphEmitter graph(at, state, live);
+    for (const auto & [original, value] : state.bindings) {
+        auto materialized = graph.materialize(value, original.getLoc(), original.getType());
+        mapping.lookup(original).replaceAllUsesWith(materialized);
+        mapping.map(original, materialized);
+    }
+    llvm::SmallVector<mlir::Operation *> removed;
+    for (mlir::Operation & op : function.getBody().front()) {
+        if (&op == state.boundary) { break; }
+        if (retainedPrefixScaffolding(&op)) { continue; }
+        auto * originalClone = mapping.lookup(&op);
+        if (auto root = llvm::dyn_cast<ctjs::RootOp>(op)) {
+            // Reestablish surviving roots after reconstruction. A root of an
+            // eliminated temporary has no corresponding runtime allocation.
+            auto * definition = root.getValue().getDefiningOp();
+            if (!definition || retainedPrefixScaffolding(definition) ||
+                llvm::any_of(state.bindings, [&](const auto & binding) {
+                    return binding.first == root.getValue();
+                })) {
+                at.clone(op, mapping);
+            }
+        } else if (llvm::isa<ctjs::FrameExitOp>(op)) {
+            at.clone(op, mapping);
+        }
+        removed.push_back(originalClone);
+    }
+    for (mlir::Operation * op : llvm::reverse(removed)) { op->erase(); }
+}
+
+} // namespace
+
+void residualize(ctjs::FuncOp function, const snapshot & state, llvm::ArrayRef<unsigned> live) {
+    auto * context = function.getContext();
+    mlir::Region replacement;
+    mlir::OpBuilder at(context);
+    if (state.boundary) {
+        residualizePrefix(function, state, live, replacement);
+    } else {
+        auto * block = new mlir::Block;
+        replacement.push_back(block);
+        for (mlir::BlockArgument arg : function.getBody().front().getArguments()) {
+            block->addArgument(arg.getType(), arg.getLoc());
+        }
+        at.setInsertionPointToEnd(block);
+        graphEmitter graph(at, state, live);
+        ctjs::ReturnOp::create(at, function.getLoc(),
+                               graph.materialize(state.result, function.getLoc()));
+    }
+    llvm::SmallVector<mlir::NamedAttribute> statistics{
+        at.getNamedAttr("steps", at.getI64IntegerAttr(state.steps)),
+        at.getNamedAttr("evaluated_nodes",
+                        at.getI64IntegerAttr(static_cast<int64_t>(state.heap.size()))),
+        at.getNamedAttr("residual_nodes", at.getI64IntegerAttr(static_cast<int64_t>(live.size())))};
+    if (state.boundary) {
+        statistics.push_back(at.getNamedAttr("mode", at.getStringAttr("prefix")));
+        statistics.push_back(at.getNamedAttr(
+            "boundary", at.getStringAttr(state.boundary->getName().getStringRef())));
+        statistics.push_back(at.getNamedAttr(
+            "live_values", at.getI64IntegerAttr(static_cast<int64_t>(state.bindings.size()))));
+    }
     function.getBody().takeBody(replacement);
-    function->setAttr(
-        "ctnative.partial_evaluated",
-        at.getDictionaryAttr(
-            {at.getNamedAttr("steps", at.getI64IntegerAttr(state.steps)),
-             at.getNamedAttr("evaluated_nodes",
-                             at.getI64IntegerAttr(static_cast<int64_t>(state.heap.size()))),
-             at.getNamedAttr("residual_nodes",
-                             at.getI64IntegerAttr(static_cast<int64_t>(live.size())))}));
+    function->setAttr("ctnative.partial_evaluated", at.getDictionaryAttr(statistics));
 }
 
 } // namespace ctcompile::ctnative::partial_eval

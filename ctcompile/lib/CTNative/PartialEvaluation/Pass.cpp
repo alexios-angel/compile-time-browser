@@ -1,5 +1,7 @@
 #include "Heap.h"
 
+#include "ctcompile/CTNative/Analysis/BindingTime.h"
+#include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/IR/SymbolTable.h"
@@ -10,82 +12,6 @@ namespace ctcompile::ctnative {
 #include "ctcompile/CTNative/Transforms/Passes.h.inc"
 
 namespace {
-
-// create_closure names a bytecode index, not an MLIR symbol use. Private
-// visibility alone therefore does not establish that every call is visible.
-// Recheck these value uses before replacing a parameterized function's body.
-std::optional<unsigned> functionIndex(ctjs::FuncOp function) {
-    const llvm::StringRef name = function.getSymName();
-    const auto dollar = name.rfind('$');
-    unsigned index = 0;
-    if (dollar == llvm::StringRef::npos || name.substr(dollar + 1).getAsInteger(10, index)) {
-        return {};
-    }
-    return index;
-}
-
-bool directCalleeUse(mlir::OpOperand & use, ctjs::FuncOp target) {
-    auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
-    return direct && use.getOperandNumber() == 2 && direct.getCallee() == target.getSymName();
-}
-
-bool closedDeclaration(ctjs::StoreGlobalOp store, ctjs::FuncOp target, mlir::ModuleOp module) {
-    auto parent = store->getParentOfType<ctjs::FuncOp>();
-    if (!parent || functionIndex(parent) != 0 || parent.getBody().empty() ||
-        store->getBlock() != &parent.getBody().front()) {
-        return false;
-    }
-    for (mlir::Operation & before : *store->getBlock()) {
-        if (&before == store.getOperation()) { break; }
-        if (!llvm::isa<ctjs::FrameEnterOp, ctjs::ConstantOp, ctjs::CreateClosureOp,
-                       ctjs::StoreGlobalOp, ctjs::RootOp>(before)) {
-            return false;
-        }
-    }
-    unsigned stores = 0;
-    bool closed = true;
-    module.walk([&](mlir::Operation * op) {
-        if (auto other = llvm::dyn_cast<ctjs::StoreGlobalOp>(op);
-            other && other.getName() == store.getName()) {
-            ++stores;
-        }
-        if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
-            load && load.getName() == store.getName()) {
-            for (mlir::OpOperand & use : load.getResult().getUses()) {
-                if (!llvm::isa<ctjs::RootOp>(use.getOwner()) && !directCalleeUse(use, target)) {
-                    closed = false;
-                }
-            }
-        }
-    });
-    return closed && stores == 1;
-}
-
-std::string callableProblem(ctjs::FuncOp function, mlir::ModuleOp module) {
-    const auto index = functionIndex(function);
-    if (!index) { return {}; } // No numeric-index closure can name this symbol.
-    std::string reason;
-    module.walk([&](ctjs::CreateClosureOp made) {
-        if (!reason.empty() || made.getFunction() < 0 ||
-            static_cast<unsigned>(made.getFunction()) != *index) {
-            return;
-        }
-        for (mlir::OpOperand & use : made.getResult().getUses()) {
-            if (llvm::isa<ctjs::RootOp>(use.getOwner()) || directCalleeUse(use, function)) {
-                continue;
-            }
-            if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(use.getOwner());
-                store && closedDeclaration(store, function, module)) {
-                continue;
-            }
-            reason = ("function closure escapes through `" +
-                      use.getOwner()->getName().getStringRef() + "`")
-                         .str();
-            return;
-        }
-    });
-    return reason;
-}
 
 // Pure fresh-object writes still require that no user prototype setters can
 // intervene. This first slice excludes every route to shared prototypes or
@@ -183,6 +109,7 @@ struct CTNativePartialEvaluatePass
         });
         prepareNativeMaps(module);
         const std::string environment = environmentProblem(module);
+        BindingTimeAnalysis bindingTime(module);
         llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> callers;
         module.walk([&](ctjs::CallDirectOp call) {
             auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
@@ -213,45 +140,45 @@ struct CTNativePartialEvaluatePass
                 decline(environment);
                 continue;
             }
-            if (const auto problem = callableProblem(fn, module); !problem.empty()) {
+            if (const auto problem = closedCallableProblem(fn, module); !problem.empty()) {
                 decline(problem);
                 continue;
             }
             llvm::SmallVector<partial_eval::value> args(fn.getBody().front().getNumArguments());
             bool known = true;
             for (unsigned i = 3; i < args.size(); ++i) {
-                mlir::Attribute expected;
-                for (ctjs::CallDirectOp call : callers[fn]) {
-                    if (i >= call->getNumOperands()) {
-                        known = false;
-                        break;
-                    }
-                    auto constant = call->getOperand(i).getDefiningOp<ctjs::ConstantOp>();
-                    if (!constant ||
-                        !llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::NullAttr,
-                                   ctjs::UndefinedAttr, ctjs::StringAttr>(constant.getValue()) ||
-                        (expected && expected != constant.getValue())) {
-                        known = false;
-                        break;
-                    }
-                    expected = constant.getValue();
+                if (auto argument = bindingTime.knownArgument(fn, i)) {
+                    args[i] = partial_eval::value::primitive(argument);
+                } else {
+                    known = false;
                 }
-                if (!known) { break; }
-                args[i] = partial_eval::value::primitive(expected);
             }
-            if (!known) {
-                decline("callers do not supply one set of constant arguments");
-                continue;
+            std::optional<partial_eval::snapshot> state;
+            std::string wholeProblem = "callers do not supply one set of constant arguments";
+            if (known) {
+                partial_eval::evaluator engine(module, maxSteps, maxNodes, maxDepth);
+                state = engine.run(fn, args);
+                if (!state) { wholeProblem = engine.reason(); }
             }
-            partial_eval::evaluator engine(module, maxSteps, maxNodes, maxDepth);
-            auto state = engine.run(fn, args);
+            // Resource exhaustion always rolls back. Otherwise a dynamic or
+            // effectful suffix can remain after a separately evaluated prefix.
+            if (!state && !llvm::StringRef(wholeProblem).contains("budget exhausted")) {
+                partial_eval::evaluator engine(module, maxSteps, maxNodes, maxDepth);
+                state = engine.runPrefix(
+                    fn, args, [&](mlir::Operation * op) { return bindingTime.isStatic(op); });
+                if (!state && engine.reason() != "no static initialization prefix") {
+                    wholeProblem = engine.reason();
+                }
+            }
             if (!state) {
-                decline(engine.reason());
+                decline(wholeProblem);
                 continue;
             }
             const auto live = partial_eval::reachable(*state);
             if (!live) {
-                decline("returned heap has an ownership cycle or unsupported value");
+                decline(state->boundary
+                            ? "prefix live heap has an ownership cycle or unsupported value"
+                            : "returned heap has an ownership cycle or unsupported value");
                 continue;
             }
             rewrites.push_back({fn, std::move(*state), *live});
