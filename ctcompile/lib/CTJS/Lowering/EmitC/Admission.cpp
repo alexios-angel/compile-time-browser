@@ -50,20 +50,15 @@ bool body_is_supported(FuncOp function, std::string & why) {
     function.getBody().walk([&](mlir::Operation * op) {
         // ctjs.frame_exit MUST BE THE LAST THING BEFORE THE RETURN.
         //
-        // The shared failure path leaves the frame too, so a fallible operation
-        // AFTER an in-place exit would emit a second ct_aot_leave on the way
-        // out. The runtime makes that harmless - leave truncates to this
-        // frame's own recorded index rather than popping, and its row says it
-        // "is a harmless no-op after a failure" - so this is an unchecked
-        // invariant rather than a live defect. It is checked anyway, because
-        // the importer emits frame_exit immediately before every return and a
-        // module where that stopped being true would be one nobody had looked
-        // at.
+        // The importer puts this marker immediately before the return. The
+        // boxed emitter coalesces their release into ct_aot_leave_return so
+        // the normalized result can be handed to the oracle. Keeping the
+        // adjacency requirement makes the deferred release match that marker.
         if (mlir::isa<FrameExitOp>(op)) {
             if (op->getNextNode() == nullptr || !mlir::isa<ReturnOp>(op->getNextNode())) {
                 supported = false;
-                why = "ctjs.frame_exit is not immediately followed by ctjs.return - anything "
-                      "fallible after it would leave the frame twice";
+                why = "ctjs.frame_exit is not immediately followed by ctjs.return - the boxed "
+                      "exit requires a return-value handoff";
             }
             return;
         }

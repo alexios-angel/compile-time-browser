@@ -249,6 +249,19 @@ CT_AOT_HELPER(/* name */ ct_aot_argc, /* ret */ uint32_t,
 CT_AOT_HELPER(/* name */ ct_aot_leave, /* ret */ void, /* params */ (struct ct_aot_frame *fr),
               /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
 
+/* Normal-return exit with an explicit in-flight result for the escape oracle.
+ * Pass the value AFTER ct_aot_return_value applies constructor semantics.
+ * The result is rooted while a bounded, mark-only walk observes the ending
+ * frame; its registers and per-frame roots are excluded. No collection or
+ * JavaScript execution occurs. Allocation coordinates remain compiled_pc,
+ * so observations cannot justify bytecode-site claims. Failed, foreign and
+ * legacy exits remain unchecked; never call this after CT_AOT_UNWOUND.
+ * DELEGATES TO: aot_bridge::leave and context::record_frame_pop.
+ * FAILURE: None. Same frame/register/handler release as ct_aot_leave. */
+CT_AOT_HELPER(/* name */ ct_aot_leave_return, /* ret */ void,
+              /* params */ (struct ct_aot_frame *fr, uint64_t result),
+              /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
+
 /* There is a universal DELIVERY point and no universal DETECTION point:
  * nothing sets an 'unwind pending' flag, and the interpreter notices only
  * because VM_NEXT re-derives the frame and re-tests. A native frame has no

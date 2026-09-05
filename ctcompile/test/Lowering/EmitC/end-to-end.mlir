@@ -65,11 +65,9 @@ function f(a) { return a; }
 // CHECK: {{v[0-9]+}} = [[FRAME]] != nullptr;
 // CHECK: return static_cast<int32_t>(ctbrowser::aot::ct_aot_status::failed);
 
-// AND THE RETURN PROTOCOL. ct_aot_return_value takes no frame handle, which is
-// exactly why the entry delivers `receiver` and `constructing` by value: the
-// body still needs them after ct_aot_leave has run. The three-argument form is
-// not optional - one compiled body serves both `f()` and `new f()`.
-// CHECK: ctbrowser::aot::ct_aot_leave([[FRAME]]);
+// Normalize the constructor result before the frame exit observes it, and
+// keep it in flight until the caller receives it.
 // CHECK: [[RESULT:v[0-9]+]] = ctbrowser::aot::ct_aot_return_value([[ARG0]],
+// CHECK: ctbrowser::aot::ct_aot_leave_return([[FRAME]], [[RESULT]]);
 // CHECK: {{v[0-9]+}}[{{v[0-9]+}}] = [[RESULT]];
 // CHECK: return static_cast<int32_t>(ctbrowser::aot::ct_aot_status::ok);

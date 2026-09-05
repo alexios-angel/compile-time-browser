@@ -12,11 +12,9 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
     // The frame is established by the entry block, not by this operation.
     if (mlir::isa<FrameEnterOp>(op)) { return true; }
 
-    if (auto exit = mlir::dyn_cast<FrameExitOp>(op)) {
-        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_leave"),
-                                 mlir::ValueRange{mapping.lookup(exit.getContext())});
-        return true;
-    }
+    // Admission requires the return immediately after this marker. Release
+    // there, once constructor normalization has produced the value in flight.
+    if (mlir::isa<FrameExitOp>(op)) { return true; }
 
     if (auto constant = mlir::dyn_cast<ConstantOp>(op)) {
         // A STRING LITERAL IS A CALL, not a spelling. It allocates, so it

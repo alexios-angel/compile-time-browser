@@ -250,8 +250,8 @@ else()
   message(STATUS "ctcompile: no Python3 - the escape oracle's checker is not registered")
 endif()
 
-# EVERY PLACE A FRAME ENDS, AS A TABLE. FrameEnds.def lists the eight sites
-# that truncate `frames_` and says which two are hooked; the escape self-test
+# EVERY PLACE A FRAME ENDS, AS A TABLE. FrameEnds.def lists nine exit paths
+# and says which three are hooked; the escape self-test
 # static_asserts its shape, and this checks that the file:line half of each
 # citation still lands inside the file it names - the one class of rot a
 # machine can see, per check-def-citations.cmake's own header.
@@ -318,4 +318,38 @@ if(Python3_Interpreter_FOUND)
                    -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/escape-oracle.py
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
                    -P ${CMAKE_CURRENT_SOURCE_DIR}/check-escape-oracle-aot.cmake)
+endif()
+
+# Observe the real boxed emitter's normalized return value, retaining the
+# compiled sentinel coordinate rather than inventing a static source site.
+if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
+  set(_aot_return_js "${CMAKE_CURRENT_SOURCE_DIR}/escape-oracle-aot-return.js")
+  set(_aot_return_inc "${CMAKE_CURRENT_BINARY_DIR}/escape-oracle-aot-return.js.inc")
+  set(_aot_return_cpp "${CMAKE_CURRENT_BINARY_DIR}/escape-oracle-aot-return.generated.cpp")
+  add_custom_command(OUTPUT "${_aot_return_inc}"
+    COMMAND "${CMAKE_COMMAND}" -DSOURCE=${_aot_return_js} -DOUTPUT=${_aot_return_inc}
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
+    DEPENDS "${_aot_return_js}" "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake" VERBATIM)
+  add_custom_command(OUTPUT "${_aot_return_cpp}"
+    COMMAND "${CMAKE_COMMAND}" -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
+      -DOPT=$<TARGET_FILE:ctjs-opt> -DMLIR_TRANSLATE=${MLIR_TRANSLATE_EXE}
+      -DSOURCE=${_aot_return_js} "-DENTRIES=oracleReturn;oracleLocal;oracleCtor"
+      -DOUTPUT=${_aot_return_cpp} -P "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake"
+    DEPENDS "${_aot_return_js}" ctjs-translate ctjs-opt
+      "${CMAKE_CURRENT_SOURCE_DIR}/compile-js-to-cpp.cmake" VERBATIM)
+  set_source_files_properties("${_aot_return_cpp}" PROPERTIES
+    COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
+  add_executable(ctcompile-test-escape-oracle-aot-return
+    EscapeOracleAOTReturn.cpp "${_aot_return_cpp}" "${_aot_return_inc}")
+  target_include_directories(ctcompile-test-escape-oracle-aot-return PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+  target_link_libraries(ctcompile-test-escape-oracle-aot-return PRIVATE ctbrowser::ctbrowser)
+  ctcompile_target(ctcompile-test-escape-oracle-aot-return)
+  add_test(NAME ctcompile_escape_oracle_aot_return COMMAND ctcompile-test-escape-oracle-aot-return)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME ctcompile_escape_oracle_aot_return_checker
+      COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:ctcompile-test-escape-oracle-aot-return>
+        -DPYTHON=${Python3_EXECUTABLE} -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/escape-oracle.py
+        -DWORK=${CMAKE_CURRENT_BINARY_DIR} -DNAME=aot-return -DUNCLAIMED=5
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/check-escape-oracle-aot.cmake)
+  endif()
 endif()

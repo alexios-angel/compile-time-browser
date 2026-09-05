@@ -274,8 +274,8 @@ inline constexpr std::uint32_t prologue_pc = 0xFFFF'FFFFu;
 // A compiled frame has no bytecode PC: its `ip` is either zero or an encoded
 // catch-pad id. Keep its allocations outside the bytecode inventory, even
 // when that pad's low bits happen to name a real allocation instruction.
-// Written as an ordinary numeric PC in format v2; it is always UNCLAIMED and
-// UNCHECKED until compiled entries supply source coordinates and an exit hook.
+// Written as an ordinary numeric PC in format v2; it remains UNCLAIMED even
+// when an explicit compiled return handoff permits an escape observation.
 inline constexpr std::uint32_t compiled_pc = 0xFFFF'FFFEu;
 
 struct static_site {
@@ -316,6 +316,9 @@ struct function_observation {
     std::vector<static_site> allocs;
     std::vector<site_observation> sites;
     std::uint64_t checks = 0;
+    // Separate from interpreted checks: compiled observations have no source
+    // coordinates and must not exhaust the interpreted site's budget.
+    std::uint64_t compiled_checks = 0;
 };
 
 struct program_observation {
@@ -404,9 +407,10 @@ public:
     void note_pop() noexcept { ++pops_; }
     void note_unwind() noexcept { ++unwinds_; }
     // Hand over a frame's records for adjudication, appended to `out`.
-    // Compiled and over-budget frames are folded as UNCHECKED here and
-    // nothing is appended.
-    void begin_check(std::uint64_t serial, std::vector<escape_record> & out);
+    // Compiled frames require an explicit normal-return handoff. Otherwise,
+    // and over the per-function/per-tier budget, records become UNCHECKED.
+    void begin_check(std::uint64_t serial, std::vector<escape_record> & out,
+                     bool compiled_return = false);
     // Fold adjudicated records into their sites. The caller has marked: a
     // record whose object is `marked` escaped by `route`, a dead one is
     // UNRESOLVED, anything else is confined.

@@ -645,15 +645,16 @@ bool lowering::convertRuntime(mlir::Operation & op, mlir::OpBuilder & build,
     }
 
     if (auto returned = mlir::dyn_cast<ReturnOp>(op)) {
-        // ct_aot_return_value TAKES NO FRAME HANDLE, which is why the entry
-        // delivers `receiver` and `constructing` by value: the body still
-        // needs them after ct_aot_leave has run. The three-argument form is
-        // not optional - one compiled body serves both `f()` and `new f()`.
+        // Normalize first: a constructor returning a primitive carries its
+        // receiver instead. The escape hook must root that actual result
+        // while removing the frame and excluding its dead register window.
         const mlir::Value produced = returned.getValue() ? mapping.lookup(returned.getValue())
                                                          : undefined(build, where, value);
         auto result = ec::CallOpaqueOp::create(build, where, mlir::TypeRange{value},
                                                callee("ct_aot_return_value"),
                                                mlir::ValueRange{produced, receiver, constructing});
+        ec::CallOpaqueOp::create(build, where, mlir::TypeRange{}, callee("ct_aot_leave_return"),
+                                 mlir::ValueRange{scope.frame, result.getResult(0)});
         // `out[0] = ...` AND NOT `*out = ...`. LLVM 23's C++ emitter refuses
         // an assignment through an `emitc.dereference` result under
         // --declare-variables-at-top ("result variable for the operation

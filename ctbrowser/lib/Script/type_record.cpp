@@ -435,7 +435,8 @@ void type_recorder::fold(const escape_record & r, root_label route, bool escaped
     }
 }
 
-void type_recorder::begin_check(std::uint64_t serial, std::vector<escape_record> & out) {
+void type_recorder::begin_check(std::uint64_t serial, std::vector<escape_record> & out,
+                                bool compiled_return) {
     const auto found = by_serial_.find(serial);
     if (found == by_serial_.end()) { return; }
     std::vector<escape_record> records = std::move(found->second);
@@ -448,15 +449,16 @@ void type_recorder::begin_check(std::uint64_t serial, std::vector<escape_record>
         if (!r.dead) { alloc_.erase(r.object); }
     }
     function_observation & f = functions_[records.front().function];
-    // A mixed unwind also ends compiled frames, but their sites have no
-    // bytecode coordinates and their normal exit cannot root the return
-    // value. Keep their observations UNCHECKED on every exit, just as on
-    // ct_aot_leave, rather than making a throw appear better covered.
-    if (records.front().pc == compiled_pc || (budget_ != 0 && f.checks >= budget_)) {
+    // The explicit return hook supplies the in-flight value. A mixed unwind
+    // or legacy exit does not opt in. The sentinel coordinate is retained,
+    // so even checked compiled observations never join a static source site.
+    const bool compiled = records.front().pc == compiled_pc;
+    std::uint64_t & checks = compiled ? f.compiled_checks : f.checks;
+    if ((compiled && !compiled_return) || (budget_ != 0 && checks >= budget_)) {
         for (const escape_record & r : records) { fold(r, root_label::globals, false, true); }
         return;
     }
-    ++f.checks;
+    ++checks;
     ++checks_;
     out.insert(out.end(), records.begin(), records.end());
 }
@@ -547,12 +549,12 @@ void context::note_freed(heap_object * o) {
 #endif
 }
 
-void context::record_frame_pop(const call_frame & popped, value carried) {
+void context::record_frame_pop(const call_frame & popped, value carried, bool compiled_return) {
 #if CTBROWSER_SCRIPT_RECORD_TYPES
     if (popped.serial == 0) { return; } // it allocated nothing
     recorder_->note_pop();
     std::vector<type_recorder::escape_record> records;
-    recorder_->begin_check(popped.serial, records);
+    recorder_->begin_check(popped.serial, records, compiled_return);
     if (records.empty()) { return; }
     // THE RETURN VALUE IS IN FLIGHT. At this moment it lives in a C++ local of
     // the dispatch loop and is written to the caller's register only after
@@ -563,6 +565,7 @@ void context::record_frame_pop(const call_frame & popped, value carried) {
 #else
     (void)popped;
     (void)carried;
+    (void)compiled_return;
 #endif
 }
 

@@ -366,8 +366,8 @@ int self_test(const char * out_path) {
 
 // --- THE FRAME-END TABLE HAS THE SHAPE THE ORACLE WAS BUILT AGAINST -----------
 //
-// FrameEnds.def lists every site that truncates `frames_`. Eight rows, two of
-// them hooked - `ret` and `unwind`. A ninth truncation site added to the VM
+// FrameEnds.def lists every path that truncates `frames_`. Nine rows, three of
+// them hooked - `ret`, `unwind`, and the explicit AOT return. A new path added to the VM
 // without a row here is exactly the hole the table exists to make visible, so
 // this is asserted rather than trusted; if the count moves, decide whether the
 // new path is a hook or an UNCHECKED reason and add the row.
@@ -391,12 +391,12 @@ constexpr std::size_t hooked = [] {
     }
     return n;
 }();
-static_assert(rows == 8, "FrameEnds.def must list the eight frames_ truncation sites - a ninth "
+static_assert(rows == 9, "FrameEnds.def must list the nine frame-ending paths - a new path "
                          "needs a row, and a decision: hook it, or name its UNCHECKED reason");
-static_assert(hooked == 2, "exactly `ret` and `unwind` are hooked in the MVP");
+static_assert(hooked == 3, "ret, unwind and explicit compiled returns are hooked");
 static_assert(std::string_view{table[0].name} == "ret" &&
                   std::string_view{table[1].name} == "unwind",
-              "the two hooked rows lead the table");
+              "the two interpreted hooks lead the table");
 } // namespace frame_ends
 
 // --- THE PROBE ---------------------------------------------------------------

@@ -1059,14 +1059,26 @@ struct aot_bridge {
     // call_frame::handler_base exactly as op::ret does, release the register
     // span. It must NOT run on the unwound path - the unwinder already
     // destroyed the frame - and is a harmless no-op after a failure.
-    static void leave(aot::ct_aot_frame * f) {
+    static void leave(aot::ct_aot_frame * f, value result = value::undefined(),
+                      bool observe_return = false) {
         aot_frame_storage & held = frame_of(f);
         context & cx = *held.ctx;
         // NOT frames_.back(). A nested call made while `failed_` is set can
         // leave a foreign frame on top, and popping it would destroy someone
         // else's. Truncating to this frame's own index is the same operation
         // when nothing went wrong and the correct one when something did.
-        if (cx.frames_.size() > held.frame_index) { cx.frames_.resize(held.frame_index); }
+        // Only a normal return with exactly this frame on top supplies enough
+        // evidence. Keep the frame copy and status check off the ordinary path
+        // when recording is disabled. Foreign-frame cleanup stays unchecked.
+        if (cx.recorder_ != nullptr && observe_return &&
+            cx.frames_.size() == held.frame_index + 1 &&
+            check(f) == static_cast<std::int32_t>(aot::ct_aot_status::ok)) [[unlikely]] {
+            const context::call_frame popped = cx.frames_[held.frame_index];
+            cx.frames_.resize(held.frame_index);
+            cx.record_frame_pop(popped, result, true);
+        } else if (cx.frames_.size() > held.frame_index) {
+            cx.frames_.resize(held.frame_index);
+        }
         if (cx.handlers_.size() > held.handler_base) { cx.handlers_.resize(held.handler_base); }
         if (cx.registers_.size() > held.register_base) { cx.registers_.resize(held.register_base); }
         held.~aot_frame_storage();
@@ -1541,6 +1553,10 @@ std::uint64_t * ct_aot_slots(ct_aot_frame * fr) {
 
 void ct_aot_leave(ct_aot_frame * fr) {
     script::aot_bridge::leave(fr);
+}
+
+void ct_aot_leave_return(ct_aot_frame * fr, std::uint64_t result) {
+    script::aot_bridge::leave(fr, script::value::from_bits(result), true);
 }
 
 std::int32_t ct_aot_check(ct_aot_frame * fr) {

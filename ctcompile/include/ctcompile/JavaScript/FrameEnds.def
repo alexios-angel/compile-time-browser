@@ -5,8 +5,8 @@
  * it escape". So every path that truncates `context::frames_` is either a
  * hook - the oracle sees the frame go - or a documented hole whose records are
  * reported UNCHECKED, never confined. This table is the list, and the escape
- * self-test (ctcompile/test/TypeOracle.cpp) asserts its shape so a ninth
- * truncation site cannot be added without deciding which it is.
+ * self-test (ctcompile/test/TypeOracle.cpp) asserts its shape so another
+ * exit path cannot be added without deciding which it is.
  *
  * CT_FRAME_END(name, where, hooked, note)
  *
@@ -19,15 +19,15 @@
  *            ending here are UNCHECKED
  *   note     what ends the frame, and why the hook is or is not there
  *
- * THE TWO HOOKED ROWS COVER INTERPRETED RETURNS AND CAUGHT THROWS. Compiled
- * allocations remain UNCHECKED even when a mixed unwind crosses their frame;
- * they carry `compiled_pc`, never a bytecode PC derived from a catch-pad id.
+ * Three hooked paths cover interpreted returns, caught throws, and compiled
+ * returns with an explicit result handoff. Compiled observations retain
+ * `compiled_pc`, never a bytecode PC derived from a catch-pad id; mixed
+ * unwinds still fold compiled records as UNCHECKED.
  * The six unhooked paths are suspensions (the frame is copied into a coroutine and
  * comes back as a NEW frame with a serial of its own), abandonments after a
  * failure nothing caught, a fresh top level clearing a dirty stack, and the
- * compiled tier - which the oracle does not adjudicate at all: it drives the
- * interpreter, and a compiled body's frame is the interpreter's business only
- * at its edges.
+ * legacy compiled exit without a result handoff. The two compiled rows name
+ * the observed and unobserved branches of the same release helper.
  */
 
 CT_FRAME_END(
@@ -76,9 +76,17 @@ CT_FRAME_END(
     /* note */ "a rejected await nothing caught; the async function's own promise rejects")
 CT_FRAME_END(/* name */ aot_leave,
              /* where */
-             "aot_bridge.cpp aot_frame_storage::leave: cx.frames_.resize(held.frame_index) "
+             "aot_bridge.cpp aot_bridge::leave: cx.frames_.resize(held.frame_index) "
              "(aot_bridge.cpp:1069)",
              /* hooked */ 0,
              /* note */
-             "compiled frames are not adjudicated: no source PC or returned-value handoff; "
-             "their allocations remain UNCHECKED on leave and mixed unwind")
+             "legacy exits, failed exits and foreign-frame cleanup lack a valid result handoff; "
+             "their compiled allocations remain UNCHECKED")
+CT_FRAME_END(/* name */ aot_return,
+             /* where */ "aot_bridge.cpp ct_aot_leave_return: aot_bridge::leave "
+                         "(aot_bridge.cpp:1561)",
+             /* hooked */ 1,
+             /* note */
+             "a normal compiled return passes the constructor-normalized result; the frame "
+             "is removed before a bounded mark with that value rooted through temporaries; "
+             "compiled_pc still has no static source attribution")

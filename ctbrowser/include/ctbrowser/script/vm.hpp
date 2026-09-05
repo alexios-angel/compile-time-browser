@@ -2000,7 +2000,7 @@ private:
     // instantiation of the dispatch loop, so a shipped build runs none of them.
     void note_allocation(heap_object * p);
     void note_freed(heap_object * o);
-    void record_frame_pop(const call_frame & popped, value carried);
+    void record_frame_pop(const call_frame & popped, value carried, bool compiled_return = false);
     void record_frames_unwound(std::size_t first);
     void adjudicate(std::size_t register_limit, std::size_t frame_limit,
                     std::vector<type_recorder::escape_record> & records);
