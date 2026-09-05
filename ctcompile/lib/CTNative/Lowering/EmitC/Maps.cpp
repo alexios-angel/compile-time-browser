@@ -18,7 +18,7 @@ bool lowering::replaceMap(mlir::Operation * o) {
     if (auto made = llvm::dyn_cast<ConstructOp>(o); made && o->hasAttr(kNativeMapSite)) {
         auto map = llvm::cast<MapType>(typeOf(made.getResult()));
         const std::string callee =
-            llvm::isa<MapType>(map.getValueType())
+            (llvm::isa<MapType>(map.getValueType()) || isObjectValueType(map.getValueType()))
                 ? ("ctnative::make_map<" + mapKeySpelling(map.getKeyType()) + ", " +
                    mapValueSpelling(map.getValueType()) + ">")
                       .str()
@@ -35,6 +35,17 @@ bool lowering::replaceMap(mlir::Operation * o) {
             llvm::append_range(args, call.getArgs());
         } else {
             args.push_back(llvm::cast<GetPropertyOp>(o).getObject());
+        }
+        if (action == "set") {
+            auto call = llvm::cast<CallOp>(o);
+            // set returns the same Map schema. Its result still has a solver
+            // fact here; the receiver may already be a replacement EmitC SSA
+            // value, which deliberately has no entry in that analysis.
+            const auto map = llvm::cast<MapType>(typeOf(call.getResult()));
+            if (isObjectValueType(map.getValueType())) {
+                args[2] =
+                    convertScalar(b, where, args[2], carrierType(context, carrier::objectValue));
+            }
         }
         const auto helper = o->hasAttr(kNativeMapPresent) ? "get_present" : action;
         const auto name = b.getStringAttr(("ctnative::map_" + helper).str());

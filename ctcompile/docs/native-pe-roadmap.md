@@ -142,6 +142,7 @@ the default pipeline unchanged; no optimization level silently enables them.
 | `--ctnative-specialize` | Off | Bounded variants for exact static argument tuples |
 | `--ctnative-partial-evaluate` | Off | BTA-guided initialization and heap residualisation |
 | `--ctnative-deforest` | Off | Proved Map snapshot projection fusion after native lowering |
+| `--ctnative-prune-unreachable` | Off | Remove proved unreachable private functions after PE, preserving published and numeric closure targets |
 | `--ctnative-supercompile` | Off | Bounded recursive driving and folding; generalization remains planned |
 | `--ctnative-binding-time-analysis` | Optional diagnostic pass | Print rederived staging facts without evaluating the program |
 
@@ -160,7 +161,7 @@ Turning the pass off never silently enables a boxed fallback.
 Resolve globals and structure first,
 precompute literals, specialize direct calls, precompute the resulting bodies,
 supercompile eligible recursive kernels, evaluate proved heap initialization,
-then lower to native C++. Run deforestation
+optionally prune unreachable private helpers, then lower to native C++. Run deforestation
 at its documented proof point. Existing individual passes remain usable.
 
 The exact vendor-derived Data probe remains a separate check from simplified
@@ -171,15 +172,19 @@ module-wide environment guards can be relaxed.
 
 ## Integrated results, 2026-09-05
 
-The devbox gate passes **394/394 CTests**, including **120/120 lit cases**, in
-**409.08 seconds**. All **471 C++ files** pass the pinned formatter, and
+The devbox gate passes **406/406 CTests**, including **123/123 lit cases**, in
+**461.12 seconds**. All **482 C++ files** pass the pinned formatter, and
 `git diff --check` passes. Each new source fixture passes ordinary and deduced
 native C++, GCC/Clang, reference comparison, altered-output rejection and no-VM
-checks. The closure, deforestation and specialization fixtures also pass
-ASan/UBSan with leak detection.
+checks. The new object-value and reachability fixtures also pass ASan/UBSan
+with leak detection and direct reference comparison. Earlier closure,
+deforestation and specialization sanitizer results are retained in their
+respective implementation records.
 
 | Source fixture | Measured transformation | Native functions | Numeric observations |
 |---|---|---:|---:|
+| Owning object/scalar Map values | Exact getter, calls/captures, lifetime and structured-loop flow | 16/16 | 47 |
+| Unreachable helpers after specialization and PE | 2 orphan variants removed, generic published callable retained | 4/4 | 4 |
 | Immutable closure heaps | 5 evaluated factories, 21 live residual nodes | 19/19 | 7 |
 | Precomputation | 69 expressions and 15 structured branches simplified | 11/11 | 20 |
 | Direct-call specialization | 12 variants, 17 redirected calls, 175 cloned operations; following PE evaluates 9 functions into 3 live nodes | 24/24 | 20 |
@@ -190,12 +195,19 @@ Deforestation, specialization and supercompilation also pass native/reference
 and no-VM checks with their optimizations disabled. The precomputation-disabled
 fixture retains the string-coercion diagnostics described above.
 
-Integration review added two regression controls. Snapshot fusion preserves an
+Earlier integration review added two regression controls. Snapshot fusion preserves an
 empty slot read before its initialization. BTA keeps original parameters dynamic
 when a specialized symbolic call still uses the original closure for boxed
 dispatch; the executable boxed test requires `1020` instead of the incorrect
 `1010`. The BTA summary worklist compares complete facts and completion state,
 with conservative fallback on exhaustion.
+
+The current continuation additionally checks observable poison on loop exit and
+continuation paths, definite-identity and union-valued loop lifetimes, conditional
+heap effects through Map keys/captures, and both symbol/numeric reachability.
+The printing gate recognizes the new carrier while still requiring spelling-only
+differences and rejecting a wrong type pin. The boxed specialization regression
+also runs optional pruning and continues to require `1020` and effect count `2`.
 
 Default corpus coverage is unchanged:
 
@@ -209,19 +221,44 @@ The exact Data browser/CommonJS/AMD probes remain **0/7, 0/7 and 0/8 native**,
 with **19/19/20 reference observations**. Boxed Bootstrap remains byte-identical:
 **10,984,359 bytes**, SHA-256
 `6847477849e52f51b8369b8e9d969c223fd647d881970003b1541c76fc67ec8a`.
-These results establish the optional stages and preserve the existing baseline;
+These results establish the new carrier and optional stages while preserving the baseline;
 full native Bootstrap initialization remains open.
+
+## Object payloads, conditional effects and reachability
+
+[Object values](native-object-values.md) extend the exact Bootstrap getter to
+property-free owning identities mixed with number, boolean, null and undefined.
+Saved aliases survive Map replacement, deletion and clearing. Calls, immutable
+captures and structured control preserve that owner. Field access, object numeric
+coercion, host publication and object-valued snapshots still require later work.
+Lift placeholders are excluded from schema flow only by a bounded proof that
+they cannot be observed, including the separate loop continuation and exit paths.
+
+[Conditional effect queries](native-conditional-effects.md) preserve disjoint
+fresh caller heaps across runtime calls. Argument-path clauses describe own
+fields and proved native Maps. Writes invalidate the entire reachable local graph,
+including Map keys and captures; unresolved clauses retain broad invalidation.
+The runtime call and result stay dynamic. These analysis facts do not by
+themselves perform additional PE or establish a Bootstrap host contract.
+
+[Reachability](native-reachability.md) removes two orphan specialization variants
+from the integrated fixture after PE. Four reachable functions remain, including
+the published generic function used by a runtime effectful call. Both symbolic
+targets and original numeric closure references retain functions. Unknown graph
+contracts and budget exhaustion retain the whole module.
 
 ## Next bounded work
 
-For Bootstrap, establish one checked host/effect contract and the required
-component/nullable-object carrier before widening the exact Data initializer.
-Keep method execution, error reporting and typed export publication explicit.
-Implement one dependency-tracked conditional effect query as described in
-[modern PE](native-modern-pe.md) before relaxing module-wide environment guards.
+For Bootstrap, extend the identity payload to owned component fields and establish
+one checked host/effect contract before widening the exact Data initializer.
+Keep wrapper calls, error reporting, string-key snapshot/Array.from behavior and
+typed export publication explicit. The current conditional queries remain behind
+their own closed-environment proof and do not relax PE/native module guards.
 
-For residual code, remove proved unreachable private helpers after PE so an
-evaluated caller cannot leave an unused helper without native type evidence.
+Published declarations remain roots after PE. Removing their closure/store pairs
+requires a proved export-observation boundary beyond private-function reachability.
+Whole-factory PE also retains its own call evaluator; general equivalence between
+symbolic native targets and retained boxed callee values remains separate work.
 For [supercompilation](native-supercompilation.md), scalar generalization comes
 before heap-aware configurations and multi-result graph search. Recursive
 Lumberhack fusion, general shared mutable capture environments and compiled

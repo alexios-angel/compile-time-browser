@@ -65,6 +65,7 @@ BindingTimeAnalysis::Impl::Impl(mlir::ModuleOp input,
                                 llvm::function_ref<void(mlir::ModuleOp)> prepareHeapFacts)
     : module(input) {
     prepareHeapFacts(module);
+    effects = std::make_unique<binding_time_detail::effectQueries>(module);
     seedArguments();
     solveSummaries();
 }

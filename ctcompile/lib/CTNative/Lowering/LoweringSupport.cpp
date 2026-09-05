@@ -37,6 +37,7 @@ carrier carrierOf(mlir::Type type) {
     if (llvm::isa<ClosureType>(type)) { return carrier::closure; }
     if (llvm::isa<MethodTableType>(type)) { return carrier::methodTable; }
     if (llvm::isa<ObjectIdentityType>(type)) { return carrier::objectIdentity; }
+    if (isObjectValueType(type)) { return carrier::objectValue; }
     if (auto string = llvm::dyn_cast<StrType>(type);
         string && string.getEncoding() == StrEncoding::UTF8) {
         return carrier::string;
@@ -64,7 +65,7 @@ carrier carrierOf(mlir::Type type) {
             llvm::isa<BottomType, NumType, BoolType, ObjectIdentityType>(key) ||
             (string && string.getEncoding() == StrEncoding::UTF8);
         const auto value = map.getValueType();
-        const bool ownedValue = llvm::isa<BottomType, NumType>(value) ||
+        const bool ownedValue = llvm::isa<BottomType, NumType>(value) || isObjectValueType(value) ||
                                 (llvm::isa<MapType>(value) && carrierOf(value) == carrier::map);
         return supportedKey && ownedValue ? carrier::map : carrier::none;
     }
@@ -110,6 +111,7 @@ llvm::StringRef mapKeySpelling(mlir::Type type) {
 }
 
 std::string mapValueSpelling(mlir::Type type) {
+    if (isObjectValueType(type)) { return kObjectValueType.str(); }
     if (llvm::isa<BottomType, NumType>(type)) { return "double"; }
     if (auto map = llvm::dyn_cast<MapType>(type)) {
         return llvm::cast<ec::OpaqueType>(mapCarrierType(map)).getValue().str();
@@ -127,7 +129,7 @@ mlir::Type mapCarrierType(MapType type) {
     const auto key = mapKeySpelling(type.getKeyType());
     const auto value = type.getValueType();
     const std::string body =
-        llvm::isa<MapType>(value)
+        (llvm::isa<MapType>(value) || isObjectValueType(value))
             ? ("ctnative::map_storage<" + key + ", " + mapValueSpelling(value) + ">").str()
             : ("ctnative::number_map<" + key + ">").str();
     return ec::OpaqueType::get(type.getContext(), "std::shared_ptr<" + body + ">");
@@ -156,6 +158,7 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     // that is worth far more than a double that happens to verify.
     switch (which) {
     case carrier::nullable: return ec::OpaqueType::get(c, kNullableType);
+    case carrier::objectValue: return ec::OpaqueType::get(c, kObjectValueType);
     case carrier::objectIdentity: return ec::OpaqueType::get(c, kObjectIdentityType);
     case carrier::methodTable:
         llvm::report_fatal_error("method table carrier needs its proved schema");

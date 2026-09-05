@@ -11,6 +11,8 @@ add_mlir_library(CTNativeAnalysis
   TypeInference.cpp
   ClosedCallable.cpp
   BindingTime/Analysis.cpp
+  BindingTime/Effects.cpp
+  BindingTime/EffectQuery.cpp
   BindingTime/Captures.cpp
   BindingTime/Operations.cpp
   BindingTime/Flow.cpp
@@ -20,6 +22,8 @@ add_mlir_library(CTNativeAnalysis
   NativeMap.cpp
   NativeMap/Presence.cpp
   NativeObjectIdentity.cpp
+  NativeObject/ValueFlow.cpp
+  NativeObject/InertSlots.cpp
 
   LINK_LIBS PUBLIC
     CTNativeDialect

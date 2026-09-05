@@ -107,7 +107,11 @@ the pinned formatting check.
 The full-summary worklist and closure extension are validated with the additional
 optimization stages in [the current roadmap](native-pe-roadmap.md).
 
-Next work needs residual closure environments and explicit host/effect contracts
-to specialize Bootstrap's module initialization. This slice stops at one
+Immutable closure environments are now represented in the compiler heap.
+[Conditional effect queries](native-conditional-effects.md) preserve disjoint
+fresh local heaps across a proved argument-local runtime call. Written reachable
+fields, Map keys/values, cells and captures become dynamic; the call and its
+result stay dynamic. Unresolved queries retain broad invalidation. Explicit
+host/effect contracts remain necessary for Bootstrap's module initialization. This slice stops at one
 straight-line entry prefix; it does not split arbitrary regions or freeze DOM
 queries, component state, event registration or export publication.

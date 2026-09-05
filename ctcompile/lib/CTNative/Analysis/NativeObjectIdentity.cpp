@@ -1,7 +1,9 @@
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
 #include "ClosedValueFlow.h"
+#include "NativeObject/ValueFlow.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringMap.h"
 
@@ -57,29 +59,40 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module) {
         }
     });
     module.walk([&](ctjs::CreateObjectOp made) { flow.add(made.getResult()); });
+    object_detail::connectValues(flow, module);
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> families;
     for (mlir::Value value : flow.nodes) { families[flow.find(value)].push_back(value); }
     for (auto & [root, family] : families) {
-        bool usedAsKey = false;
+        bool usedAsKey = false, usedAsPayload = false;
         llvm::SmallVector<ctjs::CreateObjectOp> made;
         for (mlir::Value value : family) {
             if (auto object = value.getDefiningOp<ctjs::CreateObjectOp>()) {
                 made.push_back(object);
             }
-            for (mlir::OpOperand & use : value.getUses()) { usedAsKey |= mapKeyUse(use); }
+            for (mlir::OpOperand & use : value.getUses()) {
+                usedAsKey |= mapKeyUse(use);
+                usedAsPayload |= object_detail::mapPayloadUse(use);
+            }
         }
-        if (!usedAsKey || made.empty()) { continue; }
+        if ((!usedAsKey && !usedAsPayload) || made.empty()) { continue; }
         std::string reason;
         const auto reject = [&](llvm::StringRef why) {
-            if (reason.empty()) { reason = ("identity-only Map key " + why).str(); }
+            if (reason.empty()) {
+                reason = ((usedAsKey ? "identity-only Map key " : "identity-only Map value ") + why)
+                             .str();
+            }
         };
         for (mlir::Value value : family) {
             if (value.getDefiningOp<ctjs::CreateObjectOp>()) {
                 // Fresh allocation, even when another allocation has the same schema.
             } else if (auto arg = llvm::dyn_cast<mlir::BlockArgument>(value)) {
                 auto fn = llvm::dyn_cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
-                if (!closedValueFlow::closed(fn) || arg.getOwner() != &fn.getBody().front() ||
-                    arg.getArgNumber() < 3 || flow.callers[fn].empty()) {
+                if (llvm::isa<mlir::scf::WhileOp, mlir::scf::ForOp>(
+                        arg.getOwner()->getParentOp())) {
+                    // Every initial/backedge value was connected above.
+                } else if (!closedValueFlow::closed(fn) ||
+                           arg.getOwner() != &fn.getBody().front() || arg.getArgNumber() < 3 ||
+                           flow.callers[fn].empty()) {
                     reject("parameter requires a closed function with visible callers");
                 } else {
                     for (ctjs::CallDirectOp call : flow.callers[fn]) {
@@ -95,11 +108,24 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module) {
                 }
             } else if (reads.contains(value.getDefiningOp())) {
                 // Connected to a proved owning slot above.
+            } else if (nativeMapAction(value.getDefiningOp()) == "get" ||
+                       llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::ForOp>(
+                           value.getDefiningOp())) {
+                // Producers and all alternative values share this checked family.
+            } else if (usedAsPayload && object_detail::primitiveProducer(value)) {
+                // The type lattice retains these alternatives; only object
+                // allocations receive the identity proof, never the whole family.
             } else {
-                reject("flow contains a non-object producer");
+                reject(("flow contains a non-object producer `" +
+                        value.getDefiningOp()->getName().getStringRef() + "`")
+                           .str());
             }
             for (mlir::OpOperand & use : value.getUses()) {
                 if (mapKeyUse(use)) { continue; }
+                if (object_detail::mapPayloadUse(use) ||
+                    object_detail::valueObservation(use.getOwner())) {
+                    continue;
+                }
                 if (erasedCapture(use)) { continue; }
                 if (llvm::isa<ctjs::CreateClosureOp>(use.getOwner()) &&
                     use.getOperandNumber() >= 2 && !environmentTarget(use.getOwner()).empty()) {

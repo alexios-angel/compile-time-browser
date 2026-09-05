@@ -9,6 +9,7 @@ namespace ctcompile::ctnative::lowering_detail {
 void lowering::retype(ctjs::FuncOp fn) {
     const auto retypeValue = [&](mlir::Value v) {
         needsNullable |= carrierOf(typeOf(v)) == carrier::nullable;
+        needsObjectValue |= carrierOf(typeOf(v)) == carrier::objectValue;
         if (!llvm::isa<ctjs::ValueType>(v.getType())) { return; }
         // A closed object keeps its ctjs type until its shape is known
         // below; everything else takes its carrier now.
@@ -49,6 +50,7 @@ void lowering::retype(ctjs::FuncOp fn) {
             auto map = llvm::cast<MapType>(typeOf(v));
             needsMap = true;
             needsString |= mapNeedsString(map);
+            needsObjectValue |= mapNeedsObjectValues(map);
             v.setType(mapCarrierType(map));
             return;
         }

@@ -98,6 +98,7 @@ struct lowering {
     bool needsString = false;
     bool needsMap = false;
     bool needsObjectIdentity = false;
+    bool needsObjectValue = false;
     bool needsNullable = false;
     llvm::SmallVector<std::string> environments;
     llvm::SmallVector<std::string> methodTables;

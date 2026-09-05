@@ -9,6 +9,23 @@
 
 include "mlir/Pass/PassBase.td"
 
+def CTNativePruneUnreachable : Pass<"ctnative-prune-unreachable", "mlir::ModuleOp"> {
+  let summary = "Remove private functions unreachable from checked symbolic and closure roots";
+  let description = [{
+    Optional bounded reachability analysis after partial evaluation. Public and
+    external functions, the script entry and executable module operations are
+    roots. Symbol references and numeric closure identities retain their targets,
+    including the original callee values used by boxed dispatch. Ambiguous closure
+    identities retain every target. Unknown references, scopes and exhausted work
+    retain the entire module. No operation in a live function is removed.
+  }];
+  let options = [
+    Option<"maxSteps", "max-steps", "unsigned", "100000", "Maximum graph discovery work">,
+    Option<"report", "report", "bool", "false", "Report removed private functions">
+  ];
+  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect"];
+}
+
 def CTNativePrecompute : Pass<"ctnative-precompute", "mlir::ModuleOp"> {
   let summary = "Precompute primitive expressions and simplify proved symbolic results";
   let description = [{

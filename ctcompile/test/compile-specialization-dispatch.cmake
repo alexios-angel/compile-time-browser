@@ -9,6 +9,7 @@ execute_process(
   COMMAND "${TRANSLATE}" --ctbrowser-js-to-ctjs "${SOURCE}"
   COMMAND "${OPT}" --ctjs-resolve-globals --ctjs-lift-to-scf
           --ctnative-specialize=report=true --ctnative-partial-evaluate=report=true
+          --ctnative-prune-unreachable
           --ctjs-lower-to-emitc --ctjs-drop-uncompiled --emitc-eliminate-block-arguments
           --mlir-print-op-on-diagnostic=false
   COMMAND "${MLIR_TRANSLATE}" --mlir-to-cpp --declare-variables-at-top

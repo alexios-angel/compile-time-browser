@@ -1,5 +1,6 @@
 // EmitC/Module.cpp - native lowering implementation.
 #include "../Admission/Admission.h"
+#include "../ObjectValues/RuntimeHelpers.h"
 #include "Emitter.h"
 #include "MethodTableHelpers.h"
 #include "NativeMapHelpers.h"
@@ -74,6 +75,8 @@ void lowering::finish() {
 }
 
 void lowering::declareGlobals() {
+    needsNullable |= needsObjectValue;
+    needsObjectIdentity |= needsObjectValue;
     mlir::OpBuilder b(context);
     b.setInsertionPointToStart(module.getBody());
     // INCLUDES FIRST: the builder advances past each op it creates, so
@@ -96,6 +99,10 @@ void lowering::declareGlobals() {
                 "namespace ctnative {\n// ctcompile: proved property-free object identity\n"
                 "struct identity_object {};\n}\n"));
     }
+    if (needsObjectValue) {
+        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("utility"), b.getUnitAttr());
+        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kObjectValueHelpers));
+    }
     // ONLY WHEN A VECTOR SITE EXISTS. An include and a preamble emitted
     // unconditionally would move every byte count the printing gate
     // reports and every line the other native lits pin, for programs that
@@ -109,6 +116,9 @@ void lowering::declareGlobals() {
             ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
         }
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNativeMapHelpers));
+        if (needsObjectValue) {
+            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kObjectMapHelpers));
+        }
     }
     if (!methodTables.empty()) {
         for (llvm::StringRef header : {"functional", "memory", "utility"}) {

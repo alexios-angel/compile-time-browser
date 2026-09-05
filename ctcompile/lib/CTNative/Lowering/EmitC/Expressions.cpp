@@ -51,7 +51,11 @@ mlir::Value lowering::truthyNumber(mlir::OpBuilder & b, mlir::Location where, ml
 }
 
 mlir::Value lowering::truthy(mlir::OpBuilder & builder, mlir::Location where, mlir::Value value) {
-    if (isNullableCarrier(value.getType())) {
+    if (isIdentityCarrier(value.getType())) {
+        return ec::ConstantOp::create(builder, where, mlir::IntegerType::get(context, 1),
+                                      builder.getBoolAttr(true));
+    }
+    if (isNullableCarrier(value.getType()) || isObjectValueCarrier(value.getType())) {
         return convertScalar(builder, where, value, mlir::IntegerType::get(context, 1));
     }
     if (llvm::isa<mlir::IntegerType>(value.getType())) { return value; }

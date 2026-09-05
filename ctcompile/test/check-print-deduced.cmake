@@ -113,7 +113,7 @@ endif()
 function(normalise lines out)
   set(result "")
   foreach(line IN LISTS lines)
-    string(REGEX REPLACE "^([ \t]*)(auto|double|bool|int32_t|int64_t|float|std::string|ctnative::nullable_scalar) ([A-Za-z_0-9]+) = " "\\1T \\3 = " line "${line}")
+    string(REGEX REPLACE "^([ \t]*)(auto|double|bool|int32_t|int64_t|float|std::string|ctnative::nullable_scalar|ctnative::object_value) ([A-Za-z_0-9]+) = " "\\1T \\3 = " line "${line}")
     # Direct calls can return owning Maps, including finite nested schemas.
     # Keep comparing the complete initializer and every other line.
     string(REGEX REPLACE "^([ \t]*)std::shared_ptr<ctnative::(number_map|map_storage)<([^;=]+)>> ([A-Za-z_0-9]+) = " "\\1T \\4 = " line "${line}")

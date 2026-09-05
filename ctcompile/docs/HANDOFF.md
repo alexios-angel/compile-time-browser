@@ -8,9 +8,14 @@ committing. There is no CI. Do not build on the small local machine.
 
 ## Current native staging checkpoint, 2026-09-05
 
+Final devbox gate: **406/406 CTests**, **123/123 lit cases**, **461.12 seconds**;
+all **482 C++ files** pass formatting. Object-value and reachability fixtures
+also pass ASan/UBSan/leak checks. Boxed Bootstrap is byte-identical; native
+Bootstrap remains **19/574**, and exact Data probes remain **0/7, 0/7, 0/8**.
+
 The [roadmap](native-pe-roadmap.md) records the integrated validation and optional
-controls. Heap PE, precomputation, direct-call specialization, deforestation and
-supercompilation are separate opt-in passes. The default native pipeline enables
+controls. Heap PE, precomputation, direct-call specialization, deforestation,
+supercompilation and unreachable-helper pruning are separate opt-in passes. The default native pipeline enables
 none of them; dependent BTA, type, effect and ownership proofs remain mandatory.
 
 The compiler heap now represents immutable capture cells and latent closures.
@@ -36,13 +41,31 @@ multi-result search remain planned. Research from all five supercompilation and
 both PE PDFs is synthesized in [the supercompiler design](native-supercompilation.md)
 and [the modern PE design](native-modern-pe.md).
 
-Full native Bootstrap is still unfinished. Continue with checked host/effect
-contracts and component/nullable-object carriers for the exact Data initializer;
-the [vendor probe](bootstrap-data-probe.md) remains separate from native fixtures.
-For PE, implement one dependency-tracked effect query before relaxing module-wide
-guards. For supercompilation, scalar generalization precedes heap graph contexts.
-Native removal of now-unreachable closed helpers is also pending: preserving a
-generic call before PE does not guarantee an evaluated caller retains it.
+The current continuation adds an owning object/scalar Map payload for the exact
+`t.has(e) && t.get(e).get(i) || null` expression. Property-free identities retain
+ownership across replacement, deletion, clearing, calls, immutable captures and
+loops. Scalar tags and freshness are preserved; fields, object coercions, host
+publication and object-valued snapshots still refuse. A bounded inert-slot proof
+prevents lift placeholders from conflating unrelated value families.
+
+Conditional BTA effect queries preserve disjoint fresh local heaps across runtime
+calls. They resolve own-field/Map clauses before invalidating written reachable
+graphs, including Map keys and captures. Calls/results remain dynamic. Both BTA
+call paths check actual callee identity; this does not establish a general
+cross-tier equivalence proof for the independent whole-factory PE evaluator.
+
+The optional `--ctnative-prune-unreachable` pass removes private functions only
+after a complete graph proof. Symbol and numeric closure edges both retain
+bodies, including original boxed callees. The integration fixture removes two
+orphan variants after PE and keeps the published generic callable executable.
+Published top-level declarations need a separate export-observation contract.
+
+Full native Bootstrap is still unfinished. The exact vendor Data probes retain
+fieldful payloads, UMD publication, wrapper receiver/callee behavior, string-key
+snapshots/Array.from and console error paths. Next, add owned component fields
+and one checked host/effect contract with explicit identity and export behavior.
+For PE, build on the conditional query without relaxing other module guards.
+For supercompilation, scalar generalization precedes heap-aware contexts.
 
 Implementations stay in small named folders; [source-layout.md](source-layout.md)
 maps their responsibilities. Current native corpus counts and boxed Bootstrap's

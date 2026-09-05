@@ -19,10 +19,14 @@ foreach(required TRANSLATE OPT SOURCE OUTPUT)
   endif()
 endforeach()
 set(_partial_pass "")
+set(_prune_pass "")
 set(_precompute_pass "")
 set(_specialize_pass "")
 set(_supercompile_pass "")
 set(_deforest_pass "")
+if(PRUNE_UNREACHABLE)
+  set(_prune_pass "ctnative-prune-unreachable{report=true}, ")
+endif()
 if(PRECOMPUTE)
   set(_precompute_pass "ctnative-precompute{report=true}, ")
 endif()
@@ -50,7 +54,7 @@ execute_process(
   # prune for the variables nothing reads (Phase 63 Step 7 - the file must
   # compile clean under -Wall -Wextra -Werror), and a canonicalize for what
   # the prune left dead.
-  COMMAND "${OPT}" "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ${_precompute_pass}${_specialize_pass}${_supercompile_pass}${_partial_pass}ctnative-lower-to-emitc, ${_deforest_pass}emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))"
+  COMMAND "${OPT}" "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ${_precompute_pass}${_specialize_pass}${_supercompile_pass}${_partial_pass}${_prune_pass}ctnative-lower-to-emitc, ${_deforest_pass}emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))"
           --mlir-print-debuginfo --mlir-print-op-on-diagnostic=false
   OUTPUT_VARIABLE module
   ERROR_VARIABLE complaints
@@ -60,6 +64,9 @@ foreach(outcome IN LISTS outcomes)
     message(FATAL_ERROR "native-pipeline.cmake: a stage failed (${outcomes})\n${complaints}")
   endif()
 endforeach()
+if(PRUNE_UNREACHABLE AND NOT complaints MATCHES "reachability: [1-9][0-9]* private function")
+  message(FATAL_ERROR "reachability did not remove any private function\n${complaints}")
+endif()
 if(PARTIAL_EVALUATE AND NOT complaints MATCHES "partial evaluation: [1-9][0-9]* function")
   message(FATAL_ERROR "partial evaluation did not specialize any factory\n${complaints}")
 endif()

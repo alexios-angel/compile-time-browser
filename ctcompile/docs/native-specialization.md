@@ -64,6 +64,7 @@ ctnative-precompute
 ctnative-specialize
 ctnative-precompute
 ctnative-partial-evaluate
+ctnative-prune-unreachable
 ctnative-lower-to-emitc
 ```
 
@@ -73,8 +74,9 @@ specialization, not general supercompilation or arbitrary symbolic execution.
 
 Retaining a generic call before heap evaluation does not guarantee that it
 survives afterward: evaluating an entire caller can remove its calls and leave
-private helpers without native type evidence. Native removal of unreachable
-closed helpers is a follow-up. The differential fixture deliberately retains
+private helpers without native type evidence. The optional
+[reachability pass](native-reachability.md) removes proved unreachable private
+definitions after PE. Published closure values still retain their targets. The differential fixture deliberately retains
 runtime consumers with observable writes so that it measures specialized
 initialization and residual execution together.
 
@@ -101,7 +103,7 @@ ordinary and deduced C++ with GCC and Clang, check for VM symbols, and validate
 the type-deduction pins.
 
 The separate `ctcompile_specialization_boxed_dispatch` CTest applies specialization
-and heap evaluation before ordinary boxed lowering. It installs generated entries
+and heap evaluation, then unreachable-helper pruning before ordinary boxed lowering. It installs generated entries
 for both the generic function and its caller, then compares the result and global
 write with interpretation. Calls using tuples `1` and `2` must produce `1020`;
 freezing the original body to its remaining symbolic tuple would produce `1010`.

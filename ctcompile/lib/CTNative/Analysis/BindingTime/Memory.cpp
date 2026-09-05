@@ -80,6 +80,9 @@ BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::memory(mlir::Operatio
                        return capture.domain == kind::cell && clean(capture);
                    });
         state.heaps[op].dynamic = !eligible;
+        for (mlir::Value input : made.getUpvalues()) {
+            state.heaps[op].retained.push_back(get(input));
+        }
         return {kind::closure, eligible ? BindingTime::Static : BindingTime::Dynamic, {}, {op}};
     }
     if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
@@ -155,6 +158,7 @@ BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::memory(mlir::Operatio
                 auto & target = state.heaps[id];
                 target.dynamic |= !eligible;
                 if (action == "set" && call.getArgs().size() == 2) {
+                    target.retained.push_back(get(call.getArgs()[0]));
                     const fact data = get(call.getArgs()[1]);
                     if (target.fields.empty()) {
                         target.contents = data;
@@ -165,6 +169,7 @@ BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::memory(mlir::Operatio
                 }
                 if (action == "clear" && eligible) {
                     target.fields.clear();
+                    target.retained.clear();
                     target.contents = primitive();
                 }
             }

@@ -4,7 +4,7 @@ Design review, 2026-09-05. The starting implementation was `46e94cb` plus the
 closure, precomputation and direct-call specialization tracks in
 [the PE roadmap](native-pe-roadmap.md). The integrated gate now passes 394/394
 CTests and 120/120 lit cases. This document distinguishes the implemented BTA
-summary worklist from the proposed dependency queries and richer contexts.
+summary worklist and conditional effect queries from proposed richer contexts.
 
 Keep partial evaluation optional. An optimization may remove proved work, retain
 ordinary CTJS, or decline an attempt. It must preserve observable values, effects,
@@ -185,11 +185,17 @@ Speculation must not introduce one implicitly.
    and attempt records behind the existing APIs. Test forged/stale annotations,
    normal-result facts across effectful calls, and a budget failure after mutation.
    Keep current native/source observations identical with the feature disabled.
-3. **Add one module-local conditional effect query.** Use a closed visible helper
-   operating on a proved fresh Map/object. Preserve facts across a proved unrelated
-   write; invalidate them for reachable writes, callbacks and unknown aliases.
-   Implement a reverse-dependency queue and measure solved/remaining queries.
-   Do not relax host/prototype guards as a side effect of this step.
+3. **One module-local conditional effect query is implemented.** Closed visible
+   helpers expose bounded argument-path clauses for own fields and proved Maps.
+   A reverse-dependency queue resolves callee summaries; each caller discharges
+   all clauses before invalidating written reachable graphs. Disjoint local heaps
+   retain static facts while calls/results remain dynamic. Map keys and immutable
+   capture edges participate in reachability. Unknown/dirty/nonlocal references,
+   callbacks, recursion and exhausted budgets retain broad invalidation. The
+   [query contract](native-conditional-effects.md) and its imported-source and raw
+   IR tests also verify actual callee identity for both BTA call paths. Host and
+   prototype guards remain intact; this analysis does not itself evaluate more
+   runtime calls or supply a general whole-factory PE equivalence proof.
 4. **Extend specialization only where measured.** Reuse exact tuple variants across
    repeated passes, then consider finite primitive contexts for residual branches.
    Memoize `(block, context)`, join incoming facts and repair cross-context SSA.

@@ -26,7 +26,7 @@ bool admission::op(mlir::Operation * o) {
         for (mlir::Value captured : made.getUpvalues()) {
             const auto c = carrierOf(typeOf(captured));
             if (!isScalarCarrier(c) && c != carrier::string && c != carrier::map &&
-                c != carrier::objectIdentity) {
+                !isObjectCarrier(c)) {
                 return refuse("returned closure capture needs an owning scalar, Map or object "
                               "identity carrier; got " +
                               printed(typeOf(captured)));
@@ -46,8 +46,8 @@ bool admission::op(mlir::Operation * o) {
     if (auto made = llvm::dyn_cast<ConstructOp>(o)) {
         if (o->hasAttr(kNativeMapSite)) {
             return carrierOf(typeOf(made.getResult())) == carrier::map ||
-                   refuse("native Map needs supported keys and definite numeric or acyclic "
-                          "Map values; inferred " +
+                   refuse("native Map needs supported keys and numeric, object-identity union or "
+                          "acyclic Map values; inferred " +
                           printed(typeOf(made.getResult())));
         }
     }
@@ -251,7 +251,7 @@ bool admission::op(mlir::Operation * o) {
                 continue;
             }
             if (carrierOf(typeOf(operands[i])) != carrier::methodTable &&
-                carrierOf(typeOf(operands[i])) != carrier::objectIdentity &&
+                !isObjectCarrier(carrierOf(typeOf(operands[i]))) &&
                 carrierOf(typeOf(operands[i])) != carrier::closure &&
                 carrierOf(typeOf(operands[i])) != carrier::boolean &&
                 carrierOf(typeOf(operands[i])) != carrier::string &&
@@ -370,8 +370,9 @@ bool admission::op(mlir::Operation * o) {
         case UnaryKind::Plus: return numeric(u.getOperand(), "unary");
         case UnaryKind::TypeOf:
             return isScalarCarrier(carrierOf(typeOf(u.getOperand()))) ||
+                   isObjectCarrier(carrierOf(typeOf(u.getOperand()))) ||
                    carrierOf(typeOf(u.getOperand())) == carrier::string ||
-                   refuse("typeof requires a scalar or owning string carrier");
+                   refuse("typeof requires a scalar, object identity or owning string carrier");
         case UnaryKind::Not:
             // `!x` applies the carrier's exact truthiness conversion, then
             // negates it. Tagged null/undefined and numeric NaN are falsy.
@@ -392,6 +393,22 @@ bool admission::op(mlir::Operation * o) {
         case CompareKind::Eq:
         case CompareKind::StrictEq:
             if (strings(cmp.getLhs(), cmp.getRhs())) { return true; }
+            if (isObjectCarrier(carrierOf(typeOf(cmp.getLhs()))) ||
+                isObjectCarrier(carrierOf(typeOf(cmp.getRhs())))) {
+                const auto left = typeOf(cmp.getLhs()), right = typeOf(cmp.getRhs());
+                const auto supported = [](carrier c) {
+                    return isScalarCarrier(c) || isObjectCarrier(c);
+                };
+                if (!supported(carrierOf(left)) || !supported(carrierOf(right))) {
+                    return refuse("object equality requires identity or scalar alternatives");
+                }
+                if (cmp.getKind() == CompareKind::Eq && !onlyAbsent(left) && !onlyAbsent(right) &&
+                    !(identityOrAbsent(left) && identityOrAbsent(right))) {
+                    return refuse(
+                        "loose object equality may invoke object-to-primitive conversion");
+                }
+                return true;
+            }
             return numeric(cmp.getLhs(), "equality") && numeric(cmp.getRhs(), "equality");
         }
         return refuse("an unknown comparison");
@@ -429,6 +446,9 @@ bool admission::op(mlir::Operation * o) {
         if (returns != c) {
             if (isScalarCarrier(returns) && isScalarCarrier(c)) {
                 returns = carrier::nullable;
+            } else if ((isObjectCarrier(returns) || isScalarCarrier(returns)) &&
+                       (isObjectCarrier(c) || isScalarCarrier(c))) {
+                returns = carrier::objectValue;
             } else {
                 return refuse("returns different native carriers on different paths");
             }

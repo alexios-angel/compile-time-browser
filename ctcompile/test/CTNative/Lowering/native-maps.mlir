@@ -56,12 +56,12 @@
 // NESTED: emitc.func @probe_1
 // NESTED: call_opaque "ctnative::make_map<std::string, std::shared_ptr<ctnative::number_map<double>>>"
 // MIXED: ctjs.func private @probe$1
-// MIXED-SAME: ctnative.not_native = "native Map needs supported keys and definite numeric or acyclic Map values; inferred !ctnative.map<!ctnative.variant<
+// MIXED-SAME: ctnative.not_native = "native Map needs supported keys and numeric, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.variant<
 // OBJECT: emitc.func @probe_1
 // STRING: ctjs.func private @probe$1
-// STRING-SAME: ctnative.not_native = "native Map needs supported keys and definite numeric or acyclic Map values; inferred !ctnative.map<!ctnative.str<utf8>, !ctnative.str<utf8>>"
+// STRING-SAME: ctnative.not_native = "native Map needs supported keys and numeric, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.str<utf8>, !ctnative.str<utf8>>"
 // OPTIONAL: ctjs.func private @probe$1
-// OPTIONAL-SAME: ctnative.not_native = "native Map needs supported keys and definite numeric or acyclic Map values; inferred !ctnative.map<!ctnative.num<i32>, !ctnative.opt<!ctnative.num<i32>>>"
+// OPTIONAL-SAME: ctnative.not_native = "native Map needs supported keys and numeric, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.num<i32>, !ctnative.opt<!ctnative.num<i32>>>"
 // EQUALITY: emitc.func @probe_1() -> i1
 // EQUALITY: call_opaque "ctnative::scalar_strict_equal"
 // EQUALITY-NOT: ctnative.not_native

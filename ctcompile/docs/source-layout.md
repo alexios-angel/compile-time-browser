@@ -7,15 +7,18 @@ by their implementation files. Public APIs remain under `include/ctcompile/`.
 | Area | Location | Contents |
 |---|---|---|
 | Partial evaluation | `lib/CTNative/PartialEvaluation/` | Factory admission, static entry prefixes, bounded evaluation, primitive adapter, heap graph and residualisation |
-| Binding time | `lib/CTNative/Analysis/BindingTime/` and `BindingTime/` | Argument and callee facts, heap effects, control flow and annotation pass |
+| Binding time | `lib/CTNative/Analysis/BindingTime/` and `BindingTime/` | Argument/callee facts, conditional effect summaries and queries, heap flow and annotation pass |
 | Precomputation | `lib/CTNative/Symbolic/` | Primitive and normal-result facts, bounded propagation and effect-preserving rewriting |
 | Specialization | `lib/CTNative/Specialization/` | Closed direct-call candidates, exact argument tuples and bounded residual variants |
+| Reachability | `lib/CTNative/Reachability/` | Optional bounded graph proof and transactional removal of private helpers |
 | Supercompilation | `lib/CTNative/Supercompilation/` | Transactional process graphs, recursive promises, finite-shape embedding and budget control |
 | Deforestation | `lib/CTNative/Deforestation/` | Snapshot producer/consumer constraints, effect barriers and scalar projection helpers |
 | Native pass | `lib/CTNative/Lowering/LowerToEmitC.cpp` | Pass setup, inference, admission fixpoint and lowering order |
 | Closure lifting | `lib/CTNative/Lowering/ClosureLifting/` | Calls, callbacks, bindings, cells, captures, returned closures and method tables, constructors, diagnostics and rewriting |
 | Native admission | `lib/CTNative/Lowering/Admission/` | Value, object, operation and function checks |
 | Native emission | `lib/CTNative/Lowering/EmitC/` | Shapes, types, owning environments and method tables, Maps, expressions, operations, functions, module declarations and runtime helper text |
+| Object value carriers | `lib/CTNative/Lowering/ObjectValues/` | Identity/scalar union classification and owning runtime helpers |
+| Object identity flow | `lib/CTNative/Analysis/NativeObject/` | Map payload and structured schema edges, bounded inert-slot proof |
 | Shape inference | `lib/CTNative/Analysis/Inference/` | Receiver/cell groups, closed shapes and dense-vector proofs |
 | Owning Map proofs | `lib/CTNative/Analysis/` and `Analysis/NativeMap/` | Shared closed value flow, Map schemas, conditional presence/effects and object identities |
 | Boxed emission | `lib/CTJS/Lowering/EmitC/` | Admission, function setup, operation dispatch, status handling, roots and constants |

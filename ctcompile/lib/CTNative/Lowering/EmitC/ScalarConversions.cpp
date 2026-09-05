@@ -21,7 +21,13 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     }
     if (value.getType() == target) { return value; }
     llvm::StringRef helper;
-    if (isNullableCarrier(target)) {
+    if (isObjectValueCarrier(target)) {
+        needsObjectValue = true;
+        helper = "ctnative::to_object_value";
+    } else if (isObjectValueCarrier(value.getType()) && llvm::isa<mlir::IntegerType>(target)) {
+        needsObjectValue = true;
+        helper = "ctnative::object_truthy";
+    } else if (isNullableCarrier(target)) {
         needsNullable = true;
         helper = "ctnative::to_nullable";
     } else if (isNullableCarrier(value.getType())) {
@@ -48,7 +54,8 @@ mlir::Type lowering::joinedReturnType(ctjs::FuncOp fn) const {
 void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     const auto scalarType = [&](mlir::Type type) -> mlir::Type {
         const auto c = carrierOf(type);
-        if (!isScalarCarrier(c) && c != carrier::string) { return {}; }
+        if (!isScalarCarrier(c) && !isObjectCarrier(c) && c != carrier::string) { return {}; }
+        needsObjectValue |= c == carrier::objectValue;
         needsNullable |= c == carrier::nullable;
         return carrierType(context, c);
     };

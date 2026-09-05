@@ -89,7 +89,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         // lattice joins bottom with the live incoming type, so one
         // poison can feed both string and numeric slots. Choose an
         // inert value per destination instead of giving every use NaN.
-        mlir::Value emptyString, emptyNullable, emptyBoolean;
+        mlir::Value emptyString, emptyNullable, emptyBoolean, emptyObjectValue, emptyIdentity;
         for (mlir::OpOperand & use : llvm::make_early_inc_range(o->getResult(0).getUses())) {
             mlir::Operation * user = use.getOwner();
             const unsigned index = use.getOperandNumber();
@@ -111,6 +111,23 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             if (expected == carrierType(context, carrier::string)) {
                 if (!emptyString) { emptyString = stringConstant(b, where, ""); }
                 use.set(emptyString);
+            } else if (isObjectValueCarrier(expected)) {
+                needsObjectValue = true;
+                if (!emptyObjectValue) {
+                    emptyObjectValue = ec::ConstantOp::create(
+                        b, where, carrierType(context, carrier::objectValue),
+                        ec::OpaqueAttr::get(context, "ctnative::object_value{}"));
+                }
+                use.set(emptyObjectValue);
+            } else if (isIdentityCarrier(expected)) {
+                needsObjectIdentity = true;
+                if (!emptyIdentity) {
+                    emptyIdentity = ec::ConstantOp::create(
+                        b, where, carrierType(context, carrier::objectIdentity),
+                        ec::OpaqueAttr::get(context,
+                                            "std::shared_ptr<ctnative::identity_object>{}"));
+                }
+                use.set(emptyIdentity);
             } else if (isNullableCarrier(expected)) {
                 if (!emptyNullable) { emptyNullable = absentConstant(b, where); }
                 use.set(emptyNullable);
@@ -315,7 +332,16 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             swap(number(b, where, u.getOperand()));
             return;
         case UnaryKind::TypeOf:
-            if (isNullableCarrier(u.getOperand().getType())) {
+            if (isObjectValueCarrier(u.getOperand().getType())) {
+                needsObjectValue = true;
+                swap(ec::CallOpaqueOp::create(
+                         b, where, mlir::TypeRange{carrierType(context, carrier::string)},
+                         b.getStringAttr("ctnative::object_typeof"),
+                         mlir::ValueRange{u.getOperand()})
+                         .getResult(0));
+            } else if (isIdentityCarrier(u.getOperand().getType())) {
+                swap(stringConstant(b, where, "object"));
+            } else if (isNullableCarrier(u.getOperand().getType())) {
                 needsNullable = true;
                 needsString = true;
                 swap(ec::CallOpaqueOp::create(
@@ -341,6 +367,17 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         const bool equality =
             cmp.getKind() == CompareKind::Eq || cmp.getKind() == CompareKind::StrictEq;
         mlir::Value left = cmp.getLhs(), right = cmp.getRhs();
+        if (equality &&
+            (isObjectValueCarrier(left.getType()) || isObjectValueCarrier(right.getType()) ||
+             isIdentityCarrier(left.getType()) || isIdentityCarrier(right.getType()))) {
+            needsObjectValue = true;
+            const auto helper = cmp.getKind() == CompareKind::Eq ? "ctnative::object_equal"
+                                                                 : "ctnative::object_strict_equal";
+            swap(ec::CallOpaqueOp::create(b, where, mlir::TypeRange{i1}, b.getStringAttr(helper),
+                                          mlir::ValueRange{left, right})
+                     .getResult(0));
+            return;
+        }
         if (equality && (isNullableCarrier(left.getType()) || isNullableCarrier(right.getType()) ||
                          left.getType() != right.getType())) {
             needsNullable = true;

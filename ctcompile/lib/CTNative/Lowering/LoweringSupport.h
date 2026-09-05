@@ -58,13 +58,21 @@ enum class carrier {
     closure,
     methodTable,
     objectIdentity,
+    objectValue,
     structure,
     vector
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kNullableType = "ctnative::nullable_scalar";
+inline constexpr llvm::StringLiteral kObjectValueType = "ctnative::object_value";
 bool isScalarCarrier(carrier value);
 bool isNullableCarrier(mlir::Type type);
+bool isObjectCarrier(carrier value);
+bool isObjectValueCarrier(mlir::Type type);
+bool isIdentityCarrier(mlir::Type type);
+bool isObjectValueType(mlir::Type type);
+bool identityOrAbsent(mlir::Type type);
+bool onlyAbsent(mlir::Type type);
 inline constexpr llvm::StringLiteral kObjectIdentityType =
     "std::shared_ptr<ctnative::identity_object>";
 carrier carrierOf(mlir::Type type);
@@ -72,6 +80,7 @@ mlir::Type vectorCarrierType(mlir::MLIRContext * context);
 llvm::StringRef mapKeySpelling(mlir::Type type);
 std::string mapValueSpelling(mlir::Type type);
 bool mapNeedsString(MapType type);
+bool mapNeedsObjectValues(MapType type);
 mlir::Type mapCarrierType(MapType type);
 mlir::Type closureCarrierType(ClosureType type);
 mlir::Type methodTableCarrierType(MethodTableType type);

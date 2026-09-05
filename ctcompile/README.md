@@ -10,14 +10,16 @@ functions. Full native Bootstrap execution is not yet established.
 
 Recent native work includes [tagged optional scalars](docs/native-optional-scalars.md),
 [boolean/number unions for Bootstrap's getter](docs/native-scalar-unions.md),
-[Binding-Time Analysis](docs/native-binding-time.md), and opt-in
+[owning object/scalar Map values](docs/native-object-values.md),
+[conditional BTA effect queries](docs/native-conditional-effects.md), and opt-in
 [partial evaluation with heap residualisation](docs/native-partial-evaluation.md).
 The partial evaluator reuses ctbrowser's primitive semantics inside the compiler;
 generated native programs retain no VM dependency.
 
 The [native optimization roadmap](docs/native-pe-roadmap.md) documents separate
 opt-in controls for precomputation, specialization, heap evaluation, Map snapshot
-deforestation and recursive supercompilation. The default native pipeline enables
+deforestation, recursive supercompilation and
+[unreachable-helper removal](docs/native-reachability.md). The default native pipeline enables
 none of these transforms. The research designs for
 [modern PE](docs/native-modern-pe.md) and
 [supercompilation](docs/native-supercompilation.md) distinguish implemented slices
@@ -84,7 +86,7 @@ Engine-only builds do not require LLVM. The version is pinned in
 
 Native Bootstrap still needs component and host object representations, typed
 host publication and its library/error paths. Partial evaluation now preserves
-a runtime suffix after a static entry prefix. Residual closure environments,
-explicit effect contracts and splitting across regions are the next steps for
+a runtime suffix after a static entry prefix and owns immutable closure heaps.
+Component fields, explicit host contracts and splitting across regions remain for
 Bootstrap initialization. See the [Bootstrap Data probe](docs/bootstrap-data-probe.md)
 for the current source-derived execution boundary.

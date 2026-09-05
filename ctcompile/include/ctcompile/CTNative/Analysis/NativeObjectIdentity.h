@@ -7,8 +7,9 @@ namespace ctcompile::ctnative {
 
 inline constexpr llvm::StringLiteral kNativeObjectIdentity = "ctnative.object_identity";
 
-// Prove property-free object allocations used only as Map keys or carried
-// through closed calls/returns. The Map and every alias retain an owner.
+// Prove property-free identities in Map keys/values, closed calls/returns,
+// immutable captures and structured flow. Map payloads can join exact scalars;
+// every object alias retains an owner. Property access and publication refuse.
 void prepareNativeObjectIdentities(mlir::ModuleOp module);
 
 } // namespace ctcompile::ctnative

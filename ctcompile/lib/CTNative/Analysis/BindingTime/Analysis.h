@@ -1,4 +1,5 @@
 #pragma once
+#include "Effects.h"
 #include "ctcompile/CTNative/Analysis/BindingTime.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
@@ -29,6 +30,9 @@ struct heap {
     bool dynamic = false;
     llvm::StringMap<fact> fields;
     fact contents{fact::kind::primitive, BindingTime::Static, {}, {}};
+    // Conservatively retained graph edges not represented by ordinary fields:
+    // Map keys and closure captures. Deleted keys may remain in this superset.
+    llvm::SmallVector<fact> retained;
 };
 struct flow {
     llvm::DenseMap<mlir::Value, fact> values;
@@ -52,6 +56,7 @@ struct BindingTimeAnalysis::Impl {
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Attribute>> arguments;
     llvm::DenseMap<mlir::Operation *, fact> returns;
     llvm::DenseMap<mlir::Operation *, bool> complete;
+    std::unique_ptr<binding_time_detail::effectQueries> effects;
     Impl(mlir::ModuleOp module, llvm::function_ref<void(mlir::ModuleOp)> prepareHeapFacts);
     void seedArguments();
     void solveSummaries();

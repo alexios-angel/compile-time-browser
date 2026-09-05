@@ -66,8 +66,9 @@ bool BindingTimeAnalysis::Impl::operation(mlir::Operation * op, flow & state, bo
     } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
         auto target =
             mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
-        eligible = target && complete.lookup(target) && !constructsClosures(target) &&
-                   target.getUpvalueCount() == 0 &&
+        eligible = target && complete.lookup(target) &&
+                   binding_time_detail::effectCalleeMatches(call, module) &&
+                   !constructsClosures(target) && target.getUpvalueCount() == 0 &&
                    mlir::SymbolTable::getSymbolVisibility(target) ==
                        mlir::SymbolTable::Visibility::Private &&
                    llvm::all_of(call.getArgs(), [&](mlir::Value arg) {
@@ -75,6 +76,8 @@ bool BindingTimeAnalysis::Impl::operation(mlir::Operation * op, flow & state, bo
                    });
         if (eligible) {
             result = returns.lookup(target);
+        } else if (effects->invalidateCall(call, state)) {
+            reason = "runtime call with proved argument-local heap effects";
         } else {
             binding_time_detail::invalidate(state);
         }
@@ -98,9 +101,9 @@ bool BindingTimeAnalysis::Impl::operation(mlir::Operation * op, flow & state, bo
     }
     if (!control) {
         reason = "runtime control decides whether this operation executes";
-    } else if (!eligible) {
+    } else if (!eligible && reason.empty()) {
         reason = "runtime operands, heap contents or effects";
-    } else {
+    } else if (eligible) {
         reason = "static operands and local effects";
     }
     decisions[op] = {control && eligible, std::move(reason)};
