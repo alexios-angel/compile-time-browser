@@ -9,6 +9,7 @@ namespace ctcompile::ctnative::lowering_detail {
 // name. Needed because a template ARGUMENT is text - `ctn_at_hit<bool>` -
 // where a field's type is an mlir::Type the emitter prints.
 const char * lowering::spelled(mlir::Type type) {
+    if (isNullableCarrier(type)) { return "ctnative::nullable_scalar"; }
     if (llvm::isa<mlir::Float64Type>(type)) { return "double"; }
     if (auto integer = llvm::dyn_cast_or_null<mlir::IntegerType>(type);
         integer && integer.getWidth() == 1) {
@@ -95,19 +96,11 @@ const lowering::siteShape & lowering::shapeAt(mlir::Value object) const {
     return entry->second;
 }
 
-// The fields of one closed object literal: every key read or written,
-// sorted by name, with the carrier of the field's inferred type (the join
-// of its stores, which every read carries); a key only ever read is
-// undefined, carried as NaN.
-//
-// A STORE DECIDES THE FIELD TYPE, AND A READ ONLY WHERE THERE IS NO STORE.
-// This used to take whichever user the use-list happened to hand over
-// first, which was harmless when the class was per site and is not now: the
-// shape key IS the field types, so two sites of the same shape whose
-// use-lists ran in different orders could disagree and split into a
-// template that says nothing. Admission refuses a field stored two
-// different carriers, so "any store" and "the join of the stores" are the
-// same answer here.
+// Every field is sorted by name and joins the carriers of its writes and
+// reads. An optional read widens storage to the tagged carrier even when
+// every write is a definite number or boolean: the read can precede them.
+// A field only ever read therefore preserves undefined. Collect both sides
+// before choosing so SSA use-list ordering cannot change a shape's key.
 //
 // AND IT READS THE LATTICE, NOT THE IR. This ran inside retype(), after
 // every value in the function had already taken its carrier, so it could
@@ -136,22 +129,41 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
             if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
                 if (get.getObject() != alias) { continue; }
                 key = get.getKey();
-                read.try_emplace(admission::keyOf(key), carried(get.getResult()));
+                auto [at, fresh] =
+                    read.try_emplace(admission::keyOf(key), carried(get.getResult()));
+                if (isNullableCarrier(carried(get.getResult()))) {
+                    at->second = carried(get.getResult());
+                }
             } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
                 if (set.getObject() != alias) { continue; }
                 key = set.getKey();
-                stored.try_emplace(admission::keyOf(key), carried(set.getValue()));
+                auto [at, fresh] =
+                    stored.try_emplace(admission::keyOf(key), carried(set.getValue()));
+                if (isNullableCarrier(carried(set.getValue()))) {
+                    at->second = carried(set.getValue());
+                }
             }
             if (key) { accessKey[user] = admission::keyOf(key).str(); }
         }
     }
     llvm::SmallVector<std::pair<std::string, mlir::Type>> fields;
     for (const auto & entry : stored) {
-        fields.emplace_back(entry.getKey().str(), entry.getValue());
+        const auto observed = read.lookup(entry.getKey());
+        fields.emplace_back(entry.getKey().str(),
+                            isNullableCarrier(observed) ? observed : entry.getValue());
     }
     for (const auto & entry : read) {
         if (!stored.contains(entry.getKey())) {
             fields.emplace_back(entry.getKey().str(), entry.getValue());
+        }
+    }
+    for (mlir::Value alias : aliasesOf(groups, object)) {
+        for (mlir::Operation * user : alias.getUsers()) {
+            const auto key = accessKey.find(user);
+            if (key == accessKey.end()) { continue; }
+            for (const auto & field : fields) {
+                if (field.first == key->second) { accessType[user] = field.second; }
+            }
         }
     }
     llvm::sort(fields, [](const auto & a, const auto & b) { return a.first < b.first; });

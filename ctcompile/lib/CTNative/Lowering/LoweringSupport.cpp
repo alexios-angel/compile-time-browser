@@ -42,11 +42,9 @@ carrier carrierOf(mlir::Type type) {
         return carrier::string;
     }
     if (auto opt = llvm::dyn_cast<OptType>(type)) {
-        if (llvm::isa<BottomType, NumType>(opt.getElementType())) { return carrier::number; }
-        // A boolean-or-undefined, as a bool whose undefined is false: exact
-        // in a branch, under `!` and as truthiness (both are falsy), refused
-        // where the difference shows (equality) - the number rows' shape.
-        if (llvm::isa<BoolType>(opt.getElementType())) { return carrier::boolean; }
+        if (llvm::isa<BottomType, NumType, BoolType>(opt.getElementType())) {
+            return carrier::nullable;
+        }
     }
     if (auto map = llvm::dyn_cast<MapType>(type)) {
         const auto key = map.getKeyType();
@@ -67,10 +65,22 @@ carrier carrierOf(mlir::Type type) {
     // So only a numeric element has a representation here, and the refusal
     // for the rest is named at the literal.
     if (auto elements = llvm::dyn_cast<VecType>(type)) {
-        return carrierOf(elements.getElementType()) == carrier::number ? carrier::vector
-                                                                       : carrier::none;
+        auto element = elements.getElementType();
+        if (auto opt = llvm::dyn_cast<OptType>(element)) { element = opt.getElementType(); }
+        return llvm::isa<BottomType, NumType>(element) ? carrier::vector : carrier::none;
     }
     return carrier::none;
+}
+
+bool isScalarCarrier(carrier value) {
+    return value == carrier::number || value == carrier::boolean || value == carrier::nullable;
+}
+
+bool isNullableCarrier(mlir::Type type) {
+    if (!type) { return false; }
+    if (auto value = llvm::dyn_cast<ec::LValueType>(type)) { type = value.getValueType(); }
+    auto opaque = llvm::dyn_cast<ec::OpaqueType>(type);
+    return opaque && opaque.getValue() == kNullableType;
 }
 
 // The one C++ type a dense array lowers to. Spelled once: the emitted
@@ -122,8 +132,7 @@ mlir::Type methodTableCarrierType(MethodTableType type) {
                                                       cIdentifier(type.getSite()) + ">");
 }
 
-// Can this value's carrier be undefined? True for the two `opt` rows, whose
-// NaN representation is exact only in arithmetic, comparison and truthiness.
+// Opt includes null or undefined, retained by the tagged scalar carrier.
 bool mayBeUndefined(mlir::Type type) {
     return llvm::isa<OptType>(type);
 }
@@ -135,6 +144,7 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     // reaching this point means a rule let one through, and a crash naming
     // that is worth far more than a double that happens to verify.
     switch (which) {
+    case carrier::nullable: return ec::OpaqueType::get(c, kNullableType);
     case carrier::objectIdentity: return ec::OpaqueType::get(c, kObjectIdentityType);
     case carrier::methodTable:
         llvm::report_fatal_error("method table carrier needs its proved schema");

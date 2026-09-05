@@ -29,39 +29,17 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/concat.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CONCAT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/globalstring.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=GLOBALSTRING
 
-// --- ND-7: EQUALITY IS WHERE undefined-AS-NaN STOPS BEING EXACT -------------
+// Tagged optional scalars distinguish absent values from present NaN. Equality,
+// numeric ordering and typeof now lower; the source differential fixture
+// checks their answers independently of these structural assertions.
 //
-// The whole `opt` representation rests on NaN behaving like undefined, and it
-// does - in arithmetic, in relational comparison and in truthiness. It does
-// NOT in equality, and it fails there in BOTH directions at once:
-// `undefined === undefined` is true where `NaN === NaN` is false, and
-// `undefined === 0` is false where a NaN compared to 0 is also false but for
-// an unrelated reason. `!=` and `!==` import as this same op with a negate
-// flag, so refusing the op covers all four spellings.
-//
-// EQUALITY: ctnative.not_native = "equality on a value that may be undefined - NaN would not compare the way undefined does"
-
-// --- AND THE SAME VALUE UNDER `<` IS ADMITTED -------------------------------
-//
-// The refusal above is the narrow one it claims to be, not a blanket ban on
-// reading a field that was never written. `undefined < 1` is false and
-// `NaN < 1` is false, so the relational operators carry the representation
-// exactly and stay admitted. If this half goes red the rule has become "any
-// `opt` is refused", and native-divergence-fixture.js's u_lt/u_le/u_gt/u_ge
-// globals would be unreachable.
-//
+// EQUALITY: emitc.func @equality_1() -> f64
+// EQUALITY: call_opaque "ctnative::scalar_strict_equal"
+// EQUALITY-NOT: ctnative.not_native
 // RELATIONAL: emitc.func @relational_1() -> f64
 // RELATIONAL-NOT: ctnative.not_native
-
-// --- `typeof` DISTINGUISHES undefined FROM A NUMBER, AND NaN IS A NUMBER ----
-//
-// `typeof undefined` is "undefined"; `typeof NaN` is "number". A tier that
-// carries the first as the second cannot answer this operator at all, so it
-// is refused rather than approximated. `void` and `~` share the refusal: void
-// yields undefined as a VALUE (not as a missing one) and `~` is ToInt32, which
-// is the ND-8 modular wrap below.
-//
-// TYPEOF: ctnative.not_native = "typeof, void and ~ are not native yet"
+// TYPEOF: emitc.func @kind_1({{.*}}) -> f64
+// TYPEOF-NOT: ctnative.not_native
 
 // --- ND-9: A BITWISE OPERATOR IS ToInt32, WHICH IS NOT A C++ CAST -----------
 //
@@ -101,7 +79,7 @@ var b = relational();
 
 //--- typeof.js
 function kind(x) {
-  return typeof x;
+  return typeof x === "number" ? 1 : 0;
 }
 var c = kind(1);
 

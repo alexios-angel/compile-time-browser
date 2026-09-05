@@ -64,7 +64,7 @@
 // THE FIRST STORE IS THE ONE PINNED. Both refuse, admission reports the first,
 // and `u` is it.
 //
-// HOISTED: ctnative.not_native = "store to global `u` may be undefined, and a global is where a value becomes an observable: this tier prints a Number as `%.17g` of the double, so undefined carried as NaN prints `nan` where the interpreter prints `undefined`"
+// HOISTED: ctnative.not_native = "store to global `u` may be null or undefined; native global observations require a definite number"
 
 // --- AND THE SHAPE SLICE 2 STEP 2 INTRODUCED -------------------------------
 //
@@ -79,7 +79,7 @@
 // other half of this slice: typing `v` as `num` here would not refuse anything,
 // it would PRINT A NUMBER where the interpreter prints `undefined`.
 //
-// PICK: ctnative.not_native = "store to global `out` may be undefined, and a global is where a value becomes an observable: this tier prints a Number as `%.17g` of the double, so undefined carried as NaN prints `nan` where the interpreter prints `undefined`"
+// PICK: ctnative.not_native = "store to global `out` may be null or undefined; native global observations require a definite number"
 
 // --- THE STORE, NOT THE VALUE, AND THAT DISTINCTION HAS BEEN WRONG BEFORE --
 //
@@ -104,7 +104,7 @@
 // neither is a check-prefix in closure-refusals.mlir any more; the lesson is
 // why this file pins PICK and OUTERSTORE separately.
 //
-// OUTERSTORE: ctnative.not_native = "store to global `out2` may be undefined, and a global is where a value becomes an observable: this tier prints a Number as `%.17g` of the double, so undefined carried as NaN prints `nan` where the interpreter prints `undefined`"
+// OUTERSTORE: ctnative.not_native = "store to global `out2` may be null or undefined; native global observations require a definite number"
 
 // --- AND THE SHAPES THE NARROWING EXISTS FOR -------------------------------
 //
@@ -120,7 +120,7 @@
 // claimed too.
 //
 // DOMINATES-NOT: ctnative.not_native
-// DOMINATES: emitc.global static @g_c : f64
+// DOMINATES: emitc.global static @g_c : !emitc.opaque<"ctnative::nullable_scalar">
 // DOMINATES: emitc.func @counter_1() -> f64
 // DOMINATES-NOT: ctnative.not_native
 
@@ -133,7 +133,7 @@
 // `ctjs.get_property` after it. So the seed is dropped and `p.n` is `num`.
 //
 // FIELD-NOT: ctnative.not_native
-// FIELD: emitc.global static @g_f : f64
+// FIELD: emitc.global static @g_f : !emitc.opaque<"ctnative::nullable_scalar">
 // FIELD: emitc.func @held_1() -> f64
 // FIELD-NOT: ctnative.not_native
 
@@ -145,7 +145,7 @@
 // `undefined` there. This is the field half's dominance clause, and it is the
 // one witness that separates "a store exists" from "a store comes first".
 //
-// READBEFORE: ctnative.not_native = "store to global `e` may be undefined, and a global is where a value becomes an observable: this tier prints a Number as `%.17g` of the double, so undefined carried as NaN prints `nan` where the interpreter prints `undefined`"
+// READBEFORE: ctnative.not_native = "store to global `e` may be null or undefined; native global observations require a definite number"
 
 // --- AND A STORE ON ONE PATH OF AN `if` ------------------------------------
 //
@@ -156,7 +156,7 @@
 // rule that asked for "a store anywhere in this function" would pass the
 // second while getting the first right.
 //
-// ONEPATH: ctnative.not_native = "store to global `mm` may be undefined, and a global is where a value becomes an observable: this tier prints a Number as `%.17g` of the double, so undefined carried as NaN prints `nan` where the interpreter prints `undefined`"
+// ONEPATH: ctnative.not_native = "store to global `mm` may be null or undefined; native global observations require a definite number"
 
 //--- hoisted.js
 var u;

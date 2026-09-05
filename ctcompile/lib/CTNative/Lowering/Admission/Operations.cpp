@@ -25,8 +25,7 @@ bool admission::op(mlir::Operation * o) {
     if (auto made = llvm::dyn_cast<CreateClosureOp>(o); made && !environmentTarget(o).empty()) {
         for (mlir::Value captured : made.getUpvalues()) {
             const auto c = carrierOf(typeOf(captured));
-            if (c != carrier::number && c != carrier::boolean && c != carrier::string &&
-                c != carrier::map) {
+            if (!isScalarCarrier(c) && c != carrier::string && c != carrier::map) {
                 return refuse(
                     "returned closure capture needs an owning scalar or Map carrier; got " +
                     printed(typeOf(captured)));
@@ -124,7 +123,7 @@ bool admission::op(mlir::Operation * o) {
             }
             if (auto set = llvm::dyn_cast<SetPropertyOp>(user)) {
                 const carrier c = carrierOf(typeOf(set.getValue()));
-                if (c != carrier::number && c != carrier::boolean) {
+                if (!isScalarCarrier(c)) {
                     return refuse(("field `" + key + "` is stored a " +
                                    printed(typeOf(set.getValue())) + ", not a number or a boolean")
                                       .str());
@@ -141,7 +140,8 @@ bool admission::op(mlir::Operation * o) {
                 // split into a template that says nothing about the
                 // program.
                 const auto [entry, fresh] = storedCarrier.try_emplace(key, c);
-                if (!fresh && entry->second != c) {
+                if (!fresh && entry->second != c && entry->second != carrier::nullable &&
+                    c != carrier::nullable) {
                     return refuse(("field `" + key +
                                    "` is stored a number on one path and a boolean on another")
                                       .str());
@@ -164,14 +164,17 @@ bool admission::op(mlir::Operation * o) {
         if (carrierOf(typeOf(array.getResult())) != carrier::vector) {
             auto elements = llvm::dyn_cast_or_null<VecType>(typeOf(array.getResult()));
             const mlir::Type element = elements ? elements.getElementType() : mlir::Type{};
-            if (carrierOf(element) == carrier::boolean) {
+            const auto optional = llvm::dyn_cast_or_null<OptType>(element);
+            if (carrierOf(optional ? optional.getElementType() : element) == carrier::boolean) {
                 return refuse("an array of booleans - `std::vector<bool>` is a bit-packed "
                               "specialisation whose elements are a proxy, not a `bool`");
             }
             return refuse("an array whose elements are " + printed(element) + ", not numbers");
         }
         for (mlir::Value element : array.getElements()) {
-            if (!numeric(element, "array element")) { return false; }
+            if (carrierOf(typeOf(element)) != carrier::number) {
+                return refuse("dense array storage requires definite numbers");
+            }
         }
         return true;
     }
@@ -179,7 +182,8 @@ bool admission::op(mlir::Operation * o) {
         if (!isVectorSite(push.getArray())) {
             return refuse("an append onto an array that is not a dense literal");
         }
-        return numeric(push.getElement(), "array element");
+        return carrierOf(typeOf(push.getElement())) == carrier::number ||
+               refuse("dense array storage requires definite numbers");
     }
     if (auto get = llvm::dyn_cast<GetPropertyOp>(o)) {
         if (isVectorSite(get.getObject())) {
@@ -317,7 +321,8 @@ bool admission::op(mlir::Operation * o) {
     if (auto set = llvm::dyn_cast<CellSetOp>(o); set && namesASharedCell(set.getCell())) {
         const carrier held = carrierOf(typeOf(set.getCell()));
         const carrier stored = carrierOf(typeOf(set.getValue()));
-        if (held == carrier::none || stored != held) {
+        if (held == carrier::none ||
+            (stored != held && !(held == carrier::nullable && isScalarCarrier(stored)))) {
             return refuse("an assignment of " + printed(typeOf(set.getValue())) +
                           " to a shared binding of type " + printed(typeOf(set.getCell())));
         }
@@ -344,7 +349,9 @@ bool admission::op(mlir::Operation * o) {
         return true;
     }
     if (auto k = llvm::dyn_cast<ConstantOp>(o)) {
-        if (llvm::isa<NumberAttr, BooleanAttr, UndefinedAttr>(k.getValue())) { return true; }
+        if (llvm::isa<NumberAttr, BooleanAttr, UndefinedAttr, NullAttr>(k.getValue())) {
+            return true;
+        }
         if (llvm::isa<StringAttr>(k.getValue()) &&
             carrierOf(typeOf(k.getResult())) == carrier::string) {
             return true;
@@ -378,15 +385,18 @@ bool admission::op(mlir::Operation * o) {
         switch (u.getKind()) {
         case UnaryKind::Neg:
         case UnaryKind::Plus: return numeric(u.getOperand(), "unary");
+        case UnaryKind::TypeOf:
+            return isScalarCarrier(carrierOf(typeOf(u.getOperand()))) ||
+                   carrierOf(typeOf(u.getOperand())) == carrier::string ||
+                   refuse("typeof requires a scalar or owning string carrier");
         case UnaryKind::Not:
-            // `!x` is ToBoolean then negation, on ANY carrier: a number's
-            // truthiness is exact under the NaN representation (undefined
-            // and NaN are both falsy), so `!` on a number is admitted too.
+            // `!x` applies the carrier's exact truthiness conversion, then
+            // negates it. Tagged null/undefined and numeric NaN are falsy.
             if (carrierOf(typeOf(u.getOperand())) == carrier::none) {
                 return refuse("! of " + printed(typeOf(u.getOperand())));
             }
             return true;
-        default: return refuse("typeof, void and ~ are not native yet");
+        default: return refuse("void and ~ are not native yet");
         }
     }
     if (auto cmp = llvm::dyn_cast<CompareOp>(o)) {
@@ -399,8 +409,7 @@ bool admission::op(mlir::Operation * o) {
         case CompareKind::Eq:
         case CompareKind::StrictEq:
             if (strings(cmp.getLhs(), cmp.getRhs())) { return true; }
-            return numeric(cmp.getLhs(), "equality") && numeric(cmp.getRhs(), "equality") &&
-                   defined(cmp.getLhs(), "equality") && defined(cmp.getRhs(), "equality");
+            return numeric(cmp.getLhs(), "equality") && numeric(cmp.getRhs(), "equality");
         }
         return refuse("an unknown comparison");
     }
@@ -410,7 +419,8 @@ bool admission::op(mlir::Operation * o) {
         return true;
     }
     if (auto load = llvm::dyn_cast<LoadGlobalOp>(o)) {
-        if (carrierOf(typeOf(load.getResult())) != carrier::number) {
+        if (carrierOf(typeOf(load.getResult())) != carrier::number &&
+            carrierOf(typeOf(load.getResult())) != carrier::nullable) {
             return refuse(("global `" + load.getName() + "` is " +
                            printed(typeOf(load.getResult())) + ", not a number")
                               .str());
@@ -418,71 +428,29 @@ bool admission::op(mlir::Operation * o) {
         return true;
     }
     if (auto store = llvm::dyn_cast<StoreGlobalOp>(o)) {
-        // THE WRONG ANSWER THAT LIVED HERE IS REFUSED - PHASE 59 SLICE 2
-        // STEP 3. `numeric` admits an `opt` row, because NaN is exact
-        // everywhere this tier reads one: arithmetic, relational
-        // comparison, truthiness. A GLOBAL IS NOT ONE OF THOSE PLACES. It
-        // is where a value stops being an intermediate and becomes an
-        // observable, and the observation is a print convention - `%.17g`
-        // of the double - with no spelling for undefined, so a global
-        // holding a possibly-undefined value printed `nan` where the
-        // interpreter printed `undefined`. `var u; var z = u;`, with no
-        // closure anywhere, reproduced it; so did `function pick(k) { var
-        // v; if (k > 0) { v = 5; } function get() { return v; } return
-        // get(); } var out = pick(-1);` once slice 2 step 2 stopped
-        // refusing a carried cell.
-        //
-        // AND IT COSTS TWO COERCIONS NOW, WHERE IT COST TEN. Measured by
-        // stubbing both narrowings and walking every fixture and lit
-        // program: on its own this clause refuses 8 globals across 5
-        // fixtures - `shared17`, `loop20`, `twice2`, `mutated40`,
-        // `mutated9`, `accumulated15`, `idx_in_range`, `defaulted5` - and
-        // 9 lit programs across the 4 files named below, because a value
-        // returned through a CARRIED CELL or a CLOSED-SHAPE FIELD is
-        // `opt<num>` FLOW-INSENSITIVELY: the box is emitted holding its
-        // hoisted `undefined`, and a field read is seeded with `undefined`
-        // "because nothing orders the read after a store".
-        //
-        // Slice 2 step 3 narrows both where a write DOMINATES the read -
-        // `kAssignedBeforeRead` for the cell, `fieldIsAssignedBefore` for
-        // the field - and pays for six of the eight and all nine lit
-        // programs (CTNative/Lowering/{native-struct, one-shape-one-
-        // definition, receiver-lift, shape-field-names}.mlir). The two
-        // left are real possibilities and not imprecision: `idx_in_range`
-        // reads a dense array at an unproved index, which past the end
-        // really is `undefined`, and `defaulted5`'s only store of the field
-        // is inside a constructor - a different `ctjs.func`, which needs a
-        // callee summary rather than a wider dominance query. And `pick`,
-        // whose write dominates nothing, stays `opt<num>` and refused.
-        //
-        // A THIRD SOURCE OF THE SAME IMPRECISION IS STILL HERE, AND THE
-        // TWO COUNTS ABOVE DO NOT INCLUDE IT. `TypeInference` seeds a
-        // `ctjs.load_global` with `undefined` for word-for-word the reason
-        // it seeded the cell and the field, so `var a = 5; var b = a;` -
-        // CLAIMED before this clause, both globals agreeing with the
-        // interpreter - is refused by it. No fixture holds that shape and
-        // the three bundles' `_script_$0` is refused for a dozen other
-        // reasons, so neither the fixture walk nor the corpus figures can
-        // see the class: "the corpora do not narrow" is true here and
-        // close to vacuous. Found by review, 2026-09-04.
-        //
-        // IT IS A COVERAGE LOSS, NOT A WRONG ANSWER - refusing is always
-        // safe - which is why it is recorded rather than rushed. And it is
-        // NOT the one-line analogue of the other two: a global is writable
-        // by any callee, so a `store_global` dominating a `load_global`
-        // does not prove the value at the load the way a dominating write
-        // proves a frame-local cell or a field of an object that never
-        // leaves the frame. Paying for it needs the closed world's
-        // per-name store set (ResolveGlobals already computes one), not a
-        // wider dominance query.
+        // Tagged storage preserves an early global read as undefined, but
+        // the standalone observation convention still prints only numbers.
+        // A possibly absent store must therefore refuse. Narrowing globals
+        // needs the closed world's complete store set: a local dominating
+        // write alone cannot rule out mutations by a callee.
         const std::string where = ("store to global `" + store.getName() + "`").str();
-        return numeric(store.getValue(), where) && printable(store.getValue(), where);
+        return (carrierOf(typeOf(store.getValue())) == carrier::number ||
+                carrierOf(typeOf(store.getValue())) == carrier::nullable ||
+                refuse(where + " requires a numeric global")) &&
+               printable(store.getValue(), where);
     }
     if (auto ret = llvm::dyn_cast<ReturnOp>(o)) {
         const carrier c = carrierOf(typeOf(ret.getValue()));
         if (c == carrier::none) { return refuse("returns " + printed(typeOf(ret.getValue()))); }
         if (returns == carrier::none) { returns = c; }
-        if (returns != c) { return refuse("returns different native carriers on different paths"); }
+        if (returns != c) {
+            if (isScalarCarrier(returns) && isScalarCarrier(c) &&
+                (returns == carrier::nullable || c == carrier::nullable)) {
+                returns = carrier::nullable;
+            } else {
+                return refuse("returns different native carriers on different paths");
+            }
+        }
         return true;
     }
     if (llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::ForOp, mlir::scf::ConditionOp,

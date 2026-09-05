@@ -4,6 +4,7 @@ namespace ctcompile::ctnative::lowering_detail {
 
 std::string lowering::callableTypeSpelling(mlir::Type type) {
     switch (carrierOf(type)) {
+    case carrier::nullable: needsNullable = true; return kNullableType.str();
     case carrier::number: return "double";
     case carrier::boolean: return "bool";
     case carrier::string: needsString = true; return "std::string";
@@ -25,8 +26,7 @@ void lowering::censusStoredCallable(ctjs::CreateClosureOp made) {
     const auto captures = made.getUpvalues().size();
     auto & entry = fn.getBody().front();
     std::string result = "double";
-    fn.getBody().walk(
-        [&](ctjs::ReturnOp ret) { result = callableTypeSpelling(typeOf(ret.getValue())); });
+    result = callableTypeSpelling(joinedReturnType(fn));
     llvm::SmallVector<std::string> params;
     for (unsigned i = 3 + static_cast<unsigned>(captures); i < entry.getNumArguments(); ++i) {
         params.push_back(callableTypeSpelling(typeOf(entry.getArgument(i))));

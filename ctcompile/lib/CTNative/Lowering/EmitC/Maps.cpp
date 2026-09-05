@@ -40,7 +40,7 @@ bool lowering::replaceMap(mlir::Operation * o) {
         const auto name = b.getStringAttr(("ctnative::map_" + helper).str());
         if (action == "clear") {
             ec::CallOpaqueOp::create(b, where, mlir::TypeRange{}, name, args);
-            swap(f64Constant(b, where, std::numeric_limits<double>::quiet_NaN()));
+            swap(absentConstant(b, where));
         } else if (action == "keys" || action == "values") {
             const auto type = ec::OpaqueType::get(context, kVectorType);
             mlir::Value result =

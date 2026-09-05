@@ -28,6 +28,12 @@ emitc.func @f(%a: f64, %b: f64) -> f64 {
   emitc.return %r : f64
 }
 
+// C++ promotes bool ^ bool to int; retain the explicit bool conversion.
+emitc.func @boolean_xor(%a: i1, %b: i1) -> i1 {
+  %r = emitc.bitwise_xor %a, %b : (i1, i1) -> i1
+  emitc.return %r : i1
+}
+
 // --- the IR keeps every type; only the attribute is added ------------------
 //
 // (ops inside emitc.func print without their dialect prefix)
@@ -44,6 +50,10 @@ emitc.func @f(%a: f64, %b: f64) -> f64 {
 // CHECK-NEXT: {{(emitc\.)?}}assign
 // CHECK-NEXT: {{(emitc\.)?}}load
 // CHECK-NEXT: {{(emitc\.)?}}conditional {{.*}} {ctnative.deduced} : f64
+// CHECK: emitc.func @boolean_xor
+// CHECK: bitwise_xor {{.*}} : (i1, i1) -> i1
+// CHECK-NOT: ctnative.deduced
+// CHECK: return
 
 // --- the C++: auto where marked, a pin after each, the type everywhere else -
 //
@@ -68,6 +78,9 @@ emitc.func @f(%a: f64, %b: f64) -> f64 {
 // CPP-NEXT: auto [[R:v[0-9]+]] = [[C]] ? [[P]] : [[L]];
 // CPP-NEXT: CTCOMPILE_PIN([[R]], "{{[^"]*}}print-deduced.mlir:{{[0-9]+}}:{{[0-9]+}}", double);
 // CPP-NEXT: return [[R]];
+// CPP: bool boolean_xor(bool [[XA:v[0-9]+]], bool [[XB:v[0-9]+]]) {
+// CPP-NEXT: bool [[XR:v[0-9]+]] = [[XA]] ^ [[XB]];
+// CPP-NEXT: return [[XR]];
 
 // --- the mutation: the first deduced double pinned as int32_t ---------------
 //

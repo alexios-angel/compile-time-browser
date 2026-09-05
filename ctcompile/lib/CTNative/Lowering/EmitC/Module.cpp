@@ -3,6 +3,7 @@
 #include "Emitter.h"
 #include "MethodTableHelpers.h"
 #include "NativeMapHelpers.h"
+#include "NullableHelpers.h"
 #include "RuntimeHelpers.h"
 
 namespace ctcompile::ctnative::lowering_detail {
@@ -80,8 +81,12 @@ void lowering::declareGlobals() {
     // needs <cmath> above it.
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cmath"), b.getUnitAttr());
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstdio"), b.getUnitAttr());
-    if (needsString) {
+    if (needsString || needsNullable || needsMap || needsVector || !globals.empty()) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("string"), b.getUnitAttr());
+    }
+    if (needsNullable || needsMap || needsVector || !globals.empty()) {
+        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("exception"), b.getUnitAttr());
+        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNullableHelpers));
     }
     if (needsObjectIdentity) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("memory"), b.getUnitAttr());
@@ -123,19 +128,14 @@ void lowering::declareGlobals() {
     llvm::SmallVector<llvm::StringRef> names(globals.keys().begin(), globals.keys().end());
     llvm::sort(names);
     for (llvm::StringRef name : names) {
-        // NO INITIALISER, so static zero-initialisation gives 0. Not NaN,
-        // which is what this used to emit: every global then started at
-        // the same bytes the gate prints for a NaN a program computed, so
-        // "never written" and "computed NaN" compared EQUAL and any global
-        // whose right answer is NaN was un-failable. Deleting the whole
-        // body of the fixture function that exists to prove undefined-field
-        // semantics kept the gate green. A global that is never stored is
-        // refused outright (see the census in runOnOperation), so 0 is not
-        // a value any correct program can observe here.
-        auto global = ec::GlobalOp::create(b, module.getLoc(), ("g_" + name).str(),
-                                           mlir::Float64Type::get(context), mlir::Attribute{},
-                                           /*extern_specifier=*/false, /*static_specifier=*/true,
-                                           /*const_specifier=*/false);
+        // Default tagged storage is undefined until the first generated
+        // store. global_number checks the tag at the output boundary, so a
+        // missing store cannot imitate a computed NaN and hide a compiler bug.
+        auto global =
+            ec::GlobalOp::create(b, module.getLoc(), ("g_" + name).str(),
+                                 carrierType(context, carrier::nullable), mlir::Attribute{},
+                                 /*extern_specifier=*/false, /*static_specifier=*/true,
+                                 /*const_specifier=*/false);
         global->setAttr("ctnative.provenance", b.getStringAttr("global " + name.str()));
     }
 }

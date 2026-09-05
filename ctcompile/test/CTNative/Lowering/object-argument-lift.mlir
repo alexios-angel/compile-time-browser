@@ -70,16 +70,16 @@ var m1 = mixed();
 //
 // CHECK:      emitc.class @ctn_x
 // CHECK-SAME: (2 sites)
-// CHECK-NEXT:   emitc.field @x : f64
+// CHECK-NEXT:   emitc.field @x : !emitc.opaque<"ctnative::nullable_scalar">
 // CHECK-NEXT: }
 // CHECK:      emitc.class @ctn_a
-// CHECK-NEXT:   emitc.field @a : f64
+// CHECK-NEXT:   emitc.field @a : !emitc.opaque<"ctnative::nullable_scalar">
 // CHECK-NEXT: }
 // CHECK:      emitc.class @ctn_b
-// CHECK-NEXT:   emitc.field @b : f64
+// CHECK-NEXT:   emitc.field @b : !emitc.opaque<"ctnative::nullable_scalar">
 // CHECK-NEXT: }
 // CHECK:      emitc.class @ctn_k
-// CHECK-NEXT:   emitc.field @k : f64
+// CHECK-NEXT:   emitc.field @k : !emitc.opaque<"ctnative::nullable_scalar">
 // CHECK-NEXT: }
 
 // --- THE ADDRESS AT THE CALL SITE, AND THE SIGNATURE IT FEEDS ---------------

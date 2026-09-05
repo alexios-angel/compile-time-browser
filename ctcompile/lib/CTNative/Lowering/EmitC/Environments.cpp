@@ -16,6 +16,10 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                 if (i != 0) { definition += ", "; }
                 const auto type = typeOf(captured);
                 switch (carrierOf(type)) {
+                case carrier::nullable:
+                    needsNullable = true;
+                    definition += kNullableType;
+                    break;
                 case carrier::number: definition += "double"; break;
                 case carrier::boolean: definition += "bool"; break;
                 case carrier::string:

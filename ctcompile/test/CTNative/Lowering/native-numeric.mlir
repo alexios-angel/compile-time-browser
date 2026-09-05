@@ -40,10 +40,10 @@ function scale(x) { return x * 2; }
 // global a program never wrote is distinguishable from one it computed a NaN
 // into. Initialising these to NaN made those two cases the same bytes and any
 // global whose right answer is NaN un-failable in the differential.
-// CHECK: emitc.global static @g_big : f64
+// CHECK: emitc.global static @g_big : !emitc.opaque<"ctnative::nullable_scalar">
 // CHECK-NOT: = 0x7FF8000000000000
-// CHECK: emitc.global static @g_count : f64
-// CHECK: emitc.global static @g_total : f64
+// CHECK: emitc.global static @g_count : !emitc.opaque<"ctnative::nullable_scalar">
+// CHECK: emitc.global static @g_total : !emitc.opaque<"ctnative::nullable_scalar">
 // CHECK-LABEL: emitc.func @main() -> i32
 // CHECK-NOT: ctjs.
 // CHECK: scf.while

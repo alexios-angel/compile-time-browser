@@ -311,6 +311,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // creation site, and whether a shape's definition is a template is a
         // property of every site in the program at once, so no site's type can
         // be spelled until all of them have been seen.
+        lower.censusScalars(accepted);
         lower.censusShapes(accepted);
         lower.censusEnvironments(accepted);
         lower.censusMethodTables(accepted);

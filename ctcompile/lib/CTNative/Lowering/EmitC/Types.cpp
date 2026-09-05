@@ -8,6 +8,7 @@ namespace ctcompile::ctnative::lowering_detail {
 // BEFORE any operation is replaced, so the replacements see carriers.
 void lowering::retype(ctjs::FuncOp fn) {
     const auto retypeValue = [&](mlir::Value v) {
+        needsNullable |= carrierOf(typeOf(v)) == carrier::nullable;
         if (!llvm::isa<ctjs::ValueType>(v.getType())) { return; }
         // A closed object keeps its ctjs type until its shape is known
         // below; everything else takes its carrier now.

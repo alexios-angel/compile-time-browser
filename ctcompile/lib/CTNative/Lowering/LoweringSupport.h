@@ -52,6 +52,7 @@ enum class carrier {
     none,
     boolean,
     number,
+    nullable,
     string,
     map,
     closure,
@@ -61,6 +62,9 @@ enum class carrier {
     vector
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
+inline constexpr llvm::StringLiteral kNullableType = "ctnative::nullable_scalar";
+bool isScalarCarrier(carrier value);
+bool isNullableCarrier(mlir::Type type);
 inline constexpr llvm::StringLiteral kObjectIdentityType =
     "std::shared_ptr<ctnative::identity_object>";
 carrier carrierOf(mlir::Type type);

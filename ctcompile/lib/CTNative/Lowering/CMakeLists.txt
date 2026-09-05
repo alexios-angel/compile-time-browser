@@ -91,6 +91,7 @@ add_library(ctcompile-ctnative-lowering
   EmitC/Shapes.cpp
   EmitC/Module.cpp
   EmitC/Expressions.cpp
+  EmitC/ScalarConversions.cpp
   EmitC/Types.cpp
   EmitC/Operations.cpp
   EmitC/Maps.cpp

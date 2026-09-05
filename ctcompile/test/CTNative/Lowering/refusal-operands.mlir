@@ -57,7 +57,7 @@
 // --- numeric(), where = "binary" --------------------------------------------
 //
 // BINARY: ctjs.func {{.*}}@badd$1
-// BINARY-SAME: ctnative.not_native = "binary operand is !ctnative.bool, not a number"
+// BINARY-SAME: ctnative.not_native = "binary operand is !ctnative.str<utf8>, not a number"
 
 // --- numeric(), where = "store to global `X`" -------------------------------
 //
@@ -66,7 +66,7 @@
 // boolean into one has no representation.
 //
 // STORE: ctjs.func {{.*}}@_script_$0
-// STORE-SAME: ctnative.not_native = "store to global `r` operand is !ctnative.bool, not a number"
+// STORE-SAME: ctnative.not_native = "store to global `r` requires a numeric global"
 
 // --- the carrier sweep: a value no arm objected to, with no carrier ---------
 //
@@ -120,7 +120,7 @@
 // does not produce it.
 //
 // TILDE: ctjs.func {{.*}}@bits$1
-// TILDE-SAME: ctnative.not_native = "typeof, void and ~ are not native yet"
+// TILDE-SAME: ctnative.not_native = "void and ~ are not native yet"
 
 // BITS: ctjs.func {{.*}}@shift$1
 // BITS-SAME: ctnative.not_native = "a static bitwise operator is not native yet"
@@ -138,7 +138,7 @@
 // FRAMESLOT-SAME: ctnative.not_native = "an array literal created inside a branch or a loop - its storage has to be one frame slot (obligation O-4)"
 
 //--- binary.js
-function badd(n) { var u = true; return u + n; }
+function badd(n) { var u = "text"; return u - n; }
 var r = badd(1);
 
 //--- store.js

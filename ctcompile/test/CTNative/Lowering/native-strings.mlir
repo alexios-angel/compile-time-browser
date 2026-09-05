@@ -20,7 +20,7 @@
 // ORDERING-SAME: ctnative.not_native = "compare operand is !ctnative.str<utf8>, not a number"
 // OPTIONAL: ctjs.func private @choose$1
 // OPTIONAL-SAME: ctnative.not_native = "a value of type !ctnative.opt<!ctnative.str<utf8>> from `scf.if`"
-// GLOBAL: ctnative.not_native = "store to global `result` operand is !ctnative.str<utf8>, not a number"
+// GLOBAL: ctnative.not_native = "store to global `result` requires a numeric global"
 // FIELD: ctnative.not_native = "field `direction` is stored a !ctnative.str<utf8>, not a number or a boolean"
 // MIXED: ctjs.func private @choose$1
 // MIXED-SAME: ctnative.not_native = "a value of type !ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>> from `scf.if`"

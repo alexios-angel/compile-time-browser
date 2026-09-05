@@ -24,7 +24,11 @@ namespace ctcompile::ctnative::lowering_detail {
 // ExistingOps strictness keeps its worklist to exactly those.
 void lowering::applyDeclarativeRules(ctjs::FuncOp fn) {
     llvm::SmallVector<mlir::Operation *> unaries;
-    fn.getBody().walk([&](ctjs::UnaryOp u) { unaries.push_back(u.getOperation()); });
+    fn.getBody().walk([&](ctjs::UnaryOp u) {
+        if (llvm::isa_and_nonnull<NumType>(typeOf(u.getOperand()))) {
+            unaries.push_back(u.getOperation());
+        }
+    });
     if (unaries.empty()) { return; }
     mlir::GreedyRewriteConfig config;
     config.setStrictness(mlir::GreedyRewriteStrictness::ExistingOps)
@@ -41,6 +45,7 @@ void lowering::lower(ctjs::FuncOp fn) {
     mlir::Block & entry = fn.getBody().front();
     applyDeclarativeRules(fn);
     retype(fn);
+    convertBoundaries(fn);
 
     // The signature takes the parameters after the three implicit
     // arguments and returns the proved carrier. A function that returns
@@ -63,6 +68,7 @@ void lowering::lower(ctjs::FuncOp fn) {
     mlir::Type returnType = isEntry ? i32 : f64;
     if (!isEntry) {
         fn.getBody().walk([&](ctjs::ReturnOp ret) { returnType = ret.getValue().getType(); });
+        if (const auto joined = resultTypes.lookup(fn.getSymName())) { returnType = joined; }
     }
     if (isEntry) { params.clear(); }
 

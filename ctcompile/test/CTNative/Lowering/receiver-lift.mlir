@@ -59,10 +59,10 @@ var s = shared();
 // has no carrier for - would fail the line after.
 //
 // CHECK:      emitc.class @ctn_x
-// CHECK-NEXT:   emitc.field @x : f64
+// CHECK-NEXT:   emitc.field @x : !emitc.opaque<"ctnative::nullable_scalar">
 // CHECK-NEXT: }
 // CHECK:      emitc.class @ctn_n
-// CHECK-NEXT:   emitc.field @n : f64
+// CHECK-NEXT:   emitc.field @n : !emitc.opaque<"ctnative::nullable_scalar">
 // CHECK-NEXT: }
 
 // --- TWO LITERALS, ONE CLASS ------------------------------------------------
@@ -73,7 +73,7 @@ var s = shared();
 // `plus` could not take one pointer type.
 //
 // CHECK:      emitc.class @ctn_base attributes {ctnative.provenance = "object literal at {{[^"]*}}, {{[^"]*}} (2 sites)"}
-// CHECK-NEXT:   emitc.field @base : f64
+// CHECK-NEXT:   emitc.field @base : !emitc.opaque<"ctnative::nullable_scalar">
 // CHECK-NEXT: }
 
 // --- EVERY FUNCTION IS CLAIMED ----------------------------------------------
@@ -101,7 +101,8 @@ var s = shared();
 // CHECK: %[[SELF:.*]] = "emitc.variable"{{.*}} -> !emitc.lvalue<!emitc.ptr<!emitc.opaque<"ctn_x">>>
 // CHECK: assign %arg0 : !emitc.ptr<!emitc.opaque<"ctn_x">> to %[[SELF]]
 // CHECK: %[[X:.*]] = "emitc.member_of_ptr"(%[[SELF]]) <{member = "x"}>
-// CHECK: load %[[X]] : <f64>
+// CHECK: load %[[X]] : <!emitc.opaque<"ctnative::nullable_scalar">>
+// CHECK: call_opaque "ctnative::to_number"
 
 // --- A MUTATING METHOD ------------------------------------------------------
 //
@@ -111,12 +112,12 @@ var s = shared();
 // caller reads `c.n` after the call and gets what the method wrote.
 //
 // CHECK: emitc.func @mutating_3() -> f64
-// CHECK: call @fn_4(%{{.*}}) : (!emitc.ptr<!emitc.opaque<"ctn_n">>) -> f64
-// CHECK: emitc.func @fn_4(%arg0: !emitc.ptr<!emitc.opaque<"ctn_n">>) -> f64
+// CHECK: call @fn_4(%{{.*}}) : (!emitc.ptr<!emitc.opaque<"ctn_n">>) -> !emitc.opaque<"ctnative::nullable_scalar">
+// CHECK: emitc.func @fn_4(%arg0: !emitc.ptr<!emitc.opaque<"ctn_n">>) -> !emitc.opaque<"ctnative::nullable_scalar">
 // CHECK: %[[NREAD:.*]] = "emitc.member_of_ptr"(%{{.*}}) <{member = "n"}>
-// CHECK: load %[[NREAD]] : <f64>
+// CHECK: load %[[NREAD]] : <!emitc.opaque<"ctnative::nullable_scalar">>
 // CHECK: %[[NWRITE:.*]] = "emitc.member_of_ptr"(%{{.*}}) <{member = "n"}>
-// CHECK: assign %{{.*}} : f64 to %[[NWRITE]] : <f64>
+// CHECK: assign %{{.*}} : !emitc.opaque<"ctnative::nullable_scalar"> to %[[NWRITE]] : <!emitc.opaque<"ctnative::nullable_scalar">>
 
 // --- TWO OBJECTS SHARING ONE LIFTED METHOD ----------------------------------
 //

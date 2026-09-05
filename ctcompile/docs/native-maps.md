@@ -53,8 +53,9 @@ the interpreter's UTF-8/WTF-8 byte semantics, including embedded NUL and lone
 surrogates, as described in [native-strings.md](native-strings.md).
 
 Missing `get` results use the existing `opt<number>` representation. Arithmetic
-can turn absence into NaN; equality, `typeof` and other observations that
-would confuse absence with a stored NaN remain refused. Stored values must be
+converts a missing value to NaN for numeric operations. Equality and `typeof`
+retain the distinction between a missing value and a stored NaN through the
+[tagged optional scalar carrier](native-optional-scalars.md). Stored values must be
 definite numbers, including numeric NaN, or owning acyclic child Maps. Optional
 values, mixed key types, general object keys and string values remain refused. See
 the nested-Map document for its additional presence and containment proofs.
@@ -101,7 +102,7 @@ the NaN, infinity and bounds guards before integer conversion. The original
 `native-index-truncation-fixture.js` is a passing regression with an off-by-one
 negative control. The Map fixture independently exercises fractional reads
 through both snapshots, including `-0.5` and a computed parameter.
-See [native-divergences.md](native-divergences.md#nd-8--an-out-of-range-index-is-undefined-which-is-nan-not-undefined-behaviour).
+See [native-divergences.md](native-divergences.md#nd-8--an-out-of-range-index-produces-tagged-undefined).
 
 ## Bootstrap boundary
 

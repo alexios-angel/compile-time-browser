@@ -33,7 +33,7 @@
 //
 // DENSE: emitc.include <"vector">
 // DENSE: emitc.verbatim
-// DENSE-SAME: inline double vec_at
+// DENSE-SAME: inline nullable_scalar vec_at
 // DENSE-SAME: inline double vec_length
 // DENSE-SAME: inline void vec_push
 

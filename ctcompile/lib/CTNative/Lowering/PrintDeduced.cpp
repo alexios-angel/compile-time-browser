@@ -33,6 +33,16 @@ namespace ec = mlir::emitc;
 // (no initialiser), opaque calls (the standard-library boundary), and the
 // deferred ops that are never declared at all.
 bool isDeducible(mlir::Operation * o) {
+    // C++ promotes bool and narrow integer arithmetic/bitwise operands to
+    // int. The explicit result type performs a narrowing that auto would
+    // discard; SCF canonicalization can introduce boolean xor in this form.
+    auto integer = llvm::dyn_cast<mlir::IntegerType>(o->getResult(0).getType());
+    if (integer && integer.getWidth() < 32 &&
+        llvm::isa<ec::AddOp, ec::SubOp, ec::MulOp, ec::DivOp, ec::RemOp, ec::UnaryMinusOp,
+                  ec::UnaryPlusOp, ec::BitwiseAndOp, ec::BitwiseOrOp, ec::BitwiseXorOp,
+                  ec::BitwiseNotOp, ec::BitwiseLeftShiftOp, ec::BitwiseRightShiftOp>(o)) {
+        return false;
+    }
     return llvm::isa<ec::AddOp, ec::SubOp, ec::MulOp, ec::DivOp, ec::RemOp, ec::CmpOp, ec::CastOp,
                      ec::CallOp, ec::LogicalAndOp, ec::LogicalOrOp, ec::LogicalNotOp,
                      ec::UnaryMinusOp, ec::UnaryPlusOp, ec::ConditionalOp, ec::BitwiseAndOp,

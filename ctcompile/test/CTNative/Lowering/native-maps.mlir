@@ -62,8 +62,9 @@
 // STRING-SAME: ctnative.not_native = "native Map needs supported keys and definite numeric or acyclic Map values; inferred !ctnative.map<!ctnative.str<utf8>, !ctnative.str<utf8>>"
 // OPTIONAL: ctjs.func private @probe$1
 // OPTIONAL-SAME: ctnative.not_native = "native Map needs supported keys and definite numeric or acyclic Map values; inferred !ctnative.map<!ctnative.num<i32>, !ctnative.opt<!ctnative.num<i32>>>"
-// EQUALITY: ctjs.func private @probe$1
-// EQUALITY-SAME: ctnative.not_native = "equality on a value that may be undefined - NaN would not compare the way undefined does"
+// EQUALITY: emitc.func @probe_1() -> i1
+// EQUALITY: call_opaque "ctnative::scalar_strict_equal"
+// EQUALITY-NOT: ctnative.not_native
 // KEYS: ctjs.func private @probe$1
 // KEYS-SAME: ctnative.not_native = "native Map snapshot requires confined numeric elements"
 // SNAPSHOT: ctjs.func private @probe$1

@@ -327,7 +327,7 @@ The distinction is the whole design, so it is the first column:
 | ND-6 | `1 / (0 * (0 - 1))` | `-Infinity` | `-Infinity` | **emitted, exact** |
 | ND-6b | a NaN's sign | not observable | `-nan` or `nan`, per path | **folded by the gate** |
 | ND-7 | `o.later + 1`, `o.later < 1`, `if (o.later)` | `NaN`, `false`, falsy | NaN arithmetic, the same | **emitted, exact** |
-| ND-7 | `o.later === 5`, `typeof o.later`, printing it | `false`, `"undefined"`, `undefined` | `NaN == 5` false, `"number"`, `nan` | **refused** |
+| ND-7 | `o.later === 5`, `typeof o.later`, printing it | `false`, `"undefined"`, `undefined` | tagged absence | **exact internally; optional output refused** |
 | ND-8 | `[10,20,30][7]`, the same `[-1]`, `[NaN]`, `[Infinity]` | `undefined` | `v[i]` is undefined behaviour | **guard** (`ctnative::vec_at`) |
 | ND-8 truncation | `[10,20,30][0.5]` | `10` — the engine truncates | — | **emitted, exact** (fixed 2026-09-05) |
 | ND-9 | `2147483648 \| 0` | `-2147483648` | `static_cast<int32_t>` is UB | **refused** |
@@ -492,97 +492,46 @@ probe.
 
 ---
 
-## ND-7 — `undefined` is carried as NaN: exact in three places, refused in the rest
+## ND-7 — optional scalar tags distinguish absence from NaN
 
-**Status:** declared; **emitted where exact, refused where not**.
-**Against:** the ctbrowser VM. **Introduced:** Phase 62½-C, the representation
-table.
+**Status:** internal scalar observations are exact; optional global output
+remains refused. The earlier NaN/false representation was replaced by the
+[tagged optional scalar carrier](native-optional-scalars.md).
 
-### The divergence
+A tag distinguishes undefined, null, numbers and booleans. A present NaN
+remains a number; a missing value does not become NaN until an arithmetic or
+ordering operation requests numeric conversion.
 
-The tier has no boxed value, so `undefined` needs a `double` to live in and
-that double is NaN. `LowerToEmitC.cpp`'s representation table states where
-that is exact and where it is not, and the second half is the load-bearing
-one:
-
-| use | undefined answers | NaN answers | exact? |
+| Operation | undefined | null | present NaN |
 |---|---|---|---|
-| arithmetic | `undefined + 1` is NaN | `NaN + 1` is NaN | **yes** |
-| relational `<` `<=` `>` `>=` | all false | all false | **yes** |
-| truthiness, `!` | falsy | falsy | **yes** |
-| equality `==` `===` `!=` `!==` | `undefined === undefined` is **true** | `NaN == NaN` is **false** | **no** |
-| `typeof` | `"undefined"` | `"number"` | **no** |
-| printing | `undefined` | `nan` | **no** |
+| numeric conversion | NaN | 0 | NaN |
+| truthiness | false | false | false |
+| strictly equals itself | true | true | false |
+| loosely equals null | true | true | false |
+| `typeof` | `"undefined"` | `"object"` | `"number"` |
 
-An undefined-or-boolean has the same shape with `false` as its carrier: exact
-in a branch and under `!`, wrong at equality.
+Calls, returns, fields, shared cells and control-flow edges preserve these
+values. Equality and `typeof` now lower. `void` and bitwise operations still
+have their own admission boundaries.
 
-### What the tier does about it
+The standalone numeric output convention remains narrower than the internal
+carrier. `admission::printable()` refuses a store that *"may be null or
+undefined; native global observations require a definite number"*. Globals
+start with the undefined tag, and the output boundary checks that a generated
+store produced a number. A missing store therefore cannot pass as a computed
+NaN. Dominance narrowing for fields and shared cells still proves definite
+numeric stores where the program permits it; general global narrowing needs
+closed-world mutation information.
 
-The three exact rows are **emitted**. The three inexact ones are **refused**,
-each by name:
-
-* equality — `admission::defined()`, *"equality on a value that may be
-  undefined - NaN would not compare the way undefined does"*. `!=` and `!==`
-  import as the same op with a negate flag, so one refusal covers four
-  spellings.
-* `typeof` — *"typeof, void and ~ are not native yet"*.
-* printing — `admission::printable()`, *"store to global `x` may be undefined,
-  and a global is where a value becomes an observable: this tier prints a
-  Number as `%.17g` of the double, so undefined carried as NaN prints `nan`
-  where the interpreter prints `undefined`"*. A `ctjs.store_global` is the one
-  place the tier turns a value into an observation, and it is the one use of an
-  `opt` that is refused for the REPRESENTATION rather than for a comparison —
-  which is why it has its own sentence and does not reuse `defined()`'s.
-
-  **This was an obligation on the HARNESS until Phase 59 slice 2 step 3.** The
-  paragraph here used to say so: a global holding `undefined` is not a Number,
-  the differential reference skips it, the binary prints `nan`, and the gate
-  fails by naming a missing line — so every native fixture assigned each global
-  before reading it and nothing in the LOWERING stopped a `nan`. Two programs
-  reached it anyway. `var u; var z = u;` printed `u=nan z=nan`, and once slice 2
-  step 2 stopped refusing a carried cell, `function pick(k) { var v; if (k > 0)
-  { v = 5; } function get() { return v; } return get(); } var out = pick(-1);`
-  printed `out=nan`. Both are refused now and both are pinned in
-  `CTNative/Lowering/global-undefined.mlir`.
-
-  **What made it affordable is the narrowing beside it.** Measured by stubbing
-  both narrowings and walking every fixture and lit program: on its own the
-  clause refuses **8 globals across 5 fixtures** — `shared17`, `loop20`,
-  `twice2`, `mutated40`, `mutated9`, `accumulated15`, `idx_in_range`,
-  `defaulted5` — and **9 lit programs across 4 files**
-  (`CTNative/Lowering/{native-struct, one-shape-one-definition, receiver-lift,
-  shape-field-names}.mlir`), because
-  a value returned through a carried cell or a closed-shape field was
-  `opt<num>` FLOW-INSENSITIVELY — the box is emitted holding its hoisted
-  `undefined` and a field read is seeded with `undefined` "because nothing
-  orders the read after a store". Slice 2 step 3 drops each of those where a
-  write DOMINATES the read, which is the population those refusals were. What
-  is left is two coercions, both of them real possibilities rather than
-  imprecision: `idx_in_range` in `native-divergence-fixture.js` (a dense
-  array's element type — an index past the end really is `undefined`, ND-8) and
-  `defaulted5` in `native-constructor-fixture.js` (the only store of the field
-  is inside the constructor, a different `ctjs.func` from the read, so it needs
-  a callee summary and not a dominance query).
-
-### The test
-
-Emitted half: `native-divergence-fixture.js`'s `u_plus`, `u_minus`, `u_times`,
-`u_div`, `u_mod`, `u_pow` (arithmetic), `u_lt`, `u_le`, `u_gt`, `u_ge`
-(relational — all four, because the claim is about all four), `u_truthy` and
-`u_not` (truthiness), and `b_undefined_is_false` / `b_set_is_true` for the
-boolean carrier. `native-struct-fixture.js`'s `read_before_write` is the
-older witness of the same row.
-
-Refused half: `divergence-refusals.mlir`, the EQUALITY and TYPEOF cases. The
-RELATIONAL case beside them is the negative proof that the equality refusal is
-the narrow rule it claims to be and not a blanket ban on reading a field that
-was never written — the same value under `<` must still compile, and the
-mutation that turns EQUALITY's `===` into `<` fails the pin.
+`native-optional-scalars-fixture.js` checks all these observations, including
+Map/array misses versus stored NaNs and a retained Data-like table whose
+`get` returns null on a miss. `global-undefined.mlir` retains the refused
+output cases. The older arithmetic, ordering and truthiness witnesses in
+`native-divergence-fixture.js` remain differential regressions.
 
 ---
 
-## ND-8 — an out-of-range index is `undefined`, which is NaN, not undefined behaviour
+## ND-8 — an out-of-range index produces tagged `undefined`
 
 **Status:** declared, **guarded**. **Against:** the ctbrowser VM.
 **Introduced:** Phase 57A, the dense-array lowering.
@@ -601,19 +550,18 @@ interpreter truncates them toward zero, unlike ECMAScript property lookup.
 `LowerToEmitC.cpp`:
 
 ```c++
-inline double vec_at(const std::vector<double> & v, double i) {
-  i = std::trunc(i);
-  if (!(i >= 0.0) || i >= static_cast<double>(v.size())) {
-    return NAN;
-  }
+inline nullable_scalar vec_at(const std::vector<double> & v, nullable_scalar key) {
+  if (key.tag != nullable_scalar::kind::number) { return {}; }
+  double i = std::trunc(key.value);
+  if (!(i >= 0.0) || i >= static_cast<double>(v.size())) { return {}; }
   return v[static_cast<std::vector<double>::size_type>(i)];
 }
 ```
 
 `!(i >= 0.0)` rather than `i < 0.0`, so a NaN index takes the guard too. The
 element type's join starts at `undefined` for exactly this reason
-(`TypeInference::elementTypeOf`), so the NaN this returns is a value the type
-system already admitted rather than one smuggled past it.
+(`TypeInference::elementTypeOf`), so the undefined tag returned on a miss is part of the inferred type. A
+present NaN instead retains its number tag.
 
 **`a.length` is the other half and it needs no guard**, because the density
 proof is what makes `size()` the right answer — see ND-12.

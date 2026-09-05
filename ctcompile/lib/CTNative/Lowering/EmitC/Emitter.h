@@ -78,6 +78,9 @@ struct lowering {
     // access is replaced, the object it keys is already an emitc.variable and
     // no longer reads as a closed create_object.
     llvm::DenseMap<mlir::Operation *, std::string> accessKey; // get/set -> member name
+    llvm::DenseMap<mlir::Operation *, mlir::Type> accessType;
+    llvm::StringMap<mlir::Type> resultTypes;
+    llvm::StringMap<llvm::SmallVector<mlir::Type>> parameterTypes;
     // PHASE 57A. Decided while the IR is still ctjs, for fieldsOf()'s reason:
     // by the time a read is replaced, the array it reads is already an
     // emitc.variable and no longer reads as a dense create_array.
@@ -95,6 +98,7 @@ struct lowering {
     bool needsString = false;
     bool needsMap = false;
     bool needsObjectIdentity = false;
+    bool needsNullable = false;
     llvm::SmallVector<std::string> environments;
     llvm::SmallVector<std::string> methodTables;
     llvm::SmallVector<std::string> callableBuilders;
@@ -121,6 +125,9 @@ struct lowering {
     llvm::SmallVector<std::pair<std::string, mlir::Type>> fieldsOf(mlir::Value object);
 
     void censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted);
+    void censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted);
+    mlir::Type joinedReturnType(ctjs::FuncOp fn) const;
+    void convertBoundaries(ctjs::FuncOp fn);
 
     void nameFamilies();
 
@@ -135,6 +142,10 @@ struct lowering {
     mlir::Value f64Constant(mlir::OpBuilder & b, mlir::Location where, double d);
 
     mlir::Value boolConstant(mlir::OpBuilder & b, mlir::Location where, bool v);
+    mlir::Value absentConstant(mlir::OpBuilder & b, mlir::Location where, bool isNull = false);
+    mlir::Value convertScalar(mlir::OpBuilder & b, mlir::Location where, mlir::Value value,
+                              mlir::Type target);
+    mlir::Value number(mlir::OpBuilder & b, mlir::Location where, mlir::Value value);
 
     mlir::Value stringConstant(mlir::OpBuilder & builder, mlir::Location where,
                                llvm::StringRef value);

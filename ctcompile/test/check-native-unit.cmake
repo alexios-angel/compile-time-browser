@@ -318,8 +318,16 @@ else()
           "global that sorts later than the first one printed, or use a name-directed "
           "-DMUTATE_AS=.")
       endif()
-      set(_cpp "${_head}${_symbol} = ${_symbol} + 1;\n  ${_tail}")
-      if(NOT _cpp MATCHES "${_symbol} = ${_symbol} \\+ 1;")
+      # Generated numeric globals keep a tag so a missing store cannot look
+      # like a present NaN. Handwritten fixtures still use plain doubles.
+      set(_increment "${_symbol} + 1")
+      if(_cpp MATCHES "ctnative::nullable_scalar ${_symbol}[; =]")
+        set(_increment "ctnative::global_number(${_symbol}) + 1")
+      endif()
+      set(_mutation "${_symbol} = ${_increment};")
+      set(_cpp "${_head}${_mutation}\n  ${_tail}")
+      string(FIND "${_cpp}" "${_mutation}" _applied)
+      if(_applied LESS 0)
         message(FATAL_ERROR "${NAME}: the mutation of ${MUTATE} did not apply")
       endif()
       message(STATUS "${NAME}: MUTATED - ${MUTATE} is one more than the program computed")

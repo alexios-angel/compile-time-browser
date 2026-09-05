@@ -35,12 +35,13 @@ mlir::Value lowering::stringConstant(mlir::OpBuilder & builder, mlir::Location w
 mlir::Value lowering::lvalueOfGlobal(mlir::OpBuilder & b, mlir::Location where,
                                      llvm::StringRef name) {
     globals.insert(name);
-    return ec::GetGlobalOp::create(b, where, ec::LValueType::get(mlir::Float64Type::get(context)),
+    needsNullable = true;
+    return ec::GetGlobalOp::create(b, where,
+                                   ec::LValueType::get(carrierType(context, carrier::nullable)),
                                    mlir::FlatSymbolRefAttr::get(context, ("g_" + name).str()));
 }
 
-// A number's truthiness, exactly: not zero AND not NaN. `x == x` is the
-// NaN test, and NaN carries undefined too, which is also falsy.
+// A definite number is truthy exactly when it is nonzero and not NaN.
 mlir::Value lowering::truthyNumber(mlir::OpBuilder & b, mlir::Location where, mlir::Value x) {
     const auto i1 = mlir::IntegerType::get(context, 1);
     mlir::Value nonzero =
@@ -50,6 +51,9 @@ mlir::Value lowering::truthyNumber(mlir::OpBuilder & b, mlir::Location where, ml
 }
 
 mlir::Value lowering::truthy(mlir::OpBuilder & builder, mlir::Location where, mlir::Value value) {
+    if (isNullableCarrier(value.getType())) {
+        return convertScalar(builder, where, value, mlir::IntegerType::get(context, 1));
+    }
     if (llvm::isa<mlir::IntegerType>(value.getType())) { return value; }
     if (value.getType() == carrierType(context, carrier::string)) {
         // Keep this a pure comparison: an opaque .empty() call retains
@@ -87,9 +91,8 @@ mlir::Value lowering::libmCall(mlir::OpBuilder & b, mlir::Location where, llvm::
 // pow(1, INFINITY). Everywhere else the two agree, including pow(NaN, 0)
 // == 1. So the whole difference is one guard, and emitting it is better
 // than refusing the operator: `2 ** 31` keeps working and `1 ** undefined`
-// stops being wrong. Undefined IS this tier's NaN, which is what made the
-// difference reachable from ordinary JavaScript rather than only from a
-// literal NaN.
+// stops being wrong. Numeric conversion of undefined produces NaN, making
+// this difference reachable without an explicit NaN literal.
 //
 // StdLibMap.td already classifies the library spelling `Math.pow` as
 // Divergent with this exact witness; this is the operator path catching up.

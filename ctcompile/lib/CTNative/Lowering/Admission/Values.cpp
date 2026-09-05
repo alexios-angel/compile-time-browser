@@ -13,9 +13,9 @@ bool admission::refuse(std::string reason) {
     return false;
 }
 
-// A value used as a NUMBER: num, or an opt row (NaN is exact here).
+// Scalar operands have an exact numeric conversion; equality keeps their tags.
 bool admission::numeric(mlir::Value v, llvm::StringRef where) {
-    if (carrierOf(typeOf(v)) != carrier::number) {
+    if (!isScalarCarrier(carrierOf(typeOf(v)))) {
         return refuse((where + " operand is " + printed(typeOf(v)) + ", not a number").str());
     }
     return true;
@@ -33,32 +33,12 @@ bool admission::strings(mlir::Value lhs, mlir::Value rhs) const {
     return carrierOf(typeOf(lhs)) == carrier::string && carrierOf(typeOf(rhs)) == carrier::string;
 }
 
-// A value that must not be undefined: equality is observable.
-bool admission::defined(mlir::Value v, llvm::StringRef where) {
-    if (mayBeUndefined(typeOf(v))) {
-        return refuse((where + " on a value that may be undefined - NaN would not "
-                               "compare the way undefined does")
-                          .str());
-    }
-    return true;
-}
-
-// AND A VALUE THAT MUST NOT BE UNDEFINED BECAUSE IT WILL BE PRINTED.
-// `defined()` above refuses an `opt` where EQUALITY reads it; this refuses
-// one where the PRINT does, and the two sentences are different because the
-// reasons are: equality is a comparison NaN gets wrong, and printing is a
-// CONVENTION - `%.17g` of the double - that has no spelling for undefined
-// at all. Every other use of an `opt` in this tier is exact (arithmetic,
-// relational, truthiness), which is why a global is the one place this has
-// to be asked. ND-7's printing row in ctcompile/docs/native-divergences.md
-// is this refusal; it was an obligation on the harness there until it
-// became a rule here.
+// Global observations still use the numeric printing convention. Internal
+// optional scalars are exact, but that does not add optional-global output.
 bool admission::printable(mlir::Value v, llvm::StringRef where) {
     if (mayBeUndefined(typeOf(v))) {
-        return refuse((where + " may be undefined, and a global is where a value becomes an "
-                               "observable: this tier prints a Number as `%.17g` of the "
-                               "double, so undefined carried as NaN prints `nan` where the "
-                               "interpreter prints `undefined`")
+        return refuse((where + " may be null or undefined; native global observations require "
+                               "a definite number")
                           .str());
     }
     return true;
@@ -323,9 +303,9 @@ bool admission::isReservedInCpp(llvm::StringRef key) {
 }
 
 // NAMES OBJECT.PROTOTYPE ANSWERS FOR. A field that is only ever READ is
-// `undefined` for a plain key, which this tier carries as NaN - but these
+// `undefined` for a plain key, which this tier preserves with a tag - but these
 // names are not undefined: the literal's prototype answers them, and the
-// interpreter finds a function where the generated struct finds NaN. So
+// interpreter finds a function where the generated struct finds undefined. So
 // `if (o.constructor)` took the else branch natively and the then branch
 // in the interpreter, with no refusal anywhere. A key that IS stored
 // shadows the inherited one and is fine; only a read-only key is refused.

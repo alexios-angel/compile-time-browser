@@ -34,11 +34,11 @@ template <class K, class V> bool map_has(const std::shared_ptr<map_storage<K, V>
     }
     return false;
 }
-template <class K> double map_get(const std::shared_ptr<number_map<K>> & map, const K & key) {
+template <class K> nullable_scalar map_get(const std::shared_ptr<number_map<K>> & map, const K & key) {
     for (const auto & entry : map->entries) {
         if (map_key_equal(entry.first, key)) { return entry.second; }
     }
-    return NAN;
+    return {};
 }
 template <class K, class V> V map_get_present(
     const std::shared_ptr<map_storage<K, V>> & map, const K & key) {

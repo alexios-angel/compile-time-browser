@@ -618,3 +618,16 @@ if(COMMAND ctcompile_add_native_claims)
                               "${CMAKE_CURRENT_SOURCE_DIR}/native-map-presence-fixture.js"
                               15 14 30 0)
 endif()
+
+# Tagged optional scalars distinguish null, undefined and present NaN across
+# calls, control flow, fields, array/Map reads and returned method tables.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(optional_scalars
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-optional-scalars-fixture.js"
+                                number_present)
+endif()
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(optional_scalars
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-optional-scalars-fixture.js"
+                              29 25 119 11)
+endif()

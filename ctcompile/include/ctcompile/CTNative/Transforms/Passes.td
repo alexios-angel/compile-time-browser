@@ -17,10 +17,10 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
     every `ctjs.func` decides ONE of two things:
 
       * every `!ctjs.value` in it has a proved type the native tier can
-        represent - `bool` as `bool`, `num<...>` as `double`, and
-        `opt<num<...>>`/`opt<bottom>` as a `double` whose undefined is NaN,
-        admitted only where that representation is exact (arithmetic,
-        relational comparison, truthiness) - and every operation is one this
+        represent - `bool` as `bool`, `num<...>` as `double`, and optional
+        scalar values as `ctnative::nullable_scalar`, whose tag preserves
+        null, undefined, booleans and present numbers including NaN - and
+        every operation is one this
         pass lowers: the function becomes an `emitc.func` over those types,
         its `scf` left for `--convert-scf-to-emitc`, its `ctjs.return` an
         `emitc.return`;
