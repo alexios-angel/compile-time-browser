@@ -51,6 +51,10 @@ with it.
   zlib. `encode_png` uses STORED deflate blocks and no compression library, so
   "the chunk names look right" is not evidence; the CRCs and the Adler-32 are
   silent when wrong.
+- `tools/check/bootstrap-data-probe.py` — extracts the vendor Bootstrap Data
+  factory and checks CommonJS, browser and delayed-AMD publication. Interpreter
+  observations after factory return and native compile coverage are recorded
+  separately. See [the probe contract](../../ctcompile/docs/bootstrap-data-probe.md).
 - `tools/check/type-oracle.py` — **the type oracle's checker**, ctcompile Phase
   54B. `--record-types` on the interpreter writes down every type each
   `(function, register)` actually held while a corpus ran; this compares a
