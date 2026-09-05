@@ -5,6 +5,7 @@ namespace ctcompile::ctnative::lowering_detail {
 
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
+    if (llvm::isa<CreateObjectOp>(o) && o->hasAttr(kNativeObjectIdentity)) { return true; }
     if (!methodTableName(o).empty()) {
         if (llvm::isa<CreateObjectOp>(o)) { return true; }
         mlir::Value object;
@@ -45,7 +46,7 @@ bool admission::op(mlir::Operation * o) {
     if (auto made = llvm::dyn_cast<ConstructOp>(o)) {
         if (o->hasAttr(kNativeMapSite)) {
             return carrierOf(typeOf(made.getResult())) == carrier::map ||
-                   refuse("native Map needs primitive keys and definite numeric or acyclic "
+                   refuse("native Map needs supported keys and definite numeric or acyclic "
                           "Map values; inferred " +
                           printed(typeOf(made.getResult())));
         }
@@ -263,6 +264,7 @@ bool admission::op(mlir::Operation * o) {
                 continue;
             }
             if (carrierOf(typeOf(operands[i])) != carrier::methodTable &&
+                carrierOf(typeOf(operands[i])) != carrier::objectIdentity &&
                 carrierOf(typeOf(operands[i])) != carrier::closure &&
                 carrierOf(typeOf(operands[i])) != carrier::boolean &&
                 carrierOf(typeOf(operands[i])) != carrier::string &&

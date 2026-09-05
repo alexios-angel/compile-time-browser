@@ -34,6 +34,7 @@
 #include "Inference/PropertyKey.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
+#include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
@@ -476,6 +477,10 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                                                   llvm::ArrayRef<TypeLattice *> results) {
     mlir::MLIRContext * c = op->getContext();
 
+    if (llvm::isa<ctjs::CreateObjectOp>(op) && op->hasAttr(kNativeObjectIdentity)) {
+        propagateIfChanged(results[0], results[0]->join(TypeValue{ObjectIdentityType::get(c)}));
+        return mlir::success();
+    }
     if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(op);
         object && !methodTableName(op).empty()) {
         propagateIfChanged(

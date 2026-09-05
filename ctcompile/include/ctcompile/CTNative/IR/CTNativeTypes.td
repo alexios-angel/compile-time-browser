@@ -1,6 +1,6 @@
 //===- CTNativeTypes.td - the ctnative type lattice, as TypeDefs ----------===//
 //
-// SEVENTEEN TYPES AND NO HAND-WRITTEN C++ TYPE CLASS. Part 24's Stage 53A:
+// EIGHTEEN TYPES AND NO HAND-WRITTEN C++ TYPE CLASS. Part 24's Stage 53A:
 // "every one a TypeDef, no C++."
 //
 // THE ORDER OF THE FILE IS THE ORDER OF THE LATTICE, bottom to top:
@@ -324,6 +324,17 @@ def CTNative_SetType : CTNative_Type<"Set", "set"> {
   }];
   let parameters = (ins "::mlir::Type":$elementType);
   let assemblyFormat = "`<` $elementType `>`";
+}
+
+def CTNative_ObjectIdentityType : CTNative_Type<"ObjectIdentity", "object_identity"> {
+  let summary = "An owning identity for a proved property-free object used as a Map key";
+  let description = [{
+    Every producer is a fresh empty object or closed argument/return flow.
+    Every use is a proved Map key or that closed flow. No property access,
+    reflection, mutable capture, host identity or mixed producer is admitted.
+    The carrier owns a distinct empty allocation; aliases and Map entries
+    retain it, so keys remain alive and separate allocations remain unequal.
+  }];
 }
 
 def CTNative_MethodTableType : CTNative_Type<"MethodTable", "method_table"> {

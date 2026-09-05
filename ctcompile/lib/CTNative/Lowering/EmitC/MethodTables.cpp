@@ -7,6 +7,7 @@ std::string lowering::callableTypeSpelling(mlir::Type type) {
     case carrier::number: return "double";
     case carrier::boolean: return "bool";
     case carrier::string: needsString = true; return "std::string";
+    case carrier::objectIdentity: needsObjectIdentity = true; return kObjectIdentityType.str();
     case carrier::map: {
         needsMap = true;
         const auto map = llvm::cast<MapType>(type);

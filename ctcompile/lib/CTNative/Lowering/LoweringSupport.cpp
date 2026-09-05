@@ -36,6 +36,7 @@ carrier carrierOf(mlir::Type type) {
     if (llvm::isa<NumType>(type)) { return carrier::number; }
     if (llvm::isa<ClosureType>(type)) { return carrier::closure; }
     if (llvm::isa<MethodTableType>(type)) { return carrier::methodTable; }
+    if (llvm::isa<ObjectIdentityType>(type)) { return carrier::objectIdentity; }
     if (auto string = llvm::dyn_cast<StrType>(type);
         string && string.getEncoding() == StrEncoding::UTF8) {
         return carrier::string;
@@ -50,12 +51,13 @@ carrier carrierOf(mlir::Type type) {
     if (auto map = llvm::dyn_cast<MapType>(type)) {
         const auto key = map.getKeyType();
         const auto string = llvm::dyn_cast<StrType>(key);
-        const bool primitiveKey = llvm::isa<BottomType, NumType, BoolType>(key) ||
-                                  (string && string.getEncoding() == StrEncoding::UTF8);
+        const bool supportedKey =
+            llvm::isa<BottomType, NumType, BoolType, ObjectIdentityType>(key) ||
+            (string && string.getEncoding() == StrEncoding::UTF8);
         const auto value = map.getValueType();
         const bool ownedValue = llvm::isa<BottomType, NumType>(value) ||
                                 (llvm::isa<MapType>(value) && carrierOf(value) == carrier::map);
-        return primitiveKey && ownedValue ? carrier::map : carrier::none;
+        return supportedKey && ownedValue ? carrier::map : carrier::none;
     }
     // PHASE 57A: A DENSE ARRAY IS A `std::vector<double>` AND NOTHING ELSE
     // YET. The element carrier decides: `vector<bool>` is a bit-packed
@@ -82,6 +84,7 @@ llvm::StringRef mapKeySpelling(mlir::Type type) {
     if (llvm::isa<BottomType, NumType>(type)) { return "double"; }
     if (llvm::isa<BoolType>(type)) { return "bool"; }
     if (llvm::isa<StrType>(type)) { return "std::string"; }
+    if (llvm::isa<ObjectIdentityType>(type)) { return kObjectIdentityType; }
     llvm::report_fatal_error("native Map key has no carrier; admission should refuse it");
 }
 
@@ -132,6 +135,7 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     // reaching this point means a rule let one through, and a crash naming
     // that is worth far more than a double that happens to verify.
     switch (which) {
+    case carrier::objectIdentity: return ec::OpaqueType::get(c, kObjectIdentityType);
     case carrier::methodTable:
         llvm::report_fatal_error("method table carrier needs its proved schema");
     case carrier::boolean: return mlir::IntegerType::get(c, 1);

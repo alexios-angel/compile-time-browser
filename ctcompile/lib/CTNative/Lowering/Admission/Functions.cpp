@@ -95,7 +95,7 @@ bool admission::function(ctjs::FuncOp fn) {
         const auto supported = [&](mlir::Value value) {
             const auto c = carrierOf(typeOf(value));
             return c == carrier::number || c == carrier::boolean || c == carrier::string ||
-                   c == carrier::map;
+                   c == carrier::map || c == carrier::objectIdentity;
         };
         for (unsigned i = 3; i < entry.getNumArguments(); ++i) {
             if (!supported(entry.getArgument(i))) {

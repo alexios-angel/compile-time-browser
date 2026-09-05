@@ -2,7 +2,7 @@
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 
-#include "mlir/IR/Dominance.h"
+#include "NativeMap/Presence.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -290,31 +290,7 @@ std::string collect(plan & out, flowGraph & graph,
     return {};
 }
 
-// set() returns the exact receiver. No other schema-family relation proves
-// runtime identity: two allocations passed through one formal stay distinct.
-mlir::Value instanceOf(mlir::Value value) {
-    while (auto call = value.getDefiningOp<ctjs::CallOp>()) {
-        auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-        if (!get || keyOf(get.getKey()) != "set" || get.getObject() != call.getReceiver()) {
-            break;
-        }
-        value = call.getReceiver();
-    }
-    return value;
-}
-
-bool sameKey(mlir::Value left, mlir::Value right) {
-    if (left == right) { return true; }
-    auto lhs = left.getDefiningOp<ctjs::ConstantOp>();
-    auto rhs = right.getDefiningOp<ctjs::ConstantOp>();
-    if (!lhs || !rhs) { return false; }
-    // Equal primitive constants are equal keys. Different encodings of zero
-    // or NaN need no special case here: declining a proof stays conservative.
-    return lhs.getValue() == rhs.getValue() &&
-           llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr>(lhs.getValue());
-}
-
-std::string provePayloads(llvm::ArrayRef<plan> plans, flowGraph & graph,
+std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flowGraph & graph,
                           llvm::DenseMap<mlir::Value, unsigned> & families) {
     llvm::SmallVector<llvm::SmallVector<unsigned>, 4> children(plans.size());
     for (auto [index, candidate] : llvm::enumerate(plans)) {
@@ -340,33 +316,18 @@ std::string provePayloads(llvm::ArrayRef<plan> plans, flowGraph & graph,
         if (!acyclic(index)) { return "native Map payload schemas contain an ownership cycle"; }
     }
 
-    mlir::DominanceInfo dominance;
+    llvm::SmallVector<ctjs::CallOp> calls;
+    llvm::SmallVector<ctjs::CallOp> reads;
     for (auto [index, candidate] : llvm::enumerate(plans)) {
+        llvm::append_range(calls, candidate.calls);
         if (children[index].empty()) { continue; }
-        const bool canErase = llvm::any_of(candidate.calls, [](ctjs::CallOp call) {
-            const auto key = keyOf(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey());
-            return key == "delete" || key == "clear";
-        });
         for (ctjs::CallOp read : candidate.calls) {
             auto method = read.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-            if (keyOf(method.getKey()) != "get") { continue; }
-            const bool present = !canErase && llvm::any_of(candidate.calls, [&](ctjs::CallOp set) {
-                auto get = set.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-                return keyOf(get.getKey()) == "set" &&
-                       instanceOf(set.getReceiver()) == instanceOf(read.getReceiver()) &&
-                       sameKey(set.getArgs()[0], read.getArgs()[0]) &&
-                       set->getParentOfType<ctjs::FuncOp>() ==
-                           read->getParentOfType<ctjs::FuncOp>() &&
-                       dominance.properlyDominates(set.getOperation(), read.getOperation());
-            });
-            if (!present) {
-                return "nested native Map get requires a dominating same-instance, same-key "
-                       "set and no delete or clear in its schema family";
-            }
-            read->setAttr(kNativeMapPresent, mlir::UnitAttr::get(read.getContext()));
+            if (keyOf(method.getKey()) == "get") { reads.push_back(read); }
         }
     }
-    return {};
+    return map_detail::provePresence(module, calls, reads,
+                                     [&](mlir::Value value) { return graph.find(value); });
 }
 
 } // namespace
@@ -421,7 +382,7 @@ void prepareNativeMaps(mlir::ModuleOp module) {
         const std::string problem = collect(candidate, graph, sites);
         if (reason.empty()) { reason = problem; }
     }
-    if (reason.empty()) { reason = provePayloads(plans, graph, families); }
+    if (reason.empty()) { reason = provePayloads(module, plans, graph, families); }
     llvm::DenseSet<mlir::Operation *> calls;
     for (const plan & candidate : plans) {
         for (ctjs::CallOp call : candidate.calls) { calls.insert(call); }

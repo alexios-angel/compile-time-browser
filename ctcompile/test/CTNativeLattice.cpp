@@ -13,7 +13,7 @@
 // commutative, associative, with `bottom` as its identity and `boxed`
 // absorbing - and those are properties, not cases. So the table is checked, and
 // then all four laws are checked exhaustively over a sample of the type
-// universe; associativity alone is 30^3 = 27000 triples. The mutation counts
+// universe; associativity alone is 33^3 = 35937 triples. The mutation counts
 // below were measured on the original 21-type sample (9261 triples).
 //
 // THE TWO HALVES CATCH DIFFERENT THINGS, and that was measured rather than
@@ -261,6 +261,37 @@ const MeetRow kMeetTable[] = {
      "!ctnative.method_table<\"table$2\">>>",
      "container joins preserve nominal table sites in their element alternatives"},
 
+    // --- property-free object identities ------------------------------------
+    {"!ctnative.object_identity", "!ctnative.object_identity", "!ctnative.object_identity",
+     "different allocations share one carrier without asserting equal runtime identities"},
+    {"!ctnative.opt<!ctnative.bottom>", "!ctnative.object_identity",
+     "!ctnative.opt<!ctnative.object_identity>",
+     "an absent path cannot be represented by a definite object identity"},
+    {"!ctnative.opt<!ctnative.object_identity>", "!ctnative.object_identity",
+     "!ctnative.opt<!ctnative.object_identity>",
+     "joining a definite identity does not remove existing optionality"},
+    {"!ctnative.object_identity", "!ctnative.str<utf8>",
+     "!ctnative.variant<!ctnative.object_identity, !ctnative.str<utf8>>",
+     "an object key does not become its string conversion"},
+    {"!ctnative.object_identity", "!ctnative.num<f64>",
+     "!ctnative.variant<!ctnative.num<f64>, !ctnative.object_identity>",
+     "runtime identity is not interchangeable with a numeric address"},
+    {"!ctnative.object_identity", "!ctnative.closure<\"get$1\">",
+     "!ctnative.variant<!ctnative.closure<\"get$1\">, !ctnative.object_identity>",
+     "a property-free object cannot stand in for a callable environment"},
+    {"!ctnative.object_identity", "!ctnative.method_table<\"table$1\">",
+     "!ctnative.variant<!ctnative.method_table<\"table$1\">, !ctnative.object_identity>",
+     "an identity-only key and an object with callable fields need distinct representations"},
+    {"!ctnative.map<!ctnative.object_identity, !ctnative.num<i32>>",
+     "!ctnative.map<!ctnative.object_identity, !ctnative.num<f64>>",
+     "!ctnative.map<!ctnative.object_identity, !ctnative.num<f64>>",
+     "widening numeric payloads retains the object key representation"},
+    {"!ctnative.map<!ctnative.object_identity, !ctnative.num<f64>>",
+     "!ctnative.map<!ctnative.str<utf8>, !ctnative.num<f64>>",
+     "!ctnative.map<!ctnative.variant<!ctnative.object_identity, !ctnative.str<utf8>>, "
+     "!ctnative.num<f64>>",
+     "mixed object and string keys remain visible for admission to refuse"},
+
     // --- containers ---------------------------------------------------------
     {"!ctnative.vec<!ctnative.num<i32>>", "!ctnative.vec<!ctnative.num<f64>>",
      "!ctnative.vec<!ctnative.num<f64>>", "containers meet elementwise"},
@@ -319,6 +350,9 @@ const char * const kSampleTypes[] = {
     "!ctnative.method_table<\"table$1\">",
     "!ctnative.method_table<\"table$2\">",
     "!ctnative.opt<!ctnative.method_table<\"table$1\">>",
+    "!ctnative.object_identity",
+    "!ctnative.opt<!ctnative.object_identity>",
+    "!ctnative.map<!ctnative.object_identity, !ctnative.num<f64>>",
 };
 
 //===--------------------------------------------------------------------===//
@@ -616,7 +650,7 @@ int main() {
     // exits 0 and looks exactly like a passing one; this is the number to
     // update when a case is added, and the reason it is here rather than a
     // lower bound is that a lower bound would not notice a case being deleted.
-    const int expectedChecks = 128;
+    const int expectedChecks = 146;
     if (checks != expectedChecks) {
         std::printf("FAILED  ran %d checks, expected %d - a case was added or lost\n", checks,
                     expectedChecks);

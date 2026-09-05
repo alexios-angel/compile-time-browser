@@ -31,6 +31,11 @@ void lowering::retype(ctjs::FuncOp fn) {
             return;
         }
         const carrier c = carrierOf(typeOf(v));
+        if (c == carrier::objectIdentity) {
+            needsObjectIdentity = true;
+            v.setType(carrierType(context, c));
+            return;
+        }
         if (c == carrier::methodTable) {
             v.setType(methodTableCarrierType(llvm::cast<MethodTableType>(typeOf(v))));
             return;
@@ -110,7 +115,7 @@ void lowering::retype(ctjs::FuncOp fn) {
     // every OTHER site in the program - so here each object only takes the
     // type of its own site.
     fn.getBody().walk([&](ctjs::CreateObjectOp object) {
-        if (!methodTableName(object).empty()) { return; }
+        if (!methodTableName(object).empty() || object->hasAttr(kNativeObjectIdentity)) { return; }
         mlir::Value(object.getResult()).setType(classType(shapeAt(object.getResult())));
     });
     // AND THE RECEIVER, which is the same shape one indirection away. It is

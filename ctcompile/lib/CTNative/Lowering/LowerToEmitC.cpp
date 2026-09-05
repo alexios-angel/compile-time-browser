@@ -63,6 +63,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         closureLifter lifter{module, census};
         const liftReport lifted = lifter.run();
         prepareNativeMaps(module);
+        prepareNativeObjectIdentities(module);
         if (census) {
             // ONE LINE, DETERMINISTIC. StringMap iterates in hash order, so it
             // is sorted by count and then by name - a census whose text moves

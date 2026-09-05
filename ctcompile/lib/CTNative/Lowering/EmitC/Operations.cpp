@@ -153,6 +153,14 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         return;
     }
     if (auto object = llvm::dyn_cast<CreateObjectOp>(o)) {
+        if (o->hasAttr(kNativeObjectIdentity)) {
+            swap(ec::CallOpaqueOp::create(
+                     b, where, mlir::TypeRange{object.getResult().getType()},
+                     b.getStringAttr("std::make_shared<ctnative::identity_object>"),
+                     mlir::ValueRange{})
+                     .getResult(0));
+            return;
+        }
         // The struct, by value, in this frame; every field set to its
         // undefined - NaN for a number, false for a boolean - before the
         // first store, so a read before a write is exact.

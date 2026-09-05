@@ -1,4 +1,5 @@
-#include "ClosedValueFlow.h"
+#include "../../Analysis/ClosedValueFlow.h"
+#include "ClosureLifter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 namespace {

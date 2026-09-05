@@ -1,8 +1,11 @@
 #pragma once
 
-#include "ClosureLifter.h"
+#include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "mlir/IR/SymbolTable.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
 
-namespace ctcompile::ctnative::lowering_detail {
+namespace ctcompile::ctnative {
 
 // These are possible value flows, not runtime aliases. Distinct invocations
 // of one factory share a target/schema but keep separate environments.
@@ -58,4 +61,4 @@ struct closedValueFlow {
     }
 };
 
-} // namespace ctcompile::ctnative::lowering_detail
+} // namespace ctcompile::ctnative

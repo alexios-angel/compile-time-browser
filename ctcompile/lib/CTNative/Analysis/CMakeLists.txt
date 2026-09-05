@@ -12,12 +12,15 @@ add_mlir_library(CTNativeAnalysis
   Inference/Shapes.cpp
   EscapeAnalysis.cpp
   NativeMap.cpp
+  NativeMap/Presence.cpp
+  NativeObjectIdentity.cpp
 
   LINK_LIBS PUBLIC
     CTNativeDialect
     CTJSDialect
     MLIRAnalysis
     MLIRIR
+    MLIRSCFDialect
 )
 
 target_include_directories(CTNativeAnalysis

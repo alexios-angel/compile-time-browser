@@ -37,7 +37,8 @@ creating function. Flow joins describe schemas, never runtime identity.
 Every field read must be a call with the same table as receiver. Each target
 needs visible invocations proving its parameter types and no callers outside
 the field flow. Methods cannot read `this` or `new.target`. Captures and
-signatures carry only supported scalars, owning strings and acyclic Maps.
+signatures carry supported scalars, owning strings and acyclic Maps. Signatures
+also admit proved identity-only object keys; captures of those keys are refused.
 Capturing tables, functions, ordinary objects or arrays is refused, excluding
 ownership cycles in this representation.
 
@@ -83,9 +84,11 @@ pass. Source tests pin the lifetime and mutation boundaries; IR tests reject
 forged proof annotations and callers outside the proved table flow.
 
 The parallel [nested Map work](native-nested-maps.md) supports finite Map
-payloads with numeric leaves. The next Data-specific steps are conditional
-`has` / `set` / `get` presence proofs, object-identity keys, component values
-and typed host publication. Shared mutable captured bindings remain a separate
-ownership extension. The [Bootstrap Data probe](bootstrap-data-probe.md)
+payloads with numeric leaves. The next Data-specific steps are component
+values, general object/host identities and typed host publication.
+[Conditional presence](native-map-presence.md) and
+[property-free object keys](native-object-keys.md) are now implemented. Shared
+mutable captured bindings remain a separate ownership extension. The
+[Bootstrap Data probe](bootstrap-data-probe.md)
 measures the original source in CommonJS, browser and delayed-AMD environments;
 passing its interpreter observations does not establish native Bootstrap.

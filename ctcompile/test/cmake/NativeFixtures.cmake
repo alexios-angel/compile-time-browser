@@ -595,3 +595,26 @@ if(COMMAND ctcompile_add_native_claims)
                               "${CMAKE_CURRENT_SOURCE_DIR}/native-nested-map-fixture.js"
                               14 12 25 1)
 endif()
+
+# Identity-only object keys own fresh allocations across closed calls/returns.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(object_keys
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-object-key-fixture.js"
+                                lifetime42)
+endif()
+
+# Conditional has/set/get follows must-presence and erasure effects.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(map_presence
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-map-presence-fixture.js"
+                                lifetime42)
+endif()
+
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(object_keys
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-object-key-fixture.js"
+                              14 10 22 12)
+  ctcompile_add_native_claims(map_presence
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-map-presence-fixture.js"
+                              15 14 30 0)
+endif()

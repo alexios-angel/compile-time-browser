@@ -94,6 +94,7 @@ struct lowering {
     bool needsVector = false;
     bool needsString = false;
     bool needsMap = false;
+    bool needsObjectIdentity = false;
     llvm::SmallVector<std::string> environments;
     llvm::SmallVector<std::string> methodTables;
     llvm::SmallVector<std::string> callableBuilders;

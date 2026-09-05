@@ -83,6 +83,14 @@ void lowering::declareGlobals() {
     if (needsString) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("string"), b.getUnitAttr());
     }
+    if (needsObjectIdentity) {
+        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("memory"), b.getUnitAttr());
+        ec::VerbatimOp::create(
+            b, module.getLoc(),
+            b.getStringAttr(
+                "namespace ctnative {\n// ctcompile: proved property-free object identity\n"
+                "struct identity_object {};\n}\n"));
+    }
     // ONLY WHEN A VECTOR SITE EXISTS. An include and a preamble emitted
     // unconditionally would move every byte count the printing gate
     // reports and every line the other native lits pin, for programs that

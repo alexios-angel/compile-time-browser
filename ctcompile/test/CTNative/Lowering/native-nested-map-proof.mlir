@@ -3,7 +3,7 @@
 // An input presence annotation cannot turn an absent lookup into a Map value.
 module {
   // CHECK: ctjs.func @untrusted_presence
-  // CHECK-SAME: ctnative.not_native = "nested native Map get requires a dominating same-instance, same-key set and no delete or clear in its schema family"
+  // CHECK-SAME: ctnative.not_native = "nested native Map get requires presence on every reaching path for the same instance and key; has observations must survive intervening effects"
   // CHECK-NOT: ctnative.map_present
   ctjs.func @untrusted_presence$1(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %ctor = ctjs.load_global "Map"

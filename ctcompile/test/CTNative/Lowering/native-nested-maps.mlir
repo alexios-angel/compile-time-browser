@@ -16,7 +16,7 @@
 // NATIVE-DAG: call_opaque "ctnative::map_get_present"
 // CYCLE: ctnative.not_native = "native Map payload schemas contain an ownership cycle"
 // MIXED: ctnative.not_native = "native Map flow contains a non-Map producer `ctjs.constant`"
-// PRESENCE: ctnative.not_native = "nested native Map get requires a dominating same-instance, same-key set and no delete or clear in its schema family"
+// PRESENCE: ctnative.not_native = "nested native Map get requires presence on every reaching path for the same instance and key; has observations must survive intervening effects"
 // SNAPSHOT: ctnative.not_native = "native Map snapshot requires confined numeric elements"
 
 //--- self.js

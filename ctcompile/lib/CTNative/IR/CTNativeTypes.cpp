@@ -7,7 +7,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/TypeSwitch.h"
 
-// The generated enums first: four of the seventeen types take one as a parameter,
+// The generated enums first: four of the eighteen types take one as a parameter,
 // and EnumParameter's parser and printer name symbolizeNumKind /
 // stringifyNumKind by their unqualified spelling inside this namespace.
 #include "ctcompile/CTNative/IR/CTNativeEnums.cpp.inc"

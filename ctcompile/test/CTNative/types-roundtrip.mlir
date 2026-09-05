@@ -121,6 +121,20 @@ func.func private @escaped_method_table(!ctnative.method_table<"make \"table\" \
 // CHECK-SAME: (!ctnative.method_table<"make \22table\22 \\site$7">)
 func.func private @hex_escaped_method_table(!ctnative.method_table<"make \22table\22 \5Csite$7">)
 
+// --- property-free object identities ----------------------------------------
+
+// Runtime allocations remain distinct even though their carrier has no type
+// parameter. Optionality and use as a Map key survive parsing and printing.
+// CHECK-LABEL: func.func private @object_identities
+// CHECK-SAME: (!ctnative.object_identity, !ctnative.opt<!ctnative.object_identity>) -> !ctnative.object_identity
+func.func private @object_identities(!ctnative.object_identity,
+    !ctnative.opt<!ctnative.object_identity>) -> !ctnative.object_identity
+
+// CHECK-LABEL: func.func private @identity_keyed_maps
+// CHECK-SAME: (!ctnative.map<!ctnative.object_identity, !ctnative.num<f64>>, !ctnative.map<!ctnative.object_identity, !ctnative.map<!ctnative.str<utf8>, !ctnative.num<f64>>>)
+func.func private @identity_keyed_maps(!ctnative.map<!ctnative.object_identity, !ctnative.num<f64>>,
+    !ctnative.map<!ctnative.object_identity, !ctnative.map<!ctnative.str<utf8>, !ctnative.num<f64>>>)
+
 // --- the three pointers ------------------------------------------------------
 
 // CHECK-LABEL: func.func private @pointers

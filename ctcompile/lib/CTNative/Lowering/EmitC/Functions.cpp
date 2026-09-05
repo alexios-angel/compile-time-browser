@@ -154,22 +154,18 @@ void lowering::lower(ctjs::FuncOp fn) {
         if (o->use_empty()) { eraseIfUnused(o); }
     }
 
-    // An unused owning Map parameter still receives and releases a handle.
-    // Keep that signature and evaluate the argument at every call site;
-    // explicitly discard the parameter to satisfy -Wunused-parameter.
-    // Do this after sweeping capture placeholders, which can be its last
-    // apparent use before lowering.
+    // Later canonicalization can erase a parameter's last use (for example,
+    // identical Map stores in both arms erase the boolean branch). Preserve
+    // an explicit void use for every emitted parameter so generated C++ stays
+    // warning-clean. This neither copies owning values nor changes argument
+    // evaluation, and the host compiler removes the casts.
     if (!isEntry) {
         mlir::OpBuilder at = mlir::OpBuilder::atBlockBegin(&body);
-        for (unsigned i = 3; i < body.getNumArguments(); ++i) {
+        for (unsigned i = 0; i < body.getNumArguments(); ++i) {
+            if (i < 3 && !(i == 0 && carriesReceiver)) { continue; }
             mlir::Value arg = body.getArgument(i);
-            if (arg.use_empty() && (carrierOf(typeOf(arg)) == carrier::methodTable ||
-                                    carrierOf(typeOf(arg)) == carrier::map ||
-                                    carrierOf(typeOf(arg)) == carrier::closure)) {
-                ec::CallOpaqueOp::create(at, made.getLoc(), mlir::TypeRange{},
-                                         at.getStringAttr("static_cast<void>"),
-                                         mlir::ValueRange{arg});
-            }
+            ec::CallOpaqueOp::create(at, made.getLoc(), mlir::TypeRange{},
+                                     at.getStringAttr("static_cast<void>"), mlir::ValueRange{arg});
         }
     }
 

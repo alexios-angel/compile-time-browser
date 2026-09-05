@@ -33,26 +33,21 @@ requires a finite C++ type. The accepted ownership graph cannot create a
 
 ## Presence proof for child reads
 
-A child `get` must have a dominating `set` with the same receiver identity
-and key, in the same function. Receiver identity follows only exact SSA
-values and the identity-preserving result of `set`; schema-family equality
-never substitutes for instance equality. Keys must be the same SSA value or
-equal primitive constants. Any `delete` or `clear` in the container's entire
-schema family prevents this initial presence proof, including mutations in
-closed callees.
+The subsequent [conditional presence proof](native-map-presence.md) accepts
+fresh `has` guards and branch-local initialization in addition to dominating
+stores. Deletion/clearing invalidates facts and cached observations, including
+through transitive callees; a fresh guard or store can restore them. Exact SSA
+identity and equal keys establish facts. Schema families are used only to
+invalidate possible aliases, never to equate distinct runtime Maps.
 
 Successful reads carry a derived `ctnative.map_present` annotation and return
-a definite child Map. The generated `map_get_present` helper copies the
-stored handle; its unreachable missing-key path terminates rather than
-inventing an absent Map representation. Input annotations are erased before
-proof, including when the lowering pass runs again. Ordinary numeric reads
-retain their existing optional-number behavior.
+a definite child Map. `map_get_present` copies its owning handle; an impossible
+missing-key path terminates. Input annotations cannot bypass proof. Ordinary
+numeric reads retain their optional-number behavior.
 
-The proof deliberately refuses a set performed only in one branch, a set in
-another function, and an earlier set on a different instance sharing the
-same schema. Bootstrap Data's `has` / conditional `set` / `get` initialization
-pattern needs a subsequent path-sensitive presence proof. Object-identity
-keys and component-instance values are also still outstanding.
+[Identity-only object keys](native-object-keys.md) now complement primitive
+keys. Component-instance values, general object/host identities and native
+publication remain outstanding for Bootstrap Data.
 
 ## Validation
 

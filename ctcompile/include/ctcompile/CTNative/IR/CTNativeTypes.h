@@ -1,5 +1,5 @@
 #pragma once
-// The seventeen ctnative types.
+// The eighteen ctnative types.
 //
 // CTNativeOpsTypes.h.inc, NOT CTNativeTypes.h.inc: add_mlir_dialect(CTNativeOps
 // ctnative) names its outputs after the .td file it was given, and the typedef

@@ -1,21 +1,24 @@
 # Native Maps toward Bootstrap Data
 
-The native backend can lower standard `Map` instances with primitive keys and
-numeric or finite acyclic Map values, including closed function parameters,
-returns and lifted captures. A returned handle owns its storage after the factory frame
-ends. Monomorphic [returned closures](native-returned-closures.md) can also own
+The native backend can lower standard `Map` instances with primitive or proved
+identity-only object keys and numeric or finite acyclic Map values, including
+closed function parameters, returns and lifted captures. A returned handle
+owns its storage after the factory frame ends. Monomorphic
+[returned closures](native-returned-closures.md) can also own
 Map captures after factory return. Proved
 [returned method tables](native-method-tables.md) own their callable fields.
-[Nested Maps](native-nested-maps.md) preserve child ownership and require a
-dominating same-instance/key store before child lookup. Bootstrap Data still
-needs conditional presence proofs, object-identity keys, component-instance
-values and host publication.
+[Nested Maps](native-nested-maps.md) preserve child ownership and require
+[proved membership](native-map-presence.md) for child lookup.
+[Property-free object keys](native-object-keys.md) carry owning identity.
+Bootstrap Data still needs component-instance values, general object/host
+identities and typed publication.
 
 ## Representation and semantics
 
 Each allocation owns an insertion-ordered list of key/value pairs through
-`std::shared_ptr<ctnative::number_map<K>>`. Keys use `double`, `bool` or owning
-`std::string`; values use `double`. Different allocation sites may have
+`std::shared_ptr<ctnative::number_map<K>>`. Primitive keys use `double`, `bool`
+or owning `std::string`; object identities use an owning handle. Values use
+`double`. Different allocation sites may have
 different schemas. The result of `set` shares the original Map, so chained
 calls and aliases observe the same mutations. Parameters and return values
 copy owning handles; factory invocations still allocate independent Maps.
@@ -53,7 +56,7 @@ Missing `get` results use the existing `opt<number>` representation. Arithmetic
 can turn absence into NaN; equality, `typeof` and other observations that
 would confuse absence with a stored NaN remain refused. Stored values must be
 definite numbers, including numeric NaN, or owning acyclic child Maps. Optional
-values, mixed key types, object keys and string values remain refused. See
+values, mixed key types, general object keys and string values remain refused. See
 the nested-Map document for its additional presence and containment proofs.
 
 ## Proof boundary
@@ -104,24 +107,25 @@ See [native-divergences.md](native-divergences.md#nd-8--an-out-of-range-index-is
 
 A [source-derived probe](bootstrap-data-probe.md) keeps Bootstrap 5.3.8's UMD
 wrapper and Data declaration, ending the factory after that declaration with
-`return e`. In CommonJS and
-browser environments, interpreter calls made after factory return observed
-`get=42`, a second element's value `21`, replacement `43`, and successful
-removal. Delayed AMD invocation produced the same observations and confirmed
+`return e`. CommonJS and browser interpreter calls made after factory return
+produce 19 observations covering identity, replacement, absent/wrong-key
+operations, duplicate-component rejection, removal isolation and object-valued
+reinsertion. Delayed AMD invocation adds a twentieth observation confirming
 the factory was retained before invocation.
 
-Native lowering still refuses all six functions in the CommonJS/browser
-probes and all seven in AMD. The factory reports an escaping method-bearing
+Native lowering still refuses all seven functions in the CommonJS/browser
+probes and all eight in AMD, including the console recorder added to check
+the rejection path. The factory reports an escaping method-bearing
 object; its methods retain unlowered captures. The UMD entry also needs `this`
 and host-environment types, while AMD exposes the factory value. These are
 measured prerequisites, not evidence that Data or full Bootstrap compiles.
 
 Map handles and proved callable method tables now outlive factory return.
-Finite nested Maps can retain child Maps, while Bootstrap Data's conditional
-`has` / `set` / `get` pattern needs a path-sensitive presence proof. Typed
-host publication, object-identity keys and component-instance values remain
-open. Existing pointers to frame-local capture cells must not be reused for
-that lifetime.
+Finite nested Maps retain child Maps, conditional `has` / `set` / `get`
+flows have a path-sensitive presence proof, and property-free object keys
+carry owning identity. Typed host publication, general object/host identities
+and component-instance values remain open. Existing pointers to frame-local
+capture cells must not be reused for that lifetime.
 
 ## Validation
 

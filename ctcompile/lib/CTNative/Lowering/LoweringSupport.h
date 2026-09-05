@@ -4,6 +4,7 @@
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
+#include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
 
@@ -55,10 +56,13 @@ enum class carrier {
     map,
     closure,
     methodTable,
+    objectIdentity,
     structure,
     vector
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
+inline constexpr llvm::StringLiteral kObjectIdentityType =
+    "std::shared_ptr<ctnative::identity_object>";
 carrier carrierOf(mlir::Type type);
 mlir::Type vectorCarrierType(mlir::MLIRContext * context);
 llvm::StringRef mapKeySpelling(mlir::Type type);

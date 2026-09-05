@@ -81,12 +81,14 @@ tests**. Standalone ASan/UBSan execution matches all 13 observations without
 leaks; a deliberately excessive 36-function coverage floor fails. Bootstrap,
 p5 and Phaser retain compile coverage of **19/574**, **39/4754** and
 **43/7725**, respectively. The source-derived Data probes still refuse all
-6 CommonJS/browser and 7 AMD functions. Boxed Bootstrap output remains
+7 CommonJS/browser and 8 AMD functions, including the error recorder in the
+strengthened probe. Boxed Bootstrap output remains
 byte-identical.
 
 The subsequent method-table and nested-Map extensions build on this capture
-environment. Bootstrap's complete factory still requires conditional Map
-presence proofs, object-identity keys, component-instance values and typed
-host publication. Shared mutable captured bindings remain a separate
+environment. Bootstrap's complete factory still requires component-instance
+values, general object/host identities and typed host publication. Conditional
+Map presence and property-free object keys are now
+implemented. Shared mutable captured bindings remain a separate
 ownership extension. The exported Data methods and full bundle remain
 future work.
