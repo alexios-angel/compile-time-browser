@@ -31,6 +31,10 @@ void lowering::retype(ctjs::FuncOp fn) {
             return;
         }
         const carrier c = carrierOf(typeOf(v));
+        if (c == carrier::methodTable) {
+            v.setType(methodTableCarrierType(llvm::cast<MethodTableType>(typeOf(v))));
+            return;
+        }
         if (c == carrier::closure) {
             v.setType(closureCarrierType(llvm::cast<ClosureType>(typeOf(v))));
             return;
@@ -38,7 +42,7 @@ void lowering::retype(ctjs::FuncOp fn) {
         if (c == carrier::map) {
             auto map = llvm::cast<MapType>(typeOf(v));
             needsMap = true;
-            needsString |= llvm::isa<StrType>(map.getKeyType());
+            needsString |= mapNeedsString(map);
             v.setType(mapCarrierType(map));
             return;
         }
@@ -106,6 +110,7 @@ void lowering::retype(ctjs::FuncOp fn) {
     // every OTHER site in the program - so here each object only takes the
     // type of its own site.
     fn.getBody().walk([&](ctjs::CreateObjectOp object) {
+        if (!methodTableName(object).empty()) { return; }
         mlir::Value(object.getResult()).setType(classType(shapeAt(object.getResult())));
     });
     // AND THE RECEIVER, which is the same shape one indirection away. It is

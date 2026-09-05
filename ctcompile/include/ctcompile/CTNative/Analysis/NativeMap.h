@@ -16,6 +16,7 @@ inline constexpr llvm::StringLiteral kNativeMapConstructor = "ctnative.map_const
 inline constexpr llvm::StringLiteral kNativeMapReason = "ctnative.map_reason";
 inline constexpr llvm::StringLiteral kNativeMapGroup = "ctnative.map_group";
 inline constexpr llvm::StringLiteral kNativeMapArgGroups = "ctnative.map_arg_groups";
+inline constexpr llvm::StringLiteral kNativeMapPresent = "ctnative.map_present";
 
 /// Annotate only after proving both the standard constructor/method identity
 /// and every instance use. No runtime assumption or boxed fallback is added.

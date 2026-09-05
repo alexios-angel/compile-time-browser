@@ -5,6 +5,22 @@ namespace ctcompile::ctnative::lowering_detail {
 
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
+    if (!methodTableName(o).empty()) {
+        if (llvm::isa<CreateObjectOp>(o)) { return true; }
+        mlir::Value object;
+        if (auto get = llvm::dyn_cast<GetPropertyOp>(o)) { object = get.getObject(); }
+        if (auto set = llvm::dyn_cast<SetPropertyOp>(o)) {
+            object = set.getObject();
+            if (!llvm::isa_and_nonnull<ClosureType>(typeOf(set.getValue()))) {
+                return refuse("returned method table field has no proved callable");
+            }
+        }
+        if (object) {
+            auto table = llvm::dyn_cast_or_null<MethodTableType>(typeOf(object));
+            return (table && table.getSite() == methodTableName(o)) ||
+                   refuse("returned method table access has no single proved schema");
+        }
+    }
     if (auto made = llvm::dyn_cast<CreateClosureOp>(o); made && !environmentTarget(o).empty()) {
         for (mlir::Value captured : made.getUpvalues()) {
             const auto c = carrierOf(typeOf(captured));
@@ -29,8 +45,8 @@ bool admission::op(mlir::Operation * o) {
     if (auto made = llvm::dyn_cast<ConstructOp>(o)) {
         if (o->hasAttr(kNativeMapSite)) {
             return carrierOf(typeOf(made.getResult())) == carrier::map ||
-                   refuse("native Map needs one primitive key carrier and definite numeric "
-                          "values; inferred " +
+                   refuse("native Map needs primitive keys and definite numeric or acyclic "
+                          "Map values; inferred " +
                           printed(typeOf(made.getResult())));
         }
     }
@@ -196,6 +212,12 @@ bool admission::op(mlir::Operation * o) {
         return true;
     }
     if (auto call = llvm::dyn_cast<CallDirectOp>(o)) {
+        if (o->hasAttr(kNativeStoredCall)) {
+            auto callable = llvm::dyn_cast_or_null<ClosureType>(typeOf(call.getCalleeValue()));
+            if (!callable || callable.getTarget() != call.getCallee()) {
+                return refuse("stored callable invocation has no single proved target");
+            }
+        }
         // new.target and the callee value are dropped; each remaining
         // argument needs a proved carrier. Whether the CALLEE is native is the fixpoint in
         // runOnOperation, not a question for one function.
@@ -240,7 +262,8 @@ bool admission::op(mlir::Operation * o) {
                 }
                 continue;
             }
-            if (carrierOf(typeOf(operands[i])) != carrier::closure &&
+            if (carrierOf(typeOf(operands[i])) != carrier::methodTable &&
+                carrierOf(typeOf(operands[i])) != carrier::closure &&
                 carrierOf(typeOf(operands[i])) != carrier::boolean &&
                 carrierOf(typeOf(operands[i])) != carrier::string &&
                 !(carrierOf(typeOf(operands[i])) == carrier::map &&

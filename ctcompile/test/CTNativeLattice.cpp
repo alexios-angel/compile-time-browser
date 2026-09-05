@@ -13,7 +13,7 @@
 // commutative, associative, with `bottom` as its identity and `boxed`
 // absorbing - and those are properties, not cases. So the table is checked, and
 // then all four laws are checked exhaustively over a sample of the type
-// universe; associativity alone is 27^3 = 19683 triples. The mutation counts
+// universe; associativity alone is 30^3 = 27000 triples. The mutation counts
 // below were measured on the original 21-type sample (9261 triples).
 //
 // THE TWO HALVES CATCH DIFFERENT THINGS, and that was measured rather than
@@ -228,6 +228,39 @@ const MeetRow kMeetTable[] = {
     {"!ctnative.closure<\"get$1\">", "!ctnative.json", "!ctnative.json",
      "the lattice's existing upper bound also absorbs nominal callables"},
 
+    // --- nominal method-table schemas ---------------------------------------
+    {"!ctnative.method_table<\"table$1\">", "!ctnative.method_table<\"table$1\">",
+     "!ctnative.method_table<\"table$1\">",
+     "different runtime instances from one site retain the same schema type"},
+    {"!ctnative.method_table<\"table$2\">", "!ctnative.method_table<\"table$1\">",
+     "!ctnative.variant<!ctnative.method_table<\"table$1\">, "
+     "!ctnative.method_table<\"table$2\">>",
+     "different creation sites cannot silently share one callable-field schema"},
+    {"!ctnative.opt<!ctnative.method_table<\"table$1\">>", "!ctnative.method_table<\"table$1\">",
+     "!ctnative.opt<!ctnative.method_table<\"table$1\">>",
+     "a definite table on one path cannot erase absence on another"},
+    {"!ctnative.opt<!ctnative.method_table<\"table$1\">>",
+     "!ctnative.opt<!ctnative.method_table<\"table$2\">>",
+     "!ctnative.opt<!ctnative.variant<!ctnative.method_table<\"table$1\">, "
+     "!ctnative.method_table<\"table$2\">>>",
+     "optional schemas join without losing either site or duplicating absence"},
+    {"!ctnative.opt<!ctnative.bottom>", "!ctnative.method_table<\"table$1\">",
+     "!ctnative.opt<!ctnative.method_table<\"table$1\">>",
+     "an absent return and a table return produce an optional table"},
+    {"!ctnative.method_table<\"table$1\">", "!ctnative.closure<\"table$1\">",
+     "!ctnative.variant<!ctnative.closure<\"table$1\">, !ctnative.method_table<\"table$1\">>",
+     "a table and a callable remain distinct even when their nominal strings match"},
+    {"!ctnative.method_table<\"table$1\">",
+     "!ctnative.map<!ctnative.str<utf8>, !ctnative.num<f64>>",
+     "!ctnative.variant<!ctnative.map<!ctnative.str<utf8>, !ctnative.num<f64>>, "
+     "!ctnative.method_table<\"table$1\">>",
+     "a method table retaining a Map is not itself that Map"},
+    {"!ctnative.vec<!ctnative.method_table<\"table$1\">>",
+     "!ctnative.vec<!ctnative.method_table<\"table$2\">>",
+     "!ctnative.vec<!ctnative.variant<!ctnative.method_table<\"table$1\">, "
+     "!ctnative.method_table<\"table$2\">>>",
+     "container joins preserve nominal table sites in their element alternatives"},
+
     // --- containers ---------------------------------------------------------
     {"!ctnative.vec<!ctnative.num<i32>>", "!ctnative.vec<!ctnative.num<f64>>",
      "!ctnative.vec<!ctnative.num<f64>>", "containers meet elementwise"},
@@ -283,6 +316,9 @@ const char * const kSampleTypes[] = {
     "!ctnative.opt<!ctnative.closure<\"get$2\">>",
     "!ctnative.variant<!ctnative.closure<\"get$1\">, !ctnative.closure<\"get$2\">>",
     "!ctnative.vec<!ctnative.closure<\"get$1\">>",
+    "!ctnative.method_table<\"table$1\">",
+    "!ctnative.method_table<\"table$2\">",
+    "!ctnative.opt<!ctnative.method_table<\"table$1\">>",
 };
 
 //===--------------------------------------------------------------------===//
@@ -580,7 +616,7 @@ int main() {
     // exits 0 and looks exactly like a passing one; this is the number to
     // update when a case is added, and the reason it is here rather than a
     // lower bound is that a lower bound would not notice a case being deleted.
-    const int expectedChecks = 112;
+    const int expectedChecks = 128;
     if (checks != expectedChecks) {
         std::printf("FAILED  ran %d checks, expected %d - a case was added or lost\n", checks,
                     expectedChecks);

@@ -1,66 +1,8 @@
-#include "ClosureLifter.h"
+#include "ClosedValueFlow.h"
 
 namespace ctcompile::ctnative::lowering_detail {
-namespace {
-
-// These are possible value flows, not runtime aliases. Distinct invocations
-// of one factory share a target/schema but keep separate environments.
-struct returnedFlow {
-    llvm::DenseMap<mlir::Value, mlir::Value> parent;
-    llvm::SmallVector<mlir::Value> nodes;
-    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> callers;
-    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::ReturnOp>> returns;
-
-    void add(mlir::Value value) {
-        if (parent.try_emplace(value, value).second) { nodes.push_back(value); }
-    }
-    mlir::Value find(mlir::Value value) {
-        auto root = parent.lookup(value);
-        if (!root) { return {}; }
-        while (parent.lookup(root) != root) { root = parent.lookup(root); }
-        while (value != root) {
-            auto next = parent.lookup(value);
-            parent[value] = root;
-            value = next;
-        }
-        return root;
-    }
-    void join(mlir::Value a, mlir::Value b) {
-        add(a);
-        add(b);
-        parent[find(b)] = find(a);
-    }
-    static ctjs::FuncOp target(ctjs::CallDirectOp call) {
-        return mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
-    }
-    static bool closed(ctjs::FuncOp fn) {
-        return fn && !fn.getBody().empty() &&
-               mlir::SymbolTable::getSymbolVisibility(fn) == mlir::SymbolTable::Visibility::Private;
-    }
-    void build(mlir::ModuleOp module) {
-        module.walk([&](ctjs::FuncOp fn) {
-            fn.getBody().walk([&](ctjs::ReturnOp ret) { returns[fn].push_back(ret); });
-            for (ctjs::ReturnOp ret : returns[fn]) {
-                join(returns[fn].front().getValue(), ret.getValue());
-            }
-        });
-        module.walk([&](ctjs::CallDirectOp call) {
-            auto fn = target(call);
-            if (!fn || fn.getBody().empty()) { return; }
-            callers[fn].push_back(call);
-            auto & entry = fn.getBody().front();
-            for (unsigned i = 3; i < call->getNumOperands() && i < entry.getNumArguments(); ++i) {
-                join(call->getOperand(i), entry.getArgument(i));
-            }
-            for (ctjs::ReturnOp ret : returns[fn]) { join(call.getResult(), ret.getValue()); }
-        });
-    }
-};
-
-} // namespace
-
 void closureLifter::returnedClosureCensus() {
-    returnedFlow flow;
+    closedValueFlow flow;
     flow.build(module);
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> families;
     llvm::DenseSet<mlir::Value> returnedFamilies;
@@ -93,13 +35,13 @@ void closureLifter::returnedClosureCensus() {
                 // The sole concrete producer of this callable family.
             } else if (auto arg = llvm::dyn_cast<mlir::BlockArgument>(value)) {
                 auto fn = llvm::dyn_cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
-                if (!returnedFlow::closed(fn) || arg.getOwner() != &fn.getBody().front() ||
+                if (!closedValueFlow::closed(fn) || arg.getOwner() != &fn.getBody().front() ||
                     arg.getArgNumber() < 3 || flow.callers[fn].empty()) {
                     reject("parameter requires a closed function with visible callers");
                 }
             } else if (auto call = value.getDefiningOp<ctjs::CallDirectOp>()) {
-                auto fn = returnedFlow::target(call);
-                if (!returnedFlow::closed(fn) || flow.returns[fn].empty()) {
+                auto fn = closedValueFlow::target(call);
+                if (!closedValueFlow::closed(fn) || flow.returns[fn].empty()) {
                     reject("result requires a closed function with visible returns");
                 }
             } else {
@@ -108,19 +50,19 @@ void closureLifter::returnedClosureCensus() {
             for (mlir::OpOperand & use : value.getUses()) {
                 auto * user = use.getOwner();
                 if (auto ret = llvm::dyn_cast<ctjs::ReturnOp>(user)) {
-                    if (!returnedFlow::closed(ret->getParentOfType<ctjs::FuncOp>())) {
+                    if (!closedValueFlow::closed(ret->getParentOfType<ctjs::FuncOp>())) {
                         reject("return requires a closed function");
                     }
                     continue;
                 }
                 if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
                     if (use.getOperandNumber() >= 3) {
-                        if (!returnedFlow::closed(returnedFlow::target(call))) {
+                        if (!closedValueFlow::closed(closedValueFlow::target(call))) {
                             reject("argument requires a closed callee");
                         }
                         continue;
                     }
-                    if (use.getOperandNumber() == 2 && returnedFlow::target(call) == target) {
+                    if (use.getOperandNumber() == 2 && closedValueFlow::target(call) == target) {
                         plan.calls.push_back(user);
                         continue;
                     }
@@ -181,6 +123,11 @@ void closureLifter::liftReturnedClosure(ctjs::CreateClosureOp c, ctjs::FuncOp ta
     c.getUpvaluesMutable().assign(values);
     c.removeEnclosingIndicesAttr();
     c->setAttr(kNativeEnvironment, mlir::StringAttr::get(context, target.getSymName()));
+    const bool stored = returnedClosures.find(c)->second.stored;
+    if (stored) {
+        c->setAttr(kNativeStoredCallable, mlir::UnitAttr::get(context));
+        target->setAttr(kNativeStoredCallable, mlir::UnitAttr::get(context));
+    }
     c->removeAttr("ctnative.closure_reason");
     const auto valueType = ctjs::ValueType::get(context);
     for (mlir::Operation * site : returnedClosures.find(c)->second.calls) {
@@ -195,6 +142,7 @@ void closureLifter::liftReturnedClosure(ctjs::CreateClosureOp c, ctjs::FuncOp ta
             auto read = ctjs::LoadUpvalueOp::create(at, site->getLoc(), valueType, closure, i);
             read->setAttr(kNativeEnvironmentRead, mlir::UnitAttr::get(context));
             read->setAttr(kNativeEnvironment, c->getAttr(kNativeEnvironment));
+            if (stored) { read->setAttr(kNativeStoredRead, mlir::UnitAttr::get(context)); }
             args.push_back(read.getResult());
         }
         llvm::append_range(args, argsOfCallSite(site));
@@ -202,6 +150,9 @@ void closureLifter::liftReturnedClosure(ctjs::CreateClosureOp c, ctjs::FuncOp ta
         auto call = ctjs::CallDirectOp::create(
             at, site->getLoc(), valueType, mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
             undefined, undefined, closure, args, nullptr, nullptr);
+        if (stored) {
+            call->setAttr(kNativeStoredCall, at.getI32IntegerAttr(static_cast<int32_t>(captures)));
+        }
         site->getResult(0).replaceAllUsesWith(call.getResult());
         site->erase();
         ++out.calls;

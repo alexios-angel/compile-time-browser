@@ -25,8 +25,10 @@ never borrows a factory's stack. Factory invocations have separate environments,
 while aliases of one Map still observe shared mutations. Generated programs
 need neither the VM nor a collector.
 
-This is the monomorphic case of Phase 59A. Stored or polymorphic callables still
-need `std::function` signatures, method-table ownership and further flow proofs.
+This is the monomorphic case of Phase 59A. Proved
+[returned method tables](native-method-tables.md) now carry stored callables
+with concrete `std::function` signatures. Other stored or polymorphic callable
+flows still need further proofs.
 
 ## Proof and lowering
 
@@ -55,7 +57,7 @@ does not recursively contain capture types. Map inference connects each slot
 with its extractions without conflating distinct slots or runtime allocations.
 C++ environment aliases follow Map definitions and precede function prototypes.
 
-Input environment annotations are cleared before proof. Unproved globals,
+Input environment annotations are cleared before proof. Unproved globals and
 method fields, function identity inspection, lexical `this`, `new.target`,
 surplus arguments and structured merges remain diagnostic boundaries.
 
@@ -82,12 +84,9 @@ p5 and Phaser retain compile coverage of **19/574**, **39/4754** and
 6 CommonJS/browser and 7 AMD functions. Boxed Bootstrap output remains
 byte-identical.
 
-Bootstrap's complete factory still requires returned method tables, owning
-mutable cells, host publication, object-identity Map keys and nested
-Map/component values. This change supplies an owning capture environment;
-the exported Data methods and full bundle remain future work.
-
-The next narrow gate is a returned object whose get/set/delete methods share
-one owning Map environment and remain callable after the factory returns.
-Object-identity keys and nested values, shared mutable bindings, and typed
-CommonJS/browser/AMD publication can then advance as separate workstreams.
+The subsequent method-table and nested-Map extensions build on this capture
+environment. Bootstrap's complete factory still requires conditional Map
+presence proofs, object-identity keys, component-instance values and typed
+host publication. Shared mutable captured bindings remain a separate
+ownership extension. The exported Data methods and full bundle remain
+future work.

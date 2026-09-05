@@ -10,6 +10,11 @@ liftReport closureLifter::run() {
     module.walk([](mlir::Operation * op) {
         op->removeAttr(kNativeEnvironment);
         op->removeAttr(kNativeEnvironmentRead);
+        op->removeAttr(kNativeStoredCallable);
+        op->removeAttr(kNativeStoredCall);
+        op->removeAttr(kNativeStoredRead);
+        op->removeAttr(kNativeMethodTable);
+        op->removeAttr(kNativeTableField);
     });
     // PHASE 59 SLICE 2 STEP 4, BEFORE EVERYTHING. It erases boxes, stores,
     // reads and calls, and the three censuses below record the uses of
@@ -79,6 +84,7 @@ liftReport closureLifter::run() {
         // closure returned by a factory that just became private.
         returnedClosures.clear();
         returnedClosureCensus();
+        returnedMethodTableCensus();
         // Per target: the closures that name it, and the first reason any
         // of them could not be lifted. A target's signature changes for the
         // whole program, so ONE unliftable creation site blocks every other.

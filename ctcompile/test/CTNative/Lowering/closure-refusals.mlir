@@ -259,7 +259,7 @@
 // into deep's owning environment. This checks the interaction of the two
 // rewrites, and repeating the pass must not change the capture arity.
 //
-// RELIFT: emitc.func @mid_2({{.*}}f64) -> !emitc.opaque<"ctn_env_deep_3">
+// RELIFT: emitc.func @mid_2({{.*}}f64) -> !emitc.opaque<"ctnative::ctn_env_deep_3">
 // RELIFT: emitc.func @deep_3({{.*}}f64) -> f64
 // RELIFT-NOT: ctnative.not_native
 

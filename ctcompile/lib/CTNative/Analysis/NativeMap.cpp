@@ -2,11 +2,13 @@
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <functional>
 #include <string>
 
 namespace ctcompile::ctnative {
@@ -82,6 +84,13 @@ struct flowGraph {
         add(right);
         parent[find(right)] = find(left);
     }
+    bool unify(mlir::Value left, mlir::Value right) {
+        add(left);
+        add(right);
+        if (find(left) == find(right)) { return false; }
+        join(left, right);
+        return true;
+    }
     static ctjs::FuncOp target(ctjs::CallDirectOp call) {
         return mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
     }
@@ -125,6 +134,37 @@ struct flowGraph {
             auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
             if (get && keyOf(get.getKey()) == "set") { join(call.getReceiver(), call.getResult()); }
         });
+    }
+
+    // A container's stored values and its get results share one schema.
+    // Discover recursively: a get result may itself become a Map receiver.
+    // Primitive families remain outside the Map plans; a mixed Map/scalar
+    // family reaches collect(), whose producer check refuses it.
+    void connectPayloads(mlir::ModuleOp module, llvm::ArrayRef<ctjs::ConstructOp> sites) {
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            llvm::DenseSet<mlir::Value> maps;
+            for (ctjs::ConstructOp made : sites) { maps.insert(find(made.getResult())); }
+            llvm::DenseMap<mlir::Value, mlir::Value> payload;
+            module.walk([&](ctjs::CallOp call) {
+                const auto receiver = find(call.getReceiver());
+                if (!maps.contains(receiver)) { return; }
+                auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                if (!get || get.getObject() != call.getReceiver()) { return; }
+                const auto key = keyOf(get.getKey());
+                mlir::Value value;
+                if (key == "set" && call.getArgs().size() == 2) {
+                    value = call.getArgs()[1];
+                } else if (key == "get" && call.getArgs().size() == 1) {
+                    value = call.getResult();
+                } else {
+                    return;
+                }
+                auto [at, fresh] = payload.try_emplace(receiver, value);
+                if (!fresh) { changed |= unify(at->second, value); }
+            });
+        }
     }
 };
 
@@ -170,7 +210,7 @@ std::string collect(plan & out, flowGraph & graph,
             }
         } else if (auto call = object.getDefiningOp<ctjs::CallOp>()) {
             auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-            if (!get || keyOf(get.getKey()) != "set") {
+            if (!get || (keyOf(get.getKey()) != "set" && keyOf(get.getKey()) != "get")) {
                 return "native Map flow contains an unproved call result";
             }
         } else if (auto read = object.getDefiningOp<ctjs::LoadUpvalueOp>();
@@ -209,6 +249,13 @@ std::string collect(plan & out, flowGraph & graph,
                 auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                 if (get && get.getObject() == object) { continue; }
             }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                call && call.getArgs().size() == 2 && use.getOperandNumber() == 3) {
+                auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                if (get && keyOf(get.getKey()) == "set" && get.getObject() == call.getReceiver()) {
+                    continue;
+                }
+            }
             auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
             if (!get || use.getOperandNumber() != 0) {
                 return ("native Map instance escapes or is mutated through `" +
@@ -243,6 +290,85 @@ std::string collect(plan & out, flowGraph & graph,
     return {};
 }
 
+// set() returns the exact receiver. No other schema-family relation proves
+// runtime identity: two allocations passed through one formal stay distinct.
+mlir::Value instanceOf(mlir::Value value) {
+    while (auto call = value.getDefiningOp<ctjs::CallOp>()) {
+        auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+        if (!get || keyOf(get.getKey()) != "set" || get.getObject() != call.getReceiver()) {
+            break;
+        }
+        value = call.getReceiver();
+    }
+    return value;
+}
+
+bool sameKey(mlir::Value left, mlir::Value right) {
+    if (left == right) { return true; }
+    auto lhs = left.getDefiningOp<ctjs::ConstantOp>();
+    auto rhs = right.getDefiningOp<ctjs::ConstantOp>();
+    if (!lhs || !rhs) { return false; }
+    // Equal primitive constants are equal keys. Different encodings of zero
+    // or NaN need no special case here: declining a proof stays conservative.
+    return lhs.getValue() == rhs.getValue() &&
+           llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr>(lhs.getValue());
+}
+
+std::string provePayloads(llvm::ArrayRef<plan> plans, flowGraph & graph,
+                          llvm::DenseMap<mlir::Value, unsigned> & families) {
+    llvm::SmallVector<llvm::SmallVector<unsigned>, 4> children(plans.size());
+    for (auto [index, candidate] : llvm::enumerate(plans)) {
+        for (ctjs::CallOp call : candidate.calls) {
+            auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (keyOf(get.getKey()) != "set") { continue; }
+            const auto child = families.find(graph.find(call.getArgs()[1]));
+            if (child != families.end()) { children[index].push_back(child->second); }
+        }
+    }
+    llvm::SmallVector<unsigned> state(plans.size(), 0);
+    std::function<bool(unsigned)> acyclic = [&](unsigned index) {
+        if (state[index] == 1) { return false; }
+        if (state[index] == 2) { return true; }
+        state[index] = 1;
+        for (unsigned child : children[index]) {
+            if (!acyclic(child)) { return false; }
+        }
+        state[index] = 2;
+        return true;
+    };
+    for (unsigned index = 0; index < plans.size(); ++index) {
+        if (!acyclic(index)) { return "native Map payload schemas contain an ownership cycle"; }
+    }
+
+    mlir::DominanceInfo dominance;
+    for (auto [index, candidate] : llvm::enumerate(plans)) {
+        if (children[index].empty()) { continue; }
+        const bool canErase = llvm::any_of(candidate.calls, [](ctjs::CallOp call) {
+            const auto key = keyOf(call.getCallee().getDefiningOp<ctjs::GetPropertyOp>().getKey());
+            return key == "delete" || key == "clear";
+        });
+        for (ctjs::CallOp read : candidate.calls) {
+            auto method = read.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (keyOf(method.getKey()) != "get") { continue; }
+            const bool present = !canErase && llvm::any_of(candidate.calls, [&](ctjs::CallOp set) {
+                auto get = set.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                return keyOf(get.getKey()) == "set" &&
+                       instanceOf(set.getReceiver()) == instanceOf(read.getReceiver()) &&
+                       sameKey(set.getArgs()[0], read.getArgs()[0]) &&
+                       set->getParentOfType<ctjs::FuncOp>() ==
+                           read->getParentOfType<ctjs::FuncOp>() &&
+                       dominance.properlyDominates(set.getOperation(), read.getOperation());
+            });
+            if (!present) {
+                return "nested native Map get requires a dominating same-instance, same-key "
+                       "set and no delete or clear in its schema family";
+            }
+            read->setAttr(kNativeMapPresent, mlir::UnitAttr::get(read.getContext()));
+        }
+    }
+    return {};
+}
+
 } // namespace
 
 void prepareNativeMaps(mlir::ModuleOp module) {
@@ -250,7 +376,7 @@ void prepareNativeMaps(mlir::ModuleOp module) {
     module.walk([&](mlir::Operation * op) {
         for (llvm::StringRef name :
              {kNativeMapSite, kNativeMapAction, kNativeMapMethod, kNativeMapConstructor,
-              kNativeMapReason, kNativeMapGroup, kNativeMapArgGroups}) {
+              kNativeMapReason, kNativeMapGroup, kNativeMapArgGroups, kNativeMapPresent}) {
             op->removeAttr(name);
         }
     });
@@ -278,6 +404,7 @@ void prepareNativeMaps(mlir::ModuleOp module) {
     flowGraph graph;
     for (ctjs::ConstructOp made : madeSites) { graph.add(made.getResult()); }
     graph.build(module);
+    graph.connectPayloads(module, madeSites);
     llvm::SmallVector<plan, 4> plans;
     llvm::DenseMap<mlir::Value, unsigned> families;
     for (ctjs::ConstructOp made : madeSites) {
@@ -294,6 +421,7 @@ void prepareNativeMaps(mlir::ModuleOp module) {
         const std::string problem = collect(candidate, graph, sites);
         if (reason.empty()) { reason = problem; }
     }
+    if (reason.empty()) { reason = provePayloads(plans, graph, families); }
     llvm::DenseSet<mlir::Operation *> calls;
     for (const plan & candidate : plans) {
         for (ctjs::CallOp call : candidate.calls) { calls.insert(call); }

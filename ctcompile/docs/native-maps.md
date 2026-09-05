@@ -1,12 +1,15 @@
 # Native Maps toward Bootstrap Data
 
-The native backend can lower standard `Map` instances with one primitive key
-type and numeric values, including closed function parameters, returns and
-lifted captures. A returned handle owns its storage after the factory frame
+The native backend can lower standard `Map` instances with primitive keys and
+numeric or finite acyclic Map values, including closed function parameters,
+returns and lifted captures. A returned handle owns its storage after the factory frame
 ends. Monomorphic [returned closures](native-returned-closures.md) can also own
-Map captures after factory return. Bootstrap's exported Data methods still need
-owned method tables, object identity keys, nested Maps,
-component-instance values and host publication.
+Map captures after factory return. Proved
+[returned method tables](native-method-tables.md) own their callable fields.
+[Nested Maps](native-nested-maps.md) preserve child ownership and require a
+dominating same-instance/key store before child lookup. Bootstrap Data still
+needs conditional presence proofs, object-identity keys, component-instance
+values and host publication.
 
 ## Representation and semantics
 
@@ -16,15 +19,16 @@ Each allocation owns an insertion-ordered list of key/value pairs through
 different schemas. The result of `set` shares the original Map, so chained
 calls and aliases observe the same mutations. Parameters and return values
 copy owning handles; factory invocations still allocate independent Maps.
-All accepted contents are primitive, and every instance use is proved; these
-Maps cannot form ownership cycles. Generated programs link neither the interpreter nor its
-collector.
+This is the numeric-leaf representation. Nested schemas use `map_storage<K,
+V>` with an owning child handle as `V`; a separate containment proof rejects
+all schema cycles. Every instance use is proved. Generated programs link
+neither the interpreter nor its collector.
 
 | Operation | Native behavior |
 |---|---|
 | `new Map()` | Empty owning allocation; constructor arguments are refused |
 | `set(key, value)` | Replace in place or append; return the same Map identity |
-| `get(key)` | Numeric value or absent; absent uses the existing optional-number carrier |
+| `get(key)` | Numeric value or absent, or an owning child Map when presence is proved |
 | `has(key)` | Boolean membership test |
 | `delete(key)` | Remove the entry and report whether it existed |
 | `clear()` | Remove all entries and return absent |
@@ -48,8 +52,9 @@ surrogates, as described in [native-strings.md](native-strings.md).
 Missing `get` results use the existing `opt<number>` representation. Arithmetic
 can turn absence into NaN; equality, `typeof` and other observations that
 would confuse absence with a stored NaN remain refused. Stored values must be
-definite numbers, including numeric NaN. Optional values, mixed key types,
-object keys, nested Maps and string values are not admitted in this slice.
+definite numbers, including numeric NaN, or owning acyclic child Maps. Optional
+values, mixed key types, object keys and string values remain refused. See
+the nested-Map document for its additional presence and containment proofs.
 
 ## Proof boundary
 
@@ -70,10 +75,10 @@ values, unknown calls or constructors, and dynamic invocation or deletion
 prevent admission. Ordinary user calls already made direct may remain.
 Lifted immutable captures are carried as owning Map parameters. The leftover
 capture cells must be erased bookkeeping for lifted closures. Reassigning a
-shared Map binding, returning a captured method table, publishing a Map in a
-global or object field, or merging Maps through structured phi values remains
-refused. This proof does not supply general builtin effect analysis or an
-general callable representation. Proved returned closures can carry immutable
+shared Map binding, publishing a Map in a global or ordinary object field, or
+merging Maps through structured phi values remains refused. This proof does
+not supply general builtin effect analysis or a general callable
+representation. Proved returned closures and method tables can carry immutable
 Map bindings in owning environments; each extraction joins its own capture
 slot's schema family.
 
@@ -97,8 +102,9 @@ See [native-divergences.md](native-divergences.md#nd-8--an-out-of-range-index-is
 
 ## Bootstrap boundary
 
-A source-derived probe kept Bootstrap 5.3.8's UMD wrapper and Data declaration,
-ending the factory after that declaration with `return e`. In CommonJS and
+A [source-derived probe](bootstrap-data-probe.md) keeps Bootstrap 5.3.8's UMD
+wrapper and Data declaration, ending the factory after that declaration with
+`return e`. In CommonJS and
 browser environments, interpreter calls made after factory return observed
 `get=42`, a second element's value `21`, replacement `43`, and successful
 removal. Delayed AMD invocation produced the same observations and confirmed
@@ -110,12 +116,11 @@ object; its methods retain unlowered captures. The UMD entry also needs `this`
 and host-environment types, while AMD exposes the factory value. These are
 measured prerequisites, not evidence that Data or full Bootstrap compiles.
 
-Map handles can now outlive factory return, and local Data-style method tables
-can share them through lifted captures. The next initialization step is an
-owned callable environment that lets the method table itself outlive its
-factory, together with typed host publication. Bootstrap Data additionally
-needs Maps keyed by object identity and Maps or component instances stored as
-values. Existing pointers to frame-local capture cells must not be reused for
+Map handles and proved callable method tables now outlive factory return.
+Finite nested Maps can retain child Maps, while Bootstrap Data's conditional
+`has` / `set` / `get` pattern needs a path-sensitive presence proof. Typed
+host publication, object-identity keys and component-instance values remain
+open. Existing pointers to frame-local capture cells must not be reused for
 that lifetime.
 
 ## Validation

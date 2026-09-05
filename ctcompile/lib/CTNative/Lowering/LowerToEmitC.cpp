@@ -174,6 +174,28 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             changed = false;
             for (ctjs::FuncOp fn : functions) {
                 const bool native = nativeSet.contains(fn.getOperation());
+                // Retained code is an edge too. A callable builder names its
+                // target even when the factory itself never invokes it.
+                fn.getBody().walk([&](ctjs::CreateClosureOp made) {
+                    if (environmentTarget(made).empty()) { return; }
+                    mlir::Operation * target = symbols.lookup(environmentTarget(made));
+                    const bool targetNative = target && nativeSet.contains(target);
+                    if (native && !targetNative) {
+                        nativeSet.erase(fn);
+                        fn->setAttr("ctnative.not_native",
+                                    mlir::StringAttr::get(
+                                        &getContext(), "retains `" + environmentTarget(made).str() +
+                                                           "`, which is not native"));
+                        changed = true;
+                    } else if (!native && targetNative) {
+                        nativeSet.erase(target);
+                        target->setAttr("ctnative.not_native",
+                                        mlir::StringAttr::get(
+                                            &getContext(), "retained by `" + fn.getSymName().str() +
+                                                               "`, which is not native"));
+                        changed = true;
+                    }
+                });
                 fn.getBody().walk([&](ctjs::CallDirectOp call) {
                     mlir::Operation * callee = symbols.lookup(call.getCallee());
                     const bool calleeNative = callee != nullptr && nativeSet.contains(callee);
@@ -290,6 +312,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // be spelled until all of them have been seen.
         lower.censusShapes(accepted);
         lower.censusEnvironments(accepted);
+        lower.censusMethodTables(accepted);
 
         for (ctjs::FuncOp fn : accepted) { lower.lower(fn); }
         if (!accepted.empty()) { lower.declareGlobals(); }

@@ -14,9 +14,9 @@
 // NATIVE: emitc.verbatim {{.*}}std::tuple<std::string>
 // NATIVE: emitc.verbatim {{.*}}std::tuple<bool, double, double>
 // NATIVE: emitc.declare_func @makeStore_1
-// NATIVE: emitc.func @makeStore_1({{.*}}) -> !emitc.opaque<"ctn_env_
+// NATIVE: emitc.func @makeStore_1({{.*}}) -> !emitc.opaque<"ctnative::ctn_env_
 // NATIVE: call_opaque "std::make_tuple"
-// NATIVE: emitc.func @forwardCallable_3({{.*}}!emitc.opaque<"ctn_env_
+// NATIVE: emitc.func @forwardCallable_3({{.*}}!emitc.opaque<"ctnative::ctn_env_
 // NATIVE: emitc.func @invokeCallable_4
 // NATIVE: call_opaque "std::get<0>"
 // MUTABLE: returned closure capture 0 is a mutable or late-initialized binding; it needs an owning shared cell
@@ -26,7 +26,7 @@
 // IDENTITY: returned closure escapes or is inspected through `ctjs.compare`
 // THIS: returned closure reads `this`
 // ARRAY: an array literal that escapes - it reaches `ctjs.create_closure`
-// METHODS: it is a method field of an object whose shape is not closed
+// METHODS: emitc.func @make_1({{.*}}) -> !emitc.opaque<"std::shared_ptr<ctnative::method_table_0>">
 
 //--- mutable.js
 function make() { let value = 0; return () => ++value; }

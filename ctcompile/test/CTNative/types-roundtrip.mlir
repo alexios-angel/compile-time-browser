@@ -99,6 +99,28 @@ func.func private @hex_escaped_callable(!ctnative.closure<"get \22quoted\22 \5Co
 func.func private @optional_callables(
     !ctnative.opt<!ctnative.variant<!ctnative.closure<"get$1">, !ctnative.closure<"get$2">>>)
 
+// --- nominal method-table sites --------------------------------------------
+
+// A site identifies the full field schema, not a runtime object identity.
+// Both sites and the distinction from a callable survive a round trip.
+// CHECK-LABEL: func.func private @method_tables
+// CHECK-SAME: (!ctnative.method_table<"table$1">, !ctnative.method_table<"table$2">, !ctnative.closure<"table$1">) -> !ctnative.method_table<"table$1">
+func.func private @method_tables(!ctnative.method_table<"table$1">,
+    !ctnative.method_table<"table$2">, !ctnative.closure<"table$1">) -> !ctnative.method_table<"table$1">
+
+// CHECK-LABEL: func.func private @optional_method_tables
+// CHECK-SAME: (!ctnative.opt<!ctnative.variant<!ctnative.method_table<"table$1">, !ctnative.method_table<"table$2">>>)
+func.func private @optional_method_tables(
+    !ctnative.opt<!ctnative.variant<!ctnative.method_table<"table$1">, !ctnative.method_table<"table$2">>>)
+
+// CHECK-LABEL: func.func private @escaped_method_table
+// CHECK-SAME: (!ctnative.method_table<"make \22table\22 \\site$7">)
+func.func private @escaped_method_table(!ctnative.method_table<"make \"table\" \\site$7">)
+
+// CHECK-LABEL: func.func private @hex_escaped_method_table
+// CHECK-SAME: (!ctnative.method_table<"make \22table\22 \\site$7">)
+func.func private @hex_escaped_method_table(!ctnative.method_table<"make \22table\22 \5Csite$7">)
+
 // --- the three pointers ------------------------------------------------------
 
 // CHECK-LABEL: func.func private @pointers

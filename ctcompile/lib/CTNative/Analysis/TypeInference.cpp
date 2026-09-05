@@ -476,6 +476,18 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                                                   llvm::ArrayRef<TypeLattice *> results) {
     mlir::MLIRContext * c = op->getContext();
 
+    if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(op);
+        object && !methodTableName(op).empty()) {
+        propagateIfChanged(
+            results[0], results[0]->join(TypeValue{MethodTableType::get(c, methodTableName(op))}));
+        return mlir::success();
+    }
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op); read && !methodTableName(op).empty()) {
+        propagateIfChanged(results[0],
+                           results[0]->join(TypeValue{ClosureType::get(c, environmentTarget(op))}));
+        return mlir::success();
+    }
+
     // The callable's nominal identity is known before any capture type. Its
     // environment reads subscribe to the original captured value; requiring
     // all capture types first would deadlock Map inference through a closure.
@@ -529,7 +541,9 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             } else if (action == "has" || action == "delete") {
                 mapAnswer = boolType(c);
             } else if (action == "get") {
-                mapAnswer = meet(absentType(c), map.getValueType());
+                mapAnswer = call->hasAttr(kNativeMapPresent)
+                                ? map.getValueType()
+                                : meet(absentType(c), map.getValueType());
             } else if (action == "clear") {
                 mapAnswer = absentType(c);
             } else if (action == "keys" || action == "values") {

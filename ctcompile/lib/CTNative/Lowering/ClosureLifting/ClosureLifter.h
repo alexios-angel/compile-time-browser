@@ -637,9 +637,11 @@ struct closureLifter {
     struct returnedClosure {
         llvm::SmallVector<mlir::Operation *> calls;
         std::string reason;
+        bool stored = false;
     };
     llvm::DenseMap<mlir::Operation *, returnedClosure> returnedClosures;
     void returnedClosureCensus();
+    void returnedMethodTableCensus();
     std::optional<std::string> whyNotReturnedClosure(ctjs::CreateClosureOp c);
     void liftReturnedClosure(ctjs::CreateClosureOp c, ctjs::FuncOp target, unsigned captures,
                              unsigned parameters, liftReport & out);

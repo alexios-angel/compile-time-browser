@@ -78,7 +78,7 @@ set(previous "")
 set(before_previous "")
 foreach(line IN LISTS lines)
   if(line MATCHES "^[A-Za-z_][A-Za-z_0-9:<>]* [A-Za-z_][A-Za-z_0-9]*\\(.*\\) \\{$"
-     OR line MATCHES "^class [A-Za-z_][A-Za-z_0-9]* \\{$"
+     OR line MATCHES "^(class|struct) [A-Za-z_][A-Za-z_0-9]* \\{$"
      OR line MATCHES "^static [A-Za-z_][A-Za-z_0-9:<>]* [A-Za-z_][A-Za-z_0-9]* = ")
     # TWO LINES OF LOOKBACK, BECAUSE A TEMPLATE PUTS ONE IN BETWEEN. Phase 56C
     # emits one class template for a family of object literals that agree on

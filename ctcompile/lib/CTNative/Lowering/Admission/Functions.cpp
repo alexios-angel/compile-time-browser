@@ -91,6 +91,20 @@ bool admission::function(ctjs::FuncOp fn) {
         }
     }
     bool ok = true;
+    if (fn->hasAttr(kNativeStoredCallable)) {
+        const auto supported = [&](mlir::Value value) {
+            const auto c = carrierOf(typeOf(value));
+            return c == carrier::number || c == carrier::boolean || c == carrier::string ||
+                   c == carrier::map;
+        };
+        for (unsigned i = 3; i < entry.getNumArguments(); ++i) {
+            if (!supported(entry.getArgument(i))) {
+                return refuse("stored callable parameter has no supported concrete signature");
+            }
+        }
+        fn.getBody().walk([&](ctjs::ReturnOp ret) { ok &= supported(ret.getValue()); });
+        if (!ok) { return refuse("stored callable result has no supported concrete signature"); }
+    }
     fn.getBody().walk([&](mlir::Operation * o) {
         if (!ok) { return; }
         if (o == fn.getOperation()) { return; }

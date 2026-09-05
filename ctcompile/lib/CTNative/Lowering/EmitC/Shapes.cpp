@@ -167,6 +167,7 @@ void lowering::censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     std::vector<std::set<std::string>> keys; // per family, its distinct (name, type) keys
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](ctjs::CreateObjectOp object) {
+            if (!methodTableName(object).empty()) { return; }
             const auto fields = fieldsOf(object.getResult());
             std::string nameKey; // the family key: just the names
             std::string typeKey; // the instantiation key: names AND types

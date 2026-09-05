@@ -83,6 +83,7 @@ add_library(ctcompile-ctnative-lowering
   ClosureLifting/Constructors.cpp
   ClosureLifting/Rewrite.cpp
   ClosureLifting/ReturnedClosures.cpp
+  ClosureLifting/MethodTables.cpp
   Admission/Values.cpp
   Admission/Objects.cpp
   Admission/Operations.cpp
@@ -92,8 +93,10 @@ add_library(ctcompile-ctnative-lowering
   EmitC/Expressions.cpp
   EmitC/Types.cpp
   EmitC/Operations.cpp
+  EmitC/Maps.cpp
   EmitC/Functions.cpp
   EmitC/Environments.cpp
+  EmitC/MethodTables.cpp
   PrintDeduced.cpp
   PruneDeadStores.cpp)
 ctcompile_target(ctcompile-ctnative-lowering)

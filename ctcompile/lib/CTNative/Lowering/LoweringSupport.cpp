@@ -35,6 +35,7 @@ carrier carrierOf(mlir::Type type) {
     if (llvm::isa<BoolType>(type)) { return carrier::boolean; }
     if (llvm::isa<NumType>(type)) { return carrier::number; }
     if (llvm::isa<ClosureType>(type)) { return carrier::closure; }
+    if (llvm::isa<MethodTableType>(type)) { return carrier::methodTable; }
     if (auto string = llvm::dyn_cast<StrType>(type);
         string && string.getEncoding() == StrEncoding::UTF8) {
         return carrier::string;
@@ -51,8 +52,10 @@ carrier carrierOf(mlir::Type type) {
         const auto string = llvm::dyn_cast<StrType>(key);
         const bool primitiveKey = llvm::isa<BottomType, NumType, BoolType>(key) ||
                                   (string && string.getEncoding() == StrEncoding::UTF8);
-        return primitiveKey && llvm::isa<BottomType, NumType>(map.getValueType()) ? carrier::map
-                                                                                  : carrier::none;
+        const auto value = map.getValueType();
+        const bool ownedValue = llvm::isa<BottomType, NumType>(value) ||
+                                (llvm::isa<MapType>(value) && carrierOf(value) == carrier::map);
+        return primitiveKey && ownedValue ? carrier::map : carrier::none;
     }
     // PHASE 57A: A DENSE ARRAY IS A `std::vector<double>` AND NOTHING ELSE
     // YET. The element carrier decides: `vector<bool>` is a bit-packed
@@ -82,14 +85,38 @@ llvm::StringRef mapKeySpelling(mlir::Type type) {
     llvm::report_fatal_error("native Map key has no carrier; admission should refuse it");
 }
 
+std::string mapValueSpelling(mlir::Type type) {
+    if (llvm::isa<BottomType, NumType>(type)) { return "double"; }
+    if (auto map = llvm::dyn_cast<MapType>(type)) {
+        return llvm::cast<ec::OpaqueType>(mapCarrierType(map)).getValue().str();
+    }
+    llvm::report_fatal_error("native Map value has no carrier; admission should refuse it");
+}
+
+bool mapNeedsString(MapType type) {
+    return llvm::isa<StrType>(type.getKeyType()) ||
+           (llvm::isa<MapType>(type.getValueType()) &&
+            mapNeedsString(llvm::cast<MapType>(type.getValueType())));
+}
+
 mlir::Type mapCarrierType(MapType type) {
-    return ec::OpaqueType::get(
-        type.getContext(),
-        ("std::shared_ptr<ctnative::number_map<" + mapKeySpelling(type.getKeyType()) + ">>").str());
+    const auto key = mapKeySpelling(type.getKeyType());
+    const auto value = type.getValueType();
+    const std::string body =
+        llvm::isa<MapType>(value)
+            ? ("ctnative::map_storage<" + key + ", " + mapValueSpelling(value) + ">").str()
+            : ("ctnative::number_map<" + key + ">").str();
+    return ec::OpaqueType::get(type.getContext(), "std::shared_ptr<" + body + ">");
 }
 
 mlir::Type closureCarrierType(ClosureType type) {
-    return ec::OpaqueType::get(type.getContext(), "ctn_env_" + cIdentifier(type.getTarget()));
+    return ec::OpaqueType::get(type.getContext(),
+                               "ctnative::ctn_env_" + cIdentifier(type.getTarget()));
+}
+
+mlir::Type methodTableCarrierType(MethodTableType type) {
+    return ec::OpaqueType::get(type.getContext(), "std::shared_ptr<ctnative::method_" +
+                                                      cIdentifier(type.getSite()) + ">");
 }
 
 // Can this value's carrier be undefined? True for the two `opt` rows, whose
@@ -105,6 +132,8 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     // reaching this point means a rule let one through, and a crash naming
     // that is worth far more than a double that happens to verify.
     switch (which) {
+    case carrier::methodTable:
+        llvm::report_fatal_error("method table carrier needs its proved schema");
     case carrier::boolean: return mlir::IntegerType::get(c, 1);
     case carrier::number: return mlir::Float64Type::get(c);
     case carrier::string:

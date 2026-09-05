@@ -1,6 +1,6 @@
 //===- CTNativeTypes.td - the ctnative type lattice, as TypeDefs ----------===//
 //
-// SIXTEEN TYPES AND NO HAND-WRITTEN C++ TYPE CLASS. Part 24's Stage 53A:
+// SEVENTEEN TYPES AND NO HAND-WRITTEN C++ TYPE CLASS. Part 24's Stage 53A:
 // "every one a TypeDef, no C++."
 //
 // THE ORDER OF THE FILE IS THE ORDER OF THE LATTICE, bottom to top:
@@ -326,16 +326,28 @@ def CTNative_SetType : CTNative_Type<"Set", "set"> {
   let assemblyFormat = "`<` $elementType `>`";
 }
 
+def CTNative_MethodTableType : CTNative_Type<"MethodTable", "method_table"> {
+  let summary = "An owning closed table of immutable stored callable fields";
+  let description = [{
+    The site is a nominal schema identity proved across all closed arguments
+    and returns. Every field is initialized once before publication or use.
+    Fields own concrete std::function values; object inspection, replacement,
+    deletion, open boundaries and cyclic captures remain refused.
+  }];
+  let parameters = (ins StringRefParameter<>:$site);
+  let assemblyFormat = "`<` $site `>`";
+}
+
 def CTNative_ClosureType : CTNative_Type<"Closure", "closure"> {
   let summary = "A proved monomorphic callable with an owning capture environment";
   let description = [{
     The target is a nominal identity, not a C++ function pointer. The native
     returned-closure proof checks every producer and use before introducing
-    this type. Calls name that target directly and unpack its environment;
-    immutable numbers, booleans, strings and owning Map handles are stored
-    by value. Function identity inspection, mixed targets and mutable binding
-    captures are refused. Stored polymorphic callables still need a concrete
-    std::function signature and are outside this representation.
+    this type. Immutable numbers, booleans, strings and owning Map handles
+    are captured by value. Returned function values use tuples and direct
+    invocation; proved stored method fields use std::function with a concrete
+    signature and an explicit owning lambda capture list. Function identity
+    inspection, mixed targets and mutable binding captures remain refused.
 
     Capture types are inferred from the creation site and the lifted target's
     parameters. They are not recursively embedded in this nominal type, so a

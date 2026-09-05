@@ -95,6 +95,12 @@ struct lowering {
     bool needsString = false;
     bool needsMap = false;
     llvm::SmallVector<std::string> environments;
+    llvm::SmallVector<std::string> methodTables;
+    llvm::SmallVector<std::string> callableBuilders;
+    std::string callableTypeSpelling(mlir::Type type);
+    void censusStoredCallable(ctjs::CreateClosureOp made);
+    void censusMethodTables(llvm::ArrayRef<ctjs::FuncOp> accepted);
+    bool replaceMethodTable(mlir::Operation * op);
     void censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted);
     bool replaceEnvironment(mlir::Operation * op);
     static const char * spelled(mlir::Type type);
@@ -156,6 +162,7 @@ struct lowering {
                              llvm::StringRef member, mlir::Type type);
 
     void replace(mlir::Operation * o, bool isEntry, mlir::Type returnType);
+    bool replaceMap(mlir::Operation * o);
 
     void applyDeclarativeRules(ctjs::FuncOp fn);
 

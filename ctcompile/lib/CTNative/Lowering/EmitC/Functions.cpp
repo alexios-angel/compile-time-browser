@@ -109,6 +109,10 @@ void lowering::lower(ctjs::FuncOp fn) {
     // constant whose only user was another dead constant goes too.
     llvm::SmallVector<mlir::Operation *> dead;
     made.getBody().walk([&](mlir::Operation * o) {
+        if (o->hasAttr(kNativeStoredRead)) {
+            dead.push_back(o);
+            return;
+        }
         // PHASE 59 SLICE 1 ADDS TWO, AND THE REVERSE ORDER IS WHY THEY
         // WORK. A lifted ctjs.create_closure loses its last use when the
         // call arm drops the call_direct's callee value; the constant
@@ -159,7 +163,8 @@ void lowering::lower(ctjs::FuncOp fn) {
         mlir::OpBuilder at = mlir::OpBuilder::atBlockBegin(&body);
         for (unsigned i = 3; i < body.getNumArguments(); ++i) {
             mlir::Value arg = body.getArgument(i);
-            if (arg.use_empty() && (carrierOf(typeOf(arg)) == carrier::map ||
+            if (arg.use_empty() && (carrierOf(typeOf(arg)) == carrier::methodTable ||
+                                    carrierOf(typeOf(arg)) == carrier::map ||
                                     carrierOf(typeOf(arg)) == carrier::closure)) {
                 ec::CallOpaqueOp::create(at, made.getLoc(), mlir::TypeRange{},
                                          at.getStringAttr("static_cast<void>"),

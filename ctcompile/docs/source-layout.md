@@ -7,9 +7,9 @@ by their implementation files. Public APIs remain under `include/ctcompile/`.
 | Area | Location | Contents |
 |---|---|---|
 | Native pass | `lib/CTNative/Lowering/LowerToEmitC.cpp` | Pass setup, inference, admission fixpoint and lowering order |
-| Closure lifting | `lib/CTNative/Lowering/ClosureLifting/` | Calls, callbacks, bindings, cells, captures, returned closures, methods, constructors, diagnostics and rewriting |
+| Closure lifting | `lib/CTNative/Lowering/ClosureLifting/` | Calls, callbacks, bindings, cells, captures, closed value flow, returned closures and method tables, constructors, diagnostics and rewriting |
 | Native admission | `lib/CTNative/Lowering/Admission/` | Value, object, operation and function checks |
-| Native emission | `lib/CTNative/Lowering/EmitC/` | Shapes, types, owning environments, expressions, operations, functions, module declarations and runtime helper text |
+| Native emission | `lib/CTNative/Lowering/EmitC/` | Shapes, types, owning environments and method tables, Maps, expressions, operations, functions, module declarations and runtime helper text |
 | Shape inference | `lib/CTNative/Analysis/Inference/` | Receiver/cell groups, closed shapes and dense-vector proofs |
 | Boxed emission | `lib/CTJS/Lowering/EmitC/` | Admission, function setup, operation dispatch, status handling, roots and constants |
 | Global effects | `lib/CTJS/Lowering/Globals/` | Reflection, global identity and effects retained for refused bodies |

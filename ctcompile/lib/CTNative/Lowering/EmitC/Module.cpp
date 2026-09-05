@@ -1,6 +1,7 @@
 // EmitC/Module.cpp - native lowering implementation.
 #include "../Admission/Admission.h"
 #include "Emitter.h"
+#include "MethodTableHelpers.h"
 #include "NativeMapHelpers.h"
 #include "RuntimeHelpers.h"
 
@@ -55,6 +56,9 @@ void lowering::finish() {
             ec::DeclareFuncOp::create(b, f.getLoc(),
                                       mlir::FlatSymbolRefAttr::get(context, f.getSymName()));
         }
+        for (const std::string & builder : callableBuilders) {
+            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(builder));
+        }
     }
     for (ctjs::FuncOp fn : shells) {
         if (!mlir::SymbolTable::symbolKnownUseEmpty(fn.getOperation(), module)) {
@@ -88,16 +92,25 @@ void lowering::declareGlobals() {
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kVectorHelpers));
     }
     if (needsMap) {
-        for (llvm::StringRef header : {"memory", "utility", "vector"}) {
+        for (llvm::StringRef header : {"exception", "memory", "utility", "vector"}) {
             ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
         }
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNativeMapHelpers));
+    }
+    if (!methodTables.empty()) {
+        for (llvm::StringRef header : {"functional", "memory", "utility"}) {
+            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
+        }
+        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kMethodTableHelpers));
     }
     if (!environments.empty()) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("tuple"), b.getUnitAttr());
         for (const std::string & definition : environments) {
             ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(definition));
         }
+    }
+    for (const std::string & definition : methodTables) {
+        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(definition));
     }
     llvm::SmallVector<llvm::StringRef> names(globals.keys().begin(), globals.keys().end());
     llvm::sort(names);

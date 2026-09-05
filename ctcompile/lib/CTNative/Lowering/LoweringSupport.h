@@ -54,6 +54,7 @@ enum class carrier {
     string,
     map,
     closure,
+    methodTable,
     structure,
     vector
 };
@@ -61,8 +62,11 @@ inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 carrier carrierOf(mlir::Type type);
 mlir::Type vectorCarrierType(mlir::MLIRContext * context);
 llvm::StringRef mapKeySpelling(mlir::Type type);
+std::string mapValueSpelling(mlir::Type type);
+bool mapNeedsString(MapType type);
 mlir::Type mapCarrierType(MapType type);
 mlir::Type closureCarrierType(ClosureType type);
+mlir::Type methodTableCarrierType(MethodTableType type);
 bool mayBeUndefined(mlir::Type type);
 mlir::Type carrierType(mlir::MLIRContext * context, carrier which);
 std::string printed(mlir::Type type);

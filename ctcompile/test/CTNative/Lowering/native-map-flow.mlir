@@ -8,7 +8,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/reassigned-capture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CELL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/stored.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=STORED
 
-// NATIVE: emitc.verbatim {{.*}}template <class K> struct number_map
+// NATIVE: emitc.verbatim {{.*}}template <class K, class V> struct map_storage
 // NATIVE: emitc.declare_func @makeStore_1
 // NATIVE: emitc.func @makeStore_1({{.*}}) -> !emitc.opaque<"std::shared_ptr<ctnative::number_map<std::string>>">
 // NATIVE: emitc.func @initialize_2({{.*}}!emitc.opaque<"std::shared_ptr<ctnative::number_map<std::string>>">
@@ -19,13 +19,13 @@
 // MIXED: ctjs.func private @probe$2
 // MIXED-SAME: ctnative.not_native = "native Map flow contains a non-Map producer `ctjs.constant`"
 // SCHEMA: ctjs.func private @probe$2
-// SCHEMA-SAME: ctnative.not_native = "native Map needs one primitive key carrier and definite numeric values; inferred !ctnative.map<!ctnative.variant<
+// SCHEMA-SAME: ctnative.not_native = "native Map needs primitive keys and definite numeric or acyclic Map values; inferred !ctnative.map<!ctnative.variant<
 // OPTIONAL: ctjs.func private @maybe$1
 // OPTIONAL-SAME: ctnative.not_native = "native Map instance escapes or is mutated through `scf.yield`"
 // PHI: ctjs.func private @probe$1
 // PHI-SAME: ctnative.not_native = "native Map instance escapes or is mutated through `scf.yield`"
 // EXPORT: ctjs.func private @probe$1
-// EXPORT-SAME: ctnative.not_native = "a closure used as a value: it is a method field of an object whose shape is not closed
+// EXPORT-SAME: ctnative.not_native = "a closure used as a value: returned method table field has no visible invocation
 // EXPORT: ctjs.construct {{.*}}ctnative.map_reason = "native Map instance escapes or is mutated through `ctjs.cell_set`"
 // CELL: ctjs.func private @probe$1
 // CELL-SAME: ctnative.not_native = "a shared binding of type !ctnative.boxed, which has no native carrier
@@ -66,7 +66,7 @@ function probe(flag) {
 probe(1);
 
 //--- exported-methods.js
-// A returned Map handle does not supply an owning callable environment.
+// The returned field has no invocation to prove its argument signature.
 function probe() {
     var store = new Map();
     return { get(key) { return store.get(key) + 0; } };

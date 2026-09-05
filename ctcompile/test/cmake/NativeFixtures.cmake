@@ -571,3 +571,27 @@ if(COMMAND ctcompile_add_native_claims)
                               "${CMAKE_CURRENT_SOURCE_DIR}/native-returned-closure-fixture.js"
                               35 22 36 23)
 endif()
+
+# Stored functions own their captures through a returned method table.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(method_tables
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-method-table-fixture.js"
+                                lifetime42)
+endif()
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(method_tables
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-method-table-fixture.js"
+                              28 15 24 21)
+endif()
+
+# Finite nested Map schemas own child handles; every child lookup proves presence.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(nested_maps
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-nested-map-fixture.js"
+                                lifetime42)
+endif()
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(nested_maps
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-nested-map-fixture.js"
+                              14 12 25 1)
+endif()
