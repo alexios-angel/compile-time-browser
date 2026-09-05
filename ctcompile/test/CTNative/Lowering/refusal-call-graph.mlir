@@ -49,9 +49,8 @@
 //
 // `helper` is native by every rule the admission check has: one numeric
 // parameter a caller proves, one multiplication, one numeric return. It is
-// refused anyway, because the top level that calls it is not - a string
-// constant it cannot carry - and a refused caller keeps a ctjs.call_direct
-// that must still find a ctjs.func with a body.
+// refused anyway, because the top level stores a string global and keeps a
+// ctjs.call_direct that must still find a ctjs.func with a body.
 //
 // THIS IS THE DIRECTION THAT SURPRISES PEOPLE, and it is the one that makes a
 // single unsupported construct at the top level refuse an entire program. If
@@ -59,7 +58,7 @@
 // rather than improved.
 //
 // CALLEDBY: ctjs.func {{.*}}@_script_$0
-// CALLEDBY-SAME: ctnative.not_native = "a constant that is not a number, a boolean or undefined"
+// CALLEDBY-SAME: ctnative.not_native = "store to global `t` operand is !ctnative.str<utf8>, not a number"
 // CALLEDBY: ctjs.func {{.*}}@helper$1
 // CALLEDBY-SAME: ctnative.not_native = "called by `_script_$0`, which is not native"
 

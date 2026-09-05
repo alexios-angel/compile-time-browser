@@ -80,14 +80,8 @@
 // GLOBAL: ctjs.func {{.*}}@reader$1
 // GLOBAL-SAME: ctnative.not_native = "global `unstored` is !ctnative.boxed, not a number"
 
-// --- a constant that is not a number, a boolean or undefined. 21 refusals ---
-//
-// A string literal, here reached through `.length` so that neither the
-// key-constant exemption (isKeyOnlyString) nor the vector-length one
-// (isVectorKeyString) applies and it is a value in its own right.
-//
 // CONSTANT: ctjs.func {{.*}}@s$1
-// CONSTANT-SAME: ctnative.not_native = "a constant that is not a number, a boolean or undefined"
+// CONSTANT-SAME: ctnative.not_native = "a property read on an object that is not a closed-shape literal"
 
 //--- this.js
 function usesthis(x) { return this ? x : x + 1; }

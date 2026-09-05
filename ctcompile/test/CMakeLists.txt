@@ -1368,6 +1368,9 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   # an object literal made here" 316 -> 744, "it is passed as an argument"
   # 13 -> 136, "a method field of an object whose shape is not closed"
   # 236 -> 356. Those three are the next lever, not another clause about cells.
+  # Owning UTF-8 strings (2026-09-05) raise admission to 19 / 39 / 43.
+  # Resolver and lift counts stay unchanged; native-strings.md records the
+  # measured scope, and the floors below now protect the additional functions.
   function(ctcompile_add_native_claims name js floor resolved direct lifted)
     add_test(NAME ctcompile_native_claims_${name}
              COMMAND ${Python3_EXECUTABLE}
@@ -1396,8 +1399,8 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   ctcompile_add_native_claims(differential "${CMAKE_CURRENT_SOURCE_DIR}/differential.js" 2 56 10 0)
   ctcompile_add_native_claims(launcher "${CMAKE_CURRENT_SOURCE_DIR}/launcher.js" 0 9 9 0)
   ctcompile_add_native_claims(bootstrap
-    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 4 0 21 208)
-  ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 37 0 41 328)
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 19 0 21 208)
+  ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 39 0 41 328)
   ctcompile_add_native_claims(phaser
     "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 43 0 48 283)
 
@@ -2172,4 +2175,15 @@ if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(callbacks
                               "${CMAKE_CURRENT_SOURCE_DIR}/native-callback-fixture.js"
                               21 2 13 33)
+endif()
+
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(strings
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-string-fixture.js"
+                                startup42)
+endif()
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(strings
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-string-fixture.js"
+                              17 12 28 11)
 endif()

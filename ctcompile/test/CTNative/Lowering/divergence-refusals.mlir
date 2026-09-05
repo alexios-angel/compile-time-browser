@@ -73,25 +73,9 @@
 // too. So the operator is refused until it is emitted with the wrap written
 // out, which is the same shape the `**` guard has.
 //
-// THE REFUSAL COMES FROM THE STATIC FAMILY, and pinning the other string was
-// this test's own first failure. BytecodeImport.cpp's `binary_rows` marks all
-// six bitwise opcodes NON-re-entering, so `&`, `|`, `^`, `<<`, `>>` and `>>>`
-// import as `ctjs.binary_static` and never as `ctjs.binary`. The `ctjs.binary`
-// arm's "a bitwise or string operator is not native yet" is reachable only
-// through `BinaryKind::Concat`, and a concatenation needs a string, and a
-// string in a native candidate is refused at its CONSTANT first (the next
-// case) - so that sentence has no minimal witness today. Said here rather
-// than pinned with a program that does not produce it.
-//
 // BITWISE: ctnative.not_native = "a static bitwise operator is not native yet"
 
-// --- `+` ON A STRING IS CONCATENATION, AND A STRING IS NOT A CARRIER -------
-//
-// The refusal lands on the constant rather than on the `+`, which is the
-// earlier and more useful site: it names the value that has no representation
-// instead of the operator that could not use it.
-//
-// CONCAT: ctnative.not_native = "a constant that is not a number, a boolean or undefined"
+// CONCAT: ctnative.not_native = "binary operand is !ctnative.str<utf8>, not a number"
 
 // --- A GLOBAL THAT IS NOT A NUMBER IS REFUSED WHERE IT IS READ -------------
 //

@@ -2,7 +2,7 @@
 //
 // Everything before this file is an analysis. This is the lowering: a
 // `ctjs.func` whose every value has a PROVED type the native tier can carry
-// becomes an `emitc.func` over `double` and `bool`, and a function that does
+// becomes an `emitc.func` over native C++ carriers, and a function that does
 // not is refused with a diagnostic naming the first value or operation that
 // failed. Part 24 §1.2: the output links neither the interpreter nor its
 // collector, and there is no boxed fallback - a refusal is a reason on the
@@ -12,6 +12,7 @@
 //
 //   bool               bool     exactly
 //   num<i32|i64|f64>   double   exactly - every JavaScript number is one
+//   str<utf8>         std::string  owning bytes, including NUL and WTF-8
 //   opt<num<...>>      double   with undefined as NaN. EXACT in arithmetic
 //   opt<bottom>                 (undefined + 1 is NaN), relational comparison
 //                               (undefined < 1 is false, as NaN < 1 is), and
@@ -124,6 +125,7 @@ enum class carrier {
     none,
     boolean,
     number,
+    string,
     structure,
     vector
 };
@@ -134,6 +136,10 @@ carrier carrierOf(mlir::Type type) {
     if (type == nullptr) { return carrier::none; }
     if (llvm::isa<BoolType>(type)) { return carrier::boolean; }
     if (llvm::isa<NumType>(type)) { return carrier::number; }
+    if (auto string = llvm::dyn_cast<StrType>(type);
+        string && string.getEncoding() == StrEncoding::UTF8) {
+        return carrier::string;
+    }
     if (auto opt = llvm::dyn_cast<OptType>(type)) {
         if (llvm::isa<BottomType, NumType>(opt.getElementType())) { return carrier::number; }
         // A boolean-or-undefined, as a bool whose undefined is false: exact
@@ -179,6 +185,8 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     switch (which) {
     case carrier::boolean: return mlir::IntegerType::get(c, 1);
     case carrier::number: return mlir::Float64Type::get(c);
+    case carrier::string:
+        return ec::OpaqueType::get(c, StrType::get(c, StrEncoding::UTF8).cppCarrier());
     case carrier::structure:
     case carrier::vector:
     case carrier::none: break;
@@ -4271,6 +4279,10 @@ struct admission {
         }
         return true;
     }
+    bool strings(mlir::Value lhs, mlir::Value rhs) const {
+        return carrierOf(typeOf(lhs)) == carrier::string &&
+               carrierOf(typeOf(rhs)) == carrier::string;
+    }
     // A value that must not be undefined: equality is observable.
     bool defined(mlir::Value v, llvm::StringRef where) {
         if (mayBeUndefined(typeOf(v))) {
@@ -4648,10 +4660,9 @@ struct admission {
     // A string constant whose every use is the `length` key of a dense array
     // lowers to nothing: the read becomes a call to the size helper.
     //
-    // WITHOUT THIS ARM `counted()` REFUSES OUTRIGHT, and the reason is worth
-    // stating: isKeyOnlyString requires isClosedObject, which is false for an
-    // array, so the constant falls through to the ConstantOp arm and is
-    // refused as "a constant that is not a number, a boolean or undefined".
+    // The object-key predicate requires isClosedObject, which is false for
+    // an array. Recognizing array keys separately keeps an erased `length`
+    // name from requiring a runtime string carrier or its header.
     static bool isVectorKeyString(mlir::Operation * o) {
         auto constant = llvm::dyn_cast_or_null<ctjs::ConstantOp>(o);
         if (!constant || !llvm::isa<ctjs::StringAttr>(constant.getValue()) ||
@@ -4952,8 +4963,8 @@ struct admission {
             return true;
         }
         if (auto call = llvm::dyn_cast<CallDirectOp>(o)) {
-            // new.target and the callee value are dropped; every argument is a
-            // number. Whether the CALLEE is native is the fixpoint in
+            // new.target and the callee value are dropped; each remaining
+            // argument needs a proved carrier. Whether the CALLEE is native is the fixpoint in
             // runOnOperation, not a question for one function.
             //
             // THE RECEIVER IS NOT DROPPED WHEN THE LIFT MARKED THIS CALL. It
@@ -4997,7 +5008,10 @@ struct admission {
                     }
                     continue;
                 }
-                if (!numeric(operands[i], "argument")) { return false; }
+                if (carrierOf(typeOf(operands[i])) != carrier::string &&
+                    !numeric(operands[i], "argument")) {
+                    return false;
+                }
             }
             return true;
         }
@@ -5021,6 +5035,11 @@ struct admission {
                 return refuse("a shared binding of type " + printed(typeOf(cell.getResult())) +
                               ", which has no native carrier - a variable this tier cannot "
                               "spell is not one it may point at");
+            }
+            if (carrierOf(typeOf(cell.getResult())) == carrier::string &&
+                carrierOf(typeOf(cell.getInitial())) != carrier::string &&
+                !cell->hasAttr(kAssignedBeforeRead)) {
+                return refuse("a shared string binding whose non-string initial is observable");
             }
             return true;
         }
@@ -5049,8 +5068,8 @@ struct admission {
                               : std::string{"a captured binding that stays a cell - Phase 59"});
         }
         // THE LIFT'S UNDEFINED VALUE for a block argument no predecessor sets:
-        // never read on any executed path, and carried as NaN - the double
-        // that is also undefined's carrier - so it needs no proof.
+        // never read on any executed path. Lowering chooses NaN or an empty
+        // string per destination slot, so poison itself needs no carrier.
         if (o->getName().getStringRef() == "ub.poison") { return true; }
         // THE STRUCTURING PASS'S MULTIPLEXERS: --ctjs-lift-to-scf encodes which
         // edge a merged block came from as i32 flags, in arith. They carry no
@@ -5065,11 +5084,20 @@ struct admission {
         }
         if (auto k = llvm::dyn_cast<ConstantOp>(o)) {
             if (llvm::isa<NumberAttr, BooleanAttr, UndefinedAttr>(k.getValue())) { return true; }
+            if (llvm::isa<StringAttr>(k.getValue()) &&
+                carrierOf(typeOf(k.getResult())) == carrier::string) {
+                return true;
+            }
             return refuse("a constant that is not a number, a boolean or undefined");
         }
         if (auto b = llvm::dyn_cast<BinaryOp>(o)) {
             switch (b.getKind()) {
             case BinaryKind::Add:
+                if (strings(b.getLhs(), b.getRhs())) { return true; }
+                return numeric(b.getLhs(), "binary") && numeric(b.getRhs(), "binary");
+            case BinaryKind::Concat:
+                return strings(b.getLhs(), b.getRhs()) ||
+                       refuse("concatenation requires two proved owning UTF-8 strings");
             case BinaryKind::Sub:
             case BinaryKind::Mul:
             case BinaryKind::Div:
@@ -5110,6 +5138,7 @@ struct admission {
                 return numeric(cmp.getLhs(), "compare") && numeric(cmp.getRhs(), "compare");
             case CompareKind::Eq:
             case CompareKind::StrictEq:
+                if (strings(cmp.getLhs(), cmp.getRhs())) { return true; }
                 return numeric(cmp.getLhs(), "equality") && numeric(cmp.getRhs(), "equality") &&
                        defined(cmp.getLhs(), "equality") && defined(cmp.getRhs(), "equality");
             }
@@ -5196,7 +5225,7 @@ struct admission {
             if (c == carrier::none) { return refuse("returns " + printed(typeOf(ret.getValue()))); }
             if (returns == carrier::none) { returns = c; }
             if (returns != c) {
-                return refuse("returns a number on one path and a boolean on another");
+                return refuse("returns different native carriers on different paths");
             }
             return true;
         }
@@ -5284,20 +5313,9 @@ struct admission {
                                                                        : "capture ";
             const std::string which = kind + std::to_string(isCapture ? i - 3 : i - 3 - captures);
             if (carrierOf(t) == carrier::none) {
-                // TWO CAUSES, AND THEY SEND A READER TO DIFFERENT PLACES. This
-                // said "no caller proves it (a closed-world call is Phase
-                // 62½-A)" for both, and for `function tag(s){return s} tag("hi")`
-                // that is false in both halves: a caller DID prove it - the
-                // lattice propagated `!ctnative.str<utf8>` all the way to the
-                // parameter - and the closed world is not what is missing. What
-                // is missing is a CARRIER for a string.
-                //
-                // `boxed` (or unvisited, which is a parameter no reachable call
-                // ever gave a value) is the other case and keeps the old
-                // wording: nothing resolved a caller, so nothing was proved.
-                // All 688 parameter refusals measured over bootstrap and p5 are
-                // that kind, so the corpus numbers do not move; only the proved
-                // and uncarried case gets the new sentence.
+                // Distinguish an unknown parameter from a proved type this
+                // tier cannot represent, such as an optional string. The
+                // latter needs a carrier even when every caller is known.
                 if (t == nullptr || llvm::isa<BoxedType>(t)) {
                     return refuse(which + " is " + printed(t) +
                                   " - no caller proves it (a closed-world call is Phase 62½-A)");
@@ -5484,7 +5502,7 @@ struct lowering {
     // by admission - so the only disagreement this tier can build a template
     // over today is `double` against `bool`. Phase 56C's written example, "the
     // same {x, y} literal at three sites, two numeric and one string", cannot
-    // be written: a string has no carrier here, and `field `x` is stored a
+    // be written: string fields are not supported, and `field `x` is stored a
     // !ctnative.str<utf8>, not a number or a boolean` refuses the function
     // before any shape is formed. The mechanism below is general over the
     // field types; the fixture that exercises it has to be a boolean.
@@ -5514,7 +5532,6 @@ struct lowering {
     // access is replaced, the object it keys is already an emitc.variable and
     // no longer reads as a closed create_object.
     llvm::DenseMap<mlir::Operation *, std::string> accessKey; // get/set -> member name
-    llvm::DenseSet<mlir::Operation *> keyConstants;           // constants that lower to nothing
     // PHASE 57A. Decided while the IR is still ctjs, for fieldsOf()'s reason:
     // by the time a read is replaced, the array it reads is already an
     // emitc.variable and no longer reads as a dense create_array.
@@ -5529,6 +5546,7 @@ struct lowering {
     // Set by the first array lowered; the include and the helper preamble ride
     // on it. An empty unit emits neither.
     bool needsVector = false;
+    bool needsString = false;
 
     // The C++ spelling of a field carrier, and there are two of them: a field
     // is a number or a boolean (O-2) and admission refuses everything else by
@@ -5647,12 +5665,11 @@ struct lowering {
         for (mlir::Value alias : aliasesOf(groups, object)) {
             for (mlir::Operation * user : alias.getUsers()) {
                 // The method field takes no member: the closure it holds is a
-                // free function and the store lowers to nothing. Its KEY
-                // constant is still marked, so replace() drops it rather than
-                // swapping a NaN in for a string nothing reads.
+                // free function and the store lowers to nothing. Its key can
+                // also be used as string data, so only the access is erased;
+                // the final sweep removes the key when nothing reads it.
                 if (auto method = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
                     method && user->hasAttr("ctnative.method")) {
-                    keyConstants.insert(method.getKey().getDefiningOp());
                     continue;
                 }
                 mlir::Value key;
@@ -5665,10 +5682,7 @@ struct lowering {
                     key = set.getKey();
                     stored.try_emplace(admission::keyOf(key), carried(set.getValue()));
                 }
-                if (key) {
-                    accessKey[user] = admission::keyOf(key).str();
-                    keyConstants.insert(key.getDefiningOp());
-                }
+                if (key) { accessKey[user] = admission::keyOf(key).str(); }
             }
         }
         llvm::SmallVector<std::pair<std::string, mlir::Type>> fields;
@@ -5818,9 +5832,9 @@ struct lowering {
         return out;
     }
 
-    // The reads of one dense array, sorted into `length` and index, and the
-    // `length` key constants marked as lowering to nothing - exactly what
-    // fieldsOf() does for a closed object's member names.
+    // The reads of one dense array, sorted into `length` and index. Keys are
+    // still lowered: a constant can also be used as ordinary string data.
+    // A key used only by erased accesses is removed by the final sweep.
     void collectVector(ctjs::CreateArrayOp array) {
         needsVector = true;
         for (mlir::Operation * user : array.getResult().getUsers()) {
@@ -5828,16 +5842,6 @@ struct lowering {
             if (!get) { continue; }
             if (admission::keyOf(get.getKey()) == "length") {
                 vectorLengthReads.insert(user);
-                // AND THE KEY CONSTANT IS NOT MARKED, WHICH WAS MEASURED. The
-                // obvious thing here is `keyConstants.insert(...)`, so that
-                // replace() drops the `"length"` constant rather than swapping
-                // a NaN double in for it - which is what fieldsOf() does for
-                // a member name. It makes no difference: the `vec_length` call
-                // built below takes the ARRAY and not the key, so whatever
-                // replace() leaves behind has no users and lower()'s own sweep
-                // erases it. Adding the line changed not one byte of the
-                // emitted C++ and no test could be made to fail without it, so
-                // it is not here.
             } else {
                 vectorIndexReads.insert(user);
             }
@@ -5919,6 +5923,19 @@ struct lowering {
             b, where, mlir::IntegerType::get(context, 1),
             b.getIntegerAttr(mlir::IntegerType::get(context, 1), v ? 1 : 0));
     }
+    mlir::Value stringConstant(mlir::OpBuilder & builder, mlir::Location where,
+                               llvm::StringRef value) {
+        constexpr char hex[] = "0123456789ABCDEF";
+        std::string initializer = "std::string(\"";
+        for (unsigned char byte : value.bytes()) {
+            initializer += "\\x";
+            initializer += hex[byte >> 4];
+            initializer += hex[byte & 15];
+        }
+        initializer += "\", " + std::to_string(value.size()) + ")";
+        return ec::ConstantOp::create(builder, where, carrierType(context, carrier::string),
+                                      ec::OpaqueAttr::get(context, initializer));
+    }
     mlir::Value lvalueOfGlobal(mlir::OpBuilder & b, mlir::Location where, llvm::StringRef name) {
         globals.insert(name);
         return ec::GetGlobalOp::create(b, where,
@@ -5933,6 +5950,17 @@ struct lowering {
             ec::CmpOp::create(b, where, i1, ec::CmpPredicate::ne, x, f64Constant(b, where, 0.0));
         mlir::Value notNaN = ec::CmpOp::create(b, where, i1, ec::CmpPredicate::eq, x, x);
         return ec::LogicalAndOp::create(b, where, i1, nonzero, notNaN);
+    }
+    mlir::Value truthy(mlir::OpBuilder & builder, mlir::Location where, mlir::Value value) {
+        if (llvm::isa<mlir::IntegerType>(value.getType())) { return value; }
+        if (value.getType() == carrierType(context, carrier::string)) {
+            // Keep this a pure comparison: an opaque .empty() call retains
+            // its unused result after dead-store pruning and breaks -Werror.
+            return ec::CmpOp::create(builder, where, mlir::IntegerType::get(context, 1),
+                                     ec::CmpPredicate::ne, value,
+                                     stringConstant(builder, where, ""));
+        }
+        return truthyNumber(builder, where, value);
     }
     // ZERO RESULTS, AND THAT IS THE WHOLE POINT. A call with one result that
     // nothing reads is declared as a variable by the emitter, which is
@@ -6001,14 +6029,21 @@ struct lowering {
             // along. Both are asked BEFORE the scalar row below, because the
             // lattice type of either is the carrier of what is INSIDE.
             if (admission::isCarriedCell(v.getDefiningOp())) {
+                needsString |= carrierOf(typeOf(v)) == carrier::string;
                 v.setType(ec::LValueType::get(carrierType(context, carrierOf(typeOf(v)))));
                 return;
             }
             if (admission::isCellParameter(v)) {
+                needsString |= carrierOf(typeOf(v)) == carrier::string;
                 v.setType(ec::PointerType::get(carrierType(context, carrierOf(typeOf(v)))));
                 return;
             }
             const carrier c = carrierOf(typeOf(v));
+            if (c == carrier::string && admission::lowersToNothing(v)) {
+                v.setType(mlir::Float64Type::get(context));
+                return;
+            }
+            needsString |= c == carrier::string;
             // A DENSE ARRAY TAKES ITS OWN CARRIER, which is not one of the two
             // scalars carrierType() can spell: `std::vector<double>`, by value,
             // in this frame.
@@ -6166,6 +6201,34 @@ struct lowering {
         }
         if (llvm::isa<FrameEnterOp>(o)) { return; }
         if (o->getName().getStringRef() == "ub.poison") {
+            // CFG structuring uses poison for dead carried slots. The
+            // lattice joins bottom with the live incoming type, so one
+            // poison can feed both string and numeric slots. Choose an
+            // inert value per destination instead of giving every use NaN.
+            mlir::Value emptyString;
+            for (mlir::OpOperand & use : llvm::make_early_inc_range(o->getResult(0).getUses())) {
+                mlir::Operation * user = use.getOwner();
+                const unsigned index = use.getOperandNumber();
+                mlir::Type expected;
+                if (llvm::isa<mlir::scf::YieldOp>(user)) {
+                    mlir::Operation * parent = user->getParentOp();
+                    if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(parent)) {
+                        expected = loop.getBefore().front().getArgument(index).getType();
+                    } else if (llvm::isa<mlir::scf::IfOp, mlir::scf::ForOp>(parent)) {
+                        expected = parent->getResult(index).getType();
+                    }
+                } else if (llvm::isa<mlir::scf::ConditionOp>(user) && index > 0) {
+                    expected = user->getParentOp()->getResult(index - 1).getType();
+                } else if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(user)) {
+                    expected = loop.getBefore().front().getArgument(index).getType();
+                } else if (llvm::isa<mlir::scf::ForOp>(user) && index >= 3) {
+                    expected = user->getResult(index - 3).getType();
+                }
+                if (expected == carrierType(context, carrier::string)) {
+                    if (!emptyString) { emptyString = stringConstant(b, where, ""); }
+                    use.set(emptyString);
+                }
+            }
             swap(f64Constant(b, where, std::numeric_limits<double>::quiet_NaN()));
             return;
         }
@@ -6181,7 +6244,16 @@ struct lowering {
         if (auto cell = llvm::dyn_cast<CreateCellOp>(o); cell && admission::isCarriedCell(o)) {
             mlir::Value local = ec::VariableOp::create(b, where, cell.getResult().getType(),
                                                        ec::OpaqueAttr::get(context, ""));
-            ec::AssignOp::create(b, where, local, cell.getInitial());
+            if (llvm::cast<ec::LValueType>(local.getType()).getValueType() ==
+                    carrierType(context, carrier::string) &&
+                cell.getInitial().getType() != carrierType(context, carrier::string)) {
+                if (!cell->hasAttr(kAssignedBeforeRead)) {
+                    llvm::report_fatal_error("ctnative lowering: a string cell has an observable "
+                                             "non-string initial - admission should refuse it");
+                }
+            } else {
+                ec::AssignOp::create(b, where, local, cell.getInitial());
+            }
             swap(local);
             return;
         }
@@ -6270,7 +6342,6 @@ struct lowering {
             eraseIfUnused(o);
             return;
         }
-        if (keyConstants.contains(o)) { return; } // dead after its get/set; swept
         if (admission::isDeclarationStore(o)) {
             mlir::Operation * closure = llvm::cast<StoreGlobalOp>(o).getValue().getDefiningOp();
             eraseIfUnused(o);
@@ -6282,6 +6353,9 @@ struct lowering {
                 swap(f64Constant(b, where, n.getDouble()));
             } else if (auto bo = llvm::dyn_cast<BooleanAttr>(k.getValue())) {
                 swap(boolConstant(b, where, bo.getValue()));
+            } else if (auto string = llvm::dyn_cast<StringAttr>(k.getValue());
+                       string && k.getResult().getType() == carrierType(context, carrier::string)) {
+                swap(stringConstant(b, where, string.getValue()));
             } else {
                 // undefined, as the NaN the representation table says it is.
                 swap(f64Constant(b, where, std::numeric_limits<double>::quiet_NaN()));
@@ -6291,7 +6365,10 @@ struct lowering {
         if (auto bin = llvm::dyn_cast<BinaryOp>(o)) {
             const mlir::Value l = bin.getLhs(), r = bin.getRhs();
             switch (bin.getKind()) {
-            case BinaryKind::Add: swap(ec::AddOp::create(b, where, f64, l, r)); return;
+            case BinaryKind::Add:
+            case BinaryKind::Concat:
+                swap(ec::AddOp::create(b, where, bin.getResult().getType(), l, r));
+                return;
             case BinaryKind::Sub: swap(ec::SubOp::create(b, where, f64, l, r)); return;
             case BinaryKind::Mul: swap(ec::MulOp::create(b, where, f64, l, r)); return;
             case BinaryKind::Div: swap(ec::DivOp::create(b, where, f64, l, r)); return;
@@ -6322,9 +6399,7 @@ struct lowering {
                                          "- UnaryPlusIsIdentity.pdll was supposed to have erased "
                                          "it, and PDL does not report a non-match");
             case UnaryKind::Not: {
-                mlir::Value v = u.getOperand();
-                if (!llvm::isa<mlir::IntegerType>(v.getType())) { v = truthyNumber(b, where, v); }
-                swap(ec::LogicalNotOp::create(b, where, i1, v));
+                swap(ec::LogicalNotOp::create(b, where, i1, truthy(b, where, u.getOperand())));
                 return;
             }
             default: llvm_unreachable("admission refused it");
@@ -6344,8 +6419,7 @@ struct lowering {
             return;
         }
         if (auto t = llvm::dyn_cast<TruthyOp>(o)) {
-            mlir::Value v = t.getValue();
-            swap(llvm::isa<mlir::IntegerType>(v.getType()) ? v : truthyNumber(b, where, v));
+            swap(truthy(b, where, t.getValue()));
             return;
         }
         if (auto load = llvm::dyn_cast<LoadGlobalOp>(o)) {
@@ -6473,10 +6547,9 @@ struct lowering {
         applyDeclarativeRules(fn);
         retype(fn);
 
-        // The signature: the parameters after the three implicit arguments,
-        // returning double (every native function returns a number; a
-        // function that returns nothing returns NaN, which is undefined's
-        // carrier).
+        // The signature takes the parameters after the three implicit
+        // arguments and returns the proved carrier. A function that returns
+        // nothing returns NaN, which is undefined's carrier.
         // THE RECEIVER IS THE FIRST PARAMETER, and this is the whole of the
         // signature change: `double bump_3(ctn_x * self, double n)`. It comes
         // first because ctjs.call_direct's operand 0 is the receiver, so the
@@ -6640,6 +6713,9 @@ struct lowering {
         // needs <cmath> above it.
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cmath"), b.getUnitAttr());
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstdio"), b.getUnitAttr());
+        if (needsString) {
+            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("string"), b.getUnitAttr());
+        }
         // ONLY WHEN A VECTOR SITE EXISTS. An include and a preamble emitted
         // unconditionally would move every byte count the printing gate
         // reports and every line the other native lits pin, for programs that

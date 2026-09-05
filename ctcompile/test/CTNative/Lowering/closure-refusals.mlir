@@ -149,32 +149,11 @@
 // SHAREDRETURN: ctjs.create_cell
 // SHAREDRETURN-SAME: ctnative.cell_reason = "the closure that shares it is not lifted, so the binding needs a real box and not a variable in this frame - it is returned - Phase 59 slice 2"
 
-// --- SLICE 2 STEP 2, CONDITION 2: A SHARED BINDING WITH NO NATIVE CARRIER --
-//
-// The lift runs BEFORE the type solve and cannot ask what a binding holds, so
-// the carrier is admission's question - asked twice, once of the box and once
-// of the pointer parameter, because the two are in different functions and
-// either can be reached first. `s` is a string here, which this tier has no
-// C++ carrier for, and a pointer to a value it cannot spell is not a pointer
-// it may take.
-//
-// THE LIFT STILL RAN, and `ctnative.cell_args` on `grow` is the proof: the
-// closure was carried and the REFUSAL is the carrier clause, not a capture
-// clause standing in front of it. That is what makes this a witness for this
-// clause and for no other.
-//
-// THE TYPE IN THE MESSAGE LOST ITS `opt` AT SLICE 2 STEP 3, and the refusal did
-// not move. `var s = "a"` is a write that dominates every read of the binding,
-// so the box's hoisted `undefined` is unobservable and the narrowing drops it
-// from the join - `opt<str<utf8>>` becomes `str<utf8>`. Neither has a C++
-// carrier, which is what this program is about; the change is the narrowing
-// showing through a diagnostic, not a change of verdict.
-//
-// SHAREDSTRING: ctjs.func {{.*}}@tag$1
-// SHAREDSTRING-SAME: ctnative.not_native = "a shared binding of type !ctnative.str<utf8>, which has no native carrier - a variable this tier cannot spell is not one it may point at"
-// SHAREDSTRING: ctjs.func {{.*}}@grow$2
-// SHAREDSTRING-SAME: ctnative.cell_args = array<i32: 3>
-// SHAREDSTRING-SAME: ctnative.not_native = "shared capture 0 is !ctnative.str<utf8>, which has no native carrier yet"
+// A mutable string binding now has an owning carrier and a lifted pointer.
+// The mixed-carrier refusal is covered by native-strings.mlir's SHARED-MIXED.
+// SHAREDSTRING: emitc.func @tag_1() -> f64
+// SHAREDSTRING: emitc.func @grow_2({{.*}}!emitc.ptr<!emitc.opaque<"std::string">>) -> f64
+// SHAREDSTRING-NOT: ctnative.not_native
 
 // --- CONDITION 3 ACROSS FUNCTIONS: A METHOD CALLED FROM ANOTHER METHOD -----
 //
@@ -486,7 +465,7 @@ function tag() {
     function grow() { s = s + "b"; return 1; }
     grow();
     grow();
-    return 2;
+    return s === "abb" ? 2 : 0;
 }
 var t = tag();
 
