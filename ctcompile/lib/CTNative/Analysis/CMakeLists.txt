@@ -9,6 +9,7 @@
 # naming both dialects is its entire job.
 add_mlir_library(CTNativeAnalysis
   TypeInference.cpp
+  Inference/Shapes.cpp
   EscapeAnalysis.cpp
   NativeMap.cpp
 

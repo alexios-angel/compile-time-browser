@@ -18,8 +18,8 @@
 // from a `switch (in.code)` and from two dispatch TABLES, and there is no
 // runtime predicate that answers "do you handle this opcode" - adding one would
 // be a third place to keep in step with the switch, which is the drift this
-// test exists to prevent. The build passes the path in as
-// CTCOMPILE_IMPORTER_SOURCE.
+// test exists to prevent. The build passes the driver, instruction-dispatch
+// and operator-table paths, so moving dispatch into a helper keeps it visible.
 //
 // IT IS A RATCHET, NOT A GATE. Three non-suspending opcodes are unhandled
 // today and the Phase 13 gate is that none are, so a test demanding zero would
@@ -132,13 +132,16 @@ bool dispatches(const std::string & source, std::string_view opcode) {
 } // namespace
 
 int main() {
-    std::ifstream in{CTCOMPILE_IMPORTER_SOURCE};
-    if (!in) {
-        std::printf("could not read the importer's source at %s\n", CTCOMPILE_IMPORTER_SOURCE);
-        return 1;
-    }
     std::ostringstream text;
-    text << in.rdbuf();
+    for (const char * path :
+         {CTCOMPILE_IMPORTER_SOURCE, CTCOMPILE_IMPORTER_DISPATCH, CTCOMPILE_IMPORTER_TABLES}) {
+        std::ifstream in{path};
+        if (!in) {
+            std::printf("could not read the importer's source at %s\n", path);
+            return 1;
+        }
+        text << in.rdbuf() << '\n';
+    }
     const std::string source = text.str();
 
     // A SANITY CHECK ON THE MATCHER ITSELF, because a matcher that finds

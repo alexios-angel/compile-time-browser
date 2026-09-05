@@ -72,6 +72,26 @@ add_mlir_pdll_library(CTNativeUnaryPlusPDLLIncGen
 # ctbrowser library at all.
 add_library(ctcompile-ctnative-lowering
   LowerToEmitC.cpp
+  LoweringSupport.cpp
+  ClosureLifting/Calls.cpp
+  ClosureLifting/Callbacks.cpp
+  ClosureLifting/Cells.cpp
+  ClosureLifting/Bindings.cpp
+  ClosureLifting/Captures.cpp
+  ClosureLifting/Methods.cpp
+  ClosureLifting/Diagnostics.cpp
+  ClosureLifting/Constructors.cpp
+  ClosureLifting/Rewrite.cpp
+  Admission/Values.cpp
+  Admission/Objects.cpp
+  Admission/Operations.cpp
+  Admission/Functions.cpp
+  EmitC/Shapes.cpp
+  EmitC/Module.cpp
+  EmitC/Expressions.cpp
+  EmitC/Types.cpp
+  EmitC/Operations.cpp
+  EmitC/Functions.cpp
   PrintDeduced.cpp
   PruneDeadStores.cpp)
 ctcompile_target(ctcompile-ctnative-lowering)

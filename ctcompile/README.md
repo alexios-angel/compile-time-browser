@@ -42,6 +42,10 @@ LLVM or MLIR targets ever appear in its own scope rather than trusting the rule.
 
 ## Building
 
+The compiler implementation is organized by responsibility; see the
+[source layout](docs/source-layout.md) for the import, analysis, lowering and
+test directories.
+
 Inside the monorepo:
 
 ```bash
