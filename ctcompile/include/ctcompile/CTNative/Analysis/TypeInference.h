@@ -242,10 +242,10 @@ private:
     // dense vector sites only; built in initialize() beside fieldStores_.
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> appends_;
 
-    // Proved Map sites: every queried/stored key and every stored value,
-    // including through the identity-preserving result of Map.set.
-    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> mapKeys_;
-    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> mapValues_;
+    // Proved Map schema families: every queried/stored key and stored value,
+    // including through set aliases and closed parameters, captures and returns.
+    llvm::DenseMap<int64_t, llvm::SmallVector<mlir::Value, 4>> mapKeys_;
+    llvm::DenseMap<int64_t, llvm::SmallVector<mlir::Value, 4>> mapValues_;
     mlir::Type mapTypeOf(mlir::Operation * op, mlir::Value map);
 
     /// The element type of a dense array: the join over everything appended to

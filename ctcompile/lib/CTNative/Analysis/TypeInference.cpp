@@ -612,7 +612,7 @@ mlir::Type TypeInference::cellTypeOf(mlir::Operation * op, mlir::Value cell) {
 mlir::Type TypeInference::mapTypeOf(mlir::Operation * op, mlir::Value map) {
     const auto joined = [&](const auto & index) {
         mlir::Type type = BottomType::get(op->getContext());
-        const auto found = index.find(map);
+        const auto found = index.find(nativeMapGroup(map));
         if (found != index.end()) {
             for (mlir::Value value : found->second) {
                 const TypeLattice * lattice = getLatticeElementFor(getProgramPointAfter(op), value);
@@ -638,12 +638,12 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     top->walk([&](ctjs::CallOp call) {
         const llvm::StringRef action = nativeMapAction(call);
         if (action.empty()) { return; }
-        ctjs::ConstructOp root = nativeMapRoot(call.getReceiver());
-        if (!root) { return; }
+        const int64_t group = nativeMapGroup(call.getReceiver());
+        if (group < 0) { return; }
         if (action == "set" || action == "get" || action == "has" || action == "delete") {
-            mapKeys_[root.getResult()].push_back(call.getArgs()[0]);
+            mapKeys_[group].push_back(call.getArgs()[0]);
         }
-        if (action == "set") { mapValues_[root.getResult()].push_back(call.getArgs()[1]); }
+        if (action == "set") { mapValues_[group].push_back(call.getArgs()[1]); }
     });
     // THE FIELD INDEX IS OVER THE GROUP, NOT OVER ONE VALUE, and that is the
     // whole of what a receiver parameter costs this analysis. `this.x = 5`

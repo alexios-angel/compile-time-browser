@@ -112,6 +112,9 @@ function(normalise lines out)
   set(result "")
   foreach(line IN LISTS lines)
     string(REGEX REPLACE "^([ \t]*)(auto|double|bool|int32_t|int64_t|float|std::string) ([A-Za-z_0-9]+) = " "\\1T \\3 = " line "${line}")
+    # Direct calls can now return an owning Map. Match only its three proved
+    # carriers; keep comparing the complete initializer and every other line.
+    string(REGEX REPLACE "^([ \t]*)std::shared_ptr<ctnative::number_map<(double|bool|std::string)>> ([A-Za-z_0-9]+) = " "\\1T \\3 = " line "${line}")
     list(APPEND result "${line}")
   endforeach()
   set(${out} "${result}" PARENT_SCOPE)

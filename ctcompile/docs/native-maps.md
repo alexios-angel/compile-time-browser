@@ -1,11 +1,11 @@
 # Native Maps toward Bootstrap Data
 
-The native backend can lower confined standard `Map` instances with one
-primitive key type and numeric values. This supplies the first container
-operations needed by Bootstrap's Data store. The complete Bootstrap factory
-and its exported Data methods still require persistent captured state,
-object identity keys, nested Maps, component-instance values, native callable
-exports and host publication.
+The native backend can lower standard `Map` instances with one primitive key
+type and numeric values, including closed function parameters, returns and
+lifted captures. A returned handle owns its storage after the factory frame
+ends. The complete Bootstrap factory and its exported Data methods still need
+owned callable environments, object identity keys, nested Maps,
+component-instance values and host publication.
 
 ## Representation and semantics
 
@@ -13,9 +13,10 @@ Each allocation owns an insertion-ordered list of key/value pairs through
 `std::shared_ptr<ctnative::number_map<K>>`. Keys use `double`, `bool` or owning
 `std::string`; values use `double`. Different allocation sites may have
 different schemas. The result of `set` shares the original Map, so chained
-calls and local aliases observe the same mutations. All accepted contents
-are primitive, and every instance use is confined; these Maps cannot form
-ownership cycles. Generated programs link neither the interpreter nor its
+calls and aliases observe the same mutations. Parameters and return values
+copy owning handles; factory invocations still allocate independent Maps.
+All accepted contents are primitive, and every instance use is proved; these
+Maps cannot form ownership cycles. Generated programs link neither the interpreter nor its
 collector.
 
 | Operation | Native behavior |
@@ -55,20 +56,29 @@ object keys, nested Maps and string values are not admitted in this slice.
 inference. Input annotations are cleared, including on repeated passes. It
 requires a standard `Map` global used only as the constructor, matching
 `new.target`, supported constant property names, exact method arities and
-the same receiver from which each method was read. It follows only the
-identity-preserving `set` result as an alias.
+the same receiver from which each method was read. A schema graph connects
+`set` results, corresponding actual/formal arguments, and callee returns with
+call results. Every producer in a connected family must be proved to be a
+Map: one Map input cannot justify a scalar or absent input at another call.
+Call boundaries must be closed private functions with visible callers and
+returns. Argument counts also have to match, as the CTJS verifier requires.
 
 The first identity proof is conservative across the whole module: assigning
 `Map`, inspecting or exposing its constructor, reading other host/global
 values, unknown calls or constructors, and dynamic invocation or deletion
 prevent admission. Ordinary user calls already made direct may remain.
-Returning, capturing, passing, storing or mutating a Map instance outside its
-supported methods also prevents admission. This is a confined-container proof,
-not a general builtin effect analysis.
+Lifted immutable captures are carried as owning Map parameters. The leftover
+capture cells must be erased bookkeeping for lifted closures. Reassigning a
+shared Map binding, returning a captured method table, publishing a Map in a
+global or object field, or merging Maps through structured phi values remains
+refused. This proof does not supply general builtin effect analysis or an
+owning callable representation.
 
-Inference joins every stored value and every queried or stored key at the
-allocation site. A read with a different key type widens the schema and is
-refused. Constructor and method identities are erased bookkeeping and are
+Inference joins every stored value and every queried or stored key across the
+schema family. Independent allocations passed to the same formal parameter
+share a C++ schema, while preserving separate runtime identities. Different
+formal slots stay separate. A read with a different key type widens the schema
+and is refused. Constructor and method identities are erased bookkeeping and are
 excluded from the numeric global census; they never become globals to print.
 
 ## Snapshot indexing correction
@@ -97,16 +107,19 @@ object; its methods retain unlowered captures. The UMD entry also needs `this`
 and host-environment types, while AMD exposes the factory value. These are
 measured prerequisites, not evidence that Data or full Bootstrap compiles.
 
-The next initialization step remains an owned module structure whose captured
-Map outlives factory return, together with callable exports and typed host
-publication. Bootstrap Data additionally needs Maps keyed by object identity
-and Maps or component instances stored as values. Existing pointers to
-frame-local capture cells must not be reused for that lifetime.
+Map handles can now outlive factory return, and local Data-style method tables
+can share them through lifted captures. The next initialization step is an
+owned callable environment that lets the method table itself outlive its
+factory, together with typed host publication. Bootstrap Data additionally
+needs Maps keyed by object identity and Maps or component instances stored as
+values. Existing pointers to frame-local capture cells must not be reused for
+that lifetime.
 
 ## Validation
 
-The final devbox build and suite on 2026-09-05 pass **283/283**, including all
-**94** lit tests. The pinned formatting gate and `git diff --check` pass.
+The original confined-Map checkpoint `8286564` passed **283/283** devbox tests,
+including **94** lit tests. The validation below records that checkpoint;
+the call/return extension is recorded separately after it.
 
 `native-map-fixture.js` covers aliasing, all three key carriers, NaN and signed
 zero, insertion order, deletion and reinsertion, snapshot independence, empty
@@ -144,6 +157,33 @@ all three corpora still resolve zero globals. This confined Map slice adds
 Regenerated boxed Bootstrap C++ remains **10,976,150 bytes**, SHA-256
 `8dfd8e45a6a69a032c6f7b325573dc584f130989f81e49e6805e7c5faa71a6ba`.
 The importer and boxed lowering are unchanged.
+
+### Closed calls, returns and captures
+
+The complete devbox gate passes **290/290**, including **96/96** lit tests;
+the pinned formatting gate and `git diff --check` pass. A 30-function claim
+floor fails against the measured 29. Bootstrap remains **19/574**, p5
+**39/4754** and Phaser **43/7725**, with the same direct/lift counts above.
+The real UMD/Data probes still refuse all 6/6/7 functions, and regenerated
+boxed Bootstrap retains the byte count and SHA-256 above.
+
+`native-map-flow-fixture.js` admits **29/29** functions, resolves **22** globals,
+and records **44** resolver direct calls plus **8** native-lift rewrites.
+Its **11** numeric observations cover factory-frame lifetime, independent
+instances, forwarding and `set` aliases, local Data-style method tables,
+nested captures, distinct formal schemas, recursive calls, boolean keys,
+unused owning arguments, empty returns and retention across 100 allocations.
+All agree with the interpreter, including under Clang ASan/UBSan with leak
+detection. The normal pipeline also checks standalone GCC/Clang compilation,
+no-VM symbols, deduced types and an off-by-one negative control.
+
+`native-map-flow.mlir` pins mixed input/schema, optional return, phi, returned
+method table, mutable binding and object-store refusals. The structural
+`native-map-flow-proof.mlir` additionally checks open callees, missing inputs,
+mixed return producers and forged schema annotations. Map carrier definitions
+now precede function prototypes, and unused owning parameters are explicitly
+discarded without removing argument evaluation. The deduced-output checker
+recognizes only the three supported Map carrier spellings.
 
 Build and run the complete gate from the repository root:
 

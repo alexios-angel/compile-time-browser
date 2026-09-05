@@ -49,9 +49,10 @@
 // SEEDED: ctjs.func private @probe$1
 // SEEDED-SAME: ctnative.not_native = "native Map requires an empty constructor"
 // RETURNED: ctjs.func private @probe$1
-// RETURNED-SAME: ctnative.not_native = "native Map instance escapes or is mutated through `ctjs.return`"
-// PASSED: ctjs.func private @probe$1
-// PASSED-SAME: ctnative.not_native = "native Map instance escapes or is mutated through `ctjs.call_direct`"
+// RETURNED-SAME: ctnative.not_native = "native Map instance escapes or is mutated through `ctjs.store_global`"
+// PASSED: emitc.func @probe_1
+// PASSED: emitc.func @consume_2
+// PASSED: call_opaque "static_cast<void>"
 // NESTED: ctjs.func private @probe$1
 // NESTED-SAME: ctnative.not_native = "native Map instance escapes or is mutated through `ctjs.call`"
 // MIXED: ctjs.func private @probe$1
@@ -105,8 +106,9 @@ function probe() { var map = new Map([]); return map.size; }
 probe();
 
 //--- returned.js
+// A closed return is supported; publication through a global still is not.
 function probe() { return new Map(); }
-probe();
+var exported = probe();
 
 //--- passed.js
 function probe() { var map = new Map(); consume(map); return map.size; }

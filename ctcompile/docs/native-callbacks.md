@@ -120,10 +120,10 @@ a resolver-stage cohort; the second report includes the later native stage.
 
 ## Next initialization milestone
 
-Owning strings and confined primitive-key Maps are now available; see
+Owning strings and primitive-key Maps across closed calls are now available; see
 [native-strings.md](native-strings.md) and [native-maps.md](native-maps.md).
-The latter remains local to an invocation and does not yet carry Bootstrap's
-nested Maps or object keys across factory return.
+Map handles survive factory return and can be shared through lifted captures.
+Returned callable method tables, nested Maps and object keys still need support.
 
 Compile a source-derived initialization slice using Bootstrap's unchanged UMD
 wrapper and its Map-backed Data object, then exercise exported `set`, `get`

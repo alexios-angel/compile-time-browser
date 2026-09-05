@@ -5060,6 +5060,8 @@ struct admission {
                     continue;
                 }
                 if (carrierOf(typeOf(operands[i])) != carrier::string &&
+                    !(carrierOf(typeOf(operands[i])) == carrier::map &&
+                      nativeMapGroup(operands[i]) >= 0) &&
                     !numeric(operands[i], "argument")) {
                     return false;
                 }
@@ -5905,7 +5907,9 @@ struct lowering {
         // PROTOTYPES FIRST. main is the importer's function 0 and is emitted
         // first, and C++ needs a declaration before a use; one
         // emitc.declare_func per lowered function, at the top of the module
-        // after the includes, is what the emitter prints as a prototype.
+        // after the includes and carrier definitions, is what the emitter
+        // prints as a prototype. Map parameters and returns name the helper's
+        // number_map template, so its definition must precede the prototypes.
         {
             mlir::OpBuilder b(context);
             b.setInsertionPointToStart(module.getBody());
@@ -5913,9 +5917,9 @@ struct lowering {
             module.walk([&](ec::FuncOp f) {
                 if (f.getSymName() != "main") { lowered.push_back(f); }
             });
-            // After the includes, which declareGlobals put first.
+            // After the includes and helpers, which declareGlobals put first.
             for (mlir::Operation & op : module.getBody()->getOperations()) {
-                if (!llvm::isa<ec::IncludeOp>(op)) {
+                if (!llvm::isa<ec::IncludeOp, ec::VerbatimOp>(op)) {
                     b.setInsertionPoint(&op);
                     break;
                 }
@@ -6760,6 +6764,23 @@ struct lowering {
         });
         for (mlir::Operation * o : llvm::reverse(dead)) {
             if (o->use_empty()) { eraseIfUnused(o); }
+        }
+
+        // An unused owning Map parameter still receives and releases a handle.
+        // Keep that signature and evaluate the argument at every call site;
+        // explicitly discard the parameter to satisfy -Wunused-parameter.
+        // Do this after sweeping capture placeholders, which can be its last
+        // apparent use before lowering.
+        if (!isEntry) {
+            mlir::OpBuilder at = mlir::OpBuilder::atBlockBegin(&body);
+            for (unsigned i = 3; i < body.getNumArguments(); ++i) {
+                mlir::Value arg = body.getArgument(i);
+                if (arg.use_empty() && carrierOf(typeOf(arg)) == carrier::map) {
+                    ec::CallOpaqueOp::create(at, made.getLoc(), mlir::TypeRange{},
+                                             at.getStringAttr("static_cast<void>"),
+                                             mlir::ValueRange{arg});
+                }
+            }
         }
 
         // AND NOTHING OF THE ctjs DIALECT SURVIVED, WHICH IS THE WHOLE CLAIM.

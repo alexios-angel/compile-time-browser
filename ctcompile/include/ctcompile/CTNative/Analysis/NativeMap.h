@@ -5,6 +5,8 @@
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "mlir/IR/BuiltinOps.h"
 
+#include <cstdint>
+
 namespace ctcompile::ctnative {
 
 inline constexpr llvm::StringLiteral kNativeMapSite = "ctnative.map_site";
@@ -12,6 +14,8 @@ inline constexpr llvm::StringLiteral kNativeMapAction = "ctnative.map_action";
 inline constexpr llvm::StringLiteral kNativeMapMethod = "ctnative.map_method";
 inline constexpr llvm::StringLiteral kNativeMapConstructor = "ctnative.map_constructor";
 inline constexpr llvm::StringLiteral kNativeMapReason = "ctnative.map_reason";
+inline constexpr llvm::StringLiteral kNativeMapGroup = "ctnative.map_group";
+inline constexpr llvm::StringLiteral kNativeMapArgGroups = "ctnative.map_arg_groups";
 
 /// Annotate only after proving both the standard constructor/method identity
 /// and every instance use. No runtime assumption or boxed fallback is added.
@@ -20,8 +24,10 @@ void prepareNativeMaps(mlir::ModuleOp module);
 /// The operation performed by a proved call or size read, or empty.
 llvm::StringRef nativeMapAction(mlir::Operation * op);
 
-/// Follow only the identity-preserving result of Map.set back to its new Map.
-ctjs::ConstructOp nativeMapRoot(mlir::Value value);
+/// Schema family shared through set results, closed call arguments and returns.
+/// A family may contain distinct runtime instances; it is not an identity proof.
+/// Returns -1 when the value has no proved Map flow.
+int64_t nativeMapGroup(mlir::Value value);
 
 /// These values name an erased standard constructor or method, never data.
 bool isNativeMapBookkeeping(mlir::Operation * op);

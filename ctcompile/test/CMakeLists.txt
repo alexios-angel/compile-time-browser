@@ -2161,3 +2161,16 @@ if(COMMAND ctcompile_add_native_claims)
                               "${CMAKE_CURRENT_SOURCE_DIR}/native-map-fixture.js"
                               22 19 23 2)
 endif()
+
+# Owned Map handles survive closed factory returns and lifted captures.
+# Shared schemas must preserve distinct allocations and formal argument slots.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(map_flow
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-map-flow-fixture.js"
+                                lifetime42)
+endif()
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(map_flow
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-map-flow-fixture.js"
+                              29 22 44 8)
+endif()
