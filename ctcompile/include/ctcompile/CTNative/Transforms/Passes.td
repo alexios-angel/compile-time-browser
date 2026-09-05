@@ -41,7 +41,15 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
     Runs AFTER --ctjs-resolve-globals and --ctjs-lift-to-scf; a function that
     still carries `cf` branches is refused as unstructured.
 
-    PHASE 59 SLICE 1 RUNS FIRST, INSIDE THIS PASS: closure conversion by
+    Known capture-free callback arguments are specialized first. When every
+    caller supplies the same target, calls through the parameter become
+    direct calls retaining the original closure value. A call-only parameter
+    whose callback identity cannot escape is removed from all signatures and
+    call sites; its closure is recreated locally for the capture lift. Raw
+    argument windows, unknown callers and lexical receivers remain refused.
+    Escaping callbacks retain their value and their native diagnostic.
+
+    PHASE 59 SLICE 1 THEN RUNS INSIDE THIS PASS: closure conversion by
     LAMBDA LIFTING. A `ctjs.create_closure` whose every use is a call, whose
     captures are all immutable cells, and whose target is not already reached
     another way, is rewritten so the captured VALUES become extra LEADING

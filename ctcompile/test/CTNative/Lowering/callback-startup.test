@@ -1,0 +1,10 @@
+# RUN: python3 %S/../../../../tools/check/named-callees.py --translate ctjs-translate --opt ctjs-opt --corpus %S/../../../../ctbrowser/vendor/bootstrap/bootstrap.bundle.js --require-entry-callee 'fn$2' --expect-unreachable 'fn$463' | FileCheck %s --check-prefix=BOOTSTRAP
+# RUN: not python3 %S/../../../../tools/check/named-callees.py --translate ctjs-translate --opt ctjs-opt --corpus %S/../../../../ctbrowser/vendor/bootstrap/bootstrap.bundle.js --require-entry-callee 'fn$463' 2>&1 | FileCheck %s --check-prefix=UNREACHABLE
+# RUN: python3 %S/../../../../tools/check/named-callees.py --translate ctjs-translate --opt ctjs-opt --corpus %S/../../native-callback-fixture.js --require-entry-callee 'bootstrapFactory$9' | FileCheck %s --check-prefix=NATIVE
+
+# BOOTSTRAP: CLAIMED 0   LIFTED 5   REFUSED 19
+# BOOTSTRAP: post-native graph: 63 distinct targets over 224 ctjs.call_direct and 0 emitc.call site(s)
+# BOOTSTRAP: entry _script_$0: 6 function(s) on static direct-call paths
+# BOOTSTRAP: reachable: _script_$0, bi$88, fn$1, fn$125, fn$178, fn$2
+# UNREACHABLE: named-callees: fn$463 is not reachable by direct calls from _script_$0
+# NATIVE: entry main:

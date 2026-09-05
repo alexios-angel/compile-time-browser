@@ -1395,15 +1395,8 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   # to lose.
   ctcompile_add_native_claims(differential "${CMAKE_CURRENT_SOURCE_DIR}/differential.js" 2 56 10 0)
   ctcompile_add_native_claims(launcher "${CMAKE_CURRENT_SOURCE_DIR}/launcher.js" 0 9 9 0)
-  # THE LAST FIELD ROSE WITH PHASE 59 SLICE 2 STEP 4, from 4 / 101 / 53. A
-  # local binding that holds a function is now a direct call, and the lowering
-  # makes one per read; the claimed counts did not move, which is the finding
-  # and not a rounding error. The three figures are the ones MEASURED on the
-  # day the step landed, and they are a LOWER bound on what the tree emits: the
-  # measurement was taken before the pass folded the calls it writes in another
-  # frame into the same counter, and that fold can only add.
   ctcompile_add_native_claims(bootstrap
-    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 4 0 21 206)
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js" 4 0 21 208)
   ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 37 0 41 328)
   ctcompile_add_native_claims(phaser
     "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 43 0 48 283)
@@ -2167,4 +2160,16 @@ if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(deep_bindings
                               "${CMAKE_CURRENT_SOURCE_DIR}/native-deep-binding-fixture.js"
                               44 9 29 37)
+endif()
+
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(callbacks
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-callback-fixture.js"
+                                startup42)
+endif()
+
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(callbacks
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-callback-fixture.js"
+                              21 2 13 33)
 endif()

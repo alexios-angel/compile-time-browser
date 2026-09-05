@@ -314,6 +314,8 @@ struct liftReport {
     unsigned locals = 0;       // ctjs.create_cells that became a frame-local variable
     unsigned bindings = 0;     // local bindings that held a function and lowered to nothing
     unsigned bound = 0;        // of `calls`, the ones made direct from another frame
+    unsigned callbackCalls = 0;
+    unsigned callbackParameters = 0;
 };
 
 // --- THE RECEIVER IS A PARAMETER ------------------------------------------------
@@ -824,6 +826,176 @@ struct closureLifter {
                 passesNewTarget.insert(holder.getOperation());
             }
         });
+    }
+
+    void specializeCallbacks(liftReport & out) {
+        llvm::SmallVector<ctjs::FuncOp> candidates;
+        llvm::DenseSet<mlir::Operation *> seen;
+        module.walk([&](ctjs::CallDirectOp call) {
+            if (!llvm::any_of(call.getArgs(), [](mlir::Value argument) {
+                    return argument.getDefiningOp<ctjs::CreateClosureOp>() != nullptr;
+                })) {
+                return;
+            }
+            auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
+                call, call.getCalleeAttr());
+            if (target && seen.insert(target.getOperation()).second) {
+                candidates.push_back(target);
+            }
+        });
+        for (ctjs::FuncOp wrapper : candidates) {
+            if (wrapper.getBody().empty() || wrapper.getBody().front().getNumArguments() < 4) {
+                continue;
+            }
+            const auto refuse = [&](llvm::StringRef reason) {
+                wrapper->setAttr("ctnative.callback_refusal",
+                                 mlir::StringAttr::get(context, reason));
+            };
+            bool rawArguments = false;
+            wrapper.walk([&](mlir::Operation * operation) {
+                rawArguments |= llvm::isa<ctjs::MakeArgumentsOp, ctjs::GatherRestOp>(operation);
+            });
+            if (rawArguments) {
+                refuse("the wrapper reads its raw argument window");
+                continue;
+            }
+            if (passesNewTarget.contains(wrapper.getOperation())) {
+                refuse("the wrapper passes new.target");
+                continue;
+            }
+            if (whyOwnClosureEscapes(wrapper)) {
+                refuse("the wrapper's own closure escapes");
+                continue;
+            }
+            llvm::SmallVector<ctjs::CallDirectOp> callers;
+            llvm::SmallVector<ctjs::CreateClosureOp> wrapperClosures;
+            module.walk([&](ctjs::CallDirectOp call) {
+                if (call.getCallee() == wrapper.getSymName()) { callers.push_back(call); }
+            });
+            module.walk([&](ctjs::CreateClosureOp closure) {
+                if (targetOf(closure) == wrapper) { wrapperClosures.push_back(closure); }
+            });
+            bool closed = !callers.empty() && !wrapperClosures.empty();
+            for (ctjs::CreateClosureOp closure : wrapperClosures) {
+                for (mlir::OpOperand & use : closure.getResult().getUses()) {
+                    auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+                    closed &= call && use.getOperandNumber() == 2 &&
+                              call.getCallee() == wrapper.getSymName();
+                }
+            }
+            for (ctjs::CallDirectOp call : callers) {
+                auto closure = call.getCalleeValue().getDefiningOp<ctjs::CreateClosureOp>();
+                closed &= closure && targetOf(closure) == wrapper;
+            }
+            if (!closed) {
+                refuse("not every caller of the wrapper is a direct call of its closure");
+                continue;
+            }
+            mlir::Block & entry = wrapper.getBody().front();
+            for (unsigned parameter = entry.getNumArguments(); parameter-- > 3;) {
+                if (!llvm::any_of(callers, [&](ctjs::CallDirectOp call) {
+                        return call->getOperand(parameter).getDefiningOp<ctjs::CreateClosureOp>() !=
+                               nullptr;
+                    })) {
+                    continue;
+                }
+                ctjs::FuncOp callback;
+                llvm::SmallVector<ctjs::CreateClosureOp> supplied;
+                llvm::DenseSet<mlir::Operation *> suppliedSet;
+                bool uniform = true;
+                for (ctjs::CallDirectOp call : callers) {
+                    auto closure =
+                        call->getOperand(parameter).getDefiningOp<ctjs::CreateClosureOp>();
+                    ctjs::FuncOp target = closure ? targetOf(closure) : ctjs::FuncOp{};
+                    if (!target || !closure.getUpvalues().empty() ||
+                        whyTargetIsNotLiftable(closure) || (callback && callback != target)) {
+                        uniform = false;
+                        break;
+                    }
+                    callback = target;
+                    if (suppliedSet.insert(closure.getOperation()).second) {
+                        supplied.push_back(closure);
+                    }
+                }
+                if (!uniform) {
+                    refuse("callers do not supply one known capture-free callback target");
+                    continue;
+                }
+                const unsigned arity = callback.getBody().front().getNumArguments() - 3;
+                bool callbackReadsArguments = false;
+                callback.walk([&](mlir::Operation * operation) {
+                    callbackReadsArguments |=
+                        llvm::isa<ctjs::MakeArgumentsOp, ctjs::GatherRestOp>(operation);
+                });
+                mlir::BlockArgument argument = entry.getArgument(parameter);
+                llvm::SmallVector<ctjs::CallOp> calls;
+                bool callOnly = !argument.use_empty();
+                for (mlir::OpOperand & use : argument.getUses()) {
+                    auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                    if (!call || use.getOperandNumber() != 0 || call.getArgs().size() > arity ||
+                        (call.getArgs().size() < arity && callbackReadsArguments)) {
+                        callOnly = false;
+                        continue;
+                    }
+                    calls.push_back(call);
+                }
+                bool removable = callOnly && !whyOwnClosureEscapes(callback);
+                for (ctjs::CreateClosureOp closure : supplied) {
+                    for (mlir::OpOperand & use : closure.getResult().getUses()) {
+                        auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+                        removable &= call && use.getOperandNumber() == parameter &&
+                                     call.getCallee() == wrapper.getSymName();
+                    }
+                }
+                module.walk([&](ctjs::CreateClosureOp closure) {
+                    if (targetOf(closure) == callback &&
+                        !suppliedSet.contains(closure.getOperation())) {
+                        removable = false;
+                    }
+                });
+                mlir::Value callee = argument;
+                if (removable) {
+                    mlir::OpBuilder at(&entry, entry.begin());
+                    auto undefined = ctjs::ConstantOp::create(at, supplied.front().getLoc(),
+                                                              ctjs::ValueType::get(context),
+                                                              ctjs::UndefinedAttr::get(context));
+                    mlir::Operation * moved = at.clone(*supplied.front().getOperation());
+                    moved->setOperand(0, entry.getArgument(2));
+                    moved->setOperand(1, undefined);
+                    callee = moved->getResult(0);
+                }
+                for (ctjs::CallOp call : calls) {
+                    mlir::OpBuilder at(call);
+                    const auto valueType = ctjs::ValueType::get(context);
+                    auto undefined = ctjs::ConstantOp::create(at, call.getLoc(), valueType,
+                                                              ctjs::UndefinedAttr::get(context));
+                    llvm::SmallVector<mlir::Value> arguments(call.getArgs());
+                    while (arguments.size() < arity) { arguments.push_back(undefined); }
+                    auto direct = ctjs::CallDirectOp::create(
+                        at, call.getLoc(), valueType,
+                        mlir::FlatSymbolRefAttr::get(callback.getSymNameAttr()), call.getReceiver(),
+                        undefined, callee, arguments, nullptr, nullptr);
+                    direct->setAttr("ctnative.callback", mlir::UnitAttr::get(context));
+                    call.getResult().replaceAllUsesWith(direct.getResult());
+                    call.erase();
+                    ++out.calls;
+                    ++out.callbackCalls;
+                }
+                if (!removable) {
+                    refuse("the callback value or its identity escapes the call-only parameter");
+                    continue;
+                }
+                for (ctjs::CallDirectOp call : callers) { call->eraseOperand(parameter); }
+                llvm::BitVector removed(entry.getNumArguments());
+                removed.set(parameter);
+                if (mlir::failed(wrapper.eraseArguments(removed))) {
+                    llvm::report_fatal_error(
+                        "ctnative: could not erase a proved callback parameter");
+                }
+                for (ctjs::CreateClosureOp closure : supplied) { closure.erase(); }
+                ++out.callbackParameters;
+            }
+        }
     }
 
     void census() {
@@ -3307,6 +3479,7 @@ struct closureLifter {
         // operations it has since removed. It needs two of census()'s own
         // walks, which is why they are a function of their own now.
         indexAndNewTargets();
+        specializeCallbacks(out);
         bindLocalFunctions(out);
         census();
         // THE ARGUMENT SLOTS FIRST, because `closedAfterLift` reads them and
@@ -6565,7 +6738,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                                 << " shared cell(s) made a frame-local variable carried through "
                                 << lifted.carried << " pointer parameter(s), " << lifted.bindings
                                 << " local binding(s) that held a function, of whose calls "
-                                << lifted.bound << " were made direct from another frame";
+                                << lifted.bound << " were made direct from another frame; "
+                                << lifted.callbackCalls << " callback call(s) named, "
+                                << lifted.callbackParameters
+                                << " call-only function parameter(s) erased";
         }
 
         // THE ALIAS GROUPS, once the lift has written its attributes and before
