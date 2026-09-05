@@ -16,16 +16,41 @@ the host bindings outside the unchanged wrapper. CommonJS reads
 factory and invokes it after the UMD call has returned, first checking that
 the retained value is a function.
 
-All Data calls occur after the factory returns. Two distinct object keys
-produce `42` and `21`; replacing the first key's value produces `43`; removing
-it makes `get` return `null`. The interpreter reference must print exactly
-these four observations. AMD also prints `traceDelayed=1`.
+All Data calls occur after the factory returns. The interpreter reference must
+print exactly 19 numeric observations, or 20 for AMD:
 
-Each test then runs `native-claims.py`. It requires all six source functions
-to remain imported, or seven for AMD, and records every native refusal with
-its reason. Native coverage may increase without failing the gate. The
-recorded census is compile coverage; this probe does not execute a native
-Bootstrap binary or establish full Bootstrap support.
+| Branch | Observations |
+|---|---|
+| Element never inserted | `traceAbsentGet=1` for `null`; `traceAbsentRemove=1` for `undefined` |
+| Two distinct object keys | `traceGet=42`, `traceOther=21` |
+| Replace the same component key | `traceReplacement=43` |
+| Read/remove the wrong component key | `traceWrongKeyGet=1` for `null`, `traceWrongKeyRemove=1` for `undefined`, `traceAfterWrongKeyRemove=43` |
+| Reject a second component on one element | `traceErrorCount=1`, `traceErrorMessage=1`, `traceRejectedKey=1` for `null`, `traceAfterRejectedSet=43` |
+| Delete one element and remove it again | `traceRemoved=1` for `null`, `traceOtherAfterRemove=21`, `traceRemovedAgain=1` for `undefined` |
+| Reinsert after deleting the outer Map entry | `traceReinserted=64`, `traceReinsertedIdentity=1`, `traceOldKeyAfterReinsert=1` for `null`, `traceOtherAfterReinsert=21` |
+| Delay AMD invocation | `traceDelayed=1` |
+
+The reference has no console, so the harness supplies a `console.error`
+recorder. The real Data method chooses the rejection branch and builds the
+message; the recorder checks that exactly one error names the existing
+`bs.alert` instance. Removing that element then allows the previously rejected
+`bs.collapse` key. Its new value is an object with a `value` field, and reads
+must preserve both that field and the original object's identity.
+
+Each test then runs `native-claims.py`. It requires all seven source functions
+to remain imported, or eight for AMD, and records every native refusal with
+its reason. These totals include the script entry, UMD wrapper, factory, three
+Data methods and console recorder; AMD adds its registration function. The
+recorder accounts for the increase from the previous 6/6/7 totals. Native
+coverage may increase without failing the gate. The recorded census is compile
+coverage; this probe does not execute a native Bootstrap binary or establish
+full Bootstrap support.
+
+The expanded probes measured **0/7** native functions for CommonJS, **0/7** for
+the browser and **0/8** for AMD on the devbox. Every refusal has a reason and
+no source function is skipped. All 19/19/20 interpreter observations and both
+negative controls pass. The 1,101-byte vendor fragment and its SHA-256 hash
+remain unchanged from the original four-observation probe.
 
 Two negative controls change the actual executed replacement observation to
 `44` and remove the vendor extraction boundary. They pass only on the exact

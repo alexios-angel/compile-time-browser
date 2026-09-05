@@ -29,7 +29,27 @@ ENVIRONMENTS = {
         "published",
     ),
 }
-EXPECTED = {"traceGet": "42", "traceOther": "21", "traceReplacement": "43", "traceRemoved": "1"}
+EXPECTED = {
+    "traceAbsentGet": "1",
+    "traceAbsentRemove": "1",
+    "traceGet": "42",
+    "traceOther": "21",
+    "traceReplacement": "43",
+    "traceWrongKeyGet": "1",
+    "traceWrongKeyRemove": "1",
+    "traceAfterWrongKeyRemove": "43",
+    "traceErrorCount": "1",
+    "traceErrorMessage": "1",
+    "traceRejectedKey": "1",
+    "traceAfterRejectedSet": "43",
+    "traceRemoved": "1",
+    "traceOtherAfterRemove": "21",
+    "traceRemovedAgain": "1",
+    "traceReinserted": "64",
+    "traceReinsertedIdentity": "1",
+    "traceOldKeyAfterReinsert": "1",
+    "traceOtherAfterReinsert": "21",
+}
 
 
 class ProbeError(Exception):
@@ -85,15 +105,39 @@ def generate(fragment: str, mode: str) -> str:
         'var traceDelayed = typeof pending === "function" ? 1 : 0; var published = pending();\n'
         if mode == "amd" else ""
     )
-    return prelude + fragment + delayed + f"""var element = {{}}; var other = {{}};
+    # The reference installs no console. Supply only the host's error sink;
+    # Bootstrap itself still decides when to reject and formats the message.
+    console = """var traceErrorCount = 0; var traceErrorMessage = 0;
+var console = { error: function(message) {
+    traceErrorCount = traceErrorCount + 1;
+    traceErrorMessage = message === "Bootstrap doesn't allow more than one instance per element. Bound instance: bs.alert." ? 1 : 0;
+} };
+"""
+    return prelude + console + fragment + delayed + f"""var element = {{}}; var other = {{}}; var absent = {{}};
+var traceAbsentGet = {api}.get(absent, "bs.alert") === null ? 1 : 0;
+var traceAbsentRemove = {api}.remove(absent, "bs.alert") === undefined ? 1 : 0;
 {api}.set(element, "bs.alert", 42);
 {api}.set(other, "bs.alert", 21);
 var traceGet = {api}.get(element, "bs.alert");
 var traceOther = {api}.get(other, "bs.alert");
 {api}.set(element, "bs.alert", 43);
 var traceReplacement = {api}.get(element, "bs.alert");
+var traceWrongKeyGet = {api}.get(element, "bs.missing") === null ? 1 : 0;
+var traceWrongKeyRemove = {api}.remove(element, "bs.missing") === undefined ? 1 : 0;
+var traceAfterWrongKeyRemove = {api}.get(element, "bs.alert");
+{api}.set(element, "bs.collapse", 99);
+var traceRejectedKey = {api}.get(element, "bs.collapse") === null ? 1 : 0;
+var traceAfterRejectedSet = {api}.get(element, "bs.alert");
 {api}.remove(element, "bs.alert");
 var traceRemoved = {api}.get(element, "bs.alert") === null ? 1 : 0;
+var traceOtherAfterRemove = {api}.get(other, "bs.alert");
+var traceRemovedAgain = {api}.remove(element, "bs.alert") === undefined ? 1 : 0;
+var instance = {{value: 64}};
+{api}.set(element, "bs.collapse", instance);
+var traceReinserted = {api}.get(element, "bs.collapse").value;
+var traceReinsertedIdentity = {api}.get(element, "bs.collapse") === instance ? 1 : 0;
+var traceOldKeyAfterReinsert = {api}.get(element, "bs.alert") === null ? 1 : 0;
+var traceOtherAfterReinsert = {api}.get(other, "bs.alert");
 """
 
 
@@ -155,7 +199,9 @@ def check(args: argparse.Namespace) -> None:
     ])
     stem.with_suffix(".claims.log").write_text(claims.stdout + claims.stderr)
     census = json.loads(claims_path.read_text())
-    expected_total = 7 if args.mode == "amd" else 6
+    # Script entry + UMD wrapper + factory + three Data methods + the host
+    # console recorder; AMD adds its delayed-factory registration function.
+    expected_total = 8 if args.mode == "amd" else 7
     if census["total"] != expected_total or census["skipped"] != 0:
         raise ProbeError(
             f"source functions lost: expected {expected_total} imported, "
