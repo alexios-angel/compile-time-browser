@@ -168,6 +168,8 @@ public:
     // `===`. Defined out of line below, because STRINGS compare by CONTENT and
     // string_object is not declared yet here.
     [[nodiscard]] bool strict_equals(value o) const noexcept;
+    // Map/Set key equality, also used by ctcompile's build-time evaluator.
+    [[nodiscard]] bool same_value_zero(value o) const noexcept;
     [[nodiscard]] friend constexpr bool operator==(value a, value b) noexcept {
         return a.bits_ == b.bits_;
     }
@@ -308,6 +310,14 @@ struct bigint_object final : heap_object {
                static_cast<const bigint_object *>(o.as_heap())->digits;
     }
     return false;
+}
+
+[[nodiscard]] inline bool value::same_value_zero(value o) const noexcept {
+    if (is_number() && o.is_number()) {
+        const double a = as_number(), b = o.as_number();
+        return a == b || (std::isnan(a) && std::isnan(b));
+    }
+    return strict_equals(o);
 }
 
 // `new Proxy(target, handler)`. Three traps are implemented - `get`, `has` and

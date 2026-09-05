@@ -573,14 +573,7 @@ void install_collections(context & cx) {
     // SameValueZero, which is what Map and Set key on: like ===, except NaN
     // matches NaN. A page that uses NaN as a key is doing something odd, but
     // getting it wrong here would be a silent miss.
-    const auto same_value_zero = [](value a, value b) {
-        if (a.is_number() && b.is_number()) {
-            const double x = a.as_number();
-            const double y = b.as_number();
-            return (std::isnan(x) && std::isnan(y)) || x == y;
-        }
-        return a.strict_equals(b);
-    };
+    const auto same_value_zero = [](value a, value b) { return a.same_value_zero(b); };
 
     const auto build = [&](const char * name, bool keyed) {
         object_object * proto = new_table(cx);

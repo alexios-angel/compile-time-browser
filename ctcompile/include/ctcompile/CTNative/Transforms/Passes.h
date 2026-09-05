@@ -3,6 +3,7 @@
 
 // The generated declarations name every dependent dialect by type, so this
 // header has to include them.
+#include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/Dialect/PDL/IR/PDL.h"

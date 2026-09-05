@@ -18,6 +18,10 @@ foreach(required TRANSLATE OPT SOURCE OUTPUT)
     message(FATAL_ERROR "native-pipeline.cmake: -D${required}= is required")
   endif()
 endforeach()
+set(_partial_pass "")
+if(PARTIAL_EVALUATE)
+  set(_partial_pass "ctnative-partial-evaluate{report=true}, ")
+endif()
 execute_process(
   COMMAND "${TRANSLATE}" --ctbrowser-js-to-ctjs "${SOURCE}" --mlir-print-debuginfo
   # EVERYTHING AFTER THE LOWERING RUNS INSIDE emitc.func ONLY. A refused
@@ -30,8 +34,8 @@ execute_process(
   # prune for the variables nothing reads (Phase 63 Step 7 - the file must
   # compile clean under -Wall -Wextra -Werror), and a canonicalize for what
   # the prune left dead.
-  COMMAND "${OPT}" "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))"
-          --mlir-print-debuginfo
+  COMMAND "${OPT}" "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ${_partial_pass}ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))"
+          --mlir-print-debuginfo --mlir-print-op-on-diagnostic=false
   OUTPUT_VARIABLE module
   ERROR_VARIABLE complaints
   RESULTS_VARIABLE outcomes)
@@ -40,6 +44,9 @@ foreach(outcome IN LISTS outcomes)
     message(FATAL_ERROR "native-pipeline.cmake: a stage failed (${outcomes})\n${complaints}")
   endif()
 endforeach()
+if(PARTIAL_EVALUATE AND NOT complaints MATCHES "partial evaluation: [1-9][0-9]* function")
+  message(FATAL_ERROR "partial evaluation did not specialize any factory\n${complaints}")
+endif()
 # A REFUSED FUNCTION IS NAMED HERE, not discovered as a translation failure
 # three steps later: the diagnostic is on the ctjs.func the pass left behind.
 string(REGEX MATCHALL "ctnative.not_native = \"[^\"]*\"" refusals "${module}")

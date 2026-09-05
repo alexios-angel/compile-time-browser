@@ -3,11 +3,15 @@
 The whole-application compiler: an application directory in, a self-contained
 native executable out.
 
-It is a **stub today**. `ctcompile --version` reports what it was built
-against and nothing else compiles yet. The project exists at this size on
-purpose — the repository split (Phase -1) had to be finished and verified
-before compiler work started, and a sibling project that does not build is not
-evidence of anything.
+The application driver is still incomplete. With MLIR enabled, `ctjs-translate`
+and `ctjs-opt` import JavaScript and compile it through boxed or native EmitC
+pipelines. The native subset emits standalone C++ and diagnoses unsupported
+functions. Full native Bootstrap execution is not yet established.
+
+Recent native work includes [tagged optional scalars](docs/native-optional-scalars.md)
+and opt-in [partial evaluation with heap residualisation](docs/native-partial-evaluation.md).
+The partial evaluator reuses ctbrowser's primitive semantics inside the compiler;
+generated native programs retain no VM dependency.
 
 ## What it is for
 
@@ -62,14 +66,14 @@ cmake -S ctcompile -B build-ctcompile -Dctbrowser_DIR=<prefix>/lib/cmake/ctbrows
 The standalone form is not a convenience — it is what proves the project
 boundary is real rather than a directory name.
 
-MLIR is behind `CTCOMPILE_ENABLE_MLIR`, OFF until Phase 7 has something to do
-with it. The version is pinned in the monorepo's `cmake/LLVMVersion.cmake`; see
-`docs/LLVMUpgrade.md`.
+MLIR is behind `CTCOMPILE_ENABLE_MLIR`; the full devbox gate enables it.
+Engine-only builds do not require LLVM. The version is pinned in
+`cmake/LLVMVersion.cmake`; see `docs/LLVMUpgrade.md`.
 
 ## What lands next
 
-Phase 0 — the inventories the compiler is built on, and the one that sizes
-everything else is the bytecode table: every opcode with its operands,
-allocation, GC, throwing, re-entrancy and suspension behaviour, as an X-macro
-`.def` the VM's own decoder then consumes, so the compiler's table and the
-interpreter's cannot drift.
+Native Bootstrap still needs component and host object representations, typed
+host publication and its library/error paths. Partial evaluation needs explicit
+effect contracts and region splitting to retain runtime work within otherwise
+static initialization. See the [Bootstrap Data probe](docs/bootstrap-data-probe.md)
+for the current source-derived execution boundary.

@@ -121,6 +121,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
     -DMUTATE=1 "-DEXPECT_FAILURE=refused the generated file")
   function(ctcompile_add_native_pipeline name js)
     set(_module "${CMAKE_CURRENT_BINARY_DIR}/${name}.pipeline.emitc.mlir")
+    cmake_parse_arguments(_pipeline "PARTIAL_EVALUATE" "" "" ${ARGN})
     add_custom_command(
       OUTPUT "${_module}"
       COMMAND ${CMAKE_COMMAND}
@@ -128,6 +129,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
               -DOPT=$<TARGET_FILE:ctjs-opt>
               -DSOURCE=${js}
               -DOUTPUT=${_module}
+              -DPARTIAL_EVALUATE=${_pipeline_PARTIAL_EVALUATE}
               -P "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline.cmake"
       DEPENDS "${js}" "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline.cmake" ctjs-translate ctjs-opt
       COMMENT "Lowering ${name} through the native pipeline")
@@ -148,8 +150,8 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
     # printf; the driver checks that itself and says so, because a mutation
     # inserted after the load is invisible and would pass for the wrong
     # reason.
-    if(ARGN)
-      list(GET ARGN 0 _mutate_global)
+    if(_pipeline_UNPARSED_ARGUMENTS)
+      list(GET _pipeline_UNPARSED_ARGUMENTS 0 _mutate_global)
       ctcompile_add_native_unit(pipeline_${name}_off_by_one "${_module}" "${js}"
         -DMUTATE=${_mutate_global}
         "-DEXPECT_FAILURE=global '${_mutate_global}' differs")

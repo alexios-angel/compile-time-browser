@@ -9,6 +9,33 @@
 
 include "mlir/Pass/PassBase.td"
 
+def CTNativePartialEvaluate : Pass<"ctnative-partial-evaluate", "mlir::ModuleOp"> {
+  let summary = "Evaluate closed constant-input factories and residualize their reachable heap";
+  let description = [{
+    Opt-in native initialization specialization. Evaluates a private function
+    only when every visible direct caller supplies identical primitive inputs
+    and every executed effect stays within the evaluator's fresh heap.
+    Primitive operations, known branches, bounded loops, nested direct calls,
+    plain objects and proved standard Maps are supported. Residual CTJS allocates
+    each live node once per runtime invocation, then initializes its final
+    edges, preserving identity, sharing and Map order. The ordinary native
+    ownership/type checks still decide which graphs have a C++ representation.
+
+    Unsupported effects, unknown inputs, cyclic returned graphs and exhausted
+    budgets leave the original body intact with ctnative.partial_eval_reason.
+    Result and proof annotations are recomputed on every invocation. Run after
+    ctjs-resolve-globals and before ctnative-lower-to-emitc; structured and basic
+    CFG branches are accepted. No runtime VM heap is embedded in the output.
+  }];
+  let options = [
+    Option<"maxSteps", "max-steps", "unsigned", "10000", "Maximum evaluated operations per factory">,
+    Option<"maxNodes", "max-nodes", "unsigned", "256", "Maximum fresh heap nodes per factory">,
+    Option<"maxDepth", "max-depth", "unsigned", "32", "Maximum nested evaluation depth">,
+    Option<"report", "report", "bool", "false", "Report evaluated functions, residual nodes and declines">
+  ];
+  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect"];
+}
+
 def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
   let summary = "Lower every PROVED function to EmitC over plain C++ types; diagnose the rest";
   let description = [{

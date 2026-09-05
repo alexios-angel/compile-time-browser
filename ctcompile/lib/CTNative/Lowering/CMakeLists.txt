@@ -67,10 +67,14 @@ add_mlir_pdll_library(CTNativeUnaryPlusPDLLIncGen
     ${CTCOMPILE_PDLL_INCLUDES})
 
 # The native tier's lowering: proved CTJS -> EmitC over plain C++ types. Links
-# the analyses it consults and the dialects it emits into; nothing here names a
-# runtime symbol, and part 24 §1.2 is why - the output of this pass links no
-# ctbrowser library at all.
+# the analyses it consults and the dialects it emits into. Partial evaluation
+# also reuses compiler-side primitive helpers from ctbrowser; the generated
+# C++ still links no ctbrowser library, as part 24 §1.2 requires.
 add_library(ctcompile-ctnative-lowering
+  ../PartialEvaluation/Pass.cpp
+  ../PartialEvaluation/Evaluator.cpp
+  ../PartialEvaluation/Primitives.cpp
+  ../PartialEvaluation/Residualize.cpp
   LowerToEmitC.cpp
   LoweringSupport.cpp
   ClosureLifting/Calls.cpp
@@ -107,6 +111,9 @@ add_dependencies(ctcompile-ctnative-lowering
   CTNativeUnaryPlusPDLLIncGen)
 
 target_link_libraries(ctcompile-ctnative-lowering
+  PRIVATE
+    # Compiler-side primitive semantics only. Generated native C++ links no VM.
+    ctbrowser::script
   PUBLIC
     CTNativeAnalysis
     CTNativeDialect

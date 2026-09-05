@@ -6,6 +6,7 @@ by their implementation files. Public APIs remain under `include/ctcompile/`.
 
 | Area | Location | Contents |
 |---|---|---|
+| Partial evaluation | `lib/CTNative/PartialEvaluation/` | Factory admission, bounded evaluation, primitive adapter, heap graph and residualisation |
 | Native pass | `lib/CTNative/Lowering/LowerToEmitC.cpp` | Pass setup, inference, admission fixpoint and lowering order |
 | Closure lifting | `lib/CTNative/Lowering/ClosureLifting/` | Calls, callbacks, bindings, cells, captures, returned closures and method tables, constructors, diagnostics and rewriting |
 | Native admission | `lib/CTNative/Lowering/Admission/` | Value, object, operation and function checks |
