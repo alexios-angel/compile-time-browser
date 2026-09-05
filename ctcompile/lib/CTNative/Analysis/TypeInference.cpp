@@ -116,14 +116,21 @@ bool isProvedString(const TypeLattice * operand) {
 
 // A value on which `+` is numeric addition: a number, a boolean, undefined
 // or null - the types ToPrimitive leaves alone and ToNumber accepts.
-bool isProvedNumeric(const TypeLattice * operand) {
-    const mlir::Type type = operand->getValue().getType();
+bool isProvedNumericType(mlir::Type type) {
     if (type == nullptr) { return false; }
     if (llvm::isa<BoolType, NumType>(type)) { return true; }
     if (auto opt = llvm::dyn_cast<OptType>(type)) {
-        return llvm::isa<BottomType, NumType, BoolType>(opt.getElementType());
+        return llvm::isa<BottomType>(opt.getElementType()) ||
+               isProvedNumericType(opt.getElementType());
+    }
+    if (auto variant = llvm::dyn_cast<VariantType>(type)) {
+        return llvm::all_of(variant.getAlternatives(), isProvedNumericType);
     }
     return false;
+}
+
+bool isProvedNumeric(const TypeLattice * operand) {
+    return isProvedNumericType(operand->getValue().getType());
 }
 
 bool noneAreBigInt(llvm::ArrayRef<const TypeLattice *> operands) {

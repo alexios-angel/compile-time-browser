@@ -4,10 +4,9 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
-// The C++ spelling of a field carrier, and there are two of them: a field
-// is a number or a boolean (O-2) and admission refuses everything else by
-// name. Needed because a template ARGUMENT is text - `ctn_at_hit<bool>` -
-// where a field's type is an mlir::Type the emitter prints.
+// The C++ spelling of a scalar field carrier. Definite numbers and booleans
+// retain their ordinary types; mixed or optional scalars retain their tags.
+// A template argument needs text where a field's type is an mlir::Type.
 const char * lowering::spelled(mlir::Type type) {
     if (isNullableCarrier(type)) { return "ctnative::nullable_scalar"; }
     if (llvm::isa<mlir::Float64Type>(type)) { return "double"; }
@@ -97,8 +96,8 @@ const lowering::siteShape & lowering::shapeAt(mlir::Value object) const {
 }
 
 // Every field is sorted by name and joins the carriers of its writes and
-// reads. An optional read widens storage to the tagged carrier even when
-// every write is a definite number or boolean: the read can precede them.
+// reads. Mixed scalar stores use the tagged carrier. An optional read widens
+// even definite stores because it can precede them.
 // A field only ever read therefore preserves undefined. Collect both sides
 // before choosing so SSA use-list ordering cannot change a shape's key.
 //
@@ -131,16 +130,16 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
                 key = get.getKey();
                 auto [at, fresh] =
                     read.try_emplace(admission::keyOf(key), carried(get.getResult()));
-                if (isNullableCarrier(carried(get.getResult()))) {
-                    at->second = carried(get.getResult());
+                if (!fresh && at->second != carried(get.getResult())) {
+                    at->second = carrierType(context, carrier::nullable);
                 }
             } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
                 if (set.getObject() != alias) { continue; }
                 key = set.getKey();
                 auto [at, fresh] =
                     stored.try_emplace(admission::keyOf(key), carried(set.getValue()));
-                if (isNullableCarrier(carried(set.getValue()))) {
-                    at->second = carried(set.getValue());
+                if (!fresh && at->second != carried(set.getValue())) {
+                    at->second = carrierType(context, carrier::nullable);
                 }
             }
             if (key) { accessKey[user] = admission::keyOf(key).str(); }
@@ -149,14 +148,17 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
     llvm::SmallVector<std::pair<std::string, mlir::Type>> fields;
     for (const auto & entry : stored) {
         const auto observed = read.lookup(entry.getKey());
-        fields.emplace_back(entry.getKey().str(),
-                            isNullableCarrier(observed) ? observed : entry.getValue());
+        fields.emplace_back(entry.getKey().str(), observed && observed != entry.getValue()
+                                                      ? carrierType(context, carrier::nullable)
+                                                      : entry.getValue());
     }
     for (const auto & entry : read) {
         if (!stored.contains(entry.getKey())) {
             fields.emplace_back(entry.getKey().str(), entry.getValue());
         }
     }
+    needsNullable |=
+        llvm::any_of(fields, [](const auto & field) { return isNullableCarrier(field.second); });
     for (mlir::Value alias : aliasesOf(groups, object)) {
         for (mlir::Operation * user : alias.getUsers()) {
             const auto key = accessKey.find(user);

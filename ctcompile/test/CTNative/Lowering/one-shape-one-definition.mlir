@@ -123,17 +123,16 @@
 // EMPTY-NOT: ctnative.template_params
 // EMPTY-NOT: emitc.field
 
-// --- A FIELD STORED TWO CARRIERS IS REFUSED --------------------------------
+// --- A FIELD STORED BOTH SCALAR KINDS USES TAGGED STORAGE ------------------
 //
-// `o.v = 1; o.v = true;` with `v` never read. Where the field IS read the join
-// of its stores is `!ctnative.boxed` and the read is refused for having no
-// carrier; where it is not, both stores are admitted one at a time and the
-// field used to take whichever the use-list handed over first. That was
-// unobservable while the class was per site. It is not now: the shape key IS
-// the field types, so two sites of one shape could disagree about this field
-// and split into a template that says nothing about the program.
+// `o.v = 1; o.v = true;` with `v` never read still joins every write before
+// choosing its storage. A use-list's order cannot select bool or double and
+// make otherwise identical sites disagree about the shape key.
 //
-// CONFLICT: ctnative.not_native = "field `v` is stored a number on one path and a boolean on another"
+// CONFLICT: struct nullable_scalar {
+// CONFLICT: emitc.class @ctn_v
+// CONFLICT-NEXT: emitc.field @v : !emitc.opaque<"ctnative::nullable_scalar">
+// CONFLICT: emitc.func @twofaced_1
 
 // --- AND WHAT THE TEMPLATE LOOKS LIKE AS C++ -------------------------------
 //

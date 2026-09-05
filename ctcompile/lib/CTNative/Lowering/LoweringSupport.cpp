@@ -42,7 +42,18 @@ carrier carrierOf(mlir::Type type) {
         return carrier::string;
     }
     if (auto opt = llvm::dyn_cast<OptType>(type)) {
-        if (llvm::isa<BottomType, NumType, BoolType>(opt.getElementType())) {
+        if (llvm::isa<BottomType>(opt.getElementType()) ||
+            isScalarCarrier(carrierOf(opt.getElementType()))) {
+            return carrier::nullable;
+        }
+    }
+    // A closed scalar union uses the same tags as an optional scalar. The
+    // lattice retains its exact alternatives: selecting this representation
+    // neither adds nullability nor admits strings, objects or unknown values.
+    if (auto variant = llvm::dyn_cast<VariantType>(type)) {
+        if (llvm::all_of(variant.getAlternatives(), [](mlir::Type alternative) {
+                return llvm::isa<NumType, BoolType>(alternative);
+            })) {
             return carrier::nullable;
         }
     }

@@ -1,47 +1,6 @@
-// THE ONE REFUSAL THAT IS A FACT ABOUT TWO OPERATIONS - AND THE MEASUREMENT
-// THAT SAYS NOTHING CAN REACH IT.
-//
-// Every other rule in `admission` is a question about ONE operation and the
-// types on its operands. This one is not: `admission::returns` is state that
-// SURVIVES from one ctjs.return to the next - the first return seen fixes the
-// function's carrier, and a later return with a different one is
-//
-//     "returns a number on one path and a boolean on another"
-//
-// which is why it was picked out as the case that would tell an INTERFACE from
-// a PATTERN if this pass is ever restructured: a rewrite that gives every
-// operation its own independent rule has nowhere to put it.
-//
-// IT IS DEAD CODE TODAY, and this file is the evidence rather than a claim.
-// To reach it a function needs TWO REACHABLE ctjs.return operations with
-// different carriers and NO operation that `admission::op` refuses first -
-// and `refuse()` keeps the FIRST reason it is given. Those two demands are
-// contradictory:
-//
-//   * ctjs.return is a terminator with no successors, so a second reachable
-//     return needs a successor-bearing terminator somewhere before it. The
-//     only ones there are are cf.br, cf.cond_br, cf.switch (refused by the
-//     `cf` arm) and ctjs.check, ctjs.push_handler (refused by the default
-//     arm). Follow the reachability chain back and one of them is in the
-//     ENTRY block, which the walk reaches before any later block.
-//   * after --ctjs-lift-to-scf there is no cf left to refuse, because the
-//     lift has funnelled the returns into one, fed by a phi - and the phi's
-//     type is a variant, which the carrier check refuses at the scf.if.
-//   * put the second return in an UNREACHABLE block to dodge both and
-//     DeadCodeAnalysis never visits it: measured, every value there reads
-//     `<unvisited>` and the refusal is "a value of type <unvisited> from
-//     `ctjs.constant`".
-//
-// MEASURED ON THE THREE CORPORA, after --ctjs-resolve-globals and
-// --ctjs-lift-to-scf: of 13,000 imported functions, 28 have two or more
-// ctjs.return (bootstrap 1, p5 18, phaser 9) and ZERO of those 28 are free of
-// a cf operation. So the rule fires nowhere on real code either.
-//
-// WHAT THIS FILE THEREFORE PINS is what a two-carrier function ACTUALLY says,
-// on both routes, plus a CHECK-NOT on the string that does not appear. If a
-// change ever makes that string reachable, these go red and somebody looks -
-// which is the outcome worth having, and is more than "pin the string" would
-// have got, because the string cannot be produced.
+// Scalar return alternatives join into one tagged signature. Unstructured
+// control flow and unreachable values retain their existing refusal rules.
+// The runtime scalar-union fixture covers both reachable alternatives.
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js 2>/dev/null \
@@ -55,16 +14,10 @@
 // RUN: ctjs-opt --ctnative-lower-to-emitc %t/unreachable-return.mlir \
 // RUN:   | FileCheck %s --check-prefix=UNVISITED
 
-// --- the JavaScript route: the lift funnels the returns, so the VARIANT is
-// --- what is named, at the scf.if and not at the return ---------------------
-//
-// CALLED, AND IT HAS TO BE. An uncalled private function is dead to
-// DeadCodeAnalysis and every type in it reads `<unvisited>`; a refusal that
-// needs TYPES needs a caller.
-//
-// MIXED: ctjs.func {{.*}}@mixed$1
-// MIXED-SAME: ctnative.not_native = "a value of type !ctnative.variant<!ctnative.bool, !ctnative.num<i32>> from `scf.if`"
-// MIXED-NOT: on one path
+// Mixed scalar returns are native after structuring. Their numeric observer
+// below keeps the standalone global contract definite.
+// MIXED: emitc.func @main
+// MIXED: emitc.func @mixed_1({{.*}}) -> !emitc.opaque<"ctnative::nullable_scalar">
 
 // --- and the same shape with the carriers agreeing is lowered ---------------
 //
@@ -98,7 +51,7 @@ function mixed(n) {
   if (n > 0) { return 1; }
   return true;
 }
-var r = mixed(3);
+var r = +mixed(3);
 
 //--- agreed.js
 function agreed(n) {

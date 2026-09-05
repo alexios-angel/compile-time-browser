@@ -97,9 +97,6 @@ bool admission::op(mlir::Operation * o) {
                 if (!user->hasAttr("ctnative.method")) { written.insert(keyOf(set.getKey())); }
             }
         }
-        // The carrier each key has been STORED so far, for the one-carrier
-        // check below.
-        llvm::StringMap<carrier> storedCarrier;
         for (mlir::Operation * user : accesses) {
             if (user->hasAttr("ctnative.method")) { continue; }
             const llvm::StringRef key = llvm::isa<GetPropertyOp>(user)
@@ -128,24 +125,9 @@ bool admission::op(mlir::Operation * o) {
                                    printed(typeOf(set.getValue())) + ", not a number or a boolean")
                                       .str());
                 }
-                // PHASE 56C: A FIELD HAS ONE CARRIER, and this is the only
-                // route by which it might not. Where the field is ever
-                // READ, the join of its stores is `!ctnative.boxed` and the
-                // read is refused for having no carrier; where it never is,
-                // both stores were admitted and the field took whichever
-                // one the use-list handed over first. That was unobservable
-                // while the class was per site. It is not now: the shape
-                // key IS the field types, so two sites of one shape whose
-                // use-lists ran in different orders would disagree and
-                // split into a template that says nothing about the
-                // program.
-                const auto [entry, fresh] = storedCarrier.try_emplace(key, c);
-                if (!fresh && entry->second != c && entry->second != carrier::nullable &&
-                    c != carrier::nullable) {
-                    return refuse(("field `" + key +
-                                   "` is stored a number on one path and a boolean on another")
-                                      .str());
-                }
+                // The shape census joins all scalar writes before choosing
+                // storage, including a field nobody reads. Mixed boolean
+                // and number stores therefore retain their runtime tags.
             }
         }
         return true;
@@ -313,8 +295,8 @@ bool admission::op(mlir::Operation * o) {
     // per-result walk in function(); what is asked here is that the write
     // stores the carrier the variable holds - two carriers in one variable
     // is a `double` assigned a `bool`, and the join that produced the
-    // cell's type would have had no carrier at all, so this is belt to
-    // that brace and names the store rather than the box.
+    // cell's type must select tagged storage for mixed scalar assignments.
+    // A refusal here names the store rather than the box.
     if (auto get = llvm::dyn_cast<CellGetOp>(o); get && namesASharedCell(get.getCell())) {
         return true;
     }
@@ -444,8 +426,7 @@ bool admission::op(mlir::Operation * o) {
         if (c == carrier::none) { return refuse("returns " + printed(typeOf(ret.getValue()))); }
         if (returns == carrier::none) { returns = c; }
         if (returns != c) {
-            if (isScalarCarrier(returns) && isScalarCarrier(c) &&
-                (returns == carrier::nullable || c == carrier::nullable)) {
+            if (isScalarCarrier(returns) && isScalarCarrier(c)) {
                 returns = carrier::nullable;
             } else {
                 return refuse("returns different native carriers on different paths");

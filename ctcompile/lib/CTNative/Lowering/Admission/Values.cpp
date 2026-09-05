@@ -41,6 +41,11 @@ bool admission::printable(mlir::Value v, llvm::StringRef where) {
                                "a definite number")
                           .str());
     }
+    if (!llvm::isa<NumType>(typeOf(v))) {
+        return refuse((where + " is " + printed(typeOf(v)) +
+                       "; native global observations require a definite number")
+                          .str());
+    }
     return true;
 }
 

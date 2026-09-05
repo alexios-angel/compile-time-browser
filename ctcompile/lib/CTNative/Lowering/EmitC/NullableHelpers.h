@@ -4,8 +4,8 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
-// Opt records a nullable scalar domain; the runtime tag preserves which
-// JavaScript value arrived. A present NaN is never an absence sentinel.
+// Opt and scalar-only Variant types share a carrier; the runtime tag preserves
+// which JavaScript value arrived. A present NaN is never an absence sentinel.
 inline constexpr llvm::StringLiteral kNullableHelpers = R"cpp(
 namespace ctnative {
 // ctcompile: optional scalar values preserve null, undefined and present NaN

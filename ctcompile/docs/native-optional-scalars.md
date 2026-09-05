@@ -4,6 +4,9 @@ Native lowering now gives `Opt<Bottom>`, `Opt<Num>` and `Opt<Bool>` a
 `ctnative::nullable_scalar` carrier. Its tag distinguishes undefined, null,
 number and boolean. The numeric payload retains negative zero and a present
 NaN. Definite numeric and boolean values still use `double` and `bool`.
+Closed boolean/number unions now share this carrier; their boundaries and
+Bootstrap Data getter coverage are described in
+[native-scalar-unions.md](native-scalar-unions.md).
 
 Conversions at calls, returns, control-flow edges, fields and shared cells
 preserve the tag. Arithmetic and ordering apply numeric conversion; equality,

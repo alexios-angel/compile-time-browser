@@ -631,3 +631,28 @@ if(COMMAND ctcompile_add_native_claims)
                               "${CMAKE_CURRENT_SOURCE_DIR}/native-optional-scalars-fixture.js"
                               29 25 119 11)
 endif()
+
+# A closed scalar union preserves boolean/number identity, including Data's
+# short-circuit getter and its retained nested Map environment.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(scalar_unions
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-scalar-unions-fixture.js"
+                                zz_lifetime)
+endif()
+if(COMMAND ctcompile_add_native_claims)
+  ctcompile_add_native_claims(scalar_unions
+                              "${CMAKE_CURRENT_SOURCE_DIR}/native-scalar-unions-fixture.js"
+                              24 18 87 18)
+endif()
+if(TARGET ctcompile-test-type-claims AND Python3_Interpreter_FOUND)
+  add_test(NAME ctcompile_type_claims_scalar_unions
+           COMMAND ${CMAKE_COMMAND}
+                   -DORACLE=$<TARGET_FILE:ctcompile-test-type-oracle>
+                   -DCLAIMS=$<TARGET_FILE:ctcompile-test-type-claims>
+                   -DPYTHON=${Python3_EXECUTABLE}
+                   -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/type-oracle.py
+                   -DCORPUS=${CMAKE_CURRENT_SOURCE_DIR}/native-scalar-unions-fixture.js
+                   -DWORK=${CMAKE_CURRENT_BINARY_DIR}
+                   -DNAME=scalar_unions
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/check-type-claims.cmake)
+endif()
