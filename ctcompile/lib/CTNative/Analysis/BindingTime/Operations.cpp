@@ -1,4 +1,5 @@
 #include "Analysis.h"
+#include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
@@ -65,7 +66,8 @@ bool BindingTimeAnalysis::Impl::operation(mlir::Operation * op, flow & state, bo
     } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
         auto target =
             mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
-        eligible = target && complete.lookup(target) && target.getUpvalueCount() == 0 &&
+        eligible = target && complete.lookup(target) && !constructsClosures(target) &&
+                   target.getUpvalueCount() == 0 &&
                    mlir::SymbolTable::getSymbolVisibility(target) ==
                        mlir::SymbolTable::Visibility::Private &&
                    llvm::all_of(call.getArgs(), [&](mlir::Value arg) {
@@ -77,7 +79,8 @@ bool BindingTimeAnalysis::Impl::operation(mlir::Operation * op, flow & state, bo
             binding_time_detail::invalidate(state);
         }
     } else if (llvm::isa<ctjs::CreateObjectOp, ctjs::ConstructOp, ctjs::LoadGlobalOp,
-                         ctjs::GetPropertyOp, ctjs::SetPropertyOp, ctjs::CallOp>(op)) {
+                         ctjs::GetPropertyOp, ctjs::SetPropertyOp, ctjs::CallOp, ctjs::CreateCellOp,
+                         ctjs::CellGetOp, ctjs::CellSetOp, ctjs::CreateClosureOp>(op)) {
         result = memory(op, state, control, eligible);
         if (!eligible) { binding_time_detail::invalidate(state); }
     } else {

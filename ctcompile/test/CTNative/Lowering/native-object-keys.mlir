@@ -6,6 +6,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=OPTIONAL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/publish.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=REFUSED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/capture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=REFUSED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/capture-local.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CAPTURE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/capture-field.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=FIELDS
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/capture-inspect.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=INSPECT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/snapshot.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SNAPSHOT
 
 // NATIVE-DAG: struct identity_object {}
@@ -20,6 +23,8 @@
 // MIXED: identity-only Map key flow contains a non-object producer
 // OPTIONAL: ctnative.not_native = "native Map needs supported keys and definite numeric or acyclic Map values; inferred !ctnative.map<!ctnative.boxed,
 // REFUSED: ctnative.not_native =
+// CAPTURE-DAG: call_opaque "std::make_shared<ctnative::identity_object>"
+// CAPTURE-DAG: call_opaque "ctnative::make_number_map<std::shared_ptr<ctnative::identity_object>>"
 // SNAPSHOT: ctnative.not_native = "native Map snapshot requires confined numeric elements"
 
 //--- field.js
@@ -48,6 +53,21 @@ probe();
 //--- capture.js
 function probe() { const key = {}; const map = new Map(); map.set(key, 42); return function() { return map.get(key) + 0; }; }
 const read = probe(); read();
+
+//--- capture-local.js
+function probe() { const key = {}; const map = new Map(); map.set(key, 42); return function() { return map.get(key) + 0; }; }
+function entry() { const read = probe(); return read(); }
+entry();
+
+//--- capture-field.js
+function probe() { const key = {}; const map = new Map(); map.set(key, 42); return function() { key.x = 1; return map.get(key) + 0; }; }
+function entry() { const read = probe(); return read(); }
+entry();
+
+//--- capture-inspect.js
+function probe() { const key = {}; const map = new Map(); map.set(key, 42); return function() { return map.get(key) + (key === key); }; }
+function entry() { const read = probe(); return read(); }
+entry();
 
 //--- snapshot.js
 function probe() { const key = {}; const map = new Map(); map.set(key, 42); return map.keys().length; }

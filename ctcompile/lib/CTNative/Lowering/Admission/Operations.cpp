@@ -25,10 +25,11 @@ bool admission::op(mlir::Operation * o) {
     if (auto made = llvm::dyn_cast<CreateClosureOp>(o); made && !environmentTarget(o).empty()) {
         for (mlir::Value captured : made.getUpvalues()) {
             const auto c = carrierOf(typeOf(captured));
-            if (!isScalarCarrier(c) && c != carrier::string && c != carrier::map) {
-                return refuse(
-                    "returned closure capture needs an owning scalar or Map carrier; got " +
-                    printed(typeOf(captured)));
+            if (!isScalarCarrier(c) && c != carrier::string && c != carrier::map &&
+                c != carrier::objectIdentity) {
+                return refuse("returned closure capture needs an owning scalar, Map or object "
+                              "identity carrier; got " +
+                              printed(typeOf(captured)));
             }
         }
         return true;

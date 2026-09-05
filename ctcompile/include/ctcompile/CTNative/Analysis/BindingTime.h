@@ -2,6 +2,7 @@
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include <memory>
 
 namespace ctcompile::ctnative {
@@ -20,6 +21,10 @@ llvm::StringRef bindingTimeName(BindingTime time);
 class BindingTimeAnalysis {
 public:
     explicit BindingTimeAnalysis(mlir::ModuleOp module);
+    // Compiler-internal proof preparation; callers supply a rederivation,
+    // never input annotations as authority. The default uses NativeMap.
+    BindingTimeAnalysis(mlir::ModuleOp module,
+                        llvm::function_ref<void(mlir::ModuleOp)> prepareHeapFacts);
     ~BindingTimeAnalysis();
     BindingTime get(mlir::Value value) const;
     bool isStatic(mlir::Value value) const;

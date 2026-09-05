@@ -35,8 +35,8 @@ std::optional<snapshot> evaluator::runPrefix(ctjs::FuncOp function, llvm::ArrayR
         return {};
     }
     for (unsigned i = 0; i < 3 && i < args.size(); ++i) {
-        for (mlir::Operation * use : entry.getArgument(i).getUsers()) {
-            if (!llvm::isa<ctjs::RootOp>(use)) {
+        for (mlir::OpOperand & use : entry.getArgument(i).getUses()) {
+            if (!factoryParameterUse(use, i)) {
                 fail("callee observes receiver, constructor state or closure identity");
                 return {};
             }

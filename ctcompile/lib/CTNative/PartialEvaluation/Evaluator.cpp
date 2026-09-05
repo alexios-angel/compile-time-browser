@@ -1,5 +1,6 @@
 #include "Heap.h"
 
+#include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -16,7 +17,7 @@ value evaluator::fail(llvm::StringRef reason) {
 value evaluator::allocate(node::kind kind, mlir::Location location) {
     if (state.heap.size() >= maxNodes) { return fail("heap-node budget exhausted"); }
     const unsigned id = static_cast<unsigned>(state.heap.size());
-    state.heap.push_back({kind, location, {}});
+    state.heap.emplace_back(kind, location);
     return value::reference(id);
 }
 
@@ -32,11 +33,14 @@ value evaluator::call(ctjs::FuncOp function, llvm::ArrayRef<value> args, unsigne
         return fail("callee argument count is not exact");
     }
     for (unsigned i = 0; i < 3 && i < args.size(); ++i) {
-        for (mlir::Operation * use : function.getBody().front().getArgument(i).getUsers()) {
-            if (!llvm::isa<ctjs::RootOp>(use)) {
+        for (mlir::OpOperand & use : function.getBody().front().getArgument(i).getUses()) {
+            if (!factoryParameterUse(use, i)) {
                 return fail("callee observes receiver, constructor state or closure identity");
             }
         }
+    }
+    if (depth != 0 && constructsClosures(function)) {
+        return fail("closure construction must remain in its original factory");
     }
     environment env;
     auto result = region(function.getBody(), args, env, depth + 1);
@@ -210,6 +214,10 @@ value evaluator::operation(mlir::Operation * op, environment & env, unsigned dep
         } // Bookkeeping only: the direct symbol supplies the callee.
         return fail("host or mutable global read");
     }
+    if (llvm::isa<ctjs::CreateCellOp, ctjs::CellGetOp, ctjs::CellSetOp, ctjs::CreateClosureOp>(
+            op)) {
+        return closureOperation(op, env);
+    }
     if (llvm::isa<ctjs::CreateObjectOp>(op)) { return allocate(node::kind::object, op->getLoc()); }
     if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
         if (!made->hasAttr(kNativeMapSite) || !made.getArgs().empty() ||
@@ -315,7 +323,13 @@ value evaluator::operation(mlir::Operation * op, environment & env, unsigned dep
         result = binary(binaryOp.getKind(), get(binaryOp.getLhs()), get(binaryOp.getRhs()), context,
                         true);
     } else if (auto unaryOp = llvm::dyn_cast<ctjs::UnaryOp>(op)) {
-        result = unary(unaryOp.getKind(), get(unaryOp.getOperand()), context);
+        auto input = get(unaryOp.getOperand());
+        if (unaryOp.getKind() == ctjs::UnaryKind::TypeOf && input.tag == value::kind::reference &&
+            state.heap[input.node].tag == node::kind::closure) {
+            result = value::primitive(ctjs::StringAttr::get(context, "function"));
+        } else {
+            result = unary(unaryOp.getKind(), input, context);
+        }
     } else if (auto cmp = llvm::dyn_cast<ctjs::CompareOp>(op)) {
         result = compare(cmp.getKind(), get(cmp.getLhs()), get(cmp.getRhs()), context);
     } else if (auto test = llvm::dyn_cast<ctjs::TruthyOp>(op)) {

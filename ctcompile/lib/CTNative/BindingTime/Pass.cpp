@@ -1,3 +1,4 @@
+#include "../PartialEvaluation/ClosureProof.h"
 #include "ctcompile/CTNative/Analysis/BindingTime.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/IR/Builders.h"
@@ -19,7 +20,9 @@ struct CTNativeBindingTimeAnalysisPass
                 op->removeAttr(name);
             }
         });
-        BindingTimeAnalysis analysis(module);
+        BindingTimeAnalysis analysis(module, [](mlir::ModuleOp input) {
+            (void)partial_eval::prepareClosureHeapFacts(input);
+        });
         mlir::Builder at(&getContext());
         unsigned totalStatic = 0, totalDynamic = 0, staticArguments = 0;
         module.walk([&](ctjs::FuncOp fn) {

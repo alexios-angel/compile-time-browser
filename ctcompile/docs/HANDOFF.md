@@ -1,10 +1,57 @@
 # Handoff: continuing ctcompile
 
-You are picking up work on `ctcompile`, an ahead-of-time browser-application
-compiler being built inside `compile-time-browser`. Everything below is
-committed and green; nothing is pushed.
+Native work continues on `ctcompile-v1` in the `compile-time-browser` monorepo.
+The application driver remains incomplete; native compiler development uses
+`ctjs-translate` and `ctjs-opt`. Build on the devbox using `tools/remote-build.sh`
+under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
+committing. There is no CI. Do not build on the small local machine.
 
-## Where things are
+## Current native staging checkpoint, 2026-09-05
+
+The [roadmap](native-pe-roadmap.md) records the integrated validation and optional
+controls. Heap PE, precomputation, direct-call specialization, deforestation and
+supercompilation are separate opt-in passes. The default native pipeline enables
+none of them; dependent BTA, type, effect and ownership proofs remain mandatory.
+
+The compiler heap now represents immutable capture cells and latent closures.
+Five factories residualize 21 live nodes; all 19 fixture functions compile
+natively and seven observations check sharing, freshness, object-key identity,
+owned strings and post-return lifetime. Closure bodies still run only when called.
+The native identity carrier can pass through proved immutable environments.
+
+`Symbolic/` preserves runtime producers while folding proved primitive results;
+`Specialization/` creates exact-tuple variants with generic inference evidence;
+`Deforestation/` implements a restricted Lumberhack-style Map projection strategy.
+Its local-slot proof requires the producer assignment before every observed read.
+BTA re-enqueues callers when full summaries change and keeps original parameters
+dynamic when alternate symbolic targets retain their closure for boxed dispatch.
+The boxed regression distinguishes the correct result 1020 from the former 1010.
+
+`Supercompilation/` implements a first recursive scalar driver: exact pending
+promises, dynamic branch residualization, a finite-shape embedding whistle,
+transactional identity/driven alternatives and independent work/growth budgets.
+Its fixture has five configurations, six folds and one generic whistle boundary;
+all 14 functions are native. Generalization, heap-aware configurations and full
+multi-result search remain planned. Research from all five supercompilation and
+both PE PDFs is synthesized in [the supercompiler design](native-supercompilation.md)
+and [the modern PE design](native-modern-pe.md).
+
+Full native Bootstrap is still unfinished. Continue with checked host/effect
+contracts and component/nullable-object carriers for the exact Data initializer;
+the [vendor probe](bootstrap-data-probe.md) remains separate from native fixtures.
+For PE, implement one dependency-tracked effect query before relaxing module-wide
+guards. For supercompilation, scalar generalization precedes heap graph contexts.
+Native removal of now-unreachable closed helpers is also pending: preserving a
+generic call before PE does not guarantee an evaluated caller retains it.
+
+Implementations stay in small named folders; [source-layout.md](source-layout.md)
+maps their responsibilities. Current native corpus counts and boxed Bootstrap's
+output hash belong to the roadmap, rather than the historical numbers below.
+
+## Earlier compiler bring-up checkpoint
+
+The remaining sections preserve earlier implementation history and its original
+measurements; they are not the current native status.
 
 * Repo: `/mnt/c/Users/aange/Downloads/claude/compile-time-browser`
 * Branch: **`ctcompile-v1`**, working tree clean

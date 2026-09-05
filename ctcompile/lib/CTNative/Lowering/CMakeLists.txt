@@ -71,7 +71,19 @@ add_mlir_pdll_library(CTNativeUnaryPlusPDLLIncGen
 # also reuses compiler-side primitive helpers from ctbrowser; the generated
 # C++ still links no ctbrowser library, as part 24 §1.2 requires.
 add_library(ctcompile-ctnative-lowering
+  ../Supercompilation/Control.cpp
+  ../Supercompilation/Driver.cpp
+  ../Supercompilation/Pass.cpp
+  ../Specialization/Candidates.cpp
+  ../Specialization/Pass.cpp
+  ../Symbolic/Facts.cpp
+  ../Symbolic/Rewrite.cpp
+  ../Symbolic/Pass.cpp
+  ../Deforestation/Strategies.cpp
+  ../Deforestation/Pass.cpp
   ../PartialEvaluation/Pass.cpp
+  ../PartialEvaluation/ClosureProof.cpp
+  ../PartialEvaluation/Closures.cpp
   ../PartialEvaluation/Prefix.cpp
   ../BindingTime/Pass.cpp
   ../PartialEvaluation/Evaluator.cpp

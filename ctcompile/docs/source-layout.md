@@ -8,6 +8,10 @@ by their implementation files. Public APIs remain under `include/ctcompile/`.
 |---|---|---|
 | Partial evaluation | `lib/CTNative/PartialEvaluation/` | Factory admission, static entry prefixes, bounded evaluation, primitive adapter, heap graph and residualisation |
 | Binding time | `lib/CTNative/Analysis/BindingTime/` and `BindingTime/` | Argument and callee facts, heap effects, control flow and annotation pass |
+| Precomputation | `lib/CTNative/Symbolic/` | Primitive and normal-result facts, bounded propagation and effect-preserving rewriting |
+| Specialization | `lib/CTNative/Specialization/` | Closed direct-call candidates, exact argument tuples and bounded residual variants |
+| Supercompilation | `lib/CTNative/Supercompilation/` | Transactional process graphs, recursive promises, finite-shape embedding and budget control |
+| Deforestation | `lib/CTNative/Deforestation/` | Snapshot producer/consumer constraints, effect barriers and scalar projection helpers |
 | Native pass | `lib/CTNative/Lowering/LowerToEmitC.cpp` | Pass setup, inference, admission fixpoint and lowering order |
 | Closure lifting | `lib/CTNative/Lowering/ClosureLifting/` | Calls, callbacks, bindings, cells, captures, returned closures and method tables, constructors, diagnostics and rewriting |
 | Native admission | `lib/CTNative/Lowering/Admission/` | Value, object, operation and function checks |

@@ -24,7 +24,15 @@ std::optional<std::vector<unsigned>> reachable(const snapshot & state) {
         if (color == 2) { return true; }
         color = 1;
         live.push_back(input.node);
-        for (const auto & [key, data] : state.heap[input.node].entries) {
+        const auto & item = state.heap[input.node];
+        if (item.tag == node::kind::cell &&
+            ((item.requiresWrite && !item.assigned) || !visit(item.contents))) {
+            return false;
+        }
+        for (value capture : item.captures) {
+            if (!visit(capture)) { return false; }
+        }
+        for (const auto & [key, data] : item.entries) {
             if (!visit(key) || !visit(data)) { return false; }
         }
         color = 2;
@@ -52,12 +60,14 @@ namespace {
 
 class graphEmitter {
 public:
-    graphEmitter(mlir::OpBuilder & at, const snapshot & state, llvm::ArrayRef<unsigned> live)
-        : at(at), context(at.getContext()) {
+    graphEmitter(mlir::OpBuilder & at, const snapshot & state, llvm::ArrayRef<unsigned> live,
+                 mlir::Value enclosingClosure)
+        : at(at), context(at.getContext()), state(state), enclosingClosure(enclosingClosure) {
         // Every allocation precedes every edge. Traversal order must not
         // duplicate a shared child or change an object-valued Map key.
         for (unsigned id : live) {
             const auto & item = state.heap[id];
+            if (item.tag == node::kind::cell || item.tag == node::kind::closure) { continue; }
             mlir::Operation * made;
             if (item.tag == node::kind::object) {
                 made = create("ctjs.create_object", item.location, {}, {});
@@ -67,8 +77,10 @@ public:
             }
             objects[id] = made->getResult(0);
         }
+        for (unsigned id : live) { (void)allocateCapture(id); }
         for (unsigned id : live) {
             const auto & item = state.heap[id];
+            if (item.tag == node::kind::cell || item.tag == node::kind::closure) { continue; }
             mlir::Value setter;
             if (item.tag == node::kind::map && !item.entries.empty()) {
                 setter = method(id, "set", item.location);
@@ -106,6 +118,30 @@ private:
     mlir::OpBuilder & at;
     mlir::MLIRContext * context;
     llvm::DenseMap<unsigned, mlir::Value> objects;
+    const snapshot & state;
+    mlir::Value enclosingClosure;
+
+    mlir::Value allocateCapture(unsigned id) {
+        if (auto existing = objects.lookup(id)) { return existing; }
+        const auto & item = state.heap[id];
+        const auto captured = [&](value input) {
+            return input.tag == value::kind::reference ? allocateCapture(input.node)
+                                                       : constant(input.constant, item.location);
+        };
+        mlir::Operation * made;
+        if (item.tag == node::kind::cell) {
+            made = create("ctjs.create_cell", item.location, {captured(item.contents)}, {});
+        } else {
+            auto receiver = constant(ctjs::UndefinedAttr::get(context), item.location);
+            llvm::SmallVector<mlir::Value> operands{enclosingClosure, receiver};
+            for (value capture : item.captures) { operands.push_back(captured(capture)); }
+            made = create("ctjs.create_closure", item.location, operands,
+                          {at.getNamedAttr("function", at.getI32IntegerAttr(
+                                                           static_cast<int32_t>(item.function)))});
+        }
+        objects[id] = made->getResult(0);
+        return made->getResult(0);
+    }
 
     mlir::Operation * create(llvm::StringRef name, mlir::Location location,
                              mlir::ValueRange operands,
@@ -137,7 +173,7 @@ void residualizePrefix(ctjs::FuncOp function, const snapshot & state, llvm::Arra
     function.getBody().cloneInto(&replacement, mapping);
     auto * boundary = mapping.lookup(state.boundary);
     mlir::OpBuilder at(boundary);
-    graphEmitter graph(at, state, live);
+    graphEmitter graph(at, state, live, replacement.front().getArgument(2));
     for (const auto & [original, value] : state.bindings) {
         auto materialized = graph.materialize(value, original.getLoc(), original.getType());
         mapping.lookup(original).replaceAllUsesWith(materialized);
@@ -181,7 +217,7 @@ void residualize(ctjs::FuncOp function, const snapshot & state, llvm::ArrayRef<u
             block->addArgument(arg.getType(), arg.getLoc());
         }
         at.setInsertionPointToEnd(block);
-        graphEmitter graph(at, state, live);
+        graphEmitter graph(at, state, live, replacement.front().getArgument(2));
         ctjs::ReturnOp::create(at, function.getLoc(),
                                graph.materialize(state.result, function.getLoc()));
     }

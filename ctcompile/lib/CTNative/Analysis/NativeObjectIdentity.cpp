@@ -1,6 +1,9 @@
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
 #include "ClosedValueFlow.h"
+#include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/StringMap.h"
 
 namespace ctcompile::ctnative {
 namespace {
@@ -17,6 +20,17 @@ bool mapKeyUse(mlir::OpOperand & use) {
     return action == "set" || action == "get" || action == "has" || action == "delete";
 }
 
+bool erasedCapture(mlir::OpOperand & use) {
+    auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(use.getOwner());
+    if (!cell || use.getOperandNumber() != 0 || !cell->hasAttr("ctnative.unboxed")) {
+        return false;
+    }
+    return llvm::all_of(cell.getResult().getUses(), [](mlir::OpOperand & capture) {
+        return llvm::isa<ctjs::CreateClosureOp>(capture.getOwner()) &&
+               capture.getOperandNumber() >= 2 && capture.getOwner()->hasAttr("ctnative.lifted");
+    });
+}
+
 } // namespace
 
 void prepareNativeObjectIdentities(mlir::ModuleOp module) {
@@ -24,6 +38,24 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module) {
     module.walk([](mlir::Operation * op) { op->removeAttr(kNativeObjectIdentity); });
     closedValueFlow flow;
     flow.build(module);
+    // A returned closure owns its captures. Connect slot extractions to the
+    // original object schema, as for Maps; each factory call still allocates
+    // a fresh identity and environment. These tags were rederived by the
+    // native closure lifter immediately before this analysis.
+    llvm::StringMap<ctjs::CreateClosureOp> environments;
+    llvm::DenseSet<mlir::Operation *> reads;
+    module.walk([&](ctjs::CreateClosureOp made) {
+        if (!environmentTarget(made).empty()) { environments[environmentTarget(made)] = made; }
+    });
+    module.walk([&](ctjs::LoadUpvalueOp read) {
+        if (!read->hasAttr(kNativeEnvironmentRead)) { return; }
+        auto made = environments.lookup(environmentTarget(read));
+        if (made && read.getIndex() >= 0 &&
+            static_cast<size_t>(read.getIndex()) < made.getUpvalues().size()) {
+            flow.join(read.getResult(), made.getUpvalues()[static_cast<size_t>(read.getIndex())]);
+            reads.insert(read);
+        }
+    });
     module.walk([&](ctjs::CreateObjectOp made) { flow.add(made.getResult()); });
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> families;
     for (mlir::Value value : flow.nodes) { families[flow.find(value)].push_back(value); }
@@ -61,11 +93,18 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module) {
                 if (!exactCall(call, fn) || flow.returns[fn].empty()) {
                     reject("result requires a closed function with visible returns");
                 }
+            } else if (reads.contains(value.getDefiningOp())) {
+                // Connected to a proved owning slot above.
             } else {
                 reject("flow contains a non-object producer");
             }
             for (mlir::OpOperand & use : value.getUses()) {
                 if (mapKeyUse(use)) { continue; }
+                if (erasedCapture(use)) { continue; }
+                if (llvm::isa<ctjs::CreateClosureOp>(use.getOwner()) &&
+                    use.getOperandNumber() >= 2 && !environmentTarget(use.getOwner()).empty()) {
+                    continue;
+                }
                 if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
                     call && use.getOperandNumber() >= 3 &&
                     exactCall(call, closedValueFlow::target(call))) {

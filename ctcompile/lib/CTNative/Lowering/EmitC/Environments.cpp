@@ -26,6 +26,10 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                     needsString = true;
                     definition += "std::string";
                     break;
+                case carrier::objectIdentity:
+                    needsObjectIdentity = true;
+                    definition += kObjectIdentityType;
+                    break;
                 case carrier::map: {
                     needsMap = true;
                     const auto map = llvm::cast<MapType>(type);

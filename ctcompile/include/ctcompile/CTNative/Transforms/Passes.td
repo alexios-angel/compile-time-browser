@@ -9,6 +9,82 @@
 
 include "mlir/Pass/PassBase.td"
 
+def CTNativePrecompute : Pass<"ctnative-precompute", "mlir::ModuleOp"> {
+  let summary = "Precompute primitive expressions and simplify proved symbolic results";
+  let description = [{
+    Reuses the compiler's ctbrowser primitive adapter for literal operations.
+    Symbolic result domains permit only identities valid for their proved
+    JavaScript values. Known structured branches retain the selected effects
+    exactly once. Calls and unknown coercions remain runtime operations;
+    input annotations never authorize folding. Work is bounded.
+  }];
+  let options = [
+    Option<"maxSteps", "max-steps", "unsigned", "100000", "Maximum symbolic analysis and rewrite work">,
+    Option<"report", "report", "bool", "false", "Report precomputed expressions and control">
+  ];
+  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect", "::mlir::arith::ArithDialect"];
+}
+
+def CTNativeSpecialize : Pass<"ctnative-specialize", "mlir::ModuleOp"> {
+  let summary = "Create bounded direct-call variants for exact primitive argument tuples";
+  let description = [{
+    Specializes private, capture-free direct callees while keeping runtime
+    parameters and effects. Exact literal argument tuples share one variant;
+    original argument evaluation and the generic function remain. Captures,
+    observed implicit state, nested closure construction and recursive call
+    graphs are excluded. A generic call is retained for original native type
+    inference. Limits bound variant count and cloned operations; annotations
+    record outcomes but confer no authority on a repeated pass.
+  }];
+  let options = [
+    Option<"maxVariants", "max-variants", "unsigned", "32", "Maximum new function variants">,
+    Option<"maxClonedOps", "max-cloned-ops", "unsigned", "4096", "Maximum cloned body operations">,
+    Option<"report", "report", "bool", "false", "Report function variants and redirected calls">
+  ];
+  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect", "::mlir::arith::ArithDialect"];
+}
+
+def CTNativeSupercompile : Pass<"ctnative-supercompile", "mlir::ModuleOp"> {
+  let summary = "Drive bounded recursive configurations and fold residual backedges";
+  let description = [{
+    Opt-in first supercompilation slice for private capture-free self-recursive
+    kernels. Literal argument configurations simplify through shared primitive
+    semantics; unknown branches remain residual. Pending exact configuration
+    promises allow recursive folding. A finite-shape homeomorphic embedding
+    whistle retains generic calls on growth, without assuming state equivalence.
+    Heap, host, environment and non-self calls are outside this slice. The
+    original generic definition and one external call remain for native proofs.
+    Transactional identity/driven alternatives respect module work and code-size
+    bounds. Generalization and full multi-result search remain future work.
+  }];
+  let options = [
+    Option<"maxContexts", "max-contexts", "unsigned", "32", "Maximum retained configurations per module">,
+    Option<"maxSteps", "max-steps", "unsigned", "20000", "Maximum local driving work including refused alternatives">,
+    Option<"maxResidualOps", "max-residual-ops", "unsigned", "4096", "Maximum added residual operations per module">,
+    Option<"maxGrowth", "max-growth", "unsigned", "512", "Maximum added operations per source kernel; generic code remains">,
+    Option<"report", "report", "bool", "false", "Report kernels, configurations, folds and whistles">
+  ];
+  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect", "::mlir::arith::ArithDialect"];
+}
+
+def CTNativeDeforest : Pass<"ctnative-deforest", "mlir::ModuleOp"> {
+  let summary = "Infer snapshot producer/consumer strategies and eliminate proved intermediates";
+  let description = [{
+    A bounded Lumberhack-style strategy inference and elaboration slice for
+    concrete native Map snapshots. Producer/consumer flow constraints select
+    one scalar projection strategy or retain identity on unsupported, escaping
+    or conflicting uses. Effect barriers preserve call-by-value observation
+    order. Runs after native lowering and before expression canonicalization.
+    This slice does not implement general recursive functional fusion.
+  }];
+  let options = [
+    Option<"maxSnapshots", "max-snapshots", "unsigned", "256", "Maximum snapshot producers considered">,
+    Option<"maxScan", "max-scan", "unsigned", "10000", "Maximum producer/consumer flow work">,
+    Option<"report", "report", "bool", "false", "Report eliminated snapshot allocations">
+  ];
+  let dependentDialects = ["::mlir::emitc::EmitCDialect"];
+}
+
 def CTNativeBindingTimeAnalysis : Pass<"ctnative-binding-time-analysis", "mlir::ModuleOp"> {
   let summary = "Derive static and dynamic bindings, control and heap effects";
   let description = [{

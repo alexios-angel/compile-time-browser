@@ -1,7 +1,7 @@
 # Owning object identities as native Map keys
 
 Property-free object literals can be used as Map keys and carried through
-closed function arguments and returns. Each creation makes a distinct owning
+closed function arguments, returns and proved immutable captures. Each creation makes a distinct owning
 allocation, even when multiple objects share a source site or an empty shape.
 Aliases keep the same identity; Map entries retain their keys after the
 creating frame and all other aliases end.
@@ -20,7 +20,8 @@ map.set(other, 2); // A second entry, despite the identical empty shapes.
 `Analysis/NativeObjectIdentity.cpp` follows closed exact-arity calls and
 returns using the common `Analysis/ClosedValueFlow.h` graph. Every producer
 must be an object literal or that proved flow. Every use must be a key of
-a proved standard Map operation, or a closed argument/return edge. Mixed,
+a proved standard Map operation, a closed argument/return edge, or a proved
+immutable native environment slot. Mixed,
 missing and open producers cannot obtain an identity carrier.
 
 The nominal `!ctnative.object_identity` type lowers to
@@ -31,11 +32,14 @@ the insertion-ordered storage holds a strong copy of each key. Allocations
 cannot be recycled while a Map still owns them. There is no integer address
 surrogate, VM object or collector in the output.
 
-Property reads/writes, inspection, captures, object-valued payloads, host
+Property reads/writes, inspection, mutable captures, object-valued payloads, host
 values and structured identity merges remain refused. The identity has no
 outgoing ownership edges, so adding it as a strong Map key cannot create a
 reference cycle. Input identity annotations are discarded before proof;
 an IR test verifies that a forged annotation cannot erase a real property.
+Immutable capture environments own a shared handle with the same identity as the
+Map key. The closure heap fixture separately checks capture lifetime and rejects
+property writes or identity inspection through the captured handle.
 
 ## Validation and Bootstrap boundary
 

@@ -14,6 +14,8 @@ struct fact {
         primitive,
         object,
         map,
+        cell,
+        closure,
         constructor,
         method,
         bookkeeping,
@@ -50,8 +52,9 @@ struct BindingTimeAnalysis::Impl {
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Attribute>> arguments;
     llvm::DenseMap<mlir::Operation *, fact> returns;
     llvm::DenseMap<mlir::Operation *, bool> complete;
-    explicit Impl(mlir::ModuleOp module);
+    Impl(mlir::ModuleOp module, llvm::function_ref<void(mlir::ModuleOp)> prepareHeapFacts);
     void seedArguments();
+    void solveSummaries();
     void analyze(ctjs::FuncOp function);
     bool region(mlir::Region & body, flow & state, bool staticControl,
                 llvm::ArrayRef<fact> inputs = {});

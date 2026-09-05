@@ -34,10 +34,18 @@ struct value {
 struct node {
     enum class kind {
         object,
-        map
+        map,
+        cell,
+        closure
     } tag;
     mlir::Location location;
     std::vector<std::pair<value, value>> entries;
+    value contents;
+    llvm::SmallVector<value> captures;
+    unsigned function = 0;
+    bool requiresWrite = false;
+    bool assigned = false;
+    node(kind tag, mlir::Location location) : tag(tag), location(location) {}
 };
 
 struct snapshot {
@@ -91,6 +99,7 @@ private:
     completion region(mlir::Region & region, llvm::ArrayRef<value> args, environment & env,
                       unsigned depth);
     value operation(mlir::Operation * op, environment & env, unsigned depth);
+    value closureOperation(mlir::Operation * op, environment & env);
 };
 
 // Returns nullopt for a cycle or an unsupported root. No IR changes occur
@@ -98,5 +107,6 @@ private:
 std::optional<std::vector<unsigned>> reachable(const snapshot & state);
 void residualize(ctjs::FuncOp function, const snapshot & state, llvm::ArrayRef<unsigned> live);
 bool retainedPrefixScaffolding(mlir::Operation * op);
+bool factoryParameterUse(mlir::OpOperand & use, unsigned parameter);
 
 } // namespace ctcompile::ctnative::partial_eval

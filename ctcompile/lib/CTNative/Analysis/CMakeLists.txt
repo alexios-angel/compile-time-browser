@@ -11,6 +11,7 @@ add_mlir_library(CTNativeAnalysis
   TypeInference.cpp
   ClosedCallable.cpp
   BindingTime/Analysis.cpp
+  BindingTime/Captures.cpp
   BindingTime/Operations.cpp
   BindingTime/Flow.cpp
   BindingTime/Memory.cpp

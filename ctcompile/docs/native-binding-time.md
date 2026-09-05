@@ -42,10 +42,16 @@ Private, capture-free functions can receive static arguments when every visible
 direct caller supplies the same primitive literal. Numeric-index closure uses
 and declaration loads must prove that other callers cannot reach the function.
 Unknown module invocations and host reads disable this argument seeding.
+When a specialized symbolic call retains the original closure value for boxed
+dispatch, the original's symbol-only caller list is incomplete. Its parameters
+remain dynamic, preserving calls with different argument tuples in both tiers.
 Receiver, constructor state and closure identity remain dynamic.
 
 Bottom-up summaries recognize complete static callees, independent of source
-order. An effectful callee that returns a constant remains dynamic, including
+order. A reverse-call worklist reconsiders callers when either completion or the
+full result fact changes, including literals and reference sets. Exhausting the
+bounded work allowance discards all interprocedural static claims and rederives
+local facts with dynamic calls. An effectful callee that returns a constant remains dynamic, including
 through forwarding calls. Recursion, loop invariants and non-entry CFG blocks
 are conservative. Structured branch joins retain only compatible facts; unknown
 control cannot promote a heap write into initialization.
@@ -95,9 +101,11 @@ The partial-prefix source fixture checks the resulting standalone C++ against
 ctbrowser for shared children, independent calls, saved scalar values, object
 keys, retained branches/loops, global effects and calls that must run once.
 
-The combined devbox gate passes 363/363 CTests and 114/114 lit cases. Both new
+The preceding BTA/prefix checkpoint passed 363/363 CTests and 114/114 lit cases. Both new
 native fixtures pass ASan/UBSan with leak detection, and all 450 C++ files pass
 the pinned formatting check.
+The full-summary worklist and closure extension are validated with the additional
+optimization stages in [the current roadmap](native-pe-roadmap.md).
 
 Next work needs residual closure environments and explicit host/effect contracts
 to specialize Bootstrap's module initialization. This slice stops at one

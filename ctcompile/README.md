@@ -15,6 +15,14 @@ Recent native work includes [tagged optional scalars](docs/native-optional-scala
 The partial evaluator reuses ctbrowser's primitive semantics inside the compiler;
 generated native programs retain no VM dependency.
 
+The [native optimization roadmap](docs/native-pe-roadmap.md) documents separate
+opt-in controls for precomputation, specialization, heap evaluation, Map snapshot
+deforestation and recursive supercompilation. The default native pipeline enables
+none of these transforms. The research designs for
+[modern PE](docs/native-modern-pe.md) and
+[supercompilation](docs/native-supercompilation.md) distinguish implemented slices
+from the remaining heap, host-effect and generalization work.
+
 ## What it is for
 
 A ctbrowser application is an HTML document, JavaScript, CSS and assets that

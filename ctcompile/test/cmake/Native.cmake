@@ -121,7 +121,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
     -DMUTATE=1 "-DEXPECT_FAILURE=refused the generated file")
   function(ctcompile_add_native_pipeline name js)
     set(_module "${CMAKE_CURRENT_BINARY_DIR}/${name}.pipeline.emitc.mlir")
-    cmake_parse_arguments(_pipeline "PARTIAL_EVALUATE" "" "" ${ARGN})
+    cmake_parse_arguments(_pipeline "PARTIAL_EVALUATE;PRECOMPUTE;SPECIALIZE;SUPERCOMPILE;DEFOREST" "" "" ${ARGN})
     add_custom_command(
       OUTPUT "${_module}"
       COMMAND ${CMAKE_COMMAND}
@@ -130,6 +130,10 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
               -DSOURCE=${js}
               -DOUTPUT=${_module}
               -DPARTIAL_EVALUATE=${_pipeline_PARTIAL_EVALUATE}
+              -DPRECOMPUTE=${_pipeline_PRECOMPUTE}
+              -DSPECIALIZE=${_pipeline_SPECIALIZE}
+              -DSUPERCOMPILE=${_pipeline_SUPERCOMPILE}
+              -DDEFOREST=${_pipeline_DEFOREST}
               -P "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline.cmake"
       DEPENDS "${js}" "${CMAKE_CURRENT_SOURCE_DIR}/native-pipeline.cmake" ctjs-translate ctjs-opt
       COMMENT "Lowering ${name} through the native pipeline")

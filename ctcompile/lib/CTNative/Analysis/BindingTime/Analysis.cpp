@@ -1,6 +1,7 @@
 #include "Analysis.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 
 namespace ctcompile::ctnative {
 namespace {
@@ -14,6 +15,41 @@ bool bookkeeping(ctjs::LoadGlobalOp load) {
                (llvm::isa<ctjs::CallDirectOp>(use.getOwner()) && use.getOperandNumber() == 2);
     });
 }
+bool hasAlternateCalleeCalls(ctjs::FuncOp function, mlir::ModuleOp module) {
+    const auto index = functionIndex(function);
+    if (!index) { return false; }
+    const auto alternate = [&](mlir::Value value) {
+        return llvm::any_of(value.getUses(), [&](mlir::OpOperand & use) {
+            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+            return call && use.getOperandNumber() == 2 && call.getCallee() != function.getSymName();
+        });
+    };
+    bool found = false;
+    module.walk([&](ctjs::CreateClosureOp made) {
+        if (found || made.getFunction() < 0 ||
+            static_cast<unsigned>(made.getFunction()) != *index) {
+            return;
+        }
+        found |= alternate(made.getResult());
+        for (mlir::Operation * user : made.getResult().getUsers()) {
+            auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(user);
+            if (!store) { continue; }
+            module.walk([&](ctjs::LoadGlobalOp load) {
+                if (load.getName() == store.getName()) { found |= alternate(load.getResult()); }
+            });
+        }
+    });
+    return found;
+}
+bool sameFact(const binding_time_detail::fact & left, const binding_time_detail::fact & right) {
+    // Reference identities form a set; traversal order is not a semantic
+    // difference and must not keep a recursive worklist alive.
+    return left.domain == right.domain && left.time == right.time &&
+           left.literal == right.literal && left.nodes.size() == right.nodes.size() &&
+           llvm::all_of(left.nodes, [&](mlir::Operation * node) {
+               return llvm::is_contained(right.nodes, node);
+           });
+}
 } // namespace
 
 llvm::StringRef bindingTimeName(BindingTime time) {
@@ -25,23 +61,61 @@ llvm::StringRef bindingTimeName(BindingTime time) {
     llvm_unreachable("invalid binding time");
 }
 
-BindingTimeAnalysis::Impl::Impl(mlir::ModuleOp input) : module(input) {
-    prepareNativeMaps(module);
+BindingTimeAnalysis::Impl::Impl(mlir::ModuleOp input,
+                                llvm::function_ref<void(mlir::ModuleOp)> prepareHeapFacts)
+    : module(input) {
+    prepareHeapFacts(module);
     seedArguments();
+    solveSummaries();
+}
+
+void BindingTimeAnalysis::Impl::solveSummaries() {
     llvm::SmallVector<ctjs::FuncOp> functions;
     module.walk([&](ctjs::FuncOp fn) { functions.push_back(fn); });
-    // Bottom-up summaries converge for acyclic call chains. Recursion remains
-    // dynamic; no speculative fixed point can turn an unknown call into pure.
-    for (size_t round = 0; round <= functions.size(); ++round) {
-        bool changed = false;
-        facts.clear();
-        decisions.clear();
-        for (ctjs::FuncOp fn : functions) {
-            const bool before = complete.lookup(fn);
-            analyze(fn);
-            changed |= before != complete.lookup(fn);
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::FuncOp>> dependents;
+    module.walk([&](ctjs::CallDirectOp call) {
+        auto caller = call->getParentOfType<ctjs::FuncOp>();
+        auto target =
+            mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
+        if (caller && target && !llvm::is_contained(dependents[target], caller)) {
+            dependents[target].push_back(caller);
         }
-        if (!changed) { break; }
+    });
+    llvm::SmallVector<ctjs::FuncOp> pending;
+    llvm::SmallPtrSet<mlir::Operation *, 32> queued;
+    const auto enqueue = [&](ctjs::FuncOp fn) {
+        if (queued.insert(fn).second) { pending.push_back(fn); }
+    };
+    for (ctjs::FuncOp fn : llvm::reverse(functions)) { enqueue(fn); }
+    // Keep the former N+1 whole-module sweeps as a conservative work bound.
+    // Summaries start incomplete; a recursive cycle cannot bootstrap a static
+    // call merely because the return expression happens to be a literal.
+    const uint64_t count = static_cast<uint64_t>(functions.size());
+    const uint64_t limit = count * (count + 1);
+    uint64_t visits = 0;
+    while (!pending.empty() && visits < limit) {
+        ctjs::FuncOp fn = pending.pop_back_val();
+        queued.erase(fn);
+        const bool beforeComplete = complete.lookup(fn);
+        const fact beforeResult = returns.lookup(fn);
+        analyze(fn);
+        ++visits;
+        if (beforeComplete != complete.lookup(fn) || !sameFact(beforeResult, returns.lookup(fn))) {
+            for (ctjs::FuncOp caller : dependents[fn]) { enqueue(caller); }
+        }
+    }
+    if (pending.empty()) { return; }
+    // An unfinished fixed point is not a proof. Re-derive local facts while
+    // making every direct call dynamic; no stale summary survives exhaustion.
+    returns.clear();
+    complete.clear();
+    facts.clear();
+    decisions.clear();
+    for (ctjs::FuncOp fn : functions) {
+        analyze(fn);
+        returns[fn] = {};
+        complete[fn] = false;
+        decisions[fn] = {false, "function summary analysis budget exhausted"};
     }
 }
 
@@ -80,6 +154,12 @@ void BindingTimeAnalysis::Impl::seedArguments() {
             !closedCallableProblem(fn, module).empty()) {
             return;
         }
+        // Native variants retain the original callee value for boxed dispatch.
+        // The symbol-only caller set is then incomplete for this original body:
+        // freezing it to its remaining generic arguments would change calls
+        // that dispatch through the value. Keep its parameters dynamic; this
+        // does not prevent evaluation of argument-independent heap prefixes.
+        if (hasAlternateCalleeCalls(fn, module)) { return; }
         for (unsigned i = 3; i < known.size(); ++i) {
             mlir::Attribute common;
             bool matches = true;
@@ -127,7 +207,10 @@ void BindingTimeAnalysis::Impl::analyze(ctjs::FuncOp fn) {
 }
 
 BindingTimeAnalysis::BindingTimeAnalysis(mlir::ModuleOp module)
-    : impl(std::make_unique<Impl>(module)) {}
+    : BindingTimeAnalysis(module, prepareNativeMaps) {}
+BindingTimeAnalysis::BindingTimeAnalysis(mlir::ModuleOp module,
+                                         llvm::function_ref<void(mlir::ModuleOp)> prepareHeapFacts)
+    : impl(std::make_unique<Impl>(module, prepareHeapFacts)) {}
 BindingTimeAnalysis::~BindingTimeAnalysis() = default;
 BindingTime BindingTimeAnalysis::get(mlir::Value value) const {
     const auto found = impl->facts.find(value);

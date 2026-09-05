@@ -9,11 +9,11 @@ two equal-looking object keys may have different identities.
 ## Design
 
 The partial evaluator runs over CTJS before native ownership and type inference.
-It has a compiler-owned heap of object identities and insertion-ordered Maps,
-with primitive constants on edges. Heap references are stable node IDs, never
-addresses in the compiler process. Writes update this heap; reads and arithmetic
-consume its current state. Overwritten entries and unreachable temporary objects
-need no emitted initialization.
+It has a compiler-owned heap of object identities, insertion-ordered Maps,
+immutable capture cells and closures, with primitive constants on edges. Heap
+references are stable node IDs, never addresses in the compiler process. Writes
+update this heap; reads and arithmetic consume its current state. Overwritten
+entries and unreachable temporary objects need no emitted initialization.
 
 Residualisation traces from the return value or live prefix values, allocates
 each reachable node once, then emits its final fields and entries. Shared edges
@@ -64,18 +64,20 @@ original runtime values. See the [BTA design and inspection pass](native-binding
 
 Private visibility is insufficient by itself: numeric-index closure uses are
 rechecked. Only exact direct-callee uses and single hoisting declarations with
-closed global reads are allowed. Escaping closures, accessors, implicit callback
-invocation and unproved function targets block specialization.
+closed global reads are allowed. A factory may return a separately proved closure
+graph; its own callable identity still must have closed uses. Accessors, implicit
+callback invocation and unproved function targets block specialization.
 
-Receiver, constructor state, closure captures, host reads/writes and unknown
-invocations cannot be evaluated. Nested direct calls may operate on allocations
+Receiver, constructor state, incoming closure captures, host reads/writes and
+unknown invocations cannot be evaluated. Nested direct calls may operate on allocations
 created during the same attempt. Standard Map operations require the existing
 constructor and instance proof; annotations are rederived before evaluation.
 
 The default limits are 10,000 evaluated operations, 32 nested calls and 256
-fresh heap nodes per factory. Unsupported live values, cycles in the residual
-ownership graph and exhausted budgets retain the original function and record a
-reason. Unsupported execution can remain in a runtime suffix. Input result/reason
+fresh heap nodes per factory, counting closure environments and capture cells.
+Unsupported live values, cycles in the residual ownership graph and exhausted
+budgets retain the original function and record a reason. Unsupported execution
+can remain in a runtime suffix. Input result/reason
 annotations confer no authority. The pass is opt-in while this boundary is
 being established; ordinary native lowering remains the final admission gate.
 
@@ -114,8 +116,46 @@ evaluation budget declines specialization rather than retrying around the limit.
 
 The module-wide prototype, host-call and escaping-closure guards remain in force.
 Prefix splitting does not yet specialize arbitrary Bootstrap initialization;
-Bootstrap's method table and host interactions need closure residualisation and
-explicit effect contracts before those guards can be relaxed.
+Bootstrap's host interactions still need explicit effect contracts before those
+guards can be relaxed.
+
+## Closures over static initialization
+
+A closure's code identity can be static while every future argument remains
+dynamic. The evaluator now constructs closures over known local cells without
+invoking their bodies. It retains the target's original numeric function identity
+and traces every captured cell, object and Map as part of the residual graph.
+Closures and capture cells share the ordinary node and step budgets.
+
+The first capture contract allows a known local cell initialized once and a
+visible leaf target that never reassigns an upvalue or observes its receiver,
+constructor state or own callable identity. Inherited capture slots, nested closure
+construction in the target, unknown targets and mutable bindings are refused.
+Mutating a captured Map's contents at runtime is allowed: the binding still names
+the same shared Map. A cell whose runtime initialization remains after a prefix
+boundary cannot be replaced with its current placeholder value. Live cycles
+through closures, cells, objects or Maps refuse the whole attempt.
+
+The existing native closure and method-table lifter supplies the ownership proof.
+A private module copy has all incoming native annotations removed, runs that
+lifter and rederives Map identities. Unique operation locations relate surviving
+Map facts to the unchanged original IR. A residual closure call passes the module
+barrier only if the native proof names its callee and the complete copied module
+passes the same host/prototype guard. This does not execute a closure body or
+change original function signatures. Ambiguous function indices, duplicate
+creation sites and unsupported capture forms skip the private proof attempt.
+
+Residual allocation first creates objects and Maps, then capture cells and
+closures in dependency order, then populates graph edges. Every factory call
+receives fresh state, and methods capturing one Map retain the same identity.
+Native lowering rederives its own proof and selects ordinary owning C++
+environments. Captured identity-only object keys use the existing
+`std::shared_ptr<ctnative::identity_object>` carrier. The identity proof follows
+owning capture slots to every use in the closure body; inspecting or adding
+properties to a key still refuses that carrier. The evaluator keeps closure
+construction in the original factory:
+inlining it into several callers would duplicate the code target's creation site
+and violate that native proof.
 
 ## Validation
 
@@ -140,6 +180,22 @@ object keys, branches, loops, global publication and exactly-once dynamic calls.
 The otherwise unused Map in `effectPrefix` disappears while its saved scalar and
 runtime global write remain.
 
+`test/native-partial-closures-fixture.js` has 19 native functions. Five factories
+evaluate into 21 live heap nodes, including immutable cells and closures. The
+factories have no incoming arguments or captures; the returned callables keep
+their runtime arguments. Seven numeric observations match ctbrowser under
+ordinary and deduced C++, GCC/Clang, and ASan/UBSan with leak detection. The
+fixture covers repeated factory calls, aliasing and shared method tables, object
+key identity, scalar snapshots after dropping a temporary Map, owned captured
+strings, and use after many intervening factory calls. Runtime closure writes
+and counters prove that the bodies execute only when called.
+
+Closure lit cases run PE twice, inspect eliminated initialization and retained
+snapshots, and require rollback for mutable local cells, target upvalue writes,
+pending dynamic cell initialization, cyclic captures, duplicate creation sites,
+unknown or ambiguous targets and node-budget exhaustion. Native object-key
+controls separately check captured property writes and identity inspection.
+
 The lit cases inspect the residual graph, repeat the pass, and require intact
 bodies with reasons for cycles, prototype access, escaping closures and exhausted
 budgets. Unknown values and external effects remain in runtime suffixes; varying
@@ -148,10 +204,14 @@ A tag-colliding IEEE NaN verifies the adapter boundary. The ordinary native pipe
 checks numeric observations against ctbrowser, absence of VM symbols, both GCC and Clang,
 type-deduction pins and a deliberately changed output.
 
-The combined devbox gate passes 363/363 CTests, including 114/114 lit cases.
-The pinned formatter passes all 450 C++ files.
+The closure extension passes all 18 CTests across the whole-factory, prefix and
+closure fixtures, plus focused PE/BTA and native object-key lit cases. The prior
+baseline passed 363/363 CTests, including 114/114 lit cases; the combined gate
+passes 394/394 CTests and 120/120 lit cases, with the additional optimization
+stages recorded in [the integration results](native-pe-roadmap.md).
 
 Full Bootstrap initialization is still outside this slice: its host and
-prototype interactions require effect contracts and residual closure environments.
+prototype interactions require effect contracts, and mutable or inherited
+capture environments need further proof.
 Default native corpus coverage remains a separate measure from the opt-in factory
 evaluation tests.

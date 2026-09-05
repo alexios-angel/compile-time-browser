@@ -1,4 +1,5 @@
 #include "Analysis.h"
+#include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
 #include "llvm/ADT/STLExtras.h"
 
 namespace ctcompile::ctnative {
@@ -46,6 +47,40 @@ BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::memory(mlir::Operatio
         }
         eligible = control;
         return result;
+    }
+    if (auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(op)) {
+        const fact initial = get(cell.getInitial());
+        eligible =
+            control && immutableCaptureCell(cell, module) && initial.time == BindingTime::Static;
+        state.heaps[op].dynamic = !eligible;
+        state.heaps[op].fields["value"] = initial;
+        return {kind::cell, eligible ? BindingTime::Static : BindingTime::Dynamic, {}, {op}};
+    }
+    if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(op)) {
+        const fact cell = get(read.getCell());
+        if (cell.domain != kind::cell || !clean(cell) || cell.nodes.size() != 1) { return {}; }
+        fact result = state.heaps[cell.nodes.front()].fields.lookup("value");
+        eligible = result.time == BindingTime::Static;
+        return result;
+    }
+    if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(op)) {
+        const fact cell = get(write.getCell()), data = get(write.getValue());
+        eligible =
+            control && cell.domain == kind::cell && clean(cell) && data.time == BindingTime::Static;
+        for (auto * id : cell.nodes) {
+            state.heaps[id].dynamic |= !eligible;
+            state.heaps[id].fields["value"] = data;
+        }
+        return {};
+    }
+    if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
+        eligible = control && immutableClosureTarget(made, module) &&
+                   llvm::all_of(made.getUpvalues(), [&](mlir::Value input) {
+                       const fact capture = get(input);
+                       return capture.domain == kind::cell && clean(capture);
+                   });
+        state.heaps[op].dynamic = !eligible;
+        return {kind::closure, eligible ? BindingTime::Static : BindingTime::Dynamic, {}, {op}};
     }
     if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
         if (load->hasAttr(kNativeMapConstructor)) {

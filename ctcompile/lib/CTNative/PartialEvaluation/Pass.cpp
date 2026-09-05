@@ -1,3 +1,4 @@
+#include "ClosureProof.h"
 #include "Heap.h"
 
 #include "ctcompile/CTNative/Analysis/BindingTime.h"
@@ -16,7 +17,8 @@ namespace {
 // Pure fresh-object writes still require that no user prototype setters can
 // intervene. This first slice excludes every route to shared prototypes or
 // host state, including dynamic property names and the top-level receiver.
-std::string environmentProblem(mlir::ModuleOp module) {
+std::string environmentProblem(mlir::ModuleOp module,
+                               const partial_eval::closureHeapProof * proof = nullptr) {
     std::string reason;
     llvm::DenseMap<unsigned, ctjs::FuncOp> indexed;
     module.walk([&](ctjs::FuncOp function) {
@@ -51,7 +53,9 @@ std::string environmentProblem(mlir::ModuleOp module) {
                 }
             }
         }
-        if (auto call = llvm::dyn_cast<ctjs::CallOp>(op); call && nativeMapAction(call).empty()) {
+        if (auto call = llvm::dyn_cast<ctjs::CallOp>(op);
+            call && nativeMapAction(call).empty() &&
+            !(proof && proof->checkedEnvironment && proof->closedCalls.contains(op))) {
             reason = "module has an unknown call";
         }
         if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
@@ -107,9 +111,12 @@ struct CTNativePartialEvaluatePass
             op->removeAttr("ctnative.partial_evaluated");
             op->removeAttr("ctnative.partial_eval_reason");
         });
-        prepareNativeMaps(module);
-        const std::string environment = environmentProblem(module);
-        BindingTimeAnalysis bindingTime(module);
+        partial_eval::closureHeapProof closureProof;
+        BindingTimeAnalysis bindingTime(module, [&](mlir::ModuleOp input) {
+            closureProof = partial_eval::prepareClosureHeapFacts(
+                input, [](mlir::ModuleOp shadow) { return environmentProblem(shadow).empty(); });
+        });
+        const std::string environment = environmentProblem(module, &closureProof);
         llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> callers;
         module.walk([&](ctjs::CallDirectOp call) {
             auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(

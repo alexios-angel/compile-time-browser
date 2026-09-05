@@ -19,6 +19,22 @@ foreach(required TRANSLATE OPT SOURCE OUTPUT)
   endif()
 endforeach()
 set(_partial_pass "")
+set(_precompute_pass "")
+set(_specialize_pass "")
+set(_supercompile_pass "")
+set(_deforest_pass "")
+if(PRECOMPUTE)
+  set(_precompute_pass "ctnative-precompute{report=true}, ")
+endif()
+if(SPECIALIZE)
+  set(_specialize_pass "ctnative-specialize{report=true}, ${_precompute_pass}")
+endif()
+if(DEFOREST)
+  set(_deforest_pass "ctnative-deforest{report=true}, ")
+endif()
+if(SUPERCOMPILE)
+  set(_supercompile_pass "ctnative-supercompile{report=true}, ")
+endif()
 if(PARTIAL_EVALUATE)
   set(_partial_pass "ctnative-partial-evaluate{report=true}, ")
 endif()
@@ -34,7 +50,7 @@ execute_process(
   # prune for the variables nothing reads (Phase 63 Step 7 - the file must
   # compile clean under -Wall -Wextra -Werror), and a canonicalize for what
   # the prune left dead.
-  COMMAND "${OPT}" "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ${_partial_pass}ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))"
+  COMMAND "${OPT}" "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ${_precompute_pass}${_specialize_pass}${_supercompile_pass}${_partial_pass}ctnative-lower-to-emitc, ${_deforest_pass}emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))"
           --mlir-print-debuginfo --mlir-print-op-on-diagnostic=false
   OUTPUT_VARIABLE module
   ERROR_VARIABLE complaints
@@ -46,6 +62,18 @@ foreach(outcome IN LISTS outcomes)
 endforeach()
 if(PARTIAL_EVALUATE AND NOT complaints MATCHES "partial evaluation: [1-9][0-9]* function")
   message(FATAL_ERROR "partial evaluation did not specialize any factory\n${complaints}")
+endif()
+if(PRECOMPUTE AND NOT complaints MATCHES "precomputation: [1-9][0-9]* expression")
+  message(FATAL_ERROR "precomputation did not simplify any expression\n${complaints}")
+endif()
+if(SPECIALIZE AND NOT complaints MATCHES "specialization: [1-9][0-9]* variant")
+  message(FATAL_ERROR "specialization did not create any variant\n${complaints}")
+endif()
+if(DEFOREST AND NOT complaints MATCHES "deforestation: [1-9][0-9]* snapshot")
+  message(FATAL_ERROR "deforestation did not eliminate any snapshot\n${complaints}")
+endif()
+if(SUPERCOMPILE AND NOT complaints MATCHES "supercompilation: [1-9][0-9]* kernel")
+  message(FATAL_ERROR "supercompilation did not drive any kernel\n${complaints}")
 endif()
 # A REFUSED FUNCTION IS NAMED HERE, not discovered as a translation failure
 # three steps later: the diagnostic is on the ctjs.func the pass left behind.
