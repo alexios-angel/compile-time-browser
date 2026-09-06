@@ -8,6 +8,8 @@
 # which is the set its authors actually test against.
 add_library(ctcompile-target-cpp
   Callables/Body.cpp
+  Callables/Creation.cpp
+  Callables/References.cpp
   Const/Bindings.cpp
   Const/Types.cpp
   Const/Uses.cpp

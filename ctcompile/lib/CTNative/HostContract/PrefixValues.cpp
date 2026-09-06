@@ -108,6 +108,13 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
         auto owner = values.lookup(read.getObject());
         auto key = values.lookup(read.getKey());
         auto text = llvm::dyn_cast_if_present<ctjs::StringAttr>(key.literal);
+        if (followPublication && owner.kind == prefixValue::Kind::realm && text &&
+            llvm::is_contained(contract.realmOwnDataProperties, text.getValue())) {
+            const auto field = globals.find(text.getValue());
+            return field == globals.end() || field->second.kind == prefixValue::Kind::unknown
+                       ? stop(operation, "realm property value has not been initialized by source")
+                       : field->second;
+        }
         if (owner.kind != prefixValue::Kind::object || !text || !ordinaryKey(text.getValue())) {
             return stop(operation, "property read lacks a fresh ordinary receiver/key");
         }
@@ -122,10 +129,18 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
         auto owner = values.lookup(write.getObject());
         auto key = values.lookup(write.getKey());
         auto text = llvm::dyn_cast_if_present<ctjs::StringAttr>(key.literal);
+        if (followPublication && owner.kind == prefixValue::Kind::realm && text &&
+            llvm::is_contained(contract.realmOwnDataProperties, text.getValue())) {
+            const auto value = values.lookup(write.getValue());
+            globals[text.getValue()] = value;
+            publication(write, owner, value);
+            return {};
+        }
         if (owner.kind != prefixValue::Kind::object || !text || !ordinaryKey(text.getValue())) {
             return stop(operation, "property write lacks a fresh ordinary receiver/key");
         }
         objects[owner.object][text.getValue()] = values.lookup(write.getValue());
+        publication(write, owner, values.lookup(write.getValue()));
         return {};
     }
     if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
@@ -178,13 +193,20 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
         auto lexical = closure.made
                            ? closure.made.getEnclosingThis().getDefiningOp<ctjs::ConstantOp>()
                            : ctjs::ConstantOp{};
-        if (!callee || callee.getBody().empty() || !lexical ||
-            !llvm::isa<ctjs::UndefinedAttr>(lexical.getValue()) ||
+        const bool summarizedClosure =
+            followPublication && closure.made && factoryClosures.contains(closure.made);
+        if (!callee || callee.getBody().empty() ||
+            ((!lexical || !llvm::isa<ctjs::UndefinedAttr>(lexical.getValue())) &&
+             !summarizedClosure) ||
             callee.getBody().front().getNumArguments() != invoked.getArgs().size() + 3 ||
             pendingNewTarget.contains(invoked->getParentOfType<ctjs::FuncOp>())) {
             return stop(operation, "indirect call lacks exact source target/argument state");
         }
         calls.push_back({invoked, callee});
+        if (followPublication) {
+            const auto result = factory(invoked, callee);
+            if (result.kind != prefixValue::Kind::unknown) { return result; }
+        }
         // Naming this invocation requires its actual closure value, not a
         // reusable-body proof. Interpreting the target would additionally need
         // that body's unique context; stop before any of its effects instead.

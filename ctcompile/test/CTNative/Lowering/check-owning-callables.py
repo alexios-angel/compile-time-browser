@@ -58,16 +58,16 @@ def main():
                 assert "std::make_tuple(" not in cpp and "std::get<" not in cpp, cpp
             assert "ctnative::invoke_callable(" in cpp, cpp
             lambdas = re.findall(
-                r"ctnative::ctn_env_\w+ const (ctn_lambda\w*) = \[([^\]]*)\]\(([^\n]*)\) -> ([^\n]+) \{",
+                r"ctnative::ctn_env_\w+ const ([A-Za-z_]\w*) = \[([^\]]*)\]\(([^\n]*)\) -> ([^\n]+) \{",
                 cpp)
             assert lambdas, cpp
+            assert "ctn_bind_" not in cpp and "ctn_lambda" not in cpp, cpp
             for name, captures, parameters, result in lambdas:
                 assert "&" not in captures and "mutable" not in parameters, captures
-                assert re.search(rf"return {re.escape(name)};", cpp), cpp
                 for capture in captures.split(", ") if captures else []:
-                    assert re.fullmatch(r"(capture_\w+) = std::move\(\1\)", capture), capture
+                    assert re.fullmatch(r"capture_\w+ = [A-Za-z_]\w*", capture), capture
             if fixture == "owning":
-                assert "capture_state = std::move(capture_state)" in cpp, cpp
+                assert "capture_state = state" in cpp, cpp
                 assert "js_num const argument_delta" in cpp, cpp
                 assert re.search(r"const state = ctnative::", cpp), cpp
                 # The original source body now lives inside the owning lambda;
@@ -78,7 +78,7 @@ def main():
                 assert "static_cast<void>(argument_delta)" not in cpp, cpp
             elif fixture == "scalar-string":
                 assert "std::function<std::string(std::string)>" in cpp, cpp
-                assert "capture_template = std::move(capture_template)" in cpp, cpp
+                assert "capture_template = js_template" in cpp, cpp
                 assert "js_num const argument_concept" in cpp, cpp
             decisions.append(lambdas)
             source = args.work / f"{fixture}-{label}.cpp"

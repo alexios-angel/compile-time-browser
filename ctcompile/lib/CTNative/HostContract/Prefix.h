@@ -11,6 +11,7 @@ struct prefixValue {
         primitive,
         object,
         realm,
+        resource,
         closure,
         absent
     } kind = Kind::unknown;
@@ -25,11 +26,17 @@ struct prefixAnalysis {
     mlir::ModuleOp module;
     const HostContract & contract;
     unsigned remaining;
+    bool followPublication;
+    unsigned operationCount = 0;
     bool exhausted = false;
     bool reflective = false;
     std::string refusal, boundary;
     std::vector<HostPrefixBranch> branches;
     std::vector<HostPrefixCall> calls;
+    std::vector<HostPrefixFactory> factories;
+    std::vector<HostPrefixPublication> publications;
+    llvm::DenseMap<unsigned, unsigned> factoryTables;
+    llvm::DenseSet<mlir::Operation *> factoryClosures;
     llvm::DenseMap<unsigned, ctjs::FuncOp> functions;
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> callers;
     llvm::DenseMap<mlir::Operation *, unsigned> creations;
@@ -51,8 +58,10 @@ struct prefixAnalysis {
         llvm::SmallVector<prefixValue> values;
     };
 
-    prefixAnalysis(mlir::ModuleOp module, const HostContract & contract, unsigned maxSteps);
+    prefixAnalysis(mlir::ModuleOp module, const HostContract & contract, unsigned maxSteps,
+                   bool followPublication);
     bool step();
+    bool spend(unsigned count);
     prefixValue stop(mlir::Operation * operation, llvm::StringRef reason);
     ctjs::FuncOp target(prefixValue value);
     bool uniqueContext(ctjs::FuncOp function, ctjs::CallDirectOp call,
@@ -60,6 +69,8 @@ struct prefixAnalysis {
     bool initializedGlobal(ctjs::LoadGlobalOp load);
     bool identitySafeFunction(ctjs::FuncOp function, llvm::DenseSet<mlir::Operation *> & stack);
     bool identitySafeRegion(mlir::Region & region, llvm::DenseSet<mlir::Operation *> & stack);
+    prefixValue factory(ctjs::CallOp call, ctjs::FuncOp function);
+    void publication(ctjs::SetPropertyOp write, prefixValue owner, prefixValue value);
     completion function(ctjs::FuncOp function, llvm::ArrayRef<prefixValue> arguments,
                         unsigned depth);
     completion region(mlir::Region & region, environment & values, unsigned depth);

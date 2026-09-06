@@ -19,49 +19,63 @@ add(2); // 42, after makeStore's frame has ended
 ```
 
 When the solved capture, argument and result carriers have a concrete callable
-signature, each function value uses a `std::function` alias and a named lambda.
-The binder emits the source body directly in that lambda. A shortened rendering
-of the example above is:
+signature, each function value uses a `std::function` alias. The lambda and its
+source body appear at the closure's creation site, inside the factory. A
+shortened rendering of the example above is:
 
 ```cpp
 using js_num = double;
 using ctn_env_fn_2 = std::function<js_num(js_num)>;
 
-ctn_env_fn_2 ctn_bind_fn_2(
-    std::shared_ptr<ctnative::string_to_number_map> capture_state) {
-    ctn_env_fn_2 const ctn_lambda =
-        [capture_state = std::move(capture_state)](js_num const argument_delta) -> js_num {
+ctn_env_fn_2 makeStore_1(js_num const seed) {
+    auto const state = ctnative::make_string_to_number_map();
+    ctnative::map_set(state, std::string("value", 5), seed);
+    ctn_env_fn_2 const result =
+        [capture_state = state](js_num const argument_delta) -> js_num {
             std::string const key("value", 5);
             js_num const next = ctnative::to_number(ctnative::map_get(capture_state, key))
                                 + argument_delta;
             ctnative::map_set(capture_state, key, next);
             return ctnative::to_number(ctnative::map_get(capture_state, key)) + 0.0;
         };
-    return ctn_lambda;
+    return result;
 }
 ```
 
 The explicit init-capture owns the Map handle. A reference capture would not
 extend the lifetime of the factory's local binding; copying the shared pointer
-does. The lambda's const call operator keeps that handle immutable while the
-Map's contents remain shared and mutable. Strings are owned by value as well.
+does. The init-capture copies the handle without moving from a source binding
+that may still be used or captured again. The lambda's const call operator keeps
+that handle immutable while the Map's contents remain shared and mutable.
+Strings are owned by value as well.
 Factory invocations retain separate environments; copies of one callable retain
 the same Map. Generated programs need neither the VM nor a collector.
 
-The source-derived `capture_` and `argument_` names distinguish the binder's
-locals from the source function's locals. Keywords, unsupported identifier
-bytes and collisions are handled within that generated scope. Callable builders
+The source-derived `capture_` and `argument_` names distinguish captures and
+parameters from the source function's locals. Keywords, unsupported identifier
+bytes and collisions are handled within each lambda's scope. Creation statements
 retain the returned function's source location. Signatures outside the concrete
 callable carrier set keep the previous owning `std::tuple` representation and
 direct lifted calls.
 
 The body remains EmitC IR until final C++ emission. It shares the ordinary
 function printer's source names, const/constexpr analysis, structured control,
-hoisting and deduced-type pins. If another emitted call or address references
-the lifted function, that definition remains available too. If the final use
+hoisting and deduced-type pins. Nested lambdas use independent printer state, so
+their names and analysis facts cannot replace those of the enclosing function.
+Explicit declarations initialize the callable alias directly; forced deduction
+and expression operands construct that exact alias around the lambda.
+Captures from deferred literals or inline expressions retain the binder's
+implicit conversion to the declared carrier type through a typed value-copy
+lambda. For example, an f64 literal spelled `1` still captures a double. Ordinary
+typed SSA bindings keep the direct `[capture_state = state]` spelling.
+If another emitted call or address references the lifted function, that
+definition remains available too. If the final use
 analysis requires a writable captured binding, the lambda forwards to the lifted
 function so each call still receives its own parameter copy. That fallback never
-turns the capture into persistent mutable state.
+turns the capture into persistent mutable state. Unmarked binder calls retain
+their helper. Recursive creation graphs or expansions exceeding eight nested
+functions or 4,096 visited operations also retain helpers, bounding emitted
+body duplication.
 
 This is the monomorphic case of Phase 59A. Proved
 [returned method tables](native-method-tables.md) now carry stored callables
@@ -128,7 +142,18 @@ translation unit checks that callables request their own standard headers. A
 third unit combines a tuple-backed closure accepting a callable parameter with
 a scalar callable, checking that the prior representation remains available.
 The C++ target regression separately checks retained direct/address references,
-forwarding for writable captures, repeated calls and invalid body metadata.
+forwarding for writable captures, repeated and nested creation, live string
+captures, recursive fallback, outer name/constexpr restoration, exact deduced
+type pins and invalid body/creation metadata.
+Deferred-literal and inline-expression controls check that captured values keep
+the binder's floating-point overload selection.
+
+The creation-site update passes the 2026-09-06 devbox gate: **448/448 CTests**,
+including **144/144 lit cases**, in **532.31 seconds**. All six regenerated sample
+pairs retain their 17 observations under GCC, Clang and the interpreter. Sample 5
+now places the lambda directly inside `makeCounter_1` and shrinks from 9,457 to
+9,148 bytes. The capture/lifetime suite passes ASan/UBSan, and boxed Bootstrap
+remains byte-identical.
 
 The 2026-09-05 devbox gate passes **299/299 CTests**, including **98/98 lit
 tests**. Standalone ASan/UBSan execution matches all 13 observations without

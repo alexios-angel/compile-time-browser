@@ -18,6 +18,12 @@ extern "C" std::int32_t ctcompile_host_prefix_wrapper(ctbrowser::aot::ct_aot_ctx
                                                       const std::uint64_t *, std::uint32_t,
                                                       std::uint64_t, std::uint32_t,
                                                       std::uint64_t *);
+#ifdef CTCOMPILE_HOST_PREFIX_SCRIPT
+extern "C" std::int32_t ctcompile_host_prefix_script(ctbrowser::aot::ct_aot_ctx *,
+                                                     const ctbrowser::aot::ct_aot_site *,
+                                                     const std::uint64_t *, std::uint32_t,
+                                                     std::uint64_t, std::uint32_t, std::uint64_t *);
+#endif
 
 namespace {
 
@@ -34,6 +40,9 @@ std::vector<double> run(const std::string & source, bool compiled, bool stress) 
     }
     if (compiled) {
         program.functions[CTCOMPILE_HOST_PREFIX_ENTRY].aot_entry = &ctcompile_host_prefix_wrapper;
+#ifdef CTCOMPILE_HOST_PREFIX_SCRIPT
+        program.functions[0].aot_entry = &ctcompile_host_prefix_script;
+#endif
     }
     context runtime;
     install_builtins(runtime);
@@ -49,7 +58,10 @@ std::vector<double> run(const std::string & source, bool compiled, bool stress) 
         std::fprintf(stderr, "host prefix: %s\n", result.error.c_str());
         return {};
     }
-    if (compiled && transitions(transition::vm_to_aot) != CTCOMPILE_HOST_PREFIX_INVOCATIONS) {
+    const auto compiledEntries = transitions(transition::cxx_to_aot) +
+                                 transitions(transition::vm_to_aot) +
+                                 transitions(transition::aot_to_aot);
+    if (compiled && compiledEntries != CTCOMPILE_HOST_PREFIX_INVOCATIONS) {
         std::fprintf(stderr, "host prefix: compiled body invocation count changed\n");
         return {};
     }

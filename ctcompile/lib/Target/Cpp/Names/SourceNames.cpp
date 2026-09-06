@@ -16,7 +16,10 @@ void SourceNames::prepare(mlir::Operation * function,
     unavailable.clear();
     nextTemporary = 0;
     const auto module = function->getParentOfType<mlir::ModuleOp>();
-    active = module && module->hasAttrOfType<mlir::UnitAttr>("ctnative.readable_names");
+    // A callable's fixed capture names also need collision-free locals when
+    // a hand-written EmitC module has not requested general source naming.
+    active = !parameters.empty() ||
+             (module && module->hasAttrOfType<mlir::UnitAttr>("ctnative.readable_names"));
     if (!active) { return; }
     mlir::Operation * root = function;
     while (root->getParentOp()) { root = root->getParentOp(); }

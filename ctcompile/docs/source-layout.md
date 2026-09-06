@@ -28,7 +28,7 @@ by their implementation files. Public APIs remain under `include/ctcompile/`.
 | C++ source names | `lib/CTJS/Import/Bytecode/SourceNames.*` and `lib/Target/Cpp/Names/` | Register-scope name provenance, name propagation through native values and collision-free C++ allocation |
 | C++ const bindings | `lib/Target/Cpp/Const/` and `lib/CTNative/Lowering/EmitC/Calls.cpp` | Backward binding-mutability data flow, lvalue/capture aliases and native helper operand ABI contracts |
 | C++ constexpr bindings | `lib/Target/Cpp/Constexpr/` | Forward scalar binding time, checked integer/float evaluation, representable conversions and C++ constant-expression eligibility |
-| C++ callable bodies | `lib/Target/Cpp/Callables/` | Final-IR lambda body emission, owning capture names and retained lifted-function references |
+| C++ callable bodies | `lib/Target/Cpp/Callables/` | Final-IR lambda bodies at creation sites, validated bounded expansion, independent nested printer state and retained helper/function references |
 | C++ parameter suppression | `lib/Target/Cpp/UnusedParameters.h` | Final printed-use analysis for compiler-generated unused-parameter casts |
 | Global effects | `lib/CTJS/Lowering/Globals/` | Reflection, global identity and effects retained for refused bodies |
 | Bytecode import | `lib/CTJS/Import/Bytecode/` | Per-function state, instruction dispatch, operator tables and support routines |

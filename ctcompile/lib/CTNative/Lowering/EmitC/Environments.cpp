@@ -90,6 +90,10 @@ bool lowering::replaceEnvironment(mlir::Operation * op) {
                                             mlir::TypeRange{made.getResult().getType()},
                                             at.getStringAttr(builder), made.getUpvalues())
                      .getResult(0);
+        if (const auto name = names.lookup(target); callableBodies.contains(name)) {
+            result.getDefiningOp()->setAttr("ctnative.callable_create",
+                                            mlir::FlatSymbolRefAttr::get(context, name));
+        }
     } else if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op);
                read && op->hasAttr(kNativeEnvironmentRead)) {
         const auto callee = "std::get<" + std::to_string(read.getIndex()) + ">";

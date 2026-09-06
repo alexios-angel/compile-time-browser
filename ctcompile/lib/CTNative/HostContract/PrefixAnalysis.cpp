@@ -6,8 +6,9 @@
 namespace ctcompile::ctnative::host_detail {
 
 prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contract,
-                               unsigned maxSteps)
-    : module(module), contract(contract), remaining(maxSteps), dominance(module) {
+                               unsigned maxSteps, bool followPublication)
+    : module(module), contract(contract), remaining(maxSteps), followPublication(followPublication),
+      dominance(module) {
     refusal = initialBindingProblem(module, contract);
     module.walk([&](ctjs::StoreGlobalOp store) {
         if (step()) { initializers[store.getName()].push_back(store); }
@@ -21,6 +22,7 @@ prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contr
     });
     module.walk([&](mlir::Operation * operation) {
         if (!step()) { return; }
+        ++operationCount;
         if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
             if (made.getFunction() >= 0) {
                 ++creations[functions.lookup(static_cast<unsigned>(made.getFunction()))];
@@ -83,11 +85,16 @@ prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contr
 }
 
 bool prefixAnalysis::step() {
-    if (remaining == 0) {
+    return spend(1);
+}
+
+bool prefixAnalysis::spend(unsigned count) {
+    if (count > remaining) {
         exhausted = true;
+        remaining = 0;
         return false;
     }
-    --remaining;
+    remaining -= count;
     return true;
 }
 
@@ -215,12 +222,13 @@ prefixAnalysis::completion prefixAnalysis::region(mlir::Region & region, environ
 namespace ctcompile::ctnative {
 
 HostEntryPrefixAnalysis::HostEntryPrefixAnalysis(mlir::ModuleOp module,
-                                                 const HostContract & contract, unsigned maxSteps) {
+                                                 const HostContract & contract, unsigned maxSteps,
+                                                 bool followPublication) {
     if (hostContractFingerprint(module) != contract.moduleSha256) {
         refusal = "host prefix module fingerprint mismatch";
         return;
     }
-    host_detail::prefixAnalysis analysis(module, contract, maxSteps);
+    host_detail::prefixAnalysis analysis(module, contract, maxSteps, followPublication);
     auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
     if (!entry || entry.getBody().empty() || entry.getBody().front().getNumArguments() != 3 ||
         entry.getUpvalueCount() != 0 || !analysis.callers[entry].empty() ||
@@ -240,12 +248,18 @@ HostEntryPrefixAnalysis::HostEntryPrefixAnalysis(mlir::ModuleOp module,
             changed.insert(proof.operation->getParentOfType<ctjs::FuncOp>());
         }
         for (auto proof : analysis.calls) {
-            changed.insert(proof.operation->getParentOfType<ctjs::FuncOp>());
+            auto caller = proof.operation->getParentOfType<ctjs::FuncOp>();
+            // Naming a callee in the unreferenced script entry preserves the
+            // actual call and does not specialize a reusable callee body.
+            // Helper bodies still need the full continuation identity check.
+            if (!followPublication || caller != entry) { changed.insert(caller); }
         }
         for (auto * operation : changed) {
             if (!analysis.identitySafeFunction(llvm::cast<ctjs::FuncOp>(operation), stack)) {
                 analysis.branches.clear();
                 analysis.calls.clear();
+                analysis.factories.clear();
+                analysis.publications.clear();
                 analysis.boundary = "continuation may expose the active callable identity";
                 break;
             }
@@ -256,6 +270,8 @@ HostEntryPrefixAnalysis::HostEntryPrefixAnalysis(mlir::ModuleOp module,
     if (refusal.empty()) {
         branchProofs = std::move(analysis.branches);
         callProofs = std::move(analysis.calls);
+        factoryProofs = std::move(analysis.factories);
+        publicationProofs = std::move(analysis.publications);
     }
 }
 

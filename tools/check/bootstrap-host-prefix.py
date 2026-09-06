@@ -43,6 +43,19 @@ def fallback_program(probe, fragment):
             "var traceAliasUndefined = globalThis === undefined ? 1 : 0;\n")
 
 
+def replace_publication(program, fragment, api, replacement):
+    before, found, after = program.partition(fragment)
+    if not found:
+        raise RuntimeError("publication replacement lost the exact vendor fragment")
+    setup = f"originalGet = {api}.get;\n"
+    method = "function replacement(element, key) { return originalGet(element, key); }"
+    if replacement == "method":
+        setup += f"{api}.get = {method};\n"
+    else:
+        setup += f"originalApi = {api};\n{api} = {{set: originalApi.set, get: {method}, remove: originalApi.remove}};\n"
+    return "var originalGet; var originalApi;\n" + before + fragment + setup + after
+
+
 NODE_DRIVER = r"""const fs = require('node:fs');
 const vm = require('node:vm');
 const specification = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
@@ -83,22 +96,41 @@ def main():
     parser.add_argument("--opt")
     parser.add_argument("--node", help="also check every declared observation in a fresh Node realm")
     parser.add_argument("--oracle-only", action="store_true", help="generate source and run Node without compiler tools")
-    parser.add_argument("--mode", choices=("commonjs", "browser", "browser_this_fallback", "global_reentry", "self_reentry"), required=True)
+    parser.add_argument("--follow-publication", action="store_true")
+    parser.add_argument("--replace", choices=("method", "table"), help="replace the published callable/table before observation")
+    parser.add_argument("--mode", choices=("commonjs", "browser", "browser_this_fallback", "global_reentry", "self_reentry", "resource_instances"), required=True)
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     if args.oracle_only and not args.node:
         parser.error("--oracle-only requires --node")
     if not args.oracle_only and (not args.translate or not args.opt):
         parser.error("compiler evidence requires --translate and --opt")
+    if args.replace and (not args.follow_publication or args.mode not in {"commonjs", "browser", "browser_this_fallback"}):
+        parser.error("--replace requires a followed exact publication mode")
+    if args.mode == "resource_instances" and not args.follow_publication:
+        parser.error("resource_instances requires --follow-publication")
     args.work.mkdir(parents=True, exist_ok=True)
     spec = importlib.util.spec_from_file_location("bootstrap_probe", Path(__file__).with_name("bootstrap-data-probe.py"))
     probe = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(probe)
     fragment, provenance = probe.extract(args.bootstrap.read_bytes().decode("utf-8"))
     adversarial = args.mode in {"global_reentry", "self_reentry"}
+    instances = args.mode == "resource_instances"
     realm_fallback = args.mode == "browser_this_fallback"
     realm_properties = ["bootstrap"] if realm_fallback else []
-    if adversarial:
+    if instances:
+        program = """var host = {}; var first;
+(function(factory) { first = factory(); host.slot = factory(); })(function() {
+    const resource = new Map;
+    return {get: () => resource.size, set: function(value) { resource.set('key', value); return value; }};
+});
+var traceSet = first.set(42);
+var traceFirst = first.get();
+var traceSecond = host.slot.get();
+var traceDistinct = first !== host.slot ? 1 : 0;
+"""
+        provenance = {"fixture": "two factory invocations retain distinct resource instances"}
+    elif adversarial:
         program = "function route() { if (typeof host === 'object') { trace = 1; } else { trace = 2; } } var host = {}; var trace = 0; route(); host = 0; this.route();\n"
         provenance = {"fixture": "global publication permits a later realm-property invocation"}
         if args.mode == "self_reentry":
@@ -111,7 +143,12 @@ def main():
     expected = {"trace": "2"} if adversarial else dict(probe.EXPECTED)
     if realm_fallback:
         expected.update(REALM_OBSERVATIONS)
-    function_count = 2 if adversarial else 7
+    if instances:
+        expected = {"traceSet": "42", "traceFirst": "1", "traceSecond": "0", "traceDistinct": "1"}
+    if args.replace:
+        api = "module.exports" if args.mode == "commonjs" else "scriptThis.bootstrap" if realm_fallback else "globalThis.bootstrap"
+        program = replace_publication(program, fragment, api, args.replace)
+    function_count = 2 if adversarial else 5 if instances else 8 if args.replace else 7
     js = args.work / "program.js"
     raw = args.work / "raw.mlir"
     prepared = args.work / "prepared.mlir"
@@ -121,6 +158,7 @@ def main():
     js.write_bytes(program.encode("utf-8"))
     provenance.update({"mode": args.mode, "program_sha256": probe.sha256(program),
                        "source_functions": function_count, "declared_observations": sorted(expected),
+                       "follow_publication": args.follow_publication, "replacement": args.replace,
                        "native_execution_claimed": False})
     if args.node:
         provenance["node_oracle"] = node_oracle(args.node, args.work, js, expected, realm_properties)
@@ -154,7 +192,7 @@ def main():
         raise RuntimeError("missing canonical source fingerprint")
     binding, key = "globalThis", "bootstrap"
     present = {"globalThis"}
-    if adversarial:
+    if adversarial or instances:
         binding, key = "host", "slot"
     elif realm_fallback:
         binding, key = "scriptThis", "bootstrap"
@@ -166,34 +204,50 @@ def main():
         "version": 1, "provider": "closed-source-v1", "module_sha256": digest[1],
         "entry": "_script_$0", "roots": [{"binding": binding, "properties": [key]}],
         "observations": sorted(expected),
-        "absent_bindings": [] if adversarial else sorted({"module", "exports", "define", "self"} - present),
+        "absent_bindings": [] if adversarial or instances else sorted({"module", "exports", "define", "self"} - present),
         "undefined_bindings": ["undefined"],
-        "initial_intrinsics": [] if adversarial else ["Map", "Array"],
+        "initial_intrinsics": [] if adversarial else ["Map"] if instances else ["Map", "Array"],
         "realm_global_this": True,
     }
     if realm_fallback:
         contract["entry_receiver"] = {"kind": "classic-script-realm", "own_data_properties": realm_properties}
     manifest.write_text(json.dumps(contract, indent=2) + "\n")
     result = run([args.opt, str(prepared),
-                  f"--ctnative-specialize-host-prefix=manifest={manifest} output={report_file} report=true",
+                  f"--ctnative-specialize-host-prefix=manifest={manifest} output={report_file} report=true follow-publication={str(args.follow_publication).lower()}",
                   "-o", str(specialized)])
     (args.work / "prefix.log").write_text(result.stderr)
     report = json.loads(report_file.read_text())
     expected_branches = {"commonjs": 2, "browser": 5, "browser_this_fallback": 6,
-                         "global_reentry": 0, "self_reentry": 0}[args.mode]
-    expected_targets = [] if adversarial else ["fn$3"]
+                         "global_reentry": 0, "self_reentry": 0, "resource_instances": 0}[args.mode]
+    expected_targets = [] if adversarial else ["fn$2", "fn$2", "fn$4"] if instances else ["fn$3"]
+    if args.follow_publication and not instances and not adversarial:
+        expected_targets.append("replacement$7" if args.replace else "fn$5")
     if not report["valid"] or report["selected_branches"] != expected_branches or report["targets"] != expected_targets:
         raise RuntimeError(f"exact wrapper proof did not advance as expected: {report}")
     after = specialized.read_text()
     if len(re.findall(r"\bctjs\.func\b", after)) != function_count:
         raise RuntimeError("prefix specialization lost a source function")
     wrapper = re.search(r"ctjs\.func (?:private )?@fn\$2\(.*?(?=\n  ctjs\.func |\n})", after, re.S)
-    if not adversarial and (not wrapper or "scf.if" in wrapper[0] or len(re.findall(r"ctjs.call_direct @fn\$3\(", wrapper[0])) != 1):
+    if not adversarial and not instances and (not wrapper or "scf.if" in wrapper[0] or len(re.findall(r"ctjs.call_direct @fn\$3\(", wrapper[0])) != 1):
         raise RuntimeError("selected wrapper still has open UMD alternatives or lost its factory call")
     # The retained value is the fifth wrapper operand; no replacement closure
     # or substituted script receiver may stand in for it.
-    if not adversarial and not re.search(r"ctjs.call_direct @fn\$3\([^,]+, [^,]+, %arg4\)", wrapper[0]):
+    if not adversarial and not instances and not re.search(r"ctjs.call_direct @fn\$3\([^,]+, [^,]+, %arg4\)", wrapper[0]):
         raise RuntimeError("factory call did not preserve its actual callee operand")
+    if args.follow_publication:
+        count = 2 if instances else 1
+        edges = 4 if instances else 3
+        if (report["summarized_factories"], report["runtime_provider_allocations"], report["capture_edges"], report["publication_writes"]) != (count, count, edges, 1):
+            raise RuntimeError(f"factory retention/publication proof changed: {report}")
+        for operation in ("ctjs.construct", "ctjs.create_cell", "ctjs.create_closure"):
+            if before.count(operation) != after.count(operation):
+                raise RuntimeError(f"runtime {operation} was removed by factory following")
+        if not instances and (not wrapper or wrapper[0].count("ctjs.set_property") != 1):
+            raise RuntimeError("selected publication was removed by factory following")
+        script = re.search(r"ctjs\.func (?:private )?@_script_\$0\(.*?(?=\n  ctjs\.func |\n})", after, re.S)
+        last = re.escape(expected_targets[-1])
+        if not script or not re.search(r"ctjs.call_direct @" + last + r"\(", script[0]):
+            raise RuntimeError("published target was not resolved in the script entry")
 
     # Native accounting remains an independent four-bucket census. Keep the
     # imported denominator even if ordinary default pruning becomes applicable.
@@ -220,13 +274,18 @@ def main():
                    "--ctjs-drop-uncompiled", "--emitc-eliminate-block-arguments", "-o", str(boxed)])
     (args.work / "boxed.log").write_text(lowered.stderr)
     cpp = run([args.translate, "--mlir-to-cpp", "--declare-variables-at-top", str(boxed)]).stdout
-    entry_name = "route_1" if adversarial else "fn_2"
+    entry_name = "route_1" if adversarial else "fn_1" if instances else "fn_2"
     if not re.search(r"\b" + entry_name + r"\(", cpp):
         raise RuntimeError("boxed differential wrapper was refused")
-    (args.work / "wrapper.cpp").write_text(re.sub(r"\b" + entry_name + r"\b", "ctcompile_host_prefix_wrapper", cpp))
+    cpp = re.sub(r"\b" + entry_name + r"\b", "ctcompile_host_prefix_wrapper", cpp)
+    if args.follow_publication:
+        if not re.search(r"\b_script__0\(", cpp):
+            raise RuntimeError("boxed differential script entry was refused")
+        cpp = re.sub(r"\b_script__0\b", "ctcompile_host_prefix_script", cpp)
+    (args.work / "wrapper.cpp").write_text(cpp)
     (args.work / "expected.inc").write_text("".join(
         "{" + json.dumps(name) + ", " + value + ".0},\n" for name, value in sorted(expected.items())))
-    print(f"host prefix {args.mode}: {expected_branches} selected branches, {len(expected_targets)} retained factory target(s); "
+    print(f"host prefix {args.mode}: {expected_branches} selected branches, {len(expected_targets)} resolved call target(s); "
           f"native {claimed}/{function_count}, {refused} refused; boxed differential wrapper generated")
 
 

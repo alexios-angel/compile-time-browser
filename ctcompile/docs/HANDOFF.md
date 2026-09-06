@@ -9,10 +9,13 @@ committing. There is no CI. Do not build on the small local machine.
 ## Current native staging checkpoint, 2026-09-06
 
 Native C++ now spells JavaScript numbers through `using js_num = double;`.
-[Returned closures](native-returned-closures.md) place their body directly inside
-the owning lambda, using the same final-IR names, const/constexpr analysis and
-deduced-type pins as ordinary functions. Other direct/address uses retain the
-lifted definition, and writable capture bindings retain a forwarding wrapper.
+[Returned closures](native-returned-closures.md) now appear directly at their
+creation site inside the factory. Their owning init-captures copy source values,
+preserving live bindings and shared Map identity. Each lambda uses independent
+final-IR names, const/constexpr analysis and deduced-type pins. Nested emission
+restores the surrounding function's state. Other direct/address uses retain the
+lifted definition; writable captures and recursive or oversized expansions
+retain helpers. Sample 5 has no `ctn_bind_fn_2` or separate `ctn_lambda` helper.
 Used parameters lose redundant generated void casts after final cleanup.
 
 [Maps](native-maps.md) use `std::map` and `.find()` when the admitted module has
@@ -20,16 +23,22 @@ no snapshot/iteration observations. SameValueZero lookup handles NaN and signed
 zero; modules with snapshots retain insertion order, including after fusion.
 Numeric string Maps use `ctnative::string_to_number_map` and a named factory.
 
-The [host-prefix contract](native-host-prefix.md) now supports an explicitly
-supplied classic-script realm receiver and finite writable own-data slots.
-The exact `globalThis = undefined`/distinct-`self` fallback selects six branches
-and resolves one factory target. Its 24 Node/reference/boxed observations agree,
-including forced GC; publication remains runtime and native admission stays 0/7.
-Missing slots, changed descriptors/prototypes, unknown effects and stale or
-forged contracts retain the existing boundaries.
+The [host-prefix contract](native-host-prefix.md) adds explicit
+`follow-publication=true`. It follows a checked straight-line factory's normal
+return through its fresh method table and resolves the first actual method call.
+The exact CommonJS/browser/realm-fallback probes select 2/5/6 branches, resolve
+both the factory and `Data.get`, and retain one runtime Map allocation, three
+capture edges and one publication write. Source replacement of a method or the
+table selects the replacement's actual target. Separate factory invocations keep
+separate resources. The default remains the earlier factory-boundary mode.
+Allocation, publication and method effects stay runtime; native admission remains
+0/7 on the exact probes. Unknown effects, descriptor changes, mutable captures,
+stale manifests and exhausted work retain their conservative boundaries.
+The six publication differentials compare 104 observations across Node, the
+interpreter and the boxed script/wrapper, including compiled GC-stress runs.
 
-Final devbox gate: **442/442 CTests**, **143/143 lit cases**, **526.94 seconds**;
-all **534 C++ files** pass formatting. The callable adapter also passes its
+Final devbox gate: **448/448 CTests**, **144/144 lit cases**, **532.31 seconds**;
+all **537 C++ files** pass formatting. The callable adapter also passes its
 separate formatting check; `git diff --check` passes. Named owning closures pass ASan/UBSan,
 stack-use-after-return and leak checks. String-snapshot sanitizer checks passed
 at the preceding checkpoint.
@@ -46,7 +55,7 @@ evaluation. Explicit and deduced declarations share the same qualification and
 exact type pins.
 
 [Returned closures](native-returned-closures.md) with concrete signatures now
-use a `std::function` alias and named lambda with its source body inside. Explicit init-captures own their
+use a `std::function` alias and a creation-site lambda with its source body inside. Explicit init-captures own their
 values, including shared Map handles. They preserve alias mutation and lifetime
 after factory return. Unsupported admitted signatures keep the owning tuple
 representation; closure admission and escape requirements are unchanged.
@@ -169,10 +178,12 @@ helper pruning. Pruning follows symbolic and numeric closure edges, retaining
 original boxed callees and published declarations. See their linked implementation
 documents and the [source layout](source-layout.md).
 
-Full native Bootstrap remains unfinished. The selected wrapper and actual factory
-target are now proved; next connect supported provider effects and owning callable
-publication to native ownership/call analysis. Initial provider identity alone
-does not authorize Map execution or console errors during PE. Explicit script
+Full native Bootstrap remains unfinished. The selected wrapper, factory return,
+retained Map/cell captures and first published method target are now proved.
+Next connect these retention facts to native ownership/call analysis for exported
+callables, with supported provider/error effects and current mutable slot values.
+Initial provider identity alone does not authorize Map execution or console
+errors during PE. Explicit script
 receivers, boxed public parameters and open method-table shapes still refuse
 native admission. Unchecked mixed-result property access also needs stronger
 presence/refinement evidence or an exception boundary. Keep exact vendor probe

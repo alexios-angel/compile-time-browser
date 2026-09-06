@@ -48,6 +48,7 @@ def CTNativeSpecializeHostPrefix : Pass<"ctnative-specialize-host-prefix", "mlir
     Option<"manifest", "manifest", "std::string", "\"\"", "Driver-owned host contract JSON path">,
     Option<"output", "output", "std::string", "\"\"", "Optional JSON specialization report path">,
     Option<"maxSteps", "max-steps", "unsigned", "100000", "Maximum prefix discovery work">,
+    Option<"followPublication", "follow-publication", "bool", "false", "Follow checked runtime factory allocation and publication">,
     Option<"report", "report", "bool", "false", "Report selected branches and resolved calls">
   ];
   let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect",

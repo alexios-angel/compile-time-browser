@@ -180,9 +180,9 @@ module-wide environment guards can be relaxed.
 
 ## Integrated results, 2026-09-06
 
-The devbox gate passes **442/442 CTests**, including **143/143 lit cases**, in
-**526.94 seconds**.
-All **534 C++ files** pass the pinned formatter, and
+The devbox gate passes **448/448 CTests**, including **144/144 lit cases**, in
+**532.31 seconds**.
+All **537 C++ files** pass the pinned formatter, and
 `git diff --check` passes. The optimization source fixtures pass ordinary and deduced
 native C++, GCC/Clang, reference comparison, altered-output rejection and no-VM
 checks. The owned-field fixture passes ASan/UBSan with leak detection and
@@ -253,11 +253,19 @@ fallback's finite own-data publication-slot contract is independent of the
 writable `globalThis` binding. Its 24 Node/reference/boxed observations agree;
 all seven source functions remain and native admission stays 0/7.
 The live prefix proof is separate from the still-withheld complete host-property
-contract. It stops before factory effects; source publication, callback exposure,
-reentry and unsupported providers conservatively retain runtime control. Explicit
-initial Map/Array and realm identities do not establish purity or early-execution
-permission. The executable differential compiles only the selected boxed wrapper,
-with factory and method dispatch still interpreted.
+contract. The default mode stops at the factory call. Explicit
+`follow-publication=true` derives a normal-return summary for a straight-line
+factory with standard empty Map allocation, source cells and a fresh method table.
+It follows publication to the first method invocation, preserving allocation and
+all method effects at runtime. The exact probes resolve the factory and `Data.get`,
+with one runtime resource, three capture edges and one publication each. Method
+and table replacements resolve the replacement; two invocations retain distinct
+resources. The extended differential compiles both script entry and wrapper.
+Its six fixtures compare 104 observations against Node and the interpreter,
+including compiled runs under GC stress; the exact probes remain 0/7 native.
+Unknown effects, reentry, mutable captures and unsupported providers remain
+boundaries. Initial Map/Array and realm identities do not establish purity,
+compile-time execution permission or a complete native ownership proof.
 
 The emitted C++ now combines backward binding immutability with forward target
 [constant-expression analysis](native-constexpr-bindings.md). Exact scalar
@@ -265,10 +273,12 @@ initializers can become `constexpr`, while runtime parameters, heap carriers and
 unsupported operations retain their prior qualification. This rederives target
 legality rather than trusting source BTA reports. Proved
 [returned closures](native-returned-closures.md) with concrete signatures use
-named lambdas and `std::function` aliases, with explicit owning captures and an
-owning tuple fallback for other admitted signatures. The final EmitC body now
-prints directly in the lambda; direct/address references retain its ordinary
-definition, and writable captures use forwarding to preserve per-call copies.
+creation-site lambdas and `std::function` aliases, with explicit owning captures
+and an owning tuple fallback for other admitted signatures. The final EmitC body
+prints directly in the factory's lambda. Captures copy live source bindings;
+nested lambdas have independent printer and analysis state. Direct/address
+references retain the ordinary definition, and writable captures use forwarding
+to preserve per-call copies. Recursive or oversized expansions retain helpers.
 JavaScript numeric carriers spell `js_num`, an alias of `double`. Final printed-use
 analysis removes redundant parameter void casts. Both printing modes pass
 GCC/Clang execution checks; closure lifetime checks also pass ASan/UBSan.
@@ -305,11 +315,13 @@ contracts and budget exhaustion retain the whole module.
 
 ## Next bounded work
 
-For Bootstrap, the [entry-prefix proof](native-host-prefix.md) now selects the
-wrapper and actual factory call. Extend [checked host slots](native-host-slots.md)
-with supported intrinsic/error effects and owning callable publication, then
-connect these facts to native ownership and call analysis. Initial provider
-identity alone does not establish these effect and lifetime contracts. The broader
+For Bootstrap, the [entry-prefix proof](native-host-prefix.md) now follows the
+factory's retained resource/cell captures and published method table to its first
+actual method call. Connect those normal-return retention facts to native
+ownership and call analysis for exported callables. Extend
+[checked host slots](native-host-slots.md) with supported intrinsic/error effects,
+preserving current method/table replacements. Initial provider identity alone
+does not establish these effect and lifetime contracts. The broader
 [host/effect and export contract](native-bootstrap-host-contract.md) remains
 incomplete. Unchecked mixed-result field accesses
 also need path-sensitive receiver/presence evidence or a supported exception boundary.

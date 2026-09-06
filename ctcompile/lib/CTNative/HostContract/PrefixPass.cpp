@@ -58,7 +58,7 @@ struct CTNativeSpecializeHostPrefixPass
             signalPassFailure();
             return;
         }
-        HostEntryPrefixAnalysis analysis(module, *contract, maxSteps);
+        HostEntryPrefixAnalysis analysis(module, *contract, maxSteps, followPublication);
         // Snapshot a checked plan before making the first semantic mutation.
         // No analysis query runs against partially rewritten IR.
         std::vector<HostPrefixBranch> branches(analysis.branches().begin(),
@@ -75,6 +75,42 @@ struct CTNativeSpecializeHostPrefixPass
             }
             llvm::json::Array targets;
             for (auto proof : calls) { targets.push_back(proof.target.getSymName().str()); }
+            llvm::json::Array factories, publications;
+            std::int64_t resourceCount = 0, captureCount = 0;
+            for (const auto & proof : analysis.factories()) {
+                llvm::json::Array captures;
+                llvm::SmallVector<ctjs::CreateCellOp> cells;
+                for (auto edge : proof.captures) {
+                    if (!llvm::is_contained(cells, edge.cell)) { cells.push_back(edge.cell); }
+                    captures.push_back(llvm::json::Object{
+                        {"property", edge.property},
+                        {"closure_function", edge.closure.getFunction()},
+                        {"capture_index", static_cast<std::int64_t>(edge.index)},
+                        {"cell",
+                         static_cast<std::int64_t>(llvm::find(cells, edge.cell) - cells.begin())},
+                        {"resource",
+                         static_cast<std::int64_t>(llvm::find(proof.resources, edge.resource) -
+                                                   proof.resources.begin())}});
+                }
+                resourceCount += static_cast<std::int64_t>(proof.resources.size());
+                captureCount += static_cast<std::int64_t>(proof.captures.size());
+                auto target = proof.target;
+                factories.push_back(llvm::json::Object{
+                    {"target", target.getSymName().str()},
+                    {"resource_allocations", static_cast<std::int64_t>(proof.resources.size())},
+                    {"captures", std::move(captures)}});
+            }
+            for (const auto & proof : analysis.publications()) {
+                const auto factory =
+                    llvm::find_if(analysis.factories(), [&](const auto & candidate) {
+                        return candidate.operation == proof.factory;
+                    });
+                auto target = factory->target;
+                publications.push_back(
+                    llvm::json::Object{{"binding", proof.binding},
+                                       {"property", proof.property},
+                                       {"factory_target", target.getSymName().str()}});
+            }
             llvm::json::Object document{
                 {"valid", analysis.valid()},
                 {"reason", analysis.reason().str()},
@@ -83,6 +119,12 @@ struct CTNativeSpecializeHostPrefixPass
                 {"selected_branches", static_cast<std::int64_t>(branches.size())},
                 {"resolved_calls", static_cast<std::int64_t>(calls.size())},
                 {"targets", std::move(targets)},
+                {"summarized_factories", static_cast<std::int64_t>(analysis.factories().size())},
+                {"runtime_provider_allocations", resourceCount},
+                {"capture_edges", captureCount},
+                {"publication_writes", static_cast<std::int64_t>(analysis.publications().size())},
+                {"factories", std::move(factories)},
+                {"publications", std::move(publications)},
                 {"full_host_contract_claimed", false}};
             stream << llvm::formatv("{0:2}\n", llvm::json::Value(std::move(document)));
         }

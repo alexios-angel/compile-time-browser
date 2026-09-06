@@ -8,7 +8,7 @@ The exact CommonJS/browser probes initialize ordinary source objects and then
 invoke the UMD wrapper once. A separate browser fallback probe supplies the
 stable classic-script realm receiver and its writable publication slot.
 The wrapper's `typeof` tests select an environment before the factory can
-perform a host operation. The prefix analysis proves
+perform a host operation. By default, the prefix analysis proves
 that selected control flow and the actual factory closure while retaining the
 factory's effects. Separate checks of the initial intrinsic identities and
 continuation exclude exposure of the active wrapper through a host callback.
@@ -60,7 +60,7 @@ analysis can then inspect the selected wrapper and direct factory call.
 Selected operations move directly into the enclosing block and their yield
 values replace the branch results; unrelated structured branches stay intact.
 
-The first implementation stops at the resolved factory call itself; it does
+The default `follow-publication=false` mode stops at the resolved factory call itself; it does
 not need to enter the still-open factory body to name its actual callee.
 Before changing a shared body, a separate structural check follows its
 continuation and known callees to exclude caller exposure while that body is
@@ -81,9 +81,10 @@ When explicitly contracted, the script entry receives an opaque realm token.
 Passing that value as the wrapper's ordinary fallback parameter preserves the
 token and its object truthiness. This does not characterize the wrapper's
 effective `this`, infer a native receiver type, or classify the realm as a
-fresh object. The token has no known property values. Prefix interpretation
-still stops before a realm property operation; the separate continuation
-check may exclude callbacks only for the finite own-data slots described below.
+fresh object. The token has no initially known property values. The default
+mode stops before a realm property operation; the separate continuation check
+may exclude callbacks only for the finite own-data slots described below.
+The optional publication mode tracks executed writes to those slots.
 
 ## Explicit initial provider identities
 
@@ -113,7 +114,7 @@ distinct from the stable realm receiver.
 
 These identities close the possible external caller-inspection boundary; they
 do not prove Map/Array operations pure, nonthrowing, or safe to execute early.
-The consumer still stops at the factory invocation. In particular, the
+The default consumer stops at the factory invocation. In particular, the
 complete `HostContractAnalysis::property` query remains unavailable for the
 exact Data probes. Unknown intrinsic/provider declarations and forged IR
 attributes cannot widen this trust boundary.
@@ -163,9 +164,63 @@ the specialized wrapper is active. It does not evaluate its value, advance
 past the factory, fold publication, or establish the complete host-property
 proof. Native ownership and callable-publication analysis remain separate.
 
+## Following a runtime factory and its publication
+
+`follow-publication=true` adds one compiler-derived factory summary to the
+prefix analysis. It has no additional manifest effect promises. The factory
+must have no captures or parameters and one straight-line imported block. Its
+supported operations are constants, fresh objects/cells/closures, local cell
+reads/writes, own-data table initialization and standard zero-argument Map
+construction. Arbitrary calls, global writes, branches, descriptor operations,
+coercions and other provider operations stop this slice. The existing initial
+Map identity and source replacement guards remain required.
+
+The summary states what a successful runtime return contains. It does not
+execute an allocation, assume success, or remove the original failure path.
+The factory call, Map/object/cell/closure allocations and publication all stay
+in their original execution order. The returned table and Map receive fresh
+abstract identities for each actual invocation; repeated invocations of one
+allocation site do not share an abstract object.
+
+The independent `immutableClosureTarget` query validates each returned
+closure's source target, parent and local capture indices. Receiver and
+`new.target` arguments must be unused, the implicit callee can serve only
+captured-binding reads, and captured binding writes or nested forwarding
+closures refuse. This permits naming Bootstrap's arrow `get` target without
+assuming its effective `this`. Ordinary receivers remain unknown.
+
+Captured cells must be local and have only checked cell/root/capture uses.
+Map values cannot escape separately through a property, return or unknown
+operation. The analysis rechecks each cell's final value at normal return:
+an initially captured Map does not prove retention after a later primitive
+overwrite. Every summarized Map must be retained through a returned method's
+cell. These are resource-retention edges; they do not establish complete RAII
+ownership, closed native signatures, or a lifetime proof for every value.
+
+After the factory returns, source publication and ordinary alias writes update
+the current abstract table. A later method read names its current source
+closure. Replacing a method through an alias or replacing the publication
+table therefore changes the selected target. Exports are not frozen. Unknown
+calls, reads, accessors or unsupported writes stop further discovery; no fact
+after that boundary is supplied.
+
+The extra method call rewrite is checked in the unreferenced script entry.
+It retains the actual callee value, receiver and arguments and stops at that
+method's effects. It does not specialize the method body or infer future call
+sites. Helper bodies and selected branches retain the existing continuation
+and unique-invocation checks. The complete host query and native admission
+remain independent and withheld for exact Bootstrap Data.
+
+Reports add `summarized_factories`, `runtime_provider_allocations`,
+`capture_edges`, and `publication_writes`, with factory capture and publication
+rows. The live C++ result binds each summary/publication to its actual call
+operation. A diagnostic row is not a native proof annotation. Semantic IR
+changes invalidate the live result; forged metadata, stale fingerprints and
+work exhaustion expose no usable summary or capture facts.
+
 ```sh
 ctjs-opt prepared.mlir \
-  --ctnative-specialize-host-prefix='manifest=host.json output=prefix.json report=true' \
+  --ctnative-specialize-host-prefix='manifest=host.json output=prefix.json report=true follow-publication=true' \
   -o specialized.mlir
 ```
 
@@ -177,7 +232,7 @@ It retains the exact 1,101-byte Bootstrap 5.3.8 fragment with SHA-256
 Each exact mode retains all seven source functions and declares the same
 19 Data observations. The fallback adds five observations for stable realm
 identity, a distinct untouched `self`, publication and the undefined alias.
-The measured compiler results are:
+The measured compiler results with the default factory boundary are:
 
 | Mode | Proved branch choices | Resolved factory calls | Native claimed | Refused | Pruned |
 |---|---:|---:|---:|---:|---:|
@@ -187,8 +242,8 @@ The measured compiler results are:
 
 All three selected wrappers contain no remaining UMD branch and one direct call to
 the actual `fn$3` factory, retaining its original callee operand and receiver.
-The analysis stops at that call with the diagnostic `resolved call body remains
-a runtime effect boundary`. The result advances wrapper control and target
+With factory following disabled, analysis stops at that call with the diagnostic
+`resolved call body remains a runtime effect boundary`. The result advances wrapper control and target
 proof, while native admission remains 0/7. Explicit script receivers, boxed
 public parameters, the open returned method table and captured closure
 identities remain admission frontiers. The complete host-property proof is
@@ -212,18 +267,52 @@ python3 tools/check/bootstrap-host-prefix.py \
   --work /tmp/bootstrap-realm-prefix-node
 ```
 
-The differential driver installs only the generated boxed wrapper. Factory
+The default differential driver installs only the generated boxed wrapper. Factory
 and Data methods retain interpreter dispatch, so this execution check measures
 the prefix transformation rather than a native Bootstrap executable. It
 checks the exact numeric observations and the expected compiled invocation
 count under ordinary execution and GC stress. Separate global-publication and
 implicit-callee-publication fixtures retain both invocations and require the
 second invocation to observe the changed host value.
-All five `ctcompile_bootstrap_host_prefix_*` differential tests pass:
+The five original `ctcompile_bootstrap_host_prefix_*` differential tests pass:
 CommonJS/browser modes match all 19 observations, the realm fallback matches
 all 24 observations in ordinary and GC-stress execution, and both reentry
 controls preserve the final observation `trace = 2` after two compiled
 invocations. The live `HostContractAnalysis::property` unit test also passes.
+
+Six additional fixtures enable publication following and install both the
+generated boxed script entry and wrapper. They assert two compiled entries;
+factory and method bodies retain interpreter dispatch. The three unchanged
+exact programs preserve their existing hashes and source denominators. The
+method/table replacement controls retain the exact vendor fragment and add
+one source replacement function that forwards to the retained original method.
+The separate resource-instance fixture checks two distinct factory allocations.
+
+| Publication fixture | Resolved targets | Factories / Maps / capture edges | Native claimed / refused | Observations |
+|---|---|---|---|---:|
+| CommonJS | `fn$3`, `fn$5` | 1 / 1 / 3 | 0 / 7 | 19 |
+| Browser | `fn$3`, `fn$5` | 1 / 1 / 3 | 0 / 7 | 19 |
+| Browser realm fallback | `fn$3`, `fn$5` | 1 / 1 / 3 | 0 / 7 | 24 |
+| Browser method replacement | `fn$3`, `replacement$7` | 1 / 1 / 3 | 0 / 8 | 19 |
+| Browser table replacement | `fn$3`, `replacement$7` | 1 / 1 / 3 | 0 / 8 | 19 |
+| Two resource instances | `fn$2`, `fn$2`, `fn$4` | 2 / 2 / 4 | 0 / 5 | 4 |
+
+Each reports one publication write and zero pruned functions. Node v26.8.1
+matches every declared observation in all six fixtures; the realm negative
+control still rejects an executed receiver-identity mutation. The boxed
+differentials compare all observations with the interpreter under ordinary
+execution and GC stress. All six additional differential CTests pass, as does
+the publication lit suite. The first method call is the final proof boundary.
+For the three exact programs, the retained method is Data's `get`; native
+refusals still identify boxed parameters, the open method-table shape and
+implicit closure ownership. No native Bootstrap execution is claimed.
+
+```sh
+python3 tools/check/bootstrap-host-prefix.py \
+  --bootstrap ctbrowser/vendor/bootstrap/bootstrap.bundle.js \
+  --mode browser --follow-publication --replace method \
+  --node node --oracle-only --work /tmp/bootstrap-publication-node
+```
 
 The focused lit suite covers four useful source consumers and 16 refusals,
 including mutable source slots, unknown and throwing effects, terminating
@@ -235,6 +324,14 @@ cover overwritten and initially undefined aliases, omission of either receiver
 or slot knowledge, unknown slot contents, a different publication slot, module
 and undefined receiver declarations, ordinary-call receiver opacity, descriptor
 and prototype mutation, and repeated typed-API validation.
+The additional `host-publication.test` checks current method/alias/table
+replacement, distinct invocation identities, unknown intervening effects,
+accessors, writable and forwarded captures, resource escape, source provider
+replacement, and post-capture cell overwrite. The normalized cell fixture
+initializes `create_cell` directly with a Map, then overwrites it after closure
+creation, testing final retention independently of an at-most-one-store check.
+Stale/forged contracts and both initial and mid-discovery work exhaustion are
+also covered.
 AMD's retained and delayed callable remains
 outside this first specialization path. Its invocation identity, full provider
 effects and owning publication-table flow need further proofs.

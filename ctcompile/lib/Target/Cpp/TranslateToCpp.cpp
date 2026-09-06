@@ -159,6 +159,14 @@ struct CppEmitter {
   explicit CppEmitter(raw_ostream &os, bool declareVariablesAtTop,
                       StringRef fileId);
 
+  // A nested callable shares only output and module spelling policy. Its
+  // declaration caches, names, expression stack and analyses stay independent.
+  CppEmitter(raw_ostream &os, const CppEmitter &parent)
+      : CppEmitter(os, parent.declareVariablesAtTop, parent.fileId) {
+    readableLiterals = parent.readableLiterals;
+    numericAlias = parent.numericAlias;
+  }
+
   /// Emits attribute or returns failure.
   LogicalResult emitAttribute(Location loc, Attribute attr);
 
@@ -961,8 +969,16 @@ static LogicalResult printOperation(CppEmitter &emitter, emitc::CallOp callOp) {
   return printCallOperation(emitter, operation, callee);
 }
 
+static FailureOr<bool> printCallableCreation(CppEmitter &emitter,
+                                            emitc::CallOpaqueOp call);
+
 static LogicalResult printOperation(CppEmitter &emitter,
                                     emitc::CallOpaqueOp callOpaqueOp) {
+  auto creation = printCallableCreation(emitter, callOpaqueOp);
+  if (failed(creation))
+    return failure();
+  if (*creation)
+    return success();
   raw_ostream &os = emitter.ostream();
   Operation &op = *callOpaqueOp.getOperation();
 
@@ -1537,7 +1553,7 @@ static LogicalResult printOperation(CppEmitter &emitter,
   if (failed(printFunctionArgs(emitter, operation, functionOp.getArguments())))
     return failure();
   os << ");";
-  if (!callable->binder.empty()) {
+  if (!callable->binder.empty() && callable->retainBinder) {
     os << "\n";
     return printCallable(emitter, functionOp, *callable, true);
   }
@@ -1982,6 +1998,11 @@ LogicalResult CppEmitter::emitLabel(Block &block) {
 
 LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
   if (ctcompile::cpp::omitParameterSuppression(op))
+    return success();
+  auto omitted = omitCallableDefinition(op);
+  if (failed(omitted))
+    return failure();
+  if (*omitted)
     return success();
   auto module = dyn_cast<ModuleOp>(&op);
   if (!module)

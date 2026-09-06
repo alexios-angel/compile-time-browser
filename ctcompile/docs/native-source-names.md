@@ -43,7 +43,9 @@ source suffixes and generated suffixes. The reservation is shared across a
 module; allocation remains local to each function.
 The native numeric alias `js_num` is reserved too: a JavaScript variable with
 that name gets a suffix. Inline closure bodies reserve their capture and
-argument names before allocating local families.
+argument names before allocating local families. Each creation-site lambda has
+its own name pool and analysis state; emitting it leaves the enclosing function's
+names, const/constexpr facts and temporary numbering intact.
 
 Native lowering enables this policy with `ctnative.readable_names`. Unmarked
 modules retain upstream spelling. `native-pipeline.cmake` preserves source

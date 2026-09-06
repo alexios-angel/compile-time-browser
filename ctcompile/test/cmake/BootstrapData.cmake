@@ -18,7 +18,25 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
         --reference $<TARGET_FILE:ctcompile-test-native-reference>
         --translate $<TARGET_FILE:ctjs-translate> --opt $<TARGET_FILE:ctjs-opt>)
   endforeach()
-  foreach(_mode commonjs browser browser_this_fallback global_reentry self_reentry)
+  foreach(_mode commonjs browser browser_this_fallback global_reentry self_reentry
+      commonjs_publication browser_publication browser_this_fallback_publication
+      browser_method_replacement browser_table_replacement resource_instances)
+    set(_prefix_source_mode "${_mode}")
+    set(_prefix_options)
+    set(_prefix_script FALSE)
+    if(_mode MATCHES "_publication$")
+      string(REGEX REPLACE "_publication$" "" _prefix_source_mode "${_mode}")
+      set(_prefix_script TRUE)
+    elseif(_mode MATCHES "^browser_(method|table)_replacement$")
+      set(_prefix_options --replace "${CMAKE_MATCH_1}")
+      set(_prefix_source_mode browser)
+      set(_prefix_script TRUE)
+    elseif(_mode STREQUAL "resource_instances")
+      set(_prefix_script TRUE)
+    endif()
+    if(_prefix_script)
+      list(APPEND _prefix_options --follow-publication)
+    endif()
     set(_prefix_work "${CMAKE_CURRENT_BINARY_DIR}/bootstrap-host-prefix/${_mode}")
     set(_prefix_cpp "${_prefix_work}/wrapper.cpp")
     set(_prefix_expected "${_prefix_work}/expected.inc")
@@ -26,7 +44,8 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
     add_custom_command(
       OUTPUT "${_prefix_cpp}" "${_prefix_expected}" "${_prefix_source}"
       COMMAND ${Python3_EXECUTABLE} "${CTBROWSER_MONOREPO_ROOT}/tools/check/bootstrap-host-prefix.py"
-        --bootstrap "${_bootstrap_data_source}" --mode ${_mode} --work "${_prefix_work}"
+        --bootstrap "${_bootstrap_data_source}" --mode ${_prefix_source_mode}
+        ${_prefix_options} --work "${_prefix_work}"
         --translate $<TARGET_FILE:ctjs-translate> --opt $<TARGET_FILE:ctjs-opt>
       DEPENDS ctjs-translate ctjs-opt "${_bootstrap_data_source}" "${_bootstrap_data_probe}"
         "${CTBROWSER_MONOREPO_ROOT}/tools/check/bootstrap-host-prefix.py"
@@ -38,12 +57,25 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
     target_include_directories(${_prefix_target} PRIVATE "${_prefix_work}")
     target_link_libraries(${_prefix_target} PRIVATE ctbrowser::ctbrowser)
     ctcompile_target(${_prefix_target})
-    if(_mode STREQUAL "browser_this_fallback")
+    if(_prefix_source_mode STREQUAL "browser_this_fallback")
       target_compile_definitions(${_prefix_target} PRIVATE CTCOMPILE_HOST_PREFIX_REALM_SLOT=1)
+    endif()
+    if(_prefix_script)
+      target_compile_definitions(${_prefix_target} PRIVATE CTCOMPILE_HOST_PREFIX_SCRIPT=1)
     endif()
     if(_mode MATCHES "_reentry$")
       target_compile_definitions(${_prefix_target} PRIVATE CTCOMPILE_HOST_PREFIX_FUNCTIONS=2
         CTCOMPILE_HOST_PREFIX_ENTRY=1 CTCOMPILE_HOST_PREFIX_INVOCATIONS=2)
+    elseif(_mode STREQUAL "resource_instances")
+      target_compile_definitions(${_prefix_target} PRIVATE CTCOMPILE_HOST_PREFIX_FUNCTIONS=5
+        CTCOMPILE_HOST_PREFIX_ENTRY=1 CTCOMPILE_HOST_PREFIX_INVOCATIONS=2)
+    elseif(_prefix_script)
+      set(_prefix_functions 7)
+      if(_mode MATCHES "_replacement$")
+        set(_prefix_functions 8)
+      endif()
+      target_compile_definitions(${_prefix_target} PRIVATE CTCOMPILE_HOST_PREFIX_FUNCTIONS=${_prefix_functions}
+        CTCOMPILE_HOST_PREFIX_ENTRY=2 CTCOMPILE_HOST_PREFIX_INVOCATIONS=2)
     else()
       target_compile_definitions(${_prefix_target} PRIVATE CTCOMPILE_HOST_PREFIX_FUNCTIONS=7
         CTCOMPILE_HOST_PREFIX_ENTRY=2 CTCOMPILE_HOST_PREFIX_INVOCATIONS=1)
