@@ -313,6 +313,7 @@ run_result context::run_reentrant(const program & prog) {
         return result;
     }
     const function_proto & entry = prog.functions[0];
+    const value receiver = prog.kind == script_kind::classic ? global_this_ : value::undefined();
     const std::size_t new_base = registers_.size();
     registers_.resize(new_base + entry.frame_size + 8u, value::undefined());
     const std::size_t depth = frames_.size();
@@ -328,13 +329,12 @@ run_result context::run_reentrant(const program & prog) {
     // was interpreted purely because of who imported it.
     if (value produced = value::undefined();
         enter_compiled(*this, entry, value::undefined(), registers_.data() + new_base, new_base, 0u,
-                       value::undefined(), /*constructing*/ false, produced)) {
+                       receiver, /*constructing*/ false, produced)) {
         program_ = outer_program;
         if (registers_.size() >= new_base) { registers_.resize(new_base); }
         return result;
     }
-    frames_.push_back(
-        call_frame{&entry, 0, new_base, 0, 0, nullptr, value::undefined(), handlers_.size()});
+    frames_.push_back(call_frame{&entry, 0, new_base, 0, 0, nullptr, receiver, handlers_.size()});
     (void)run_loop(depth);
     program_ = outer_program;
     if (registers_.size() >= new_base) { registers_.resize(new_base); }
@@ -406,17 +406,21 @@ value context::execute(const program & prog, const function_proto & entry) {
     handlers_.clear();
     thrown_ = value::undefined();
     program_ = &prog;
+    // Script this belongs to the realm, including in a strict classic script.
+    // Modules have no top-level receiver. Never reload the writable globalThis
+    // binding here: an earlier script may have replaced or cleared it.
+    const value receiver = prog.kind == script_kind::classic ? global_this_ : value::undefined();
     // A COMPILED TOP LEVEL, IF THIS PROGRAM HAS ONE, and for ctcompile that is
     // the ordinary case rather than an exotic one: a page's `<script>` IS a top
     // level, so a backend that compiles anything compiles this. Asked after the
     // reset above, so a compiled body enters a context in the state it expects,
     // and before the frame push, because ct_aot_enter pushes its own.
-    if (value produced = value::undefined(); enter_compiled(
-            *this, entry, value::undefined(), registers_.data(), 0u, 0u, value::undefined(),
-            /*constructing*/ false, produced)) {
+    if (value produced = value::undefined();
+        enter_compiled(*this, entry, value::undefined(), registers_.data(), 0u, 0u, receiver,
+                       /*constructing*/ false, produced)) {
         return produced;
     }
-    frames_.push_back(call_frame{&entry, 0, 0, 0, 0, nullptr, value::undefined(), 0});
+    frames_.push_back(call_frame{&entry, 0, 0, 0, 0, nullptr, receiver, 0});
     // Per-frame string interning: a literal in a loop should allocate once,
     // not once per iteration.
     string_cache_.clear();

@@ -4,12 +4,16 @@ Native C++ qualifies initialized value bindings and by-value parameters when
 their uses permit it. For example, the sample's score becomes:
 
 ```cpp
-double const score_1 = -1.0;
+constexpr double score_1 = -1.0;
 double score_3;
 // Branches assign score_3 and their own join storage.
 double const score_2 = score_3;
 return score_2;
 ```
+
+The independent [constant-expression analysis](native-constexpr-bindings.md)
+promotes the immutable literal seed to `constexpr`. The returned snapshot stays
+`const` because its initializer depends on runtime branch storage.
 
 A backward data-flow analysis starts with potentially immutable bindings, marks
 writes, address escapes and unknown uses, and propagates those requirements

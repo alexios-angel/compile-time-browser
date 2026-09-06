@@ -21,8 +21,10 @@
  * roots: everything reachable is reachable from exactly these."
  */
 
-CT_GC_ROOT(/* name */ globals, /* owner */ "context::globals_", /* marked_in */ "collect()",
-           /* note */ "the global object's bindings")
+CT_GC_ROOT(/* name */ globals, /* owner */ "context::globals_ and context::global_this_",
+           /* marked_in */ "collect()",
+           /* note */ "the global bindings and the realm receiver, which survives replacement of "
+           "every visible globalThis alias")
 CT_GC_ROOT(/* name */ registers, /* owner */ "context::registers_", /* marked_in */ "collect()",
            /* note */ "ONE FLAT VECTOR for every live frame's window, indexed by base. This is also "
            "why only the top frame can suspend - lifting one from the middle would move "

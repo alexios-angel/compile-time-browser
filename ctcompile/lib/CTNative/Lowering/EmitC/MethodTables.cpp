@@ -1,6 +1,82 @@
 #include "Emitter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
+namespace {
+
+std::string callableSourceName(mlir::Value value) {
+    std::string result;
+    bool conflict = false;
+    value.getLoc()->walk([&](mlir::Location location) -> mlir::WalkResult {
+        auto fused = llvm::dyn_cast<mlir::FusedLoc>(location);
+        if (!fused) { return mlir::WalkResult::advance(); }
+        auto metadata = llvm::dyn_cast_or_null<mlir::DictionaryAttr>(fused.getMetadata());
+        if (!metadata) { return mlir::WalkResult::advance(); }
+        auto name = metadata.getAs<mlir::StringAttr>("ctnative.source_name");
+        if (auto index = llvm::dyn_cast<mlir::OpResult>(value)) {
+            if (auto array = metadata.getAs<mlir::ArrayAttr>("ctnative.source_names")) {
+                if (index.getResultNumber() < array.size()) {
+                    name = llvm::dyn_cast<mlir::StringAttr>(array[index.getResultNumber()]);
+                }
+            }
+        }
+        if (!name || name.empty()) { return mlir::WalkResult::advance(); }
+        conflict |= !result.empty() && result != name.getValue();
+        result = name.str();
+        return mlir::WalkResult::advance();
+    });
+    return conflict ? std::string{} : result;
+}
+
+std::string callableLocal(llvm::StringRef prefix, llvm::StringRef hint, unsigned fallback,
+                          llvm::StringSet<> & occupied) {
+    // A generated prefix prevents keywords and standard-header macros from
+    // shadowing C++ code. Encoding every non-alphanumeric byte also prevents
+    // reserved double underscores; a suffix resolves sanitized collisions.
+    std::string base = prefix.str();
+    constexpr char hex[] = "0123456789abcdef";
+    for (char ch : hint) {
+        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')) {
+            base += ch;
+        } else {
+            const auto byte = static_cast<unsigned char>(ch);
+            base += 'u';
+            base += hex[byte >> 4];
+            base += hex[byte & 15];
+        }
+    }
+    if (hint.empty()) { base += std::to_string(fallback); }
+    std::string result = base;
+    unsigned suffix = 2;
+    while (!occupied.insert(result).second) { result = base + "_" + std::to_string(suffix++); }
+    return result;
+}
+
+} // namespace
+
+bool lowering::hasConcreteCallableSignature(ctjs::CreateClosureOp made) const {
+    const auto supported = [](mlir::Type type) {
+        switch (carrierOf(type)) {
+        case carrier::nullable:
+        case carrier::number:
+        case carrier::boolean:
+        case carrier::string:
+        case carrier::objectValue:
+        case carrier::objectIdentity:
+        case carrier::map: return true;
+        default: return false;
+        }
+    };
+    auto fn = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
+        made, mlir::FlatSymbolRefAttr::get(context, environmentTarget(made)));
+    if (!fn || fn.getBody().empty() || !supported(joinedReturnType(fn))) { return false; }
+    for (mlir::Value capture : made.getUpvalues()) {
+        if (!supported(typeOf(capture))) { return false; }
+    }
+    for (mlir::BlockArgument argument : fn.getBody().front().getArguments().drop_front(3)) {
+        if (!supported(typeOf(argument))) { return false; }
+    }
+    return true;
+}
 
 std::string lowering::callableTypeSpelling(mlir::Type type) {
     switch (carrierOf(type)) {
@@ -21,7 +97,7 @@ std::string lowering::callableTypeSpelling(mlir::Type type) {
     }
 }
 
-void lowering::censusStoredCallable(ctjs::CreateClosureOp made) {
+void lowering::censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda) {
     const auto target = environmentTarget(made);
     auto fn = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
         made, mlir::FlatSymbolRefAttr::get(context, target));
@@ -30,9 +106,24 @@ void lowering::censusStoredCallable(ctjs::CreateClosureOp made) {
     std::string result = "double";
     result = callableTypeSpelling(joinedReturnType(fn));
     llvm::SmallVector<std::string> params;
+    llvm::SmallVector<std::string> paramNames;
+    llvm::SmallVector<std::string> captureNames;
+    llvm::StringSet<> occupied;
+    for (const auto & named : names) { occupied.insert(named.second); }
+    for (auto [i, capture] : llvm::enumerate(made.getUpvalues())) {
+        captureNames.push_back(namedLambda ? callableLocal("capture_", callableSourceName(capture),
+                                                           static_cast<unsigned>(i), occupied)
+                                           : "cap" + std::to_string(i));
+    }
     for (unsigned i = 3 + static_cast<unsigned>(captures); i < entry.getNumArguments(); ++i) {
         params.push_back(callableTypeSpelling(typeOf(entry.getArgument(i))));
+        const auto index = static_cast<unsigned>(paramNames.size());
+        paramNames.push_back(namedLambda ? callableLocal("argument_",
+                                                         callableSourceName(entry.getArgument(i)),
+                                                         index, occupied)
+                                         : "arg" + std::to_string(index));
     }
+    const auto lambdaName = callableLocal("ctn_", "lambda", 0, occupied);
     const auto name = cIdentifier(target);
     std::string alias =
         "namespace ctnative {\nusing ctn_env_" + name + " = std::function<" + result + "(";
@@ -46,29 +137,33 @@ void lowering::censusStoredCallable(ctjs::CreateClosureOp made) {
                           name + "(";
     for (auto [i, capture] : llvm::enumerate(made.getUpvalues())) {
         if (i) { builder += ", "; }
-        builder += callableTypeSpelling(typeOf(capture)) + " cap" + std::to_string(i);
+        builder += callableTypeSpelling(typeOf(capture)) + " " + captureNames[i];
     }
-    builder += ") {\n  return [";
+    builder += ") {\n  ";
+    builder +=
+        namedLambda ? "ctnative::ctn_env_" + name + " const " + lambdaName + " = [" : "return [";
     for (size_t i = 0; i < captures; ++i) {
         if (i) { builder += ", "; }
-        const auto slot = "cap" + std::to_string(i);
+        const auto & slot = captureNames[i];
         builder += slot + " = std::move(" + slot + ")";
     }
     builder += "](";
     for (auto [i, type] : llvm::enumerate(params)) {
         if (i) { builder += ", "; }
-        builder += type + " arg" + std::to_string(i);
+        builder += type + (namedLambda ? " const " : " ") + paramNames[i];
     }
     builder += ") -> " + result + " {\n    return " + names.lookup(target) + "(";
     for (size_t i = 0; i < captures; ++i) {
         if (i) { builder += ", "; }
-        builder += "cap" + std::to_string(i);
+        builder += captureNames[i];
     }
     for (size_t i = 0; i < params.size(); ++i) {
         if (captures || i) { builder += ", "; }
-        builder += "arg" + std::to_string(i);
+        builder += paramNames[i];
     }
-    callableBuilders.push_back(builder + ");\n  };\n}\n");
+    builder += ");\n  };\n";
+    if (namedLambda) { builder += "  return " + lambdaName + ";\n"; }
+    callableBuilders.push_back(builder + "}\n");
 }
 
 void lowering::censusMethodTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {

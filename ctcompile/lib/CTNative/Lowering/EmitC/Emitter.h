@@ -121,7 +121,8 @@ struct lowering {
     llvm::SmallVector<std::string> methodTables;
     llvm::SmallVector<std::string> callableBuilders;
     std::string callableTypeSpelling(mlir::Type type);
-    void censusStoredCallable(ctjs::CreateClosureOp made);
+    bool hasConcreteCallableSignature(ctjs::CreateClosureOp made) const;
+    void censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda = false);
     void censusMethodTables(llvm::ArrayRef<ctjs::FuncOp> accepted);
     bool replaceMethodTable(mlir::Operation * op);
     void censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted);

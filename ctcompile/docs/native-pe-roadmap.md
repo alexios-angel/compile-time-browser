@@ -180,9 +180,9 @@ module-wide environment guards can be relaxed.
 
 ## Integrated results, 2026-09-06
 
-The devbox gate passes **436/436 CTests**, including **137/137 lit cases**, in
-**505.73 seconds**.
-All **517 C++ files** pass the pinned formatter, and
+The devbox gate passes **441/441 CTests**, including **140/140 lit cases**, in
+**509.41 seconds**.
+All **531 C++ files** pass the pinned formatter, and
 `git diff --check` passes. The optimization source fixtures pass ordinary and deduced
 native C++, GCC/Clang, reference comparison, altered-output rejection and no-VM
 checks. The owned-field fixture passes ASan/UBSan with leak detection and
@@ -192,7 +192,7 @@ implementation records.
 
 | Source fixture | Measured transformation | Native functions | Numeric observations |
 |---|---|---:|---:|
-| Default optimization comparison | 17 expressions, 3 branches, 294 steps; generated C++ 7,840 → 7,043 bytes with readable literals, source names and const bindings after the call-order correction | 4/4 | 8 |
+| Default optimization comparison | 17 expressions, 3 branches, 294 steps; generated C++ 7,924 → 7,087 bytes with readable literals, source names and const/constexpr bindings after the call-order correction | 4/4 | 8 |
 | String-key Map snapshots | Exact diagnostic, standard Array.from copy, nullable strings and retained snapshots | 10/10 | 24 |
 | Owned scalar component fields | Exact getter, guarded aliases, shared mutation and lifetime after deletion | 15/15 | 29 |
 | Scalar child generalization | 3 kernels, 14 configurations, 12 folds, 9 generalizations, 320 added residual operations | 23/23 | 16 |
@@ -241,9 +241,30 @@ intentionally changes boxed Bootstrap to **11,226,071 bytes**, SHA-256
 `721e6095554b20eb2241367283ae1b02c032c771c858ca582af974c6754c2528`.
 The [host-slot prerequisite](native-host-slots.md) finds 24 CommonJS and 23 browser
 candidate publication edges, but all exact contracts still refuse with zero usable
-proof edges. Native-function accessors and corrected call order bring the separate
-host oracle to 10/11 ctbrowser matches against 11/11 Node cases. Full native
-Bootstrap initialization remains open.
+proof edges. The stable [classic-script receiver](native-bootstrap-script-this.md),
+native-function accessors and corrected call order bring the separate host oracle
+to **11/11** in both ctbrowser and Node. Full native Bootstrap initialization
+remains open.
+
+The opt-in [host entry-prefix consumer](native-host-prefix.md) proves two CommonJS
+and five browser UMD branches and the actual factory closure at one call per
+probe. All seven source functions remain and native admission stays 0/7.
+The live prefix proof is separate from the still-withheld complete host-property
+contract. It stops before factory effects; source publication, callback exposure,
+reentry and unsupported providers conservatively retain runtime control. Explicit
+initial Map/Array and realm identities do not establish purity or early-execution
+permission. The executable differential compiles only the selected boxed wrapper,
+with factory and method dispatch still interpreted.
+
+The emitted C++ now combines backward binding immutability with forward target
+[constant-expression analysis](native-constexpr-bindings.md). Exact scalar
+initializers can become `constexpr`, while runtime parameters, heap carriers and
+unsupported operations retain their prior qualification. This rederives target
+legality rather than trusting source BTA reports. Proved
+[returned closures](native-returned-closures.md) with concrete signatures use
+named lambdas and `std::function` aliases, with explicit owning captures and an
+owning tuple fallback for other admitted signatures. Both printing modes pass
+GCC/Clang execution checks; closure lifetime checks also pass ASan/UBSan.
 
 ## Object payloads, conditional effects and reachability
 
@@ -272,18 +293,19 @@ contracts and budget exhaustion retain the whole module.
 
 ## Next bounded work
 
-For Bootstrap, extend [checked host slots](native-host-slots.md) with supported
-intrinsic/error providers and retained callable publication, then connect the live
-proof to ownership and call analysis. The broader
+For Bootstrap, the [entry-prefix proof](native-host-prefix.md) now selects the
+wrapper and actual factory call. Extend [checked host slots](native-host-slots.md)
+with supported intrinsic/error effects and owning callable publication, then
+connect these facts to native ownership and call analysis. Initial provider
+identity alone does not establish these effect and lifetime contracts. The broader
 [host/effect and export contract](native-bootstrap-host-contract.md) remains
 incomplete. Unchecked mixed-result field accesses
 also need path-sensitive receiver/presence evidence or a supported exception boundary.
 The [string-key snapshot and Array.from prerequisite](native-string-snapshots.md)
 is implemented for confined proved Maps, including absent and empty keys.
-Wrapper calls, error reporting and typed export publication remain open. The host
-audit retains one source/reference difference in fallback `this`; the callee and
-accessor evaluation-order mismatch is fixed. A broader host adapter must resolve
-the remaining receiver boundary explicitly.
+Error reporting and typed export publication remain open. The host audit's
+script receiver and callee/accessor evaluation-order differences are fixed.
+Native receiver admission remains a separate proof obligation.
 The current conditional queries remain behind
 their own closed-environment proof and do not relax PE/native module guards.
 

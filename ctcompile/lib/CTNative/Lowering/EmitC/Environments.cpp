@@ -3,11 +3,19 @@
 namespace ctcompile::ctnative::lowering_detail {
 
 void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
+    llvm::StringMap<unsigned> callables;
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](ctjs::CreateClosureOp made) {
             if (environmentTarget(made).empty()) { return; }
-            if (made->hasAttr(kNativeStoredCallable)) {
-                censusStoredCallable(made);
+            const bool stored = made->hasAttr(kNativeStoredCallable);
+            if (stored || hasConcreteCallableSignature(made)) {
+                // Admission has already proved ownership and every invocation.
+                // Choose the existing callable ABI only after its concrete
+                // signature is known; other admitted signatures keep tuples.
+                made->setAttr(kNativeStoredCallable, mlir::UnitAttr::get(context));
+                callables.try_emplace(environmentTarget(made),
+                                      static_cast<unsigned>(made.getUpvalues().size()));
+                censusStoredCallable(made, !stored);
                 return;
             }
             const auto name = "ctn_env_" + cIdentifier(environmentTarget(made));
@@ -46,6 +54,24 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                 }
             }
             environments.push_back(definition + ">;\n}\n");
+        });
+    }
+    for (ctjs::FuncOp fn : accepted) {
+        fn.getBody().walk([&](mlir::Operation * op) {
+            if (op->hasAttr(kNativeEnvironmentRead) && callables.contains(environmentTarget(op))) {
+                // Keep inference's capture operands until the invocation is
+                // replaced. The existing stored-read sweep removes them then.
+                op->setAttr(kNativeStoredRead, mlir::UnitAttr::get(context));
+            }
+            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op);
+            if (!call) { return; }
+            const auto found = callables.find(call.getCallee());
+            if (found == callables.end()) { return; }
+            const auto type = llvm::dyn_cast_or_null<ClosureType>(typeOf(call.getCalleeValue()));
+            if (!type || type.getTarget() != call.getCallee()) { return; }
+            call->setAttr(
+                kNativeStoredCall,
+                mlir::IntegerAttr::get(mlir::IntegerType::get(context, 32), found->second));
         });
     }
 }

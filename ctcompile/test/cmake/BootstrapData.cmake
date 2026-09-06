@@ -18,6 +18,36 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
         --reference $<TARGET_FILE:ctcompile-test-native-reference>
         --translate $<TARGET_FILE:ctjs-translate> --opt $<TARGET_FILE:ctjs-opt>)
   endforeach()
+  foreach(_mode commonjs browser global_reentry self_reentry)
+    set(_prefix_work "${CMAKE_CURRENT_BINARY_DIR}/bootstrap-host-prefix/${_mode}")
+    set(_prefix_cpp "${_prefix_work}/wrapper.cpp")
+    set(_prefix_expected "${_prefix_work}/expected.inc")
+    set(_prefix_source "${_prefix_work}/program.js")
+    add_custom_command(
+      OUTPUT "${_prefix_cpp}" "${_prefix_expected}" "${_prefix_source}"
+      COMMAND ${Python3_EXECUTABLE} "${CTBROWSER_MONOREPO_ROOT}/tools/check/bootstrap-host-prefix.py"
+        --bootstrap "${_bootstrap_data_source}" --mode ${_mode} --work "${_prefix_work}"
+        --translate $<TARGET_FILE:ctjs-translate> --opt $<TARGET_FILE:ctjs-opt>
+      DEPENDS ctjs-translate ctjs-opt "${_bootstrap_data_source}" "${_bootstrap_data_probe}"
+        "${CTBROWSER_MONOREPO_ROOT}/tools/check/bootstrap-host-prefix.py"
+      COMMENT "Checking and compiling host prefix ${_mode}"
+      VERBATIM)
+    set_source_files_properties("${_prefix_cpp}" PROPERTIES COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
+    set(_prefix_target "ctcompile-test-host-prefix-${_mode}")
+    add_executable(${_prefix_target} HostPrefixDifferential.cpp "${_prefix_cpp}" "${_prefix_expected}")
+    target_include_directories(${_prefix_target} PRIVATE "${_prefix_work}")
+    target_link_libraries(${_prefix_target} PRIVATE ctbrowser::ctbrowser)
+    ctcompile_target(${_prefix_target})
+    if(_mode MATCHES "_reentry$")
+      target_compile_definitions(${_prefix_target} PRIVATE CTCOMPILE_HOST_PREFIX_FUNCTIONS=2
+        CTCOMPILE_HOST_PREFIX_ENTRY=1 CTCOMPILE_HOST_PREFIX_INVOCATIONS=2)
+    else()
+      target_compile_definitions(${_prefix_target} PRIVATE CTCOMPILE_HOST_PREFIX_FUNCTIONS=7
+        CTCOMPILE_HOST_PREFIX_ENTRY=2 CTCOMPILE_HOST_PREFIX_INVOCATIONS=1)
+    endif()
+    add_test(NAME ctcompile_bootstrap_host_prefix_${_mode}
+      COMMAND ${_prefix_target} "${_prefix_source}")
+  endforeach()
   # Mutate an executed observation and the real source boundary separately.
   # Each control accepts only its exact intended diagnostic, never a crash or
   # a missing executable. Separate output directories also permit ctest -j.

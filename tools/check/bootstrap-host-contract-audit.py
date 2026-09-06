@@ -290,7 +290,7 @@ def check(args: argparse.Namespace) -> None:
                 if not separator:
                     raise ProbeError(f"invalid reference observation for {name}: {line!r}")
                 # The reference also prints non-trace primitive globals, e.g.
-                # its undefined script receiver. Keep the full raw output but
+                # an explicitly undefined globalThis binding. Keep raw output but
                 # compare the same explicit observation roots as Node.
                 if not key.startswith("trace"):
                     continue

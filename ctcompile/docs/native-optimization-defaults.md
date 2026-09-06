@@ -23,7 +23,9 @@ so the step counters are analysis limits, not wall-clock or memory guarantees.
 Input proof annotations never bypass either analysis.
 
 Specialization, heap partial evaluation, supercompilation and snapshot
-deforestation remain explicit opt-ins. The boxed pipeline is unchanged.
+deforestation remain explicit opt-ins. [Host entry-prefix specialization](native-host-prefix.md)
+is also a separate explicit pass requiring a fingerprinted embedding contract;
+native defaults never enable it. The ordinary boxed pipeline is unchanged.
 Native closure lifting and the ordinary EmitC cleanup stages remain required
 parts of lowering and are independent of this optimization policy.
 
@@ -79,10 +81,11 @@ the disabled baseline explicitly; those checks retain their original purpose.
 On the devbox, the default-policy fixture folds 17 expressions and three
 branches in 294 symbolic steps without exhaustion. Both variants produce all
 eight expected numeric observations and contain no ctbrowser symbols. Generated
-C++ decreases from 7,840 to 7,043 bytes (10.2%) with the
+C++ decreases from 7,924 to 7,087 bytes (10.6%) with the
 [readable literal policy](native-literals.md), [source names](native-source-names.md)
-and [const bindings](native-const-bindings.md), after the callee-before-argument
-bytecode correction. These replace the preceding 7,366/6,701-byte measurements;
+and [const](native-const-bindings.md)/[constexpr bindings](native-constexpr-bindings.md),
+after the callee-before-argument bytecode correction. These replace the preceding
+7,840/7,043-byte measurements;
 the optimization stages and expected observations are unchanged. The combined
 enabled/disabled differential and wrapper-option checks
 include native C++ compilation and interpreter comparisons.

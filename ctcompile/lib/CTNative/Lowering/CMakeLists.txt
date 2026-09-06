@@ -99,6 +99,7 @@ add_library(ctcompile-ctnative-lowering
   ../PartialEvaluation/Prefix.cpp
   ../BindingTime/Pass.cpp
   ../HostContract/Pass.cpp
+  ../HostContract/PrefixPass.cpp
   ../PartialEvaluation/Evaluator.cpp
   ../PartialEvaluation/Calls.cpp
   ../PartialEvaluation/CallProof.cpp

@@ -208,6 +208,10 @@ void test_window_is_the_global_object() {
         // shadowing itself in the globals.
         console.log('own=' + (window.innerWidth > 0));
         console.log('same=' + (window === globalThis));
+        console.log('this=' + (this === window));
+        var scriptReceiver = this;
+        globalThis = undefined;
+        console.log('stable=' + (this === scriptReceiver) + ',' + (this === window));
     </script></body></html>)");
     check(page.script_error().empty(), "the window script ran: " + page.script_error());
     const auto & log = log_of(page);
@@ -217,6 +221,8 @@ void test_window_is_the_global_object() {
     check(log[3] == "bare=7", "a write through the window defines a global: " + log[3]);
     check(log[4] == "own=true", "the window keeps its own properties: " + log[4]);
     check(log[5] == "same=true", "globalThis is the window: " + log[5]);
+    check(log[6] == "this=true", "classic script this is the Window view: " + log[6]);
+    check(log[7] == "stable=true,true", "replacing globalThis preserves script this: " + log[7]);
 }
 
 // The REFLECTED attributes: id, className, width, height.

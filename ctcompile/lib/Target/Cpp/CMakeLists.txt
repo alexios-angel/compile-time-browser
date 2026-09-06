@@ -10,6 +10,11 @@ add_library(ctcompile-target-cpp
   Const/Bindings.cpp
   Const/Types.cpp
   Const/Uses.cpp
+  Constexpr/Bindings.cpp
+  Constexpr/Conversions.cpp
+  Constexpr/Evaluate.cpp
+  Constexpr/Floats.cpp
+  Constexpr/Integers.cpp
   Names/Hints.cpp
   Names/Identifiers.cpp
   Names/SourceNames.cpp

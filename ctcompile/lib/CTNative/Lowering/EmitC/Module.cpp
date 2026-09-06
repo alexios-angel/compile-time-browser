@@ -81,6 +81,7 @@ void lowering::declareGlobals() {
     module->setAttr("ctnative.readable_literals", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.readable_names", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.const_bindings", mlir::UnitAttr::get(context));
+    module->setAttr("ctnative.constexpr_bindings", mlir::UnitAttr::get(context));
     needsNullableString |= needsStringVector;
     needsNullable |= needsNullableString;
     needsNullable |= needsObjectValue;
@@ -134,7 +135,7 @@ void lowering::declareGlobals() {
             ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kObjectMapHelpers));
         }
     }
-    if (!methodTables.empty()) {
+    if (!methodTables.empty() || !callableBuilders.empty()) {
         for (llvm::StringRef header : {"functional", "memory", "utility"}) {
             ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
         }

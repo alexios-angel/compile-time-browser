@@ -16,6 +16,7 @@ target_link_libraries(ctjs-opt
     MLIRSCFDialect
     MLIRUBDialect
     MLIRControlFlowToSCF
+    MLIRSCFToControlFlow
     MLIRSCFToEmitC
     MLIRTransforms
     MLIRSCFTransforms)

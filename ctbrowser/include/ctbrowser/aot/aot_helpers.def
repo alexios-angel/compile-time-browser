@@ -435,8 +435,9 @@ CT_AOT_COVERS(/* helper */ ct_aot_throw, /* opcode */ throw_value)
  *   vm.hpp:897-902, via run_loop.cpp:1059-1060.
  * FAILURE: None. There is NO sloppy-mode globalThis substitution: a frame
  *   entered with no receiver hands back raw undefined (op::call sets
- *   receiver = undefined, run_loop.cpp:937), so `this` at top level or in a
- *   bare call is undefined. */
+ *   receiver = undefined), so a bare call sees undefined. Classic script
+ *   entry receives the realm's stable global_this value; module entry receives
+ *   undefined. Neither path looks up the writable globalThis binding. */
 CT_AOT_HELPER(/* name */ ct_aot_this, /* ret */ uint64_t, /* params */ (struct ct_aot_frame *fr),
               /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0)
 CT_AOT_COVERS(/* helper */ ct_aot_this, /* opcode */ load_this)

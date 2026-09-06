@@ -1006,12 +1006,11 @@ CT_OPCODE(/* name */ type_of, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ u
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 1, /* impl */ "vm/coerce.cpp:type_of")
 
-/* No sloppy-mode substitution: a frame entered with no receiver hands back
- * raw undefined (op::call sets receiver = undefined, run_loop.cpp:1037), so
- * `this` at top level or in a bare call is undefined, not globalThis. The
- * long new.target commentary at run_loop.cpp:1169-1182 sits INSIDE this
- * block after its `break`, describes load_new_target rather than load_this,
- * and is stale - see load_new_target. */
+/* Classic script entry receives the realm's stable global_this value; module
+ * entry receives undefined. Arrows retain their lexical receiver through
+ * effective_this. Bare calls still have no sloppy-mode substitution: a frame
+ * entered with no receiver observes raw undefined. The mutable globalThis
+ * binding is not consulted when selecting any frame's receiver. */
 CT_OPCODE(/* name */ load_this, /* a_kind */ reg, /* b_kind */ unused, /* c_kind */ unused, /* writes_a */ 1,
           /* allocates */ 0, /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0,
           /* may_suspend */ 0, /* resumable */ 1, /* impl */ "vm.hpp:context::effective_this")

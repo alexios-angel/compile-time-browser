@@ -23,19 +23,17 @@ int main(int argc, char ** argv) {
     ctcompile::ctjs::registerCTJSPasses();
     // And the native tier's, Phase 62½ - the same generated registration.
     ctcompile::ctnative::registerCTNativePasses();
-    // AND THE TWO UPSTREAM CONVERSIONS THIS PROJECT NEEDS, which this tool did
-    // not register at all. They recover structured control flow from a CFG
-    // built out of jumps, and neither is ours to write:
+    // Register the upstream conversions used by the native and boxed pipelines:
     //
     //   --lift-cf-to-scf      cf.br/cf.cond_br -> scf.if/scf.while
     //   --convert-scf-to-emitc  scf -> emitc.if/emitc.for
+    //   --convert-scf-to-cf  specialized structured CTJS -> boxed CFG
     //
-    // TWO, NOT registerConversionPasses(). That registers every conversion
-    // MLIR has - AMDGPU, ArmSME, SPIR-V - and each one is a link dependency,
-    // so the tool failed to link on createConvertAMDGPUToROCDLPass before it
-    // failed on anything relevant.
+    // registerConversionPasses() would pull every backend into the link,
+    // including AMDGPU, ArmSME and SPIR-V, which these pipelines do not use.
     mlir::registerLiftControlFlowToSCFPass();
     mlir::registerSCFToEmitC();
+    mlir::registerSCFToControlFlowPass();
     // AND arith -> emitc, because --ctjs-lift-to-scf encodes its edge
     // multiplexers as arith i32 flags (Phase 62½-C).
     mlir::registerConvertArithToEmitC();

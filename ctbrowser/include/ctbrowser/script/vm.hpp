@@ -331,7 +331,7 @@ struct run_result {
 
 class context {
 public:
-    context() = default;
+    context();
     ~context() { sweep_all(); }
 
     context(const context &) = delete;
@@ -391,6 +391,15 @@ public:
     }
     // Every global, for a window that enumerates itself.
     [[nodiscard]] const string_flat_map<value> & globals() const noexcept { return globals_; }
+
+    // The realm's script receiver is independent of the writable globalThis
+    // binding. An embedder selects its host object before running scripts;
+    // assigning globalThis in JavaScript never changes this identity.
+    [[nodiscard]] value global_this() const noexcept { return global_this_; }
+    void set_global_this(value receiver) {
+        global_this_ = receiver;
+        define_global("globalThis", receiver);
+    }
 
     // --- execution ---------------------------------------------------------
     //
@@ -1888,6 +1897,9 @@ private:
     // reachable, and "reachable in the VM" is not "reachable in the program".
     template <class Visit>
     void each_root(std::size_t register_limit, std::size_t frame_limit, Visit && visit) {
+        // A script can replace every visible alias of its global object. The
+        // realm still owns it between turns, and the next script receives it.
+        visit(root_label::globals, global_this_);
         for (const auto & [name, v] : globals_) { visit(root_label::globals, v); }
         const std::size_t top = std::min(register_limit, registers_.size());
         for (std::size_t i = 0; i < top; ++i) { visit(root_label::registers, registers_[i]); }
@@ -2161,6 +2173,7 @@ private:
     // docs/performance.md measured at -47% on object_object::find, and this map
     // is the one the whole shell binding layer reads through.
     string_flat_map<value> globals_;
+    value global_this_ = value::undefined();
     std::vector<value> registers_;
     std::vector<call_frame> frames_;
     // WHERE THE TYPE ORACLE'S OBSERVATIONS GO, or null - which it is in every

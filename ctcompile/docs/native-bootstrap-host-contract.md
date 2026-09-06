@@ -236,14 +236,20 @@ python3 tools/check/bootstrap-host-contract-audit.py \
   --work /tmp/bootstrap-host-contract-audit
 ```
 
-Node 26.8.1 agrees with all 11 scenarios. The rebuilt devbox reference agrees
-with 10/11, including the callee-order witness. The negative control catches
-the exact mutated trace `1235`. Only the script-receiver difference remains a
-boundary of this contract:
+Node 26.8.1 agrees with all 11 scenarios. After the callee-order correction,
+the devbox reference agreed with 10/11; its last mismatch was the browser
+fallback with `globalThis` undefined. The reference's undefined script
+receiver selected `self` instead of top-level script `this`. The negative
+control catches the exact mutated trace `1235`.
 
-| Scenario | Node | Current ctbrowser reference |
-|---|---|---|
-| Browser fallback with `globalThis` undefined | Wrapper selects top-level script `this`; `self` stays unchanged | Reference script receiver is undefined; wrapper selects `self` |
+The [script receiver implementation](native-bootstrap-script-this.md) now
+stores a realm value independently of the writable `globalThis` binding and
+passes it to classic-script entry in both interpreter and AOT execution.
+Shell explicitly selects its Window view; modules retain an undefined
+receiver. The value remains rooted even when every visible alias is replaced.
+The rebuilt devbox reference now agrees with Node on **11/11** scenarios, and
+the exact mutated trace `1235` still fails its negative control. No vendor
+fragment or expected observation changed.
 
 The callee-order witness saves the original `Array.from` and `Map.prototype.keys`,
 records their use, and rejects a second component through the exact Data method.

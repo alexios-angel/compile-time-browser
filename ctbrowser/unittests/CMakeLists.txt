@@ -30,6 +30,7 @@ ctbrowser_test(unit/script_debug)
 # is the class of defect test262 and WPT cannot see: they measure conformance
 # from outside, and a use-after-free the corpus never triggers looks green.
 ctbrowser_test(unit/script_gc)
+ctbrowser_test(unit/script_this)
 # THE IMAGE AS AN UNTRUSTED FILE. `ctcompile/test/ProgramImage.cpp` asks whether
 # an image round-trips and whether a corrupt one is refused; this asks the
 # narrower question the round-trip cannot see - whether a constant that is a

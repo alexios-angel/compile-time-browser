@@ -98,6 +98,11 @@ int main() {
     check(!unsafe.proved() && !unsafe.property(read),
           "a fresh manifest and forged success tags cannot authorize an unknown call");
     bad.erase();
+    auto invalidIntrinsic = contractFor(*module);
+    invalidIntrinsic.initialIntrinsics = {"unknown"};
+    HostContractAnalysis invalidProvider(*module, invalidIntrinsic);
+    check(!invalidProvider.proved() && !invalidProvider.property(read),
+          "typed API cannot bypass supported initial intrinsic identities");
     contract.observations = {"missing"};
     HostContractAnalysis missing(*module, contract);
     check(!missing.proved() && missing.reason().contains("observation"),

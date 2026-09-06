@@ -25,6 +25,10 @@ struct HostContract {
     std::vector<std::string> observations;
     std::vector<std::string> absentBindings;
     std::vector<std::string> undefinedBindings;
+    // Explicit identities supplied by the embedding, not effect summaries.
+    // Only standard Map/Array are supported. Source replacement/escape refuses.
+    std::vector<std::string> initialIntrinsics;
+    bool realmGlobalThis = false;
 };
 
 llvm::Expected<HostContract> parseHostContract(llvm::StringRef json);

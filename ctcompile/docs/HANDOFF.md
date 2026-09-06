@@ -8,12 +8,27 @@ committing. There is no CI. Do not build on the small local machine.
 
 ## Current native staging checkpoint, 2026-09-06
 
-Final devbox gate: **436/436 CTests**, **137/137 lit cases**, **505.73 seconds**;
-all **517 C++ files** pass formatting. String-snapshot ASan/UBSan and leak checks
-passed at the preceding checkpoint.
+Final devbox gate: **441/441 CTests**, **140/140 lit cases**, **509.41 seconds**;
+all **531 C++ files** pass formatting. Named owning closures pass ASan/UBSan,
+stack-use-after-return and leak checks. String-snapshot sanitizer checks passed
+at the preceding checkpoint.
 Default native coverage stays
 Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725**; exact Data probes remain
 **0/7, 0/7, 0/8 native**. Full Bootstrap initialization is still unfinished.
+
+[Constant-expression bindings](native-constexpr-bindings.md) combine the existing
+backward immutability proof with forward target binding-time analysis. Typed
+scalar literals and checked exact operations become `constexpr`; parameters,
+heap values, opaque calls, invalid/inexact operations and mutable join storage
+retain their previous policy. Source BTA reports cannot authorize C++ constant
+evaluation. Explicit and deduced declarations share the same qualification and
+exact type pins.
+
+[Returned closures](native-returned-closures.md) with concrete signatures now
+use a `std::function` alias and named lambda. Explicit init-captures own their
+values, including shared Map handles. They preserve alias mutation and lifetime
+after factory return. Unsupported admitted signatures keep the owning tuple
+representation; closure admission and escape requirements are unchanged.
 
 [Const bindings](native-const-bindings.md) now qualify native C++ locals and
 by-value parameters using backward binding-mutability data flow. Writes, unknown
@@ -46,8 +61,8 @@ Heap PE, direct-call specialization, deforestation and supercompilation remain
 opt-in. Type, effect, BTA and ownership proofs remain required. See the
 [defaults policy](native-optimization-defaults.md) and [roadmap](native-pe-roadmap.md).
 The default/disabled differential preserves eight observations and reduces its
-generated C++ from 7,840 to 7,043 bytes with readable literals, source names and
-const bindings after the call-order correction.
+generated C++ from 7,924 to 7,087 bytes with readable literals, source names and
+const/constexpr bindings after the call-order correction.
 Coverage now accounts for pruned functions without shrinking the source denominator;
 historical admission floors run separately with defaults disabled.
 
@@ -66,12 +81,23 @@ CommonJS/browser probes find 24/23 candidate slot edges, but all three complete
 contracts remain refused and native admission stays unchanged. Connecting this
 proof to retained callables and supported host effects is still open.
 
+[Host entry-prefix specialization](native-host-prefix.md) now consumes a narrower
+live proof without claiming the complete host contract. The exact CommonJS and
+browser wrappers select two and five UMD branches respectively and resolve one
+actual factory closure each. All seven source functions and the runtime factory
+call remain; native admission stays 0/7. Initial Map/Array and realm identities
+are explicit embedding contracts. Unknown effects, callback exposure, reentry,
+stale manifests and exhausted work retain the original control flow. This stage
+is opt-in and does not execute initialization early.
+
 The [Bootstrap host/export oracle](native-bootstrap-host-contract.md) covers
 publication slots, AMD retention, mutable methods, receivers, exceptions and
-error reentry. Correct callee-before-argument bytecode and native-function
-accessors bring ctbrowser agreement to 10/11 cases; Node passes 11/11.
-Script-`this` fallback is the remaining mismatch. Accessor closures survive
-forced GC. The compiler change intentionally changes boxed Bootstrap output to
+error reentry. The [classic-script receiver](native-bootstrap-script-this.md)
+now has a stable realm identity independent of the writable `globalThis` binding.
+Both interpreted and compiled entries receive it; modules receive undefined.
+Together with the preceding call-order/accessor fixes, ctbrowser now agrees with
+Node on all **11/11** audit cases. Accessor closures and the realm receiver survive
+forced GC. The preceding compiler change intentionally changed boxed Bootstrap output to
 11,226,071 bytes, SHA-256
 `721e6095554b20eb2241367283ae1b02c032c771c858ca582af974c6754c2528`.
 
@@ -122,11 +148,12 @@ helper pruning. Pruning follows symbolic and numeric closure edges, retaining
 original boxed callees and published declarations. See their linked implementation
 documents and the [source layout](source-layout.md).
 
-Full native Bootstrap remains unfinished. Next, extend the checked host-slot
-prerequisite with supported intrinsic/error providers and retained callable
-publication, then consume the live proof in ownership/call analysis. Script-`this`
-fallback and console errors are still open. Its unchecked
-mixed-result property access also needs stronger
+Full native Bootstrap remains unfinished. The selected wrapper and actual factory
+target are now proved; next connect supported provider effects and owning callable
+publication to native ownership/call analysis. Initial provider identity alone
+does not authorize Map execution or console errors during PE. Explicit script
+receivers, boxed public parameters and open method-table shapes still refuse
+native admission. Unchecked mixed-result property access also needs stronger
 presence/refinement evidence or an exception boundary. Keep exact vendor probe
 coverage distinct from the component fixtures. Recursive Lumberhack fusion,
 shared mutable capture environments and region splitting remain separate work.

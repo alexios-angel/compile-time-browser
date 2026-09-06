@@ -919,7 +919,8 @@ void dom_bindings::install_window(context & cx) {
     const value window_view = value::object(
         cx.allocate<script::proxy_object>(window_target, value::object(window_handler)));
     cx.define_global("window", window_view);
-    cx.define_global("globalThis", window_view);
+    // Select the realm receiver separately from its writable globalThis alias.
+    cx.set_global_this(window_view);
     // `self`, WHICH IS THE SAME OBJECT AND WAS MISSING. It is what a script
     // that means to run in a window OR a worker names the global by, so a
     // library never writes `window` at all - and the first thing

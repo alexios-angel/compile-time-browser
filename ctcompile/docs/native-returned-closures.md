@@ -18,12 +18,37 @@ const add = makeStore(40);
 add(2); // 42, after makeStore's frame has ended
 ```
 
-Each function value carries an owning `std::tuple` environment. Its code target
-is proved statically, so calls extract the captures and invoke the lifted C++
-function directly. The tuple owns strings and copies Map shared pointers; it
-never borrows a factory's stack. Factory invocations have separate environments,
-while aliases of one Map still observe shared mutations. Generated programs
-need neither the VM nor a collector.
+When the solved capture, argument and result carriers have a concrete callable
+signature, each function value uses a `std::function` alias and a named lambda.
+For the example above, its binder has this form (the lifted function retains
+the source body):
+
+```cpp
+using ctn_env_fn_2 = std::function<double(double)>;
+
+inline ctn_env_fn_2 ctn_bind_fn_2(
+    std::shared_ptr<ctnative::number_map<std::string>> capture_state) {
+    ctn_env_fn_2 const ctn_lambda =
+        [capture_state = std::move(capture_state)](double const argument_delta) -> double {
+            return fn_2(capture_state, argument_delta);
+        };
+    return ctn_lambda;
+}
+```
+
+The explicit init-capture owns the Map handle. A reference capture would not
+extend the lifetime of the factory's local binding; copying the shared pointer
+does. The lambda's const call operator keeps that handle immutable while the
+Map's contents remain shared and mutable. Strings are owned by value as well.
+Factory invocations retain separate environments; copies of one callable retain
+the same Map. Generated programs need neither the VM nor a collector.
+
+The source-derived `capture_` and `argument_` names distinguish the binder's
+locals from the source function's locals. Keywords, unsupported identifier
+bytes and collisions are handled within that generated scope. Callable builders
+retain the returned function's source location. Signatures outside the concrete
+callable carrier set keep the previous owning `std::tuple` representation and
+direct lifted calls.
 
 This is the monomorphic case of Phase 59A. Proved
 [returned method tables](native-method-tables.md) now carry stored callables
@@ -56,6 +81,10 @@ reads subscribe to their creation site's inferred values; the nominal type
 does not recursively contain capture types. Map inference connects each slot
 with its extractions without conflating distinct slots or runtime allocations.
 C++ environment aliases follow Map definitions and precede function prototypes.
+Only after admission and type inference does EmitC select a concrete callable
+representation. That selection does not broaden the accepted closure flow or
+trust source annotations. Synthetic capture reads still carry inference facts;
+the callable invocation drops them and the existing dead-read sweep erases them.
 
 Input environment annotations are cleared before proof. Unproved globals and
 method fields, function identity inspection, lexical `this`, `new.target`,
@@ -75,6 +104,16 @@ VM symbols, deduced-type pins and an off-by-one negative control. Source and
 IR tests pin refusals for mixed producers, mutation, late initialization, open
 boundaries, inspection and forged annotations. Type tests cover nominal
 identity, joins, optionality and escaped target names.
+
+`CTNative/Lowering/native-owning-callables.mlir` adds a focused source regression
+for named owning lambdas. Its checker compares eight observations in ordinary
+and deduced output under GCC and Clang, and repeats both with Clang ASan/UBSan
+and stack-use-after-return detection. It covers retained factory results,
+forwarded aliases, independent Maps, external Map mutation, strings exceeding
+small-string storage and C++ keyword source names. A separate scalar/string
+translation unit checks that callables request their own standard headers. A
+third unit combines a tuple-backed closure accepting a callable parameter with
+a scalar callable, checking that the prior representation remains available.
 
 The 2026-09-05 devbox gate passes **299/299 CTests**, including **98/98 lit
 tests**. Standalone ASan/UBSan execution matches all 13 observations without

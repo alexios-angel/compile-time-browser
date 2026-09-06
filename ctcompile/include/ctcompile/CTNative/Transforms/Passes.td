@@ -33,6 +33,27 @@ def CTNativeHostContract : Pass<"ctnative-host-contract", "mlir::ModuleOp"> {
                           "::mlir::arith::ArithDialect"];
 }
 
+def CTNativeSpecializeHostPrefix : Pass<"ctnative-specialize-host-prefix", "mlir::ModuleOp"> {
+  let summary = "Specialize a checked closed host entry prefix without crossing unknown effects";
+  let description = [{
+    A fingerprinted closed-source-v1 manifest supplies the initial host binding
+    presence. Interpret only executed source initialization and unique closed
+    invocation contexts. Select proved structured branches and name exact source
+    callees while preserving actual callee values, receivers, arguments and all
+    runtime effects. The first unknown effect ends the prefix; stale manifests,
+    repeated/escaping bodies and exhausted work cannot authorize specialization.
+    This narrower proof never grants complete host or native admission.
+  }];
+  let options = [
+    Option<"manifest", "manifest", "std::string", "\"\"", "Driver-owned host contract JSON path">,
+    Option<"output", "output", "std::string", "\"\"", "Optional JSON specialization report path">,
+    Option<"maxSteps", "max-steps", "unsigned", "100000", "Maximum prefix discovery work">,
+    Option<"report", "report", "bool", "false", "Report selected branches and resolved calls">
+  ];
+  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect",
+                          "::mlir::arith::ArithDialect"];
+}
+
 def CTNativePruneUnreachable : Pass<"ctnative-prune-unreachable", "mlir::ModuleOp"> {
   let summary = "Remove private functions unreachable from checked symbolic and closure roots";
   let description = [{

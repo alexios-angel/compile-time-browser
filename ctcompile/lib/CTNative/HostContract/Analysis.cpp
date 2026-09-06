@@ -116,6 +116,10 @@ HostContractAnalysis::HostContractAnalysis(mlir::ModuleOp module, const HostCont
         return;
     }
     host_detail::analyzer analysis(module, contract, maxSteps);
+    if (auto problem = host_detail::initialBindingProblem(module, contract); !problem.empty()) {
+        refusal = problem;
+        return;
+    }
     if (!analysis.entry || analysis.entry.getBody().empty()) {
         refusal = "host contract script entry is missing or external";
         return;

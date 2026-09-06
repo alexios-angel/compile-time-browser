@@ -31,6 +31,44 @@
 
 namespace ctbrowser::script {
 
+context::context() {
+    // A bare VM has a global object too. Like Shell's Window view, this proxy
+    // shares the existing global binding table instead of copying it. The
+    // table remains the own-data environment used by the VM and AOT helpers;
+    // this does not introduce accessor calls into pure global_get.
+    const value target = make_object();
+    auto * handler = static_cast<object_object *>(make_object().as_heap());
+    const auto trap = [&](const char * name, native_fn fn) {
+        handler->set(name, value::object(allocate<native_object>(name, std::move(fn))));
+    };
+    trap("get", [](context & cx, std::span<value> args) {
+        auto * object = static_cast<object_object *>(args[0].as_heap());
+        const std::string name = cx.to_string(args[1]);
+        if (object->find(name) != nullptr || object->find_accessor(name) != nullptr) {
+            return cx.lookup_property(args[0], name);
+        }
+        if (cx.has_global(name)) { return cx.global(name); }
+        return cx.lookup_property(args[0], name);
+    });
+    trap("set", [](context & cx, std::span<value> args) {
+        auto * object = static_cast<object_object *>(args[0].as_heap());
+        const std::string name = cx.to_string(args[1]);
+        if (object->find(name) != nullptr || object->find_accessor(name) != nullptr) {
+            cx.store_property(args[0], name, args[2]);
+        } else {
+            cx.define_global(name, args[2]);
+        }
+        return value::boolean(true);
+    });
+    trap("has", [](context & cx, std::span<value> args) {
+        auto * object = static_cast<object_object *>(args[0].as_heap());
+        const std::string name = cx.to_string(args[1]);
+        return value::boolean(object->find(name) != nullptr ||
+                              object->find_accessor(name) != nullptr || cx.has_global(name));
+    });
+    set_global_this(value::object(allocate<proxy_object>(target, value::object(handler))));
+}
+
 // ===================== gc ================================================
 
 // THE MARK PHASE, AS A LOOP. `push_mark` greys and `trace_object` blackens;

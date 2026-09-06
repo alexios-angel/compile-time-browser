@@ -30,6 +30,12 @@ operations are pure or nonthrowing. Unknown fields/provider names, supplied
 effect claims, conflicting binding declarations and source writes to fixed
 absent/undefined bindings are rejected.
 
+The optional `initial_intrinsics` and `realm_global_this` fields identify
+specific initial embedding resources for
+[entry-prefix specialization](native-host-prefix.md). Intrinsic replacement or
+escape is rechecked from source. These fields do not supply an effect proof or
+authorize the complete slot query when another obligation fails.
+
 The fingerprint covers the canonical generic IR of the complete program and
 driver. Locations and previous `ctnative.host_*` reports are excluded. Changing
 semantic IR invalidates the manifest; comments or printing locations do not.

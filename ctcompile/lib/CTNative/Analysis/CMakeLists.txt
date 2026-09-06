@@ -14,6 +14,9 @@ add_mlir_library(CTNativeAnalysis
   ../HostContract/Values.cpp
   ../HostContract/Slots.cpp
   ../HostContract/Analysis.cpp
+  ../HostContract/PrefixAnalysis.cpp
+  ../HostContract/PrefixValues.cpp
+  ../HostContract/PrefixIdentity.cpp
   BindingTime/Analysis.cpp
   BindingTime/Effects.cpp
   BindingTime/EffectQuery.cpp

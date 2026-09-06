@@ -10,15 +10,15 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/array.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ARRAY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/methods.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=METHODS
 
-// NATIVE: emitc.verbatim {{.*}}using ctn_env_{{.*}} = std::tuple<std::shared_ptr<ctnative::number_map<std::string>>>;
-// NATIVE: emitc.verbatim {{.*}}std::tuple<std::string>
-// NATIVE: emitc.verbatim {{.*}}std::tuple<bool, double, double>
+// NATIVE: emitc.verbatim {{.*}}using ctn_env_{{.*}} = std::function<double(double)>;
+// NATIVE: emitc.verbatim {{.*}}std::function<std::string(std::string)>
+// NATIVE: emitc.verbatim {{.*}}std::function<double()>
 // NATIVE: emitc.declare_func @makeStore_1
 // NATIVE: emitc.func @makeStore_1({{.*}}) -> !emitc.opaque<"ctnative::ctn_env_
-// NATIVE: call_opaque "std::make_tuple"
+// NATIVE: call_opaque "ctn_bind_
 // NATIVE: emitc.func @forwardCallable_3({{.*}}!emitc.opaque<"ctnative::ctn_env_
 // NATIVE: emitc.func @invokeCallable_4
-// NATIVE: call_opaque "std::get<0>"
+// NATIVE: call_opaque "ctnative::invoke_callable"
 // MUTABLE: returned closure capture 0 is a mutable or late-initialized binding; it needs an owning shared cell
 // LATE: returned closure: capture 0 is a binding whose value does not reach this call of it
 // LATESTORE: returned closure: capture 0 is a binding whose single assignment does not dominate this call of it

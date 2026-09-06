@@ -63,8 +63,11 @@ def main() -> None:
     contract = {
         "version": 1, "provider": "closed-source-v1", "module_sha256": matched[1],
         "entry": "_script_$0", "roots": roots, "observations": observations,
-        "absent_bindings": sorted({"module", "exports", "define", "globalThis", "self"} - present),
+        # Bare contexts now supply the realm's globalThis view. It remains
+        # unmodeled unless this driver replaces it with its own source object.
+        "absent_bindings": sorted({"module", "exports", "define", "self"} - present),
         "undefined_bindings": ["undefined"],
+        "initial_intrinsics": ["Map", "Array"], "realm_global_this": True,
     }
     manifest = stem.with_suffix(".contract.json")
     report_path = stem.with_suffix(".report.json")
