@@ -162,17 +162,18 @@ void lowering::lower(ctjs::FuncOp fn) {
 
     // Later canonicalization can erase a parameter's last use (for example,
     // identical Map stores in both arms erase the boolean branch). Preserve
-    // an explicit void use for every emitted parameter so generated C++ stays
-    // warning-clean. This neither copies owning values nor changes argument
-    // evaluation, and the host compiler removes the casts.
+    // a tagged void use for every emitted parameter. The final printer omits
+    // it when another use survives, after every cleanup pass has run. This
+    // keeps unused parameters warning-clean without cluttering used ones.
     if (!isEntry) {
         mlir::OpBuilder at = mlir::OpBuilder::atBlockBegin(&body);
         for (unsigned i = 0; i < body.getNumArguments(); ++i) {
             if (i < 3 && !(i == 0 && carriesReceiver)) { continue; }
             mlir::Value arg = body.getArgument(i);
-            callWithConstValueOperands(at, made.getLoc(), mlir::TypeRange{},
-                                       at.getStringAttr("static_cast<void>"),
-                                       mlir::ValueRange{arg});
+            auto suppression = callWithConstValueOperands(at, made.getLoc(), mlir::TypeRange{},
+                                                          at.getStringAttr("static_cast<void>"),
+                                                          mlir::ValueRange{arg});
+            suppression->setAttr("ctnative.parameter_suppression", at.getUnitAttr());
         }
     }
 

@@ -43,6 +43,11 @@ function macroTokens(name, site) {
     const is_same_v = name + site;
     return is_same_v;
 }
+function numericAlias(js_num) {
+    const first = js_num + 1;
+    const second = first * 2;
+    return second;
+}
 function observeClosure() {
     const read = makeReader(10);
     return read(3);
@@ -54,3 +59,4 @@ var loopScore = accumulate(5);
 var closureScore = observeClosure();
 var reusedScore = scopeReuse(1);
 var macroScore = macroTokens(5, 7);
+var numericAliasScore = numericAlias(20);

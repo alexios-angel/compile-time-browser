@@ -230,7 +230,11 @@ HostEntryPrefixAnalysis::HostEntryPrefixAnalysis(mlir::ModuleOp module,
     }
     if (analysis.refusal.empty() && !analysis.exhausted) {
         const host_detail::prefixValue unknown;
-        analysis.function(entry, {unknown, unknown, unknown}, 0);
+        const host_detail::prefixValue receiver =
+            contract.classicScriptRealm
+                ? host_detail::prefixValue{host_detail::prefixValue::Kind::realm, {}, {}, 0}
+                : unknown;
+        analysis.function(entry, {receiver, unknown, unknown}, 0);
         llvm::DenseSet<mlir::Operation *> changed, stack;
         for (auto proof : analysis.branches) {
             changed.insert(proof.operation->getParentOfType<ctjs::FuncOp>());

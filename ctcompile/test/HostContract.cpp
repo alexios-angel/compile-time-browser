@@ -103,6 +103,21 @@ int main() {
     HostContractAnalysis invalidProvider(*module, invalidIntrinsic);
     check(!invalidProvider.proved() && !invalidProvider.property(read),
           "typed API cannot bypass supported initial intrinsic identities");
+    auto invalidRealm = contractFor(*module);
+    invalidRealm.realmOwnDataProperties = {"slot"};
+    HostContractAnalysis orphanRealmSlots(*module, invalidRealm);
+    check(!orphanRealmSlots.proved() && !orphanRealmSlots.property(read),
+          "typed API cannot supply realm slots without the entry receiver");
+    invalidRealm.classicScriptRealm = true;
+    invalidRealm.realmOwnDataProperties = {"__proto__"};
+    HostContractAnalysis prototypeRealmSlot(*module, invalidRealm);
+    check(!prototypeRealmSlot.proved() && !prototypeRealmSlot.property(read),
+          "typed API cannot turn a prototype operation into a realm data slot");
+    invalidRealm.realmOwnDataProperties = {"slot"};
+    invalidRealm.absentBindings = {"slot"};
+    HostContractAnalysis conflictingRealmSlot(*module, invalidRealm);
+    check(!conflictingRealmSlot.proved() && !conflictingRealmSlot.property(read),
+          "typed API rejects a writable realm slot declared absent");
     contract.observations = {"missing"};
     HostContractAnalysis missing(*module, contract);
     check(!missing.proved() && missing.reason().contains("observation"),

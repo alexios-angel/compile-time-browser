@@ -18,7 +18,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
         --reference $<TARGET_FILE:ctcompile-test-native-reference>
         --translate $<TARGET_FILE:ctjs-translate> --opt $<TARGET_FILE:ctjs-opt>)
   endforeach()
-  foreach(_mode commonjs browser global_reentry self_reentry)
+  foreach(_mode commonjs browser browser_this_fallback global_reentry self_reentry)
     set(_prefix_work "${CMAKE_CURRENT_BINARY_DIR}/bootstrap-host-prefix/${_mode}")
     set(_prefix_cpp "${_prefix_work}/wrapper.cpp")
     set(_prefix_expected "${_prefix_work}/expected.inc")
@@ -38,6 +38,9 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
     target_include_directories(${_prefix_target} PRIVATE "${_prefix_work}")
     target_link_libraries(${_prefix_target} PRIVATE ctbrowser::ctbrowser)
     ctcompile_target(${_prefix_target})
+    if(_mode STREQUAL "browser_this_fallback")
+      target_compile_definitions(${_prefix_target} PRIVATE CTCOMPILE_HOST_PREFIX_REALM_SLOT=1)
+    endif()
     if(_mode MATCHES "_reentry$")
       target_compile_definitions(${_prefix_target} PRIVATE CTCOMPILE_HOST_PREFIX_FUNCTIONS=2
         CTCOMPILE_HOST_PREFIX_ENTRY=1 CTCOMPILE_HOST_PREFIX_INVOCATIONS=2)

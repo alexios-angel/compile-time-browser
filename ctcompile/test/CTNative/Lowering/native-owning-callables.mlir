@@ -48,10 +48,22 @@ function externalMutation() {
     state.set("value", 42);
     return read();
 }
+function makeLoop(offset) {
+    return count => {
+        var sum = offset;
+        for (var index = 0; index < count; ++index) { sum += index; }
+        return sum;
+    };
+}
+function loopInLambda() {
+    const sum = makeLoop(5);
+    return sum(4) + sum(0);
+}
 var independentResult = independentCounters();
 var lifetimeResult = afterFactoryReturns();
 var sharedResult = sharedAlias();
 var mutationResult = externalMutation();
+var loopResult = loopInLambda();
 
 //--- scalar-string.js
 // No Map or method table: callable emission itself must request its headers.

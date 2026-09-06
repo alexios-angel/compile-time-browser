@@ -39,6 +39,24 @@ bool keys(const llvm::json::Object & object, llvm::ArrayRef<llvm::StringRef> all
     return true;
 }
 
+std::string realmReceiverProblem(const HostContract & contract) {
+    if (!contract.classicScriptRealm && !contract.realmOwnDataProperties.empty()) {
+        return "realm own-data properties require the classic-script-realm entry receiver";
+    }
+    llvm::StringSet<> seen;
+    for (const auto & name : contract.realmOwnDataProperties) {
+        if (!host_detail::ordinaryKey(name) || !seen.insert(name).second) {
+            return "realm own-data properties require distinct ordinary property names";
+        }
+        if (llvm::is_contained(contract.absentBindings, name) ||
+            llvm::is_contained(contract.undefinedBindings, name) ||
+            llvm::is_contained(contract.initialIntrinsics, name)) {
+            return "realm writable property conflicts with a fixed host binding";
+        }
+    }
+    return {};
+}
+
 } // namespace
 
 llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
@@ -48,7 +66,7 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
     if (object == nullptr ||
         !keys(*object, {"version", "provider", "module_sha256", "entry", "roots", "observations",
                         "absent_bindings", "undefined_bindings", "initial_intrinsics",
-                        "realm_global_this"})) {
+                        "realm_global_this", "entry_receiver"})) {
         return error("host contract must be an object with only supported fields");
     }
     if (object->getInteger("version") != 1) { return error("unsupported host contract version"); }
@@ -99,6 +117,20 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
             return error("the realm globalThis binding cannot be absent or undefined");
         }
     }
+    if (object->get("entry_receiver")) {
+        const auto * receiver = object->getObject("entry_receiver");
+        if (!receiver || !keys(*receiver, {"kind", "own_data_properties"}) ||
+            receiver->getString("kind") != "classic-script-realm") {
+            return error(
+                "entry_receiver requires kind classic-script-realm and own_data_properties");
+        }
+        result.classicScriptRealm = true;
+        if (auto failure =
+                names(*receiver, "own_data_properties", result.realmOwnDataProperties, true)) {
+            return std::move(failure);
+        }
+    }
+    if (auto problem = realmReceiverProblem(result); !problem.empty()) { return error(problem); }
     for (const std::string & name : result.undefinedBindings) {
         if (llvm::is_contained(result.absentBindings, name)) {
             return error("a host binding cannot be both absent and present undefined");
@@ -160,7 +192,8 @@ std::string hostContractFingerprint(mlir::ModuleOp module) {
 namespace ctcompile::ctnative::host_detail {
 
 std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & contract) {
-    std::string reason;
+    std::string reason = realmReceiverProblem(contract);
+    if (!reason.empty()) { return reason; }
     if (contract.realmGlobalThis &&
         (llvm::is_contained(contract.absentBindings, "globalThis") ||
          llvm::is_contained(contract.undefinedBindings, "globalThis"))) {
@@ -175,6 +208,25 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
     }
     module.walk([&](mlir::Operation * operation) {
         if (!reason.empty()) { return; }
+        if (!contract.realmOwnDataProperties.empty()) {
+            // This narrow contract provides no descriptor/prototype mutation
+            // model. Refuse possible changes anywhere, including a suffix or
+            // alias not reached by prefix interpretation.
+            mlir::Value key;
+            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) { key = read.getKey(); }
+            if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
+                key = write.getKey();
+            }
+            const auto name = key ? keyOf(key) : llvm::StringRef{};
+            if (llvm::isa<ctjs::DefineAccessorOp, ctjs::DeletePropertyOp, ctjs::DeleteNamedOp>(
+                    operation) ||
+                name == "__proto__" || name == "prototype" || name == "defineProperty" ||
+                name == "defineProperties" || name == "setPrototypeOf" ||
+                name == "__defineGetter__" || name == "__defineSetter__") {
+                reason = "source can change contracted realm property descriptors or prototype";
+                return;
+            }
+        }
         if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation)) {
             if (llvm::is_contained(contract.initialIntrinsics, store.getName())) {
                 reason = "declared intrinsic binding is replaced by source";

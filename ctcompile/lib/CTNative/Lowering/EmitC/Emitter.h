@@ -114,12 +114,14 @@ struct lowering {
     bool needsNullableString = false;
     bool needsStringVector = false;
     bool needsMap = false;
+    bool needsMapOrder = false;
     bool needsObjectIdentity = false;
     bool needsObjectValue = false;
     bool needsNullable = false;
     llvm::SmallVector<std::string> environments;
     llvm::SmallVector<std::string> methodTables;
     llvm::SmallVector<std::string> callableBuilders;
+    llvm::StringMap<mlir::DictionaryAttr> callableBodies;
     std::string callableTypeSpelling(mlir::Type type);
     bool hasConcreteCallableSignature(ctjs::CreateClosureOp made) const;
     void censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda = false);

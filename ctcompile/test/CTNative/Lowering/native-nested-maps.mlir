@@ -12,7 +12,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/snapshot.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SNAPSHOT
 
 // NATIVE: emitc.func @main() -> i32
-// NATIVE-DAG: call_opaque "ctnative::make_map<std::string, std::shared_ptr<ctnative::number_map<std::string>>>"
+// NATIVE-DAG: call_opaque "ctnative::make_map<std::string, std::shared_ptr<ctnative::string_to_number_map>>"
 // NATIVE-DAG: call_opaque "ctnative::map_get_present"
 // CYCLE: ctnative.not_native = "native Map payload schemas contain an ownership cycle"
 // MIXED: ctnative.not_native = "native Map flow contains a non-Map producer `ctjs.constant`"

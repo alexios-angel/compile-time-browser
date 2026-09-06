@@ -28,7 +28,7 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                     needsNullable = true;
                     definition += kNullableType;
                     break;
-                case carrier::number: definition += "double"; break;
+                case carrier::number: definition += "js_num"; break;
                 case carrier::boolean: definition += "bool"; break;
                 case carrier::string:
                     needsString = true;

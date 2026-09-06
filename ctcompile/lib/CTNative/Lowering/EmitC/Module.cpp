@@ -22,6 +22,9 @@ void lowering::finish() {
         b.setInsertionPointToStart(module.getBody());
         llvm::SmallVector<ec::FuncOp> lowered;
         module.walk([&](ec::FuncOp f) {
+            if (auto body = callableBodies.find(f.getSymName()); body != callableBodies.end()) {
+                f->setAttr("ctnative.callable_body", body->second);
+            }
             if (f.getSymName() != "main") { lowered.push_back(f); }
         });
         // After the includes and helpers, which declareGlobals put first.
@@ -82,6 +85,7 @@ void lowering::declareGlobals() {
     module->setAttr("ctnative.readable_names", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.const_bindings", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.constexpr_bindings", mlir::UnitAttr::get(context));
+    module->setAttr("ctnative.numeric_alias", mlir::UnitAttr::get(context));
     needsNullableString |= needsStringVector;
     needsNullable |= needsNullableString;
     needsNullable |= needsObjectValue;
@@ -93,6 +97,7 @@ void lowering::declareGlobals() {
     // needs <cmath> above it.
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cmath"), b.getUnitAttr());
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstdio"), b.getUnitAttr());
+    ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr("using js_num = double;"));
     if (needsString || needsNullable || needsMap || needsVector || !globals.empty()) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("string"), b.getUnitAttr());
     }
@@ -127,15 +132,35 @@ void lowering::declareGlobals() {
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kStringVectorHelpers));
     }
     if (needsMap) {
-        for (llvm::StringRef header : {"exception", "memory", "utility", "vector"}) {
+        // Snapshot projections remain ordered even after their producer has
+        // been deforested. The choice only becomes more conservative here.
+        module.walk([&](ec::CallOpaqueOp call) {
+            needsMapOrder |= call.getCallee() == "ctnative::map_keys" ||
+                             call.getCallee() == "ctnative::map_values" ||
+                             call.getCallee().starts_with("ctnative::map_snapshot_at<");
+        });
+        for (llvm::StringRef header : {"exception", "memory", "utility"}) {
             ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
         }
+        if (needsMapOrder) {
+            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("vector"), b.getUnitAttr());
+        } else {
+            for (llvm::StringRef header : {"map", "functional"}) {
+                ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
+            }
+        }
+        ec::VerbatimOp::create(b, module.getLoc(),
+                               b.getStringAttr(needsMapOrder ? kNativeOrderedMapStorage
+                                                             : kNativeAssociativeMapStorage));
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNativeMapHelpers));
+        if (needsMapOrder) {
+            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNativeMapSnapshotHelpers));
+        }
         if (needsObjectValue) {
             ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kObjectMapHelpers));
         }
     }
-    if (!methodTables.empty() || !callableBuilders.empty()) {
+    if (!methodTables.empty() || !callableBuilders.empty() || !callableBodies.empty()) {
         for (llvm::StringRef header : {"functional", "memory", "utility"}) {
             ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
         }

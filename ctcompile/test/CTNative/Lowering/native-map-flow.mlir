@@ -8,12 +8,12 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/reassigned-capture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CELL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/stored.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=STORED
 
-// NATIVE: emitc.verbatim {{.*}}template <class K, class V> struct map_storage
+// NATIVE: emitc.verbatim {{.*}}using map_storage = std::map<K, V, map_key_less<K>>
 // NATIVE: emitc.declare_func @makeStore_1
-// NATIVE: emitc.func @makeStore_1({{.*}}) -> !emitc.opaque<"std::shared_ptr<ctnative::number_map<std::string>>">
-// NATIVE: emitc.func @initialize_2({{.*}}!emitc.opaque<"std::shared_ptr<ctnative::number_map<std::string>>">
-// NATIVE: emitc.func @identity_5({{.*}}) -> !emitc.opaque<"std::shared_ptr<ctnative::number_map<std::string>>">
-// NATIVE: emitc.func @differentSlots_18({{.*}}!emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">{{.*}}!emitc.opaque<"std::shared_ptr<ctnative::number_map<std::string>>">
+// NATIVE: emitc.func @makeStore_1({{.*}}) -> !emitc.opaque<"std::shared_ptr<ctnative::string_to_number_map>">
+// NATIVE: emitc.func @initialize_2({{.*}}!emitc.opaque<"std::shared_ptr<ctnative::string_to_number_map>">
+// NATIVE: emitc.func @identity_5({{.*}}) -> !emitc.opaque<"std::shared_ptr<ctnative::string_to_number_map>">
+// NATIVE: emitc.func @differentSlots_18({{.*}}!emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">{{.*}}!emitc.opaque<"std::shared_ptr<ctnative::string_to_number_map>">
 // NATIVE: emitc.func @unusedStore_24
 // NATIVE: call_opaque "static_cast<void>"
 // MIXED: ctjs.func private @probe$2

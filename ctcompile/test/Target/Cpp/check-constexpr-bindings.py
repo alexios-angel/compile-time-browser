@@ -123,13 +123,13 @@ def main():
         cpp = run([args.translate, "--mlir-to-cpp", str(module)])
         body = cpp.split("// ctcompile: function runtimeMix,", 1)[1]
         body = body.split("// ctcompile:", 1)[0]
-        if not re.search(r"double runtimeMix_\d+\(double const input\)", body):
+        if not re.search(r"js_num runtimeMix_\d+\(js_num const input\)", body):
             raise RuntimeError(f"runtime parameter spelling changed:\n{body}")
-        if "constexpr double staticSeed = 8.0;" not in body:
+        if "constexpr js_num staticSeed = 8.0;" not in body:
             raise RuntimeError(f"source literal did not become constexpr:\n{body}")
-        if not re.search(r"(?:double|auto) const dynamicSum = input \+ staticSeed;", body):
+        if not re.search(r"(?:js_num|auto) const dynamicSum = input \+ staticSeed;", body):
             raise RuntimeError(f"runtime computation lost its source name/type:\n{body}")
-        decisions.append(re.findall(r"\b(constexpr )?(?:double|auto)( const)? (staticSeed|dynamicSum)\b", body))
+        decisions.append(re.findall(r"\b(constexpr )?(?:js_num|auto)( const)? (staticSeed|dynamicSum)\b", body))
         compile_and_run(label, cpp, expected="first=11\nsecond=17\n")
     if decisions[0] != decisions[1]:
         raise RuntimeError(f"deduction changed constexpr/const decisions: {decisions}")

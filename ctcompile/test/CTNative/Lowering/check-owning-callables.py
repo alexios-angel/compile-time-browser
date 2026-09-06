@@ -33,7 +33,7 @@ def main():
             raise RuntimeError("owning callable regression requires " + " or ".join(choices))
         compilers.append(compiler)
     fixtures = {
-        "owning": "independentResult=101\nlifetimeResult=42\nmutationResult=42\nsharedResult=15\n",
+        "owning": "independentResult=101\nlifetimeResult=42\nloopResult=16\nmutationResult=42\nsharedResult=15\n",
         "scalar-string": "keywordResult=42\nscalarResult=1342\nstringResult=11\n",
         "fallback": "fallbackResult=42\n",
     }
@@ -49,10 +49,10 @@ def main():
         decisions = []
         for label, ir in [("plain", module), ("deduced", deduced)]:
             cpp = run([args.translate, "--mlir-to-cpp", str(ir)])
-            assert "std::function<double(double)>" in cpp, cpp
+            assert "std::function<js_num(js_num)>" in cpp, cpp
             assert "#include <functional>" in cpp, cpp
             if fixture == "fallback":
-                assert "std::tuple<double>" in cpp and "std::make_tuple(" in cpp, cpp
+                assert "std::tuple<js_num>" in cpp and "std::make_tuple(" in cpp, cpp
                 assert "std::get<0>" in cpp, cpp
             else:
                 assert "std::make_tuple(" not in cpp and "std::get<" not in cpp, cpp
@@ -68,12 +68,18 @@ def main():
                     assert re.fullmatch(r"(capture_\w+) = std::move\(\1\)", capture), capture
             if fixture == "owning":
                 assert "capture_state = std::move(capture_state)" in cpp, cpp
-                assert "double const argument_delta" in cpp, cpp
+                assert "js_num const argument_delta" in cpp, cpp
                 assert re.search(r"const state = ctnative::", cpp), cpp
+                # The original source body now lives inside the owning lambda;
+                # neither a forwarding call nor an unused lifted definition remains.
+                assert not re.search(r"\bfn_2\s*\(", cpp), cpp
+                assert "ctnative::map_get(capture_state," in cpp, cpp
+                assert "static_cast<void>(capture_state)" not in cpp, cpp
+                assert "static_cast<void>(argument_delta)" not in cpp, cpp
             elif fixture == "scalar-string":
                 assert "std::function<std::string(std::string)>" in cpp, cpp
                 assert "capture_template = std::move(capture_template)" in cpp, cpp
-                assert "double const argument_concept" in cpp, cpp
+                assert "js_num const argument_concept" in cpp, cpp
             decisions.append(lambdas)
             source = args.work / f"{fixture}-{label}.cpp"
             source.write_text(cpp)
@@ -97,7 +103,7 @@ def main():
              "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
              str(source), "-o", str(binary)])
         assert run([str(binary)], environment=environment) == expected
-    print("owning callables: 8 observations agree, plain/deduced, GCC/Clang and ASan/UBSan")
+    print("owning callables: 9 observations agree, plain/deduced, GCC/Clang and ASan/UBSan")
 
 
 if __name__ == "__main__":

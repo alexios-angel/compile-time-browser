@@ -20,29 +20,97 @@ def run(command):
     return result
 
 
+REALM_OBSERVATIONS = {
+    "traceRealmPublished": "1", "traceRealmStable": "1", "traceRealmDistinct": "1",
+    "traceSelfUntouched": "1", "traceAliasUndefined": "1",
+}
+
+
+def fallback_program(probe, fragment):
+    # Reuse the unchanged Data observations while keeping the exact vendor
+    # fragment outside all host-prelude/API substitutions.
+    browser = probe.generate(fragment, "browser")
+    before, found, after = browser.partition(fragment)
+    prelude, api = probe.ENVIRONMENTS["browser"]
+    if not found or not before.startswith(prelude):
+        raise RuntimeError("Data generator no longer has the expected exact-fragment boundary")
+    return ("var scriptThis = this; var globalThis = undefined; var self = {};\n" +
+            before[len(prelude):] + fragment + after.replace(api, "scriptThis.bootstrap") +
+            "var traceRealmPublished = typeof scriptThis.bootstrap === 'object' ? 1 : 0;\n"
+            "var traceRealmStable = scriptThis === this ? 1 : 0;\n"
+            "var traceRealmDistinct = scriptThis !== self ? 1 : 0;\n"
+            "var traceSelfUntouched = self.bootstrap === undefined ? 1 : 0;\n"
+            "var traceAliasUndefined = globalThis === undefined ? 1 : 0;\n")
+
+
+NODE_DRIVER = r"""const fs = require('node:fs');
+const vm = require('node:vm');
+const specification = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const sandbox = {};
+for (const key of specification.realm_own_data_properties) {
+    Object.defineProperty(sandbox, key, {value: undefined, writable: true, configurable: true});
+}
+const context = vm.createContext(sandbox);
+vm.runInContext(fs.readFileSync(specification.source, 'utf8'), context, {timeout: 10000});
+const observations = {};
+for (const key of specification.observations) {
+    const value = vm.runInContext(key, context);
+    if (typeof value !== 'number') throw new Error('non-numeric observation ' + key);
+    observations[key] = String(value);
+}
+process.stdout.write(JSON.stringify({node: process.version, observations}, null, 2) + '\n');
+"""
+
+
+def node_oracle(node, work, js, expected, realm_properties):
+    driver = work / "node-driver.cjs"
+    specification = work / "node-input.json"
+    driver.write_text(NODE_DRIVER)
+    specification.write_text(json.dumps({"source": str(js.resolve()), "observations": sorted(expected),
+                                         "realm_own_data_properties": realm_properties}, indent=2) + "\n")
+    observed = json.loads(run([node, str(driver), str(specification)]).stdout)
+    for name, value in expected.items():
+        if observed["observations"].get(name) != value:
+            raise RuntimeError(f"Node observation {name}: expected {value}, got {observed['observations'].get(name)}")
+    (work / "node.json").write_text(json.dumps(observed, indent=2) + "\n")
+    return observed
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bootstrap", type=Path, required=True)
-    parser.add_argument("--translate", required=True)
-    parser.add_argument("--opt", required=True)
-    parser.add_argument("--mode", choices=("commonjs", "browser", "global_reentry", "self_reentry"), required=True)
+    parser.add_argument("--translate")
+    parser.add_argument("--opt")
+    parser.add_argument("--node", help="also check every declared observation in a fresh Node realm")
+    parser.add_argument("--oracle-only", action="store_true", help="generate source and run Node without compiler tools")
+    parser.add_argument("--mode", choices=("commonjs", "browser", "browser_this_fallback", "global_reentry", "self_reentry"), required=True)
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
+    if args.oracle_only and not args.node:
+        parser.error("--oracle-only requires --node")
+    if not args.oracle_only and (not args.translate or not args.opt):
+        parser.error("compiler evidence requires --translate and --opt")
     args.work.mkdir(parents=True, exist_ok=True)
     spec = importlib.util.spec_from_file_location("bootstrap_probe", Path(__file__).with_name("bootstrap-data-probe.py"))
     probe = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(probe)
     fragment, provenance = probe.extract(args.bootstrap.read_bytes().decode("utf-8"))
     adversarial = args.mode in {"global_reentry", "self_reentry"}
+    realm_fallback = args.mode == "browser_this_fallback"
+    realm_properties = ["bootstrap"] if realm_fallback else []
     if adversarial:
         program = "function route() { if (typeof host === 'object') { trace = 1; } else { trace = 2; } } var host = {}; var trace = 0; route(); host = 0; this.route();\n"
         provenance = {"fixture": "global publication permits a later realm-property invocation"}
         if args.mode == "self_reentry":
             program = "var saved; var host = {}; var trace = 0; (function route() { if (typeof host === 'object') { trace = 1; } else { trace = 2; } saved = route; })(); host = 0; saved();\n"
             provenance = {"fixture": "implicit callee publication permits a later invocation"}
+    elif realm_fallback:
+        program = fallback_program(probe, fragment)
     else:
         program = probe.generate(fragment, args.mode)
-    expected = {"trace": "2"} if adversarial else probe.EXPECTED
+    expected = {"trace": "2"} if adversarial else dict(probe.EXPECTED)
+    if realm_fallback:
+        expected.update(REALM_OBSERVATIONS)
     function_count = 2 if adversarial else 7
     js = args.work / "program.js"
     raw = args.work / "raw.mlir"
@@ -51,6 +119,30 @@ def main():
     manifest = args.work / "contract.json"
     report_file = args.work / "prefix.json"
     js.write_bytes(program.encode("utf-8"))
+    provenance.update({"mode": args.mode, "program_sha256": probe.sha256(program),
+                       "source_functions": function_count, "declared_observations": sorted(expected),
+                       "native_execution_claimed": False})
+    if args.node:
+        provenance["node_oracle"] = node_oracle(args.node, args.work, js, expected, realm_properties)
+        if realm_fallback:
+            # The oracle must reject an executed receiver-identity mutation,
+            # not merely compare a self-authored expected-output file.
+            control = args.work / "node-negative-control"
+            control.mkdir(exist_ok=True)
+            changed = control / "program.js"
+            changed.write_text(program + "traceRealmDistinct = 0;\n")
+            try:
+                node_oracle(args.node, control, changed, expected, realm_properties)
+            except RuntimeError as failure:
+                if str(failure) != "Node observation traceRealmDistinct: expected 1, got 0":
+                    raise
+                provenance["node_receiver_negative_control"] = str(failure)
+            else:
+                raise RuntimeError("Node receiver negative control was accepted")
+    if args.oracle_only:
+        (args.work / "oracle-evidence.json").write_text(json.dumps(provenance, indent=2) + "\n")
+        print(f"host prefix {args.mode}: Node agrees with {len(expected)} observations; native execution not claimed")
+        return
     run([args.translate, "--ctbrowser-js-to-ctjs", str(js), "-o", str(raw)])
     run([args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(prepared)])
     before = prepared.read_text()
@@ -60,10 +152,17 @@ def main():
     digest = re.search(r"host-contract fingerprint: ([0-9a-f]{64})", fingerprint.stderr)
     if not digest:
         raise RuntimeError("missing canonical source fingerprint")
-    binding, key = (("host", "slot") if adversarial else
-                    (("module", "exports") if args.mode == "commonjs" else ("globalThis", "bootstrap")))
-    present = {"module", "exports"} if args.mode == "commonjs" else {"globalThis"}
-    manifest.write_text(json.dumps({
+    binding, key = "globalThis", "bootstrap"
+    present = {"globalThis"}
+    if adversarial:
+        binding, key = "host", "slot"
+    elif realm_fallback:
+        binding, key = "scriptThis", "bootstrap"
+        present.add("self")
+    elif args.mode == "commonjs":
+        binding, key = "module", "exports"
+        present = {"module", "exports"}
+    contract = {
         "version": 1, "provider": "closed-source-v1", "module_sha256": digest[1],
         "entry": "_script_$0", "roots": [{"binding": binding, "properties": [key]}],
         "observations": sorted(expected),
@@ -71,13 +170,17 @@ def main():
         "undefined_bindings": ["undefined"],
         "initial_intrinsics": [] if adversarial else ["Map", "Array"],
         "realm_global_this": True,
-    }, indent=2) + "\n")
+    }
+    if realm_fallback:
+        contract["entry_receiver"] = {"kind": "classic-script-realm", "own_data_properties": realm_properties}
+    manifest.write_text(json.dumps(contract, indent=2) + "\n")
     result = run([args.opt, str(prepared),
                   f"--ctnative-specialize-host-prefix=manifest={manifest} output={report_file} report=true",
                   "-o", str(specialized)])
     (args.work / "prefix.log").write_text(result.stderr)
     report = json.loads(report_file.read_text())
-    expected_branches = 0 if adversarial else (2 if args.mode == "commonjs" else 5)
+    expected_branches = {"commonjs": 2, "browser": 5, "browser_this_fallback": 6,
+                         "global_reentry": 0, "self_reentry": 0}[args.mode]
     expected_targets = [] if adversarial else ["fn$3"]
     if not report["valid"] or report["selected_branches"] != expected_branches or report["targets"] != expected_targets:
         raise RuntimeError(f"exact wrapper proof did not advance as expected: {report}")
@@ -104,9 +207,7 @@ def main():
     pruned = int(reachability[1]) if reachability else -1
     if refused != len(reasons) or claimed + refused + pruned != function_count:
         raise RuntimeError("native refusal/source accounting is incomplete")
-    provenance.update({"mode": args.mode, "program_sha256": probe.sha256(program),
-                       "source_functions": function_count, "declared_observations": sorted(expected),
-                       "prefix": report, "native_execution_claimed": False,
+    provenance.update({"prefix": report,
                        "native_census": {"claimed": claimed, "refused": refused,
                                          "pruned": pruned, "reasons": reasons}})
     (args.work / "evidence.json").write_text(json.dumps(provenance, indent=2) + "\n")

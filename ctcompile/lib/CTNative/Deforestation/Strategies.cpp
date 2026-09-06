@@ -196,13 +196,16 @@ bool isSnapshot(ec::CallOpaqueOp call) {
         return false;
     }
     auto map = llvm::dyn_cast<ec::OpaqueType>(call.getOperand(0).getType());
-    if (!map || !map.getValue().ends_with(">>")) { return false; }
+    if (!map) { return false; }
     if (call.getCallee() == "ctnative::map_values") {
-        return map.getValue().starts_with("std::shared_ptr<ctnative::number_map<");
+        return map.getValue() == "std::shared_ptr<ctnative::string_to_number_map>" ||
+               (map.getValue().starts_with("std::shared_ptr<ctnative::number_map<") &&
+                map.getValue().ends_with(">>"));
     }
     if (call.getCallee() == "ctnative::map_keys") {
         return map.getValue() == "std::shared_ptr<ctnative::number_map<double>>" ||
-               map.getValue().starts_with("std::shared_ptr<ctnative::map_storage<double, ");
+               (map.getValue().starts_with("std::shared_ptr<ctnative::map_storage<double, ") &&
+                map.getValue().ends_with(">>"));
     }
     return false;
 }

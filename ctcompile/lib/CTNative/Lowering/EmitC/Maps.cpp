@@ -16,6 +16,7 @@ bool lowering::replaceMap(mlir::Operation * o) {
         return true;
     }
     if (o->hasAttr(kNativeMapSnapshotCopy)) {
+        needsMapOrder = true;
         auto copy = llvm::cast<CallOp>(o);
         mlir::Value local = ec::VariableOp::create(b, where, copy.getResult().getType(),
                                                    ec::OpaqueAttr::get(context, ""));
@@ -32,6 +33,8 @@ bool lowering::replaceMap(mlir::Operation * o) {
                 ? ("ctnative::make_map<" + mapKeySpelling(map.getKeyType()) + ", " +
                    mapValueSpelling(map.getValueType()) + ">")
                       .str()
+            : llvm::isa<StrType>(map.getKeyType())
+                ? std::string{"ctnative::make_string_to_number_map"}
                 : ("ctnative::make_number_map<" + mapKeySpelling(map.getKeyType()) + ">").str();
         swap(callWithConstValueOperands(b, where, mlir::TypeRange{made.getResult().getType()},
                                         b.getStringAttr(callee), mlir::ValueRange{})
@@ -39,6 +42,7 @@ bool lowering::replaceMap(mlir::Operation * o) {
         return true;
     }
     if (const llvm::StringRef action = nativeMapAction(o); !action.empty()) {
+        needsMapOrder |= action == "keys" || action == "values";
         llvm::SmallVector<mlir::Value> args;
         if (auto call = llvm::dyn_cast<CallOp>(o)) {
             args.push_back(call.getReceiver());

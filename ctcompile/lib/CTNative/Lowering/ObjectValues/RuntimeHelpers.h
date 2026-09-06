@@ -39,9 +39,8 @@ namespace ctnative {
 // ctcompile: absent lookups retain undefined, saved values retain their owner
 template <class K> object_value map_get(
     const std::shared_ptr<map_storage<K, object_value>> & map, const K & key) {
-    for (const auto & entry : map->entries) {
-        if (map_key_equal(entry.first, key)) { return entry.second; }
-    }
+    const auto found = map->find(key);
+    if (found != map->end()) { return found->second; }
     return {};
 }
 } // namespace ctnative

@@ -4,10 +4,10 @@ Native C++ qualifies initialized value bindings and by-value parameters when
 their uses permit it. For example, the sample's score becomes:
 
 ```cpp
-constexpr double score_1 = -1.0;
-double score_3;
+constexpr js_num score_1 = -1.0;
+js_num score_3;
 // Branches assign score_3 and their own join storage.
-double const score_2 = score_3;
+js_num const score_2 = score_3;
 return score_2;
 ```
 
@@ -55,3 +55,10 @@ compiles and executes mutation, overload, expression-capture, pointer, loop and
 hoisting cases under GCC and Clang. Negative pin checks reject both lost binding
 const and incorrect pointee const. The native sample regression also checks
 const `catalog`/`score` bindings while observing mutations through shared Maps.
+
+Generated parameter warning suppressions are decided after final IR cleanup.
+Used parameters lose their redundant `static_cast<void>`; unused parameters keep
+it even when canonicalization erased their last real use. Expression aliases
+and explicitly selected opaque-call operands are followed to determine whether
+the parameter actually appears in the printed body. User-written casts and
+unknown opaque carriers retain their original behavior.

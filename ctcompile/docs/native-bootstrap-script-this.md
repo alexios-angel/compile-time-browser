@@ -69,6 +69,13 @@ unknown mutations, and native callable escape still need their separate
 proofs. Passing all host oracle scenarios does not establish that Bootstrap
 has been admitted to native lowering.
 
+The opt-in [host prefix proof](native-host-prefix.md) can now use an explicit
+embedding promise for this classic-script receiver and a finite writable
+own-data publication slot. It follows Bootstrap's fallback argument even after
+`globalThis` is undefined, while leaving ordinary-call effective `this`
+unknown. The selected factory and publication remain runtime operations;
+this advances a wrapper proof without admitting the exact Data probe natively.
+
 ## Verification
 
 [`script_this`](../../ctbrowser/unittests/unit/script_this.cpp) checks default

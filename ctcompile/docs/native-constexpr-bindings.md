@@ -2,10 +2,13 @@
 
 Native emission combines backward binding-mutability analysis with forward
 binding-time analysis of the final EmitC initializers. An initialized scalar
-can become `constexpr double value` or `constexpr auto value` only when its
+can become `constexpr js_num value` or `constexpr auto value` only when its
 binding is immutable and its actual C++ initializer is a checked constant
 expression. Parameters remain runtime values. Exact deduction pins continue
 to require the resulting top-level const type.
+Native output declares `using js_num = double;`; this spelling preserves the
+underlying floating type, function signatures and constant-expression rules.
+The same analysis runs on bodies emitted inside owning lambdas.
 
 The forward worklist starts with typed integer and finite floating literals.
 It propagates exact values through supported scalar arithmetic, comparisons,

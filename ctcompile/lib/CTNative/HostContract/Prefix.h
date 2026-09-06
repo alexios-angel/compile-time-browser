@@ -10,6 +10,7 @@ struct prefixValue {
         unknown,
         primitive,
         object,
+        realm,
         closure,
         absent
     } kind = Kind::unknown;

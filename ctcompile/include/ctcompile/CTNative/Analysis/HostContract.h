@@ -29,6 +29,12 @@ struct HostContract {
     // Only standard Map/Array are supported. Source replacement/escape refuses.
     std::vector<std::string> initialIntrinsics;
     bool realmGlobalThis = false;
+    // The embedding invokes this entry as a classic script, with its stable
+    // realm receiver. This does not characterize an ordinary call's `this`.
+    // Listed realm properties initially exist as writable own data slots;
+    // reading/writing them cannot call JS. Their values remain unknown.
+    bool classicScriptRealm = false;
+    std::vector<std::string> realmOwnDataProperties;
 };
 
 llvm::Expected<HostContract> parseHostContract(llvm::StringRef json);

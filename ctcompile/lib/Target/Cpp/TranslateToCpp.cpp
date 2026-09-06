@@ -41,8 +41,10 @@
 
 #include "Const/Bindings.h"
 #include "Constexpr/Bindings.h"
+#include "Callables/Body.h"
 #include "Names/SourceNames.h"
 #include "ReadableFloat.h"
+#include "UnusedParameters.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -230,7 +232,8 @@ struct CppEmitter {
   StringRef getOrCreateName(Value val);
 
   /// Prepare native printing policies independently of the declaration cache.
-  void prepareFunction(Operation *function);
+  void prepareFunction(Operation *function,
+                       ArrayRef<std::string> parameters = {});
   void finishFunction() {
     sourceNames.finish();
     constBindings.finish();
@@ -350,6 +353,7 @@ private:
 
   /// Native-only literal spelling, scoped to the operation's nearest module.
   bool readableLiterals = false;
+  bool numericAlias = false;
 
   ctcompile::cpp::SourceNames sourceNames;
   ctcompile::cpp::ConstBindings constBindings;
@@ -1454,7 +1458,7 @@ static LogicalResult printOperation(CppEmitter &emitter,
   return success();
 }
 
-static LogicalResult printOperation(CppEmitter &emitter,
+static LogicalResult printRegularFunction(CppEmitter &emitter,
                                     emitc::FuncOp functionOp) {
   // We need to declare variables at top if the function has multiple blocks.
   if (!emitter.shouldDeclareVariablesAtTop() &&
@@ -1496,6 +1500,8 @@ static LogicalResult printOperation(CppEmitter &emitter,
   return success();
 }
 
+#include "Callables/Emit.inc"
+
 static LogicalResult printOperation(CppEmitter &emitter,
                                     DeclareFuncOp declareFuncOp) {
   raw_indented_ostream &os = emitter.ostream();
@@ -1506,6 +1512,12 @@ static LogicalResult printOperation(CppEmitter &emitter,
 
   if (!functionOp)
     return failure();
+
+  auto callable = ctcompile::cpp::callableBodyPlan(functionOp);
+  if (failed(callable))
+    return failure();
+  if (!callable->binder.empty() && !callable->retainFunction)
+    return printCallable(emitter, functionOp, *callable, true);
 
   emitter.prepareFunction(functionOp);
 
@@ -1525,6 +1537,10 @@ static LogicalResult printOperation(CppEmitter &emitter,
   if (failed(printFunctionArgs(emitter, operation, functionOp.getArguments())))
     return failure();
   os << ");";
+  if (!callable->binder.empty()) {
+    os << "\n";
+    return printCallable(emitter, functionOp, *callable, true);
+  }
 
   return success();
 }
@@ -1542,7 +1558,8 @@ void CppEmitter::cacheDeferredOpResult(Value value, StringRef str) {
     valueMapper.insert(value, str.str());
 }
 
-void CppEmitter::prepareFunction(Operation *function) {
+void CppEmitter::prepareFunction(Operation *function,
+                                ArrayRef<std::string> parameters) {
   constBindings.prepare(function);
   constexprBindings.prepare(function, constBindings);
   sourceNames.prepare(function, [&](Value value) {
@@ -1553,7 +1570,7 @@ void CppEmitter::prepareFunction(Operation *function) {
     return !hasDeferredEmission(op) && !shouldBeInlined(op) &&
            !isa<emitc::ExpressionOp>(op->getParentOp()) &&
            (shouldDeclareVariablesAtTop() || !op->hasAttr("ctnative.statement"));
-  });
+  }, parameters);
 }
 
 /// Return the existing or a new name for a Value.
@@ -1964,12 +1981,17 @@ LogicalResult CppEmitter::emitLabel(Block &block) {
 }
 
 LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
+  if (ctcompile::cpp::omitParameterSuppression(op))
+    return success();
   auto module = dyn_cast<ModuleOp>(&op);
   if (!module)
     module = op.getParentOfType<ModuleOp>();
   llvm::SaveAndRestore readableScope(
       readableLiterals,
       module && module->hasAttrOfType<UnitAttr>("ctnative.readable_literals"));
+  llvm::SaveAndRestore aliasScope(
+      numericAlias,
+      module && module->hasAttrOfType<UnitAttr>("ctnative.numeric_alias"));
 
   // ctcompile Phase 63 Step 7: a provenance comment above every generated
   // definition, so a C++ diagnostic on generated code names a JavaScript
@@ -2120,7 +2142,7 @@ LogicalResult CppEmitter::emitType(Location loc, Type type) {
     case 32:
       return (os << "float"), success();
     case 64:
-      return (os << "double"), success();
+      return (os << (numericAlias ? "js_num" : "double")), success();
     default:
       return emitError(loc, "cannot emit float type ") << type;
     }

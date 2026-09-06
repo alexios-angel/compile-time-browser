@@ -35,12 +35,19 @@ struct CTNativeDeforestPass : impl::CTNativeDeforestBase<CTNativeDeforestPass> {
         // opaque call with a familiar name does not license this rewrite.
         ec::VerbatimOp runtime;
         bool helpersPresent = false;
+        bool orderedStorage = false;
+        bool snapshotHelpers = false;
         for (ec::VerbatimOp text : module.getOps<ec::VerbatimOp>()) {
             if (text.getFmtArgs().empty() && text.getValue() == kNativeMapHelpers) {
                 runtime = text;
             }
+            orderedStorage |=
+                text.getFmtArgs().empty() && text.getValue() == kNativeOrderedMapStorage;
+            snapshotHelpers |=
+                text.getFmtArgs().empty() && text.getValue() == kNativeMapSnapshotHelpers;
             helpersPresent |= text.getValue() == kProjectionHelpers;
         }
+        if (!orderedStorage || !snapshotHelpers) { runtime = {}; }
         llvm::SmallVector<strategy> strategies;
         unsigned inspected = 0;
         mlir::OpBuilder builder(module.getContext());

@@ -7,7 +7,8 @@
 namespace ctcompile::ctnative::host_detail {
 
 std::optional<bool> prefixTruth(prefixValue value) {
-    if (value.kind == prefixValue::Kind::object || value.kind == prefixValue::Kind::closure) {
+    if (value.kind == prefixValue::Kind::object || value.kind == prefixValue::Kind::realm ||
+        value.kind == prefixValue::Kind::closure) {
         return true;
     }
     if (value.kind != prefixValue::Kind::primitive) { return {}; }
@@ -38,7 +39,8 @@ prefixValue prefixUnary(ctjs::UnaryKind kind, prefixValue operand, mlir::MLIRCon
     llvm::StringRef name;
     if (operand.kind == prefixValue::Kind::closure) {
         name = "function";
-    } else if (operand.kind == prefixValue::Kind::object) {
+    } else if (operand.kind == prefixValue::Kind::object ||
+               operand.kind == prefixValue::Kind::realm) {
         name = "object";
     } else if (operand.kind == prefixValue::Kind::absent ||
                llvm::isa_and_nonnull<ctjs::UndefinedAttr>(operand.literal)) {

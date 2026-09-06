@@ -3,13 +3,15 @@
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 
 namespace ctcompile::cpp {
 
 void SourceNames::prepare(mlir::Operation * function,
-                          llvm::function_ref<bool(mlir::Value)> materialized) {
+                          llvm::function_ref<bool(mlir::Value)> materialized,
+                          llvm::ArrayRef<std::string> parameters) {
     names.clear();
     unavailable.clear();
     nextTemporary = 0;
@@ -24,6 +26,14 @@ void SourceNames::prepare(mlir::Operation * function,
         reservedRoot = root;
     }
     for (const auto & name : moduleIdentifiers) { unavailable.insert(name.getKey()); }
+    if (!parameters.empty()) {
+        const auto arguments = function->getRegion(0).front().getArguments();
+        assert(parameters.size() == arguments.size());
+        for (auto [argument, name] : llvm::zip(arguments, parameters)) {
+            names[argument] = name;
+            unavailable.insert(name);
+        }
+    }
     const auto hints = inferSourceNames(function);
 
     struct family {
@@ -34,6 +44,7 @@ void SourceNames::prepare(mlir::Operation * function,
     llvm::StringMap<unsigned> indices;
     llvm::StringSet<> bases;
     const auto collect = [&](mlir::Value value) {
+        if (names.contains(value)) { return; }
         auto found = hints.find(value);
         if (found == hints.end() || found->second.empty() || !materialized(value)) { return; }
         std::string base = localIdentifier(found->second);

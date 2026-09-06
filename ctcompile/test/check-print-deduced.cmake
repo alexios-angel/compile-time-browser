@@ -117,13 +117,14 @@ function(normalise lines out)
     # but keep constexpr and const so explicit/deduced declarations agree.
     # Capture the whole required suffix: CMake 3.x rejects backreferences to
     # an unmatched optional capture, so `( const)?` cannot be copied alone.
-    string(REGEX REPLACE "^([ \t]*(constexpr )?)(auto|double|bool|int32_t|int64_t|float|std::string|ctnative::nullable_scalar|ctnative::nullable_string|ctnative::object_value)(( const)? [A-Za-z_0-9]+ = )" "\\1T\\4" line "${line}")
+    string(REGEX REPLACE "^([ \t]*(constexpr )?)(auto|double|js_num|bool|int32_t|int64_t|float|std::string|ctnative::nullable_scalar|ctnative::nullable_string|ctnative::object_value)(( const)? [A-Za-z_0-9]+ = )" "\\1T\\4" line "${line}")
     # Direct calls can return owning Maps, including finite nested schemas.
     # Keep comparing the complete initializer and every other line.
     string(REGEX REPLACE "^([ \t]*(constexpr )?)std::shared_ptr<ctnative::(number_map|map_storage)<([^;=]+)>>(( const)? [A-Za-z_0-9]+ = )" "\\1T\\5" line "${line}")
     string(REGEX REPLACE "^([ \t]*(constexpr )?)ctnative::ctn_env_[A-Za-z_0-9]+(( const)? [A-Za-z_0-9]+ = )" "\\1T\\3" line "${line}")
     string(REGEX REPLACE "^([ \t]*(constexpr )?)std::shared_ptr<ctnative::method_table_[A-Za-z_0-9]+>(( const)? [A-Za-z_0-9]+ = )" "\\1T\\3" line "${line}")
     string(REGEX REPLACE "^([ \t]*(constexpr )?)std::shared_ptr<ctnative::identity_object>(( const)? [A-Za-z_0-9]+ = )" "\\1T\\3" line "${line}")
+    string(REGEX REPLACE "^([ \t]*(constexpr )?)std::shared_ptr<ctnative::string_to_number_map>(( const)? [A-Za-z_0-9]+ = )" "\\1T\\3" line "${line}")
     list(APPEND result "${line}")
   endforeach()
   set(${out} "${result}" PARENT_SCOPE)

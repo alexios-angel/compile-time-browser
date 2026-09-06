@@ -7,6 +7,7 @@ namespace ctcompile::ctnative::host_detail {
 
 bool prefixAnalysis::initializedGlobal(ctjs::LoadGlobalOp load) {
     if (llvm::is_contained(contract.initialIntrinsics, load.getName()) ||
+        llvm::is_contained(contract.realmOwnDataProperties, load.getName()) ||
         (contract.realmGlobalThis && load.getName() == "globalThis")) {
         return true;
     }
@@ -92,14 +93,23 @@ bool prefixAnalysis::identitySafeRegion(mlir::Region & region,
             // caller or invoke JS. Allocation/throw behavior remains runtime.
             continue;
         }
-        mlir::Value receiver;
+        mlir::Value receiver, propertyKey;
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
             receiver = get.getObject();
+            propertyKey = get.getKey();
         }
         if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
             receiver = set.getObject();
+            propertyKey = set.getKey();
         }
         if (receiver) {
+            // The realm is opaque and never joins the fresh-object heap.
+            // Only the embedding's finite writable own-data slots exclude a
+            // callback here. Their values and publication effects stay live.
+            if (observedValues.lookup(receiver).kind == prefixValue::Kind::realm &&
+                llvm::is_contained(contract.realmOwnDataProperties, keyOf(propertyKey))) {
+                continue;
+            }
             if (!receiver.getDefiningOp<ctjs::CreateObjectOp>() &&
                 observedValues.lookup(receiver).kind != prefixValue::Kind::object) {
                 return false;

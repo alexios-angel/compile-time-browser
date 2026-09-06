@@ -8,8 +8,29 @@ committing. There is no CI. Do not build on the small local machine.
 
 ## Current native staging checkpoint, 2026-09-06
 
-Final devbox gate: **441/441 CTests**, **140/140 lit cases**, **509.41 seconds**;
-all **531 C++ files** pass formatting. Named owning closures pass ASan/UBSan,
+Native C++ now spells JavaScript numbers through `using js_num = double;`.
+[Returned closures](native-returned-closures.md) place their body directly inside
+the owning lambda, using the same final-IR names, const/constexpr analysis and
+deduced-type pins as ordinary functions. Other direct/address uses retain the
+lifted definition, and writable capture bindings retain a forwarding wrapper.
+Used parameters lose redundant generated void casts after final cleanup.
+
+[Maps](native-maps.md) use `std::map` and `.find()` when the admitted module has
+no snapshot/iteration observations. SameValueZero lookup handles NaN and signed
+zero; modules with snapshots retain insertion order, including after fusion.
+Numeric string Maps use `ctnative::string_to_number_map` and a named factory.
+
+The [host-prefix contract](native-host-prefix.md) now supports an explicitly
+supplied classic-script realm receiver and finite writable own-data slots.
+The exact `globalThis = undefined`/distinct-`self` fallback selects six branches
+and resolves one factory target. Its 24 Node/reference/boxed observations agree,
+including forced GC; publication remains runtime and native admission stays 0/7.
+Missing slots, changed descriptors/prototypes, unknown effects and stale or
+forged contracts retain the existing boundaries.
+
+Final devbox gate: **442/442 CTests**, **143/143 lit cases**, **526.94 seconds**;
+all **534 C++ files** pass formatting. The callable adapter also passes its
+separate formatting check; `git diff --check` passes. Named owning closures pass ASan/UBSan,
 stack-use-after-return and leak checks. String-snapshot sanitizer checks passed
 at the preceding checkpoint.
 Default native coverage stays
@@ -25,7 +46,7 @@ evaluation. Explicit and deduced declarations share the same qualification and
 exact type pins.
 
 [Returned closures](native-returned-closures.md) with concrete signatures now
-use a `std::function` alias and named lambda. Explicit init-captures own their
+use a `std::function` alias and named lambda with its source body inside. Explicit init-captures own their
 values, including shared Map handles. They preserve alias mutation and lifetime
 after factory return. Unsupported admitted signatures keep the owning tuple
 representation; closure admission and escape requirements are unchanged.
@@ -61,7 +82,7 @@ Heap PE, direct-call specialization, deforestation and supercompilation remain
 opt-in. Type, effect, BTA and ownership proofs remain required. See the
 [defaults policy](native-optimization-defaults.md) and [roadmap](native-pe-roadmap.md).
 The default/disabled differential preserves eight observations and reduces its
-generated C++ from 7,924 to 7,087 bytes with readable literals, source names and
+generated C++ from 7,859 to 7,022 bytes with readable literals, source names and
 const/constexpr bindings after the call-order correction.
 Coverage now accounts for pruned functions without shrinking the source denominator;
 historical admission floors run separately with defaults disabled.

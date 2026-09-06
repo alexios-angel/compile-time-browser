@@ -15,10 +15,10 @@ identities and typed publication.
 
 ## Representation and semantics
 
-Each allocation owns an insertion-ordered list of key/value pairs through
-`std::shared_ptr<ctnative::number_map<K>>`. Primitive keys use `double`, `bool`
-or owning `std::string`; object identities use an owning handle. Values use
-`double`. Different allocation sites may have
+Each allocation owns its storage through
+`std::shared_ptr<ctnative::number_map<K>>`. Primitive keys use `js_num`, `bool`
+or owning `std::string`; object identities use an owning handle. Numeric values
+use `js_num`, the alias of `double`. Different allocation sites may have
 different schemas. The result of `set` shares the original Map, so chained
 calls and aliases observe the same mutations. Parameters and return values
 copy owning handles; factory invocations still allocate independent Maps.
@@ -26,6 +26,38 @@ This is the numeric-leaf representation. Nested schemas use `map_storage<K,
 V>` with an owning child handle as `V`; a separate containment proof rejects
 all schema cycles. Every instance use is proved. Generated programs link
 neither the interpreter nor its collector.
+
+When no admitted native Map operation observes iteration order, the module
+uses `std::map<K, V, map_key_less<K>>`. Lookup helpers call `map->find(key)`;
+updates use `insert_or_assign`. The comparator groups all numeric NaNs into
+one equivalence class and treats positive and negative zero as equal.
+Ordinary `std::less<double>` would not provide the required NaN semantics.
+String comparison operates on the owning byte strings, and object keys retain
+their owning identity handles.
+
+Any `keys()`, `values()`, or snapshot copy selects the insertion-ordered vector
+representation for every Map in that native module. This conservative choice
+is made before deforestation, so eliminating a temporary snapshot does not
+turn a positional projection into sorted-key traversal. Deforestation requires
+the exact ordered-storage and snapshot helper definitions as well as the
+common helper contract. The ordered representation exposes the same `find`
+interface, with linear lookup; the associative representation has logarithmic
+lookup. No performance improvement is assumed for very small Maps.
+
+String-to-number allocations use the shorter emitted names:
+
+```cpp
+namespace ctnative {
+using string_to_number_map = number_map<std::string>;
+inline std::shared_ptr<string_to_number_map> make_string_to_number_map() {
+    return make_number_map<std::string>();
+}
+}
+```
+
+The forwarding function is valid C++; a `using` declaration cannot alias a
+function-template specialization. `number_map` uses the native `js_num` alias
+for its numeric payload, whose underlying type remains `double`.
 
 | Operation | Native behavior |
 |---|---|
@@ -135,6 +167,14 @@ capture cells must not be reused for that lifetime.
 The original confined-Map checkpoint `8286564` passed **283/283** devbox tests,
 including **94** lit tests. The validation below records that checkpoint;
 the call/return extension is recorded separately after it.
+
+`native-map-representation.mlir` checks the associative and ordered choices,
+the string alias/factory, NaN and signed-zero equality, key identity, retained
+child ownership, insertion order after update/delete/reinsert, independent
+snapshot copies and deforested string-key value projections. Eight expected
+numeric observations run through GCC and Clang with explicit and deduced
+declarations; Clang ASan/UBSan checks the owning cases. A missing ordered-runtime
+contract refuses projection fusion instead of trusting helper names.
 
 `native-map-fixture.js` covers aliasing, all three key carriers, NaN and signed
 zero, insertion order, deletion and reinsertion, snapshot independence, empty

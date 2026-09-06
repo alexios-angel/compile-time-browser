@@ -12,7 +12,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/property_names.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PROPERTYNAMES
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed_producer.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MIXEDPRODUCER
 
-// NATIVE-DAG: using ctn_env_fn_2 = std::function<double(double)>
+// NATIVE-DAG: using ctn_env_fn_2 = std::function<js_num(js_num)>
 // NATIVE-DAG: struct method_table_0
 // NATIVE-DAG: cap0 = std::move(cap0)
 // NATIVE-DAG: call_opaque "ctnative::method_set<&ctnative::method_table_0::m_get>"

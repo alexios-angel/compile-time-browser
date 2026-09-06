@@ -81,7 +81,7 @@ bool lowering::hasConcreteCallableSignature(ctjs::CreateClosureOp made) const {
 std::string lowering::callableTypeSpelling(mlir::Type type) {
     switch (carrierOf(type)) {
     case carrier::nullable: needsNullable = true; return kNullableType.str();
-    case carrier::number: return "double";
+    case carrier::number: return "js_num";
     case carrier::boolean: return "bool";
     case carrier::string: needsString = true; return "std::string";
     case carrier::objectValue: needsObjectValue = true; return kObjectValueType.str();
@@ -103,8 +103,7 @@ void lowering::censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda
         made, mlir::FlatSymbolRefAttr::get(context, target));
     const auto captures = made.getUpvalues().size();
     auto & entry = fn.getBody().front();
-    std::string result = "double";
-    result = callableTypeSpelling(joinedReturnType(fn));
+    const std::string result = callableTypeSpelling(joinedReturnType(fn));
     llvm::SmallVector<std::string> params;
     llvm::SmallVector<std::string> paramNames;
     llvm::SmallVector<std::string> captureNames;
@@ -132,6 +131,27 @@ void lowering::censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda
         alias += type;
     }
     environments.push_back(alias + ")>;\n}\n");
+    if (namedLambda) {
+        // Keep the body as IR until the final printer. Canonicalization,
+        // deduction, const/constexpr analysis and source names must apply to
+        // the actual lambda body, not to an earlier serialized copy.
+        mlir::Builder attributes(context);
+        const auto strings = [&](llvm::ArrayRef<std::string> values) {
+            llvm::SmallVector<mlir::Attribute> array;
+            for (const auto & value : values) { array.push_back(attributes.getStringAttr(value)); }
+            return attributes.getArrayAttr(array);
+        };
+        callableBodies.try_emplace(
+            names.lookup(target),
+            attributes.getDictionaryAttr(
+                {attributes.getNamedAttr("type",
+                                         attributes.getStringAttr("ctnative::ctn_env_" + name)),
+                 attributes.getNamedAttr("binder", attributes.getStringAttr("ctn_bind_" + name)),
+                 attributes.getNamedAttr("name", attributes.getStringAttr(lambdaName)),
+                 attributes.getNamedAttr("captures", strings(captureNames)),
+                 attributes.getNamedAttr("parameters", strings(paramNames))}));
+        return;
+    }
     std::string builder = "// ctcompile: stored callable " + target.str() + ", " +
                           siteOfFunction(fn) + "\ninline ctnative::ctn_env_" + name + " ctn_bind_" +
                           name + "(";
@@ -139,9 +159,7 @@ void lowering::censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda
         if (i) { builder += ", "; }
         builder += callableTypeSpelling(typeOf(capture)) + " " + captureNames[i];
     }
-    builder += ") {\n  ";
-    builder +=
-        namedLambda ? "ctnative::ctn_env_" + name + " const " + lambdaName + " = [" : "return [";
+    builder += ") {\n  return [";
     for (size_t i = 0; i < captures; ++i) {
         if (i) { builder += ", "; }
         const auto & slot = captureNames[i];
@@ -150,7 +168,7 @@ void lowering::censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda
     builder += "](";
     for (auto [i, type] : llvm::enumerate(params)) {
         if (i) { builder += ", "; }
-        builder += type + (namedLambda ? " const " : " ") + paramNames[i];
+        builder += type + " " + paramNames[i];
     }
     builder += ") -> " + result + " {\n    return " + names.lookup(target) + "(";
     for (size_t i = 0; i < captures; ++i) {
@@ -162,7 +180,6 @@ void lowering::censusStoredCallable(ctjs::CreateClosureOp made, bool namedLambda
         builder += paramNames[i];
     }
     builder += ");\n  };\n";
-    if (namedLambda) { builder += "  return " + lambdaName + ";\n"; }
     callableBuilders.push_back(builder + "}\n");
 }
 

@@ -133,7 +133,8 @@ mlir::Type mapCarrierType(MapType type) {
     const std::string body =
         (llvm::isa<MapType>(value) || isObjectValueType(value))
             ? ("ctnative::map_storage<" + key + ", " + mapValueSpelling(value) + ">").str()
-            : ("ctnative::number_map<" + key + ">").str();
+        : llvm::isa<StrType>(type.getKeyType()) ? std::string{"ctnative::string_to_number_map"}
+                                                : ("ctnative::number_map<" + key + ">").str();
     return ec::OpaqueType::get(type.getContext(), "std::shared_ptr<" + body + ">");
 }
 

@@ -145,7 +145,7 @@
 // CPP-NEXT: template <class T0>
 // CPP-NEXT: class ctn_at_hit {
 // CPP-NEXT: public:
-// CPP-NEXT: double at;
+// CPP-NEXT: js_num at;
 // CPP-NEXT: T0 hit;
 // CPP-NEXT: };
 // CPP-DAG: ctn_at_hit<bool> v

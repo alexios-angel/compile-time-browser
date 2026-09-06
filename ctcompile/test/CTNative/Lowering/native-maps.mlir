@@ -24,7 +24,7 @@
 // NATIVE: emitc.include <"memory">
 // NATIVE: emitc.func @main() -> i32
 // NATIVE-DAG: call_opaque "ctnative::make_number_map<double>"
-// NATIVE-DAG: call_opaque "ctnative::make_number_map<std::string>"
+// NATIVE-DAG: call_opaque "ctnative::make_string_to_number_map"
 // NATIVE-DAG: call_opaque "ctnative::make_number_map<bool>"
 // NATIVE-DAG: call_opaque "ctnative::map_set"
 // NATIVE-DAG: call_opaque "ctnative::map_get"

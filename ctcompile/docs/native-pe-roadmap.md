@@ -180,9 +180,9 @@ module-wide environment guards can be relaxed.
 
 ## Integrated results, 2026-09-06
 
-The devbox gate passes **441/441 CTests**, including **140/140 lit cases**, in
-**509.41 seconds**.
-All **531 C++ files** pass the pinned formatter, and
+The devbox gate passes **442/442 CTests**, including **143/143 lit cases**, in
+**526.94 seconds**.
+All **534 C++ files** pass the pinned formatter, and
 `git diff --check` passes. The optimization source fixtures pass ordinary and deduced
 native C++, GCC/Clang, reference comparison, altered-output rejection and no-VM
 checks. The owned-field fixture passes ASan/UBSan with leak detection and
@@ -192,7 +192,7 @@ implementation records.
 
 | Source fixture | Measured transformation | Native functions | Numeric observations |
 |---|---|---:|---:|
-| Default optimization comparison | 17 expressions, 3 branches, 294 steps; generated C++ 7,924 → 7,087 bytes with readable literals, source names and const/constexpr bindings after the call-order correction | 4/4 | 8 |
+| Default optimization comparison | 17 expressions, 3 branches, 294 steps; generated C++ 7,859 → 7,022 bytes with readable literals, source names and const/constexpr bindings after the call-order correction | 4/4 | 8 |
 | String-key Map snapshots | Exact diagnostic, standard Array.from copy, nullable strings and retained snapshots | 10/10 | 24 |
 | Owned scalar component fields | Exact getter, guarded aliases, shared mutation and lifetime after deletion | 15/15 | 29 |
 | Scalar child generalization | 3 kernels, 14 configurations, 12 folds, 9 generalizations, 320 added residual operations | 23/23 | 16 |
@@ -247,8 +247,11 @@ to **11/11** in both ctbrowser and Node. Full native Bootstrap initialization
 remains open.
 
 The opt-in [host entry-prefix consumer](native-host-prefix.md) proves two CommonJS
-and five browser UMD branches and the actual factory closure at one call per
-probe. All seven source functions remain and native admission stays 0/7.
+and five browser UMD branches, plus six branches in the explicit classic-script
+realm fallback, and the actual factory closure at one call per probe. The
+fallback's finite own-data publication-slot contract is independent of the
+writable `globalThis` binding. Its 24 Node/reference/boxed observations agree;
+all seven source functions remain and native admission stays 0/7.
 The live prefix proof is separate from the still-withheld complete host-property
 contract. It stops before factory effects; source publication, callback exposure,
 reentry and unsupported providers conservatively retain runtime control. Explicit
@@ -263,8 +266,17 @@ unsupported operations retain their prior qualification. This rederives target
 legality rather than trusting source BTA reports. Proved
 [returned closures](native-returned-closures.md) with concrete signatures use
 named lambdas and `std::function` aliases, with explicit owning captures and an
-owning tuple fallback for other admitted signatures. Both printing modes pass
+owning tuple fallback for other admitted signatures. The final EmitC body now
+prints directly in the lambda; direct/address references retain its ordinary
+definition, and writable captures use forwarding to preserve per-call copies.
+JavaScript numeric carriers spell `js_num`, an alias of `double`. Final printed-use
+analysis removes redundant parameter void casts. Both printing modes pass
 GCC/Clang execution checks; closure lifetime checks also pass ASan/UBSan.
+
+Modules without snapshot observations now use `std::map` storage and `.find()`
+with SameValueZero numeric lookup. Snapshot modules retain insertion order even
+after deforestation. The readable `string_to_number_map` alias and factory keep
+the same shared ownership; representation changes add no new native admission.
 
 ## Object payloads, conditional effects and reachability
 

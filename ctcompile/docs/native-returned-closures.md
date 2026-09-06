@@ -20,17 +20,22 @@ add(2); // 42, after makeStore's frame has ended
 
 When the solved capture, argument and result carriers have a concrete callable
 signature, each function value uses a `std::function` alias and a named lambda.
-For the example above, its binder has this form (the lifted function retains
-the source body):
+The binder emits the source body directly in that lambda. A shortened rendering
+of the example above is:
 
 ```cpp
-using ctn_env_fn_2 = std::function<double(double)>;
+using js_num = double;
+using ctn_env_fn_2 = std::function<js_num(js_num)>;
 
-inline ctn_env_fn_2 ctn_bind_fn_2(
-    std::shared_ptr<ctnative::number_map<std::string>> capture_state) {
+ctn_env_fn_2 ctn_bind_fn_2(
+    std::shared_ptr<ctnative::string_to_number_map> capture_state) {
     ctn_env_fn_2 const ctn_lambda =
-        [capture_state = std::move(capture_state)](double const argument_delta) -> double {
-            return fn_2(capture_state, argument_delta);
+        [capture_state = std::move(capture_state)](js_num const argument_delta) -> js_num {
+            std::string const key("value", 5);
+            js_num const next = ctnative::to_number(ctnative::map_get(capture_state, key))
+                                + argument_delta;
+            ctnative::map_set(capture_state, key, next);
+            return ctnative::to_number(ctnative::map_get(capture_state, key)) + 0.0;
         };
     return ctn_lambda;
 }
@@ -49,6 +54,14 @@ bytes and collisions are handled within that generated scope. Callable builders
 retain the returned function's source location. Signatures outside the concrete
 callable carrier set keep the previous owning `std::tuple` representation and
 direct lifted calls.
+
+The body remains EmitC IR until final C++ emission. It shares the ordinary
+function printer's source names, const/constexpr analysis, structured control,
+hoisting and deduced-type pins. If another emitted call or address references
+the lifted function, that definition remains available too. If the final use
+analysis requires a writable captured binding, the lambda forwards to the lifted
+function so each call still receives its own parameter copy. That fallback never
+turns the capture into persistent mutable state.
 
 This is the monomorphic case of Phase 59A. Proved
 [returned method tables](native-method-tables.md) now carry stored callables
@@ -106,14 +119,16 @@ boundaries, inspection and forged annotations. Type tests cover nominal
 identity, joins, optionality and escaped target names.
 
 `CTNative/Lowering/native-owning-callables.mlir` adds a focused source regression
-for named owning lambdas. Its checker compares eight observations in ordinary
+for named owning lambdas. Its checker compares nine observations in ordinary
 and deduced output under GCC and Clang, and repeats both with Clang ASan/UBSan
 and stack-use-after-return detection. It covers retained factory results,
 forwarded aliases, independent Maps, external Map mutation, strings exceeding
-small-string storage and C++ keyword source names. A separate scalar/string
+small-string storage, structured loops and C++ keyword source names. A separate scalar/string
 translation unit checks that callables request their own standard headers. A
 third unit combines a tuple-backed closure accepting a callable parameter with
 a scalar callable, checking that the prior representation remains available.
+The C++ target regression separately checks retained direct/address references,
+forwarding for writable captures, repeated calls and invalid body metadata.
 
 The 2026-09-05 devbox gate passes **299/299 CTests**, including **98/98 lit
 tests**. Standalone ASan/UBSan execution matches all 13 observations without

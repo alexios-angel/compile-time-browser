@@ -4,10 +4,10 @@ Native output preserves JavaScript parameter and local names. A unique parameter
 can remain `catalog`. Multiple values belonging to a local use a numbered family:
 
 ```cpp
-constexpr double score_1 = -1.0;
-double score_3;
+constexpr js_num score_1 = -1.0;
+js_num score_3;
 // Branches and expression intermediates use score_4, score_5, ...
-double const score_2 = score_3;
+js_num const score_2 = score_3;
 return score_2;
 ```
 
@@ -41,6 +41,9 @@ safe spellings. The allocator reserves emitted symbols, opaque code identifiers
 and native header macros before choosing names, and avoids collisions between
 source suffixes and generated suffixes. The reservation is shared across a
 module; allocation remains local to each function.
+The native numeric alias `js_num` is reserved too: a JavaScript variable with
+that name gets a suffix. Inline closure bodies reserve their capture and
+argument names before allocating local families.
 
 Native lowering enables this policy with `ctnative.readable_names`. Unmarked
 modules retain upstream spelling. `native-pipeline.cmake` preserves source

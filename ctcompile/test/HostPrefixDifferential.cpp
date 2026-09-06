@@ -27,7 +27,7 @@ constexpr std::pair<std::string_view, double> expected[] = {
 
 std::vector<double> run(const std::string & source, bool compiled, bool stress) {
     using namespace ctbrowser::script;
-    auto program = compiler::compile(source);
+    auto program = compiler::compile(source, script_kind::classic);
     if (!program.ok || program.functions.size() != CTCOMPILE_HOST_PREFIX_FUNCTIONS) {
         std::fprintf(stderr, "host prefix: expected source function count did not compile\n");
         return {};
@@ -37,6 +37,11 @@ std::vector<double> run(const std::string & source, bool compiled, bool stress) 
     }
     context runtime;
     install_builtins(runtime);
+#ifdef CTCOMPILE_HOST_PREFIX_REALM_SLOT
+    // This is the embedding's own-data publication slot, separate from the
+    // source's writable globalThis alias and separate self object.
+    runtime.define_global("bootstrap", value::undefined());
+#endif
     runtime.set_gc_stress(stress);
     reset_transitions();
     const auto result = runtime.run(program);

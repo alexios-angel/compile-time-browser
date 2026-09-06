@@ -10,9 +10,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/array.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ARRAY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/methods.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=METHODS
 
-// NATIVE: emitc.verbatim {{.*}}using ctn_env_{{.*}} = std::function<double(double)>;
+// NATIVE: emitc.verbatim {{.*}}using ctn_env_{{.*}} = std::function<js_num(js_num)>;
 // NATIVE: emitc.verbatim {{.*}}std::function<std::string(std::string)>
-// NATIVE: emitc.verbatim {{.*}}std::function<double()>
+// NATIVE: emitc.verbatim {{.*}}std::function<js_num()>
 // NATIVE: emitc.declare_func @makeStore_1
 // NATIVE: emitc.func @makeStore_1({{.*}}) -> !emitc.opaque<"ctnative::ctn_env_
 // NATIVE: call_opaque "ctn_bind_

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mlir/IR/Value.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringSet.h"
@@ -17,7 +18,8 @@ namespace ctcompile::cpp {
 // also records declarations already emitted and caches deferred expressions.
 class SourceNames {
 public:
-    void prepare(mlir::Operation * function, llvm::function_ref<bool(mlir::Value)> materialized);
+    void prepare(mlir::Operation * function, llvm::function_ref<bool(mlir::Value)> materialized,
+                 llvm::ArrayRef<std::string> parameters = {});
     bool enabled() const { return active; }
     void finish() { active = false; }
     llvm::StringRef get(mlir::Value value, llvm::StringRef fallback = "v");
