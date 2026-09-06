@@ -1,0 +1,4 @@
+# RUN: python3 %S/check-source-names.py --opt ctjs-opt --translate ctjs-translate --work %t
+
+# The complete native pipeline preserves JS parameter/local names and exact
+# output through heap PE, structured joins, closure lifting and type deduction.

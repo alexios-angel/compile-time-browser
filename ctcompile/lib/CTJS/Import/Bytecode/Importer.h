@@ -1,5 +1,7 @@
 #pragma once
 
+#include "SourceNames.h"
+
 #include <ctcompile/CTJS/Import/BytecodeImport.hpp>
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
@@ -74,6 +76,8 @@ struct function_importer {
     // THE PROGRAM'S LINE TABLE, built once and borrowed. Null when the source
     // was dropped from the image or the debug tables were compiled out.
     const ctbrowser::script::line_table * lines = nullptr;
+
+    source_names names{proto};
 
     [[nodiscard]] mlir::Location location_for(std::size_t at) const {
         // FUSED, WHICH THE PHASE 7 CONVENTION ASKS FOR: a name that identifies
@@ -165,6 +169,23 @@ struct function_importer {
         llvm::SmallVector<std::uint16_t, 1> & slots = occupied[v];
         const auto narrowed = static_cast<std::uint16_t>(slot);
         if (!llvm::is_contained(slots, narrowed)) { slots.push_back(narrowed); }
+    }
+
+    // Bytecode assignments may give an unnamed temporary its first source
+    // binding. Structural block rebinds use write() without changing names.
+    void assign(std::size_t slot, mlir::Value value, std::size_t pc) {
+        write(slot, value);
+        names.assign(value, slot, pc);
+    }
+
+    [[nodiscard]] llvm::SmallVector<mlir::Location> slot_locations(std::size_t pc) const {
+        const mlir::Location original = location_for(pc);
+        llvm::SmallVector<mlir::Location> locations;
+        locations.reserve(proto.frame_size);
+        for (std::size_t slot = 0; slot < proto.frame_size; ++slot) {
+            locations.push_back(names.location(original, slot, pc));
+        }
+        return locations;
     }
 
     // The register vector as successor operands - the whole file, every time.

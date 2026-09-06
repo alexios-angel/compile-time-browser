@@ -88,6 +88,10 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         function_importer state{
             into, context, from, proto, program_id, static_cast<std::uint32_t>(index), skipped};
         state.lines = lines_or_null;
+        for (std::size_t slot = 0; slot < proto.param_count; ++slot) {
+            entry->getArgument(static_cast<unsigned>(implicit_arguments + slot))
+                .setLoc(state.names.location(state.location_for(0), slot, 0));
+        }
         into.setInsertionPointToStart(entry);
 
         // THE FRAME, in the entry block and nowhere else. The entry dominates
@@ -166,7 +170,6 @@ import_result import_program(const program & from, llvm::StringRef program_id,
 
         // One block per leader, each carrying the whole register file.
         llvm::SmallVector<mlir::Type> slot_types(proto.frame_size, value_type);
-        llvm::SmallVector<mlir::Location> slot_locs(proto.frame_size, into.getUnknownLoc());
         for (std::size_t at = targets_zero ? 0 : 1; at < proto.code.size(); ++at) {
             // STRICTLY INSIDE THE CODE. `ret` marks its successor a leader, and
             // for the last instruction that successor is one past the end - a
@@ -197,7 +200,7 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             // start one instruction later.
             if (!leader[at]) { continue; }
             mlir::Block * block = &function.getBody().emplaceBlock();
-            block->addArguments(slot_types, slot_locs);
+            block->addArguments(slot_types, state.slot_locations(at));
             state.blocks[static_cast<std::int64_t>(at)] = block;
         }
 
@@ -302,14 +305,14 @@ import_result import_program(const program & from, llvm::StringRef program_id,
                 state.block_at(static_cast<std::int64_t>(at)) != nullptr) {
                 auto land = ctjs::CatchLandOp::create(into, state.location_for(at),
                                                       into.getI32Type(), value_type);
-                state.write(landed->second, land.getThrown());
+                state.assign(landed->second, land.getThrown(), at);
             }
             const instruction & in = proto.code[at];
             const mlir::Location where = state.location_for(at);
             const auto reg = [&](std::uint16_t slot) -> mlir::Value {
                 return slot < state.registers.size() ? state.registers[slot] : mlir::Value{};
             };
-            const auto set = [&](std::uint16_t slot, mlir::Value v) { state.write(slot, v); };
+            const auto set = [&](std::uint16_t slot, mlir::Value v) { state.assign(slot, v, at); };
 
             // THE REGISTER FILE AS OF THE THROW, SNAPSHOT BEFORE THE
             // INSTRUCTION RUNS. It is what the handler block will be given, and
@@ -381,7 +384,7 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             // the lowering that knows which operations became status calls.
             if (!state.gave_up && !state.handlers.empty() && !in_terminator(in.code)) {
                 mlir::Block * fresh = &function.getBody().emplaceBlock();
-                fresh->addArguments(slot_types, slot_locs);
+                fresh->addArguments(slot_types, state.slot_locations(at + 1));
                 ctjs::CheckOp::create(into, where, state.outgoing(), before_instruction, fresh,
                                       state.handlers.back().pad);
                 into.setInsertionPointToEnd(fresh);

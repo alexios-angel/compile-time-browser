@@ -34,6 +34,13 @@ target_link_libraries(ctcompile-test-importer-coverage PRIVATE ctcompile::suppor
 ctcompile_target(ctcompile-test-importer-coverage)
 add_test(NAME ctcompile_importer_coverage COMMAND ctcompile-test-importer-coverage)
 
+if(CTCOMPILE_ENABLE_MLIR)
+  add_executable(ctcompile-test-importer-source-names ImporterSourceNames.cpp)
+  target_link_libraries(ctcompile-test-importer-source-names PRIVATE ctcompile::ctjs-import)
+  ctcompile_target(ctcompile-test-importer-source-names)
+  add_test(NAME ctcompile_importer_source_names COMMAND ctcompile-test-importer-source-names)
+endif()
+
 # THE STUB HAS TO RUN. Phase -1's gate says ctcompile builds an executable, and
 # an executable that builds and then dies on a missing symbol has passed a
 # compile and failed the gate. This runs it.

@@ -24,6 +24,7 @@ by their implementation files. Public APIs remain under `include/ctcompile/`.
 | Owning Map proofs | `lib/CTNative/Analysis/` and `Analysis/NativeMap/` | Shared closed value flow, Map schemas, conditional presence/effects, object identities and standard snapshot-copy proof |
 | Boxed emission | `lib/CTJS/Lowering/EmitC/` | Admission, function setup, operation dispatch, status handling, roots and constants |
 | C++ literals | `include/ctcompile/Support/CppLiterals.hpp` and `lib/Target/Cpp/ReadableFloat.*` | Shared byte-preserving string escaping and native shortest round-trip float spelling |
+| C++ source names | `lib/CTJS/Import/Bytecode/SourceNames.*` and `lib/Target/Cpp/Names/` | Register-scope name provenance, name propagation through native values and collision-free C++ allocation |
 | Global effects | `lib/CTJS/Lowering/Globals/` | Reflection, global identity and effects retained for refused bodies |
 | Bytecode import | `lib/CTJS/Import/Bytecode/` | Per-function state, instruction dispatch, operator tables and support routines |
 | Operation definitions | `include/ctcompile/CTJS/IR/Ops/` | TableGen records grouped by bindings, properties, runtime, operators, containers, modules, calls, functions, suspension and frames |

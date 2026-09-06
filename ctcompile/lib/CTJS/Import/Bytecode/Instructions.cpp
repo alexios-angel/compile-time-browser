@@ -12,7 +12,7 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
     const auto reg = [&](std::uint16_t slot) -> mlir::Value {
         return slot < state.registers.size() ? state.registers[slot] : mlir::Value{};
     };
-    const auto set = [&](std::uint16_t slot, mlir::Value v) { state.write(slot, v); };
+    const auto set = [&](std::uint16_t slot, mlir::Value v) { state.assign(slot, v, at); };
     switch (in.code) {
     case op::load_undef: set(in.a, state.undefined(where)); break;
     case op::load_null: set(in.a, state.constant(where, ctjs::NullAttr::get(context))); break;
@@ -448,7 +448,10 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
     case op::cell_get:
         set(in.a, ctjs::CellGetOp::create(into, where, value_type, reg(in.b)));
         break;
-    case op::cell_set: ctjs::CellSetOp::create(into, where, reg(in.a), reg(in.b)); break;
+    case op::cell_set:
+        state.names.assign(reg(in.b), in.a, at);
+        ctjs::CellSetOp::create(into, where, reg(in.a), reg(in.b));
+        break;
     case op::get_upvalue:
         // THE FRAME'S OWN CLOSURE, which arrives as the third implicit
         // argument. The interpreter reads vm_frame->closure; a compiled

@@ -12,6 +12,7 @@
 add_library(ctcompile-ctjs-import
   BytecodeImport.cpp
   Bytecode/Support.cpp
+  Bytecode/SourceNames.cpp
   Bytecode/Instructions.cpp)
 ctcompile_target(ctcompile-ctjs-import)
 

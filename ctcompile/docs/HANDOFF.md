@@ -6,14 +6,22 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Current native staging checkpoint, 2026-09-05
+## Current native staging checkpoint, 2026-09-06
 
-Final devbox gate: **430/430 CTests**, **133/133 lit cases**, **492.91 seconds**;
-all **496 C++ files** pass formatting. String-snapshot ASan/UBSan and leak checks
+Final devbox gate: **431/431 CTests**, **135/135 lit cases**, **547.40 seconds**;
+all **503 C++ files** pass formatting. String-snapshot ASan/UBSan and leak checks
 passed at the preceding checkpoint. Boxed Bootstrap is freshly byte-identical.
 Default native coverage stays
 Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725**; exact Data probes remain
 **0/7, 0/7, 0/8 native**. Full Bootstrap initialization is still unfinished.
+
+[JavaScript source names](native-source-names.md) now survive into native C++.
+The sample's parameter remains `catalog`; its initial and returned scores use
+`score_1` and `score_2`, with other intermediates in the same numbered family.
+Optional bytecode debug tables supply provenance without changing semantic IR.
+One function-wide allocator avoids collisions with types, symbols, macros,
+anonymous temporaries and nested loops. Both explicit and deduced output pass
+GCC/Clang execution checks, and unmarked boxed output retains its spelling.
 
 [Native C++ literal printing](native-literals.md) now keeps ordinary strings
 readable (`std::string("price", 5)`) and spells finite doubles concisely
@@ -30,8 +38,8 @@ Heap PE, direct-call specialization, deforestation and supercompilation remain
 opt-in. Type, effect, BTA and ownership proofs remain required. See the
 [defaults policy](native-optimization-defaults.md) and [roadmap](native-pe-roadmap.md).
 The default/disabled differential preserves eight observations and reduces its
-generated C++ from 7,264 to 6,623 bytes with readable literals. Coverage now
-accounts for pruned functions without shrinking the source denominator;
+generated C++ from 7,366 to 6,701 bytes with readable literals and source names.
+Coverage now accounts for pruned functions without shrinking the source denominator;
 historical admission floors run separately with defaults disabled.
 
 [String-key snapshots](native-string-snapshots.md) now lower Bootstrap's exact

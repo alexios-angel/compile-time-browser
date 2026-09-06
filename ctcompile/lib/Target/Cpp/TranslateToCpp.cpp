@@ -34,10 +34,11 @@
 // superset, and it fails the suite the same afternoon rather than at the next
 // bump.
 //
-// Native printing extensions are gated by ctnative attributes. Finite float
-// spelling for marked modules lives in ReadableFloat.cpp; unmarked modules
-// retain upstream output and the vendored tests remain unchanged.
+// Native printing extensions are gated by ctnative attributes. Source-name
+// allocation lives in Names/, and finite float spelling in ReadableFloat.cpp.
+// Unmarked modules retain upstream output; vendored tests remain unchanged.
 
+#include "Names/SourceNames.h"
 #include "ReadableFloat.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
@@ -224,6 +225,10 @@ struct CppEmitter {
   /// Return the existing or a new name for a Value.
   StringRef getOrCreateName(Value val);
 
+  /// Allocate native source names independently of the declaration cache.
+  void prepareSourceNames(Operation *function);
+  void finishSourceNames() { sourceNames.finish(); }
+
   /// Return the existing or a new name for a loop induction variable of an
   /// emitc::ForOp.
   StringRef getOrCreateInductionVarName(Value val);
@@ -260,6 +265,7 @@ struct CppEmitter {
       // Re-use value names.
       emitter.resetValueCounter();
     }
+    ~FunctionScope() { emitter.finishSourceNames(); }
   };
 
   /// RAII helper function to manage entering/exiting emitc::forOp loops and
@@ -328,6 +334,8 @@ private:
 
   /// Native-only literal spelling, scoped to the operation's nearest module.
   bool readableLiterals = false;
+
+  ctcompile::cpp::SourceNames sourceNames;
 
   /// Only emit file ops whos id matches this value.
   std::string fileId;
@@ -1409,6 +1417,7 @@ static LogicalResult printOperation(CppEmitter &emitter,
 
   CppEmitter::FunctionScope scope(emitter);
   raw_indented_ostream &os = emitter.ostream();
+  emitter.prepareSourceNames(functionOp);
   if (failed(emitter.emitTypes(functionOp.getLoc(),
                                functionOp.getFunctionType().getResults())))
     return failure();
@@ -1437,6 +1446,7 @@ static LogicalResult printOperation(CppEmitter &emitter,
 
   CppEmitter::FunctionScope scope(emitter);
   raw_indented_ostream &os = emitter.ostream();
+  emitter.prepareSourceNames(functionOp);
   if (functionOp.getSpecifiers()) {
     for (Attribute specifier : functionOp.getSpecifiersAttr()) {
       os << cast<StringAttr>(specifier).str() << " ";
@@ -1478,6 +1488,8 @@ static LogicalResult printOperation(CppEmitter &emitter,
   if (!functionOp)
     return failure();
 
+  emitter.prepareSourceNames(functionOp);
+
   if (functionOp.getSpecifiers()) {
     for (Attribute specifier : functionOp.getSpecifiersAttr()) {
       os << cast<StringAttr>(specifier).str() << " ";
@@ -1511,6 +1523,18 @@ void CppEmitter::cacheDeferredOpResult(Value value, StringRef str) {
     valueMapper.insert(value, str.str());
 }
 
+void CppEmitter::prepareSourceNames(Operation *function) {
+  sourceNames.prepare(function, [&](Value value) {
+    auto result = dyn_cast<OpResult>(value);
+    if (!result)
+      return true;
+    Operation *op = result.getOwner();
+    return !hasDeferredEmission(op) && !shouldBeInlined(op) &&
+           !isa<emitc::ExpressionOp>(op->getParentOp()) &&
+           (shouldDeclareVariablesAtTop() || !op->hasAttr("ctnative.statement"));
+  });
+}
+
 /// Return the existing or a new name for a Value.
 StringRef CppEmitter::getOrCreateName(Value val) {
   if (!valueMapper.count(val)) {
@@ -1518,7 +1542,10 @@ StringRef CppEmitter::getOrCreateName(Value val) {
            "cacheDeferredOpResult should have been called on this value, "
            "update the emitOperation function.");
 
-    valueMapper.insert(val, formatv("v{0}", ++valueCount));
+    if (sourceNames.enabled())
+      valueMapper.insert(val, sourceNames.get(val).str());
+    else
+      valueMapper.insert(val, formatv("v{0}", ++valueCount));
   }
   return *valueMapper.begin(val);
 }
@@ -1527,6 +1554,11 @@ StringRef CppEmitter::getOrCreateName(Value val) {
 /// Loop induction variables follow natural naming: i, j, k, ..., t, uX.
 StringRef CppEmitter::getOrCreateInductionVarName(Value val) {
   if (!valueMapper.count(val)) {
+
+    if (sourceNames.enabled()) {
+      valueMapper.insert(val, sourceNames.get(val, "i").str());
+      return *valueMapper.begin(val);
+    }
 
     int64_t identifier = 'i' + loopNestingLevel;
 

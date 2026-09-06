@@ -79,8 +79,8 @@ the disabled baseline explicitly; those checks retain their original purpose.
 On the devbox, the default-policy fixture folds 17 expressions and three
 branches in 294 symbolic steps without exhaustion. Both variants produce all
 eight expected numeric observations and contain no ctbrowser symbols. Generated
-C++ decreases from 7,264 to 6,623 bytes (8.8%) with the
-[readable literal policy](native-literals.md). These replace the earlier
-7,569/6,788-byte measurements; optimization behavior is unchanged. The combined
-enabled/disabled differential and wrapper-option checks take 4.94 seconds; this
-includes native C++ compilation and interpreter checks, not just optimization time.
+C++ decreases from 7,366 to 6,701 bytes (9.0%) with the
+[readable literal policy](native-literals.md) and [source names](native-source-names.md).
+These replace the earlier 7,569/6,788-byte measurements; optimization behavior is
+unchanged. The combined enabled/disabled differential and wrapper-option checks
+include native C++ compilation and interpreter comparisons.

@@ -178,11 +178,12 @@ advances without claiming whole Bootstrap execution from a fixture. Host contrac
 must explicitly describe reads, writes, callback escape and object identity before
 module-wide environment guards can be relaxed.
 
-## Integrated results, 2026-09-05
+## Integrated results, 2026-09-06
 
-The devbox gate passes **430/430 CTests**, including **131/131 lit cases**, in
-**492.18 seconds**. All **494 C++ files** pass the pinned formatter, and
-`git diff --check` passes. Each new source fixture passes ordinary and deduced
+The devbox gate passes **431/431 CTests**, including **135/135 lit cases**, in
+**547.40 seconds**.
+All **503 C++ files** pass the pinned formatter, and
+`git diff --check` passes. The optimization source fixtures pass ordinary and deduced
 native C++, GCC/Clang, reference comparison, altered-output rejection and no-VM
 checks. The owned-field fixture passes ASan/UBSan with leak detection and
 29 observations matching the interpreter. Earlier object-value, reachability,
@@ -191,7 +192,7 @@ implementation records.
 
 | Source fixture | Measured transformation | Native functions | Numeric observations |
 |---|---|---:|---:|
-| Default optimization comparison | 17 expressions, 3 branches, 294 steps; generated C++ 7,264 → 6,623 bytes with readable literals | 4/4 | 8 |
+| Default optimization comparison | 17 expressions, 3 branches, 294 steps; generated C++ 7,366 → 6,701 bytes with readable literals and source names | 4/4 | 8 |
 | String-key Map snapshots | Exact diagnostic, standard Array.from copy, nullable strings and retained snapshots | 10/10 | 24 |
 | Owned scalar component fields | Exact getter, guarded aliases, shared mutation and lifetime after deletion | 15/15 | 29 |
 | Scalar child generalization | 3 kernels, 14 configurations, 12 folds, 9 generalizations, 320 added residual operations | 23/23 | 16 |
