@@ -7,6 +7,9 @@
 # bump. `llvm_update_compile_flags` gives it the flags LLVM builds ITSELF with,
 # which is the set its authors actually test against.
 add_library(ctcompile-target-cpp
+  Const/Bindings.cpp
+  Const/Types.cpp
+  Const/Uses.cpp
   Names/Hints.cpp
   Names/Identifiers.cpp
   Names/SourceNames.cpp

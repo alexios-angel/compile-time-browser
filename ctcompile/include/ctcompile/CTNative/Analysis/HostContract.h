@@ -1,0 +1,72 @@
+#pragma once
+
+#include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/Support/Error.h"
+
+#include <string>
+#include <vector>
+
+namespace ctcompile::ctnative {
+
+struct HostRootRequest {
+    std::string binding;
+    std::vector<std::string> properties;
+};
+
+// Driver input, never an IR proof annotation. closed-source-v1 starts with
+// ordinary own global bindings and unmodified intrinsic prototypes; all
+// subsequent source mutations/calls still require the analysis below.
+struct HostContract {
+    std::string moduleSha256;
+    std::string entry;
+    std::vector<HostRootRequest> roots;
+    std::vector<std::string> observations;
+    std::vector<std::string> absentBindings;
+    std::vector<std::string> undefinedBindings;
+};
+
+llvm::Expected<HostContract> parseHostContract(llvm::StringRef json);
+// Includes the whole driver/program IR. Presentation locations and previous
+// host-contract reports are excluded; all semantic operations remain bound.
+std::string hostContractFingerprint(mlir::ModuleOp module);
+void clearHostContractReports(mlir::ModuleOp module);
+
+struct HostSlotEdge {
+    ctjs::SetPropertyOp write;
+    ctjs::GetPropertyOp read;
+};
+
+struct HostSlotReport {
+    std::string binding;
+    std::string property;
+    ctjs::CreateObjectOp owner;
+    std::vector<ctjs::SetPropertyOp> writes;
+    std::vector<ctjs::GetPropertyOp> reads;
+    std::vector<HostSlotEdge> edges;
+    std::string reason;
+};
+
+// A live, module-specific result. Diagnostic slot reports may expose partial
+// evidence; property() returns a proof only when every contract obligation
+// passed. Mutating the module invalidates this object. No native pass consumes
+// the printed report attributes as authority.
+class HostContractAnalysis {
+public:
+    HostContractAnalysis(mlir::ModuleOp module, const HostContract & contract,
+                         unsigned maxSteps = 100000);
+
+    [[nodiscard]] bool proved() const { return refusal.empty(); }
+    [[nodiscard]] llvm::StringRef reason() const { return refusal; }
+    [[nodiscard]] llvm::ArrayRef<HostSlotReport> slots() const { return reports; }
+    [[nodiscard]] llvm::ArrayRef<ctjs::StoreGlobalOp> observations() const { return observed; }
+    [[nodiscard]] const HostSlotEdge * property(ctjs::GetPropertyOp read) const;
+
+private:
+    std::string refusal;
+    std::vector<HostSlotReport> reports;
+    std::vector<ctjs::StoreGlobalOp> observed;
+};
+
+} // namespace ctcompile::ctnative

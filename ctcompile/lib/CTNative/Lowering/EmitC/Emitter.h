@@ -4,6 +4,15 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
+// Only for the compiler-owned helper ABIs below: non-lvalue operands are
+// accepted by value or const reference. Mutable binding arguments (vec_push's
+// vector, for example) must carry LValueType. This records a C++ const-acceptance
+// contract, not a purity claim; Map handles may still mutate their pointees.
+// Arbitrary external C++ calls must use CallOpaqueOp without this contract.
+ec::CallOpaqueOp callWithConstValueOperands(mlir::OpBuilder & builder, mlir::Location where,
+                                            mlir::TypeRange results, mlir::StringAttr callee,
+                                            mlir::ValueRange operands);
+
 struct lowering {
     mlir::DataFlowSolver & solver;
     mlir::MLIRContext * context;

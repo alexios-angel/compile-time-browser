@@ -62,7 +62,7 @@ function scale(x) { return x * 2; }
 // CHECK: call_opaque "std::isfinite"
 // CHECK: call_opaque "std::pow"
 // CHECK: conditional
-// CHECK: call_opaque "printf"({{.*}}) : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
+// CHECK: call_opaque "printf"({{.*}}) {ctnative.const_operands = array<i32: 0, 1>} : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
 // CHECK: return %{{.*}} : i32
 
 // --- A FUNCTION NOBODY PROVES IS REFUSED, BY NAME --------------------------

@@ -102,6 +102,10 @@ void context::trace_object(heap_object * o) {
     case heap_kind::native: {
         auto * fn = static_cast<native_object *>(o);
         for (const auto & [name, v] : fn->props) { edge(v); }
+        for (const accessor_entry & entry : fn->accessors.entries) {
+            edge(entry.getter);
+            edge(entry.setter);
+        }
         // ...AND WHAT ITS C++ LAMBDA CAPTURED. A capture is invisible to a
         // precise collector - it lives inside a std::function's erased
         // storage, which no root walk can reach - so a native that closed over
@@ -521,6 +525,13 @@ void context::store_property(value target, const std::string & name, value v) {
     }
     if (target.is_kind(heap_kind::native)) {
         auto * fn = static_cast<native_object *>(target.as_heap());
+        if (accessor_entry * entry = fn->find_accessor(name)) {
+            if (entry->setter.is_callable()) {
+                const value args[1] = {v};
+                (void)call(entry->setter, args, target);
+            }
+            return;
+        }
         // The same three checks as an object's - see above, TODO(strict) and
         // all. `Array.prototype = x` is the one every page tries by accident.
         if (fn->find(name) != nullptr) {
@@ -690,6 +701,15 @@ bool context::own_property(value target, const std::string & name, property_desc
 
     if (target.is_kind(heap_kind::native)) {
         auto * fn = static_cast<native_object *>(target.as_heap());
+        if (accessor_entry * entry = fn->find_accessor(name)) {
+            out.has_get = out.has_set = true;
+            out.getter = entry->getter;
+            out.setter = entry->setter;
+            out.has_enumerable = out.has_configurable = true;
+            out.enumerable = (entry->attrs & attr_enumerable) != 0;
+            out.configurable = (entry->attrs & attr_configurable) != 0;
+            return true;
+        }
         if (value * held = fn->find(name)) {
             out = property_descriptor::data(*held, fn->attrs_of(name));
             return true;
@@ -801,6 +821,10 @@ bool context::delete_own_property(value target, const std::string & name) {
     }
     if (target.is_kind(heap_kind::native)) {
         auto * fn = static_cast<native_object *>(target.as_heap());
+        if (accessor_entry * entry = fn->find_accessor(name)) {
+            if ((entry->attrs & attr_configurable) == 0) { return false; }
+            return fn->erase(name);
+        }
         if (fn->find(name) == nullptr) { return true; }
         if ((fn->attrs_of(name) & attr_configurable) == 0) { return false; }
         return fn->erase(name);
@@ -899,11 +923,15 @@ bool context::define_own_property(value target, const std::string & name,
                 ->define_accessor(name, getter, setter, accessor_attrs);
             return true;
         }
-        // AN ARRAY AND A NATIVE HAVE NOWHERE TO PUT ONE, and answer true.
+        if (target.is_kind(heap_kind::native)) {
+            static_cast<native_object *>(target.as_heap())
+                ->define_accessor(name, getter, setter, accessor_attrs);
+            return true;
+        }
+        // AN ARRAY HAS NOWHERE TO PUT ONE, and answers true.
         //
-        // Neither carries an accessor table: an array's elements are a
-        // std::vector and a native's statics are a flat list of data
-        // properties. Answering FALSE here would turn what has always been a
+        // An array's elements are a std::vector. Answering FALSE here would
+        // turn what has always been a
         // silent no-op into a TypeError - `Object.defineProperty(arr, "0",
         // {get() {...}})` is real test262 code and real library code - so this
         // keeps the previous behaviour and names it. Measured: answering false
@@ -1112,6 +1140,11 @@ value context::lookup_property(value target, const std::string & name) {
     }
     if (target.is_kind(heap_kind::native)) {
         auto * fn = static_cast<native_object *>(target.as_heap());
+        if (accessor_entry * entry = fn->find_accessor(name)) {
+            return entry->getter.is_callable()
+                       ? call(entry->getter, std::span<const value>{}, target)
+                       : value::undefined();
+        }
         if (value * found = fn->find(name)) { return *found; }
         // A BUILT-IN FUNCTION HAS A NAME, and it was undefined for every one
         // that is not a constructor - so test262's own assert.throws printed
@@ -1126,6 +1159,11 @@ value context::lookup_property(value target, const std::string & name) {
         for (value up = fn->proto_link; up.is_object() || up.is_callable();) {
             if (up.is_kind(heap_kind::native)) {
                 auto * parent = static_cast<native_object *>(up.as_heap());
+                if (accessor_entry * entry = parent->find_accessor(name)) {
+                    return entry->getter.is_callable()
+                               ? call(entry->getter, std::span<const value>{}, target)
+                               : value::undefined();
+                }
                 if (value * found = parent->find(name)) { return *found; }
                 up = parent->proto_link;
                 continue;
@@ -1194,9 +1232,13 @@ value context::lookup_property(value target, const std::string & name) {
                 up = parent->proto_link;
                 continue;
             }
-            if (value * found = static_cast<native_object *>(up.as_heap())->find(name)) {
-                return *found;
+            auto * parent = static_cast<native_object *>(up.as_heap());
+            if (accessor_entry * entry = parent->find_accessor(name)) {
+                return entry->getter.is_callable()
+                           ? call(entry->getter, std::span<const value>{}, target)
+                           : value::undefined();
             }
+            if (value * found = parent->find(name)) { return *found; }
             break;
         }
         // A FUNCTION IS AN OBJECT WITH A PROTOTYPE OF ITS OWN. `call`, `apply`

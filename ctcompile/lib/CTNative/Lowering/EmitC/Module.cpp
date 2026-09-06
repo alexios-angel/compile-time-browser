@@ -80,6 +80,7 @@ void lowering::declareGlobals() {
     // optimization and let the C++ printer choose their literal spelling.
     module->setAttr("ctnative.readable_literals", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.readable_names", mlir::UnitAttr::get(context));
+    module->setAttr("ctnative.const_bindings", mlir::UnitAttr::get(context));
     needsNullableString |= needsStringVector;
     needsNullable |= needsNullableString;
     needsNullable |= needsObjectValue;

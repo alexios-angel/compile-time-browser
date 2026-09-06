@@ -152,6 +152,16 @@ int main() {
     js_expect("Object.getOwnPropertyDescriptor(Array.prototype,'indexOf').writable", "true");
     js_expect("Object.getOwnPropertyDescriptor(Array.prototype,'indexOf').enumerable", "false");
     js_expect("Object.getOwnPropertyDescriptor(Array.prototype,'indexOf').configurable", "true");
+    js_expect(R"((function () {
+        var names = ['isArray', 'of', 'from'], attributes = [];
+        for (var i = 0; i < names.length; i++) {
+            var descriptor = Object.getOwnPropertyDescriptor(Array, names[i]);
+            attributes.push(descriptor.writable + ',' + descriptor.enumerable + ',' +
+                descriptor.configurable);
+        }
+        return attributes.join(';');
+    })())",
+              "true,false,true;true,false,true;true,false,true");
     // `constructor` is a built-in data property in the same sense, on a class's
     // prototype as much as on Array's.
     js_expect("Object.keys(Array.prototype.constructor.prototype).length", "0");
@@ -234,6 +244,72 @@ int main() {
     // A native's `length` is not recorded anywhere - a native_fn takes a span -
     // so the property is ABSENT rather than wrong.
     js_expect("Object.getOwnPropertyDescriptor(Object.keys,'length')", "undefined");
+
+    // Native constructors retain accessor descriptors rather than silently
+    // leaving the previous data property in place (Bootstrap's Array.from).
+    js_expect(R"((function () {
+        var original = Array.from, reads = 0, receiver = false;
+        function getter() { reads++; receiver = this === Array; return original; }
+        Object.defineProperty(Array, 'from', {get: getter});
+        var descriptor = Object.getOwnPropertyDescriptor(Array, 'from');
+        var out = Array.from([7, 8]);
+        return reads + ',' + receiver + ',' + out[1] + ',' +
+            (descriptor.get === getter) + ',' + (descriptor.value === undefined) + ',' +
+            descriptor.enumerable + ',' + descriptor.configurable;
+    })())",
+              "1,true,8,true,true,false,true");
+    js_expect(R"((function () {
+        var receiver = false, stored = 0;
+        Object.defineProperty(Array, 'from', {
+            get: function() { return stored; },
+            set: function(value) { receiver = this === Array; stored = value; }
+        });
+        Array.from = 7;
+        return receiver + ',' + Array.from;
+    })())",
+              "true,7");
+    js_expect(R"((function () {
+        Object.defineProperty(Array, 'from', {get: function() { return 7; }});
+        Array.from = 9;
+        return Array.from;
+    })())",
+              "7");
+    js_expect(R"((function () {
+        Object.defineProperty(Array, 'from', {set: function(value) {}});
+        return typeof Array.from;
+    })())",
+              "undefined");
+    js_expect(R"((function () {
+        var names = Object.getOwnPropertyNames(Array).join(',');
+        Object.defineProperty(Array, 'from', {get: function() { return 7; }});
+        Object.defineProperty(Array, 'from', {value: 9});
+        return Array.from + ',' + (Object.getOwnPropertyNames(Array).join(',') === names);
+    })())",
+              "9,true");
+    js_expect(R"((function () {
+        Object.defineProperty(Array, 'from', {get: function() { return 7; }});
+        Object.defineProperty(Array, 'from', {get: undefined});
+        return typeof Array.from;
+    })())",
+              "undefined");
+    js_expect(R"((function () {
+        Object.defineProperty(Array, 'from', {get: function() { return 7; }});
+        delete Array.from;
+        return Array.from + ',' + Object.hasOwn(Array, 'from');
+    })())",
+              "undefined,false");
+    js_expect(R"((function () {
+        Object.defineProperty(Array, 'from', {get: function() { return 7; }});
+        Object.freeze(Array);
+        var caught = false;
+        try { Object.defineProperty(Array, 'from', {value: 9}); } catch (error) {
+            caught = error.name === 'TypeError';
+        }
+        delete Array.from;
+        return Array.from + ',' + caught + ',' +
+            Object.getOwnPropertyDescriptor(Array, 'from').configurable;
+    })())",
+              "7,true,false");
 
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

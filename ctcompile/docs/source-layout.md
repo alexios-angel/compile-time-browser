@@ -8,6 +8,7 @@ by their implementation files. Public APIs remain under `include/ctcompile/`.
 |---|---|---|
 | Partial evaluation | `lib/CTNative/PartialEvaluation/` | Factory admission, static entry prefixes, bounded evaluation, call-target and heap-equivalence proofs, primitive adapter and residualisation |
 | Binding time | `lib/CTNative/Analysis/BindingTime/` and `BindingTime/` | Argument/callee facts, conditional effect summaries and queries, heap flow and annotation pass |
+| Host contracts | `lib/CTNative/HostContract/` | Fingerprinted closed-source manifests, fresh allocation identity, own-data slot flow and bounded proof reports |
 | Precomputation | `lib/CTNative/Symbolic/` | Primitive and normal-result facts, bounded propagation, PDLL scalar replacements and native region splicing |
 | Specialization | `lib/CTNative/Specialization/` | Closed direct-call candidates, exact argument tuples and bounded residual variants |
 | Reachability | `lib/CTNative/Reachability/` | Bounded graph proof and transactional removal of private helpers |
@@ -25,6 +26,7 @@ by their implementation files. Public APIs remain under `include/ctcompile/`.
 | Boxed emission | `lib/CTJS/Lowering/EmitC/` | Admission, function setup, operation dispatch, status handling, roots and constants |
 | C++ literals | `include/ctcompile/Support/CppLiterals.hpp` and `lib/Target/Cpp/ReadableFloat.*` | Shared byte-preserving string escaping and native shortest round-trip float spelling |
 | C++ source names | `lib/CTJS/Import/Bytecode/SourceNames.*` and `lib/Target/Cpp/Names/` | Register-scope name provenance, name propagation through native values and collision-free C++ allocation |
+| C++ const bindings | `lib/Target/Cpp/Const/` and `lib/CTNative/Lowering/EmitC/Calls.cpp` | Backward binding-mutability data flow, lvalue/capture aliases and native helper operand ABI contracts |
 | Global effects | `lib/CTJS/Lowering/Globals/` | Reflection, global identity and effects retained for refused bodies |
 | Bytecode import | `lib/CTJS/Import/Bytecode/` | Per-function state, instruction dispatch, operator tables and support routines |
 | Operation definitions | `include/ctcompile/CTJS/IR/Ops/` | TableGen records grouped by bindings, properties, runtime, operators, containers, modules, calls, functions, suspension and frames |

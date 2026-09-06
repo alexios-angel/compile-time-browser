@@ -95,6 +95,10 @@ struct native_object final : heap_object {
     // specification says none of them is enumerable.
     std::vector<std::uint8_t> attrs;
     bool extensible = true;
+    // Accessor keys retain their position in props with an undefined payload.
+    // That keeps data/accessor replacement in the same property order; find()
+    // only exposes data slots, while the VM invokes the separate descriptor.
+    accessor_table accessors;
 
     // WHAT THIS NATIVE'S C++ LAMBDA IS HOLDING - the one root the collector
     // could not otherwise have.
@@ -119,6 +123,7 @@ struct native_object final : heap_object {
     std::vector<value> retained;
 
     [[nodiscard]] value * find(std::string_view key) {
+        if (accessors.find(key) != nullptr) { return nullptr; }
         for (auto & [k, item] : props) {
             if (k == key) { return &item; }
         }
@@ -142,6 +147,7 @@ struct native_object final : heap_object {
         attrs[at] = a;
     }
     void set(std::string_view key, value v) {
+        accessors.erase(key);
         if (!attrs.empty() && attrs.size() != props.size()) {
             attrs.resize(props.size(), attr_default);
         }
@@ -156,9 +162,19 @@ struct native_object final : heap_object {
         set(key, v);
         set_attrs(key, a);
     }
+    [[nodiscard]] accessor_entry * find_accessor(std::string_view key) {
+        return accessors.find(key);
+    }
+    void define_accessor(std::string_view key, value getter, value setter,
+                         std::uint8_t a = attr_enumerable | attr_configurable) {
+        set(key, value::undefined());
+        set_attrs(key, a);
+        accessors.define(key, getter, setter, 0, a);
+    }
     bool erase(std::string_view key) {
         const std::size_t at = position(key);
         if (at >= props.size()) { return false; }
+        accessors.erase(key);
         props.erase(props.begin() + static_cast<std::ptrdiff_t>(at));
         if (at < attrs.size()) { attrs.erase(attrs.begin() + static_cast<std::ptrdiff_t>(at)); }
         return true;

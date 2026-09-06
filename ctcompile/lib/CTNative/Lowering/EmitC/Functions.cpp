@@ -170,8 +170,9 @@ void lowering::lower(ctjs::FuncOp fn) {
         for (unsigned i = 0; i < body.getNumArguments(); ++i) {
             if (i < 3 && !(i == 0 && carriesReceiver)) { continue; }
             mlir::Value arg = body.getArgument(i);
-            ec::CallOpaqueOp::create(at, made.getLoc(), mlir::TypeRange{},
-                                     at.getStringAttr("static_cast<void>"), mlir::ValueRange{arg});
+            callWithConstValueOperands(at, made.getLoc(), mlir::TypeRange{},
+                                       at.getStringAttr("static_cast<void>"),
+                                       mlir::ValueRange{arg});
         }
     }
 

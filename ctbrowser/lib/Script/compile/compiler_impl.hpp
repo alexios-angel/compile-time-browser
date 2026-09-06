@@ -992,6 +992,8 @@ public:
     void compile_spread_call(const vp::node & n, std::uint16_t dst);
 
     void compile_call(const vp::node & n, std::uint16_t dst);
+    void compile_call_target(const vp::node & n, std::uint16_t target, std::uint16_t self);
+    void emit_optional_guard(std::uint16_t value);
 
     // `new C(...)`. The receiver is created by the VM, which also has to decide
     // what the expression evaluates to - the new object, unless the constructor

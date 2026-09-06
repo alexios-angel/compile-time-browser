@@ -4,10 +4,10 @@ Native output preserves JavaScript parameter and local names. A unique parameter
 can remain `catalog`. Multiple values belonging to a local use a numbered family:
 
 ```cpp
-double score_1 = -1.0;
+double const score_1 = -1.0;
 double score_3;
 // Branches and expression intermediates use score_4, score_5, ...
-double score_2 = score_3;
+double const score_2 = score_3;
 return score_2;
 ```
 
@@ -17,6 +17,8 @@ skip an occupied name. Each function has one name pool for parameters, locals,
 loop induction variables and anonymous temporaries, including when declarations
 are hoisted to the top of a function. Prototypes and definitions use the same
 allocation. Type deduction and its diagnostic pins retain those names.
+The [const policy](native-const-bindings.md) independently qualifies immutable
+bindings while leaving branch storage writable.
 
 The importer reads the bytecode compiler's optional local-name table using its
 half-open register scope ranges. It stores spelling in `FusedLoc` dictionary

@@ -103,9 +103,9 @@ bool lowering::replaceMethodTable(mlir::Operation * op) {
         const auto captures = op->getAttrOfType<mlir::IntegerAttr>(kNativeStoredCall).getInt();
         llvm::SmallVector<mlir::Value> args{call.getCalleeValue()};
         llvm::append_range(args, op->getOperands().drop_front(3 + static_cast<size_t>(captures)));
-        auto invoked =
-            ec::CallOpaqueOp::create(at, op->getLoc(), mlir::TypeRange{call.getResult().getType()},
-                                     at.getStringAttr("ctnative::invoke_callable"), args);
+        auto invoked = callWithConstValueOperands(
+            at, op->getLoc(), mlir::TypeRange{call.getResult().getType()},
+            at.getStringAttr("ctnative::invoke_callable"), args);
         call.getResult().replaceAllUsesWith(invoked.getResult(0));
         eraseIfUnused(op);
         return true;
@@ -114,7 +114,7 @@ bool lowering::replaceMethodTable(mlir::Operation * op) {
     if (site.empty()) { return false; }
     const auto name = "ctnative::method_" + cIdentifier(site);
     if (auto made = llvm::dyn_cast<ctjs::CreateObjectOp>(op)) {
-        auto created = ec::CallOpaqueOp::create(
+        auto created = callWithConstValueOperands(
             at, op->getLoc(), mlir::TypeRange{made.getResult().getType()},
             at.getStringAttr("std::make_shared<" + name + ">"), mlir::ValueRange{});
         made.getResult().replaceAllUsesWith(created.getResult(0));
@@ -122,15 +122,15 @@ bool lowering::replaceMethodTable(mlir::Operation * op) {
         const auto key = op->getAttrOfType<mlir::StringAttr>(kNativeTableField).getValue();
         const auto member = "<&" + name + "::m_" + key.str() + ">";
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
-            auto value = ec::CallOpaqueOp::create(at, op->getLoc(),
-                                                  mlir::TypeRange{get.getResult().getType()},
-                                                  at.getStringAttr("ctnative::method_get" + member),
-                                                  mlir::ValueRange{get.getObject()});
+            auto value = callWithConstValueOperands(
+                at, op->getLoc(), mlir::TypeRange{get.getResult().getType()},
+                at.getStringAttr("ctnative::method_get" + member),
+                mlir::ValueRange{get.getObject()});
             get.getResult().replaceAllUsesWith(value.getResult(0));
         } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
-            ec::CallOpaqueOp::create(at, op->getLoc(), mlir::TypeRange{},
-                                     at.getStringAttr("ctnative::method_set" + member),
-                                     mlir::ValueRange{set.getObject(), set.getValue()});
+            callWithConstValueOperands(at, op->getLoc(), mlir::TypeRange{},
+                                       at.getStringAttr("ctnative::method_set" + member),
+                                       mlir::ValueRange{set.getObject(), set.getValue()});
         } else {
             return false;
         }

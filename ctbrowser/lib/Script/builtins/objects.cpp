@@ -121,6 +121,9 @@ inline void set_integrity(context & cx, value target, bool frozen) {
             a = static_cast<std::uint8_t>(a & ~attr_configurable);
             if (frozen) { a = static_cast<std::uint8_t>(a & ~attr_writable); }
         }
+        for (accessor_entry & entry : fn->accessors.entries) {
+            entry.attrs = static_cast<std::uint8_t>(entry.attrs & ~attr_configurable);
+        }
         return;
     }
     if (target.is_kind(heap_kind::function)) {

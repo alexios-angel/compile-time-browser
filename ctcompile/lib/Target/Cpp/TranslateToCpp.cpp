@@ -35,9 +35,11 @@
 // bump.
 //
 // Native printing extensions are gated by ctnative attributes. Source-name
-// allocation lives in Names/, and finite float spelling in ReadableFloat.cpp.
+// allocation lives in Names/, const-binding analysis in Const/, and finite
+// float spelling in ReadableFloat.cpp.
 // Unmarked modules retain upstream output; vendored tests remain unchanged.
 
+#include "Const/Bindings.h"
 #include "Names/SourceNames.h"
 #include "ReadableFloat.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -186,7 +188,7 @@ struct CppEmitter {
 
   /// Emits a declaration of a variable with the given type and name.
   LogicalResult emitVariableDeclaration(Location loc, Type type,
-                                        StringRef name);
+                                        StringRef name, bool constant = false);
 
   /// Emits the variable declaration and assignment prefix for 'op'.
   /// - emits separate variable followed by std::tie for multi-valued operation;
@@ -225,9 +227,16 @@ struct CppEmitter {
   /// Return the existing or a new name for a Value.
   StringRef getOrCreateName(Value val);
 
-  /// Allocate native source names independently of the declaration cache.
-  void prepareSourceNames(Operation *function);
-  void finishSourceNames() { sourceNames.finish(); }
+  /// Prepare native printing policies independently of the declaration cache.
+  void prepareFunction(Operation *function);
+  void finishFunction() {
+    sourceNames.finish();
+    constBindings.finish();
+  }
+  bool isConstBinding(Value value) {
+    return (!isa<OpResult>(value) || !shouldDeclareVariablesAtTop()) &&
+           constBindings.qualifies(value);
+  }
 
   /// Return the existing or a new name for a loop induction variable of an
   /// emitc::ForOp.
@@ -265,7 +274,7 @@ struct CppEmitter {
       // Re-use value names.
       emitter.resetValueCounter();
     }
-    ~FunctionScope() { emitter.finishSourceNames(); }
+    ~FunctionScope() { emitter.finishFunction(); }
   };
 
   /// RAII helper function to manage entering/exiting emitc::forOp loops and
@@ -336,6 +345,7 @@ private:
   bool readableLiterals = false;
 
   ctcompile::cpp::SourceNames sourceNames;
+  ctcompile::cpp::ConstBindings constBindings;
 
   /// Only emit file ops whos id matches this value.
   std::string fileId;
@@ -1326,7 +1336,8 @@ static LogicalResult printFunctionArgs(CppEmitter &emitter,
   return (interleaveCommaWithError(
       arguments, os, [&](BlockArgument arg) -> LogicalResult {
         return emitter.emitVariableDeclaration(
-            functionOp->getLoc(), arg.getType(), emitter.getOrCreateName(arg));
+            functionOp->getLoc(), arg.getType(), emitter.getOrCreateName(arg),
+            emitter.isConstBinding(arg));
       }));
 }
 
@@ -1417,7 +1428,7 @@ static LogicalResult printOperation(CppEmitter &emitter,
 
   CppEmitter::FunctionScope scope(emitter);
   raw_indented_ostream &os = emitter.ostream();
-  emitter.prepareSourceNames(functionOp);
+  emitter.prepareFunction(functionOp);
   if (failed(emitter.emitTypes(functionOp.getLoc(),
                                functionOp.getFunctionType().getResults())))
     return failure();
@@ -1446,7 +1457,7 @@ static LogicalResult printOperation(CppEmitter &emitter,
 
   CppEmitter::FunctionScope scope(emitter);
   raw_indented_ostream &os = emitter.ostream();
-  emitter.prepareSourceNames(functionOp);
+  emitter.prepareFunction(functionOp);
   if (functionOp.getSpecifiers()) {
     for (Attribute specifier : functionOp.getSpecifiersAttr()) {
       os << cast<StringAttr>(specifier).str() << " ";
@@ -1488,7 +1499,7 @@ static LogicalResult printOperation(CppEmitter &emitter,
   if (!functionOp)
     return failure();
 
-  emitter.prepareSourceNames(functionOp);
+  emitter.prepareFunction(functionOp);
 
   if (functionOp.getSpecifiers()) {
     for (Attribute specifier : functionOp.getSpecifiersAttr()) {
@@ -1523,7 +1534,8 @@ void CppEmitter::cacheDeferredOpResult(Value value, StringRef str) {
     valueMapper.insert(value, str.str());
 }
 
-void CppEmitter::prepareSourceNames(Operation *function) {
+void CppEmitter::prepareFunction(Operation *function) {
+  constBindings.prepare(function);
   sourceNames.prepare(function, [&](Value value) {
     auto result = dyn_cast<OpResult>(value);
     if (!result)
@@ -1835,7 +1847,8 @@ LogicalResult CppEmitter::emitVariableDeclaration(OpResult result,
   }
   if (failed(emitVariableDeclaration(result.getOwner()->getLoc(),
                                      result.getType(),
-                                     getOrCreateName(result))))
+                                     getOrCreateName(result),
+                                     isConstBinding(result))))
     return failure();
   if (trailingSemicolon)
     os << ";\n";
@@ -1906,7 +1919,8 @@ LogicalResult CppEmitter::emitAssignPrefix(Operation &op) {
         return success();
       if (hasValueInScope(result))
         return op.emitError("result variable for the operation already declared");
-      os << "auto " << getOrCreateName(result) << " = ";
+      os << (isConstBinding(result) ? "auto const " : "auto ")
+         << getOrCreateName(result) << " = ";
     } else {
       if (failed(emitVariableDeclaration(result, /*trailingSemicolon=*/false)))
         return failure();
@@ -2035,6 +2049,8 @@ LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
     os << "\", ";
     if (failed(emitType(op.getLoc(), pinned)))
       return failure();
+    if (isConstBinding(op.getResult(0)))
+      os << " const";
     os << ");\n";
   }
 
@@ -2042,7 +2058,7 @@ LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
 }
 
 LogicalResult CppEmitter::emitVariableDeclaration(Location loc, Type type,
-                                                  StringRef name) {
+                                                  StringRef name, bool constant) {
   if (auto arrType = dyn_cast<emitc::ArrayType>(type)) {
     if (failed(emitType(loc, arrType.getElementType())))
       return failure();
@@ -2054,6 +2070,8 @@ LogicalResult CppEmitter::emitVariableDeclaration(Location loc, Type type,
   }
   if (failed(emitType(loc, type)))
     return failure();
+  if (constant)
+    os << " const";
   os << " " << name;
   return success();
 }

@@ -74,14 +74,14 @@ mlir::Value lowering::truthy(mlir::OpBuilder & builder, mlir::Location where, ml
 // nothing.
 void lowering::push(mlir::OpBuilder & b, mlir::Location where, mlir::Value into,
                     mlir::Value element) {
-    ec::CallOpaqueOp::create(b, where, mlir::TypeRange{}, b.getStringAttr("ctnative::vec_push"),
-                             mlir::ValueRange{into, element});
+    callWithConstValueOperands(b, where, mlir::TypeRange{}, b.getStringAttr("ctnative::vec_push"),
+                               mlir::ValueRange{into, element});
 }
 
 mlir::Value lowering::libmCall(mlir::OpBuilder & b, mlir::Location where, llvm::StringRef fn,
                                mlir::ValueRange args) {
-    return ec::CallOpaqueOp::create(b, where, mlir::TypeRange{mlir::Float64Type::get(context)},
-                                    b.getStringAttr(fn), args)
+    return callWithConstValueOperands(b, where, mlir::TypeRange{mlir::Float64Type::get(context)},
+                                      b.getStringAttr(fn), args)
         .getResult(0);
 }
 
@@ -104,8 +104,8 @@ mlir::Value lowering::exponentiate(mlir::OpBuilder & b, mlir::Location where, ml
     mlir::Value isOne = ec::CmpOp::create(b, where, i1, ec::CmpPredicate::eq, magnitude,
                                           f64Constant(b, where, 1.0));
     mlir::Value finite =
-        ec::CallOpaqueOp::create(b, where, mlir::TypeRange{i1}, b.getStringAttr("std::isfinite"),
-                                 mlir::ValueRange{exponent})
+        callWithConstValueOperands(b, where, mlir::TypeRange{i1}, b.getStringAttr("std::isfinite"),
+                                   mlir::ValueRange{exponent})
             .getResult(0);
     mlir::Value notFinite = ec::LogicalNotOp::create(b, where, i1, finite);
     mlir::Value diverges = ec::LogicalAndOp::create(b, where, i1, isOne, notFinite);

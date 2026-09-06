@@ -9,6 +9,30 @@
 
 include "mlir/Pass/PassBase.td"
 
+def CTNativeHostContract : Pass<"ctnative-host-contract", "mlir::ModuleOp"> {
+  let summary = "Validate driver-bound closed source host roots and publication slot flow";
+  let description = [{
+    An explicit closed-source-v1 manifest binds the whole program/driver IR,
+    declares observation roots and distinguishes absent from present-undefined
+    bindings. Recompute fresh host owners, ordinary own-data slots and ordered
+    source write/read flow; never trust supplied proof annotations. Unknown
+    providers, calls, accessors, prototype mutation, ambiguous control/call
+    contexts and exhausted work withhold every usable proof. Printed partial
+    evidence is diagnostic only and does not change native admission or runtime
+    operations. Retained AMD callable providers are not implemented yet.
+  }];
+  let options = [
+    Option<"manifest", "manifest", "std::string", "\"\"", "Driver-owned host contract JSON path">,
+    Option<"output", "output", "std::string", "\"\"", "Optional JSON evidence report path">,
+    Option<"fingerprint", "fingerprint", "bool", "false", "Print the canonical module fingerprint only">,
+    Option<"requireProof", "require-proof", "bool", "false", "Fail if the complete host contract is not proved">,
+    Option<"maxSteps", "max-steps", "unsigned", "100000", "Maximum source proof discovery work">,
+    Option<"report", "report", "bool", "false", "Report partial slot evidence and the remaining refusal">
+  ];
+  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect",
+                          "::mlir::arith::ArithDialect"];
+}
+
 def CTNativePruneUnreachable : Pass<"ctnative-prune-unreachable", "mlir::ModuleOp"> {
   let summary = "Remove private functions unreachable from checked symbolic and closure roots";
   let description = [{

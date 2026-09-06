@@ -180,9 +180,9 @@ module-wide environment guards can be relaxed.
 
 ## Integrated results, 2026-09-06
 
-The devbox gate passes **431/431 CTests**, including **135/135 lit cases**, in
-**547.40 seconds**.
-All **503 C++ files** pass the pinned formatter, and
+The devbox gate passes **436/436 CTests**, including **137/137 lit cases**, in
+**505.73 seconds**.
+All **517 C++ files** pass the pinned formatter, and
 `git diff --check` passes. The optimization source fixtures pass ordinary and deduced
 native C++, GCC/Clang, reference comparison, altered-output rejection and no-VM
 checks. The owned-field fixture passes ASan/UBSan with leak detection and
@@ -192,7 +192,7 @@ implementation records.
 
 | Source fixture | Measured transformation | Native functions | Numeric observations |
 |---|---|---:|---:|
-| Default optimization comparison | 17 expressions, 3 branches, 294 steps; generated C++ 7,366 → 6,701 bytes with readable literals and source names | 4/4 | 8 |
+| Default optimization comparison | 17 expressions, 3 branches, 294 steps; generated C++ 7,840 → 7,043 bytes with readable literals, source names and const bindings after the call-order correction | 4/4 | 8 |
 | String-key Map snapshots | Exact diagnostic, standard Array.from copy, nullable strings and retained snapshots | 10/10 | 24 |
 | Owned scalar component fields | Exact getter, guarded aliases, shared mutation and lifetime after deletion | 15/15 | 29 |
 | Scalar child generalization | 3 kernels, 14 configurations, 12 folds, 9 generalizations, 320 added residual operations | 23/23 | 16 |
@@ -236,11 +236,14 @@ run with `--no-default-optimizations`; separate default corpus tests protect the
 ordinary entry. None of these vendor modules loses a function to default pruning.
 
 The exact Data browser/CommonJS/AMD probes remain **0/7, 0/7 and 0/8 native**,
-with **19/19/20 reference observations**. Boxed Bootstrap remains byte-identical:
-**10,984,359 bytes**, SHA-256
-`6847477849e52f51b8369b8e9d969c223fd647d881970003b1541c76fc67ec8a`.
-These results establish the new carrier and optional stages while preserving the baseline;
-full native Bootstrap initialization remains open.
+with **19/19/20 reference observations**. Correct callee-before-argument bytecode
+intentionally changes boxed Bootstrap to **11,226,071 bytes**, SHA-256
+`721e6095554b20eb2241367283ae1b02c032c771c858ca582af974c6754c2528`.
+The [host-slot prerequisite](native-host-slots.md) finds 24 CommonJS and 23 browser
+candidate publication edges, but all exact contracts still refuse with zero usable
+proof edges. Native-function accessors and corrected call order bring the separate
+host oracle to 10/11 ctbrowser matches against 11/11 Node cases. Full native
+Bootstrap initialization remains open.
 
 ## Object payloads, conditional effects and reachability
 
@@ -269,14 +272,18 @@ contracts and budget exhaustion retain the whole module.
 
 ## Next bounded work
 
-For Bootstrap, implement the [host/effect and export contract design](native-bootstrap-host-contract.md) before
-widening the exact Data initializer. Its unchecked mixed-result field accesses
+For Bootstrap, extend [checked host slots](native-host-slots.md) with supported
+intrinsic/error providers and retained callable publication, then connect the live
+proof to ownership and call analysis. The broader
+[host/effect and export contract](native-bootstrap-host-contract.md) remains
+incomplete. Unchecked mixed-result field accesses
 also need path-sensitive receiver/presence evidence or a supported exception boundary.
 The [string-key snapshot and Array.from prerequisite](native-string-snapshots.md)
 is implemented for confined proved Maps, including absent and empty keys.
 Wrapper calls, error reporting and typed export publication remain open. The host
-audit records two source/reference differences in fallback `this` and accessor
-evaluation order; a broader host adapter must resolve those boundaries explicitly.
+audit retains one source/reference difference in fallback `this`; the callee and
+accessor evaluation-order mismatch is fixed. A broader host adapter must resolve
+the remaining receiver boundary explicitly.
 The current conditional queries remain behind
 their own closed-environment proof and do not relax PE/native module guards.
 

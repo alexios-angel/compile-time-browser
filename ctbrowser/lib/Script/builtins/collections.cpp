@@ -34,7 +34,7 @@ void install_array(context & cx) {
         return out;
     });
     const auto static_method = [&](const char * name, native_fn fn) {
-        array_ctor->set(name, value::object(cx.allocate<native_object>(name, std::move(fn))));
+        method(cx, array_ctor, name, std::move(fn));
     };
     static_method("isArray", [](context &, std::span<value> a) {
         return value::boolean(arg_at(a, 0).is_array());

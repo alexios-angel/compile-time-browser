@@ -52,8 +52,8 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     } else {
         llvm::report_fatal_error("native scalar boundary has incompatible proved carriers");
     }
-    return ec::CallOpaqueOp::create(b, where, mlir::TypeRange{target}, b.getStringAttr(helper),
-                                    mlir::ValueRange{value})
+    return callWithConstValueOperands(b, where, mlir::TypeRange{target}, b.getStringAttr(helper),
+                                      mlir::ValueRange{value})
         .getResult(0);
 }
 

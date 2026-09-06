@@ -98,6 +98,7 @@ add_library(ctcompile-ctnative-lowering
   ../PartialEvaluation/Closures.cpp
   ../PartialEvaluation/Prefix.cpp
   ../BindingTime/Pass.cpp
+  ../HostContract/Pass.cpp
   ../PartialEvaluation/Evaluator.cpp
   ../PartialEvaluation/Calls.cpp
   ../PartialEvaluation/CallProof.cpp
@@ -124,6 +125,7 @@ add_library(ctcompile-ctnative-lowering
   EmitC/Shapes.cpp
   EmitC/Module.cpp
   EmitC/Expressions.cpp
+  EmitC/Calls.cpp
   EmitC/ScalarConversions.cpp
   EmitC/Types.cpp
   EmitC/Operations.cpp

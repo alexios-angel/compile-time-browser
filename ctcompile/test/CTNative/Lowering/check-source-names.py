@@ -34,15 +34,17 @@ def main():
     outputs = []
     for label, ir in [("plain", module), ("deduced", deduced)]:
         cpp = run([args.translate, "--mlir-to-cpp", str(ir)])
-        assert re.search(r"double observePrice_\d+\([^\n]* catalog\)", cpp), cpp
+        assert re.search(r"double observePrice_\d+\([^\n]* const catalog\)", cpp), cpp
         sharing = cpp.split("// ctcompile: function observeSharing,", 1)[1]
         sharing = sharing.split("// ctcompile: function", 1)[0]
-        assert "double score_1 = -1.0;" in sharing, sharing
+        assert "double const score_1 = -1.0;" in sharing, sharing
         assert "return score_2;" in sharing, sharing
-        assert re.search(r"(?:double|auto) score_\d+ = score_\d+ [*+]", sharing), sharing
+        assert re.search(r"double const score_2 = score_\d+;", sharing), sharing
+        assert "double score_3;" in sharing, sharing
+        assert re.search(r"(?:double|auto)(?: const)? score_\d+ = score_\d+ [*+]", sharing), sharing
         assert re.search(r"score_\d+ = score_1;", sharing), sharing
-        # The optional pin pass must preserve the exact chosen identifiers.
-        outputs.append(re.findall(r"\b(?:double|auto) (score_\d+)\b", sharing))
+        # The optional pin pass must preserve identifiers and qualification.
+        outputs.append(re.findall(r"\b(?:double|auto)( const)? (score_\d+)\b", sharing))
         source = args.work / f"{label}.cpp"
         source.write_text(cpp)
         for name in ("g++", "clang++"):

@@ -1,10 +1,13 @@
 # Bootstrap Data host and export contract
 
-Design and source audit, 2026-09-05. **The contract below is proposed, not an
-implemented compiler API.** The next useful host slice is the exact Data probe
-under an explicitly closed application driver. It must connect exported slots
-and retained factory values to the existing ownership/call proofs. Recognizing
-the names `bootstrap`, `module.exports` or `console.error` is not such a proof.
+Design and source audit, updated 2026-09-06. The first compiler prerequisite is
+implemented in [checked host-slot analysis](native-host-slots.md): a fingerprinted
+closed-source contract and live analysis of fresh own-data publication slots.
+The broader host/effect contract below remains proposed. Exact Data probes still
+refuse the complete proof, and native admission is unchanged. The next slice must
+connect exported slots and retained factory values to the existing ownership/call
+proofs. Recognizing the names `bootstrap`, `module.exports` or `console.error` is
+not such a proof.
 
 ## Exact source and current evidence
 
@@ -233,25 +236,41 @@ python3 tools/check/bootstrap-host-contract-audit.py \
   --work /tmp/bootstrap-host-contract-audit
 ```
 
-Node 26.8.1 agrees with all 11 scenarios. Running the same source hashes through
-the devbox ctbrowser reference agrees with nine. The two differences are actual
-boundaries, not native regressions introduced by this design:
+Node 26.8.1 agrees with all 11 scenarios. The rebuilt devbox reference agrees
+with 10/11, including the callee-order witness. The negative control catches
+the exact mutated trace `1235`. Only the script-receiver difference remains a
+boundary of this contract:
 
 | Scenario | Node | Current ctbrowser reference |
 |---|---|---|
 | Browser fallback with `globalThis` undefined | Wrapper selects top-level script `this`; `self` stays unchanged | Reference script receiver is undefined; wrapper selects `self` |
-| Rejection callee-read order | `console.error` getter, `Array.from` getter, `keys()` call, error call: `1234` | `keys()` call, `console.error` getter, error call: `314` |
 
-The second witness saves the original `Array.from` and `Map.prototype.keys`,
+The callee-order witness saves the original `Array.from` and `Map.prototype.keys`,
 records their use, and rejects a second component through the exact Data method.
-The prepared IR places `get_property "from"` after the `keys()` call and
-`get_property "error"` after message construction. The reference additionally
-does not execute the installed `Array.from` getter. Consequently a general host
-adapter cannot claim correct accessor/callee behavior merely by following that
-IR. Fix the upstream ordering and runtime accessor behavior before admitting
-those hosts; the initial own-data-slot/inert-intrinsic contract refuses them.
+Both Node and the rebuilt reference report `1234`: `console.error` getter,
+`Array.from` getter, `keys()` call, then the error call. The former `314` result
+had two causes: method-call bytecode deferred property lookup until after
+arguments, and native functions silently discarded accessor descriptors.
 
-The nine matching scenarios cover CommonJS precedence/aliasing, defined browser
+The compiler now emits the member read before arguments and saves the callable
+and receiver in distinct registers. Plain, computed, spread and optional calls
+share that evaluation path. Native functions retain accessor descriptors,
+invoke getters/setters with the receiver, preserve replacement position and
+descriptor attributes, and trace getter/setter captures during collection.
+Array's static methods use non-enumerable builtin descriptors, whose
+enumerability survives conversion from a data property to an accessor.
+`call_order`, `property_attributes` and the `native-accessors` cases in
+`script_gc` cover ordering, argument mutation, exceptions, optional short
+circuits and lifetime. The audit's `1234` oracle and the exact vendor source
+remain unchanged. Regenerated boxed Bootstrap measures 11,226,071 bytes,
+SHA-256 `721e6095554b20eb2241367283ae1b02c032c771c858ca582af974c6754c2528`.
+The corrected bytecode intentionally changes the earlier boxed output.
+
+Correct interpreter behavior does not admit accessor hosts to the native
+contract. Such getters and setters still require an effect/exception proof;
+the initial own-data-slot/inert-intrinsic contract refuses them.
+
+The other nine scenarios cover CommonJS precedence/aliasing, defined browser
 target, delayed repeated AMD invocation, mutable exports and detached original
 methods, replacement/throwing/reentrant error sinks, publication-setter failure,
 factory failure before publication, and retained AMD factory after registration

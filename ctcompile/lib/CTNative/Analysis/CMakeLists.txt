@@ -10,6 +10,10 @@
 add_mlir_library(CTNativeAnalysis
   TypeInference.cpp
   ClosedCallable.cpp
+  ../HostContract/Contract.cpp
+  ../HostContract/Values.cpp
+  ../HostContract/Slots.cpp
+  ../HostContract/Analysis.cpp
   BindingTime/Analysis.cpp
   BindingTime/Effects.cpp
   BindingTime/EffectQuery.cpp

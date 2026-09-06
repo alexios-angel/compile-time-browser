@@ -60,17 +60,17 @@ bool lowering::replaceEnvironment(mlir::Operation * op) {
         const std::string builder = made->hasAttr(kNativeStoredCallable)
                                         ? "ctn_bind_" + cIdentifier(target)
                                         : "std::make_tuple";
-        result =
-            ec::CallOpaqueOp::create(at, op->getLoc(), mlir::TypeRange{made.getResult().getType()},
-                                     at.getStringAttr(builder), made.getUpvalues())
-                .getResult(0);
+        result = callWithConstValueOperands(at, op->getLoc(),
+                                            mlir::TypeRange{made.getResult().getType()},
+                                            at.getStringAttr(builder), made.getUpvalues())
+                     .getResult(0);
     } else if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op);
                read && op->hasAttr(kNativeEnvironmentRead)) {
         const auto callee = "std::get<" + std::to_string(read.getIndex()) + ">";
-        result =
-            ec::CallOpaqueOp::create(at, op->getLoc(), mlir::TypeRange{read.getResult().getType()},
-                                     at.getStringAttr(callee), mlir::ValueRange{read.getClosure()})
-                .getResult(0);
+        result = callWithConstValueOperands(
+                     at, op->getLoc(), mlir::TypeRange{read.getResult().getType()},
+                     at.getStringAttr(callee), mlir::ValueRange{read.getClosure()})
+                     .getResult(0);
     } else {
         return false;
     }

@@ -6,6 +6,11 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
   set(_bootstrap_data_probe "${CTBROWSER_MONOREPO_ROOT}/tools/check/bootstrap-data-probe.py")
   set(_bootstrap_data_source "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js")
   foreach(_mode commonjs browser amd)
+    add_test(NAME ctcompile_bootstrap_host_slots_${_mode}
+      COMMAND ${Python3_EXECUTABLE} "${CTBROWSER_MONOREPO_ROOT}/tools/check/bootstrap-host-slots.py"
+        --bootstrap "${_bootstrap_data_source}" --mode ${_mode}
+        --work "${CMAKE_CURRENT_BINARY_DIR}/bootstrap-host-slots/${_mode}"
+        --translate $<TARGET_FILE:ctjs-translate> --opt $<TARGET_FILE:ctjs-opt>)
     add_test(NAME ctcompile_bootstrap_data_${_mode}
       COMMAND ${Python3_EXECUTABLE} "${_bootstrap_data_probe}"
         --bootstrap "${_bootstrap_data_source}" --mode ${_mode}
@@ -26,4 +31,11 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
         --translate $<TARGET_FILE:ctjs-translate> --opt $<TARGET_FILE:ctjs-opt>
         --negative-control ${_control})
   endforeach()
+endif()
+
+if(CTCOMPILE_ENABLE_MLIR)
+  add_executable(ctcompile-test-host-contract HostContract.cpp)
+  target_link_libraries(ctcompile-test-host-contract PRIVATE CTNativeAnalysis MLIRParser)
+  ctcompile_target(ctcompile-test-host-contract)
+  add_test(NAME ctcompile_host_contract COMMAND ctcompile-test-host-contract)
 endif()

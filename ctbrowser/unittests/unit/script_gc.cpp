@@ -132,6 +132,41 @@ void test_symbol_registry_survives_a_collection() {
               "true");
 }
 
+void test_native_accessors_survive_a_collection() {
+    expect_gc("native accessor closures retain their cells", R"(
+        (function () {
+            var stored = {name: 'retained'};
+            Object.defineProperty(Array, 'held', {
+                get: function() { return stored.name; },
+                set: function(value) { stored = value; }
+            });
+        })();
+        gc();
+        var filler = [];
+        for (var i = 0; i < 400; i++) { filler.push({name: 'recycled'}); }
+        var before = Array.held;
+        Array.held = {name: 'updated'};
+        gc();
+        return before + '/' + Array.held;
+    )",
+              "retained/updated");
+    // Resolving the method before arguments must leave both its callable and
+    // original receiver rooted even when an argument removes every alias.
+    expect_gc("saved callee and receiver survive argument gc", R"(
+        var object = {name: 'receiver', get method() {
+            var captured = {name: 'callee'};
+            return function(value) { return captured.name + '/' + this.name + '/' + value; };
+        }};
+        function argument() {
+            object = null;
+            gc();
+            return 'argument';
+        }
+        return object.method(argument());
+    )",
+              "callee/receiver/argument");
+}
+
 // --- array builtins across a callback --------------------------------------
 //
 // Each of these holds a heap value in a C++ local across a call back into the
@@ -261,6 +296,7 @@ int main(int argc, char ** argv) {
     };
     run("bind", &test_bind_captures_survive_a_collection);
     run("symbol", &test_symbol_registry_survives_a_collection);
+    run("native-accessors", &test_native_accessors_survive_a_collection);
     run("map", &test_map_result_survives_a_collection);
     run("filter", &test_filter_result_survives_a_collection);
     run("flatmap", &test_flat_map_result_survives_a_collection);

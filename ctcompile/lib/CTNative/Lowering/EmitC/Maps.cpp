@@ -33,8 +33,8 @@ bool lowering::replaceMap(mlir::Operation * o) {
                    mapValueSpelling(map.getValueType()) + ">")
                       .str()
                 : ("ctnative::make_number_map<" + mapKeySpelling(map.getKeyType()) + ">").str();
-        swap(ec::CallOpaqueOp::create(b, where, mlir::TypeRange{made.getResult().getType()},
-                                      b.getStringAttr(callee), mlir::ValueRange{})
+        swap(callWithConstValueOperands(b, where, mlir::TypeRange{made.getResult().getType()},
+                                        b.getStringAttr(callee), mlir::ValueRange{})
                  .getResult(0));
         return true;
     }
@@ -60,20 +60,21 @@ bool lowering::replaceMap(mlir::Operation * o) {
         const auto helper = o->hasAttr(kNativeMapPresent) ? "get_present" : action;
         const auto name = b.getStringAttr(("ctnative::map_" + helper).str());
         if (action == "clear") {
-            ec::CallOpaqueOp::create(b, where, mlir::TypeRange{}, name, args);
+            callWithConstValueOperands(b, where, mlir::TypeRange{}, name, args);
             swap(absentConstant(b, where));
         } else if (action == "keys" || action == "values") {
             const auto localType = o->getResult(0).getType();
             const auto type = llvm::cast<ec::LValueType>(localType).getValueType();
             mlir::Value result =
-                ec::CallOpaqueOp::create(b, where, mlir::TypeRange{type}, name, args).getResult(0);
+                callWithConstValueOperands(b, where, mlir::TypeRange{type}, name, args)
+                    .getResult(0);
             mlir::Value local =
                 ec::VariableOp::create(b, where, localType, ec::OpaqueAttr::get(context, ""));
             ec::AssignOp::create(b, where, local, result);
             swap(local);
         } else {
-            swap(ec::CallOpaqueOp::create(b, where, mlir::TypeRange{o->getResult(0).getType()},
-                                          name, args)
+            swap(callWithConstValueOperands(b, where, mlir::TypeRange{o->getResult(0).getType()},
+                                            name, args)
                      .getResult(0));
         }
         return true;

@@ -47,8 +47,8 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
         return false;
     }
     needsNullableString = true;
-    swap(ec::CallOpaqueOp::create(b, where, mlir::TypeRange{result}, b.getStringAttr(helper),
-                                  operands)
+    swap(callWithConstValueOperands(b, where, mlir::TypeRange{result}, b.getStringAttr(helper),
+                                    operands)
              .getResult(0));
     return true;
 }

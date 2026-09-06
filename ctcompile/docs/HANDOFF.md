@@ -8,12 +8,20 @@ committing. There is no CI. Do not build on the small local machine.
 
 ## Current native staging checkpoint, 2026-09-06
 
-Final devbox gate: **431/431 CTests**, **135/135 lit cases**, **547.40 seconds**;
-all **503 C++ files** pass formatting. String-snapshot ASan/UBSan and leak checks
-passed at the preceding checkpoint. Boxed Bootstrap is freshly byte-identical.
+Final devbox gate: **436/436 CTests**, **137/137 lit cases**, **505.73 seconds**;
+all **517 C++ files** pass formatting. String-snapshot ASan/UBSan and leak checks
+passed at the preceding checkpoint.
 Default native coverage stays
 Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725**; exact Data probes remain
 **0/7, 0/7, 0/8 native**. Full Bootstrap initialization is still unfinished.
+
+[Const bindings](native-const-bindings.md) now qualify native C++ locals and
+by-value parameters using backward binding-mutability data flow. Writes, unknown
+reference uses and lvalue/capture aliases keep bindings writable. Explicit and
+deduced output agree, including exact const type pins and shallow pointer const.
+Loop/join storage remains mutable, while `catalog`, `score_1` and `score_2` gain
+const where their uses permit it. Compiler-owned helper operand contracts describe
+C++ const acceptance without claiming purity or immutable heap contents.
 
 [JavaScript source names](native-source-names.md) now survive into native C++.
 The sample's parameter remains `catalog`; its initial and returned scores use
@@ -38,7 +46,8 @@ Heap PE, direct-call specialization, deforestation and supercompilation remain
 opt-in. Type, effect, BTA and ownership proofs remain required. See the
 [defaults policy](native-optimization-defaults.md) and [roadmap](native-pe-roadmap.md).
 The default/disabled differential preserves eight observations and reduces its
-generated C++ from 7,366 to 6,701 bytes with readable literals and source names.
+generated C++ from 7,840 to 7,043 bytes with readable literals, source names and
+const bindings after the call-order correction.
 Coverage now accounts for pruned functions without shrinking the source denominator;
 historical admission floors run separately with defaults disabled.
 
@@ -49,11 +58,22 @@ insertion order and lifetime after mutation. The fixture admits 10/10 functions
 with 24 observations and passes ASan/UBSan/leak checks. The Map/Array identity and
 confinement proofs remain mandatory; arbitrary hosts and iterators are unsupported.
 
-The [Bootstrap host/export contract](native-bootstrap-host-contract.md) is designed
-but not implemented. Its source-derived oracle covers publication slots, AMD
-retention, mutable methods, receivers, exceptions and error reentry. Node passes
-11/11 cases; ctbrowser agrees on 9/11. Script-`this` fallback and callee/accessor
-evaluation order differ and are recorded explicitly, without native coverage claims.
+The first [checked host-slot analysis](native-host-slots.md) implements a
+fingerprinted closed-source contract, fresh allocation identity and own-data
+publication flow. It exposes usable edges only after the entire contract passes;
+unknown effects, stale manifests and repeated factory identities refuse. Exact
+CommonJS/browser probes find 24/23 candidate slot edges, but all three complete
+contracts remain refused and native admission stays unchanged. Connecting this
+proof to retained callables and supported host effects is still open.
+
+The [Bootstrap host/export oracle](native-bootstrap-host-contract.md) covers
+publication slots, AMD retention, mutable methods, receivers, exceptions and
+error reentry. Correct callee-before-argument bytecode and native-function
+accessors bring ctbrowser agreement to 10/11 cases; Node passes 11/11.
+Script-`this` fallback is the remaining mismatch. Accessor closures survive
+forced GC. The compiler change intentionally changes boxed Bootstrap output to
+11,226,071 bytes, SHA-256
+`721e6095554b20eb2241367283ae1b02c032c771c858ca582af974c6754c2528`.
 
 Six readable JavaScript/native-C++ sample pairs live outside the checkout in
 `~/Downloads/claude/ctcompile-samples/`. They cover loops, strings, snapshots,
@@ -102,9 +122,10 @@ helper pruning. Pruning follows symbolic and numeric closure edges, retaining
 original boxed callees and published declarations. See their linked implementation
 documents and the [source layout](source-layout.md).
 
-Full native Bootstrap remains unfinished. Next, implement the checked host/effect
-and export contract for exact Data initialization. UMD publication, wrapper
-receiver/callee behavior and console errors are still open. Its unchecked
+Full native Bootstrap remains unfinished. Next, extend the checked host-slot
+prerequisite with supported intrinsic/error providers and retained callable
+publication, then consume the live proof in ownership/call analysis. Script-`this`
+fallback and console errors are still open. Its unchecked
 mixed-result property access also needs stronger
 presence/refinement evidence or an exception boundary. Keep exact vendor probe
 coverage distinct from the component fixtures. Recursive Lumberhack fusion,

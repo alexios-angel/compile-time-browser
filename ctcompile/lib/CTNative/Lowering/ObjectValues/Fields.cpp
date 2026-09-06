@@ -68,14 +68,14 @@ bool lowering::replaceIdentityField(mlir::Operation * op) {
     const auto storage = carrierType(context, carrier::nullable);
     if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
         auto loaded =
-            ec::CallOpaqueOp::create(b, where, mlir::TypeRange{storage},
-                                     b.getStringAttr("ctnative::object_get_" + found->second),
-                                     mlir::ValueRange{get.getObject()});
+            callWithConstValueOperands(b, where, mlir::TypeRange{storage},
+                                       b.getStringAttr("ctnative::object_get_" + found->second),
+                                       mlir::ValueRange{get.getObject()});
         get.getResult().replaceAllUsesWith(
             convertScalar(b, where, loaded.getResult(0), get.getResult().getType()));
     } else {
         auto set = llvm::cast<ctjs::SetPropertyOp>(op);
-        ec::CallOpaqueOp::create(
+        callWithConstValueOperands(
             b, where, mlir::TypeRange{}, b.getStringAttr("ctnative::object_set_" + found->second),
             mlir::ValueRange{set.getObject(), convertScalar(b, where, set.getValue(), storage)});
     }

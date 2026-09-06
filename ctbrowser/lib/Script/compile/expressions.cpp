@@ -626,13 +626,30 @@ void compiler_impl::emit_argument_array(std::span<const std::int32_t> args, std:
     }
 }
 
-void compiler_impl::compile_spread_call(const vp::node & n, std::uint16_t dst) {
-    const std::span<const std::int32_t> args = kids(n);
-    const vp::node & callee = at(n.a);
-    const std::uint32_t mark = reg_mark();
-    const std::uint16_t target = alloc_reg();
-    const std::uint16_t self = alloc_reg();
+namespace {
+bool call_has_receiver(const vp::node & callee) {
+    return callee.kind == vp::nk::member || callee.kind == vp::nk::index ||
+           callee.kind == vp::nk::opt_member || callee.kind == vp::nk::opt_index ||
+           callee.kind == vp::nk::super_lit;
+}
+} // namespace
 
+void compiler_impl::emit_optional_guard(std::uint16_t value) {
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t nullish = alloc_reg();
+    proto().emit(instruction{op::load_null, nullish});
+    const std::uint16_t test = alloc_reg();
+    proto().emit(instruction{op::loose_equal, test, value, nullish});
+    optional_exits_.push_back(proto().emit(instruction{op::jump_if_true, test}));
+    release_to(mark);
+}
+
+// Evaluate the reference and GetValue before evaluating any argument. Keeping
+// the callable and receiver in separate registers also preserves both when an
+// argument replaces the method or reassigns the variable naming its receiver.
+void compiler_impl::compile_call_target(const vp::node & n, std::uint16_t target,
+                                        std::uint16_t self) {
+    const vp::node & callee = at(n.a);
     const bool super_method =
         callee.kind == vp::nk::member && callee.a >= 0 && at(callee.a).kind == vp::nk::super_lit;
     if (callee.kind == vp::nk::super_lit || super_method) {
@@ -640,20 +657,35 @@ void compiler_impl::compile_spread_call(const vp::node & n, std::uint16_t dst) {
         const std::string name = super_method ? std::string{callee.text} : "constructor";
         proto().emit(instruction{op::get_prop, target, target, name_operand(name)});
         proto().emit(instruction{op::load_this, self});
-    } else if (callee.kind == vp::nk::member) {
+    } else if (call_has_receiver(callee)) {
         compile_expr(callee.a, self);
-        proto().emit(
-            instruction{op::get_prop, target, self, name_operand(std::string{callee.text})});
-    } else if (callee.kind == vp::nk::index) {
-        compile_expr(callee.a, self);
-        const std::uint16_t key = alloc_reg();
-        compile_expr(callee.b, key);
-        proto().emit(instruction{op::get_index, target, self, key});
+        if (callee.kind == vp::nk::opt_member || callee.kind == vp::nk::opt_index) {
+            emit_optional_guard(self);
+        }
+        if (callee.kind == vp::nk::member || callee.kind == vp::nk::opt_member) {
+            proto().emit(
+                instruction{op::get_prop, target, self, name_operand(std::string{callee.text})});
+        } else {
+            const std::uint32_t mark = reg_mark();
+            const std::uint16_t key = alloc_reg();
+            compile_expr(callee.b, key);
+            proto().emit(instruction{op::get_index, target, self, key});
+            release_to(mark);
+        }
     } else {
         compile_expr(n.a, target);
-        proto().emit(instruction{op::load_undef, self});
     }
+    if (n.kind == vp::nk::opt_call) { emit_optional_guard(target); }
+}
 
+void compiler_impl::compile_spread_call(const vp::node & n, std::uint16_t dst) {
+    const std::span<const std::int32_t> args = kids(n);
+    const vp::node & callee = at(n.a);
+    const std::uint32_t mark = reg_mark();
+    const std::uint16_t target = alloc_reg();
+    const std::uint16_t self = alloc_reg();
+    compile_call_target(n, target, self);
+    if (!call_has_receiver(callee)) { proto().emit(instruction{op::load_undef, self}); }
     const std::uint16_t argv = alloc_reg();
     emit_argument_array(args, argv);
     // `super(...)` - NOT `super.m(...)` - carries new.target into the base
@@ -674,110 +706,19 @@ void compiler_impl::compile_call(const vp::node & n, std::uint16_t dst) {
     const vp::node & callee = at(n.a);
     const std::uint32_t mark = reg_mark();
     const std::uint16_t base = alloc_reg();
-
-    const bool super_method =
-        callee.kind == vp::nk::member && callee.a >= 0 && at(callee.a).kind == vp::nk::super_lit;
-    if (callee.kind == vp::nk::super_lit || super_method) {
-        // `super(...)` is the parent CONSTRUCTOR run against this same
-        // object - it does not make a new one - so the receiver is `this`
-        // in both forms.
-        emit_super_base(base);
-        const std::string name = super_method ? std::string{callee.text} : "constructor";
-        proto().emit(instruction{op::get_prop, base, base, name_operand(name)});
-        for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
-        const std::uint16_t self = alloc_reg();
-        proto().emit(instruction{op::load_this, self});
-        // `super(...)` - NOT `super.m(...)` - carries new.target into the
-        // base constructor. THIS is the path a plain super() takes; the
-        // spread form a few hundred lines up is the other one, and marking
-        // only that one left the common case still reading undefined.
-        if (callee.kind == vp::nk::super_lit) { proto().emit(instruction{op::pass_new_target}); }
-        proto().emit(
-            instruction{op::call_receiver, base, static_cast<std::uint16_t>(args.size()), self});
-        proto().emit(instruction{op::move, dst, base});
-        release_to(mark);
-        return;
-    }
-
-    // `x?.m(...)` IS A METHOD CALL. The parser gives it as call(opt_member(x,
-    // 'm')), so the callee is an opt_member and this fell through to the plain
-    // path below - which calls the function with NO receiver. `this` was
-    // undefined inside the method, and for a primitive receiver that means the
-    // wrong answer rather than an error: `s?.trim()` was undefined,
-    // `(5)?.toFixed(1)` was NaN, `[1,2]?.join('-')` was "".
-    //
-    // It cost every colour string in p5.js. `parse$4` opens with `String(str)
-    // ?.trim()`, so every `fill('#ff0000')`, `color('red')` and
-    // `background('#fff')` threw "Invalid color string" - and an object
-    // receiver hid it, because a method that ignores `this` works either way.
-    const bool optional_member =
-        callee.kind == vp::nk::opt_member || callee.kind == vp::nk::opt_index;
-    if (optional_member) {
-        compile_expr(callee.a, base); // the receiver, which may be nullish
-        // The short-circuit, released before the argument window is reserved
-        // so the arguments stay contiguous from base+1.
-        {
-            const std::uint32_t guard = reg_mark();
-            const std::uint16_t nullish = alloc_reg();
-            proto().emit(instruction{op::load_null, nullish});
-            const std::uint16_t test = alloc_reg();
-            proto().emit(instruction{op::loose_equal, test, base, nullish});
-            optional_exits_.push_back(proto().emit(instruction{op::jump_if_true, test}));
-            release_to(guard);
-        }
-        if (callee.kind == vp::nk::opt_member) {
-            for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
-            proto().emit(instruction{op::call_method, base, static_cast<std::uint16_t>(args.size()),
-                                     name_operand(std::string{callee.text})});
-        } else {
-            std::vector<std::uint16_t> arg_regs;
-            arg_regs.reserve(args.size());
-            for (std::size_t i = 0; i < args.size(); ++i) { arg_regs.push_back(alloc_reg()); }
-            const std::uint16_t key = alloc_reg();
-            compile_expr(callee.b, key);
-            for (std::size_t i = 0; i < args.size(); ++i) { compile_expr(args[i], arg_regs[i]); }
-            proto().emit(
-                instruction{op::call_computed, base, static_cast<std::uint16_t>(args.size()), key});
-        }
-        proto().emit(instruction{op::move, dst, base});
-        release_to(mark);
-        return;
-    }
-
-    if (callee.kind == vp::nk::member) {
-        compile_expr(callee.a, base); // the receiver
-        for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
-        const std::uint16_t name = name_operand(std::string{callee.text});
-        proto().emit(
-            instruction{op::call_method, base, static_cast<std::uint16_t>(args.size()), name});
-    } else if (callee.kind == vp::nk::index) {
-        // `obj[name](...)` is a METHOD call: the receiver is obj. Compiling
-        // it as a plain call leaves `this` undefined inside the method.
-        compile_expr(callee.a, base); // the receiver
-        // THE ARGUMENT WINDOW IS RESERVED BEFORE THE KEY IS EVALUATED.
-        //
-        // call_computed reads its arguments from base+1 upwards, so base+1
-        // belongs to argument 0 and to nothing else. Evaluating the key into
-        // a register first took base+1, pushed the arguments up one, and the
-        // VM then read the KEY as argument 0 and dropped the last argument -
-        // `t['k'](1, 2, 3)` arrived as `('k', 1, 2)`.
-        //
-        // Reserving first and filling after keeps both rules: the arguments
-        // are contiguous from base+1, and the key is still evaluated BEFORE
-        // them, which is the order JavaScript specifies.
-        std::vector<std::uint16_t> arg_regs;
-        arg_regs.reserve(args.size());
-        for (std::size_t i = 0; i < args.size(); ++i) { arg_regs.push_back(alloc_reg()); }
-        const std::uint16_t key = alloc_reg();
-        compile_expr(callee.b, key);
-        for (std::size_t i = 0; i < args.size(); ++i) { compile_expr(args[i], arg_regs[i]); }
-        proto().emit(
-            instruction{op::call_computed, base, static_cast<std::uint16_t>(args.size()), key});
-    } else {
-        compile_expr(n.a, base);
-        for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
-        proto().emit(instruction{op::call, base, static_cast<std::uint16_t>(args.size())});
-    }
+    // The bytecode ABI reads arguments at base+1. Reserve that window before
+    // allocating the saved receiver or evaluating a computed member key.
+    std::vector<std::uint16_t> arg_regs;
+    arg_regs.reserve(args.size());
+    for (std::size_t i = 0; i < args.size(); ++i) { arg_regs.push_back(alloc_reg()); }
+    const bool receiver = call_has_receiver(callee);
+    const std::uint16_t self = receiver ? alloc_reg() : base;
+    compile_call_target(n, base, self);
+    for (std::size_t i = 0; i < args.size(); ++i) { compile_expr(args[i], arg_regs[i]); }
+    if (callee.kind == vp::nk::super_lit) { proto().emit(instruction{op::pass_new_target}); }
+    proto().emit(instruction{receiver ? op::call_receiver : op::call, base,
+                             static_cast<std::uint16_t>(args.size()),
+                             receiver ? self : std::uint16_t{0}});
     proto().emit(instruction{op::move, dst, base});
     release_to(mark);
 }
@@ -841,6 +782,10 @@ void compiler_impl::compile_chain(std::int32_t idx, std::uint16_t dst) {
 }
 
 void compiler_impl::compile_optional(const vp::node & n, std::uint16_t dst) {
+    if (n.kind == vp::nk::opt_call) {
+        compile_call(n, dst);
+        return;
+    }
     const std::uint32_t mark = reg_mark();
     const std::uint16_t object = alloc_reg();
     compile_expr(n.a, object);
@@ -858,13 +803,6 @@ void compiler_impl::compile_optional(const vp::node & n, std::uint16_t dst) {
         const std::uint16_t key = alloc_reg();
         compile_expr(n.b, key);
         proto().emit(instruction{op::get_index, dst, object, key});
-    } else { // opt_call
-        const std::span<const std::int32_t> args = kids(n);
-        const std::uint16_t base = alloc_reg();
-        proto().emit(instruction{op::move, base, object});
-        for (const std::int32_t arg : args) { compile_expr(arg, alloc_reg()); }
-        proto().emit(instruction{op::call, base, static_cast<std::uint16_t>(args.size())});
-        proto().emit(instruction{op::move, dst, base});
     }
     // The exit belongs to the CHAIN, not to this link. compile_chain
     // patches every one of them to a single point past the whole thing.
