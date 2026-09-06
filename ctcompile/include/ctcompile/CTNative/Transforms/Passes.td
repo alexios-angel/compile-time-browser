@@ -39,7 +39,9 @@ def CTNativePrecompute : Pass<"ctnative-precompute", "mlir::ModuleOp"> {
     Option<"maxSteps", "max-steps", "unsigned", "100000", "Maximum symbolic analysis and rewrite work">,
     Option<"report", "report", "bool", "false", "Report precomputed expressions and control">
   ];
-  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect", "::mlir::arith::ArithDialect"];
+  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect",
+                          "::mlir::arith::ArithDialect", "::mlir::pdl::PDLDialect",
+                          "::mlir::pdl_interp::PDLInterpDialect"];
 }
 
 def CTNativeSpecialize : Pass<"ctnative-specialize", "mlir::ModuleOp"> {
@@ -81,7 +83,9 @@ def CTNativeSupercompile : Pass<"ctnative-supercompile", "mlir::ModuleOp"> {
     Option<"maxGrowth", "max-growth", "unsigned", "512", "Maximum added operations per source kernel; generic code remains">,
     Option<"report", "report", "bool", "false", "Report kernels, configurations, folds and whistles">
   ];
-  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect", "::mlir::arith::ArithDialect"];
+  let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect",
+                          "::mlir::arith::ArithDialect", "::mlir::pdl::PDLDialect",
+                          "::mlir::pdl_interp::PDLInterpDialect"];
 }
 
 def CTNativeDeforest : Pass<"ctnative-deforest", "mlir::ModuleOp"> {

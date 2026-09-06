@@ -313,6 +313,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // be spelled until all of them have been seen.
         lower.censusScalars(accepted);
         lower.censusShapes(accepted);
+        lower.censusIdentityFields(accepted);
         lower.censusEnvironments(accepted);
         lower.censusMethodTables(accepted);
 

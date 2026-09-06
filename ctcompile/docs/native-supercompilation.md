@@ -2,14 +2,15 @@
 
 Design baseline: `46e94cb` plus the native partial-evaluation tracks described in
 [the roadmap](native-pe-roadmap.md). This document specifies an independently
-optional supercompilation pass and its first implementation boundary. It is not a
+optional supercompilation pass and its bounded scalar implementation. It is not a
 claim that the broader heap-aware design or all of the gates below have shipped.
 
 Start with a CTJS configuration driver for private, capture-free, self-recursive
 functions with known primitive arguments. Drive the known parts of their bodies,
 retain unknown branches, and fold repeated configurations into calls to residual
-functions. Stop growing configurations at an embedding whistle and keep a generic
-runtime call. This provides a small foundation for recursive specialization while
+functions. Generalize growing configurations at an embedding whistle by retaining
+their common exact arguments; keep a generic runtime call when no static argument
+remains. This provides a small foundation for recursive specialization while
 the existing heap evaluator handles proved initialization.
 
 The Bootstrap application is later specialization of closed component/configuration
@@ -105,16 +106,16 @@ The implemented ODS API is:
 | `max-steps` | Bound local driving work across the module, including work spent on rejected drafts. Never reset this allowance for every candidate. |
 | `max-residual-ops` | Bound newly retained residual operations across the module. |
 | `max-growth` | Bound added operations for one source function, summed over all its retained variants. Since its original generic body remains, total family size is `original + added`; the allowance is not `original + added allowance` for the new variants alone. |
-| `report` | Print selected kernels, configurations, folds, whistles and residual operations. Module annotations also record steps; refused source functions carry reasons. |
+| `report` | Print selected kernels, configurations, folds, whistles, generalizations and residual operations. Module annotations also record steps; refused source functions carry reasons. |
 
 These are work and IR-size limits, not C++ byte-size or runtime guarantees.
 Zero allowances must refuse safely. Use checked/wide arithmetic for cost sums.
 
-Suggested file boundaries are `Supercompilation/Driver.h`, `Driver.cpp`,
+The implementation uses `Supercompilation/Driver.h`, `Driver.cpp`,
 `Control.cpp` and `Pass.cpp`. `Driver` owns a source's temporary process graph and
-residual drafts; `Control` owns admission and the whistle; `Pass` owns module-wide
-budgets, candidate discovery and publication. Avoid growing the concrete heap
-evaluator into a second graph controller.
+residual drafts; `Control` owns admission, the whistle and common bindings; `Pass`
+owns module-wide budgets, candidate discovery and publication. Avoid growing the
+concrete heap evaluator into a second graph controller.
 
 ### Admission and configuration identity
 
@@ -164,17 +165,23 @@ redirecting original calls:
 
 ```text
 drive(configuration, ancestor history):
+    if no known argument remains:
+        return the original generic call
+    charge work; reject the source attempt if its allowance is exhausted
     if an exact promise exists:
         return its residual call                         // fold first
     if an ancestor shape embeds this configuration:
-        return the original generic call                 // whistle
+        retain only their common exact argument bindings // whistle
+        drive this weaker child with the same history    // generalize
     if work or graph allowance is exhausted:
         reject the source attempt                        // identity alternative
     create a fresh residual symbol and record its promise
     drive a draft of the source under its known arguments
     select proved branches; retain both arms of unknown branches
     for each retained self call:
-        derive its argument configuration and drive/fold/stop it
+        derive its argument configuration
+        leave every dynamic parent position dynamic
+        drive/fold/generalize/stop it
     record the finished residual definition
 ```
 
@@ -204,8 +211,9 @@ The residual `true` configuration retains the runtime `n <= 0` test, removes the
 mode branch and recursively calls its own promised residual function. Its result
 depends on dynamic inputs; it cannot be replaced by a compile-time constant.
 Repeated exact seeds share a residual definition. A changed numeric static
-argument encounters the growth policy and retains a generic recursive call;
-there is no requirement to unroll a sequence of changing constants.
+argument becomes a dynamic parameter while common exact modes remain static.
+If no static argument survives, retain a generic recursive call; there is no
+requirement to unroll a sequence of changing constants.
 
 Keep at least one original external generic call for native inference evidence.
 The current inference system derives information from actual call routes; merely
@@ -226,9 +234,9 @@ graph with a backedge to a promise created before driving, plus correctly retain
 dynamic control. Substituting literals in a nonrecursive clone, or unrolling a
 recursive function a fixed number of times, is not enough. It does not yet provide
 the papers' general nested-context driving, recursive constructor fusion,
-anti-unification, or heap-aware supercompilation.
+structured or relational anti-unification, or heap-aware supercompilation.
 
-## Termination control and later generalization
+## Termination control and bounded scalar generalization
 
 For the first whistle, represent the argument tuple as a finite tree whose leaves
 are `Dynamic`, `Number`, `String`, `Null`, `Undefined`, `True` or `False`.
@@ -258,23 +266,36 @@ step limit, and graph expansion has history/context limits. If a later splitter
 restarts driving after a stop, prove it descends to smaller states or revisits
 only a finite set; resetting history indefinitely defeats a whistle.
 
-**First implementation: whistle means a retained generic call. Generalization is
-not implemented by naming that fallback a generalization.**
+The scalar generalizer creates a weaker child at the whistle [R18 §2.3].
+For the ancestor bindings `A` and child bindings `B`, construct `G` position by
+position: retain an exact primitive attribute only where `A[i] == B[i]`, and use
+an ordinary dynamic parameter elsewhere. The unchanged actual arguments provide
+the substitutions `A = G[old_args]` and `B = G[new_args]`. Numeric bit patterns
+and string bytes remain exact in this comparison. A common boolean mode can
+remain specialized while a growing numeric accumulator becomes dynamic.
 
-The next scalar generalizer should compute a configuration `G` and substitutions
-`old = G[old_args]`, `new = G[new_args]`. Preserve common source/control structure
-and stable literal modes; turn growing accumulator components into residual
-parameters. Preserve relationships between repeated variables, and evaluate each
-substitution expression once at its original strict evaluation point. Explicit
-SSA bindings provide the role of the papers' `let` expressions.
+Create a new promise for `G` and drive a fresh clone of the original kernel.
+The already-driven ancestor keeps its own key and body. This child strategy
+requires no ancestor replacement or subtree restart; merely renaming an existing
+specialized body to `G` would be unsound. Exact matching runs before every whistle,
+including when `G` already has a pending promise. If no static binding remains,
+keep the original generic call. The existing single-seed growth case therefore
+still selects its generic boundary.
 
-If `G` generalizes an ancestor, replace that ancestor and invalidate/rebuild all
-dependent draft nodes and promises transactionally [R18 §2.3]. Merely changing its
-memo key while retaining the old specialized body is unsound. For a bounded first
-generalizer, static positions may only become dynamic, never become static again
-during that attempt; bound restarts as well. This gives a finite weakening order
-in addition to the embedding check. More expressive generalization requires its
-own termination argument.
+Every position that is dynamic in a parent configuration remains dynamic in its
+recursive children, even if a later call supplies a literal in that position.
+This conservative policy makes forgotten slots stay forgotten, makes a promise's
+binding tuple sufficient to determine its driving policy, and gives a finite
+weakening order along each path. Independent external seeds can still retain
+their own exact arguments. Context, local work and residual-size allowances also
+bound the new promises; exhaustion rejects the entire source attempt.
+
+Residual function signatures and all call operands keep their original order.
+An expression whose static binding is forgotten remains an SSA producer at its
+existing evaluation point, and its result is passed to the new parameter. This
+preserves repeated uses, coercions, argument effects and strict evaluation without
+duplicating substitution expressions. Heap and relational generalization remain
+outside this entry-configuration slice.
 
 ## Heap identities, versions and effects: the next representation
 
@@ -372,7 +393,7 @@ options and measure emitted C++ size and runtime separately.
 
 ## Acceptance gates and staged follow-up
 
-The first implementation is present in `Supercompilation/`. Its source fixture
+The original scalar fixture remains covered by `Supercompilation/`. It
 admits all 14 functions, creates five residual configurations, folds six repeated
 configurations and retains one generic call at a whistle. All six native CTests
 pass, including ordinary/deduced output, GCC/Clang, no-VM checks and a deliberately
@@ -381,13 +402,25 @@ recursive folding, retained argument effects, divergent residual calls, repeated
 passes, forged metadata and each independent budget. Integration and vendor
 measurements are recorded in [the roadmap](native-pe-roadmap.md).
 
+The [generalization fixture](../test/native-supercompilation-generalization-fixture.js)
+drives three numeric/string/reset kernels into 14 configurations, with 12 folds,
+nine whistles and nine generalizations. The graph contains 320 residual operations;
+native lowering admits all 23 original/residual functions. Its 16 numeric
+observations include complete string equality checks and argument-effect order.
+The [dedicated lit test](../test/CTNative/supercompilation-generalization.mlir)
+also pins exact signed-zero/NaN generalization, unchanged ancestor bodies, promise
+reuse in both directions between external and generalized entries, literal-reset
+monotonicity, rollback after partial construction, and repeated-pass stability.
+
 The first slice needs both structural and executable evidence:
 
 | Gate | Required observation |
 |---|---|
 | Invariant recursive mode with runtime counter/accumulator | A residual function calls its own promise; the static mode branch disappears; the runtime base-case branch remains; results agree for empty/base and several recursive cases. |
 | Repeated seeds and different primitive modes | Exact seeds reuse code; distinct values do not alias memo entries. Preserve at least one actual generic source call. |
-| Changing static numeric accumulator | A whistle retains a generic recursive call; compilation terminates within limits without manufacturing infinitely many variants. |
+| Changing numeric or string accumulator with a stable mode | A whistle creates a new residual child retaining the common exact bindings; its dynamic accumulator remains a runtime parameter. The original exact entry keeps its own body, and repeated generalized children share a promise. |
+| Growth with no common static argument | Retain a generic recursive call; compilation terminates within limits without manufacturing infinitely many variants. |
+| Literal reset after generalization | A dynamic parameter remains dynamic along both growth and literal-reset edges. A promise reached by another entry uses the same policy. |
 | Numeric and coercion edges | Signed zero, NaN, infinities, boolean/number distinctions and supported literal coercions agree with reference execution; no floating-point reassociation. |
 | Dynamic argument evaluation | Effectful caller argument producers remain once and in order even if specialization makes the corresponding formal unused. |
 | Refused bodies | Heap mutations, dynamic globals, host calls, closure/cell state, mutual recursion, constructor state and unsupported control remain unchanged. |
@@ -402,9 +435,9 @@ finite effect/throw probes where supported for runtime order checks.
 Add heap support only with tests for shared versus equal-but-distinct nodes,
 independent factory invocations, alias writes across calls, old snapshots after
 mutation, Map object keys and order, immutable closure captures, dynamic captured
-state and rollback after a failed nested evaluator call. Then add scalar
-generalization tests with growing accumulators and changed variable relations,
-followed by compact multi-result tests that demonstrate avoided code duplication.
+state and rollback after a failed nested evaluator call. Extend scalar
+generalization only with explicit proofs and tests for changed variable relations,
+then add compact multi-result tests that demonstrate avoided code duplication.
 
 Each stage remains optional and reports its own proof boundary. Run source
 observations, focused lit checks and the native/deduced pipelines on the devbox,

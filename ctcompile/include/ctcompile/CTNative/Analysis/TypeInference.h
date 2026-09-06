@@ -221,6 +221,9 @@ private:
     // closed-shape objects only; built in initialize().
     llvm::DenseMap<std::pair<mlir::Value, llvm::StringRef>, llvm::SmallVector<mlir::Value, 2>>
         fieldStores_;
+    // Owning object families share a scalar field schema, not runtime identity.
+    llvm::DenseMap<std::pair<int64_t, llvm::StringRef>, llvm::SmallVector<mlir::Value, 2>>
+        identityFieldStores_;
     /// PHASE 59 SLICE 2 STEP 3, THE FIELD HALF: the same key, indexed by the
     /// STORE'S OWN object value and holding the `ctjs.set_property` OPERATIONS
     /// rather than the values they wrote.

@@ -79,6 +79,12 @@ struct lowering {
     // no longer reads as a closed create_object.
     llvm::DenseMap<mlir::Operation *, std::string> accessKey; // get/set -> member name
     llvm::DenseMap<mlir::Operation *, mlir::Type> accessType;
+    std::set<std::string> identityFields;
+    llvm::DenseMap<mlir::Operation *, std::string> identityAccess;
+    void censusIdentityFields(llvm::ArrayRef<ctjs::FuncOp> accepted);
+    std::string identityDefinition() const;
+    std::string identityFieldHelpers() const;
+    bool replaceIdentityField(mlir::Operation * op);
     llvm::StringMap<mlir::Type> resultTypes;
     llvm::StringMap<llvm::SmallVector<mlir::Type>> parameterTypes;
     // PHASE 57A. Decided while the IR is still ctjs, for fieldsOf()'s reason:

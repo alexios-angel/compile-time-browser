@@ -8,68 +8,66 @@ committing. There is no CI. Do not build on the small local machine.
 
 ## Current native staging checkpoint, 2026-09-05
 
-Final devbox gate: **406/406 CTests**, **123/123 lit cases**, **461.12 seconds**;
-all **482 C++ files** pass formatting. Object-value and reachability fixtures
-also pass ASan/UBSan/leak checks. Boxed Bootstrap is byte-identical; native
-Bootstrap remains **19/574**, and exact Data probes remain **0/7, 0/7, 0/8**.
+Final devbox gate: **418/418 CTests**, **128/128 lit cases**, **451.19 seconds**;
+all **489 C++ files** pass formatting. Owned-field C++ passes ASan/UBSan with
+leak detection. Boxed Bootstrap is byte-identical. Default native coverage stays
+Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725**; exact Data probes remain
+**0/7, 0/7, 0/8 native**. Full Bootstrap initialization is still unfinished.
 
-The [roadmap](native-pe-roadmap.md) records the integrated validation and optional
-controls. Heap PE, precomputation, direct-call specialization, deforestation,
-supercompilation and unreachable-helper pruning are separate opt-in passes. The default native pipeline enables
-none of them; dependent BTA, type, effect and ownership proofs remain mandatory.
+The [roadmap](native-pe-roadmap.md) records coverage and optional controls.
+Heap PE, precomputation, direct-call specialization, deforestation,
+supercompilation and unreachable-helper pruning remain independent opt-in passes.
+The default native pipeline enables none; type, effect, BTA and ownership proofs
+remain mandatory.
 
-The compiler heap now represents immutable capture cells and latent closures.
-Five factories residualize 21 live nodes; all 19 fixture functions compile
-natively and seven observations check sharing, freshness, object-key identity,
-owned strings and post-return lifetime. Closure bodies still run only when called.
-The native identity carrier can pass through proved immutable environments.
+[Owned scalar component fields](native-object-fields.md) now preserve fields
+through the exact Bootstrap getter and owning Map payloads. Explicit C++ members
+hold number/boolean/null/undefined values; aliases retain one mutable owner after
+factory return, replacement, removal and clearing. Field schemas start from
+undefined even when another allocation stores the same key. Mixed lookup results
+need an exact SSA identity guard or optional-object truthiness guard. The fixture
+admits 15/15 functions and compares 29 observations, including reversed guards,
+missing fields and distinct allocations. ASan/UBSan/leak checks pass.
 
-`Symbolic/` preserves runtime producers while folding proved primitive results;
-`Specialization/` creates exact-tuple variants with generic inference evidence;
-`Deforestation/` implements a restricted Lumberhack-style Map projection strategy.
-Its local-slot proof requires the producer assignment before every observed read.
-BTA re-enqueues callers when full summaries change and keeps original parameters
-dynamic when alternate symbolic targets retain their closure for boxed dispatch.
-The boxed regression distinguishes the correct result 1020 from the former 1010.
+[PE call-target proofs](native-pe-call-proof.md) close a concrete wrong-code route:
+a native variant and the retained boxed callable could both return undefined while
+mutating the caller's object differently. The evaluator now resolves actual
+callable identity and checks alternate bodies from copies of the same pre-call
+heap. Exact primitive attributes, anchored old identities, bijective fresh
+identities, aliases and ordered Map entries must agree under shared work limits.
+Disagreement retains the call through the existing transactional prefix path.
+This proves a concrete evaluation, not arbitrary runtime dispatch equivalence.
 
-`Supercompilation/` implements a first recursive scalar driver: exact pending
-promises, dynamic branch residualization, a finite-shape embedding whistle,
-transactional identity/driven alternatives and independent work/growth budgets.
-Its fixture has five configurations, six folds and one generic whistle boundary;
-all 14 functions are native. Generalization, heap-aware configurations and full
-multi-result search remain planned. Research from all five supercompilation and
-both PE PDFs is synthesized in [the supercompiler design](native-supercompilation.md)
-and [the modern PE design](native-modern-pe.md).
+[Scalar supercompiler generalization](native-supercompilation.md) creates a child
+configuration retaining only static arguments shared with a whistled ancestor.
+Forgotten positions stay dynamic through literal resets; ancestor promises and
+bodies remain unchanged. Exact folding runs first, and budgets retain the generic
+alternative. The new fixture has 14 configurations, 12 folds and 9 generalizations;
+all 23 functions are native with 16 matching observations. Heap-aware contexts,
+generalization over heaps and multi-result search remain planned.
 
-The current continuation adds an owning object/scalar Map payload for the exact
-`t.has(e) && t.get(e).get(i) || null` expression. Property-free identities retain
-ownership across replacement, deletion, clearing, calls, immutable captures and
-loops. Scalar tags and freshness are preserved; fields, object coercions, host
-publication and object-valued snapshots still refuse. A bounded inert-slot proof
-prevents lift placeholders from conflating unrelated value families.
+[Precomputation](native-precomputation.md) now expresses six scalar replacements
+in PDLL. Invocation-scoped native callbacks consult the analysis; PDLL constructs
+constants and replaces roots. Runtime producers, budget charges and native region
+splicing retain their previous semantics. LLVM 23 supports captured callbacks;
+both precompute and supercompile declare the required PDL dialect dependencies.
+The differential-test harness also accepts CMake's wrapped diagnostic whitespace
+while still requiring the intended wrong-output failure.
 
-Conditional BTA effect queries preserve disjoint fresh local heaps across runtime
-calls. They resolve own-field/Map clauses before invalidating written reachable
-graphs, including Map keys and captures. Calls/results remain dynamic. Both BTA
-call paths check actual callee identity; this does not establish a general
-cross-tier equivalence proof for the independent whole-factory PE evaluator.
+Earlier implemented stages remain covered: immutable closure/cell heaps,
+conditional BTA effect queries through fields/Maps/captures, exact-tuple direct
+specialization, restricted Lumberhack snapshot projection and bounded private
+helper pruning. Pruning follows symbolic and numeric closure edges, retaining
+original boxed callees and published declarations. See their linked implementation
+documents and the [source layout](source-layout.md).
 
-The optional `--ctnative-prune-unreachable` pass removes private functions only
-after a complete graph proof. Symbol and numeric closure edges both retain
-bodies, including original boxed callees. The integration fixture removes two
-orphan variants after PE and keeps the published generic callable executable.
-Published top-level declarations need a separate export-observation contract.
-
-Full native Bootstrap is still unfinished. The exact vendor Data probes retain
-fieldful payloads, UMD publication, wrapper receiver/callee behavior, string-key
-snapshots/Array.from and console error paths. Next, add owned component fields
-and one checked host/effect contract with explicit identity and export behavior.
-For PE, build on the conditional query without relaxing other module guards.
-For supercompilation, scalar generalization precedes heap-aware contexts.
-
-Implementations stay in small named folders; [source-layout.md](source-layout.md)
-maps their responsibilities. Current native corpus counts and boxed Bootstrap's
-output hash belong to the roadmap, rather than the historical numbers below.
+Full native Bootstrap remains unfinished. Next, establish one checked host/effect
+and export contract for exact Data initialization. UMD publication, wrapper
+receiver/callee behavior, string-key snapshots/Array.from and console errors are
+still open. Its unchecked mixed-result property access also needs stronger
+presence/refinement evidence or an exception boundary. Keep exact vendor probe
+coverage distinct from the component fixtures. Recursive Lumberhack fusion,
+shared mutable capture environments and region splitting remain separate work.
 
 ## Earlier compiler bring-up checkpoint
 

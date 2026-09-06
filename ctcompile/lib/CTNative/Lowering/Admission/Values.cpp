@@ -339,7 +339,10 @@ bool admission::isKeyOnlyString(mlir::Operation * o) {
         } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
             object = set.getObject();
         }
-        if (!object || use.getOperandNumber() != 1 || !isClosedObject(object)) { return false; }
+        if (!object || use.getOperandNumber() != 1 ||
+            (!isClosedObject(object) && nativeObjectFieldGroup(user) < 0)) {
+            return false;
+        }
     }
     return true;
 }

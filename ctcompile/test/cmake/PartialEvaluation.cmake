@@ -4,6 +4,9 @@ if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(object_values
     "${CMAKE_CURRENT_SOURCE_DIR}/native-object-values-fixture.js"
     raw42)
+  ctcompile_add_native_pipeline(object_fields
+    "${CMAKE_CURRENT_SOURCE_DIR}/native-object-fields-fixture.js"
+    traceWrite)
   ctcompile_add_native_pipeline(partial_evaluation
     "${CMAKE_CURRENT_SOURCE_DIR}/native-partial-evaluation-fixture.js"
     lifetime42 PARTIAL_EVALUATE)
@@ -27,6 +30,9 @@ if(COMMAND ctcompile_add_native_pipeline)
     lifetime42 SPECIALIZE PARTIAL_EVALUATE PRUNE_UNREACHABLE)
   ctcompile_add_native_pipeline(supercompilation
     "${CMAKE_CURRENT_SOURCE_DIR}/native-supercompilation-fixture.js"
+    lifetime42 SUPERCOMPILE)
+  ctcompile_add_native_pipeline(supercompilation_generalization
+    "${CMAKE_CURRENT_SOURCE_DIR}/native-supercompilation-generalization-fixture.js"
     lifetime42 SUPERCOMPILE)
 endif()
 

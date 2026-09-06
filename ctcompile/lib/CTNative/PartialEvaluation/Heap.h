@@ -96,6 +96,7 @@ private:
     value fail(llvm::StringRef reason);
     value allocate(node::kind kind, mlir::Location location);
     value call(ctjs::FuncOp function, llvm::ArrayRef<value> args, unsigned depth);
+    value directCall(ctjs::CallDirectOp invoked, environment & env, unsigned depth);
     completion region(mlir::Region & region, llvm::ArrayRef<value> args, environment & env,
                       unsigned depth);
     value operation(mlir::Operation * op, environment & env, unsigned depth);

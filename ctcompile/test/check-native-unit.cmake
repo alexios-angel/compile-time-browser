@@ -160,11 +160,15 @@ if(DEFINED EXPECT_FAILURE)
     message(FATAL_ERROR
       "${NAME}: the gate PASSED where it had to fail - it has no teeth for this case\n${_out}${_err}")
   endif()
-  if(NOT "${_out}${_err}" MATCHES "${EXPECT_FAILURE}")
+  # CMake wraps long diagnostics based on the fixture name. Match the same
+  # required reason across those formatting breaks, retaining the original
+  # output below when an unrelated failure occurs.
+  string(REGEX REPLACE "[ \t\r\n]+" " " _diagnostic "${_out}${_err}")
+  if(NOT "${_diagnostic}" MATCHES "${EXPECT_FAILURE}")
     message(FATAL_ERROR
       "${NAME}: the gate failed, but not for the reason expected (wanted /${EXPECT_FAILURE}/):\n${_out}${_err}")
   endif()
-  string(REGEX MATCH "[^\n]*${EXPECT_FAILURE}[^\n]*" _named "${_out}${_err}")
+  string(REGEX MATCH "${EXPECT_FAILURE}" _named "${_diagnostic}")
   message(STATUS "negative proof (${NAME}): the gate failed as it must, and said why: ${_named}")
   return()
 endif()

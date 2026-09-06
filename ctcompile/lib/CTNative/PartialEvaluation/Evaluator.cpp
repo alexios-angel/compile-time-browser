@@ -211,7 +211,7 @@ value evaluator::operation(mlir::Operation * op, environment & env, unsigned dep
                 return llvm::isa<ctjs::CallDirectOp>(use.getOwner()) && use.getOperandNumber() == 2;
             })) {
             return {};
-        } // Bookkeeping only: the direct symbol supplies the callee.
+        } // Direct-call evaluation separately proves the loaded callee identity.
         return fail("host or mutable global read");
     }
     if (llvm::isa<ctjs::CreateCellOp, ctjs::CellGetOp, ctjs::CellSetOp, ctjs::CreateClosureOp>(
@@ -267,11 +267,7 @@ value evaluator::operation(mlir::Operation * op, environment & env, unsigned dep
         return {};
     }
     if (auto invoked = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
-        llvm::SmallVector<value> args;
-        for (mlir::Value operand : invoked.getOperands()) { args.push_back(get(operand)); }
-        return call(mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-                        invoked, invoked.getCalleeAttr()),
-                    args, depth);
+        return directCall(invoked, env, depth);
     }
     if (auto invoked = llvm::dyn_cast<ctjs::CallOp>(op)) {
         value method = get(invoked.getCallee()), receiver = get(invoked.getReceiver());

@@ -38,12 +38,37 @@ valid, so no partially executed runtime effect needs rollback. Input
 discarded and rederived. The summary records expression and branch rewrites,
 steps, and budget exhaustion. `report=true` also emits those counters.
 
+`lib/CTNative/Symbolic/Precompute.pdll` owns scalar replacement for `ctjs.binary`,
+`ctjs.binary_static`, `ctjs.unary`, `ctjs.compare`, `ctjs.truthy`, and
+`arith.trunci`. Native callbacks capture the current analysis and adapt a proved
+literal to the result representation; PDLL constructs the appropriate CTJS or
+integer constant and replaces only the root. Analysis, budget scheduling, and
+structured-region splicing stay in C++. The callbacks and compiled patterns
+live within one invocation, with no global state or trusted proof attributes.
+
+The policy's exemption for analysis-dependent rewrites is a design boundary,
+not a restriction of the callback API. MLIR 23 stores registered external
+constraints and rewrites as `std::function`; the callbacks can capture analysis
+and side tables directly. A native snippet embedded in PDLL does not implicitly
+see pass-local variables. Imported declarations and explicit registration supply
+that connection. Here the proof remains native while the operation replacement
+is declarative, and the compiled pattern set never outlives its captured facts.
+
+The driver derives scalar candidate kinds from the generated patterns and visits
+them once in the same postorder as structured branches. A candidate without a
+literal still consumes its original budget step. It uses `PatternApplicator`
+directly, so greedy folding or dead-code elimination cannot remove producers,
+retry candidates, or perform unbudgeted work.
+
 The source fixture `test/native-symbolic-fixture.js` covers literal coercions,
 NaN, signed zero, infinities, symbolic boolean/string results, varying inputs,
 effectful producers and chosen branch order. Standalone lit cases pin retained
 unknown operations, original call multiplicity, precise numeric literals,
-forged-fact rejection, repeated invocation, and budget exhaustion. Native
-reference comparison remains separate from structural optimization evidence.
+forged-fact rejection, repeated invocation, and budget exhaustion. The dedicated
+`test/CTNative/precompute-pdll.mlir` exercises every scalar pattern with proved
+and unknown values, integer widths, and exact step limits around scalar and
+branch rewrites. Native reference comparison remains separate from structural
+optimization evidence.
 
 This pass is one stage of the opt-in native initialization pipeline. Specializing
 a function supplies explicit literals; precomputation then simplifies its

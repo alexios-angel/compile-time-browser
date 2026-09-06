@@ -327,15 +327,16 @@ def CTNative_SetType : CTNative_Type<"Set", "set"> {
 }
 
 def CTNative_ObjectIdentityType : CTNative_Type<"ObjectIdentity", "object_identity"> {
-  let summary = "An owning identity for a proved property-free object in native Map flows";
+  let summary = "An owning identity for a proved closed object in native Map flows";
   let description = [{
     Only proved fresh empty allocations receive this type. Closed calls,
     structured control and Map payloads may join it with primitive alternatives;
     the lattice retains those alternatives rather than declaring them objects.
-    No property access, reflection, mutable capture or host identity is admitted.
+    Ordinary scalar fields require a separate closed-use and receiver proof;
+    reflection, mutable capture and host identity remain refused.
     Equality, truthiness and typeof preserve observable identities and tags;
     coercions that might invoke object hooks remain refused by native admission.
-    The carrier owns a distinct empty allocation; aliases and Map entries
+    The carrier owns a distinct allocation with scalar leaves; aliases and Map entries
     retain it, so keys remain alive and separate allocations remain unequal.
   }];
 }

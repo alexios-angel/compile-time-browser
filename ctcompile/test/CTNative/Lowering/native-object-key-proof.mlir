@@ -1,6 +1,6 @@
 // RUN: ctjs-opt %s --ctnative-lower-to-emitc | FileCheck %s
 // RUN: ctjs-opt %s --ctnative-lower-to-emitc --ctnative-lower-to-emitc | FileCheck %s
-// Input identity tags cannot erase properties.
+// Input identity/field tags cannot authorize prototype mutation.
 module {
   // CHECK: ctjs.func @open_key
   // CHECK-SAME: ctnative.not_native =
@@ -11,9 +11,9 @@ module {
     %ctor = ctjs.load_global "Map"
     %map = ctjs.construct %ctor(%ctor)
     %key = ctjs.create_object {ctnative.object_identity}
-    %field = ctjs.constant #ctjs.string<"x">
+    %field = ctjs.constant #ctjs.string<"__proto__">
     %one = ctjs.constant #ctjs.number<1>
-    ctjs.set_property %key[%field], %one
+    ctjs.set_property %key[%field], %one {ctnative.object_field_group = 0 : i64}
     %set = ctjs.constant #ctjs.string<"set">
     %method = ctjs.get_property %map[%set]
     %stored = ctjs.call %method(%map, %key, %one)

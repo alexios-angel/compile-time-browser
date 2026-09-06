@@ -11,22 +11,44 @@ Driver::Driver(mlir::ModuleOp module, ctjs::FuncOp source, Limits limits)
     : module(module), source(source), limits(limits), budget{limits.steps},
       drafts(mlir::ModuleOp::create(module.getLoc())) {}
 
+bool Driver::spend() {
+    if (budget.take()) { return true; }
+    problem = "driving budget exhausted; retained identity alternative";
+    return false;
+}
+
 ctjs::FuncOp Driver::drive(Bindings bindings, llvm::SmallVector<unsigned> history) {
     if (!problem.empty() || !llvm::any_of(bindings, [](auto attr) { return bool(attr); })) {
         return {};
     }
+    if (!spend()) { return {}; }
     // Folding is semantic equality modulo dynamic argument names. The whistle
     // is a different relation and must never authorize a residual backedge.
     for (const auto & configuration : configurations) {
+        if (!spend()) { return {}; }
         if (configuration.bindings == bindings) {
             ++stats.folds;
             return configuration.residual;
         }
     }
     for (unsigned ancestor : history) {
+        if (!spend()) { return {}; }
         if (embeds(configurations[ancestor].bindings, bindings)) {
             ++stats.whistles;
-            return {}; // Retain the generic recursive call, including arguments.
+            auto generalized = commonBindings(configurations[ancestor].bindings, bindings);
+            for (auto ignored : generalized) {
+                (void)ignored;
+                if (!spend()) { return {}; }
+            }
+            if (!llvm::any_of(generalized, [](auto attr) { return bool(attr); })) {
+                return {}; // No useful static binding remains; retain the generic call.
+            }
+            // Generalize this child, never rename an ancestor's already-driven
+            // body. Its actual operands still pass the forgotten values once,
+            // in their original positions, to a freshly driven configuration.
+            auto residual = drive(std::move(generalized), std::move(history));
+            if (residual) { ++stats.generalizations; }
+            return residual;
         }
     }
     if (configurations.size() >= limits.contexts) {
@@ -78,7 +100,14 @@ ctjs::FuncOp Driver::drive(Bindings bindings, llvm::SmallVector<unsigned> histor
     llvm::SmallVector<ctjs::CallDirectOp> calls;
     residual.walk([&](ctjs::CallDirectOp call) { calls.push_back(call); });
     for (auto call : calls) {
-        auto next = drive(specialization::staticArguments(call, source), history);
+        auto recursive = specialization::staticArguments(call, source);
+        for (auto [i, binding] : llvm::enumerate(bindings)) {
+            if (!spend()) { return {}; }
+            // Once dynamic, a position stays dynamic down this path. Literal
+            // resets cannot restart growth or recover a forgotten binding.
+            if (!binding) { recursive[i] = {}; }
+        }
+        auto next = drive(std::move(recursive), history);
         if (next) { call.setCalleeAttr(mlir::FlatSymbolRefAttr::get(next.getSymNameAttr())); }
         if (!problem.empty()) { return {}; }
     }

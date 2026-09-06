@@ -48,6 +48,16 @@ bool embeds(llvm::ArrayRef<mlir::Attribute> ancestor, llvm::ArrayRef<mlir::Attri
     return embedding(shape(ancestor), shape(next));
 }
 
+Bindings commonBindings(llvm::ArrayRef<mlir::Attribute> ancestor,
+                        llvm::ArrayRef<mlir::Attribute> next) {
+    Bindings result(next.size());
+    if (ancestor.size() != next.size()) { return result; }
+    for (auto [i, value] : llvm::enumerate(next)) {
+        if (ancestor[i] == value) { result[i] = value; }
+    }
+    return result;
+}
+
 std::string refusal(ctjs::FuncOp function, mlir::ModuleOp module) {
     if (!functionIndex(function) || function->getParentOp() != module ||
         mlir::SymbolTable::getSymbolVisibility(function) !=

@@ -26,6 +26,7 @@ struct admission {
     bool strings(mlir::Value lhs, mlir::Value rhs) const;
 
     bool printable(mlir::Value v, llvm::StringRef where);
+    bool identityField(mlir::Operation * op);
 
     static bool isDeclarationClosure(mlir::Operation * o);
 

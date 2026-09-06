@@ -352,6 +352,7 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     globalStores_.clear();
     globalsAreDynamic_ = false;
     fieldStores_.clear();
+    identityFieldStores_.clear();
     fieldStoreSites_.clear();
     appends_.clear();
     cellStores_.clear();
@@ -384,6 +385,12 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     // is a group of one, which is the row this file had before.
     const auto groups = groupReceivers(top);
     top->walk([&](ctjs::SetPropertyOp store) {
+        const int64_t identityGroup = nativeObjectFieldGroup(store);
+        if (identityGroup >= 0) {
+            identityFieldStores_[{identityGroup, constantKey(store.getKey())}].push_back(
+                store.getValue());
+            return;
+        }
         if (!hasClosedShape(store.getObject())) { return; }
         const llvm::StringRef key = constantKey(store.getKey());
         // PHASE 59 SLICE 2 STEP 3, THE FIELD HALF: the store SITE, on its own
@@ -674,7 +681,24 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     mlir::Type field{};
     bool fieldKnown = false;
     if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
-        if (hasClosedShape(get.getObject())) {
+        const int64_t identityGroup = nativeObjectFieldGroup(op);
+        if (identityGroup >= 0) {
+            fieldKnown = true;
+            // A schema group can contain distinct allocations and missing
+            // fields. Never infer presence from a store on another alias/site.
+            field = absentType(c);
+            const auto stores =
+                identityFieldStores_.find({identityGroup, constantKey(get.getKey())});
+            if (stores != identityFieldStores_.end()) {
+                for (mlir::Value stored : stores->second) {
+                    const TypeLattice * lattice =
+                        getLatticeElementFor(getProgramPointAfter(op), stored);
+                    if (!lattice->getValue().isUninitialized()) {
+                        field = meet(field, lattice->getValue().getType());
+                    }
+                }
+            }
+        } else if (hasClosedShape(get.getObject())) {
             const llvm::StringRef key = constantKey(get.getKey());
             fieldKnown = true;
             // AND THE SEED IS DROPPED WHERE A STORE DOMINATES - PHASE 59 SLICE

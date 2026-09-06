@@ -72,6 +72,10 @@ Receiver, constructor state, incoming closure captures, host reads/writes and
 unknown invocations cannot be evaluated. Nested direct calls may operate on allocations
 created during the same attempt. Standard Map operations require the existing
 constructor and instance proof; annotations are rederived before evaluation.
+An alternate native call target must agree with the actual boxed callable on
+the return value and anchored heap graph under the evaluated arguments. Exact
+targets avoid this comparison; failed proofs retain the call and its prefix
+state. See [the call-target proof](native-pe-call-proof.md).
 
 The default limits are 10,000 evaluated operations, 32 nested calls and 256
 fresh heap nodes per factory, counting closure environments and capture cells.

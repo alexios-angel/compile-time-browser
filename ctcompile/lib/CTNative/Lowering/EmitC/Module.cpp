@@ -93,15 +93,14 @@ void lowering::declareGlobals() {
     }
     if (needsObjectIdentity) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("memory"), b.getUnitAttr());
-        ec::VerbatimOp::create(
-            b, module.getLoc(),
-            b.getStringAttr(
-                "namespace ctnative {\n// ctcompile: proved property-free object identity\n"
-                "struct identity_object {};\n}\n"));
+        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(identityDefinition()));
     }
     if (needsObjectValue) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("utility"), b.getUnitAttr());
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kObjectValueHelpers));
+    }
+    if (!identityFields.empty()) {
+        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(identityFieldHelpers()));
     }
     // ONLY WHEN A VECTOR SITE EXISTS. An include and a preamble emitted
     // unconditionally would move every byte count the printing gate

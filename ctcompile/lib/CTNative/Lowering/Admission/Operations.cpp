@@ -169,6 +169,7 @@ bool admission::op(mlir::Operation * o) {
                refuse("dense array storage requires definite numbers");
     }
     if (auto get = llvm::dyn_cast<GetPropertyOp>(o)) {
+        if (nativeObjectFieldGroup(o) >= 0) { return identityField(o); }
         if (isVectorSite(get.getObject())) {
             // `length` is `size()`, exactly, BECAUSE the site proof is what
             // rules out a hole; every other key is an index, and the index
@@ -183,6 +184,7 @@ bool admission::op(mlir::Operation * o) {
         return true; // its result's carrier is checked with every other value
     }
     if (auto set = llvm::dyn_cast<SetPropertyOp>(o)) {
+        if (nativeObjectFieldGroup(o) >= 0) { return identityField(o); }
         // An array literal written through is not a vector site at all, so
         // the site's own diagnostic names the sparsity route rather than
         // this one naming a closed shape the program never asked for.

@@ -43,7 +43,8 @@ struct CTNativeSupercompilePass : impl::CTNativeSupercompileBase<CTNativeSuperco
                 candidates.push_back(operation);
             }
         }
-        unsigned kernels = 0, contexts = 0, folds = 0, whistles = 0, operations = 0, steps = 0;
+        unsigned kernels = 0, contexts = 0, folds = 0, whistles = 0, generalizations = 0,
+                 operations = 0, steps = 0;
         for (auto * operation : candidates) {
             auto function = llvm::cast<ctjs::FuncOp>(operation);
             supercompilation::Driver driver(
@@ -64,20 +65,24 @@ struct CTNativeSupercompilePass : impl::CTNativeSupercompileBase<CTNativeSuperco
             contexts += stats.contexts;
             folds += stats.folds;
             whistles += stats.whistles;
+            generalizations += stats.generalizations;
             operations += stats.residualOps;
         }
-        module->setAttr("ctnative.supercompile_summary",
-                        at.getDictionaryAttr(
-                            {at.getNamedAttr("kernels", at.getI64IntegerAttr(kernels)),
-                             at.getNamedAttr("contexts", at.getI64IntegerAttr(contexts)),
-                             at.getNamedAttr("folds", at.getI64IntegerAttr(folds)),
-                             at.getNamedAttr("whistles", at.getI64IntegerAttr(whistles)),
-                             at.getNamedAttr("steps", at.getI64IntegerAttr(steps)),
-                             at.getNamedAttr("residual_ops", at.getI64IntegerAttr(operations))}));
+        module->setAttr(
+            "ctnative.supercompile_summary",
+            at.getDictionaryAttr(
+                {at.getNamedAttr("kernels", at.getI64IntegerAttr(kernels)),
+                 at.getNamedAttr("contexts", at.getI64IntegerAttr(contexts)),
+                 at.getNamedAttr("folds", at.getI64IntegerAttr(folds)),
+                 at.getNamedAttr("generalizations", at.getI64IntegerAttr(generalizations)),
+                 at.getNamedAttr("whistles", at.getI64IntegerAttr(whistles)),
+                 at.getNamedAttr("steps", at.getI64IntegerAttr(steps)),
+                 at.getNamedAttr("residual_ops", at.getI64IntegerAttr(operations))}));
         if (report) {
             module.emitRemark() << "supercompilation: " << kernels << " kernel(s), " << contexts
                                 << " configuration(s), " << folds << " fold(s), " << whistles
-                                << " whistle(s), " << operations << " residual operation(s)";
+                                << " whistle(s), " << generalizations << " generalization(s), "
+                                << operations << " residual operation(s)";
         }
     }
 };

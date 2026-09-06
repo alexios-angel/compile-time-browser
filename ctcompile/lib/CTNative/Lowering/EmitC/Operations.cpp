@@ -75,6 +75,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     };
 
     if (replaceMap(o)) { return; }
+    if (replaceIdentityField(o)) { return; }
 
     // FRAME BOOKKEEPING LOWERS TO NOTHING - but frame_enter's result is
     // used by every frame_exit and root after it, and walk order visits

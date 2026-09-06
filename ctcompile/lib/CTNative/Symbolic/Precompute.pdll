@@ -1,0 +1,47 @@
+// Scalar precomputation consumes invocation-local Analysis proofs. Imported
+// callbacks are registered by Rewrite.cpp and capture that analysis directly;
+// neither annotations on input IR nor global state authorize a replacement.
+// Only the root is replaced: effectful producers remain in program order.
+#include "ctcompile/CTJS/IR/CTJSOps.td"
+#include "mlir/Dialect/Arith/IR/ArithOps.td"
+
+Constraint HasSymbolicLiteral(root: Op);
+Rewrite SymbolicLiteral(root: Op) -> Attr;
+
+Pattern PrecomputeBinary {
+  let root = op<ctjs.binary>;
+  HasSymbolicLiteral(root);
+  replace root with op<ctjs.constant> {value = SymbolicLiteral(root)};
+}
+
+Pattern PrecomputeStaticBinary {
+  let root = op<ctjs.binary_static>;
+  HasSymbolicLiteral(root);
+  replace root with op<ctjs.constant> {value = SymbolicLiteral(root)};
+}
+
+Pattern PrecomputeUnary {
+  let root = op<ctjs.unary>;
+  HasSymbolicLiteral(root);
+  replace root with op<ctjs.constant> {value = SymbolicLiteral(root)};
+}
+
+Pattern PrecomputeCompare {
+  let root = op<ctjs.compare>;
+  HasSymbolicLiteral(root);
+  replace root with op<ctjs.constant> {value = SymbolicLiteral(root)};
+}
+
+// Truthiness returns i1, while ordinary CTJS scalar operations return boxed
+// !ctjs.value. Native literal adaptation preserves that representation.
+Pattern PrecomputeTruthy {
+  let root = op<ctjs.truthy>;
+  HasSymbolicLiteral(root);
+  replace root with op<arith.constant> {value = SymbolicLiteral(root)};
+}
+
+Pattern PrecomputeTruncate {
+  let root = op<arith.trunci>;
+  HasSymbolicLiteral(root);
+  replace root with op<arith.constant> {value = SymbolicLiteral(root)};
+}

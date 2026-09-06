@@ -1,6 +1,6 @@
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../native-object-values-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/field.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=FIELD
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/field.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=STORED --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/read.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=FIELD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/alias.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=FIELD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/numeric.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NUMERIC
@@ -18,8 +18,8 @@
 // NATIVE-DAG: call_opaque "ctnative::object_strict_equal"
 // NATIVE-DAG: call_opaque "ctnative::object_truthy"
 // NATIVE-DAG: call_opaque "ctnative::object_typeof"
-// FIELD: ctnative.not_native =
-// FIELD: identity-only Map value has an unsupported use through `ctjs.{{get|set}}_property`
+// STORED: call_opaque "ctnative::object_set_field_78"
+// FIELD: ctnative.not_native = "an owning field receiver may be scalar, null or undefined;
 // NUMERIC: ctnative.not_native = "unary operand is !ctnative.opt<!ctnative.object_identity>, not a number"
 // LOOSE: ctnative.not_native = "loose object equality may invoke object-to-primitive conversion"
 // REFUSED: ctnative.not_native =
@@ -61,9 +61,9 @@ probe();
 module {
   ctjs.func @field$1(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %object = ctjs.create_object {ctnative.object_identity}
-    %field = ctjs.constant #ctjs.string<"value">
+    %field = ctjs.constant #ctjs.string<"__proto__">
     %one = ctjs.constant #ctjs.number<1>
-    ctjs.set_property %object[%field], %one
+    ctjs.set_property %object[%field], %one {ctnative.object_field_group = 0 : i64}
     %ctor = ctjs.load_global "Map"
     %map = ctjs.construct %ctor(%ctor)
     %set = ctjs.constant #ctjs.string<"set">

@@ -4,7 +4,8 @@ Implemented, 2026-09-05. Bootstrap Data can store a component and return it thro
 `t.has(e) && t.get(e).get(i) || null`. The intermediate result includes booleans,
 null, undefined and the component; the exact vendor probe also stores numbers.
 The bounded carrier supports this union for property-free object identities.
-Objects with fields and host-backed components remain a later extension.
+[Owned scalar fields](native-object-fields.md) extend this carrier in the next
+slice; host-backed components remain outside its closed ownership proof.
 
 Keep the existing scalar carrier unchanged. A separate `object_value` contains
 an owning identity or the existing tagged scalar. Map entries and saved results
@@ -14,8 +15,8 @@ outgoing ownership edges, so this extension cannot introduce an ownership cycle.
 
 Recheck every producer and use in the closed value-flow family. Connect proved
 Map stores/lookups and structured region edges for schema checking, never as a
-claim of runtime alias identity. Unknown producers, property access, publication,
-callbacks and mutable captures remain refused. Native type inference still joins
+claim of runtime alias identity. Unknown producers, unproved property access,
+publication, callbacks and mutable captures remain refused. Native type inference still joins
 the actual Map stores; no annotation supplies a trusted value type.
 
 Support strict equality, truthiness, `typeof`, calls/returns and structured

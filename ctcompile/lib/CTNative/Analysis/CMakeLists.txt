@@ -24,6 +24,7 @@ add_mlir_library(CTNativeAnalysis
   NativeObjectIdentity.cpp
   NativeObject/ValueFlow.cpp
   NativeObject/InertSlots.cpp
+  NativeObject/Fields.cpp
 
   LINK_LIBS PUBLIC
     CTNativeDialect

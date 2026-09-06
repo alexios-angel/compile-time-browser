@@ -1,5 +1,6 @@
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
 #include "ClosedValueFlow.h"
+#include "NativeObject/Fields.h"
 #include "NativeObject/ValueFlow.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
@@ -37,7 +38,12 @@ bool erasedCapture(mlir::OpOperand & use) {
 
 void prepareNativeObjectIdentities(mlir::ModuleOp module) {
     // Derived from uses, never trusted from a prior lowering or input IR.
-    module.walk([](mlir::Operation * op) { op->removeAttr(kNativeObjectIdentity); });
+    module.walk([](mlir::Operation * op) {
+        op->removeAttr(kNativeObjectIdentity);
+        op->removeAttr(kNativeObjectFieldGroup);
+    });
+    const bool fieldsSafe = object_detail::scalarFieldEnvironment(module);
+    int64_t nextFieldGroup = 0;
     closedValueFlow flow;
     flow.build(module);
     // A returned closure owns its captures. Connect slot extractions to the
@@ -76,6 +82,7 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module) {
         }
         if ((!usedAsKey && !usedAsPayload) || made.empty()) { continue; }
         std::string reason;
+        llvm::DenseSet<mlir::Operation *> fields;
         const auto reject = [&](llvm::StringRef why) {
             if (reason.empty()) {
                 reason = ((usedAsKey ? "identity-only Map key " : "identity-only Map value ") + why)
@@ -122,6 +129,10 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module) {
             }
             for (mlir::OpOperand & use : value.getUses()) {
                 if (mapKeyUse(use)) { continue; }
+                if (fieldsSafe && object_detail::scalarFieldUse(use)) {
+                    fields.insert(use.getOwner());
+                    continue;
+                }
                 if (object_detail::mapPayloadUse(use) ||
                     object_detail::valueObservation(use.getOwner())) {
                     continue;
@@ -145,8 +156,16 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module) {
                            .str());
             }
         }
+        if (reason.empty() && !fields.empty()) {
+            const auto group = mlir::IntegerAttr::get(
+                mlir::IntegerType::get(module.getContext(), 64), nextFieldGroup++);
+            for (mlir::Operation * field : fields) {
+                field->setAttr(kNativeObjectFieldGroup, group);
+            }
+        }
         for (ctjs::CreateObjectOp object : made) {
             if (reason.empty()) {
+                object->removeAttr("ctnative.object_reason");
                 object->setAttr(kNativeObjectIdentity, mlir::UnitAttr::get(module.getContext()));
             } else {
                 object->setAttr("ctnative.object_reason",

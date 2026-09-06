@@ -1,20 +1,20 @@
 //===- UnaryPlusIsIdentity.pdll - the first pattern over OUR dialect ------===//
 //
-// `+x` IS `x` ONCE ADMISSION HAS PROVED x A NUMBER, and this is the one arm of
-// LowerToEmitC's replace() that a PDLL pattern can state on its own.
+// `+x` is `x` once admission has proved x a number. This type-preserving
+// rewrite runs before native carrier lowering.
 //
-// WHY ONLY THIS ONE - the boundary, in three sentences. A PDLL native
-// constraint is registered as a PLAIN FUNCTION POINTER and captures nothing,
-// so it cannot reach the pass's DataFlowSolver lattice or its side tables
-// (`shapes`, `accessKey`, `keyConstants`, `names`). Every other arm of
-// replace() builds an EmitC operation over `f64`/`i1`, which is only correct
-// AFTER retype() has rewritten every value's type from that lattice - and
-// after retype() a `ctjs.unary` has an f64 operand where its ODS declares
-// `CTJS_ValueType`, so the function no longer verifies and is no place to run
-// a pattern driver. This rule is the exception because it is type-preserving
-// at the ctjs level: it replaces a `!ctjs.value` result with a `!ctjs.value`
-// operand, so it runs BEFORE retype() on IR that still verifies, and it needs
-// no type from anywhere.
+// This rule preserves CTJS types: it replaces a `!ctjs.value` result with a
+// `!ctjs.value` operand before retype(). The remaining scalar lowering builds
+// EmitC operations after retype() has converted every value from the solver
+// lattice. At that point a `ctjs.unary` can have an f64 operand where its ODS
+// declares `CTJS_ValueType`, so it is not a suitable stage for this driver.
+//
+// Analysis access itself is supported. MLIR 23 registers external PDLL
+// constraints and rewrites as std::function, which can capture invocation-local
+// analysis and side tables. Symbolic/Rewrite.cpp uses that API with callbacks
+// whose lifetime ends before the captured analysis. Inline native snippets in
+// a .pdll file do not acquire pass locals implicitly; imported declarations
+// plus explicit callback registration provide that connection without globals.
 //
 // WHAT MAKES IT SOUND IS WHERE IT RUNS, not what it matches. `+x` in general
 // is ToNumber: it can re-enter user code through valueOf and it can produce a

@@ -66,12 +66,19 @@ add_mlir_pdll_library(CTNativeUnaryPlusPDLLIncGen
   EXTRA_INCLUDES
     ${CTCOMPILE_PDLL_INCLUDES})
 
+add_mlir_pdll_library(CTNativeSymbolicPDLLIncGen
+  ../Symbolic/Precompute.pdll
+  SymbolicPrecompute.h.inc
+  EXTRA_INCLUDES
+    ${CTCOMPILE_PDLL_INCLUDES})
+
 # The native tier's lowering: proved CTJS -> EmitC over plain C++ types. Links
 # the analyses it consults and the dialects it emits into. Partial evaluation
 # also reuses compiler-side primitive helpers from ctbrowser; the generated
 # C++ still links no ctbrowser library, as part 24 §1.2 requires.
 add_library(ctcompile-ctnative-lowering
   ObjectValues/Types.cpp
+  ObjectValues/Fields.cpp
   ../Reachability/Analysis.cpp
   ../Reachability/Pass.cpp
   ../Supercompilation/Control.cpp
@@ -90,6 +97,8 @@ add_library(ctcompile-ctnative-lowering
   ../PartialEvaluation/Prefix.cpp
   ../BindingTime/Pass.cpp
   ../PartialEvaluation/Evaluator.cpp
+  ../PartialEvaluation/Calls.cpp
+  ../PartialEvaluation/CallProof.cpp
   ../PartialEvaluation/Primitives.cpp
   ../PartialEvaluation/Residualize.cpp
   LowerToEmitC.cpp
@@ -106,6 +115,7 @@ add_library(ctcompile-ctnative-lowering
   ClosureLifting/ReturnedClosures.cpp
   ClosureLifting/MethodTables.cpp
   Admission/Values.cpp
+  Admission/IdentityFields.cpp
   Admission/Objects.cpp
   Admission/Operations.cpp
   Admission/Functions.cpp
@@ -125,6 +135,7 @@ ctcompile_target(ctcompile-ctnative-lowering)
 add_dependencies(ctcompile-ctnative-lowering
   CTNativeTransformsPassIncGen
   CTNativePruneDeadStoresPDLLIncGen
+  CTNativeSymbolicPDLLIncGen
   CTNativeUnaryPlusPDLLIncGen)
 
 target_link_libraries(ctcompile-ctnative-lowering

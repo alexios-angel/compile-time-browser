@@ -120,15 +120,17 @@ the residual result has a native C++ representation.
 The whistle uses homeomorphic embedding over a finite abstraction of argument
 shapes; numeric and string payloads are collapsed only for termination checks.
 Exact memo keys retain full attributes, including signed zero and NaN. A whistle
-retains the generic recursive call in this slice. It is not an equivalence proof
-and does not yet implement generalization. Local driving, graph size and emitted
+now generalizes the child to the exact static bindings shared with its ancestor;
+forgotten positions stay dynamic. If no useful static argument survives, keep the
+generic recursive call. The whistle itself is never an equivalence proof.
+Local driving, graph size and emitted
 operation budgets are separate. Always retain the unchanged alternative and
 commit a driven graph only if its growth stays within the configured bound.
 
 Preserve one generic external call for the original function's type evidence.
 Stage all cloned functions transactionally before redirecting root calls. This
 implements recursive configuration folding, beyond the nonrecursive variant
-pass; general heap-aware driving, anti-unification and multi-result search follow
+pass; heap-aware driving, graph anti-unification and multi-result search follow
 the separate literature design.
 
 ## Integration and Bootstrap evidence
@@ -172,17 +174,19 @@ module-wide environment guards can be relaxed.
 
 ## Integrated results, 2026-09-05
 
-The devbox gate passes **406/406 CTests**, including **123/123 lit cases**, in
-**461.12 seconds**. All **482 C++ files** pass the pinned formatter, and
+The devbox gate passes **418/418 CTests**, including **128/128 lit cases**, in
+**451.19 seconds**. All **489 C++ files** pass the pinned formatter, and
 `git diff --check` passes. Each new source fixture passes ordinary and deduced
 native C++, GCC/Clang, reference comparison, altered-output rejection and no-VM
-checks. The new object-value and reachability fixtures also pass ASan/UBSan
-with leak detection and direct reference comparison. Earlier closure,
-deforestation and specialization sanitizer results are retained in their
-respective implementation records.
+checks. The owned-field fixture passes ASan/UBSan with leak detection and
+29 observations matching the interpreter. Earlier object-value, reachability,
+closure, deforestation and specialization sanitizer results remain in their
+implementation records.
 
 | Source fixture | Measured transformation | Native functions | Numeric observations |
 |---|---|---:|---:|
+| Owned scalar component fields | Exact getter, guarded aliases, shared mutation and lifetime after deletion | 15/15 | 29 |
+| Scalar child generalization | 3 kernels, 14 configurations, 12 folds, 9 generalizations, 320 added residual operations | 23/23 | 16 |
 | Owning object/scalar Map values | Exact getter, calls/captures, lifetime and structured-loop flow | 16/16 | 47 |
 | Unreachable helpers after specialization and PE | 2 orphan variants removed, generic published callable retained | 4/4 | 4 |
 | Immutable closure heaps | 5 evaluated factories, 21 live residual nodes | 19/19 | 7 |
@@ -229,8 +233,10 @@ full native Bootstrap initialization remains open.
 [Object values](native-object-values.md) extend the exact Bootstrap getter to
 property-free owning identities mixed with number, boolean, null and undefined.
 Saved aliases survive Map replacement, deletion and clearing. Calls, immutable
-captures and structured control preserve that owner. Field access, object numeric
-coercion, host publication and object-valued snapshots still require later work.
+captures and structured control preserve that owner. [Owned scalar fields](native-object-fields.md)
+now use explicit C++ members and require a definitely owning receiver or a checked
+structured identity guard. Object numeric coercion, host publication and
+object-valued snapshots still require later work.
 Lift placeholders are excluded from schema flow only by a bounded proof that
 they cannot be observed, including the separate loop continuation and exit paths.
 
@@ -249,17 +255,19 @@ contracts and budget exhaustion retain the whole module.
 
 ## Next bounded work
 
-For Bootstrap, extend the identity payload to owned component fields and establish
-one checked host/effect contract before widening the exact Data initializer.
+For Bootstrap, establish one checked host/effect and export contract before
+widening the exact Data initializer. Its unchecked mixed-result field accesses
+also need path-sensitive receiver/presence evidence or a supported exception boundary.
 Keep wrapper calls, error reporting, string-key snapshot/Array.from behavior and
 typed export publication explicit. The current conditional queries remain behind
 their own closed-environment proof and do not relax PE/native module guards.
 
 Published declarations remain roots after PE. Removing their closure/store pairs
 requires a proved export-observation boundary beyond private-function reachability.
-Whole-factory PE also retains its own call evaluator; general equivalence between
-symbolic native targets and retained boxed callee values remains separate work.
-For [supercompilation](native-supercompilation.md), scalar generalization comes
-before heap-aware configurations and multi-result graph search. Recursive
+Whole-factory PE now [checks alternate call targets](native-pe-call-proof.md)
+against the retained boxed callee for the concrete arguments and pre-call heap.
+This bounded evaluation proof does not certify arbitrary runtime calls. Scalar
+[supercompiler generalization](native-supercompilation.md) is implemented;
+heap-aware configurations and multi-result graph search remain next. Recursive
 Lumberhack fusion, general shared mutable capture environments and compiled
 source-site attribution remain separate workstreams.
