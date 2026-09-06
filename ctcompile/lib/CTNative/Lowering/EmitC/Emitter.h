@@ -102,6 +102,8 @@ struct lowering {
     // on it. An empty unit emits neither.
     bool needsVector = false;
     bool needsString = false;
+    bool needsNullableString = false;
+    bool needsStringVector = false;
     bool needsMap = false;
     bool needsObjectIdentity = false;
     bool needsObjectValue = false;
@@ -141,6 +143,7 @@ struct lowering {
     [[nodiscard]] std::string provenanceOf(const family & f) const;
 
     void collectVector(mlir::Value array);
+    bool replaceStringValue(mlir::Operation * op);
 
     void finish();
 

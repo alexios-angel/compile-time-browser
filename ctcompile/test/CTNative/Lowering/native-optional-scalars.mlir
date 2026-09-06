@@ -19,8 +19,9 @@
 // NATIVE-DAG: emitc.func @booleanFlags_{{[0-9]+}}({{.*}}!emitc.opaque<"ctnative::nullable_scalar">{{.*}}) -> f64
 // NATIVE-DAG: emitc.func @retainedData_{{[0-9]+}}() -> f64
 
-// STRING: ctjs.func @_script_$0
-// STRING-SAME: ctnative.not_native = "a value of type !ctnative.opt<!ctnative.str<utf8>>
+// STRING: emitc.func @choose_1({{.*}}) -> !emitc.opaque<"ctnative::nullable_string">
+// STRING: call_opaque "ctnative::to_nullable_string"
+// STRING-NOT: ctnative.not_native
 // MIXED: ctjs.func private @choose$1
 // MIXED-SAME: ctnative.not_native = "a value of type !ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>> from `scf.if`"
 // PAYLOAD: ctjs.func private @probe$1
@@ -31,7 +32,7 @@
 // ARRAY-SAME: ctnative.not_native = "dense array storage requires definite numbers"
 
 //--- optional-string.js
-// Nullable numeric/boolean carriers do not represent an optional string.
+// Optional strings have an owning carrier with separate null/undefined tags.
 function choose(flag) { return flag ? "value" : null; }
 choose(false);
 

@@ -15,6 +15,16 @@ bool lowering::replaceMap(mlir::Operation * o) {
         swap(f64Constant(b, where, std::numeric_limits<double>::quiet_NaN()));
         return true;
     }
+    if (o->hasAttr(kNativeMapSnapshotCopy)) {
+        auto copy = llvm::cast<CallOp>(o);
+        mlir::Value local = ec::VariableOp::create(b, where, copy.getResult().getType(),
+                                                   ec::OpaqueAttr::get(context, ""));
+        const auto type = llvm::cast<ec::LValueType>(local.getType()).getValueType();
+        mlir::Value value = ec::LoadOp::create(b, where, type, copy.getArgs().front());
+        ec::AssignOp::create(b, where, local, value);
+        swap(local);
+        return true;
+    }
     if (auto made = llvm::dyn_cast<ConstructOp>(o); made && o->hasAttr(kNativeMapSite)) {
         auto map = llvm::cast<MapType>(typeOf(made.getResult()));
         const std::string callee =
@@ -53,11 +63,12 @@ bool lowering::replaceMap(mlir::Operation * o) {
             ec::CallOpaqueOp::create(b, where, mlir::TypeRange{}, name, args);
             swap(absentConstant(b, where));
         } else if (action == "keys" || action == "values") {
-            const auto type = ec::OpaqueType::get(context, kVectorType);
+            const auto localType = o->getResult(0).getType();
+            const auto type = llvm::cast<ec::LValueType>(localType).getValueType();
             mlir::Value result =
                 ec::CallOpaqueOp::create(b, where, mlir::TypeRange{type}, name, args).getResult(0);
-            mlir::Value local = ec::VariableOp::create(b, where, vectorCarrierType(context),
-                                                       ec::OpaqueAttr::get(context, ""));
+            mlir::Value local =
+                ec::VariableOp::create(b, where, localType, ec::OpaqueAttr::get(context, ""));
             ec::AssignOp::create(b, where, local, result);
             swap(local);
         } else {

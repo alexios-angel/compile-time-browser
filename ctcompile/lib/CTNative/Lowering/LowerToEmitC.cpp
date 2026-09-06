@@ -38,6 +38,7 @@
 #include "ClosureLifting/ClosureLifter.h"
 #include "EmitC/Emitter.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
+#include "mlir/Pass/PassManager.h"
 
 namespace ctcompile::ctnative {
 
@@ -52,6 +53,28 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
 
     void runOnOperation() override {
         mlir::ModuleOp module = getOperation();
+
+        // Keep the default policy on the native entry, so clients do not need
+        // to reconstruct it in a shell/test pipeline. Run before closure
+        // lifting: reachability still sees CTJS's complete reference forms,
+        // and an unreachable private body never reaches type admission.
+        // The pass manager owns analysis invalidation and instrumentation.
+        if (optimize && (precompute || pruneUnreachable)) {
+            mlir::OpPassManager defaults(mlir::ModuleOp::getOperationName());
+            if (precompute) {
+                CTNativePrecomputeOptions options;
+                options.maxSteps = precomputeMaxSteps;
+                options.report = optimizationReport;
+                defaults.addPass(createCTNativePrecompute(options));
+            }
+            if (pruneUnreachable) {
+                CTNativePruneUnreachableOptions options;
+                options.maxSteps = reachabilityMaxSteps;
+                options.report = optimizationReport;
+                defaults.addPass(createCTNativePruneUnreachable(options));
+            }
+            if (failed(runPipeline(defaults, module))) { return signalPassFailure(); }
+        }
 
         // PHASE 59 SLICE 1, AND IT RUNS BEFORE THE SOLVE. Lifting turns a
         // closure call into a ctjs.call_direct, which is what makes the target

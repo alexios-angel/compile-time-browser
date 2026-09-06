@@ -135,17 +135,20 @@ the separate literature design.
 
 ## Integration and Bootstrap evidence
 
-All transformations below are independently opt-in. Omitting their flags leaves
-the default pipeline unchanged; no optimization level silently enables them.
+The native lowering entry enables two bounded transformations by default:
+primitive precomputation, then private reachability pruning. Both have explicit
+opt-outs; the four broader transformations remain opt-in. The boxed pipeline
+keeps its existing defaults. See [native optimization defaults](native-optimization-defaults.md)
+for the entry options, independent budgets and enabled/disabled differential.
 
 | Control | Default | Purpose |
 |---|---|---|
-| `--ctnative-precompute` | Off | Primitive and symbolic simplification, preserving runtime effects |
+| `--ctnative-precompute` | On inside native lowering | Primitive and symbolic simplification, preserving runtime effects |
 | `--ctnative-specialize` | Off | Bounded variants for exact static argument tuples |
 | `--ctnative-partial-evaluate` | Off | BTA-guided initialization and heap residualisation |
 | `--ctnative-deforest` | Off | Proved Map snapshot projection fusion after native lowering |
-| `--ctnative-prune-unreachable` | Off | Remove proved unreachable private functions after PE, preserving published and numeric closure targets |
-| `--ctnative-supercompile` | Off | Bounded recursive driving and folding; generalization remains planned |
+| `--ctnative-prune-unreachable` | On inside native lowering | Remove proved unreachable private functions, preserving published and numeric closure targets |
+| `--ctnative-supercompile` | Off | Bounded recursive driving, folding and scalar child generalization |
 | `--ctnative-binding-time-analysis` | Optional diagnostic pass | Print rederived staging facts without evaluating the program |
 
 BTA is always recomputed when heap evaluation needs it. Type, effect and ownership
@@ -153,6 +156,9 @@ proofs remain required by the transforms that rely on them; turning off an
 optimization does not turn off correctness checks. Each pass has independent work
 and/or code-size budgets, and budget exhaustion retains runtime computation.
 No annotation claiming a prior proof or optimization result is trusted.
+Use `--ctnative-lower-to-emitc=optimize=false` for the previous native pipeline,
+or `precompute=false` / `prune-unreachable=false` for one stage. These options
+disable only the entry's defaults; separately requested passes still execute.
 
 An optional transformation can make previously unsupported code admissible by
 removing proved static work. For example, the precomputation fixture contains
@@ -174,8 +180,8 @@ module-wide environment guards can be relaxed.
 
 ## Integrated results, 2026-09-05
 
-The devbox gate passes **418/418 CTests**, including **128/128 lit cases**, in
-**451.19 seconds**. All **489 C++ files** pass the pinned formatter, and
+The devbox gate passes **430/430 CTests**, including **131/131 lit cases**, in
+**492.18 seconds**. All **494 C++ files** pass the pinned formatter, and
 `git diff --check` passes. Each new source fixture passes ordinary and deduced
 native C++, GCC/Clang, reference comparison, altered-output rejection and no-VM
 checks. The owned-field fixture passes ASan/UBSan with leak detection and
@@ -185,6 +191,8 @@ implementation records.
 
 | Source fixture | Measured transformation | Native functions | Numeric observations |
 |---|---|---:|---:|
+| Default optimization comparison | 17 expressions, 3 branches, 294 steps; generated C++ 7,569 → 6,788 bytes | 4/4 | 8 |
+| String-key Map snapshots | Exact diagnostic, standard Array.from copy, nullable strings and retained snapshots | 10/10 | 24 |
 | Owned scalar component fields | Exact getter, guarded aliases, shared mutation and lifetime after deletion | 15/15 | 29 |
 | Scalar child generalization | 3 kernels, 14 configurations, 12 folds, 9 generalizations, 320 added residual operations | 23/23 | 16 |
 | Owning object/scalar Map values | Exact getter, calls/captures, lifetime and structured-loop flow | 16/16 | 47 |
@@ -221,6 +229,11 @@ Default corpus coverage is unchanged:
 | p5 | 39/4754 | 0/41/328 |
 | Phaser | 45/7725 | 0/48/283 |
 
+The census now includes proved-pruned private functions in the source denominator
+and checks `imported = native + refused + pruned`. Historical admission floors
+run with `--no-default-optimizations`; separate default corpus tests protect the
+ordinary entry. None of these vendor modules loses a function to default pruning.
+
 The exact Data browser/CommonJS/AMD probes remain **0/7, 0/7 and 0/8 native**,
 with **19/19/20 reference observations**. Boxed Bootstrap remains byte-identical:
 **10,984,359 bytes**, SHA-256
@@ -255,11 +268,15 @@ contracts and budget exhaustion retain the whole module.
 
 ## Next bounded work
 
-For Bootstrap, establish one checked host/effect and export contract before
+For Bootstrap, implement the [host/effect and export contract design](native-bootstrap-host-contract.md) before
 widening the exact Data initializer. Its unchecked mixed-result field accesses
 also need path-sensitive receiver/presence evidence or a supported exception boundary.
-Keep wrapper calls, error reporting, string-key snapshot/Array.from behavior and
-typed export publication explicit. The current conditional queries remain behind
+The [string-key snapshot and Array.from prerequisite](native-string-snapshots.md)
+is implemented for confined proved Maps, including absent and empty keys.
+Wrapper calls, error reporting and typed export publication remain open. The host
+audit records two source/reference differences in fallback `this` and accessor
+evaluation order; a broader host adapter must resolve those boundaries explicitly.
+The current conditional queries remain behind
 their own closed-environment proof and do not relax PE/native module guards.
 
 Published declarations remain roots after PE. Removing their closure/store pairs

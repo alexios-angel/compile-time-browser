@@ -11,7 +11,7 @@
 // RUN: ctjs-opt %t/nested.mlir --ctnative-prune-unreachable | FileCheck %s --check-prefix=NESTED
 // RUN: ctjs-opt %t/control.mlir --ctnative-prune-unreachable | FileCheck %s --check-prefix=CONTROL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../native-reachability-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize --ctnative-partial-evaluate | FileCheck %s --check-prefix=BEFORE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../native-reachability-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize --ctnative-partial-evaluate --ctnative-lower-to-emitc | FileCheck %s --check-prefix=UNPRUNED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../native-reachability-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize --ctnative-partial-evaluate --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=UNPRUNED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../native-reachability-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize --ctnative-partial-evaluate --ctnative-prune-unreachable | FileCheck %s --check-prefix=SOURCE --implicit-check-not='ctjs.func private @seed$1__specialized'
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../native-reachability-fixture.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize --ctnative-partial-evaluate --ctnative-prune-unreachable --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 

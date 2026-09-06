@@ -271,11 +271,14 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
 // answer: `Array.prototype[7] = x` is not a thing this tier undertakes to
 // survive, and it is recorded here rather than assumed away.
 bool TypeInference::isDenseVectorSite(mlir::Value array) {
-    const llvm::StringRef action = nativeMapAction(array.getDefiningOp());
-    const bool snapshot = action == "keys" || action == "values";
+    const bool snapshot = isNativeMapSnapshot(array.getDefiningOp());
     if (!array.getDefiningOp<ctjs::CreateArrayOp>() && !snapshot) { return false; }
     for (mlir::OpOperand & use : array.getUses()) {
         mlir::Operation * user = use.getOwner();
+        if (user->hasAttr(kNativeMapSnapshotCopy) && use.getOperandNumber() == 2 &&
+            isDenseVectorSite(user->getResult(0))) {
+            continue;
+        }
         if (llvm::isa<ctjs::AppendOp>(user)) {
             // OPERAND 0 IS THE ARRAY BEING BUILT; operand 1 is the element,
             // and an array appended INTO another array has escaped into it.

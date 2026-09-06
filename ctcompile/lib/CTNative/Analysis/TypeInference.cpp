@@ -260,8 +260,7 @@ mlir::Type TypeInference::elementTypeOf(mlir::Operation * op, mlir::Value array)
     // `num` would claim a number for a read the interpreter answers
     // `undefined` for, which is the one direction the lattice cannot undo.
     mlir::Type element = absentType(op->getContext());
-    if (auto call = array.getDefiningOp<ctjs::CallOp>();
-        call && (nativeMapAction(call) == "keys" || nativeMapAction(call) == "values")) {
+    if (auto call = array.getDefiningOp<ctjs::CallOp>(); call && isNativeMapSnapshot(call)) {
         const TypeLattice * lattice = getLatticeElementFor(getProgramPointAfter(op), array);
         if (auto vector = llvm::dyn_cast_or_null<VecType>(lattice->getValue().getType())) {
             return meet(element, vector.getElementType());
@@ -549,6 +548,8 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     mlir::Type mapAnswer;
     if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op); made && made->hasAttr(kNativeMapSite)) {
         mapAnswer = mapTypeOf(op, made.getResult());
+    } else if (op->hasAttr(kNativeMapSnapshotCopy)) {
+        mapAnswer = operands[2]->getValue().getType();
     } else if (const llvm::StringRef action = nativeMapAction(op); !action.empty()) {
         if (action == "size") {
             mapAnswer = doubleType(c);
@@ -567,7 +568,6 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                 mapAnswer = absentType(c);
             } else if (action == "keys" || action == "values") {
                 mlir::Type element = action == "keys" ? map.getKeyType() : map.getValueType();
-                if (llvm::isa<BottomType>(element)) { element = doubleType(c); }
                 mapAnswer = VecType::get(c, element);
             }
         }

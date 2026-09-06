@@ -1,11 +1,14 @@
-# Optional removal of unreachable native helpers
+# Removal of unreachable native helpers
 
 `--ctnative-prune-unreachable` removes private CTJS function definitions after
 specialization and partial evaluation have erased all their references. An
 unused residual variant can otherwise reach native type inference without any
 caller supplying parameter facts and make a fully evaluated initializer fail
-native admission. Run the pass after PE and before native lowering. It is off
-by default and does not replace type or ownership admission.
+native admission. The native lowering entry runs it by default after primitive
+precomputation, before closure lifting and type inference. Explicit PE and
+specialization stages therefore precede this default. It does not replace type
+or ownership admission. [Native optimization defaults](native-optimization-defaults.md)
+documents opt-outs and the disabled baseline.
 
 The pass constructs a graph from the current IR. Non-private functions, external
 declarations, bytecode entry index zero and references outside function bodies

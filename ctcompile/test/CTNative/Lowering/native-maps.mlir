@@ -65,10 +65,12 @@
 // EQUALITY: emitc.func @probe_1() -> i1
 // EQUALITY: call_opaque "ctnative::scalar_strict_equal"
 // EQUALITY-NOT: ctnative.not_native
-// KEYS: ctjs.func private @probe$1
-// KEYS-SAME: ctnative.not_native = "native Map snapshot requires confined numeric elements"
+// KEYS: emitc.func @probe_1
+// KEYS: call_opaque "ctnative::map_keys"
+// KEYS: !emitc.opaque<"std::vector<std::string>">
+// KEYS-NOT: ctnative.not_native
 // SNAPSHOT: ctjs.func private @probe$1
-// SNAPSHOT-SAME: ctnative.not_native = "native Map snapshot requires confined numeric elements"
+// SNAPSHOT-SAME: ctnative.not_native = "native Map snapshot requires confined numeric or string elements"
 // ENTRIES: ctjs.func private @probe$1
 // ENTRIES-SAME: ctnative.not_native = "native Map property is not a supported constant method or size"
 // COMPUTED: ctjs.func private @probe$1

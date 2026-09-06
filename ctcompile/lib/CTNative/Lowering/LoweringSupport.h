@@ -54,19 +54,28 @@ enum class carrier {
     number,
     nullable,
     string,
+    nullableString,
     map,
     closure,
     methodTable,
     objectIdentity,
     objectValue,
     structure,
-    vector
+    vector,
+    stringVector
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
+inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
+inline constexpr llvm::StringLiteral kNullableStringType = "ctnative::nullable_string";
 inline constexpr llvm::StringLiteral kNullableType = "ctnative::nullable_scalar";
 inline constexpr llvm::StringLiteral kObjectValueType = "ctnative::object_value";
 bool isScalarCarrier(carrier value);
 bool isNullableCarrier(mlir::Type type);
+bool isNullableStringCarrier(mlir::Type type);
+bool isStringCarrier(carrier value);
+bool isVectorCarrier(carrier value);
+bool stringConcatenation(mlir::Type left, mlir::Type right);
+bool stringEquality(mlir::Type left, mlir::Type right);
 bool isObjectCarrier(carrier value);
 bool isObjectValueCarrier(mlir::Type type);
 bool isIdentityCarrier(mlir::Type type);
@@ -76,7 +85,7 @@ bool onlyAbsent(mlir::Type type);
 inline constexpr llvm::StringLiteral kObjectIdentityType =
     "std::shared_ptr<ctnative::identity_object>";
 carrier carrierOf(mlir::Type type);
-mlir::Type vectorCarrierType(mlir::MLIRContext * context);
+mlir::Type vectorCarrierType(mlir::MLIRContext * context, bool strings = false);
 llvm::StringRef mapKeySpelling(mlir::Type type);
 std::string mapValueSpelling(mlir::Type type);
 bool mapNeedsString(MapType type);

@@ -45,8 +45,10 @@ unrelated factory calls. Its `get` returns null for an absent key and preserves
 boundary; the separately tracked Bootstrap publication probe still derives
 its Data fragment verbatim from the vendor source.
 
-Optional strings, number/string unions, optional Map objects, nullable stored
-Map values and nullable array elements remain refused. The literal Bootstrap
+Optional strings now have a separate owning carrier; see
+[native-string-snapshots.md](native-string-snapshots.md). Number/string unions,
+optional Map objects, nullable stored Map values and nullable array elements
+remain refused. The literal Bootstrap
 `has && get || null` expression still requires the separate boolean/number
 union carrier. General component and host objects also remain outside this
 subset.

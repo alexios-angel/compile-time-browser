@@ -22,7 +22,9 @@ separately encoded surrogate halves does not normalize them into the bytes
 of a single supplementary character. `split41` records this interpreter
 behavior; it is different from a UTF-16 JavaScript engine's answer.
 
-The lowering still refuses optional strings, mixed string/number coercion,
+Optional strings now have a tagged owning carrier for the bounded consumers
+described in [native-string-snapshots.md](native-string-snapshots.md).
+The lowering still refuses mixed string/number coercion,
 string ordering, string property access, and string globals or object fields.
 The existing numeric global-printing convention is unchanged. The fixture
 observes intermediate string results through numeric equality/truthiness
@@ -56,7 +58,8 @@ interpreter. Its mutable capture starts beyond small-string storage and
 checks that a returned snapshot survives subsequent heap-backed mutation.
 
 The refusal tests pin the actual callee's diagnostic for mixed coercion,
-equality, ordering, optional strings and string/number variants. The shared
+equality, ordering and string/number variants. Optional-string tests now pin
+their owning carrier and the explicit widening at control-flow edges. The shared
 variant test also requires the lifted pointer parameter, so a failure to lift
 cannot stand in for the carrier refusal.
 

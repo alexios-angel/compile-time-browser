@@ -525,6 +525,9 @@ if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(strings
                                 "${CMAKE_CURRENT_SOURCE_DIR}/native-string-fixture.js"
                                 startup42)
+  ctcompile_add_native_pipeline(string_snapshots
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-string-snapshots-fixture.js"
+                                bootstrap_message)
 endif()
 if(COMMAND ctcompile_add_native_claims)
   ctcompile_add_native_claims(strings

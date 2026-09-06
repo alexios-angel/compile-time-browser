@@ -31,7 +31,9 @@
 // invariant fires on the emitc.declare_func prototype. The importer names
 // every function this way; a hand-written module has to as well.
 
-// RUN: ctjs-opt %s --ctnative-lower-to-emitc | FileCheck %s
+// RUN: ctjs-opt %s --ctnative-lower-to-emitc=optimize=false | FileCheck %s
+// Keep literal arithmetic for the lowering pattern under test; default
+// precomputation can remove the entire expression before that pattern runs.
 
 // --- `+2 + 3` ---------------------------------------------------------------
 //

@@ -79,6 +79,8 @@ add_mlir_pdll_library(CTNativeSymbolicPDLLIncGen
 add_library(ctcompile-ctnative-lowering
   ObjectValues/Types.cpp
   ObjectValues/Fields.cpp
+  StringValues/Types.cpp
+  StringValues/Operations.cpp
   ../Reachability/Analysis.cpp
   ../Reachability/Pass.cpp
   ../Supercompilation/Control.cpp

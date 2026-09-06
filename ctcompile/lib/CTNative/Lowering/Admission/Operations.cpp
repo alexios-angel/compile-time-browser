@@ -51,6 +51,12 @@ bool admission::op(mlir::Operation * o) {
                           printed(typeOf(made.getResult())));
         }
     }
+    if (o->hasAttr(kNativeMapSnapshotCopy)) {
+        auto copy = llvm::cast<CallOp>(o);
+        return (isVectorSite(copy.getArgs().front()) && isVectorSite(copy.getResult()) &&
+                isVectorCarrier(carrierOf(typeOf(copy.getResult())))) ||
+               refuse("native Array.from requires a confined numeric or string Map snapshot");
+    }
     if (const llvm::StringRef action = nativeMapAction(o); !action.empty()) {
         if (action == "size") { return true; }
         auto call = llvm::cast<CallOp>(o);
@@ -59,8 +65,8 @@ bool admission::op(mlir::Operation * o) {
         }
         if (action == "keys" || action == "values") {
             return (isVectorSite(call.getResult()) &&
-                    carrierOf(typeOf(call.getResult())) == carrier::vector) ||
-                   refuse("native Map snapshot requires confined numeric elements");
+                    isVectorCarrier(carrierOf(typeOf(call.getResult())))) ||
+                   refuse("native Map snapshot requires confined numeric or string elements");
         }
         return true;
     }
@@ -256,7 +262,7 @@ bool admission::op(mlir::Operation * o) {
                 !isObjectCarrier(carrierOf(typeOf(operands[i]))) &&
                 carrierOf(typeOf(operands[i])) != carrier::closure &&
                 carrierOf(typeOf(operands[i])) != carrier::boolean &&
-                carrierOf(typeOf(operands[i])) != carrier::string &&
+                !isStringCarrier(carrierOf(typeOf(operands[i]))) &&
                 !(carrierOf(typeOf(operands[i])) == carrier::map &&
                   nativeMapGroup(operands[i]) >= 0) &&
                 !numeric(operands[i], "argument")) {
@@ -346,10 +352,10 @@ bool admission::op(mlir::Operation * o) {
     if (auto b = llvm::dyn_cast<BinaryOp>(o)) {
         switch (b.getKind()) {
         case BinaryKind::Add:
-            if (strings(b.getLhs(), b.getRhs())) { return true; }
+            if (stringConcatenation(typeOf(b.getLhs()), typeOf(b.getRhs()))) { return true; }
             return numeric(b.getLhs(), "binary") && numeric(b.getRhs(), "binary");
         case BinaryKind::Concat:
-            return strings(b.getLhs(), b.getRhs()) ||
+            return stringConcatenation(typeOf(b.getLhs()), typeOf(b.getRhs())) ||
                    refuse("concatenation requires two proved owning UTF-8 strings");
         case BinaryKind::Sub:
         case BinaryKind::Mul:
@@ -373,7 +379,7 @@ bool admission::op(mlir::Operation * o) {
         case UnaryKind::TypeOf:
             return isScalarCarrier(carrierOf(typeOf(u.getOperand()))) ||
                    isObjectCarrier(carrierOf(typeOf(u.getOperand()))) ||
-                   carrierOf(typeOf(u.getOperand())) == carrier::string ||
+                   isStringCarrier(carrierOf(typeOf(u.getOperand()))) ||
                    refuse("typeof requires a scalar, object identity or owning string carrier");
         case UnaryKind::Not:
             // `!x` applies the carrier's exact truthiness conversion, then
@@ -394,7 +400,7 @@ bool admission::op(mlir::Operation * o) {
             return numeric(cmp.getLhs(), "compare") && numeric(cmp.getRhs(), "compare");
         case CompareKind::Eq:
         case CompareKind::StrictEq:
-            if (strings(cmp.getLhs(), cmp.getRhs())) { return true; }
+            if (stringEquality(typeOf(cmp.getLhs()), typeOf(cmp.getRhs()))) { return true; }
             if (isObjectCarrier(carrierOf(typeOf(cmp.getLhs()))) ||
                 isObjectCarrier(carrierOf(typeOf(cmp.getRhs())))) {
                 const auto left = typeOf(cmp.getLhs()), right = typeOf(cmp.getRhs());

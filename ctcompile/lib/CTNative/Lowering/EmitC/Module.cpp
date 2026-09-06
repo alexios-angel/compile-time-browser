@@ -1,6 +1,7 @@
 // EmitC/Module.cpp - native lowering implementation.
 #include "../Admission/Admission.h"
 #include "../ObjectValues/RuntimeHelpers.h"
+#include "../StringValues/RuntimeHelpers.h"
 #include "Emitter.h"
 #include "MethodTableHelpers.h"
 #include "NativeMapHelpers.h"
@@ -75,6 +76,8 @@ void lowering::finish() {
 }
 
 void lowering::declareGlobals() {
+    needsNullableString |= needsStringVector;
+    needsNullable |= needsNullableString;
     needsNullable |= needsObjectValue;
     needsObjectIdentity |= needsObjectValue;
     mlir::OpBuilder b(context);
@@ -95,6 +98,9 @@ void lowering::declareGlobals() {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("memory"), b.getUnitAttr());
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(identityDefinition()));
     }
+    if (needsNullableString) {
+        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNullableStringHelpers));
+    }
     if (needsObjectValue) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("utility"), b.getUnitAttr());
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kObjectValueHelpers));
@@ -109,6 +115,10 @@ void lowering::declareGlobals() {
     if (needsVector) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("vector"), b.getUnitAttr());
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kVectorHelpers));
+    }
+    if (needsStringVector) {
+        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("vector"), b.getUnitAttr());
+        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kStringVectorHelpers));
     }
     if (needsMap) {
         for (llvm::StringRef header : {"exception", "memory", "utility", "vector"}) {

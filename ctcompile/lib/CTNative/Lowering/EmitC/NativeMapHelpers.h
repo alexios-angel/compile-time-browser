@@ -86,6 +86,13 @@ template <class V> std::vector<double> map_keys(const std::shared_ptr<map_storag
     for (const auto & entry : map->entries) { out.push_back(entry.first); }
     return out;
 }
+template <class V> std::vector<std::string> map_keys(
+    const std::shared_ptr<map_storage<std::string, V>> & map) {
+    std::vector<std::string> out;
+    out.reserve(map->entries.size());
+    for (const auto & entry : map->entries) { out.push_back(entry.first); }
+    return out;
+}
 } // namespace ctnative
 )cpp";
 

@@ -11,8 +11,10 @@
 // refusal is the assertion - it names the parameter and what would prove it.
 
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %s \
-// RUN:   | ctjs-opt --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | ctjs-opt --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s
+// The disabled baseline keeps the literal power operation whose runtime
+// lowering this test inspects; default precomputation replaces it with a constant.
 
 var total = 0;
 var count = 0;

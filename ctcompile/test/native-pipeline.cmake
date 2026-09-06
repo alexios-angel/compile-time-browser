@@ -1,5 +1,5 @@
 # JAVASCRIPT TO AN EMITC MODULE THROUGH THE NATIVE PIPELINE - part 24 Phase
-# 62½-C. The four passes in the order the lowering documents: recover
+# 62½-C. The stages in the order the lowering documents: recover
 # structure, lower every proved function (refuse the rest by name), then
 # upstream's scf and arith conversions. The module this writes is what
 # check-native-unit.cmake turns into a binary and compares with the
@@ -18,6 +18,32 @@ foreach(required TRANSLATE OPT SOURCE OUTPUT)
     message(FATAL_ERROR "native-pipeline.cmake: -D${required}= is required")
   endif()
 endforeach()
+# Undefined PRECOMPUTE/PRUNE_UNREACHABLE use the native entry's defaults.
+# Explicit ON keeps the earlier report+positive-count stage used by the
+# optimization fixtures; either explicit value suppresses a duplicate stage
+# inside lowering. OPTIMIZE=OFF disables only the entry's defaults, just as
+# --ctnative-lower-to-emitc=optimize=false does in a manually composed pipeline.
+set(_native_options "")
+if(DEFINED OPTIMIZE AND NOT OPTIMIZE)
+  list(APPEND _native_options "optimize=false")
+endif()
+if(DEFINED PRECOMPUTE)
+  list(APPEND _native_options "precompute=false")
+endif()
+if(DEFINED PRUNE_UNREACHABLE)
+  list(APPEND _native_options "prune-unreachable=false")
+endif()
+if(OPTIMIZATION_REPORT)
+  list(APPEND _native_options "optimization-report=true")
+endif()
+if(DEFINED PRECOMPUTE_MAX_STEPS)
+  list(APPEND _native_options "precompute-max-steps=${PRECOMPUTE_MAX_STEPS}")
+endif()
+if(DEFINED REACHABILITY_MAX_STEPS)
+  list(APPEND _native_options "reachability-max-steps=${REACHABILITY_MAX_STEPS}")
+endif()
+list(JOIN _native_options " " _native_options)
+set(_native_lower "ctnative-lower-to-emitc{${_native_options}}")
 set(_partial_pass "")
 set(_prune_pass "")
 set(_precompute_pass "")
@@ -54,7 +80,7 @@ execute_process(
   # prune for the variables nothing reads (Phase 63 Step 7 - the file must
   # compile clean under -Wall -Wextra -Werror), and a canonicalize for what
   # the prune left dead.
-  COMMAND "${OPT}" "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ${_precompute_pass}${_specialize_pass}${_supercompile_pass}${_partial_pass}${_prune_pass}ctnative-lower-to-emitc, ${_deforest_pass}emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))"
+  COMMAND "${OPT}" "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ${_precompute_pass}${_specialize_pass}${_supercompile_pass}${_partial_pass}${_prune_pass}${_native_lower}, ${_deforest_pass}emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))"
           --mlir-print-debuginfo --mlir-print-op-on-diagnostic=false
   OUTPUT_VARIABLE module
   ERROR_VARIABLE complaints
@@ -90,4 +116,7 @@ if(refusals)
   message(FATAL_ERROR "native-pipeline.cmake: ${SOURCE} is not native:\n  ${refusals}")
 endif()
 file(WRITE "${OUTPUT}" "${module}")
+if(OPTIMIZATION_REPORT)
+  message(STATUS "${complaints}")
+endif()
 message(STATUS "native pipeline: ${SOURCE} -> ${OUTPUT}, no function refused")

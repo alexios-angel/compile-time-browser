@@ -21,6 +21,7 @@ add_mlir_library(CTNativeAnalysis
   EscapeAnalysis.cpp
   NativeMap.cpp
   NativeMap/Presence.cpp
+  NativeMap/SnapshotCopies.cpp
   NativeObjectIdentity.cpp
   NativeObject/ValueFlow.cpp
   NativeObject/InertSlots.cpp

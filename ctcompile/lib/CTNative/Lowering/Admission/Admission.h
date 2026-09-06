@@ -23,8 +23,6 @@ struct admission {
 
     bool boolean(mlir::Value v, llvm::StringRef where);
 
-    bool strings(mlir::Value lhs, mlir::Value rhs) const;
-
     bool printable(mlir::Value v, llvm::StringRef where);
     bool identityField(mlir::Operation * op);
 

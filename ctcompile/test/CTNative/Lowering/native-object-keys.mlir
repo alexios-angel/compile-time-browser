@@ -23,7 +23,7 @@
 // REFUSED: ctnative.not_native =
 // CAPTURE-DAG: call_opaque "std::make_shared<ctnative::identity_object>"
 // CAPTURE-DAG: call_opaque "ctnative::make_number_map<std::shared_ptr<ctnative::identity_object>>"
-// SNAPSHOT: ctnative.not_native = "native Map snapshot requires confined numeric elements"
+// SNAPSHOT: ctnative.not_native = "native Map snapshot requires confined numeric or string elements"
 
 //--- field.js
 function probe() { const key = {x: 1}; const map = new Map(); map.set(key, 42); return map.size; }

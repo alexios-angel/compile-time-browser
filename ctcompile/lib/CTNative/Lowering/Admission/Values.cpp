@@ -29,10 +29,6 @@ bool admission::boolean(mlir::Value v, llvm::StringRef where) {
     return true;
 }
 
-bool admission::strings(mlir::Value lhs, mlir::Value rhs) const {
-    return carrierOf(typeOf(lhs)) == carrier::string && carrierOf(typeOf(rhs)) == carrier::string;
-}
-
 // Global observations still use the numeric printing convention. Internal
 // optional scalars are exact, but that does not add optional-global output.
 bool admission::printable(mlir::Value v, llvm::StringRef where) {

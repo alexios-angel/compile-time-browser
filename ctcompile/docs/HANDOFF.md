@@ -8,17 +8,41 @@ committing. There is no CI. Do not build on the small local machine.
 
 ## Current native staging checkpoint, 2026-09-05
 
-Final devbox gate: **418/418 CTests**, **128/128 lit cases**, **451.19 seconds**;
-all **489 C++ files** pass formatting. Owned-field C++ passes ASan/UBSan with
+Final devbox gate: **430/430 CTests**, **131/131 lit cases**, **492.18 seconds**;
+all **494 C++ files** pass formatting. String-snapshot C++ passes ASan/UBSan with
 leak detection. Boxed Bootstrap is byte-identical. Default native coverage stays
 Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725**; exact Data probes remain
 **0/7, 0/7, 0/8 native**. Full Bootstrap initialization is still unfinished.
 
-The [roadmap](native-pe-roadmap.md) records coverage and optional controls.
-Heap PE, precomputation, direct-call specialization, deforestation,
-supercompilation and unreachable-helper pruning remain independent opt-in passes.
-The default native pipeline enables none; type, effect, BTA and ownership proofs
-remain mandatory.
+The native entry now defaults to bounded primitive precomputation followed by
+private reachability pruning. `--ctnative-lower-to-emitc=optimize=false` disables
+both; `precompute=false` and `prune-unreachable=false` disable either independently.
+Heap PE, direct-call specialization, deforestation and supercompilation remain
+opt-in. Type, effect, BTA and ownership proofs remain required. See the
+[defaults policy](native-optimization-defaults.md) and [roadmap](native-pe-roadmap.md).
+The default/disabled differential preserves eight observations and reduces its
+generated C++ from 7,569 to 6,788 bytes. Coverage now accounts for pruned functions
+without shrinking the source denominator; historical admission floors run
+separately with defaults disabled.
+
+[String-key snapshots](native-string-snapshots.md) now lower Bootstrap's exact
+`Array.from(map.keys())[0]` diagnostic expression for confined standard Maps.
+Owning vectors and nullable strings preserve undefined, null and empty strings,
+insertion order and lifetime after mutation. The fixture admits 10/10 functions
+with 24 observations and passes ASan/UBSan/leak checks. The Map/Array identity and
+confinement proofs remain mandatory; arbitrary hosts and iterators are unsupported.
+
+The [Bootstrap host/export contract](native-bootstrap-host-contract.md) is designed
+but not implemented. Its source-derived oracle covers publication slots, AMD
+retention, mutable methods, receivers, exceptions and error reentry. Node passes
+11/11 cases; ctbrowser agrees on 9/11. Script-`this` fallback and callee/accessor
+evaluation order differ and are recorded explicitly, without native coverage claims.
+
+Six readable JavaScript/native-C++ sample pairs live outside the checkout in
+`~/Downloads/claude/ctcompile-samples/`. They cover loops, strings, snapshots,
+component lifetime, returned closures and explicit heap PE. All 17 observations
+agree under GCC, Clang and the interpreter; the directory includes expected
+output, a regeneration driver and artifact hashes.
 
 [Owned scalar component fields](native-object-fields.md) now preserve fields
 through the exact Bootstrap getter and owning Map payloads. Explicit C++ members
@@ -61,10 +85,10 @@ helper pruning. Pruning follows symbolic and numeric closure edges, retaining
 original boxed callees and published declarations. See their linked implementation
 documents and the [source layout](source-layout.md).
 
-Full native Bootstrap remains unfinished. Next, establish one checked host/effect
+Full native Bootstrap remains unfinished. Next, implement the checked host/effect
 and export contract for exact Data initialization. UMD publication, wrapper
-receiver/callee behavior, string-key snapshots/Array.from and console errors are
-still open. Its unchecked mixed-result property access also needs stronger
+receiver/callee behavior and console errors are still open. Its unchecked
+mixed-result property access also needs stronger
 presence/refinement evidence or an exception boundary. Keep exact vendor probe
 coverage distinct from the component fixtures. Recursive Lumberhack fusion,
 shared mutable capture environments and region splitting remain separate work.

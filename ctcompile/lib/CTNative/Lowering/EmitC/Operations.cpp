@@ -76,6 +76,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
 
     if (replaceMap(o)) { return; }
     if (replaceIdentityField(o)) { return; }
+    if (replaceStringValue(o)) { return; }
 
     // FRAME BOOKKEEPING LOWERS TO NOTHING - but frame_enter's result is
     // used by every frame_exit and root after it, and walk order visits
@@ -90,7 +91,8 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         // lattice joins bottom with the live incoming type, so one
         // poison can feed both string and numeric slots. Choose an
         // inert value per destination instead of giving every use NaN.
-        mlir::Value emptyString, emptyNullable, emptyBoolean, emptyObjectValue, emptyIdentity;
+        mlir::Value emptyString, emptyNullableString, emptyNullable, emptyBoolean, emptyObjectValue,
+            emptyIdentity;
         for (mlir::OpOperand & use : llvm::make_early_inc_range(o->getResult(0).getUses())) {
             mlir::Operation * user = use.getOwner();
             const unsigned index = use.getOperandNumber();
@@ -112,6 +114,14 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             if (expected == carrierType(context, carrier::string)) {
                 if (!emptyString) { emptyString = stringConstant(b, where, ""); }
                 use.set(emptyString);
+            } else if (isNullableStringCarrier(expected)) {
+                needsNullableString = true;
+                if (!emptyNullableString) {
+                    emptyNullableString = ec::ConstantOp::create(
+                        b, where, carrierType(context, carrier::nullableString),
+                        ec::OpaqueAttr::get(context, "ctnative::nullable_string{}"));
+                }
+                use.set(emptyNullableString);
             } else if (isObjectValueCarrier(expected)) {
                 needsObjectValue = true;
                 if (!emptyObjectValue) {

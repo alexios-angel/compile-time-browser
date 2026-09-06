@@ -17,6 +17,8 @@ inline constexpr llvm::StringLiteral kNativeMapReason = "ctnative.map_reason";
 inline constexpr llvm::StringLiteral kNativeMapGroup = "ctnative.map_group";
 inline constexpr llvm::StringLiteral kNativeMapArgGroups = "ctnative.map_arg_groups";
 inline constexpr llvm::StringLiteral kNativeMapPresent = "ctnative.map_present";
+inline constexpr llvm::StringLiteral kNativeMapSnapshotCopy = "ctnative.map_snapshot_copy";
+inline constexpr llvm::StringLiteral kNativeMapSnapshotBuiltin = "ctnative.map_snapshot_builtin";
 
 /// Annotate only after proving both the standard constructor/method identity
 /// and every instance use. No runtime assumption or boxed fallback is added.
@@ -24,6 +26,9 @@ void prepareNativeMaps(mlir::ModuleOp module);
 
 /// The operation performed by a proved call or size read, or empty.
 llvm::StringRef nativeMapAction(mlir::Operation * op);
+
+/// A proved keys/values snapshot or its confined standard Array.from copy.
+bool isNativeMapSnapshot(mlir::Operation * op);
 
 /// Schema family shared through set results, closed call arguments and returns.
 /// A family may contain distinct runtime instances; it is not an identity proof.

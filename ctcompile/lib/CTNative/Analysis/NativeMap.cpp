@@ -3,6 +3,7 @@
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 
 #include "NativeMap/Presence.h"
+#include "NativeMap/SnapshotCopies.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -35,7 +36,14 @@ int64_t nativeMapGroup(mlir::Value value) {
 }
 
 bool isNativeMapBookkeeping(mlir::Operation * op) {
-    return op != nullptr && (op->hasAttr(kNativeMapConstructor) || op->hasAttr(kNativeMapMethod));
+    return op != nullptr && (op->hasAttr(kNativeMapConstructor) || op->hasAttr(kNativeMapMethod) ||
+                             op->hasAttr(kNativeMapSnapshotBuiltin));
+}
+
+bool isNativeMapSnapshot(mlir::Operation * op) {
+    const auto action = nativeMapAction(op);
+    return op != nullptr &&
+           (action == "keys" || action == "values" || op->hasAttr(kNativeMapSnapshotCopy));
 }
 
 namespace {
@@ -337,7 +345,8 @@ void prepareNativeMaps(mlir::ModuleOp module) {
     module.walk([&](mlir::Operation * op) {
         for (llvm::StringRef name :
              {kNativeMapSite, kNativeMapAction, kNativeMapMethod, kNativeMapConstructor,
-              kNativeMapReason, kNativeMapGroup, kNativeMapArgGroups, kNativeMapPresent}) {
+              kNativeMapReason, kNativeMapGroup, kNativeMapArgGroups, kNativeMapPresent,
+              kNativeMapSnapshotCopy, kNativeMapSnapshotBuiltin}) {
             op->removeAttr(name);
         }
     });
@@ -387,6 +396,8 @@ void prepareNativeMaps(mlir::ModuleOp module) {
     for (const plan & candidate : plans) {
         for (ctjs::CallOp call : candidate.calls) { calls.insert(call); }
     }
+    map_detail::snapshotCopies copies;
+    if (reason.empty()) { reason = map_detail::collectSnapshotCopies(module, calls, copies); }
     // Standard builtins are installed by the reference/native program's
     // initial environment. A spelling alone is insufficient: explicit stores,
     // global-object/reflection access and unknown invocations can replace the
@@ -397,14 +408,15 @@ void prepareNativeMaps(mlir::ModuleOp module) {
             store && store.getName() == "Map") {
             reason = "standard Map binding is assigned in this program";
         } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
-                   load && load.getName() != "Map") {
+                   load && load.getName() != "Map" && !copies.builtins.contains(op)) {
             for (mlir::OpOperand & use : load.getResult().getUses()) {
                 if (!llvm::isa<ctjs::CallDirectOp>(use.getOwner()) || use.getOperandNumber() != 2) {
                     reason = "standard Map identity is unproved with other host/global value reads";
                     break;
                 }
             }
-        } else if (llvm::isa<ctjs::CallOp>(op) && !calls.contains(op)) {
+        } else if (llvm::isa<ctjs::CallOp>(op) && !calls.contains(op) &&
+                   !copies.calls.contains(op)) {
             reason = "standard Map identity is unproved across an unknown call";
         } else if (llvm::isa<ctjs::ConstructOp>(op) && !sites.contains(op)) {
             reason = "standard Map identity is unproved across an unknown constructor";
@@ -426,6 +438,12 @@ void prepareNativeMaps(mlir::ModuleOp module) {
     }
     for (ctjs::LoadGlobalOp load : constructors) {
         load->setAttr(kNativeMapConstructor, mlir::UnitAttr::get(context));
+    }
+    for (mlir::Operation * builtin : copies.builtins) {
+        builtin->setAttr(kNativeMapSnapshotBuiltin, mlir::UnitAttr::get(context));
+    }
+    for (mlir::Operation * copy : copies.calls) {
+        copy->setAttr(kNativeMapSnapshotCopy, mlir::UnitAttr::get(context));
     }
     int64_t group = 0;
     for (const plan & candidate : plans) {

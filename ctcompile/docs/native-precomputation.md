@@ -70,7 +70,8 @@ and unknown values, integer widths, and exact step limits around scalar and
 branch rewrites. Native reference comparison remains separate from structural
 optimization evidence.
 
-This pass is one stage of the opt-in native initialization pipeline. Specializing
-a function supplies explicit literals; precomputation then simplifies its
+This pass runs by default at the native lowering entry, before reachability;
+see [native optimization defaults](native-optimization-defaults.md) for opt-outs
+and limits. Specializing a function supplies explicit literals; precomputation then simplifies its
 residual body. Heap ownership, closures and host effects still require their
 separate native proofs. Full Bootstrap support is not implied by this fixture.

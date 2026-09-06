@@ -21,7 +21,19 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     }
     if (value.getType() == target) { return value; }
     llvm::StringRef helper;
-    if (isObjectValueCarrier(target)) {
+    if (isNullableStringCarrier(target)) {
+        needsNullableString = true;
+        helper = "ctnative::to_nullable_string";
+    } else if (isNullableStringCarrier(value.getType())) {
+        needsNullableString = true;
+        if (target == carrierType(context, carrier::string)) {
+            helper = "ctnative::string_text";
+        } else if (llvm::isa<mlir::IntegerType>(target)) {
+            helper = "ctnative::string_truthy";
+        } else {
+            llvm::report_fatal_error("nullable string has no admitted numeric conversion");
+        }
+    } else if (isObjectValueCarrier(target)) {
         needsObjectValue = true;
         helper = "ctnative::to_object_value";
     } else if (isObjectValueCarrier(value.getType()) && llvm::isa<mlir::IntegerType>(target)) {
@@ -54,9 +66,10 @@ mlir::Type lowering::joinedReturnType(ctjs::FuncOp fn) const {
 void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     const auto scalarType = [&](mlir::Type type) -> mlir::Type {
         const auto c = carrierOf(type);
-        if (!isScalarCarrier(c) && !isObjectCarrier(c) && c != carrier::string) { return {}; }
+        if (!isScalarCarrier(c) && !isObjectCarrier(c) && !isStringCarrier(c)) { return {}; }
         needsObjectValue |= c == carrier::objectValue;
         needsNullable |= c == carrier::nullable;
+        needsNullableString |= c == carrier::nullableString;
         return carrierType(context, c);
     };
     for (ctjs::FuncOp fn : accepted) {

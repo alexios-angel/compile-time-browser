@@ -36,7 +36,7 @@ neither the interpreter nor its collector.
 | `delete(key)` | Remove the entry and report whether it existed |
 | `clear()` | Remove all entries and return absent |
 | `size` | Number of current entries |
-| `keys()` | Independent numeric array snapshot, for numeric keys |
+| `keys()` | Independent numeric or string array snapshot |
 | `values()` | Independent numeric array snapshot |
 
 Numeric lookup uses SameValueZero: NaN finds NaN, and positive and negative
@@ -48,7 +48,9 @@ This differs from ECMAScript Map's zero normalization.
 The interpreter returns arrays from `keys()` and `values()`, rather than
 ECMAScript iterators. Native snapshots therefore copy their elements and
 survive subsequent mutation or clearing. Reads and `length` are supported;
-snapshot mutation, escape and nonnumeric elements are refused. Strings retain
+snapshot mutation, escape and elements other than numbers or strings are refused.
+Proved standard `Array.from` copies and optional string scalar reads are covered
+by [native-string-snapshots.md](native-string-snapshots.md). Strings retain
 the interpreter's UTF-8/WTF-8 byte semantics, including embedded NUL and lone
 surrogates, as described in [native-strings.md](native-strings.md).
 

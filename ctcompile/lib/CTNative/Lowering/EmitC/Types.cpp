@@ -10,6 +10,7 @@ void lowering::retype(ctjs::FuncOp fn) {
     const auto retypeValue = [&](mlir::Value v) {
         needsNullable |= carrierOf(typeOf(v)) == carrier::nullable;
         needsObjectValue |= carrierOf(typeOf(v)) == carrier::objectValue;
+        needsNullableString |= carrierOf(typeOf(v)) == carrier::nullableString;
         if (!llvm::isa<ctjs::ValueType>(v.getType())) { return; }
         // A closed object keeps its ctjs type until its shape is known
         // below; everything else takes its carrier now.
@@ -58,12 +59,13 @@ void lowering::retype(ctjs::FuncOp fn) {
             v.setType(mlir::Float64Type::get(context));
             return;
         }
-        needsString |= c == carrier::string;
+        needsString |= isStringCarrier(c);
         // A DENSE ARRAY TAKES ITS OWN CARRIER, which is not one of the two
         // scalars carrierType() can spell: `std::vector<double>`, by value,
         // in this frame.
-        if (c == carrier::vector) {
-            v.setType(vectorCarrierType(context));
+        if (isVectorCarrier(c)) {
+            needsStringVector |= c == carrier::stringVector;
+            v.setType(vectorCarrierType(context, c == carrier::stringVector));
             return;
         }
         // NO CARRIER IS FATAL, NOT A DOUBLE. This fell through to f64

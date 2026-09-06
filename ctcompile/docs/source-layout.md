@@ -10,17 +10,18 @@ by their implementation files. Public APIs remain under `include/ctcompile/`.
 | Binding time | `lib/CTNative/Analysis/BindingTime/` and `BindingTime/` | Argument/callee facts, conditional effect summaries and queries, heap flow and annotation pass |
 | Precomputation | `lib/CTNative/Symbolic/` | Primitive and normal-result facts, bounded propagation, PDLL scalar replacements and native region splicing |
 | Specialization | `lib/CTNative/Specialization/` | Closed direct-call candidates, exact argument tuples and bounded residual variants |
-| Reachability | `lib/CTNative/Reachability/` | Optional bounded graph proof and transactional removal of private helpers |
+| Reachability | `lib/CTNative/Reachability/` | Bounded graph proof and transactional removal of private helpers |
 | Supercompilation | `lib/CTNative/Supercompilation/` | Transactional process graphs, recursive promises, finite-shape embedding, scalar child generalization and budget control |
 | Deforestation | `lib/CTNative/Deforestation/` | Snapshot producer/consumer constraints, effect barriers and scalar projection helpers |
-| Native pass | `lib/CTNative/Lowering/LowerToEmitC.cpp` | Pass setup, inference, admission fixpoint and lowering order |
+| Native pass | `lib/CTNative/Lowering/LowerToEmitC.cpp` | Default optimization policy, pass setup, inference, admission fixpoint and lowering order |
 | Closure lifting | `lib/CTNative/Lowering/ClosureLifting/` | Calls, callbacks, bindings, cells, captures, returned closures and method tables, constructors, diagnostics and rewriting |
 | Native admission | `lib/CTNative/Lowering/Admission/` | Value, object, operation and function checks |
 | Native emission | `lib/CTNative/Lowering/EmitC/` | Shapes, types, owning environments and method tables, Maps, expressions, operations, functions, module declarations and runtime helper text |
 | Object value carriers | `lib/CTNative/Lowering/ObjectValues/` | Identity/scalar union classification, fixed scalar field layouts and owning runtime helpers |
+| String value carriers | `lib/CTNative/Lowering/StringValues/` | Nullable owning strings, scalar consumers and ordered string snapshot helpers |
 | Object identity flow | `lib/CTNative/Analysis/NativeObject/` | Map payload and structured schema edges, closed field/environment proof and bounded inert-slot proof |
 | Shape inference | `lib/CTNative/Analysis/Inference/` | Receiver/cell groups, closed shapes and dense-vector proofs |
-| Owning Map proofs | `lib/CTNative/Analysis/` and `Analysis/NativeMap/` | Shared closed value flow, Map schemas, conditional presence/effects and object identities |
+| Owning Map proofs | `lib/CTNative/Analysis/` and `Analysis/NativeMap/` | Shared closed value flow, Map schemas, conditional presence/effects, object identities and standard snapshot-copy proof |
 | Boxed emission | `lib/CTJS/Lowering/EmitC/` | Admission, function setup, operation dispatch, status handling, roots and constants |
 | Global effects | `lib/CTJS/Lowering/Globals/` | Reflection, global identity and effects retained for refused bodies |
 | Bytecode import | `lib/CTJS/Import/Bytecode/` | Per-function state, instruction dispatch, operator tables and support routines |

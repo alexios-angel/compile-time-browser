@@ -17,7 +17,7 @@
 // CYCLE: ctnative.not_native = "native Map payload schemas contain an ownership cycle"
 // MIXED: ctnative.not_native = "native Map flow contains a non-Map producer `ctjs.constant`"
 // PRESENCE: ctnative.not_native = "nested native Map get requires presence on every reaching path for the same instance and key; has observations must survive intervening effects"
-// SNAPSHOT: ctnative.not_native = "native Map snapshot requires confined numeric elements"
+// SNAPSHOT: ctnative.not_native = "native Map snapshot requires confined numeric or string elements"
 
 //--- self.js
 function probe() { var map = new Map(); map.set(1, map); return map.size; }

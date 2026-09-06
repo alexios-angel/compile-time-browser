@@ -43,6 +43,7 @@ carrier carrierOf(mlir::Type type) {
         return carrier::string;
     }
     if (auto opt = llvm::dyn_cast<OptType>(type)) {
+        if (carrierOf(opt.getElementType()) == carrier::string) { return carrier::nullableString; }
         if (llvm::isa<BottomType>(opt.getElementType()) ||
             isScalarCarrier(carrierOf(opt.getElementType()))) {
             return carrier::nullable;
@@ -78,6 +79,7 @@ carrier carrierOf(mlir::Type type) {
     // for the rest is named at the literal.
     if (auto elements = llvm::dyn_cast<VecType>(type)) {
         auto element = elements.getElementType();
+        if (carrierOf(element) == carrier::string) { return carrier::stringVector; }
         if (auto opt = llvm::dyn_cast<OptType>(element)) { element = opt.getElementType(); }
         return llvm::isa<BottomType, NumType>(element) ? carrier::vector : carrier::none;
     }
@@ -98,8 +100,8 @@ bool isNullableCarrier(mlir::Type type) {
 // The one C++ type a dense array lowers to. Spelled once: the emitted
 // declaration, the helper signatures and the lit test all have to agree, and
 // three copies of a string is how they stop agreeing.
-mlir::Type vectorCarrierType(mlir::MLIRContext * c) {
-    return ec::LValueType::get(ec::OpaqueType::get(c, kVectorType));
+mlir::Type vectorCarrierType(mlir::MLIRContext * c, bool strings) {
+    return ec::LValueType::get(ec::OpaqueType::get(c, strings ? kStringVectorType : kVectorType));
 }
 
 llvm::StringRef mapKeySpelling(mlir::Type type) {
@@ -158,6 +160,7 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     // that is worth far more than a double that happens to verify.
     switch (which) {
     case carrier::nullable: return ec::OpaqueType::get(c, kNullableType);
+    case carrier::nullableString: return ec::OpaqueType::get(c, kNullableStringType);
     case carrier::objectValue: return ec::OpaqueType::get(c, kObjectValueType);
     case carrier::objectIdentity: return ec::OpaqueType::get(c, kObjectIdentityType);
     case carrier::methodTable:
@@ -170,6 +173,7 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     case carrier::closure:
     case carrier::map:
     case carrier::vector:
+    case carrier::stringVector:
     case carrier::none: break;
     }
     llvm::report_fatal_error("ctnative lowering: asked for the C++ carrier of a value that has "

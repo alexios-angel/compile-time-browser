@@ -23,7 +23,7 @@
 // NUMERIC: ctnative.not_native = "unary operand is !ctnative.opt<!ctnative.object_identity>, not a number"
 // LOOSE: ctnative.not_native = "loose object equality may invoke object-to-primitive conversion"
 // REFUSED: ctnative.not_native =
-// SNAPSHOT: ctnative.not_native = "native Map snapshot requires confined numeric elements"
+// SNAPSHOT: ctnative.not_native = "native Map snapshot requires confined numeric or string elements"
 // FORGED: ctnative.not_native =
 // FORGED: identity-only Map value has an unsupported use through `ctjs.set_property`
 

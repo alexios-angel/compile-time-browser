@@ -121,7 +121,16 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
     -DMUTATE=1 "-DEXPECT_FAILURE=refused the generated file")
   function(ctcompile_add_native_pipeline name js)
     set(_module "${CMAKE_CURRENT_BINARY_DIR}/${name}.pipeline.emitc.mlir")
-    cmake_parse_arguments(_pipeline "PARTIAL_EVALUATE;PRECOMPUTE;SPECIALIZE;SUPERCOMPILE;DEFOREST;PRUNE_UNREACHABLE" "" "" ${ARGN})
+    cmake_parse_arguments(_pipeline "PARTIAL_EVALUATE;PRECOMPUTE;SPECIALIZE;SUPERCOMPILE;DEFOREST;PRUNE_UNREACHABLE;NO_DEFAULT_OPTIMIZATIONS" "" "" ${ARGN})
+    set(_optimization_args)
+    foreach(_stage PRECOMPUTE PRUNE_UNREACHABLE)
+      if(_pipeline_${_stage})
+        list(APPEND _optimization_args "-D${_stage}=TRUE")
+      endif()
+    endforeach()
+    if(_pipeline_NO_DEFAULT_OPTIMIZATIONS)
+      list(APPEND _optimization_args "-DOPTIMIZE=FALSE")
+    endif()
     add_custom_command(
       OUTPUT "${_module}"
       COMMAND ${CMAKE_COMMAND}
@@ -130,8 +139,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
               -DSOURCE=${js}
               -DOUTPUT=${_module}
               -DPARTIAL_EVALUATE=${_pipeline_PARTIAL_EVALUATE}
-              -DPRUNE_UNREACHABLE=${_pipeline_PRUNE_UNREACHABLE}
-              -DPRECOMPUTE=${_pipeline_PRECOMPUTE}
+              ${_optimization_args}
               -DSPECIALIZE=${_pipeline_SPECIALIZE}
               -DSUPERCOMPILE=${_pipeline_SUPERCOMPILE}
               -DDEFOREST=${_pipeline_DEFOREST}
@@ -201,6 +209,18 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
   ctcompile_add_native_pipeline(structs "${CMAKE_CURRENT_SOURCE_DIR}/native-struct-fixture.js" swap_answer)
   # Phase 57A: dense, uniformly numeric array literals, as std::vector<double>
   ctcompile_add_native_pipeline(arrays "${CMAKE_CURRENT_SOURCE_DIR}/native-array-fixture.js" sum)
+
+  add_test(NAME ctcompile_native_optimization_defaults
+           COMMAND ${CMAKE_COMMAND}
+                   -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
+                   -DOPT=$<TARGET_FILE:ctjs-opt>
+                   -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/native-default-optimizations-fixture.js
+                   -DCXX=${CMAKE_CXX_COMPILER}
+                   -DNM=${_native_nm}
+                   -DREFERENCE=$<TARGET_FILE:ctcompile-test-native-reference>
+                   -DVM_LINKED=$<TARGET_FILE:ctcompile-test-type-oracle>
+                   -DWORK=${CMAKE_CURRENT_BINARY_DIR}
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/check-native-optimization-defaults.cmake)
 endif()
 
 # === PART 24 §3.3: the deduction probe ===
@@ -321,6 +341,14 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   # Resolver and lift counts stay unchanged; native-strings.md records the
   # measured scope, and the floors below now protect the additional functions.
   function(ctcompile_add_native_claims name js floor resolved direct lifted)
+    cmake_parse_arguments(_claims "DEFAULT_OPTIMIZATIONS" "" "" ${ARGN})
+    # Preserve historical admission floors independently of removing dead
+    # helpers. Separate DEFAULT_OPTIMIZATIONS cases measure ordinary lowering
+    # and keep pruned functions in the source denominator.
+    set(_optimization_args --no-default-optimizations)
+    if(_claims_DEFAULT_OPTIMIZATIONS)
+      set(_optimization_args)
+    endif()
     add_test(NAME ctcompile_native_claims_${name}
              COMMAND ${Python3_EXECUTABLE}
                      ${CTBROWSER_MONOREPO_ROOT}/tools/check/native-claims.py
@@ -328,6 +356,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
                      --opt $<TARGET_FILE:ctjs-opt>
                      --corpus ${js}
                      --name ${name}
+                     ${_optimization_args}
                      --json ${CMAKE_CURRENT_BINARY_DIR}/native-claims-${name}.json
                      --min-claimed ${floor}
                      --min-resolved ${resolved}
@@ -352,6 +381,17 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   ctcompile_add_native_claims(p5 "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js" 39 0 41 328)
   ctcompile_add_native_claims(phaser
     "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 45 0 48 283)
+  ctcompile_add_native_claims(default_fixture
+    "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.js" 9 8 16 0 DEFAULT_OPTIMIZATIONS)
+  ctcompile_add_native_claims(default_bootstrap
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
+    19 0 21 208 DEFAULT_OPTIMIZATIONS)
+  ctcompile_add_native_claims(default_p5
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/p5/p5.js"
+    39 0 41 328 DEFAULT_OPTIMIZATIONS)
+  ctcompile_add_native_claims(default_phaser
+    "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js"
+    45 0 48 283 DEFAULT_OPTIMIZATIONS)
 
   # BOTH TEETH, PROVED. Each runs the same check as a child and passes only
   # when that child failed for the stated reason - not ctest's WILL_FAIL,
@@ -390,4 +430,8 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
     "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.js"
     --mutate-drop-call-direct
     "--expect-failure=the counter and the rewrite disagree")
+  ctcompile_add_native_claims_negative(pruned_counter_agrees
+    "${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.js"
+    --mutate-pruned-count
+    "--expect-failure=source function conservation failed")
 endif()

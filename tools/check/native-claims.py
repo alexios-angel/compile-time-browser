@@ -7,12 +7,17 @@ This is both, over one JavaScript program, as a table and as JSON.
 
 It runs the native pipeline - the importer, the closed world, the lift and the
 lowering - and sorts every function of the program into exactly one of three
-buckets:
+buckets, plus functions proved unreachable by the default optimization stages:
 
   claimed   an `emitc.func`: proved, lowered, no interpreter and no collector
   refused   a `ctjs.func` still carrying `ctnative.not_native = "<reason>"`
   skipped   never imported at all, because the bytecode used an opcode the
             importer does not lower; ctjs-translate warns about each one
+  pruned    an imported private function removed by proved reachability;
+            counted in the source denominator, never as native admission
+
+Use --no-default-optimizations to measure the historical admission baseline.
+The default measures the same bounded stages as ordinary native lowering.
 
 THE THIRD BUCKET IS THE POINT. A percentage over (claimed + refused) alone
 flatters the compiler by exactly the functions it never looked at, and those
@@ -39,7 +44,7 @@ So it measures the closed world too, from --ctjs-resolve-globals' own counters:
 teeth: a rule that closes the world by one clause too many fails HERE, in the
 same commit, rather than in a survey six weeks later.
 
-FOUR INVARIANTS ARE ASSERTED, not printed and admired:
+FIVE INVARIANTS ARE ASSERTED, not printed and admired:
 
   * every function that was imported and not claimed carries a reason. A
     `ctjs.func` with no `ctnative.not_native` is a function silently left
@@ -52,6 +57,9 @@ FOUR INVARIANTS ARE ASSERTED, not printed and admired:
     pass whose `report` option somebody deleted.
   * the remark and the IR agree about the rewrite. A pass that counts a
     ctjs.call_direct it did not emit makes both floors below it worthless.
+  * every imported function is accounted for as native, refused or pruned.
+    Removing unreachable functions must not inflate the native percentage by
+    silently shrinking the source denominator.
 
 Usage:
   native-claims.py --translate <ctjs-translate> --opt <ctjs-opt>
@@ -73,7 +81,7 @@ NEGATIVE PROOFS, so both teeth stay in the suite rather than in a transcript:
                              the child crashes, segfaults or cannot find its
                              corpus, which is how a negative test rots.
 
-Exit status is 0 only when all four invariants hold and every floor given is
+Exit status is 0 only when all five invariants hold and every floor given is
 met. A floor is a guard against silent narrowing: a change that refuses
 functions - or globals - it used to claim fails here even though every other
 gate stays green, because every other gate uses fixtures the compiler already
@@ -125,6 +133,7 @@ _CALL_DIRECT = re.compile(r"\bctjs\.call_direct\b")
 # the second stage at which a callee gets named, and the one this check used to
 # be blind to.
 _LIFT_REPORT = re.compile(r"ctnative: lifted \d+ closure\(s\).*?rewrote (\d+) call\(s\)")
+_REACHABILITY = re.compile(r"ctnative\.reachability_summary = \{removed = (\d+) : i64,")
 # `ctjs.globals = [{name = "x", reason = "...", resolved = ..., stores = N}]`,
 # the per-name verdict the pass writes on the module. The REASONS are the
 # roadmap for the ceiling in exactly the way `ctnative.not_native` is the
@@ -194,7 +203,8 @@ def run(argv: argparse.Namespace) -> dict:
         [
             argv.opt,
             "--ctjs-lift-to-scf",
-            "--ctnative-lower-to-emitc=report=true",
+            "--ctnative-lower-to-emitc=report=true"
+            + (" optimize=false" if argv.no_default_optimizations else ""),
         ],
         input=closed.stdout,
         capture_output=True,
@@ -235,6 +245,13 @@ def run(argv: argparse.Namespace) -> dict:
     lifted_direct = int(lift_remark.group(1))
 
     module = lower.stdout.decode("utf-8", "replace")
+    reachability = _REACHABILITY.search(module)
+    if not argv.no_default_optimizations and not reachability:
+        sys.exit(f"native-claims ({argv.name}): default reachability summary is missing")
+    pruned = int(reachability.group(1)) if reachability else 0
+    if argv.mutate_pruned_count:
+        pruned += 1
+    imported = len(_CTJS_FUNC.findall(resolved_ir))
     if argv.mutate_drop_one_reason:
         module = re.sub(r', ctnative\.not_native = "(?:[^"\\]|\\.)*"', "", module, count=1)
     claimed = len(_EMITC_FUNC.findall(module))
@@ -253,7 +270,12 @@ def run(argv: argparse.Namespace) -> dict:
             "dropped silently, which part 24 SS2 forbids"
         )
     # INVARIANT 2: the run is not vacuous.
-    total = claimed + left + len(skipped)
+    if imported != claimed + left + pruned:
+        sys.exit(
+            f"native-claims ({argv.name}): source function conservation failed: "
+            f"{imported} imported, {claimed} claimed + {left} refused + {pruned} pruned"
+        )
+    total = imported + len(skipped)
     if total == 0:
         sys.exit(
             f"native-claims ({argv.name}): no functions at all from {argv.corpus} - "
@@ -279,6 +301,8 @@ def run(argv: argparse.Namespace) -> dict:
         "claimed": claimed,
         "refused": left,
         "skipped": len(skipped),
+        "pruned": pruned,
+        "optimization_defaults": not argv.no_default_optimizations,
         "claimed_percent": round(100.0 * claimed / total, 2),
         "refusals": by_reason.most_common(),
         "skips": by_skip.most_common(),
@@ -296,8 +320,9 @@ def report(result: dict, top: int) -> None:
     print(
         f"native claims ({result['name']}): {result['claimed']} of {result['total']} "
         f"functions claimed ({result['claimed_percent']}%), {result['refused']} refused "
-        f"with a reason, {result['skipped']} never imported"
+        f"with a reason, {result['skipped']} never imported, {result['pruned']} pruned"
     )
+    print(f"    optimization defaults: {'on' if result['optimization_defaults'] else 'off'}")
     print(
         f"    closed world: {result['globals_resolved']} of {result['globals']} global(s) "
         f"resolved, {result['call_direct']} ctjs.call_direct, "
@@ -328,6 +353,10 @@ def main() -> None:
     parser.add_argument("--top", type=int, default=8)
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument(
+        "--no-default-optimizations", action="store_true",
+        help="measure admission without default precomputation and reachability pruning",
+    )
+    parser.add_argument(
         "--min-claimed",
         type=int,
         help="fail if fewer functions are claimed than this - the floor against silent narrowing",
@@ -357,6 +386,10 @@ def main() -> None:
         "--mutate-drop-call-direct",
         action="store_true",
         help="negative proof: rename every ctjs.call_direct, which the check must catch",
+    )
+    parser.add_argument(
+        "--mutate-pruned-count", action="store_true",
+        help="negative proof: overcount pruning, which source conservation must catch",
     )
     parser.add_argument(
         "--expect-failure",
@@ -390,6 +423,8 @@ def main() -> None:
         ]
         if argv.json:
             child_argv += ["--json", argv.json]
+        if argv.no_default_optimizations:
+            child_argv.append("--no-default-optimizations")
         if argv.min_claimed is not None:
             child_argv += ["--min-claimed", str(argv.min_claimed)]
         if argv.min_resolved is not None:
@@ -402,6 +437,8 @@ def main() -> None:
             child_argv.append("--mutate-drop-one-reason")
         if argv.mutate_drop_call_direct:
             child_argv.append("--mutate-drop-call-direct")
+        if argv.mutate_pruned_count:
+            child_argv.append("--mutate-pruned-count")
         assert "--expect-failure" not in " ".join(child_argv)
         child = subprocess.run(
             child_argv,

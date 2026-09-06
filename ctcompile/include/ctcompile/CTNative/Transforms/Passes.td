@@ -12,7 +12,7 @@ include "mlir/Pass/PassBase.td"
 def CTNativePruneUnreachable : Pass<"ctnative-prune-unreachable", "mlir::ModuleOp"> {
   let summary = "Remove private functions unreachable from checked symbolic and closure roots";
   let description = [{
-    Optional bounded reachability analysis after partial evaluation. Public and
+    Bounded reachability analysis after partial evaluation. Public and
     external functions, the script entry and executable module operations are
     roots. Symbol references and numeric closure identities retain their targets,
     including the original callee values used by boxed dispatch. Ambiguous closure
@@ -184,6 +184,13 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
     Runs AFTER --ctjs-resolve-globals and --ctjs-lift-to-scf; a function that
     still carries `cf` branches is refused as unstructured.
 
+    By default, runs bounded primitive precomputation followed by private
+    reachability pruning before closure lifting and type inference. These
+    stages do not clone functions or evaluate heap factories. `optimize=false`
+    disables both; `precompute=false` and `prune-unreachable=false` disable
+    each independently. Explicit standalone optimization passes remain
+    available, including specialization, partial evaluation and supercompilation.
+
     Known capture-free callback arguments are specialized first. When every
     caller supplies the same target, calls through the parameter become
     direct calls retaining the original closure value. A call-only parameter
@@ -202,6 +209,18 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
     collector. Anything else is refused by name and left for slice 2.
   }];
   let options = [
+    Option<"optimize", "optimize", "bool", "true",
+           "Run the bounded native default optimizations before lowering">,
+    Option<"precompute", "precompute", "bool", "true",
+           "Precompute proved primitive expressions and structured branches">,
+    Option<"pruneUnreachable", "prune-unreachable", "bool", "true",
+           "Remove private functions with no reachable reference">,
+    Option<"precomputeMaxSteps", "precompute-max-steps", "unsigned", "100000",
+           "Maximum symbolic analysis and rewrite work in the default pipeline">,
+    Option<"reachabilityMaxSteps", "reachability-max-steps", "unsigned", "100000",
+           "Maximum graph discovery work in the default pipeline">,
+    Option<"optimizationReport", "optimization-report", "bool", "false",
+           "Report precomputation and reachability counts for the default pipeline">,
     Option<"report", "report", "bool", /*default=*/"false",
            "Emit the Phase 59 lift counts as a remark (the release LLVM package compiles pass statistics out)">,
     Option<"census", "census", "bool", /*default=*/"false",
@@ -212,9 +231,12 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
   // mlir-pdll does not compile a matcher: it emits PDL TEXT that MLIRParser
   // parses when the pattern set is built, PDLToPDLInterp lowers, and a
   // bytecode interpreter runs. Parsing that text needs both dialects loaded
-  // before the pass runs, which is what this list is for.
+  // before the pass runs, which is what this list is for. The default
+  // precomputation pipeline also constructs CTJS and arith constants.
   let dependentDialects = [
+    "::ctcompile::ctjs::CTJSDialect",
     "::ctcompile::ctnative::CTNativeDialect",
+    "::mlir::arith::ArithDialect",
     "::mlir::emitc::EmitCDialect",
     "::mlir::pdl::PDLDialect",
     "::mlir::pdl_interp::PDLInterpDialect",

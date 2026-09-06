@@ -18,8 +18,9 @@
 // EQUALITY-SAME: ctnative.not_native = "equality operand is !ctnative.str<utf8>, not a number"
 // ORDERING: ctjs.func private @compare$1
 // ORDERING-SAME: ctnative.not_native = "compare operand is !ctnative.str<utf8>, not a number"
-// OPTIONAL: ctjs.func private @choose$1
-// OPTIONAL-SAME: ctnative.not_native = "a value of type !ctnative.opt<!ctnative.str<utf8>> from `scf.if`"
+// OPTIONAL: emitc.func @choose_1({{.*}}) -> !emitc.opaque<"ctnative::nullable_string">
+// OPTIONAL: call_opaque "ctnative::to_nullable_string"
+// OPTIONAL-NOT: ctnative.not_native
 // GLOBAL: ctnative.not_native = "store to global `result` requires a numeric global"
 // FIELD: ctnative.not_native = "field `direction` is stored a !ctnative.str<utf8>, not a number or a boolean"
 // MIXED: ctjs.func private @choose$1
