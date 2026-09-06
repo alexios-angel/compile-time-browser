@@ -34,10 +34,11 @@
 // superset, and it fails the suite the same afternoon rather than at the next
 // bump.
 //
-// THE DIFF FROM UPSTREAM IS THREE HUNKS and is meant to stay that way: this
-// comment, the include below, and the qualified name on the definition of
-// translateToCpp at the bottom. Everything between them is upstream's, verbatim.
+// Native printing extensions are gated by ctnative attributes. Finite float
+// spelling for marked modules lives in ReadableFloat.cpp; unmarked modules
+// retain upstream output and the vendored tests remain unchanged.
 
+#include "ReadableFloat.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -51,6 +52,7 @@
 #include "mlir/Support/LLVM.h"
 #include "ctcompile/Target/Cpp/CppEmitter.h"
 #include "llvm/ADT/ScopedHashTable.h"
+#include "llvm/Support/SaveAndRestore.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Debug.h"
@@ -323,6 +325,9 @@ private:
   /// arguments are declared at the beginning of the function. This also
   /// includes results from ops located in nested regions.
   bool declareVariablesAtTop;
+
+  /// Native-only literal spelling, scoped to the operation's nearest module.
+  bool readableLiterals = false;
 
   /// Only emit file ops whos id matches this value.
   std::string fileId;
@@ -1576,6 +1581,8 @@ LogicalResult CppEmitter::emitAttribute(Location loc, Attribute attr) {
   };
 
   auto printFloat = [&](const APFloat &val) {
+    if (readableLiterals && ctcompile::cpp::emitReadableFloat(val, os))
+      return;
     if (val.isFinite()) {
       SmallString<128> strValue;
       // Use default values of toString except don't truncate zeros.
@@ -1900,6 +1907,13 @@ LogicalResult CppEmitter::emitLabel(Block &block) {
 }
 
 LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
+  auto module = dyn_cast<ModuleOp>(&op);
+  if (!module)
+    module = op.getParentOfType<ModuleOp>();
+  llvm::SaveAndRestore readableScope(
+      readableLiterals,
+      module && module->hasAttrOfType<UnitAttr>("ctnative.readable_literals"));
+
   // ctcompile Phase 63 Step 7: a provenance comment above every generated
   // definition, so a C++ diagnostic on generated code names a JavaScript
   // site. The lowering composes the text; this is its one consumer.

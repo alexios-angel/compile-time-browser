@@ -191,7 +191,7 @@ implementation records.
 
 | Source fixture | Measured transformation | Native functions | Numeric observations |
 |---|---|---:|---:|
-| Default optimization comparison | 17 expressions, 3 branches, 294 steps; generated C++ 7,569 → 6,788 bytes | 4/4 | 8 |
+| Default optimization comparison | 17 expressions, 3 branches, 294 steps; generated C++ 7,264 → 6,623 bytes with readable literals | 4/4 | 8 |
 | String-key Map snapshots | Exact diagnostic, standard Array.from copy, nullable strings and retained snapshots | 10/10 | 24 |
 | Owned scalar component fields | Exact getter, guarded aliases, shared mutation and lifetime after deletion | 15/15 | 29 |
 | Scalar child generalization | 3 kernels, 14 configurations, 12 folds, 9 generalizations, 320 added residual operations | 23/23 | 16 |

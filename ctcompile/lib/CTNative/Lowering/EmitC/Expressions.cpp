@@ -1,6 +1,7 @@
 // EmitC/Expressions.cpp - native lowering implementation.
 #include "../Admission/Admission.h"
 #include "Emitter.h"
+#include "ctcompile/Support/CppLiterals.hpp"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -20,14 +21,9 @@ mlir::Value lowering::boolConstant(mlir::OpBuilder & b, mlir::Location where, bo
 
 mlir::Value lowering::stringConstant(mlir::OpBuilder & builder, mlir::Location where,
                                      llvm::StringRef value) {
-    constexpr char hex[] = "0123456789ABCDEF";
-    std::string initializer = "std::string(\"";
-    for (unsigned char byte : value.bytes()) {
-        initializer += "\\x";
-        initializer += hex[byte >> 4];
-        initializer += hex[byte & 15];
-    }
-    initializer += "\", " + std::to_string(value.size()) + ")";
+    const std::string initializer =
+        "std::string(" + cpp::c_string_literal(std::string_view(value.data(), value.size())) +
+        ", " + std::to_string(value.size()) + ")";
     return ec::ConstantOp::create(builder, where, carrierType(context, carrier::string),
                                   ec::OpaqueAttr::get(context, initializer));
 }

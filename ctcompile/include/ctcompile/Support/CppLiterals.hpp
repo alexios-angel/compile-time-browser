@@ -3,7 +3,7 @@
 #include <string>
 #include <string_view>
 
-namespace ctcompile::ctjs::emitc_detail {
+namespace ctcompile::cpp {
 // A C++ STRING LITERAL FOR ARBITRARY BYTES.
 //
 // OCTAL ESCAPES, NOT HEX, and the difference is a real bug rather than a taste.
@@ -47,9 +47,15 @@ inline constexpr bool raw_string_is_clearer(std::string_view bytes) {
 inline constexpr std::string c_string_literal(std::string_view bytes) {
     if (raw_string_is_clearer(bytes)) { return "R\"(" + std::string(bytes) + ")\""; }
     std::string spelled = "\"";
-    for (const char raw : bytes) {
+    for (std::size_t index = 0; index < bytes.size(); ++index) {
+        const char raw = bytes[index];
         const auto byte = static_cast<unsigned char>(raw);
-        if (byte == '"' || byte == '\\') {
+        // C++23 ignores trigraphs, but compilers still warn about them. Escape
+        // the second question mark so warning-as-error builds accept the text.
+        const bool trigraph =
+            byte == '?' && index > 0 && bytes[index - 1] == '?' && index + 1 < bytes.size() &&
+            std::string_view("=/'()!<>-").find(bytes[index + 1]) != std::string_view::npos;
+        if (byte == '"' || byte == '\\' || trigraph) {
             spelled += '\\';
             spelled += raw;
         } else if (byte >= 0x20 && byte < 0x7f) {
@@ -97,5 +103,7 @@ static_assert(c_string_literal("a\"b\\c") == "R\"(a\"b\\c)\"");
 // AND NEVER WHERE THE CONTENT WOULD CLOSE IT.
 static_assert(!raw_string_is_clearer("a)\"b"), "the content contains the terminator");
 static_assert(c_string_literal("a)\"b") == "\"a)\\\"b\"");
+static_assert(c_string_literal("?"
+                               "?/") == "\"?\\?/\"");
 
-} // namespace ctcompile::ctjs::emitc_detail
+} // namespace ctcompile::cpp

@@ -8,11 +8,20 @@ committing. There is no CI. Do not build on the small local machine.
 
 ## Current native staging checkpoint, 2026-09-05
 
-Final devbox gate: **430/430 CTests**, **131/131 lit cases**, **492.18 seconds**;
-all **494 C++ files** pass formatting. String-snapshot C++ passes ASan/UBSan with
-leak detection. Boxed Bootstrap is byte-identical. Default native coverage stays
+Final devbox gate: **430/430 CTests**, **133/133 lit cases**, **492.91 seconds**;
+all **496 C++ files** pass formatting. String-snapshot ASan/UBSan and leak checks
+passed at the preceding checkpoint. Boxed Bootstrap is freshly byte-identical.
+Default native coverage stays
 Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725**; exact Data probes remain
 **0/7, 0/7, 0/8 native**. Full Bootstrap initialization is still unfinished.
+
+[Native C++ literal printing](native-literals.md) now keeps ordinary strings
+readable (`std::string("price", 5)`) and spells finite doubles concisely
+(`100.0`, `0.1`, `-0.0`). The shared byte-safe formatter preserves embedded NUL,
+UTF-8/WTF-8 and escaping boundaries; the C++ printer preserves round-trip float
+precision and deduction types. Both GCC and Clang pass 12 string cases covering
+all 256 bytes and 168 floating-point bit patterns. All six sample pairs have
+been regenerated and retain their 17 expected observations.
 
 The native entry now defaults to bounded primitive precomputation followed by
 private reachability pruning. `--ctnative-lower-to-emitc=optimize=false` disables
@@ -21,9 +30,9 @@ Heap PE, direct-call specialization, deforestation and supercompilation remain
 opt-in. Type, effect, BTA and ownership proofs remain required. See the
 [defaults policy](native-optimization-defaults.md) and [roadmap](native-pe-roadmap.md).
 The default/disabled differential preserves eight observations and reduces its
-generated C++ from 7,569 to 6,788 bytes. Coverage now accounts for pruned functions
-without shrinking the source denominator; historical admission floors run
-separately with defaults disabled.
+generated C++ from 7,264 to 6,623 bytes with readable literals. Coverage now
+accounts for pruned functions without shrinking the source denominator;
+historical admission floors run separately with defaults disabled.
 
 [String-key snapshots](native-string-snapshots.md) now lower Bootstrap's exact
 `Array.from(map.keys())[0]` diagnostic expression for confined standard Maps.

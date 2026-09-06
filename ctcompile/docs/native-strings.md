@@ -15,9 +15,13 @@ native startup remain refused.
 
 ## Representation and limits
 
-Literals use explicit byte lengths and hex escapes, preserving embedded NUL,
-non-ASCII bytes and lone surrogates. Concatenation and equality follow the
-current interpreter's UTF-8/WTF-8 byte semantics. In particular, concatenating
+Literals use readable ASCII text and explicit byte lengths, for example
+`std::string("price", 5)`. The shared C++ literal formatter escapes control and
+non-ASCII bytes with three-digit octal escapes, preserving embedded NUL and
+lone surrogates without consuming following digits. Quotes and backslashes use
+raw strings when the contents permit it. See [literal printing](native-literals.md).
+Concatenation and equality follow the current interpreter's UTF-8/WTF-8 byte
+semantics. In particular, concatenating
 separately encoded surrogate halves does not normalize them into the bytes
 of a single supplementary character. `split41` records this interpreter
 behavior; it is different from a UTF-16 JavaScript engine's answer.

@@ -1,8 +1,9 @@
 // Boxed EmitC values lowering.
-#include "Literals.h"
 #include "Lowering.h"
+#include "ctcompile/Support/CppLiterals.hpp"
 
 namespace ctcompile::ctjs::emitc_detail {
+using cpp::c_string_literal;
 
 bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
                              mlir::IRMapping & mapping, compiled_entry & scope) {

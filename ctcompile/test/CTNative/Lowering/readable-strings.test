@@ -1,0 +1,4 @@
+# RUN: python3 %S/readable-strings.py --opt ctjs-opt --translate ctjs-translate --work %t
+
+# Check the actual native C++ spelling, then compile it and compare returned
+# strings with independent numeric byte arrays, including every byte value.

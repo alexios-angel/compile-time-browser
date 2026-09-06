@@ -7,6 +7,7 @@
 # bump. `llvm_update_compile_flags` gives it the flags LLVM builds ITSELF with,
 # which is the set its authors actually test against.
 add_library(ctcompile-target-cpp
+  ReadableFloat.cpp
   TranslateToCpp.cpp
   TranslateRegistration.cpp)
 llvm_update_compile_flags(ctcompile-target-cpp)
