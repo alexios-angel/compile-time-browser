@@ -12,9 +12,13 @@
 #include <ctbrowser/style/css/properties.hpp>
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <iterator>
 #include <numbers>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // dom_bindings' method bodies - the API a page's script actually calls.
@@ -25,6 +29,10 @@ namespace ctbrowser::shell {
 
 value dom_bindings::wrap(context & cx, node_id id) {
     if (!id) { return value::null(); }
+    // The interfaces, if they can be built yet - see ensure_dom_interfaces. A
+    // no-op after the first success, and the reason it is HERE is that this is
+    // the earliest thing a page can do that needs one.
+    ensure_dom_interfaces(cx);
     if (const auto it = wrappers_.find(pack(id)); it != wrappers_.end()) {
         refresh_element(cx, *it->second, id);
         return value::object(it->second);
@@ -32,17 +40,16 @@ value dom_bindings::wrap(context & cx, node_id id) {
     auto * obj = static_cast<script::object_object *>(cx.make_object().as_heap());
     value wrapper = value::object(obj);
     obj->set(std::string{handle_property}, value::number(static_cast<double>(pack(id))));
-    // WHICH INTERFACE THIS ELEMENT IS, so `instanceof` can answer. Only the two
-    // a library actually asks about are distinguished; everything else stays a
-    // plain object rather than growing a hierarchy nothing reads.
+    // WHICH INTERFACE THIS NODE IS. `HTMLCanvasElement.prototype` for a canvas,
+    // `Text.prototype` for a text node, `HTMLElement.prototype` for a tag with
+    // no interface of its own - and every one of those chains down to
+    // `EventTarget.prototype`. It is what `instanceof` answers from AND where
+    // the reflected IDL attributes live, so an element with no prototype has
+    // neither `id` nor `className`.
     {
         const auto txn = doc_->read();
-        const std::string_view tag = atoms_->text(txn.tag(id).value_or(atom{}));
-        if (tag == "canvas" && canvas_element_prototype_.is_object()) {
-            obj->prototype = canvas_element_prototype_;
-        } else if (tag == "img" && image_element_prototype_.is_object()) {
-            obj->prototype = image_element_prototype_;
-        }
+        const value proto = prototype_for_node(txn, id);
+        if (proto.is_object()) { obj->prototype = proto; }
     }
     install_element_methods(cx, *obj);
     install_element_views(cx, *obj, id);
@@ -72,6 +79,11 @@ node_id dom_bindings::receiver(context & cx) {
 }
 
 void dom_bindings::refresh_element(context & cx, script::object_object & obj, node_id id) {
+    // Here as well as in wrap(), because refresh_wrappers() walks every live
+    // wrapper before a dispatch and before a frame - so a page that never asks
+    // for a new element still gets its interfaces built, and the wrappers
+    // install_document made before EventTarget existed still get linked.
+    ensure_dom_interfaces(cx);
     const auto txn = doc_->read();
     // `tagName` is UPPERCASE for an HTML element, and lowercase was a silent
     // wrong answer: p5.js branches on `elt.tagName === 'INPUT'` and on
@@ -473,6 +485,11 @@ bool dom_bindings::pre_insert_valid(context & cx, node_id parent, node_id child,
 }
 
 void dom_bindings::install_element_views(context & cx, script::object_object & obj, node_id id) {
+    // `<style>.sheet` and `<link>.sheet` - the LinkStyle mixin. Here rather than
+    // in bindings/stylesheets.cpp for the same reason `style` is here: it is a
+    // view onto ONE element and it has to be installed as its wrapper is made.
+    install_sheet_property(cx, obj, id);
+
     // --- element.style
     //
     // A PROXY, because a style object has no fixed set of properties: a page
@@ -639,68 +656,20 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
 
     // --- the reflected attributes
     //
-    // `id`, `className`, `width` and `height` are IDL attributes that REFLECT
-    // content attributes: reading one reads the attribute and writing one
-    // writes it. As plain data properties they only ever went one way - the
-    // refresh copied the attribute onto the wrapper, and a page's assignment
-    // changed the wrapper alone and was overwritten by the next refresh.
+    // NOT HERE ANY MORE, and that is the point. `id`, `className`, `href`,
+    // `download`, `target`, `rel`, `alt`, `title`, `name`, `placeholder`,
+    // `type` and `htmlFor` used to be twelve accessors installed on EVERY
+    // wrapper, which was wrong in both directions: `div.href` existed and
+    // `input.maxLength` did not, and none of the twelve knew its own type - so
+    // `details.open` was a string and `td.colSpan` was nothing at all.
     //
-    // Nothing said so. p5.js gives its canvas an id and a size that way and
-    // both writes disappeared, leaving a nameless 300x150 canvas that no
-    // amount of drawing could make the right size.
-    const auto reflect_string = [&](std::string property, std::string attribute) {
-        obj.define_accessor(
-            property,
-            value::object(cx.allocate<script::native_object>(
-                property,
-                [this, id, attribute](context & c, std::span<value>) {
-                    const auto txn = doc_->read();
-                    return c.string(
-                        std::string{txn.attribute_value(id, atoms_->intern(attribute))});
-                })),
-            value::object(cx.allocate<script::native_object>(
-                property, [this, id, attribute](context & c, std::span<value> a) {
-                    (void)doc_->set_attribute(id, atoms_->intern(attribute), arg_string(c, a, 0));
-                    mutated();
-                    return value::undefined();
-                })));
-    };
-    reflect_string("id", "id");
-    reflect_string("className", "class");
-    // THE REST OF THE ORDINARY IDL ATTRIBUTES, and leaving them out was the same
-    // one-way bug as `id` used to be: `link.href = url` set a property on the
-    // wrapper that no attribute, no layout and no default action ever read.
-    //
-    // That is what made p5's export do nothing. downloadFile builds `<a href
-    // download>` entirely from script, so BOTH attributes were invisible - the
-    // click found an anchor with no href and no download and treated it as a
-    // click on nothing.
-    //
-    // Named rather than generic, because reflection is per element in the spec
-    // and a made-up `el.foo = 1` must NOT become an attribute. These are the ones
-    // a page assigns.
-    for (const auto & [property, attribute] :
-         std::initializer_list<std::pair<const char *, const char *>>{
-             {"href", "href"},
-             {"download", "download"},
-             {"target", "target"},
-             {"rel", "rel"},
-             {"alt", "alt"},
-             {"title", "title"},
-             {"name", "name"},
-             {"placeholder", "placeholder"},
-             // `type` is what a page branches on for a control - p5 itself does
-             // `elt.tagName === 'INPUT' && elt.type === 'checkbox'` - and
-             // createFileInput builds its element with setAttribute('type',
-             // 'file') and then hands back something whose `.type` read undefined.
-             // NOT `value` or `src`: both have live accessors of their own - a
-             // control's value tracks what the user typed rather than the
-             // attribute, and an <img>'s src has to start a load. A generic
-             // reflection here overwrites those and quietly wins.
-             {"type", "type"},
-             {"htmlFor", "for"}}) {
-        reflect_string(property, attribute);
-    }
+    // They live on the INTERFACE PROTOTYPES now, out of one table, which is
+    // what the specification means by reflection being defined per interface.
+    // See install_dom_interfaces at the bottom of this file. What is still
+    // installed per element below it is the handful that CANNOT be a table row:
+    // a control's `value` and `checked`, which track what the user typed rather
+    // than an attribute, an <img>'s `src`, which has to start a load, and a
+    // <canvas>'s `width` and `height`, which resize a drawing buffer.
 
     // `innerHTML` and `textContent` are ACCESSORS over the tree, not properties
     // on the wrapper. As properties, assigning markup stored a string, built no
@@ -1596,13 +1565,14 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
     });
     // `matches` and `closest`, DEFINED IN TERMS OF THE SAME MATCHER
     // `querySelectorAll` uses, so neither can be right about a selector the
-    // other is wrong about. That matters more than it sounds: `query()` is a
-    // hand-rolled compound matcher with no combinator support at all, quite
-    // separate from the real Selectors engine in `lib/Style/css/selector.cpp`,
-    // and answering `matches` from a second, differently-limited matcher would
-    // make `el.matches(s)` and `[...root.querySelectorAll(s)].includes(el)`
-    // disagree. Rewiring BOTH onto the style engine is the next rung and is
-    // recorded in docs/wpt.md.
+    // other is wrong about. That matcher is now `style::engine::select` - the
+    // one the cascade runs - rather than the hand-rolled compound matcher
+    // `query()` used to be, which gave up on any selector containing a space.
+    //
+    // BOTH ARE STILL O(document) PER CALL, because they ask `query()` for every
+    // match in the tree and then look for this element in the answer. That is
+    // the shape to fix next: matching ONE element needs the traversal cursor
+    // for its ancestor chain and nothing else.
     method("matches", [this](context & c, std::span<value> args) {
         const node_id self = receiver(c);
         if (!self) { return value::boolean(false); }
@@ -1855,6 +1825,1060 @@ value dom_bindings::value_of_wrapper(node_id id) const {
     const auto it = wrappers_.find(pack(id));
     return it == wrappers_.end() || it->second == nullptr ? value::undefined()
                                                           : value::object(it->second);
+}
+
+// --- REFLECTION, AND THE INTERFACE OBJECTS THE ACCESSORS LIVE ON ------------
+//
+// "Reflecting content attributes in IDL attributes" is HTML section 2.6, and it
+// is one paragraph per TYPE and a table per element - which is exactly the shape
+// it has here. Before this there were twelve names (`id`, `className`, `href`,
+// `download`, `target`, `rel`, `alt`, `title`, `name`, `placeholder`, `type`,
+// `htmlFor`) installed as string accessors on EVERY wrapper, so `div.href`
+// existed, `input.maxLength` did not, `details.open` was a string rather than a
+// boolean, and `td.colSpan` was undefined. `html/dom` counted the cost:
+// 2,411 subtests reading `undefined` where a string belongs, 665 where a
+// boolean does and 576 where a number does.
+//
+// TWO THINGS CHANGED TOGETHER, and they are one change. The rules are a table,
+// and the table's first column is an INTERFACE - so the accessors go on
+// `HTMLInputElement.prototype` rather than on each input, which is both what the
+// specification says and the only way ~270 of them are affordable. Building
+// those prototypes is the other half of the work, and it is what
+// `el instanceof HTMLBodyElement` and `eventTarget.constructor.name` ask for.
+namespace {
+
+// WHICH RULE OF SECTION 2.6 A ROW FOLLOWS. Every one of these is a separate
+// paragraph in the specification with its own parse, its own default and, for
+// three of them, its own way of throwing.
+enum class reflect_type : std::uint8_t {
+    dom_string,             // 2.6.1: the value, or "" when absent
+    url,                    // 2.6.2: resolved against the document's address
+    boolean,                // 2.6.4: PRESENCE, not value
+    signed_long,            // 2.6.6: rules for parsing integers
+    unsigned_long,          // 2.6.8: rules for parsing non-negative integers
+    limited_long,           // 2.6.7: non-negative; setting a negative throws
+    limited_unsigned_long,  // 2.6.9: greater than zero; setting zero throws
+    unsigned_long_fallback, // 2.6.10: as above, but a bad set writes the default
+    clamped_unsigned_long,  // 2.6.11: parsed then clamped into [low, high]
+    enumerated              // 2.6.5: limited to only known values
+};
+
+// ONE REFLECTED IDL ATTRIBUTE. The four columns the plan asked for - interface,
+// IDL name, content attribute, type - plus the defaults, which are
+// per-attribute rather than per-type: `input.size` defaults to 20,
+// `textarea.rows` to 2 and `td.colSpan` to 1, and there is nowhere else to put
+// that.
+//
+// THE CASE MAPPING IS DATA, NOT A TRANSFORMATION. `htmlFor` is `for`,
+// `acceptCharset` is `accept-charset`, `httpEquiv` is `http-equiv`,
+// `defaultValue` is `value` and `defaultMuted` is `muted`: no rule relates the
+// two spellings, so the row carries both.
+struct reflected_attribute {
+    std::string_view interface;
+    std::string_view idl;
+    std::string_view content;
+    reflect_type type = reflect_type::dom_string;
+    // The missing value default for the numeric types, and the clamp range for
+    // `clamped_unsigned_long`.
+    long long fallback = 0;
+    long long low = 0;
+    long long high = 0;
+    // SPACE-SEPARATED, for `enumerated`. None of HTML's keywords contains a
+    // space - the longest is `application/x-www-form-urlencoded` - so one
+    // string_view holds the whole set and the table stays one line per row.
+    //
+    // The empty-string keyword that `referrerPolicy` and `input.formMethod`
+    // have is NOT listed: a keyword of "" is indistinguishable from the missing
+    // value default, both answer "" here, so it costs nothing to leave out.
+    std::string_view keywords;
+    std::string_view missing; // the missing value default
+    std::string_view invalid; // the invalid value default
+};
+
+constexpr reflected_attribute text_attr(std::string_view iface, std::string_view idl,
+                                        std::string_view content = {}) {
+    return {iface, idl, content.empty() ? idl : content, reflect_type::dom_string, 0, 0, 0, {},
+            {},    {}};
+}
+constexpr reflected_attribute url_attr(std::string_view iface, std::string_view idl,
+                                       std::string_view content = {}) {
+    return {iface, idl, content.empty() ? idl : content, reflect_type::url, 0, 0, 0, {}, {}, {}};
+}
+constexpr reflected_attribute bool_attr(std::string_view iface, std::string_view idl,
+                                        std::string_view content = {}) {
+    return {iface, idl, content.empty() ? idl : content, reflect_type::boolean, 0, 0, 0, {},
+            {},    {}};
+}
+constexpr reflected_attribute long_attr(std::string_view iface, std::string_view idl,
+                                        long long fallback = 0, std::string_view content = {}) {
+    return {
+        iface, idl, content.empty() ? idl : content, reflect_type::signed_long, fallback, 0, 0, {},
+        {},    {}};
+}
+constexpr reflected_attribute ulong_attr(std::string_view iface, std::string_view idl,
+                                         long long fallback = 0, std::string_view content = {}) {
+    return {iface,
+            idl,
+            content.empty() ? idl : content,
+            reflect_type::unsigned_long,
+            fallback,
+            0,
+            0,
+            {},
+            {},
+            {}};
+}
+constexpr reflected_attribute limited_long_attr(std::string_view iface, std::string_view idl,
+                                                std::string_view content = {}) {
+    return {iface, idl, content.empty() ? idl : content, reflect_type::limited_long, -1, 0, 0, {},
+            {},    {}};
+}
+constexpr reflected_attribute limited_ulong_attr(std::string_view iface, std::string_view idl,
+                                                 long long fallback,
+                                                 std::string_view content = {}) {
+    return {iface,
+            idl,
+            content.empty() ? idl : content,
+            reflect_type::limited_unsigned_long,
+            fallback,
+            0,
+            0,
+            {},
+            {},
+            {}};
+}
+constexpr reflected_attribute fallback_ulong_attr(std::string_view iface, std::string_view idl,
+                                                  long long fallback,
+                                                  std::string_view content = {}) {
+    return {iface,
+            idl,
+            content.empty() ? idl : content,
+            reflect_type::unsigned_long_fallback,
+            fallback,
+            0,
+            0,
+            {},
+            {},
+            {}};
+}
+constexpr reflected_attribute clamped_attr(std::string_view iface, std::string_view idl,
+                                           long long fallback, long long low, long long high,
+                                           std::string_view content = {}) {
+    return {iface,
+            idl,
+            content.empty() ? idl : content,
+            reflect_type::clamped_unsigned_long,
+            fallback,
+            low,
+            high,
+            {},
+            {},
+            {}};
+}
+constexpr reflected_attribute enum_attr(std::string_view iface, std::string_view idl,
+                                        std::string_view keywords, std::string_view missing,
+                                        std::string_view invalid, std::string_view content = {}) {
+    return {iface,
+            idl,
+            content.empty() ? idl : content,
+            reflect_type::enumerated,
+            0,
+            0,
+            0,
+            keywords,
+            missing,
+            invalid};
+}
+
+// The keyword sets that appear on more than one interface, named once so the
+// table cannot spell one of them differently from the other.
+constexpr std::string_view referrer_keywords =
+    "no-referrer no-referrer-when-downgrade same-origin origin strict-origin "
+    "origin-when-cross-origin strict-origin-when-cross-origin unsafe-url";
+constexpr std::string_view enctype_keywords =
+    "application/x-www-form-urlencoded multipart/form-data text/plain";
+constexpr std::string_view default_enctype = "application/x-www-form-urlencoded";
+
+// THE TABLE. Built from what the corpus tests: `html/dom/elements-*.js` in the
+// WPT checkout enumerate, per element, every reflected attribute and its type,
+// and the eight `reflection-*.html` files run that product.
+//
+// WHAT IS DELIBERATELY NOT HERE, and why:
+//   * `width` and `height` on every element. The engine already answers those
+//     three different ways - the canvas's drawing buffer, an <img>'s decoded
+//     size, and a generic numeric accessor for any element carrying either
+//     attribute - all as OWN accessors on the wrapper, which shadow anything on
+//     a prototype. A row here would be dead code that reads as if it worked.
+//   * `value` on a control and `src` on an <img>, for the same reason: both
+//     have live own accessors, and a control's value is not its attribute.
+//   * `relList`, `sandbox`, `output.htmlFor`, `link.sizes` - the token lists.
+//     `classList` exists as its own object; the rest need a real DOMTokenList,
+//     which is an object type rather than a table row.
+//   * `crossOrigin` and `document.dir`: the first is a NULLABLE enumerated
+//     attribute, whose default is `null` rather than "" and whose `typeof` is
+//     therefore "object", which this accessor shape cannot express without a
+//     fourth default; the second is on the document object rather than on an
+//     element interface.
+//   * `meter`'s six doubles and `progress.max`: `limited double` is a type
+//     nothing else uses and the elements have no behaviour behind it here.
+constexpr reflected_attribute reflection_table[] = {
+    // --- Element: on everything, including SVG and a page-invented namespace
+    text_attr("Element", "id"),
+    text_attr("Element", "className", "class"),
+    text_attr("Element", "slot"),
+
+    // --- HTMLElement: the global attributes, which the corpus tests once per
+    // --- element and which are therefore worth more than any other rows here.
+    text_attr("HTMLElement", "title"),
+    text_attr("HTMLElement", "lang"),
+    text_attr("HTMLElement", "accessKey", "accesskey"),
+    text_attr("HTMLElement", "nonce"),
+    enum_attr("HTMLElement", "dir", "ltr rtl auto", "", ""),
+    enum_attr("HTMLElement", "enterKeyHint", "enter done go next previous search send", "", "",
+              "enterkeyhint"),
+    enum_attr("HTMLElement", "inputMode", "none text tel url email numeric decimal search", "", "",
+              "inputmode"),
+    bool_attr("HTMLElement", "autofocus"),
+    bool_attr("HTMLElement", "hidden"),
+    // The specification's default here is "0 or -1 depending on whether the
+    // element is focusable", which is a SHOULD and which the corpus explicitly
+    // declines to test. 0 is what a focusable element reports.
+    long_attr("HTMLElement", "tabIndex", 0, "tabindex"),
+
+    // --- text-level semantics
+    text_attr("HTMLAnchorElement", "target"),
+    text_attr("HTMLAnchorElement", "download"),
+    text_attr("HTMLAnchorElement", "ping"),
+    text_attr("HTMLAnchorElement", "rel"),
+    text_attr("HTMLAnchorElement", "hreflang"),
+    text_attr("HTMLAnchorElement", "type"),
+    text_attr("HTMLAnchorElement", "coords"),
+    text_attr("HTMLAnchorElement", "charset"),
+    text_attr("HTMLAnchorElement", "name"),
+    text_attr("HTMLAnchorElement", "rev"),
+    text_attr("HTMLAnchorElement", "shape"),
+    enum_attr("HTMLAnchorElement", "referrerPolicy", referrer_keywords, "", "", "referrerpolicy"),
+    url_attr("HTMLAnchorElement", "href"),
+    url_attr("HTMLQuoteElement", "cite"),
+    text_attr("HTMLDataElement", "value"),
+    text_attr("HTMLTimeElement", "dateTime", "datetime"),
+    text_attr("HTMLBRElement", "clear"),
+
+    // --- grouping content
+    text_attr("HTMLParagraphElement", "align"),
+    text_attr("HTMLHRElement", "align"),
+    text_attr("HTMLHRElement", "color"),
+    text_attr("HTMLHRElement", "size"),
+    bool_attr("HTMLHRElement", "noShade", "noshade"),
+    bool_attr("HTMLOListElement", "reversed"),
+    bool_attr("HTMLOListElement", "compact"),
+    long_attr("HTMLOListElement", "start", 1),
+    text_attr("HTMLOListElement", "type"),
+    bool_attr("HTMLUListElement", "compact"),
+    text_attr("HTMLUListElement", "type"),
+    long_attr("HTMLLIElement", "value"),
+    text_attr("HTMLLIElement", "type"),
+    bool_attr("HTMLDListElement", "compact"),
+    text_attr("HTMLDivElement", "align"),
+    text_attr("HTMLHeadingElement", "align"),
+    bool_attr("HTMLMenuElement", "compact"),
+
+    // --- sections
+    text_attr("HTMLBodyElement", "text"),
+    text_attr("HTMLBodyElement", "link"),
+    text_attr("HTMLBodyElement", "vLink", "vlink"),
+    text_attr("HTMLBodyElement", "aLink", "alink"),
+    text_attr("HTMLBodyElement", "bgColor", "bgcolor"),
+    text_attr("HTMLBodyElement", "background"),
+    text_attr("HTMLHtmlElement", "version"),
+
+    // --- metadata
+    text_attr("HTMLBaseElement", "target"),
+    url_attr("HTMLLinkElement", "href"),
+    text_attr("HTMLLinkElement", "rel"),
+    text_attr("HTMLLinkElement", "media"),
+    text_attr("HTMLLinkElement", "integrity"),
+    text_attr("HTMLLinkElement", "hreflang"),
+    text_attr("HTMLLinkElement", "type"),
+    text_attr("HTMLLinkElement", "charset"),
+    text_attr("HTMLLinkElement", "rev"),
+    text_attr("HTMLLinkElement", "target"),
+    enum_attr("HTMLLinkElement", "as",
+              "fetch audio document embed font image manifest object report script sharedworker "
+              "style track video worker xslt",
+              "", ""),
+    enum_attr("HTMLLinkElement", "referrerPolicy", referrer_keywords, "", "", "referrerpolicy"),
+    text_attr("HTMLMetaElement", "name"),
+    text_attr("HTMLMetaElement", "httpEquiv", "http-equiv"),
+    text_attr("HTMLMetaElement", "content"),
+    text_attr("HTMLMetaElement", "media"),
+    text_attr("HTMLMetaElement", "scheme"),
+    text_attr("HTMLStyleElement", "media"),
+    text_attr("HTMLStyleElement", "type"),
+
+    // --- scripting, edits, interactive
+    url_attr("HTMLScriptElement", "src"),
+    text_attr("HTMLScriptElement", "type"),
+    text_attr("HTMLScriptElement", "charset"),
+    text_attr("HTMLScriptElement", "integrity"),
+    text_attr("HTMLScriptElement", "event"),
+    text_attr("HTMLScriptElement", "htmlFor", "for"),
+    bool_attr("HTMLScriptElement", "noModule", "nomodule"),
+    bool_attr("HTMLScriptElement", "defer"),
+    url_attr("HTMLModElement", "cite"),
+    text_attr("HTMLModElement", "dateTime", "datetime"),
+    bool_attr("HTMLDetailsElement", "open"),
+    bool_attr("HTMLDialogElement", "open"),
+    text_attr("HTMLSlotElement", "name"),
+
+    // --- embedded content
+    text_attr("HTMLImageElement", "alt"),
+    text_attr("HTMLImageElement", "srcset"),
+    text_attr("HTMLImageElement", "useMap", "usemap"),
+    text_attr("HTMLImageElement", "name"),
+    text_attr("HTMLImageElement", "align"),
+    text_attr("HTMLImageElement", "border"),
+    bool_attr("HTMLImageElement", "isMap", "ismap"),
+    ulong_attr("HTMLImageElement", "hspace"),
+    ulong_attr("HTMLImageElement", "vspace"),
+    url_attr("HTMLImageElement", "lowsrc"),
+    url_attr("HTMLImageElement", "longDesc", "longdesc"),
+    enum_attr("HTMLImageElement", "referrerPolicy", referrer_keywords, "", "", "referrerpolicy"),
+    enum_attr("HTMLImageElement", "decoding", "async sync auto", "auto", "auto"),
+    url_attr("HTMLIFrameElement", "src"),
+    text_attr("HTMLIFrameElement", "srcdoc"),
+    text_attr("HTMLIFrameElement", "name"),
+    text_attr("HTMLIFrameElement", "align"),
+    text_attr("HTMLIFrameElement", "scrolling"),
+    text_attr("HTMLIFrameElement", "frameBorder", "frameborder"),
+    text_attr("HTMLIFrameElement", "marginHeight", "marginheight"),
+    text_attr("HTMLIFrameElement", "marginWidth", "marginwidth"),
+    url_attr("HTMLIFrameElement", "longDesc", "longdesc"),
+    bool_attr("HTMLIFrameElement", "allowFullscreen", "allowfullscreen"),
+    enum_attr("HTMLIFrameElement", "referrerPolicy", referrer_keywords, "", "", "referrerpolicy"),
+    url_attr("HTMLEmbedElement", "src"),
+    text_attr("HTMLEmbedElement", "type"),
+    text_attr("HTMLEmbedElement", "align"),
+    text_attr("HTMLEmbedElement", "name"),
+    text_attr("HTMLObjectElement", "type"),
+    text_attr("HTMLObjectElement", "name"),
+    text_attr("HTMLObjectElement", "useMap", "usemap"),
+    text_attr("HTMLObjectElement", "align"),
+    text_attr("HTMLObjectElement", "archive"),
+    text_attr("HTMLObjectElement", "code"),
+    text_attr("HTMLObjectElement", "standby"),
+    text_attr("HTMLObjectElement", "codeType", "codetype"),
+    text_attr("HTMLObjectElement", "border"),
+    bool_attr("HTMLObjectElement", "declare"),
+    ulong_attr("HTMLObjectElement", "hspace"),
+    ulong_attr("HTMLObjectElement", "vspace"),
+    url_attr("HTMLObjectElement", "codeBase", "codebase"),
+    text_attr("HTMLParamElement", "name"),
+    text_attr("HTMLParamElement", "value"),
+    text_attr("HTMLParamElement", "type"),
+    text_attr("HTMLParamElement", "valueType", "valuetype"),
+    url_attr("HTMLMediaElement", "src"),
+    bool_attr("HTMLMediaElement", "autoplay"),
+    bool_attr("HTMLMediaElement", "loop"),
+    bool_attr("HTMLMediaElement", "controls"),
+    bool_attr("HTMLMediaElement", "defaultMuted", "muted"),
+    enum_attr("HTMLMediaElement", "preload", "none metadata auto", "auto", "auto"),
+    enum_attr("HTMLMediaElement", "loading", "lazy eager", "eager", "eager"),
+    url_attr("HTMLVideoElement", "poster"),
+    bool_attr("HTMLVideoElement", "playsInline", "playsinline"),
+    url_attr("HTMLSourceElement", "src"),
+    text_attr("HTMLSourceElement", "type"),
+    text_attr("HTMLSourceElement", "srcset"),
+    text_attr("HTMLSourceElement", "sizes"),
+    text_attr("HTMLSourceElement", "media"),
+    url_attr("HTMLTrackElement", "src"),
+    text_attr("HTMLTrackElement", "srclang"),
+    text_attr("HTMLTrackElement", "label"),
+    bool_attr("HTMLTrackElement", "default"),
+    enum_attr("HTMLTrackElement", "kind", "subtitles captions descriptions chapters metadata",
+              "subtitles", "metadata"),
+    text_attr("HTMLMapElement", "name"),
+    text_attr("HTMLAreaElement", "alt"),
+    text_attr("HTMLAreaElement", "coords"),
+    text_attr("HTMLAreaElement", "shape"),
+    text_attr("HTMLAreaElement", "target"),
+    text_attr("HTMLAreaElement", "download"),
+    text_attr("HTMLAreaElement", "ping"),
+    text_attr("HTMLAreaElement", "rel"),
+    text_attr("HTMLAreaElement", "hreflang"),
+    text_attr("HTMLAreaElement", "type"),
+    bool_attr("HTMLAreaElement", "noHref", "nohref"),
+    enum_attr("HTMLAreaElement", "referrerPolicy", referrer_keywords, "", "", "referrerpolicy"),
+    url_attr("HTMLAreaElement", "href"),
+
+    // --- tabular data
+    text_attr("HTMLTableElement", "align"),
+    text_attr("HTMLTableElement", "border"),
+    text_attr("HTMLTableElement", "frame"),
+    text_attr("HTMLTableElement", "rules"),
+    text_attr("HTMLTableElement", "summary"),
+    text_attr("HTMLTableElement", "bgColor", "bgcolor"),
+    text_attr("HTMLTableElement", "cellPadding", "cellpadding"),
+    text_attr("HTMLTableElement", "cellSpacing", "cellspacing"),
+    text_attr("HTMLTableCaptionElement", "align"),
+    text_attr("HTMLTableColElement", "align"),
+    text_attr("HTMLTableColElement", "ch", "char"),
+    text_attr("HTMLTableColElement", "chOff", "charoff"),
+    text_attr("HTMLTableColElement", "vAlign", "valign"),
+    clamped_attr("HTMLTableColElement", "span", 1, 1, 1000),
+    text_attr("HTMLTableSectionElement", "align"),
+    text_attr("HTMLTableSectionElement", "ch", "char"),
+    text_attr("HTMLTableSectionElement", "chOff", "charoff"),
+    text_attr("HTMLTableSectionElement", "vAlign", "valign"),
+    text_attr("HTMLTableRowElement", "align"),
+    text_attr("HTMLTableRowElement", "ch", "char"),
+    text_attr("HTMLTableRowElement", "chOff", "charoff"),
+    text_attr("HTMLTableRowElement", "vAlign", "valign"),
+    text_attr("HTMLTableRowElement", "bgColor", "bgcolor"),
+    text_attr("HTMLTableCellElement", "headers"),
+    text_attr("HTMLTableCellElement", "abbr"),
+    text_attr("HTMLTableCellElement", "align"),
+    text_attr("HTMLTableCellElement", "axis"),
+    text_attr("HTMLTableCellElement", "ch", "char"),
+    text_attr("HTMLTableCellElement", "chOff", "charoff"),
+    text_attr("HTMLTableCellElement", "vAlign", "valign"),
+    text_attr("HTMLTableCellElement", "bgColor", "bgcolor"),
+    bool_attr("HTMLTableCellElement", "noWrap", "nowrap"),
+    clamped_attr("HTMLTableCellElement", "colSpan", 1, 1, 1000, "colspan"),
+    clamped_attr("HTMLTableCellElement", "rowSpan", 1, 0, 65534, "rowspan"),
+    enum_attr("HTMLTableCellElement", "scope", "row col rowgroup colgroup", "", ""),
+
+    // --- forms
+    text_attr("HTMLFormElement", "acceptCharset", "accept-charset"),
+    text_attr("HTMLFormElement", "name"),
+    text_attr("HTMLFormElement", "target"),
+    bool_attr("HTMLFormElement", "noValidate", "novalidate"),
+    url_attr("HTMLFormElement", "action"),
+    enum_attr("HTMLFormElement", "autocomplete", "on off", "on", "on"),
+    enum_attr("HTMLFormElement", "enctype", enctype_keywords, default_enctype, default_enctype),
+    enum_attr("HTMLFormElement", "encoding", enctype_keywords, default_enctype, default_enctype,
+              "enctype"),
+    enum_attr("HTMLFormElement", "method", "get post dialog", "get", "get"),
+    bool_attr("HTMLFieldSetElement", "disabled"),
+    text_attr("HTMLFieldSetElement", "name"),
+    text_attr("HTMLLegendElement", "align"),
+    text_attr("HTMLLabelElement", "htmlFor", "for"),
+    text_attr("HTMLInputElement", "accept"),
+    text_attr("HTMLInputElement", "alt"),
+    text_attr("HTMLInputElement", "dirName", "dirname"),
+    text_attr("HTMLInputElement", "formTarget", "formtarget"),
+    text_attr("HTMLInputElement", "max"),
+    text_attr("HTMLInputElement", "min"),
+    text_attr("HTMLInputElement", "name"),
+    text_attr("HTMLInputElement", "pattern"),
+    text_attr("HTMLInputElement", "placeholder"),
+    text_attr("HTMLInputElement", "step"),
+    text_attr("HTMLInputElement", "align"),
+    text_attr("HTMLInputElement", "useMap", "usemap"),
+    text_attr("HTMLInputElement", "defaultValue", "value"),
+    bool_attr("HTMLInputElement", "defaultChecked", "checked"),
+    bool_attr("HTMLInputElement", "disabled"),
+    bool_attr("HTMLInputElement", "multiple"),
+    bool_attr("HTMLInputElement", "readOnly", "readonly"),
+    bool_attr("HTMLInputElement", "required"),
+    bool_attr("HTMLInputElement", "formNoValidate", "formnovalidate"),
+    limited_long_attr("HTMLInputElement", "maxLength", "maxlength"),
+    limited_long_attr("HTMLInputElement", "minLength", "minlength"),
+    limited_ulong_attr("HTMLInputElement", "size", 20),
+    url_attr("HTMLInputElement", "src"),
+    url_attr("HTMLInputElement", "formAction", "formaction"),
+    enum_attr("HTMLInputElement", "formEnctype", enctype_keywords, "", default_enctype,
+              "formenctype"),
+    enum_attr("HTMLInputElement", "formMethod", "get post", "", "get", "formmethod"),
+    enum_attr("HTMLInputElement", "type",
+              "hidden text search tel url email password date month week time datetime-local "
+              "number range color checkbox radio file submit image reset button",
+              "text", "text"),
+    text_attr("HTMLButtonElement", "name"),
+    text_attr("HTMLButtonElement", "formTarget", "formtarget"),
+    bool_attr("HTMLButtonElement", "disabled"),
+    bool_attr("HTMLButtonElement", "formNoValidate", "formnovalidate"),
+    url_attr("HTMLButtonElement", "formAction", "formaction"),
+    enum_attr("HTMLButtonElement", "formEnctype", enctype_keywords, "", default_enctype,
+              "formenctype"),
+    enum_attr("HTMLButtonElement", "formMethod", "get post dialog", "", "get", "formmethod"),
+    enum_attr("HTMLButtonElement", "type", "submit reset button", "submit", "submit"),
+    text_attr("HTMLSelectElement", "name"),
+    bool_attr("HTMLSelectElement", "disabled"),
+    bool_attr("HTMLSelectElement", "multiple"),
+    bool_attr("HTMLSelectElement", "required"),
+    ulong_attr("HTMLSelectElement", "size", 0),
+    text_attr("HTMLOptGroupElement", "label"),
+    bool_attr("HTMLOptGroupElement", "disabled"),
+    bool_attr("HTMLOptionElement", "disabled"),
+    bool_attr("HTMLOptionElement", "defaultSelected", "selected"),
+    text_attr("HTMLTextAreaElement", "dirName", "dirname"),
+    text_attr("HTMLTextAreaElement", "name"),
+    text_attr("HTMLTextAreaElement", "placeholder"),
+    text_attr("HTMLTextAreaElement", "wrap"),
+    bool_attr("HTMLTextAreaElement", "disabled"),
+    bool_attr("HTMLTextAreaElement", "readOnly", "readonly"),
+    bool_attr("HTMLTextAreaElement", "required"),
+    limited_long_attr("HTMLTextAreaElement", "maxLength", "maxlength"),
+    limited_long_attr("HTMLTextAreaElement", "minLength", "minlength"),
+    fallback_ulong_attr("HTMLTextAreaElement", "cols", 20),
+    fallback_ulong_attr("HTMLTextAreaElement", "rows", 2),
+    text_attr("HTMLOutputElement", "name"),
+
+    // --- obsolete, and still measured: the corpus has a whole file of them
+    text_attr("HTMLFrameSetElement", "cols"),
+    text_attr("HTMLFrameSetElement", "rows"),
+    text_attr("HTMLFrameElement", "name"),
+    text_attr("HTMLFrameElement", "scrolling"),
+    text_attr("HTMLFrameElement", "frameBorder", "frameborder"),
+    text_attr("HTMLFrameElement", "marginHeight", "marginheight"),
+    text_attr("HTMLFrameElement", "marginWidth", "marginwidth"),
+    bool_attr("HTMLFrameElement", "noResize", "noresize"),
+    url_attr("HTMLFrameElement", "src"),
+    url_attr("HTMLFrameElement", "longDesc", "longdesc"),
+    bool_attr("HTMLDirectoryElement", "compact"),
+    text_attr("HTMLFontElement", "color"),
+    text_attr("HTMLFontElement", "face"),
+    text_attr("HTMLFontElement", "size"),
+    text_attr("HTMLMarqueeElement", "bgColor", "bgcolor"),
+    ulong_attr("HTMLMarqueeElement", "hspace"),
+    ulong_attr("HTMLMarqueeElement", "vspace"),
+    ulong_attr("HTMLMarqueeElement", "scrollAmount", 6, "scrollamount"),
+    ulong_attr("HTMLMarqueeElement", "scrollDelay", 85, "scrolldelay"),
+    bool_attr("HTMLMarqueeElement", "trueSpeed", "truespeed"),
+    enum_attr("HTMLMarqueeElement", "behavior", "scroll slide alternate", "scroll", "scroll"),
+    enum_attr("HTMLMarqueeElement", "direction", "up right down left", "left", "left"),
+};
+
+// ONE INTERFACE. `parent` is the interface whose prototype this one's chains
+// to - empty means Object.prototype, which is where EventTarget and the
+// collections stop - and `tags` is every HTML tag name that IS one, so the
+// tag-to-prototype map and the inheritance chain are the same table rather than
+// two that can disagree.
+struct dom_interface {
+    std::string_view name;
+    std::string_view parent;
+    std::string_view tags;
+};
+
+// THE CHAIN, spelled out:
+//   HTMLDivElement -> HTMLElement -> Element -> Node -> EventTarget -> Object
+//
+// EventTarget comes first so that everything below it can name it, and the
+// interfaces another translation unit already owns - EventTarget itself,
+// HTMLCanvasElement, HTMLImageElement - are ADOPTED rather than rebuilt: see
+// install_dom_interfaces.
+constexpr dom_interface interface_table[] = {
+    {"EventTarget", "", ""},
+    {"Node", "EventTarget", ""},
+    {"Element", "Node", ""},
+    {"CharacterData", "Node", ""},
+    {"Text", "CharacterData", ""},
+    {"CDATASection", "Text", ""},
+    {"Comment", "CharacterData", ""},
+    {"ProcessingInstruction", "CharacterData", ""},
+    {"DocumentType", "Node", ""},
+    {"Document", "Node", ""},
+    {"XMLDocument", "Document", ""},
+    {"DocumentFragment", "Node", ""},
+    {"Attr", "Node", ""},
+    {"Window", "EventTarget", ""},
+    // The collections. They are not nodes and inherit from nothing, and they
+    // are here because `document.links instanceof HTMLCollection` and
+    // `assert_true(x instanceof NodeList)` are what the corpus asks - see
+    // interface_prototype(), which is how another file reaches them.
+    {"NodeList", "", ""},
+    {"HTMLCollection", "", ""},
+    {"DOMTokenList", "", ""},
+    {"NamedNodeMap", "", ""},
+    {"DOMStringMap", "", ""},
+
+    // EVERY TAG THAT IS A PLAIN HTMLElement, listed rather than left to the
+    // fallback, so that anything NOT here can be told apart from them: HTML
+    // says an unrecognised tag is an HTMLUnknownElement, and `historical.html`
+    // asserts exactly that about <blink>, <isindex> and six others.
+    {"HTMLElement", "Element",
+     "abbr acronym address article aside b bdi bdo big center cite code dd dfn dt em figcaption "
+     "figure footer header hgroup i kbd main mark nav nobr noembed noframes noscript plaintext rb "
+     "rp rt rtc ruby s samp search section small strike strong sub summary sup tt u var wbr"},
+    // NOT an HTMLElement, and the distinction is load-bearing:
+    // `Body-FrameSet-Event-Handlers.html` asserts an element in a foreign
+    // namespace is `instanceof Element` and NOT `instanceof HTMLElement`.
+    {"SVGElement", "Element", ""},
+    {"HTMLUnknownElement", "HTMLElement", ""},
+
+    {"HTMLAnchorElement", "HTMLElement", "a"},
+    {"HTMLAreaElement", "HTMLElement", "area"},
+    {"HTMLBRElement", "HTMLElement", "br"},
+    {"HTMLBaseElement", "HTMLElement", "base"},
+    {"HTMLBodyElement", "HTMLElement", "body"},
+    {"HTMLButtonElement", "HTMLElement", "button"},
+    {"HTMLCanvasElement", "HTMLElement", "canvas"},
+    {"HTMLDListElement", "HTMLElement", "dl"},
+    {"HTMLDataElement", "HTMLElement", "data"},
+    {"HTMLDataListElement", "HTMLElement", "datalist"},
+    {"HTMLDetailsElement", "HTMLElement", "details"},
+    {"HTMLDialogElement", "HTMLElement", "dialog"},
+    {"HTMLDirectoryElement", "HTMLElement", "dir"},
+    {"HTMLDivElement", "HTMLElement", "div"},
+    {"HTMLEmbedElement", "HTMLElement", "embed"},
+    {"HTMLFieldSetElement", "HTMLElement", "fieldset"},
+    {"HTMLFontElement", "HTMLElement", "font"},
+    {"HTMLFormElement", "HTMLElement", "form"},
+    {"HTMLFrameElement", "HTMLElement", "frame"},
+    {"HTMLFrameSetElement", "HTMLElement", "frameset"},
+    {"HTMLHRElement", "HTMLElement", "hr"},
+    {"HTMLHeadElement", "HTMLElement", "head"},
+    {"HTMLHeadingElement", "HTMLElement", "h1 h2 h3 h4 h5 h6"},
+    {"HTMLHtmlElement", "HTMLElement", "html"},
+    {"HTMLIFrameElement", "HTMLElement", "iframe"},
+    {"HTMLImageElement", "HTMLElement", "img"},
+    {"HTMLInputElement", "HTMLElement", "input"},
+    {"HTMLLIElement", "HTMLElement", "li"},
+    {"HTMLLabelElement", "HTMLElement", "label"},
+    {"HTMLLegendElement", "HTMLElement", "legend"},
+    {"HTMLLinkElement", "HTMLElement", "link"},
+    {"HTMLMapElement", "HTMLElement", "map"},
+    {"HTMLMarqueeElement", "HTMLElement", "marquee"},
+    {"HTMLMediaElement", "HTMLElement", ""},
+    {"HTMLAudioElement", "HTMLMediaElement", "audio"},
+    {"HTMLVideoElement", "HTMLMediaElement", "video"},
+    {"HTMLMenuElement", "HTMLElement", "menu"},
+    {"HTMLMetaElement", "HTMLElement", "meta"},
+    {"HTMLMeterElement", "HTMLElement", "meter"},
+    {"HTMLModElement", "HTMLElement", "ins del"},
+    {"HTMLOListElement", "HTMLElement", "ol"},
+    {"HTMLObjectElement", "HTMLElement", "object"},
+    {"HTMLOptGroupElement", "HTMLElement", "optgroup"},
+    {"HTMLOptionElement", "HTMLElement", "option"},
+    {"HTMLOutputElement", "HTMLElement", "output"},
+    {"HTMLParagraphElement", "HTMLElement", "p"},
+    {"HTMLParamElement", "HTMLElement", "param"},
+    {"HTMLPictureElement", "HTMLElement", "picture"},
+    {"HTMLPreElement", "HTMLElement", "pre listing xmp"},
+    {"HTMLProgressElement", "HTMLElement", "progress"},
+    {"HTMLQuoteElement", "HTMLElement", "blockquote q"},
+    {"HTMLScriptElement", "HTMLElement", "script"},
+    {"HTMLSelectElement", "HTMLElement", "select"},
+    {"HTMLSlotElement", "HTMLElement", "slot"},
+    {"HTMLSourceElement", "HTMLElement", "source"},
+    {"HTMLSpanElement", "HTMLElement", "span"},
+    {"HTMLStyleElement", "HTMLElement", "style"},
+    {"HTMLTableCaptionElement", "HTMLElement", "caption"},
+    {"HTMLTableCellElement", "HTMLElement", "td th"},
+    {"HTMLTableColElement", "HTMLElement", "col colgroup"},
+    {"HTMLTableElement", "HTMLElement", "table"},
+    {"HTMLTableRowElement", "HTMLElement", "tr"},
+    {"HTMLTableSectionElement", "HTMLElement", "tbody tfoot thead"},
+    {"HTMLTemplateElement", "HTMLElement", "template"},
+    {"HTMLTextAreaElement", "HTMLElement", "textarea"},
+    {"HTMLTimeElement", "HTMLElement", "time"},
+    {"HTMLTitleElement", "HTMLElement", "title"},
+    {"HTMLTrackElement", "HTMLElement", "track"},
+    {"HTMLUListElement", "HTMLElement", "ul"},
+};
+
+// Is `want` one of the space-separated tokens of `list`? The table's keyword
+// sets and its tag lists are both encoded that way.
+[[nodiscard]] constexpr bool lists_token(std::string_view list, std::string_view want) {
+    if (want.empty()) { return false; }
+    std::size_t at = 0;
+    while (at <= list.size()) {
+        const std::size_t end = list.find(' ', at);
+        const std::size_t stop = end == std::string_view::npos ? list.size() : end;
+        if (list.substr(at, stop - at) == want) { return true; }
+        if (end == std::string_view::npos) { return false; }
+        at = end + 1;
+    }
+    return false;
+}
+
+[[nodiscard]] constexpr std::size_t interface_index(std::string_view name) {
+    for (std::size_t i = 0; i < std::size(interface_table); ++i) {
+        if (interface_table[i].name == name) { return i; }
+    }
+    return std::size(interface_table);
+}
+
+// The interface an HTML tag is. A tag the table does not name at all is an
+// HTMLUnknownElement - UNLESS its name contains a hyphen, which makes it a valid
+// custom element name and therefore an ordinary HTMLElement. Both halves are
+// tested: `historical.html` asserts <blink> and seven other dead tags ARE
+// HTMLUnknownElement, and a page's own <my-widget> is not.
+//
+// Either way it inherits from HTMLElement, so nothing about the global
+// attributes depends on getting this right - only the name does.
+[[nodiscard]] constexpr std::size_t interface_for_tag(std::string_view tag) {
+    for (std::size_t i = 0; i < std::size(interface_table); ++i) {
+        if (lists_token(interface_table[i].tags, tag)) { return i; }
+    }
+    return interface_index(tag.find('-') == std::string_view::npos ? "HTMLUnknownElement"
+                                                                   : "HTMLElement");
+}
+
+// THE RULES FOR PARSING INTEGERS, HTML 2.4.4.1, which the numeric reflection
+// types are all defined in terms of. Answers false when there is no integer
+// there at all, which is what makes the attribute's default apply.
+//
+// The whitespace set is HTML's five characters and NOT JavaScript's -
+// `core/algorithms.hpp` takes the set as a parameter for exactly this reason.
+// The corpus tests a vertical tab in front of a digit among twenty other
+// spacings and expects it to FAIL, because a vertical tab is not HTML
+// whitespace and `\v7` is therefore not an integer.
+[[nodiscard]] bool parse_html_integer(std::string_view text, long long & out) {
+    std::size_t at = 0;
+    while (at < text.size() && html_whitespace.find(text[at]) != std::string_view::npos) { ++at; }
+    long long sign = 1;
+    if (at < text.size() && (text[at] == '-' || text[at] == '+')) {
+        sign = text[at] == '-' ? -1 : 1;
+        ++at;
+    }
+    if (at >= text.size() || text[at] < '0' || text[at] > '9') { return false; }
+    long long digits = 0;
+    bool too_big = false;
+    while (at < text.size() && text[at] >= '0' && text[at] <= '9') {
+        // CAPPED RATHER THAN WRAPPED. A page can write a hundred digits in an
+        // attribute, and signed overflow is undefined behaviour rather than a
+        // large number. Anything past 2^32 is out of range for every type here.
+        if (digits > 4294967296LL) {
+            too_big = true;
+        } else {
+            digits = digits * 10 + (text[at] - '0');
+        }
+        ++at;
+    }
+    if (too_big) { return false; }
+    out = sign * digits;
+    return true;
+}
+
+// ToUint32 and ToInt32 (ECMA-262 7.1.6/7.1.7), which is what WebIDL's
+// `unsigned long` and `long` do to whatever a page assigns. `el.tabIndex = 1e30`
+// wraps; it does not clamp and it does not throw.
+[[nodiscard]] long long to_uint32(double x) {
+    if (!std::isfinite(x)) { return 0; }
+    double wrapped = std::fmod(std::trunc(x), 4294967296.0);
+    if (wrapped < 0) { wrapped += 4294967296.0; }
+    return static_cast<long long>(wrapped);
+}
+
+[[nodiscard]] long long to_int32(double x) {
+    const long long unsigned_value = to_uint32(x);
+    return unsigned_value >= 2147483648LL ? unsigned_value - 4294967296LL : unsigned_value;
+}
+
+constexpr long long max_int32 = 2147483647;
+
+} // namespace
+
+// One reflected attribute's getter: read the content attribute, apply the rule
+// its type names. A receiver that does not resolve to an element - a wrapper for
+// something removed from the document - answers the type's default rather than
+// throwing, which is what every other native in this file does.
+value dom_bindings::reflected_get(context & cx, const void * row_ptr) {
+    const auto & row = *static_cast<const reflected_attribute *>(row_ptr);
+    const node_id id = receiver(cx);
+    const auto txn = doc_->read();
+    const atom name = atoms_->intern(row.content);
+    const bool present = id && txn.has_attribute(id, name);
+    const std::string_view raw = present ? txn.attribute_value(id, name) : std::string_view{};
+    switch (row.type) {
+    case reflect_type::dom_string: return cx.string(std::string{raw});
+    case reflect_type::boolean: return value::boolean(present);
+    case reflect_type::url: {
+        // "If the content attribute is absent, return the empty string.
+        // Otherwise parse it relative to the element's node document and return
+        // the resulting URL string. If parsing fails, the value of the content
+        // attribute must be returned instead."
+        //
+        // WHAT THIS ENGINE RESOLVES AGAINST is `location_href_` - the address
+        // the browser pushed in through observe_location, which is what
+        // `document.URL` and `document.baseURI` already report. It is NOT the
+        // `<base href>` element: nothing here reads one, so a page carrying a
+        // <base> resolves against the document's own address instead. That is a
+        // real difference from a browser and it is the honest one to have -
+        // inventing a base URL would be worse than using the document's.
+        if (!present) { return cx.string(""); }
+        if (location_href_.empty()) { return cx.string(std::string{raw}); }
+        const std::string resolved = resolve(location_href_, raw);
+        return cx.string(resolved.empty() ? std::string{raw} : resolved);
+    }
+    case reflect_type::enumerated: {
+        if (!present) { return cx.string(std::string{row.missing}); }
+        const std::string folded = ascii_lower_copy(raw);
+        if (lists_token(row.keywords, folded)) { return cx.string(folded); }
+        // "" is a keyword of several of these and is spelled as the absence of
+        // one here - see the note on reflected_attribute::keywords.
+        if (folded.empty()) { return cx.string(""); }
+        return cx.string(std::string{row.invalid});
+    }
+    default: break;
+    }
+    long long parsed = 0;
+    const bool ok = present && parse_html_integer(raw, parsed);
+    long long answer = row.fallback;
+    if (ok) {
+        switch (row.type) {
+        case reflect_type::signed_long:
+            if (parsed >= -2147483648LL && parsed <= max_int32) { answer = parsed; }
+            break;
+        case reflect_type::unsigned_long:
+        case reflect_type::limited_long:
+            if (parsed >= 0 && parsed <= max_int32) { answer = parsed; }
+            break;
+        case reflect_type::limited_unsigned_long:
+        case reflect_type::unsigned_long_fallback:
+            if (parsed >= 1 && parsed <= max_int32) { answer = parsed; }
+            break;
+        case reflect_type::clamped_unsigned_long:
+            // "If it succeeds but the value is less than min, min must be
+            // returned; if greater than max, max." Only a FAILED parse falls
+            // back to the default, so `<td colspan=0>` is 1 and
+            // `<td colspan=x>` is 1 for two different reasons.
+            answer = parsed < row.low ? row.low : (parsed > row.high ? row.high : parsed);
+            break;
+        default: break;
+        }
+    }
+    return value::number(static_cast<double>(answer));
+}
+
+// ...and its setter, which is where the two types that THROW live. Answers
+// undefined always: an IDL setter has no return value, and the exception is the
+// only channel it has.
+value dom_bindings::reflected_set(context & cx, const void * row_ptr, std::span<value> args) {
+    const auto & row = *static_cast<const reflected_attribute *>(row_ptr);
+    const node_id id = receiver(cx);
+    if (!id) { return value::undefined(); }
+    const atom name = atoms_->intern(row.content);
+    const auto write = [&](std::string text) {
+        (void)doc_->set_attribute(id, name, text);
+        mutated();
+    };
+    switch (row.type) {
+    case reflect_type::boolean:
+        // "The content attribute must be removed if the IDL attribute is set to
+        // false, and must be set to the empty string if it is set to true."
+        if (!args.empty() && context::truthy(args[0])) {
+            write("");
+        } else {
+            (void)doc_->remove_attribute(id, name);
+            mutated();
+        }
+        return value::undefined();
+    case reflect_type::dom_string:
+    case reflect_type::url:
+    case reflect_type::enumerated:
+        // All three write the ToString of the value verbatim. An enumerated
+        // attribute does NOT canonicalise on the way in - the getter is where
+        // the keyword table applies - and a URL is stored as given and resolved
+        // on the way out.
+        write(arg_string(cx, args, 0));
+        return value::undefined();
+    default: break;
+    }
+    const double given = arg_number(args, 0);
+    long long number =
+        row.type == reflect_type::signed_long || row.type == reflect_type::limited_long
+            ? to_int32(given)
+            : to_uint32(given);
+    switch (row.type) {
+    case reflect_type::limited_long:
+        // "On setting, if the value is negative, the user agent must fire an
+        // INDEX_SIZE_ERR exception."
+        if (number < 0) {
+            throw_dom_exception(cx, "IndexSizeError",
+                                std::string{row.idl} + " cannot be set to a negative number");
+            return value::undefined();
+        }
+        break;
+    case reflect_type::limited_unsigned_long:
+        if (number == 0) {
+            throw_dom_exception(cx, "IndexSizeError",
+                                std::string{row.idl} + " cannot be set to zero");
+            return value::undefined();
+        }
+        if (number > max_int32) { number = row.fallback; }
+        break;
+    case reflect_type::unsigned_long_fallback:
+        if (number < 1 || number > max_int32) { number = row.fallback; }
+        break;
+    case reflect_type::unsigned_long:
+    case reflect_type::clamped_unsigned_long:
+        // A clamped attribute "behaves the same as a regular reflected unsigned
+        // integer" on setting: the clamp is a GETTING rule only.
+        if (number > max_int32) { number = row.fallback; }
+        break;
+    default: break;
+    }
+    write(std::to_string(number));
+    return value::undefined();
+}
+
+value dom_bindings::interface_prototype(std::string_view name) const {
+    const std::size_t at = interface_index(name);
+    return at < interface_prototypes_.size() ? interface_prototypes_[at] : value::undefined();
+}
+
+value dom_bindings::prototype_for_node(const read_txn & txn, node_id id) const {
+    if (interface_prototypes_.empty() || !id) { return value::undefined(); }
+    switch (txn.kind(id).value_or(node_kind::element)) {
+    case node_kind::text: return interface_prototype("Text");
+    case node_kind::comment: return interface_prototype("Comment");
+    case node_kind::document: return interface_prototype("Document");
+    case node_kind::document_fragment: return interface_prototype("DocumentFragment");
+    case node_kind::element: break;
+    }
+    // THE NAMESPACE DECIDES FIRST. `document.createElementNS(svgNS, "title")` is
+    // an SVGElement and `<title>` is an HTMLTitleElement, and the two intern to
+    // the same atom - the trap the CLAUDE.md invariant names for anything
+    // walking the DOM for <title>, <style> or <script>.
+    if (txn.element_ns(id) == node_ns::svg) { return interface_prototype("SVGElement"); }
+    if (txn.element_ns(id) != node_ns::html) { return interface_prototype("Element"); }
+    const std::size_t at = interface_for_tag(atoms_->text(txn.tag(id).value_or(atom{})));
+    return at < interface_prototypes_.size() ? interface_prototypes_[at]
+                                             : interface_prototype("HTMLElement");
+}
+
+void dom_bindings::ensure_dom_interfaces(context & cx) {
+    if (interfaces_linked_) { return; }
+    // NOT YET. `install()` builds the document before the events, and building
+    // the document makes the first two element wrappers - so the first call to
+    // wrap() happens while `EventTarget.prototype` does not exist, and a chain
+    // built then would end one link short. Waiting costs those two wrappers
+    // nothing: install_dom_interfaces re-links every wrapper that already exists.
+    if (!event_target_prototype_.is_object()) { return; }
+    install_dom_interfaces(cx);
+}
+
+void dom_bindings::install_dom_interfaces(context & cx) {
+    constexpr std::size_t count = std::size(interface_table);
+    interface_prototypes_.assign(count, value::undefined());
+
+    // THE ONES ANOTHER FILE ALREADY OWNS ARE ADOPTED, NOT REBUILT. `EventTarget`
+    // is constructible and carries addEventListener; `HTMLCanvasElement` and
+    // `HTMLImageElement` are defined by install_window and canvas wrappers are
+    // already linked to them. Taking `Ctor.prototype` off the global that
+    // exists is what keeps ONE prototype per interface however many places make
+    // one, and it is what makes this function safe to call twice.
+    for (std::size_t i = 0; i < count; ++i) {
+        const std::string name{interface_table[i].name};
+        if (!cx.has_global(name)) { continue; }
+        const value proto = cx.lookup_property(cx.global(name), "prototype");
+        if (proto.is_object()) { interface_prototypes_[i] = proto; }
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+        if (interface_prototypes_[i].is_object()) { continue; }
+        interface_prototypes_[i] = cx.make_object();
+    }
+
+    // A GC ROOT FOR ALL OF THEM AT ONCE - see the note on interface_keeper_.
+    const value keeper = cx.make_array();
+    auto * held = static_cast<script::array_object *>(keeper.as_heap());
+    for (const value & proto : interface_prototypes_) { held->items.push_back(proto); }
+    interface_keeper_ = keeper;
+
+    // The chain, and the interface object in front of each link.
+    for (std::size_t i = 0; i < count; ++i) {
+        auto * proto = static_cast<script::object_object *>(interface_prototypes_[i].as_heap());
+        const std::size_t parent = interface_index(interface_table[i].parent);
+        if (parent < count) { proto->prototype = interface_prototypes_[parent]; }
+        const std::string name{interface_table[i].name};
+        value ctor_value = value::undefined();
+        if (cx.has_global(name)) {
+            // ADOPTED: the interface object another file made, kept as it is.
+            // Redefining it would replace a CONSTRUCTIBLE `EventTarget` with a
+            // stub, which is a regression rather than a feature.
+            ctor_value = cx.global(name);
+        } else {
+            // NOT CONSTRUCTIBLE. `new HTMLDivElement()` throws in a browser too,
+            // and saying so is better than handing back an object that is not an
+            // element - the same choice install_window made for
+            // HTMLCanvasElement.
+            auto * ctor =
+                cx.allocate<script::native_object>(name, [name](context & c, std::span<value>) {
+                    c.throw_error("TypeError", "Illegal constructor: " + name +
+                                                   " cannot be constructed by a page");
+                    return value::undefined();
+                });
+            ctor->set("prototype", interface_prototypes_[i]);
+            ctor->retained.push_back(keeper);
+            ctor_value = value::object(ctor);
+            cx.define_global(name, ctor_value);
+        }
+        // `constructor` and `@@toStringTag`, ON AN ADOPTED PROTOTYPE TOO - the
+        // four interfaces install_window builds carry neither, so
+        // `canvas.constructor.name` read `HTMLElement` off the parent link until
+        // this ran for them as well. Never OVERWRITTEN: a prototype that already
+        // names its constructor knows better than this loop does.
+        //
+        // `constructor` is what `eventTarget.constructor.name` reads, and it is
+        // what stands in front of `passive-by-default.html`: that test names its
+        // subtests with a template literal that reads it, so an undefined
+        // `constructor` threw before one assertion could run. `@@toStringTag` is
+        // what `assert_class_string` reads, through
+        // `Object.prototype.toString` - so `[object HTMLBodyElement]` is only
+        // right if that builtin consults the tag, which is the one thing here
+        // that lives outside this file.
+        //
+        // NOT ENUMERABLE, either of them. `Body-FrameSet-Event-Handlers.html`
+        // enumerates an element with `for (var attribute in element)` and
+        // compares the result against the IDL; a reflected attribute IS
+        // enumerable there and `constructor` is not, which is what
+        // `script::attr_builtin` spells.
+        if (proto->find("constructor") == nullptr) {
+            proto->set("constructor", ctor_value);
+            proto->set_attrs("constructor", script::attr_builtin);
+        }
+        if (proto->find("@@toStringTag") == nullptr) {
+            proto->set("@@toStringTag", cx.string(name));
+            proto->set_attrs("@@toStringTag", script::attr_builtin);
+        }
+    }
+
+    // THE REFLECTED ATTRIBUTES, one accessor pair per row, on the prototype of
+    // the interface the row names. A row naming an interface that is not in the
+    // table above is a typo rather than a feature, and is skipped rather than
+    // silently landing on Object.prototype.
+    for (const reflected_attribute & row : reflection_table) {
+        const std::size_t at = interface_index(row.interface);
+        if (at >= count) { continue; }
+        auto * proto = static_cast<script::object_object *>(interface_prototypes_[at].as_heap());
+        const std::string property{row.idl};
+        // A POINTER INTO A STATIC TABLE, captured by value. The rows outlive
+        // every page, so the accessors do not have to carry a copy of one.
+        const reflected_attribute * held_row = &row;
+        proto->define_accessor(property,
+                               value::object(cx.allocate<script::native_object>(
+                                   property,
+                                   [this, held_row](context & c, std::span<value>) {
+                                       return reflected_get(c, held_row);
+                                   })),
+                               value::object(cx.allocate<script::native_object>(
+                                   property, [this, held_row](context & c, std::span<value> a) {
+                                       return reflected_set(c, held_row, a);
+                                   })));
+    }
+
+    // The document and the window are EventTargets with interfaces of their own,
+    // and `passive-by-default.html` reads `eventTarget.constructor.name` for
+    // both of them before it can even name its subtests.
+    if (auto * doc = document_object()) { doc->prototype = interface_prototype("Document"); }
+    if (auto * win = window_object()) { win->prototype = interface_prototype("Window"); }
+
+    // EVERY WRAPPER THAT ALREADY EXISTS, RE-LINKED. Two of them are made by
+    // install_document before this can run at all, and they are `document.body`
+    // and `document.documentElement` - the two elements a test is most likely to
+    // ask an instanceof about.
+    {
+        const auto txn = doc_->read();
+        for (auto & [packed, obj] : wrappers_) {
+            if (obj == nullptr) { continue; }
+            const value proto = prototype_for_node(txn, unpack(packed));
+            if (proto.is_object()) { obj->prototype = proto; }
+        }
+    }
+    interfaces_linked_ = event_target_prototype_.is_object();
 }
 
 } // namespace ctbrowser::shell

@@ -447,7 +447,57 @@ private:
     // --- worked on at once without two of them editing the same lines here.
     // --- Each block below belongs to exactly one file in bindings/.
 
-    // BEGIN reflection
+    // BEGIN reflection (bindings/element.cpp)
+    //
+    // THE INTERFACE OBJECTS, AND REFLECTION, WHICH ARE ONE THING.
+    //
+    // `HTMLDivElement.prototype -> HTMLElement.prototype -> Element.prototype ->
+    // Node.prototype -> EventTarget.prototype` is a real chain here, built once
+    // per page from a static table in element.cpp, and every wrapper is linked
+    // into it by the tag it has. That is what `el instanceof HTMLBodyElement`
+    // and `eventTarget.constructor.name` ask, and it is ALSO where the reflected
+    // IDL attributes live: `id`, `href`, `disabled` and the ~270 others are
+    // accessors on ONE prototype each rather than on every wrapper, which is
+    // both what the specification says and what makes a table affordable.
+    //
+    // Reflection used to be twelve names installed on every element wrapper, so
+    // `div.href` existed, `input.maxLength` did not, and neither of them parsed
+    // anything: ~6,400 subtests of `html/dom` say so. See element.cpp for the
+    // table and for what each type does.
+    void install_dom_interfaces(context & cx);
+    // Build them if they are not built and the pieces they chain to exist yet.
+    // Cheap after the first success; called from wrap() because the bindings'
+    // install order puts the first element wrapper BEFORE `EventTarget` exists.
+    void ensure_dom_interfaces(context & cx);
+    // `HTMLCanvasElement.prototype` for a <canvas>, `Text.prototype` for a text
+    // node, `Element.prototype` for something createElementNS put in a
+    // namespace that is neither HTML nor SVG.
+    [[nodiscard]] value prototype_for_node(const read_txn & txn, node_id id) const;
+    // One interface's prototype by name - how a collection built in another
+    // translation unit becomes `instanceof HTMLCollection`. Undefined before
+    // the interfaces are built, and undefined for a name that is not one.
+    [[nodiscard]] value interface_prototype(std::string_view name) const;
+    // ONE reflected IDL attribute, read and written. The row is a pointer into
+    // the static table in element.cpp and is `const void *` here for the reason
+    // the third-party-header invariant exists: the row type is one file's
+    // business, and putting it in this header would make every consumer of the
+    // engine parse a 270-row table's declaration to get at `document`.
+    [[nodiscard]] value reflected_get(context & cx, const void * row);
+    [[nodiscard]] value reflected_set(context & cx, const void * row, std::span<value> args);
+    // Parallel to the static interface table in element.cpp: one prototype per
+    // row, in the same order, so a tag resolves to a prototype by index.
+    std::vector<value> interface_prototypes_;
+    // EVERY PROTOTYPE, IN ONE ARRAY THE COLLECTOR CAN SEE. Each interface's
+    // prototype is reachable from its constructor, which is a global - and a
+    // page may delete a global, after which a prototype this object still
+    // points at could be swept. So every constructor `retains` this one array,
+    // and all 70-odd of them would have to be deleted before any prototype
+    // became unreachable. (`register_roots` in bindings/document.cpp marking it
+    // would be stronger still, but that file belongs to another concern.)
+    value interface_keeper_;
+    // Set once the chain is built AND linked to `event_target_prototype_`,
+    // which install_event_interfaces publishes after the first wrapper exists.
+    bool interfaces_linked_ = false;
     // END reflection
 
     // BEGIN mutation observers (bindings/mutation.cpp)
