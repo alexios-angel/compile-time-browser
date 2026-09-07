@@ -84,15 +84,29 @@ void install_math(context & cx, std::uint64_t seed) {
     unary("acosh", [](double x) { return std::acosh(x); });
     unary("atanh", [](double x) { return std::atanh(x); });
     unary("fround", [](double x) { return static_cast<double>(static_cast<float>(x)); });
-    method(cx, math, "clz32", 1, [](context &, std::span<value> a) {
-        const std::uint32_t x = context::to_uint32(arg_at(a, 0));
+    // ToUint32 (7.1.6) OVER AN ALREADY-COERCED NUMBER. `context::to_uint32` is
+    // the STATIC conversion and answers 0 for every object, so `Math.imul({
+    // valueOf: () => 3}, 2)` was 0 and `Math.clz32("1")` was 32 - both because
+    // the receiver's own coercion never ran. Step 1 of each is `? ToUint32(x)`,
+    // which is ToNumber and then this.
+    const auto to_uint32_of = [](double n) -> std::uint32_t {
+        if (!std::isfinite(n)) { return 0; }
+        return static_cast<std::uint32_t>(
+            static_cast<std::int64_t>(std::fmod(std::trunc(n), 4294967296.0)));
+    };
+    method(cx, math, "clz32", 1, [math_arg, to_uint32_of](context & c, std::span<value> a) {
+        const std::uint32_t x = to_uint32_of(math_arg(c, a, 0));
         int n = 0;
         for (std::uint32_t bit = 0x80000000u; bit != 0 && (x & bit) == 0; bit >>= 1) { ++n; }
         return value::number(x == 0 ? 32 : n);
     });
-    method(cx, math, "imul", 2, [](context &, std::span<value> a) {
-        return value::number(static_cast<double>(static_cast<std::int32_t>(
-            context::to_uint32(arg_at(a, 0)) * context::to_uint32(arg_at(a, 1)))));
+    method(cx, math, "imul", 2, [math_arg, to_uint32_of](context & c, std::span<value> a) {
+        // NAMED LOCALS, so the two coercions happen LEFT TO RIGHT. As arguments
+        // to one expression their order is unspecified in C++ and observable in
+        // JavaScript: `Math.imul({valueOf: f}, {valueOf: g})` must call f then g.
+        const std::uint32_t x = to_uint32_of(math_arg(c, a, 0));
+        const std::uint32_t y = to_uint32_of(math_arg(c, a, 1));
+        return value::number(static_cast<double>(static_cast<std::int32_t>(x * y)));
     });
     unary("floor", [](double x) { return std::floor(x); });
     unary("ceil", [](double x) { return std::ceil(x); });
@@ -141,11 +155,20 @@ void install_math(context & cx, std::uint64_t seed) {
     // Number::exponentiate says NaN for exactly those. Three lines of special
     // case, and without them `Math.pow(1, NaN)` was 1 - a value a page will
     // happily do arithmetic on rather than checking with isNaN.
+    // NAMED LOCALS FOR THE TWO ARGUMENTS, in both of these and in `imul` below.
+    // The order in which C++ evaluates the arguments of one call is
+    // UNSPECIFIED, and clang evaluates them right to left - so
+    // `Math.pow({valueOf: f}, {valueOf: g})` ran g before f, where the
+    // specification's steps 1 and 2 fix the order and a test can see it.
     method(cx, math, "pow", 2, [math_arg](context & c, std::span<value> a) {
-        return value::number(context::exponentiate(math_arg(c, a, 0), math_arg(c, a, 1)));
+        const double base = math_arg(c, a, 0);
+        const double exponent = math_arg(c, a, 1);
+        return value::number(context::exponentiate(base, exponent));
     });
     method(cx, math, "atan2", 2, [math_arg](context & c, std::span<value> a) {
-        return value::number(std::atan2(math_arg(c, a, 0), math_arg(c, a, 1)));
+        const double y = math_arg(c, a, 0);
+        const double x = math_arg(c, a, 1);
+        return value::number(std::atan2(y, x));
     });
     // SCALED, AND INFINITY BEATS NaN. `sqrt(sum of squares)` is the obvious
     // shape and is wrong at both ends of the range:
@@ -167,11 +190,33 @@ void install_math(context & cx, std::uint64_t seed) {
     // The scale factor is the largest magnitude rather than a power of two, and
     // that is deliberate: it keeps `hypot(3, 4)` exactly 5 and leaves the
     // already-correct mid-range answers bit-identical.
-    method(cx, math, "hypot", 2, [](context & c, std::span<value> a) {
+    // EVERY ARGUMENT IS COERCED FIRST, ONCE, IN ORDER, and only then are any of
+    // them looked at. Step 1 of hypot, min and max builds a List called
+    // `coerced` before step 3 inspects it, and that ordering is OBSERVABLE
+    // three ways:
+    //
+    //  * a `valueOf` that throws must abort at the FIRST such argument and
+    //    leave the later ones uncalled. `Math.hypot(Infinity, {valueOf: throws},
+    //    {valueOf: counts})` returned Infinity from the infinity without ever
+    //    reaching either object.
+    //  * a `valueOf` after a NaN must still be called. `Math.min(NaN, obj)`
+    //    returned NaN from the first argument, so obj.valueOf never ran - which
+    //    is exactly what Math.min_each-element-coerced.js counts.
+    //  * an argument must be coerced EXACTLY once. hypot's two passes ran every
+    //    `valueOf` twice, and a `valueOf` that returns a different number each
+    //    time - a counter, which is how the suite detects this - made the scan
+    //    and the sum disagree about what they were adding up.
+    const auto coerce_all = [](context & c, std::span<value> a) {
+        std::vector<double> out;
+        out.reserve(a.size());
+        for (const value & v : a) { out.push_back(c.to_number_value(v)); }
+        return out;
+    };
+    method(cx, math, "hypot", 2, [coerce_all](context & c, std::span<value> a) {
+        const std::vector<double> coerced = coerce_all(c, a);
         bool saw_nan = false;
         double largest = 0;
-        for (const value & v : a) {
-            const double x = c.to_number_value(v);
+        for (const double x : coerced) {
             if (std::isinf(x)) { return value::number(std::numeric_limits<double>::infinity()); }
             if (std::isnan(x)) {
                 saw_nan = true;
@@ -183,8 +228,8 @@ void install_math(context & cx, std::uint64_t seed) {
         // Every argument was a zero, or there were none at all.
         if (largest == 0) { return value::number(0.0); }
         double total = 0;
-        for (const value & v : a) {
-            const double scaled = c.to_number_value(v) / largest;
+        for (const double x : coerced) {
+            const double scaled = x / largest;
             total += scaled * scaled;
         }
         return value::number(largest * std::sqrt(total));
@@ -199,19 +244,19 @@ void install_math(context & cx, std::uint64_t seed) {
     // false, so which zero came back depended on ARGUMENT ORDER: `Math.min(0,
     // -0)` gave +0 while `Math.min(-0, 0)` was accidentally right. Steps 4.b
     // make the zero ordering explicit, and so does this.
-    method(cx, math, "min", 2, [](context & c, std::span<value> a) {
+    method(cx, math, "min", 2, [coerce_all](context & c, std::span<value> a) {
+        const std::vector<double> coerced = coerce_all(c, a);
         double best = std::numeric_limits<double>::infinity();
-        for (const value & v : a) {
-            const double x = c.to_number_value(v);
+        for (const double x : coerced) {
             if (std::isnan(x)) { return value::number(std::nan("")); }
             if (x < best || (x == 0 && best == 0 && std::signbit(x))) { best = x; }
         }
         return value::number(best);
     });
-    method(cx, math, "max", 2, [](context & c, std::span<value> a) {
+    method(cx, math, "max", 2, [coerce_all](context & c, std::span<value> a) {
+        const std::vector<double> coerced = coerce_all(c, a);
         double best = -std::numeric_limits<double>::infinity();
-        for (const value & v : a) {
-            const double x = c.to_number_value(v);
+        for (const double x : coerced) {
             if (std::isnan(x)) { return value::number(std::nan("")); }
             if (x > best || (x == 0 && best == 0 && std::signbit(best))) { best = x; }
         }
@@ -318,9 +363,39 @@ void install_number(context & cx) {
     cx.define_global("Number", value::object(number_ctor));
 
     object_object * number_proto = new_table(cx);
-    method(cx, number_proto, "toFixed", 1, [](context & c, std::span<value> a) {
+    // A DIGIT COUNT OUT OF RANGE IS A RangeError, NOT A CLAMP - 21.1.3.3 step
+    // 4, 21.1.3.2 step 5 and 21.1.3.5 step 5, one per method below.
+    //
+    // All three clamped instead, and a clamp is the wrong answer twice over.
+    // `(1).toFixed(-1)` answered "1" where every engine throws, so a page
+    // computing a digit count and getting it wrong was handed a plausible
+    // string rather than told; and the ceiling was 20 where the specification's
+    // is 100, so `(3).toFixed(50)` was silently 20 places. It also coerced with
+    // the STATIC `num_at`, which answers NaN for an object - so
+    // `(1).toFixed({valueOf: () => 2})` never ran the valueOf and clamped the
+    // NaN to zero.
+    //
+    // Infinity is an out-of-range count and not a huge one: `integer_arg`
+    // preserves it precisely so the range test can see it.
+    //
+    // The COERCION and the REFUSAL are separate because the specification puts
+    // a step between them in two of the three methods: toExponential and
+    // toPrecision answer for a non-finite receiver AFTER coercing the argument
+    // and BEFORE checking its range, so `Infinity.toPrecision(1000)` is
+    // "Infinity" and not a RangeError - while toFixed checks the range first
+    // and `NaN.toFixed(101)` therefore throws.
+    const auto refuse_digits = [](context & c, const char * method, double n, double low,
+                                  double high) {
+        if (n >= low && n <= high) { return false; }
+        c.throw_error("RangeError", std::string{method} + "() argument must be between " +
+                                        number_to_string(low) + " and " + number_to_string(high));
+        return true;
+    };
+    method(cx, number_proto, "toFixed", 1, [refuse_digits](context & c, std::span<value> a) {
         const double self = detail::this_number_value(c, "Number.prototype.toFixed");
-        const auto digits = static_cast<int>(std::clamp(num_at(a, 0), 0.0, 20.0));
+        const double asked = integer_arg(c, a, 0);
+        if (refuse_digits(c, "toFixed", asked, 0, 100)) { return c.string(""); }
+        const auto digits = static_cast<int>(asked);
         // NOT snprintf("%.*f"): it is locale-dependent, it prints a thousand
         // digits past 1e21 where the specification hands back ToString, and it
         // rounds a tie to EVEN where toFixed rounds away from zero - so
@@ -340,8 +415,13 @@ void install_number(context & cx) {
         // `c.to_string(c.current_this())`, which for an object receiver calls
         // this native again. Nothing below asks the CONTEXT to stringify the
         // receiver any more; it stringifies the NUMBER, which cannot re-enter.
-        const int radix =
-            a.empty() || a[0].is_undefined() ? 10 : static_cast<int>(c.to_number_value(a[0]));
+        // ToIntegerOrInfinity, NOT a cast. `static_cast<int>` of a NaN or of an
+        // infinity is undefined behaviour - on x86-64 it is `cvttsd2si`'s
+        // indefinite value, 0x80000000 - so `(1).toString(NaN)` and
+        // `(1).toString(Infinity)` were UB that happened to land outside the
+        // range and throw. 7.1.5 makes NaN zero, and zero is out of range.
+        const double asked = a.empty() || a[0].is_undefined() ? 10.0 : integer_arg(c, a, 0);
+        const int radix = asked >= 2 && asked <= 36 ? static_cast<int>(asked) : 0;
         if (radix < 2 || radix > 36) {
             c.throw_error("RangeError", "toString() radix must be between 2 and 36");
             return c.string("");
@@ -379,26 +459,43 @@ void install_number(context & cx) {
     method(cx, number_proto, "valueOf", 0, [](context & c, std::span<value>) {
         return value::number(detail::this_number_value(c, "Number.prototype.valueOf"));
     });
-    method(cx, number_proto, "toExponential", 1, [](context & c, std::span<value> a) {
+    method(cx, number_proto, "toExponential", 1, [refuse_digits](context & c, std::span<value> a) {
         const double v = detail::this_number_value(c, "Number.prototype.toExponential");
         // NO ARGUMENT IS NOT SIX. The specification asks for as many digits as
         // uniquely specify the value, so `(5).toExponential()` is "5e+0" and
         // not "5.000000e+0"; -1 is how number_to_exponential is told that.
-        const int places = a.empty() || a[0].is_undefined()
-                               ? -1
-                               : std::clamp(static_cast<int>(context::to_number(a[0])), 0, 100);
-        return c.string(number_to_exponential(v, places));
+        if (a.empty() || a[0].is_undefined()) { return c.string(number_to_exponential(v, -1)); }
+        // The argument is coerced (step 2) even when the receiver is not finite
+        // and the answer cannot depend on it, so a `valueOf` on it still runs -
+        // which is exactly what toExponential/nan.js counts.
+        const double asked = integer_arg(c, a, 0);
+        if (!std::isfinite(v)) { return c.string(number_to_string(v)); }
+        if (refuse_digits(c, "toExponential", asked, 0, 100)) { return c.string(""); }
+        return c.string(number_to_exponential(v, static_cast<int>(asked)));
     });
-    method(cx, number_proto, "toPrecision", 1, [](context & c, std::span<value> a) {
+    method(cx, number_proto, "toPrecision", 1, [refuse_digits](context & c, std::span<value> a) {
         const double v = detail::this_number_value(c, "Number.prototype.toPrecision");
         // No argument at all is toString, not zero significant digits - of the
         // NUMBER, not of the receiver. `c.to_string(c.current_this())` here was
         // the second half of the toString cycle: see this_number_value.
         if (a.empty() || a[0].is_undefined()) { return c.string(number_to_string(v)); }
-        const int digits = std::clamp(static_cast<int>(context::to_number(a[0])), 1, 100);
+        // The same step ordering as toExponential above, and 21.1.3.5's lower
+        // bound is ONE rather than zero: there is no such thing as a number
+        // written to no significant digits.
+        const double asked = integer_arg(c, a, 0);
+        if (!std::isfinite(v)) { return c.string(number_to_string(v)); }
+        if (refuse_digits(c, "toPrecision", asked, 1, 100)) { return c.string(""); }
         // NOT "%.*g", which drops trailing zeros where toPrecision keeps them -
         // `(1.5).toPrecision(3)` is "1.50" - and writes two exponent digits.
-        return c.string(number_to_precision(v, digits));
+        return c.string(number_to_precision(v, static_cast<int>(asked)));
+    });
+    // 21.1.3.4. No ECMA-402 here, so it is ToString of the number - which is
+    // what the specification itself allows an implementation without an Intl
+    // library to do, and it is the difference between a page's
+    // `n.toLocaleString()` printing a number and throwing "not a function".
+    method(cx, number_proto, "toLocaleString", 0, [](context & c, std::span<value>) {
+        return c.string(
+            number_to_string(detail::this_number_value(c, "Number.prototype.toLocaleString")));
     });
     detail::constant(number_ctor, "prototype", value::object(number_proto));
     link_constructor(cx, number_proto, "Number", 1, value::object(number_ctor));

@@ -285,5 +285,59 @@ int main() {
     js_expect("(function () { var a = Math.random(), b = Math.random(); return a !== b; })()",
               "true");
 
+    // --- EVERY ARGUMENT IS COERCED, ONCE, IN ORDER, BEFORE ANY IS READ -------
+    // Step 1 of hypot, min and max builds a List called `coerced` and step 3
+    // inspects it, and the ordering is observable three ways. All three of
+    // these count `valueOf` calls, because that is the only thing that can see
+    // it - the returned number is the same either way.
+    //
+    // A NaN found early used to end the loop, so a later argument's valueOf was
+    // never called. Math.min_each-element-coerced.js is exactly this.
+    js_expect("(function () { var n = 0;"
+              " Math.min(NaN, {valueOf: function () { n++; return 1; }}); return n; })()",
+              "1");
+    js_expect("(function () { var n = 0;"
+              " Math.max(NaN, {valueOf: function () { n++; return 1; }}); return n; })()",
+              "1");
+    // An infinity found early ended hypot's loop the same way.
+    js_expect("(function () { var n = 0;"
+              " Math.hypot(Infinity, {valueOf: function () { n++; return 1; }}); return n; })()",
+              "1");
+    // And hypot made TWO passes over its arguments, so every valueOf ran twice.
+    // A counter as an argument made the scan and the sum disagree about what
+    // they were adding up.
+    js_expect("(function () { var n = 0;"
+              " Math.hypot({valueOf: function () { n++; return 3; }}, 4); return n; })()",
+              "1");
+    // ...and a valueOf that answers differently each time now cannot make the
+    // scale factor and the sum disagree, because there is only one pass.
+    js_expect("(function () { var n = 0;"
+              " return Math.hypot({valueOf: function () { n++; return n * 3; }}, 4); })()",
+              "5");
+    // The two-argument functions coerce LEFT TO RIGHT. As arguments to one C++
+    // call their order is unspecified, and clang evaluated them right to left.
+    js_expect("(function () { var seen = '';"
+              " var a = {valueOf: function () { seen += 'a'; return 2; }};"
+              " var b = {valueOf: function () { seen += 'b'; return 3; }};"
+              " Math.pow(a, b); return seen; })()",
+              "ab");
+    js_expect("(function () { var seen = '';"
+              " var a = {valueOf: function () { seen += 'a'; return 2; }};"
+              " var b = {valueOf: function () { seen += 'b'; return 3; }};"
+              " Math.atan2(a, b); return seen; })()",
+              "ab");
+    js_expect("(function () { var seen = '';"
+              " var a = {valueOf: function () { seen += 'a'; return 2; }};"
+              " var b = {valueOf: function () { seen += 'b'; return 3; }};"
+              " Math.imul(a, b); return seen; })()",
+              "ab");
+    // imul and clz32 took the STATIC ToUint32, which answers 0 for every
+    // object, so neither ever ran a receiver's own coercion.
+    js_expect("Math.imul({valueOf: function () { return 3; }}, 2)", "6");
+    js_expect("Math.clz32({valueOf: function () { return 1; }})", "31");
+    js_expect("Math.clz32('1')", "31");
+    js_expect("Math.clz32(NaN)", "32");
+    js_expect("Math.clz32()", "32");
+
     REPORT("math_basics");
 }

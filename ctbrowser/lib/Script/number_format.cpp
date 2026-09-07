@@ -280,7 +280,11 @@ std::string number_to_exponential(double value, int places) {
             n = 1;
         }
     } else {
-        std::array<char, 64> buffer{};
+        // 128, NOT 64. `places` reaches 100 (21.1.3.2 step 5), which is a
+        // leading digit, a point, 100 more digits and "e+308" - 108 characters,
+        // and to_chars answers value_too_large rather than truncating. That
+        // made `(3).toExponential(100)` the string "0".
+        std::array<char, 128> buffer{};
         const auto [stop, err] = std::to_chars(buffer.data(), buffer.data() + buffer.size(),
                                                magnitude, std::chars_format::scientific, places);
         if (err != std::errc{}) { return "0"; }
@@ -323,7 +327,11 @@ std::string number_to_precision(double value, int digits) {
     // The exponent of the value rounded to `digits` significant digits - taken
     // from to_chars rather than from log10, which is off by one near a power of
     // ten and would put the decimal point in the wrong place there.
-    std::array<char, 64> buffer{};
+    //
+    // 128 for the same reason as toExponential above: `digits` reaches 100 and
+    // 64 characters is not enough for the widest answer, so to_chars refused
+    // and `(3).toPrecision(100)` fell back to "3".
+    std::array<char, 128> buffer{};
     const auto [stop, err] = std::to_chars(buffer.data(), buffer.data() + buffer.size(), magnitude,
                                            std::chars_format::scientific, digits - 1);
     if (err != std::errc{}) { return number_to_string(value); }
