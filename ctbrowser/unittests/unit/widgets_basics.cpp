@@ -633,7 +633,17 @@ void test_window_is_an_object_too() {
                    "console.log('absent ' + window.hasOwnProperty('__nope'));"
                    // The idiom Phaser actually uses, on an interface this
                    // engine does NOT have - it must answer false, not throw.
-                   "console.log('video ' + window.hasOwnProperty('HTMLVideoElement'));"
+                   //
+                   // IT USED TO ASK ABOUT `HTMLVideoElement`, WHICH THIS ENGINE
+                   // DOES HAVE - it is in the interface table in
+                   // bindings/element.cpp. The answer was `false` only because
+                   // the ninety interface objects were defined LAZILY, on the
+                   // first `wrap()`, and this script runs before the page has
+                   // touched an element. So the assertion was pinning the bug
+                   // that commit 857800f fixed rather than the behaviour it
+                   // meant to. `AudioContext` is genuinely absent, which is
+                   // what the case is about.
+                   "console.log('audio ' + window.hasOwnProperty('AudioContext'));"
                    // One it DOES have.
                    "console.log('canvas ' + window.hasOwnProperty('HTMLCanvasElement'));"
                    // Other Object.prototype methods arrive by the same route.
@@ -646,7 +656,7 @@ void test_window_is_an_object_too() {
     check(log[1] == "global true", "it sees an engine global: " + log[1]);
     check(log[2] == "mine true", "and one the page just made: " + log[2]);
     check(log[3] == "absent false", "and says no to one that is not there: " + log[3]);
-    check(log[4] == "video false", "an absent interface answers false: " + log[4]);
+    check(log[4] == "audio false", "an absent interface answers false: " + log[4]);
     check(log[5] == "canvas true", "a present one answers true: " + log[5]);
     check(log[6] == "str function", "the rest of Object.prototype is reachable: " + log[6]);
 }
