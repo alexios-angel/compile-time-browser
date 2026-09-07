@@ -1017,6 +1017,30 @@ constexpr std::string_view math_names[] = {"clamp(", "atan2(", "hypot(", "round(
     return {};
 }
 
+// ONE PAST THE END OF THE STRING THAT STARTS AT `at`, or `at` itself when no
+// string does. A QUOTED RUN IS NOT CODE: `content: "calc(1px + 1px)"` and
+// `font-family: "round()"` are strings whose bytes happen to spell a function,
+// and reading one as arithmetic either rewrites what the page says or - for
+// `round()` - deletes the declaration for a syntax error inside a literal.
+// `span_of` already skips quotes while it matches parentheses; every scan that
+// looks for a NAME has to as well, and all three of them below do.
+//
+// An unterminated string runs to the end of the value, CSS Syntax 3 §4.3.5.
+[[nodiscard]] std::size_t end_of_string_at(std::string_view value, std::size_t at) noexcept {
+    const char quote = value[at];
+    if (quote != '"' && quote != '\'') { return at; }
+    std::size_t scan = at + 1;
+    while (scan < value.size()) {
+        if (value[scan] == '\\' && scan + 1 < value.size()) {
+            ++scan;
+        } else if (value[scan] == quote) {
+            return scan + 1;
+        }
+        ++scan;
+    }
+    return value.size();
+}
+
 } // namespace
 
 bool may_have_math(std::string_view value) noexcept {
@@ -1078,7 +1102,119 @@ struct function_span {
     return value.substr(from, span.end - from - (span.closed ? 1 : 0));
 }
 
+// THE UNITS WHOSE VALUE IS THE SAME EVERYWHERE. An absolute length, an angle, a
+// time, a frequency and a resolution all convert to their canonical unit by a
+// constant; `em`, `vw`, `lh`, `cqw`, `fr` and `%` do not, and a SPECIFIED value
+// is written before any of their bases exist.
+[[nodiscard]] bool context_free_unit(std::string_view unit) noexcept {
+    static constexpr std::string_view units[] = {"px",  "cm",   "mm",   "q",    "in", "pt", "pc",
+                                                 "deg", "grad", "rad",  "turn", "s",  "ms", "hz",
+                                                 "khz", "dpi",  "dpcm", "dppx", "x"};
+    for (const std::string_view one : units) {
+        if (ascii_iequals(one, unit)) { return true; }
+    }
+    return false;
+}
+
+// Can this text be simplified WHERE IT STANDS - before a font size, a viewport
+// or a containing block exists?
+//
+// CSS Values 4 §10.11 is exact about what may NOT be simplified: `calc(10px +
+// 1em)` keeps both terms because the em has no length yet. This file's evaluator
+// has one mode, which resolves an `em` against whatever context it is handed, so
+// the test is deliberately narrow - every dimension converts by a constant, and
+// there is no percentage anywhere. Anything else is reported as the author wrote
+// it, which is where it was before and cannot be a regression.
+[[nodiscard]] bool context_free(std::string_view text) {
+    const token_stream ts = tokenize(text);
+    for (const css_token & t : ts.tokens) {
+        if (t.type == token_type::percentage) { return false; }
+        if (t.type == token_type::dimension && !context_free_unit(ts.unit_of(t))) { return false; }
+    }
+    return true;
+}
+
+// A simplified math function as a SPECIFIED value: `calc()` around the answer,
+// always. `serialize_calc` writes a COMPUTED value, where a bare `96px` is the
+// whole of it; a specified one keeps the function, which is how a page can tell
+// `width: calc(96px)` from `width: 96px` after the fact - and what every
+// `test_specified_serialization` in the corpus compares against.
+[[nodiscard]] std::string specified_math(const calc_result & value) {
+    const std::string text = serialize_calc(value);
+    // An infinity or a NaN already carries its own calc(), because there is no
+    // way to write one without a function around it.
+    if (text.starts_with("calc(")) { return text; }
+    return "calc(" + text + ")";
+}
+
+// Is `body` exactly ONE math function and nothing else? That is the test for
+// §10.12's redundant-calc rule below.
+[[nodiscard]] bool is_lone_math_function(std::string_view body) {
+    const std::string_view name = math_name_at(body, 0);
+    if (name.empty()) { return false; }
+    return span_of(body, 0, name).end == body.size();
+}
+
 } // namespace
+
+std::string simplify_math(std::string_view value) {
+    // The bases do not exist yet - that is what makes this the SPECIFIED value -
+    // so `context_free` above is what decides whether a function may be touched
+    // at all, and this context is only ever handed expressions that need none.
+    const length_context ctx;
+    std::string out;
+    std::size_t at = 0;
+    while (at < value.size()) {
+        // A MATH FUNCTION WITH ITS OWN VOCABULARY IS COPIED OVER WHOLE, for the
+        // same reason `math_syntax_ok` steps over it: `calc-size(10px, sign(size)
+        // * size)` redefines `size` inside itself, so the `sign()` in there is
+        // not the ordinary one and simplifying it would be answering a question
+        // this file was not asked.
+        if (ascii_iequals(value.substr(at, 10), "calc-size(") &&
+            (at == 0 || !is_name_char(value[at - 1]))) {
+            const std::size_t end = span_of(value, at, "calc-size(").end;
+            out.append(value.substr(at, end - at));
+            at = end;
+            continue;
+        }
+        if (const std::size_t quoted = end_of_string_at(value, at); quoted != at) {
+            out.append(value.substr(at, quoted - at));
+            at = quoted;
+            continue;
+        }
+        const std::string_view name = math_name_at(value, at);
+        if (name.empty()) {
+            out.push_back(value[at]);
+            ++at;
+            continue;
+        }
+        const function_span span = span_of(value, at, name);
+        const std::string_view whole = value.substr(at, span.end - at);
+        const std::string_view body = body_of(value, at, name, span);
+        at = span.end;
+        // A calc() AROUND ONE OTHER MATH FUNCTION IS REDUNDANT. §10.12's
+        // simplification returns a lone child rather than wrapping it, so
+        // `calc(clamp(1px, 1em, 1vh))` is `clamp(1px, 1em, 1vh)` and
+        // `calc(calc(0px + clamp(...)))` loses exactly one layer. Chrome prints
+        // both that way and `clamp-length-serialize` asserts it four times.
+        if (ascii_iequals(name, "calc(") && is_lone_math_function(trim(body, html_whitespace))) {
+            out.append(simplify_math(trim(body, html_whitespace)));
+            continue;
+        }
+        const math_answer answer = evaluate_math(body, ctx);
+        if (answer.outcome == math_outcome::resolved && context_free(whole)) {
+            out.append(specified_math(answer.value));
+            continue;
+        }
+        // NOT SIMPLIFIABLE HERE KEEPS THE AUTHOR'S BYTES, which is the answer
+        // for `min(10px, 5%)` (no answer until layout, §10.11), for
+        // `calc(1em + 1px)` (no font size yet) and for a function this file
+        // cannot evaluate at all. Re-serialising a value whose grammar is
+        // unknown is how `random-item(auto ,serif)` came back respaced.
+        out.append(whole);
+    }
+    return out;
+}
 
 bool math_syntax_ok(std::string_view value) {
     // The bases do not matter to a syntax question - `1em` is well formed at any
@@ -1098,6 +1234,10 @@ bool math_syntax_ok(std::string_view value) {
         if (ascii_iequals(value.substr(at, 10), "calc-size(") &&
             (at == 0 || !is_name_char(value[at - 1]))) {
             at = span_of(value, at, "calc-size(").end;
+            continue;
+        }
+        if (const std::size_t quoted = end_of_string_at(value, at); quoted != at) {
+            at = quoted;
             continue;
         }
         const std::string_view name = math_name_at(value, at);
@@ -1121,6 +1261,11 @@ folded_value fold_math(std::string_view value, const length_context & ctx, math_
     bool ok = true;
     std::size_t at = 0;
     while (at < value.size()) {
+        if (const std::size_t quoted = end_of_string_at(value, at); quoted != at) {
+            out.append(value.substr(at, quoted - at));
+            at = quoted;
+            continue;
+        }
         const std::string_view name = math_name_at(value, at);
         if (name.empty()) {
             out.push_back(value[at]);

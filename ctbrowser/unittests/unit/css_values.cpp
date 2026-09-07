@@ -265,6 +265,47 @@ void test_the_rest_of_the_math_functions() {
     bad("width", "calc(1px + 1nonsense)"); // a typo is not a unit
 }
 
+// CSS Values 4 §10.12: A MATH FUNCTION'S SPECIFIED VALUE IS ITS SIMPLIFIED FORM,
+// wherever the function sits.
+//
+// "Wherever" is the half that was missing, and it is not a corner: the corpus
+// tests every one of the sixteen functions through `transform`,
+// `background-image` and `scale`, which are properties whose grammar this table
+// does not model at all - so it asked "is the WHOLE value one math function",
+// answered no, and handed back the author's text. That is ~290 assertions across
+// `acos-asin-atan-atan2-serialize`, `sin-cos-tan-serialize`, `exp-log-serialize`,
+// `hypot-pow-sqrt-serialize`, `round-mod-rem-serialize`, `signs-abs-serialize`,
+// `minmax-number-serialize` and three of the `calc-infinity-nan-serialize-*`.
+void test_a_math_function_is_simplified_wherever_it_sits() {
+    // Inside a function of a property with no grammar here at all.
+    ok("transform", "rotate(acos(1))", "rotate(calc(0deg))");
+    ok("transform", "rotate(calc(1deg * NaN))", "rotate(calc(NaN * 1deg))");
+    ok("transform", "scale(min(.3, .2, .1))", "scale(calc(0.1))");
+    ok("transform", "translate(calc(1px + 2px), calc(2px * 2))", "translate(calc(3px), calc(4px))");
+    ok("scale", "calc(sin(30deg) + cos(60deg))", "calc(1)");
+    // Beside other values, and beside a quoted string whose parentheses must not
+    // end the expression early.
+    ok("border", "calc(calc(10px)) solid pink", "calc(10px) solid pink");
+    ok("background-image", "image-set(url(\"a)b\") calc(1x * 2))",
+       "image-set(url(\"a)b\") calc(2dppx))");
+
+    // A calc() AROUND ONE OTHER MATH FUNCTION IS REDUNDANT and loses exactly one
+    // layer, which is what §10.12's simplification does with a lone child.
+    ok("margin-top", "calc(clamp(1px, 1em, 1vh))", "clamp(1px, 1em, 1vh)");
+    ok("margin-top", "calc(calc(0px + clamp(1px, 1em, 1vh)))", "calc(0px + clamp(1px, 1em, 1vh))");
+    ok("width", "calc(calc(calc(10px)))", "calc(10px)");
+
+    // ...AND EVERYTHING ELSE KEEPS THE AUTHOR'S BYTES. A function with no answer
+    // until layout, one whose units have no basis yet, and one this file cannot
+    // evaluate are all left exactly as written - which is where they were before
+    // this rule existed, so nothing that works today can start failing.
+    ok("transform", "translate(min(10px, 5%))", "translate(min(10px, 5%))");
+    ok("transform", "rotate(calc(1deg + 1cqw))", "rotate(calc(1deg + 1cqw))");
+    ok("transform", "scale(calc(1 * sibling-index()))", "scale(calc(1 * sibling-index()))");
+    ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
+    ok("font-family", "\"calc(1px + 1px)\"", "\"calc(1px + 1px)\""); // inside a string
+}
+
 void test_important_and_the_empty_value() {
     // `!important` is a DECLARATION's business, never a value's. CSSOM's
     // setProperty takes the priority as its own argument, and the IDL setter
@@ -401,6 +442,7 @@ int main() {
     test_the_things_that_must_survive();
     test_what_a_math_function_may_not_be();
     test_the_rest_of_the_math_functions();
+    test_a_math_function_is_simplified_wherever_it_sits();
     test_important_and_the_empty_value();
     test_a_custom_property_takes_anything_that_tokenises();
     test_the_two_spellings_of_one_property();

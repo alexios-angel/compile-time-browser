@@ -225,6 +225,31 @@ struct folded_value {
 // `--custom: calc-ish-name` costs one wasted parse and nothing else.
 [[nodiscard]] bool may_have_math(std::string_view value) noexcept;
 
+// EVERY MATH FUNCTION IN A SPECIFIED VALUE, REPLACED BY ITS SIMPLIFIED FORM.
+// CSS Values 4 §10.12, and the words that matter are "every" and "specified".
+//
+// EVERY: a math function is simplified WHEREVER IT SITS, not only when it is the
+// whole value. `transform: rotate(acos(1))` is `rotate(calc(0deg))` and
+// `background-image: image-set(url("") calc(1x * NaN))` is `image-set(url("")
+// calc(NaN * 1dppx))` in every browser. Testing "is the whole value one math
+// function" instead left ~290 `css/css-values` assertions reading back the
+// author's text: the corpus tests these functions through `transform`,
+// `background-image` and `scale`, which are properties whose grammar this engine
+// does not model at all - so the simplification has to be independent of it.
+//
+// SPECIFIED: the answer keeps a `calc()` around it, because that is what
+// distinguishes `width: calc(96px)` from `width: 96px` after the fact.
+// `serialize_calc` writes the COMPUTED form, where a bare `96px` is the whole
+// of it. And a `calc()` whose entire body is one other math function loses that
+// redundant layer: `calc(clamp(1px, 1em, 1vh))` is `clamp(1px, 1em, 1vh)`.
+//
+// A FUNCTION THAT CANNOT BE SIMPLIFIED HERE KEEPS THE AUTHOR'S BYTES. There are
+// no bases at specified-value time, so anything mentioning `em`, `vw`, `lh`,
+// `cqw`, `fr` or a percentage is left exactly as written - §10.11 says
+// `calc(10px + 1em)` keeps both terms - as is a function this file cannot
+// evaluate and one whose comparison has no answer until layout.
+[[nodiscard]] std::string simplify_math(std::string_view value);
+
 // IS EVERY MATH FUNCTION IN THIS VALUE WELL FORMED? Not "does it fold" - a
 // `min(10px, 5%)` has no answer until layout and is perfectly well formed - but
 // "would a browser drop the declaration on sight". `round(nearest, 1px)` is
