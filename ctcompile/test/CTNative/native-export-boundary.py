@@ -49,9 +49,9 @@ def prepare(args, name, source):
     return js, prepared, len(FUNCTION.findall(text))
 
 
-def native(args, ir, name, denominator, *, claimed=0):
+def native(args, ir, name, denominator, *, claimed=0, options=""):
     output = args.work / f"{name}.native.mlir"
-    host.run([args.opt, str(ir), "--ctnative-lower-to-emitc=optimize=false", "-o", str(output)])
+    host.run([args.opt, str(ir), f"--ctnative-lower-to-emitc=optimize=false {options}", "-o", str(output)])
     text = output.read_text()
     reasons = REFUSAL.findall(text)
     remaining = len(FUNCTION.findall(text))
@@ -160,6 +160,29 @@ def main():
     if (not report["proved"] or report["reason"]
             or len(report["slots"]) != 1 or report["slots"][0]["proved_edges"] != 1):
         raise RuntimeError(f"plain_table: missing the complete current getter proof: {report}")
+
+    # The stricter owning-global query now connects the table and callable, but
+    # the native carrier still requires a numeric field. Preserve every source
+    # allocation/publication/call while that admission boundary remains.
+    config = args.work / "plain-table-proof.json"
+    checked, checked_reasons = native(args, ir, "plain-table-owned-proof", 3, claimed=1,
+                                      options=f"host-manifest={config}")
+    checked_text = checked.read_text()
+    numeric_field = "owned global root needs a proved owner and one definite numeric field"
+    if ("ctnative.host_owner_proved = true" not in checked_text
+            or numeric_field not in checked_reasons
+            or not any("a closure used as a value" in reason for reason in checked_reasons)):
+        raise RuntimeError(f"plain_table: ownership proof bypassed final field/call admission: {checked_reasons}")
+    for op in ("create_object", "create_closure", "store_global", "load_global",
+               "set_property", "get_property", "call_direct", "call"):
+        pattern = rf"^\s*(?:%[^=\n]+\s*=\s*)?ctjs\.{op}\b"
+        if len(re.findall(pattern, ir.read_text(), re.M)) != len(re.findall(pattern, checked_text, re.M)):
+            raise RuntimeError(f"plain_table: incomplete native admission changed ctjs.{op}")
+    repeated, _ = native(args, checked, "plain-table-owned-proof-rerun", 3, claimed=1,
+                          options=f"host-manifest={config}")
+    if ("ctnative.host_owner_proved = false" not in repeated.read_text()
+            or "host contract module fingerprint mismatch" not in repeated.read_text()):
+        raise RuntimeError("plain_table: semantic native mutation reused the earlier manifest")
 
     # This source has no remaining startup-prefix boundary. Its Map, closure
     # and publication still execute at runtime and do not yet have a native path.

@@ -4,7 +4,21 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <optional>
+
 namespace ctcompile::ctnative {
+
+// An uncaptured callable table retained by the ordinary root. These are live
+// source edges, not a native carrier or permission for future external calls.
+struct OwnedGlobalMethodTable {
+    ctjs::CallDirectOp factoryCall;
+    ctjs::FuncOp factory;
+    ctjs::CreateObjectOp table;
+    ctjs::SetPropertyOp methodInitialization;
+    ctjs::CreateClosureOp closure;
+    ctjs::FuncOp method;
+    llvm::SmallVector<HostCallableEdge> calls;
+};
 
 // One allocation, its owning global binding, and a fixed initialized field.
 // This is a storage/identity proof, not a proof of the field's native type.
@@ -17,11 +31,13 @@ struct OwnedGlobalRoot {
     llvm::SmallVector<ctjs::GetPropertyOp> reads;
     std::string binding;
     std::string property;
+    std::optional<OwnedGlobalMethodTable> methodTable;
 };
 
 // Borrows the current IR and validates the driver's exact fingerprint. Rebuild
 // after any semantic change; neither stale handles nor report attributes prove
-// ownership. This first tier requires one straight-line script entry, one root
+// ownership. The scalar tier requires one straight-line script entry; the
+// method tier adds one uncaptured factory/getter pair. Both require one root
 // binding and one ordinary field. Escape analysis still reports StoredGlobal.
 class OwnedGlobalRoots {
 public:
@@ -37,7 +53,9 @@ public:
     [[nodiscard]] bool exhausted() const { return budgetExhausted; }
 
 private:
-    llvm::SmallVector<OwnedGlobalRoot> checked;
+    void analyzeMethodTable(mlir::ModuleOp module, const HostContract & contract,
+                            const HostContractAnalysis & host, unsigned maxSteps);
+    llvm::SmallVector<OwnedGlobalRoot, 1> checked;
     llvm::DenseMap<mlir::Operation *, unsigned> edges;
     std::string refusal;
     unsigned workSteps = 0;

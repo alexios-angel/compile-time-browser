@@ -46,10 +46,15 @@ explicit/deduced forms, including owning lifetime sanitizers. Missing/conditiona
 initialization, replacement, mutation, stale contracts and incomplete budgets
 withhold the owner plan. Without the option, the baseline remains **0/1**.
 
-## Next: owning method fields and current callees
+## Next: consume owning method fields and current callees
 
-Connect one fixed field containing an uncaptured owning method table to
-its current stored closure. That smaller specimen is **1/3 native**; the
+The live host and [owning source graph](native-owned-global-methods.md) queries
+now connect one fixed field's uncaptured method table to its current closure.
+Consume these edges in closed value flow, returned-table preparation, owning
+field emission and final call-component admission. The explicit-manifest path
+still skips closure lifting; preparation must validate the original fingerprint
+and reconstruct proof without accepting a stale manifest.
+The smaller specimen remains **1/3 native** with and without the manifest; the
 Map-backed four-function publication specimen is **0/4**, although its startup
 prefix already completes. Their **3/3** and **4/4** native gates remain
 proposed. See [the export design](native-export-boundary.md) for concrete consumer sites,
@@ -57,8 +62,9 @@ lifetime checks and future-call obligations.
 
 Exceptions do not make a callback or allocation inert. Native try/catch covers
 one acyclic handler with homogeneous number, boolean or owning string throws
-and proved nonthrowing primitive helpers in its catch. Protected callee resolution,
-throwing callees, general finally, reentry and object payloads require further work.
+and proved nonthrowing primitive helpers in its try and catch. Checked callee
+resolution now follows preserved status/register vectors. Throwing callees,
+general finally, reentry and object payloads require further work.
 Normal-return provider facts cannot authorize an exceptional continuation.
 
 Retain the eleven scenarios in

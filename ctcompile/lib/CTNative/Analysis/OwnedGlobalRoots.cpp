@@ -54,6 +54,12 @@ OwnedGlobalRoots::OwnedGlobalRoots(mlir::ModuleOp module, const HostContract & c
         }
     }
 
+    auto field = slot.writes.front();
+    if (field.getValue().getDefiningOp<ctjs::CallDirectOp>()) {
+        analyzeMethodTable(module, contract, host, maxSteps);
+        return;
+    }
+
     const auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
     llvm::SmallVector<mlir::Operation *> operations;
     llvm::DenseMap<mlir::Operation *, unsigned> order;
@@ -190,7 +196,7 @@ OwnedGlobalRoots::OwnedGlobalRoots(mlir::ModuleOp module, const HostContract & c
     // Commit only after the complete host proof and the stricter owner census
     // finish within their shared budget. No partial operation index escapes.
     checked.push_back({owner, initialization, std::move(loads), fieldInitialization,
-                       std::move(reads), slot.binding, slot.property});
+                       std::move(reads), slot.binding, slot.property, std::nullopt});
     edges = std::move(committedEdges);
 }
 

@@ -25,7 +25,7 @@ same source allocation; matching field schemas never establish identity.
 The [live query](../lib/CTNative/Analysis/OwnedGlobalRoots.h) first requires the
 complete `HostContractAnalysis` proof, then checks the stricter owner use graph.
 Both share `host-max-steps` (default 100000). Exhaustion exposes no owner or
-field edges. Its unit fixture completes at 162 charged steps, and every smaller
+field edges. Its unit fixture completes at 164 charged steps, and every smaller
 budget refuses atomically. Fingerprinting itself retains the host analysis's
 existing whole-module hashing behavior.
 
@@ -79,12 +79,14 @@ semantic mutation, unimported source and distinct allocation checks.
 
 ## Next boundary
 
-The uncaptured exported getter specimen remains **1/3 native** under the
-ordinary pipeline; a completed Map-backed publication remains **0/4**. Next
-prove the actual fixed field's owning method table and current callable, then
-consume that proof in returned-table flow and closed-call admission. A startup
-prefix cannot supply future argument types or an open typed export ABI.
-Complete host analysis still refuses those callable/provider paths.
+The uncaptured exported getter now has a complete host callable proof and
+[owning source graph](native-owned-global-methods.md), including its exact
+factory/table/field identity. It remains **1/3 native** with and without an
+explicit manifest; a completed Map-backed publication remains **0/4**. Next
+consume the graph in returned-table flow, owning field emission and final
+call-component admission. A startup prefix cannot supply future argument types
+or an open typed export ABI. Complete host analysis still refuses the captured
+Map/provider path.
 
 The exact Bootstrap Data probes remain **0/7 native** in CommonJS/browser/
 realm-fallback modes. This scalar owner does not implement a realm owner,

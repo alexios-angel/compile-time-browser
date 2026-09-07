@@ -12,6 +12,7 @@ add_mlir_library(CTNativeAnalysis
   ClosedCallable.cpp
   OwnedMethodTableSlots.cpp
   OwnedGlobalRoots.cpp
+  OwnedGlobalMethods.cpp
   ../HostContract/Contract.cpp
   ../HostContract/Values.cpp
   ../HostContract/Slots.cpp

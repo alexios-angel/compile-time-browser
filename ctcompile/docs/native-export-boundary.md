@@ -1,26 +1,27 @@
 # Native export ownership and calls
 
-**Status: first scalar owner implemented, 2026-09-07.** The explicit
+**Status: scalar owner and exported getter source proof, 2026-09-07.** The explicit
 [ordinary global owner](native-owned-globals.md) now admits the scalar specimen
 at **1/1 native** under a live driver contract. The baseline regression below
 intentionally runs without that option and retains **0/1**. Provider-prefix
 discovery and native export admission remain separate proofs.
 
-Next connect a returned owning method table through the fixed field to a live
-callable proof. Global confinement remains unchanged; published functions
-cannot become private from a prefix observation.
+The exported getter's live callable and owning source graph are now proved.
+Next consume that graph in native table storage and call admission. Global
+confinement remains unchanged; published functions cannot become private from
+a prefix observation.
 
 ## Measured boundary
 
-The baseline is `6760a8b`, using existing devbox compiler binaries with
-`--ctnative-lower-to-emitc=optimize=false`. No source function is skipped or
-pruned. The new `CTNative/native-export-boundary.test` keeps these measurements
+The original baseline was `6760a8b`; the current getter proof below is the
+2026-09-07 increment. Native counts use `--ctnative-lower-to-emitc=optimize=false`.
+No source function is skipped or pruned. `CTNative/native-export-boundary.test` keeps these measurements
 reproducible and checks reports, final admission and reruns.
 
 | Source | Complete host/prefix evidence | Native admission | Node/interpreter |
 |---|---|---|---|
 | One ordinary global root holding a number | Complete `HostContractAnalysis`: one usable write/read edge | **0/1** | `trace=42` |
-| Exported table with an uncaptured constant getter | Complete contract refuses the ordinary property call | **1/3** | `trace=42` |
+| Exported table with an uncaptured constant getter | Complete current callable and fixed owning source graph | **1/3** | `trace=42` |
 | Exported Map-backed getter below | Entire startup prefix completes: two resolved calls, one factory and one completed provider summary | **0/4** | `trace=0` |
 | Confined local root holding the same kind of owning table | Existing confined-field proof | **4/4** | `trace=0` |
 
@@ -139,11 +140,13 @@ host.slot = make();
 var trace = host.slot.get();
 ```
 
-It measures **1/3 native**, with global-owner escape and returned-table storage
-refusals; the independent constant getter is the one admitted function. Its
-complete host contract refuses `unsupported provider behavior through ctjs.call`
-and exposes zero usable edges. This isolates the property-callee consumer before
-adding Map or capture effects. A complete **3/3** is a proposed gate.
+It measures **1/3 native**; the independent constant getter is the one admitted
+function. Its complete host contract now proves the current property callee,
+and `OwnedGlobalRoots` proves the exact factory/table/field source graph.
+Explicit-manifest lowering retains the definite-numeric-field and closure-value
+refusals. Allocation, publication, property and call operations remain intact.
+See [the proof and its measured budget](native-owned-global-methods.md).
+A complete **3/3** standalone native gate remains proposed.
 
 `Analysis/ClosedValueFlow.h` and
 `Lowering/ClosureLifting/MethodTables.cpp` already explicitly consume the local
@@ -151,14 +154,13 @@ slot query. The analogous exported edge must be requested explicitly by this
 consumer, and must preserve the table, its callable environments and their Map
 handles after factory and script-entry return.
 
-The published specimen also needs a complete callable/environment proof. The
-current `HostContractAnalysis::property()` returns no edge after any refusal;
-its callable lookup does not follow a method property to the supplied closure.
-The complete analyzer does not yet admit Map/capture/provider behavior. A
-prefix's retained factory/call rows cannot substitute for those missing checks.
-First implement a closed, effect-checked callable path or a dedicated live
-export analysis with equally explicit obligations; then let the table consumer
-use the resulting edges.
+The published Map specimen still needs a complete callable/environment proof.
+`HostContractAnalysis::property()` and `callable()` return no edge after any
+refusal. Callable lookup now follows an uncaptured literal getter's method
+property to its actual stored source closure; Map/capture/provider behavior
+remains outside that complete analysis. A prefix's retained factory/call rows
+cannot substitute for those missing checks. The table consumer must explicitly
+request the new live owning graph; it cannot infer it from reports.
 
 Resolve each field read to its actual preceding stored closure and numeric
 source identity, preserving receiver, evaluated arguments and source order.
