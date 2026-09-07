@@ -1,0 +1,1 @@
+# RUN: python3 %S/native-map-iterators.py --translate ctjs-translate --opt ctjs-opt --work %t

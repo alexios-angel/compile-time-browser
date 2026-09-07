@@ -54,7 +54,7 @@ var published;
 function probe() { const map = new Map(); const value = {}; map.set("x", value); published = value; return map.size; }
 probe();
 //--- snapshot.js
-function probe() { const map = new Map(); map.set("x", {}); return map.values().length; }
+function probe() { const map = new Map(); map.set("x", {}); return Array.from(map.values()).length; }
 probe();
 
 //--- forged.mlir

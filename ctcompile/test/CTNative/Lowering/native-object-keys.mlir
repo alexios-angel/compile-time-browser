@@ -68,5 +68,5 @@ function entry() { const read = probe(); return read(); }
 entry();
 
 //--- snapshot.js
-function probe() { const key = {}; const map = new Map(); map.set(key, 42); return map.keys().length; }
+function probe() { const key = {}; const map = new Map(); map.set(key, 42); return Array.from(map.keys()).length; }
 probe();

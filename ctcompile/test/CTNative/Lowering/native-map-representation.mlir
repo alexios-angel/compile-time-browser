@@ -58,12 +58,12 @@ var identityResult = identities();
 function insertionOrder() {
     var map = new Map();
     map.set(3, 30).set(1, 10).set(2, 20);
-    var before = map.values();
+    var before = Array.from(map.values());
     map.set(1, 11);
     map.delete(3);
     map.set(3, 31);
-    var keys = map.keys();
-    var after = map.values();
+    var keys = Array.from(map.keys());
+    var after = Array.from(map.values());
     map.clear();
     return before[0] * 1000000 + before[1] * 10000 + before[2] * 100 +
         keys[0] * 100 + keys[1] * 10 + keys[2] +
@@ -74,7 +74,7 @@ var orderResult = insertionOrder();
 function zeroKey() {
     var map = new Map();
     map.set(-0, 1).set(0, 2);
-    var keys = map.keys();
+    var keys = Array.from(map.keys());
     return 1 / keys[0] < 0 ? 1 : 0;
 }
 var zeroResult = zeroKey();
@@ -94,7 +94,7 @@ var stringOrderResult = stringOrder();
 function projection() {
     var map = new Map();
     map.set("z", 30).set("a", 10);
-    var values = map.values();
+    var values = Array.from(map.values());
     return values[0] + 0;
 }
 var projectionResult = projection();

@@ -34,7 +34,7 @@ function makeKeyedMap() {
 function retainedKeys() {
     const map = makeKeyedMap();
     for (var i = 0; i < 100; ++i) { map.set(makeKey(), i); }
-    return map.size * 1000 + map.values()[0];
+    return map.size * 1000 + Array.from(map.values())[0];
 }
 function retainedAlias() {
     const key = forwardKey(makeKey());

@@ -1,5 +1,5 @@
-// The reference's Map keeps insertion order and returns array snapshots from
-// keys()/values(). Every observation is numeric for the independent native gate.
+// Materialize independent arrays from Map's insertion-ordered iterators.
+// Every observation is numeric for the independent native gate.
 function numericKeys() {
     var map = new Map();
     map.set(0 / 0, 2);
@@ -21,12 +21,12 @@ var alias44 = aliases();
 function orderedSnapshots() {
     var map = new Map();
     map.set(3, 30).set(1, 10).set(2, 20);
-    var before = map.values();
+    var before = Array.from(map.values());
     map.set(1, 11);
     map.delete(3);
     map.set(3, 31);
-    var keys = map.keys();
-    var after = map.values();
+    var keys = Array.from(map.keys());
+    var after = Array.from(map.values());
     map.clear();
     return before[0] * 1000000 + before[1] * 10000 + before[2] * 100 +
         keys[0] * 100 + keys[1] * 10 + keys[2] +
@@ -37,8 +37,8 @@ var order30102188 = orderedSnapshots();
 function fractionalSnapshots(index) {
     var map = new Map();
     map.set(1, 10).set(2, 20);
-    var values = map.values();
-    var keys = map.keys();
+    var values = Array.from(map.values());
+    var keys = Array.from(map.keys());
     // As for array literals, the reference truncates before bounds checking.
     return values[0.5] + values[-0.5] + values[index] + keys[index];
 }
@@ -47,7 +47,7 @@ var fractional42 = fractionalSnapshots(1.9);
 function zeroKey() {
     var map = new Map();
     map.set(-0, 1).set(0, 2);
-    var keys = map.keys();
+    var keys = Array.from(map.keys());
     // The current interpreter retains the first key's sign, unlike ES Map.
     return 1 / keys[0];
 }
@@ -161,8 +161,8 @@ var emptyNaN = emptyMissing();
 
 function emptySnapshots() {
     var map = new Map();
-    var keys = map.keys();
-    var values = map.values();
+    var keys = Array.from(map.keys());
+    var values = Array.from(map.values());
     return keys.length + values.length;
 }
 var emptySnapshot0 = emptySnapshots();

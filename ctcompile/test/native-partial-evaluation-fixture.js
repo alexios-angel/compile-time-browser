@@ -30,8 +30,8 @@ function orderedSeed() {
     return map;
 }
 function observeOrder(map) {
-    return map.keys()[0] * 1000 + map.keys()[1] * 100 +
-        map.values()[0] * 10 + map.values()[1];
+    return Array.from(map.keys())[0] * 1000 + Array.from(map.keys())[1] * 100 +
+        Array.from(map.values())[0] * 10 + Array.from(map.values())[1];
 }
 function keyedSeed() {
     const first = {};
@@ -43,7 +43,7 @@ function keyedSeed() {
     return map;
 }
 function observeKeys(map) {
-    return map.size * 10000 + map.values()[0] * 100 + map.values()[1];
+    return map.size * 10000 + Array.from(map.values())[0] * 100 + Array.from(map.values())[1];
 }
 function clearedSeed() {
     const map = new Map();

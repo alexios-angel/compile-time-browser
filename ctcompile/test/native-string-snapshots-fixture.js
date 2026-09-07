@@ -42,8 +42,8 @@ function preservedSnapshots() {
     map.set("0123456789abcdef0123456789abcdef", 1);
     map.set("second", 2);
     map.set("0123456789abcdef0123456789abcdef", 3);
-    const original = map.keys();
-    const copied = Array.from(original);
+    const original = Array.from(map.keys());
+    const copied = Array.from(map.keys());
     map.delete("0123456789abcdef0123456789abcdef");
     map.set("0123456789abcdef0123456789abcdef", 4);
     const reordered = Array.from(map.keys());

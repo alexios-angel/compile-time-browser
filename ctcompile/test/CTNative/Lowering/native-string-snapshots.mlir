@@ -7,7 +7,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/other-array.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=OTHER
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prototype.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=REPLACED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/host.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=HOST
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutate-original.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SNAPSHOT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutate-original.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ITERATOR
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mutate-copy.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SNAPSHOT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/escape.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SNAPSHOT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/numeric-coercion.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NUMERIC
@@ -38,6 +38,8 @@
 // OTHER-SAME: ctnative.not_native = "native Array.from requires a proved Map keys or values snapshot"
 // HOST: ctjs.func private @probe$1
 // HOST-SAME: ctnative.not_native = "standard Map identity is unproved with other host/global value reads"
+// ITERATOR: ctjs.func private @probe$1
+// ITERATOR-SAME: ctnative.not_native = "native Map iterator requires one immediate Array.from consumption"
 // SNAPSHOT: ctjs.func private @probe$1
 // SNAPSHOT-SAME: ctnative.not_native = "native Map snapshot requires confined numeric or string elements"
 // NUMERIC: ctjs.func private @probe$1
