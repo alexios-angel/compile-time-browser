@@ -116,7 +116,11 @@ interval; these numbers do not claim improved analysis performance.
 
 Focused CTests pass **3/3 in 7.50 seconds**, followed by the full native
 program/lifetime/refusal gate. Log: `/tmp/ctcompile-map-results-integrated2.log`.
-The full generated gate is recorded in [HANDOFF.md](HANDOFF.md).
+The full frozen generated build passes **475/475 CTests in 674.94 seconds**,
+including **163/163 lit cases in 113.29 seconds**. Log:
+`/tmp/ctcompile-map-results-full.log`; evidence:
+`/tmp/ctcompile-map-results-evidence.json`. [HANDOFF.md](HANDOFF.md) records the
+browser baseline and the separate evidence-collector Node-path correction.
 
 ## Preceding argument gate, 2026-09-07
 
@@ -211,7 +215,7 @@ devbox build passes **475/475 CTests** in **652.00 seconds**, including
 The retained `result_seeded_map_get` replaces the getter with
 `get() { state.set(0, 1); return state.get(0); }` and still calls
 `host.slot.set(host.slot.get())`. It remains **0/5 native**, retaining every
-source call. Its producer needs independent contents, presence and result-type
+source call, with fresh Node/interpreter `trace=1` and no owner proof. Its producer needs independent contents, presence and result-type
 evidence before the consuming formal can be admitted. The unseeded
 `get() { return state.get(0); }` stays refused too. Never infer a definite tag
 from the first observed invocation or from an incomplete family. Current-call

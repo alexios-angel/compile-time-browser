@@ -59,18 +59,31 @@ three imported direct-call fixtures retain their original checks because their
 global callee lookups lack independent live binding/getter proofs. Default
 recovery and ordinary native throwing-call admission remain unchanged.
 
-The full frozen generated build and CTest run is in progress in
-`/tmp/ctcompile-map-results-full.log`; no full-gate result is claimed yet.
-The frozen browser bytes are the committed `ce728c0` baseline (unchanged since
-`7a755dd`), excluding Claude's unmerged WPT branch and the ten browser carryover
-paths. Compiler files pass formatting; the whole-tree check flags only the
-known untouched browser `style/selector.hpp`, `DOM/document.cpp` and
-`Style/css/selector.cpp`.
+The full frozen generated devbox build passes **475/475 CTests in 674.94
+seconds**: **367 compiler / 108 browser**, including **163/163 lit cases in
+113.29 seconds**. Log: `/tmp/ctcompile-map-results-full.log`. Post-gate evidence
+collection was rerun successfully with CMake's recorded Node executable after
+the SSH environment lacked `node` on PATH; the CTest run itself passed.
+All nine committed source/test/exception-document paths byte-match the frozen
+gate. Browser bytes are the committed `ce728c0` baseline (unchanged since
+`7a755dd`), excluding Claude's unmerged WPT branch and ten browser carryover
+paths. Compiler formatting passes; the whole-tree check flags only the known
+untouched browser `style/selector.hpp`, `DOM/document.cpp` and `Style/css/selector.cpp`.
+
+Fresh native component counts remain **19/574 Bootstrap**, **39/4754 p5** and
+**45/7725 Phaser**, in both optimization modes with zero pruned functions.
+These are component counts, not complete native applications; exact Data stays
+**0/7** per mode. Evidence: `/tmp/ctcompile-map-results-evidence.json`.
+The emitted `/tmp/ctcompile-map-results-parameter.cpp` was reviewed: a typed
+numeric getter result is passed to the runtime setter, and both callables own
+the same Map. No VM context or collector appears.
 
 **Exact next native boundary:** `result_seeded_map_get` changes the producer to
 `get() { state.set(0, 1); return state.get(0); }`, keeping `set(get())` and the
-same five functions. Its focused refusal is **0/5 native**, with every original
-call retained. Add independent live contents, presence and result-type evidence
+same five functions. The fresh gate records **0/5 native**, Node/interpreter
+`trace=1`, every original call retained, and no owner proof. Current named
+refusals include `uses its own closure` and an unproved boxed parameter.
+Add independent live contents, presence and result-type evidence
 before admitting the consuming formal. Neither a completed ownership proof nor
 an observed first-call value supplies that evidence. The unseeded Map.get result
 also remains refused. Nullable Map keys within one method remain a separate

@@ -143,8 +143,8 @@ and all five existing lifetime variants; see [the Map gate](native-owned-global-
 
 The retained `result_seeded_map_get` uses
 `get() { state.set(0, 1); return state.get(0); }` with the same `set(get())`
-entry. It remains **0/5 native** with source calls intact. Closing primitive
-contents does not yet prove this result's presence and definite tag; provide
+entry. It remains **0/5 native**, with source calls intact and fresh
+Node/interpreter `trace=1`. Closing primitive contents does not yet prove this result's presence and definite tag; provide
 live evidence for both before classifying the consuming parameter. The
 unseeded `Map.get` result stays refused. Nullable `Map.get` keys within one
 method remain a separate **0/4** carrier boundary. Exact Bootstrap Data remains
