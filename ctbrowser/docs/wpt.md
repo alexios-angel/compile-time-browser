@@ -14,29 +14,72 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
-## The baseline — 2026-09-03
+## The baseline — 2026-09-07
 
-**1,632 tests, 275.6 s, four workers, and still not one crash.** Measured on the
+**1,632 tests, 265.1 s, four workers, and still not one crash.** Measured on the
 devbox against WPT `3f6b09ae`, engine at this branch.
 
 | suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `dom/nodes` | 42 | 199 | 32 | 0 | 36 | 53 | 362 |
-| `dom/events` | 24 | 45 | 11 | 0 | 11 | 85 | 176 |
-| `html/dom` | 27 | 126 | 19 | 0 | 55 | 138 | 365 |
-| `css/cssom` | 10 | 145 | 17 | 0 | 20 | 29 | 221 |
-| `css/css-values` | 16 | 213 | 3 | 0 | 39 | 237 | 508 |
-| **total** | **119** | **728** | **82** | **0** | **161** | **542** | **1,632** |
+| `dom/nodes` | 65 | 179 | 33 | 0 | 32 | 53 | 362 |
+| `dom/events` | 51 | 18 | 12 | 0 | 10 | 85 | 176 |
+| `html/dom` | 43 | 150 | 17 | 0 | 17 | 138 | 365 |
+| `css/cssom` | 21 | 137 | 10 | 0 | 24 | 29 | 221 |
+| `css/css-values` | 15 | 215 | 2 | 0 | 39 | 237 | 508 |
+| **total** | **195** | **699** | **74** | **0** | **122** | **542** | **1,632** |
+
+Subtests: **3,633 PASS, 18,450 FAIL, 743 NOTRUN, 102 TIMEOUT.**
+
+**195 of 1,090 tests that ran, which is 17.9%.** Four days earlier it was 119 —
+10.9% — and the two measurements in between are worth keeping because they say
+which half of the movement was aimed at:
+
+| date | PASS | of 1,090 | what happened |
+|---|---:|---:|---|
+| 2026-09-02 | 52 | 4.8% | the first measurement |
+| 2026-09-03 | 119 | 10.9% | six DOM changes, each measured |
+| 2026-09-07 (before) | 138 | 12.7% | **nothing aimed at WPT**: the GC, array and error-prototype work since |
+| 2026-09-07 (after) | 195 | 17.9% | the session below |
+
+**Zero crashes** again, over a still larger executed surface.
+
+### What moved, and what it cost
+
+Every row is one commit with its own before/after, and every number was measured
+rather than projected. The engine work is described where it lives; this is what
+the instrument said about it.
+
+| change | measured effect |
+|---|---|
+| **DOMException**, and `context::throw_value` so a native can throw one | `assert_throws_dom` checks `code`, `name` AND `e.constructor === DOMException`; an Error passes none. 246 `dom/nodes` subtests reported exactly that |
+| **`getComputedStyle` answers** — a script mutation marks `dirty::styles` rather than `dirty::paint`, the read flushes the pending restyle, and the object publishes 125 longhands under both spellings with their initial values | `css/cssom` 12 → 21, and it is the precondition for most of `css/css-values` |
+| **the value grammar** — 143 properties with a syntax, `el.style` validating and canonicalising, `CSS.supports`, `CSS.escape` | `test_invalid_value` can be answered at all for the first time |
+| **the element-only tree** — `firstElementChild` and its six siblings, `moveBefore`, `matches`/`closest`, and pre-insertion validity throwing the DOMException the specification names | `dom/nodes` 46 → 65 |
+| **eleven event interfaces**, a listener that may be an object with `handleEvent`, `this` bound to the current target, `passive` enforced, and a throwing listener reported to the page | `dom/events` 37 → 51, subtests 180 → 318 |
+| **the document's own throws**, three separate name rules verified against every row of the corpus's own tables, `defaultView`, `document.write`, `compatMode` from the doctype | `html/dom` 27 → 43 |
+
+### And seven that went PASS → FAIL, each diagnosed
+
+The gate fails in both directions and so does this table. All seven are in
+`css/css-values`, which is the one suite that did not move up (16 → 15).
+
+| count | what | verdict |
+|---:|---|---|
+| 2 | `random-item-valid`, `random-item-serialize` — `el.style` was re-serialising a value whose grammar it does not model, so `random-item(auto ,serif)` came back with the spacing changed and `test_valid_value`'s round-trip failed | **mine, and fixed**: the author's bytes are kept for anything the table does not model |
+| 5 | `attr-all-types`, `attr-argument-grammar`, `random-alias-property`, `calc-time-values`, `lh-rlh-on-root-001` — each guards its assertions on `CSS.supports`, which did not exist and now said yes to everything | **fixed the same way it was found**: `CSS.supports` refuses a value calling a function this engine cannot evaluate. They were passing by not testing anything, which is not something to preserve, but a `CSS.supports` that cannot say no is not worth having |
+
+### The previous baseline, 2026-09-03
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP |
+|---|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 42 | 199 | 32 | 0 | 36 | 53 |
+| `dom/events` | 24 | 45 | 11 | 0 | 11 | 85 |
+| `html/dom` | 27 | 126 | 19 | 0 | 55 | 138 |
+| `css/cssom` | 10 | 145 | 17 | 0 | 20 | 29 |
+| `css/css-values` | 16 | 213 | 3 | 0 | 39 | 237 |
+| **total** | **119** | **728** | **82** | **0** | **161** | **542** |
 
 Subtests: **2,262 PASS, 16,331 FAIL, 746 NOTRUN, 92 TIMEOUT.**
-
-**119 of 1,090 tests that ran, which is 10.9%.** The first measurement, one day
-earlier, was 52 of 1,090 — 4.8%. What moved it is in the next section and every
-number in it was measured rather than estimated.
-
-**Zero crashes** again, now over a much larger executed surface: the suites run
-thousands of pages written to break browsers under a 4 GB `ulimit -v`, and the
-engine has never once segfaulted, aborted or exhausted the cap.
 
 ### The previous baseline, 2026-09-02, for comparison
 
@@ -49,73 +92,38 @@ engine has never once segfaulted, aborted or exhausted the cap.
 | `css/css-values` | 13 | 128 | 2 | 0 | 128 | 237 |
 | **total** | **52** | **688** | **63** | **0** | **287** | **542** |
 
-**Two of the columns are not comparable across the two tables, and saying which
-is the point of keeping both.**
+**Two columns are not comparable across the 09-02 and 09-03 tables, and saying
+which is the point of keeping both.** `css/support/` was not in the sparse
+checkout on 2026-09-02, so 94 of `css/css-values`' 128 harness errors were one
+missing helper file each; fetching it converted 84 into real failures and three
+into passes with the engine UNCHANGED. FAIL going up by 84 is the instrument
+working. HARNESS_ERROR falling and TIMEOUT rising is mostly the same story: a
+test that used to die on the first missing function now runs.
 
-- **`css/css-values` moved for a reason that is not the engine.** `css/support/`
-  was not in the sparse checkout on 2026-09-02, so 94 of that suite's 128
-  harness errors were one missing helper file each. It is fetched now, which
-  converted 84 of them into real failures and three into passes with the engine
-  UNCHANGED between the two runs. FAIL going up by 84 is the instrument working.
-- **HARNESS_ERROR falling and TIMEOUT rising is mostly the same story.** A test
-  that used to die on the first missing function now runs. `html/dom`'s eight
-  `reflection-*.html` files each run thousands of subtests and run out of clock;
-  three `NodeList-static-length-getter-tampered` files reach far enough to hang.
-  Both were failing before and are failing now, differently and more usefully.
+**And once more between 09-03 and 09-07**, for the same reason and recorded the
+same way: `/dom/constants.js` and `/dom/common.js` joined the sparse list.
+`dom/events/Event-constants.html` reported HARNESS_ERROR about a helper that was
+never checked out. One file, and it is named here so nobody attributes it to the
+engine.
 
-### What moved, and what it cost
+## What is standing in front of the most tests now
 
-Measured one API at a time, each with its own commit and its own before/after:
+Every entry is a count from the 2026-09-07 run and names a piece of work rather
+than a symptom. This is the handoff.
 
-| change | measured effect |
-|---|---|
-| `getElementsByClassName`, `getElementsByName` — **live** collections through a Proxy | `dom/nodes` 14 → 38, `html/dom` 11 → 26. **39 files** FAIL → PASS |
-| the event **path**: `createEvent`, `dispatchEvent`, `currentTarget`, `eventPhase`, the propagation flags, `Event`/`CustomEvent` | `dom/events` 6 → 19 PASS, subtests 28 → 139 |
-| `new EventTarget()`, and the duplicate-listener rule | `dom/events` 19 → 23 |
-| fragments, comments, `append`/`prepend`/`before`/`after`/`replaceWith`, `cloneNode` | `dom/nodes` 38 → 41, twelve files converted from HARNESS_ERROR to a measurement |
-| `document.implementation` + `hasFeature` | one file, **136 assertions**, FAIL → PASS |
-| `createElementNS` and the namespace an element remembers | `dom/nodes` subtests 340 → 486; no new file passes |
+| what | where | what it is worth |
+|---|---|---|
+| **`querySelector` runs a hand-rolled matcher, not the Selectors engine** | `dom_bindings::query`, `lib/Shell/bindings/document.cpp` | it gives up on ANY selector containing a space or a `>` — its own comment says "a combinator: not supported, matches nothing" — while `lib/Style/css/selector.cpp` and `style::engine::matches` implement combinators, attribute selectors, `:not`/`:is` and the sibling forms. Two matchers, and the weaker one is the one script reaches. `matches`/`closest` are deliberately defined in terms of it so the two cannot disagree, which means all three move together. The rung: give `style::engine` a public `select(txn, root, selector_list)` that runs the same DFS `resolve_subtree` does but tests each element instead of resolving it — the cursor it needs (`levels_`, `path_`, `ancestor_filter`) is already maintained there — and give `dom_bindings` a way to reach the engine, which today observes only the resolved `style_map`. It is also the precondition for `querySelector` throwing `SyntaxError`, which it must NOT do before then: it cannot parse plenty of VALID selectors, so it would fire on correct input |
+| **reflection: an IDL attribute does not reflect its content attribute** | `lib/Shell/bindings/element.cpp` | ~6,400 failing subtests in `html/dom`, in four shapes: `getAttribute() expected X but got Y` (2,453), `IDL get expected (string) X but got undefined` (2,411), the same for boolean (665) and for number (576). It wants a TABLE — interface, IDL name, content attribute, type, default — not a method each. Note the file yield is low and the subtest yield is enormous: the eight `reflection-*.html` files each run thousands of subtests and time out regardless |
+| **a second Document** | `dom_bindings`, the whole handle model | `createHTMLDocument` (27 files) and `createDocument` (17). `node_id` is a slot+generation into one slab and `wrappers_`, `namespaces_`, `mirrors_` and `webgl_objects_` are ALL keyed on `pack(node_id)`, so two documents give two different nodes the same key and `getElementById` on one returns the other's wrapper. Doing it properly means a document handle beside the node handle in every one of those and in `receiver()`/`handle_of()`/`wrap()`, and `doc_` becoming "the document this call is about" rather than a member, across ~90 uses in six files |
+| **MutationObserver** | `dom_bindings`, `mutated()` | 18 files in `dom/nodes`, 5 more as harness errors in `css/cssom` and `html/dom`. `mutated()` is already the funnel — 18 call sites in `element.cpp`, 5 in `document.cpp` — so a per-target snapshot diff there is the shape, and it needs members on `dom_bindings` to hold the observer list, its queue and the snapshot. **All or nothing**: the validation half alone turns five `MutationObserver-*` files from a fast FAIL into a 10-second TIMEOUT, because their last subtest is an `async_test` waiting for a record |
+| **the CSSOM object model** | new, `lib/Shell/bindings/` | `document.styleSheets`, `CSSStyleSheet`, `CSSRuleList`, `CSSStyleRule.selectorText`, `insertRule`/`deleteRule`, `new CSSStyleSheet()`. It is the precondition for most of what is left in `css/cssom` — 22 subtests fail on `new CSSStyleSheet` by name and four `dom/events` harness errors are `insertRule`. `style::css::stylesheet` already retains the rules, the selectors and the declarations, so the model is there; what is missing is the binding and a way for `dom_bindings` to reach the engine's sheets |
+| **interface objects for node types** | `lib/Shell/bindings/element.cpp` | `HTMLBodyElement`, `Window`, `Document`, `NodeList`, `HTMLCollection` as globals with prototypes the wrappers chain to. It is what `assert_class_string`, `e instanceof HTMLBodyElement` and `eventTarget.constructor.name` all ask, and one defect stands behind `Body-FrameSet-Event-Handlers.html`, `passive-by-default.html`, `document.links` and `document.scripts` |
+| **shadow DOM** | the tree model | `attachShadow`: 14 files plus five harness errors across three suites. Not a bindings change |
+| **attribute namespaces** | `include/ctbrowser/dom/node.hpp` | `setAttributeNS`/`getAttributeNS`: `struct attribute` is `(atom name, std::string value)` with nowhere to put a namespace, so this is a DOM-layer change rather than a binding. 80 subtests and two harness errors in `dom/nodes` |
+| **named access on the Window** | `lib/Shell/bindings/window.cpp` | `window[id]` for an element with an `id`. One harness error in `dom/events` found it; it is a documented HTML feature that pages use widely |
 
-### What is actually failing now
-
-| count | cause |
-|---:|---|
-| 121 | `assert_equals: expected (string) … but got (undefined)` — mostly CSS values |
-| 85 | `assert_equals: expected … but got …` — wrong answers, not missing ones |
-| 50 | `assert_true: expected true got false` |
-| 39 | `document.write`, from `generateParserDelay` |
-| 32 | `assert_false: expected false got true` |
-| 27 | `createHTMLDocument` |
-| 19 | `assert_array_equals: value is …, expected array` — see below |
-| 18 | `new MutationObserver` |
-| 17 | `createDocument` |
-| 14 | `attachShadow` |
-| 14 | `setProperty` on a Web Animations keyframe |
-| 11 | `new CSSStyleSheet` |
-| 10 | `setAttributeNS` |
-
-**Three of these are worth naming precisely, because each is one defect standing
-in front of many tests:**
-
-- **`"length" in []` is FALSE in this engine** while `[].hasOwnProperty("length")`
-  is true — measured through `ctdrive`, not inferred. `context::has_property` in
-  `lib/Script/vm/objects.cpp` parses an array key as an index and never answers
-  `"length"`. `assert_array_equals` opens with `"length" in actual`, so **every
-  comparison against an array a page built fails before it compares anything**.
-  It is the sole remaining cause in eleven `dom/events` files and in eight more
-  elsewhere.
-- **A native cannot throw a DOMException.** `assert_throws_dom` requires the
-  thrown object's `code` and `name` AND `e.constructor === DOMException`. The
-  only way to throw from a native here is `context::throw_error(kind, message)`,
-  which builds an Error with the right `name`, no `code`, and Error.prototype.
-  A `throw_value(value)` on the context would make `createElementNS`'s 110
-  throwing assertions, `createProcessingInstruction`'s eight and every other
-  `assert_throws_dom` reachable.
-- **`createHTMLDocument` and `createDocument` need a SECOND Document**, which
-  the bindings cannot hold: there is one `document *` and every element wrapper
-  is keyed on a node id that means nothing against any other. 27 files.
-
-### Skips, all 542 of them
+## Skips, all 542 of them
 
 | count | reason |
 |---:|---|
@@ -275,18 +283,25 @@ and each has a commit of its own.
 | a listener registered twice was registered twice | the DOM says (type, callback, capture) on one target is a listener's IDENTITY | a page that registers defensively in a function it calls twice got two calls per event, and a `once` listener registered twice fired twice |
 | `document.implementation` did not exist | so `hasFeature` did not, and the test's `.apply(...)` on `undefined` did not either | 136 assertions in one file, reported as "`apply` is not a function" — a message about a method nobody was missing, forty lines from the cause |
 
-### And two that are NOT fixed, both outside the DOM
+### And the two that were NOT fixed then, both of which are now
 
-Named here because each stands in front of many tests and neither is a DOM gap:
+`docs/wpt.md` named these on 2026-09-03 as standing in front of many tests. Both
+have since been closed, and how each turned out is worth a line:
 
-- **`"length" in []` is false.** `context::has_property` parses an array key as
-  an index and never answers `"length"`, while `hasOwnProperty("length")`
-  answers true — measured through `ctdrive`. `assert_array_equals` opens with
-  exactly that test, so no comparison against a page-built array can pass.
-- **A native cannot throw a DOMException.** `context::throw_error(kind, message)`
-  is the only way to throw from one, and it builds an Error: right `name`, no
-  `code`, `constructor === Error`. `assert_throws_dom` checks all three.
-
+- **`"length" in []` was false.** `context::has_property` parsed an array key as
+  an index and never answered `"length"`, so `assert_array_equals` — which opens
+  with exactly that test — could not compare against any array a page built.
+  Closed by the property-attribute work: `own_property` is now the shared
+  [[GetOwnProperty]] over all four tables and `in` walks the whole chain through
+  it, which also fixed `'toString' in {}` and an accessor being invisible to the
+  operator whose entire job is to see one.
+- **A native could not throw a DOMException.** Closed by
+  `context::throw_value(value)` and `lib/Shell/bindings/exceptions.cpp`. What it
+  was worth is in the 2026-09-07 table; what it turned out to ALSO be worth is
+  not in any table: `Document-createElementNS.html` passes
+  `doc.defaultView.DOMException` as `assert_throws_dom`'s constructor argument,
+  so its 110 throwing assertions needed `document.defaultView` as much as they
+  needed the exception.
 
 ## Running it
 

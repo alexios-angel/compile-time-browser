@@ -635,6 +635,112 @@ synthesised `prototype` (1), a String wrapper (1).
 
 ---
 
+## Array.prototype is generic, and a built-in knows its arity — 2026-09-07
+
+**11,210 -> 12,745 of the ten areas, 34.1% -> 38.8%, measured on the devbox
+against the same pinned corpus.** Two seams, both counted over the corpus before
+they were touched rather than guessed at.
+
+### The receiver
+
+Every `Array.prototype` method is specified GENERIC: it reads `this` through
+[[Get]] and `length` through ToLength, whatever `this` is. Every one of them here
+opened with `this_array()`, which answers nullptr for anything that is not a real
+Array and made the method return a default. `Array.prototype.some.call(obj, f)`
+was `false` for every object literal in the corpus.
+
+Counted over `~/.cache/ctbrowser/test262` at the pin: **583 files** call one of
+the nine iteration methods on a plain object literal — `reduce` 91, `reduceRight`
+89, `filter` 69, `map` 68, `some` 60, `every` 60, `forEach` 59, `lastIndexOf` 44,
+`indexOf` 43. And **598 more** could not run a line because the method did not
+exist at all: `reduceRight` 260, `lastIndexOf` 198, `copyWithin` 39, `toSpliced`
+30, `with` 21, `toSorted` 21, `toReversed` 17, `toLocaleString` 12.
+
+### The descriptors
+
+A built-in function's `length` was absent everywhere and its `name` was
+synthesised from the C++ object rather than being an own property, so
+`verifyProperty` — which test262 uses on every one — failed on both: **157 files**
+for `length`, **178** for `name`.
+
+The `name` half had a second half. `context::own_property` synthesises the name
+when the table has none, and the synthesised slot has no memory: after `delete
+f.name` it uncovered and `hasOwnProperty("name")` stayed true, which is exactly
+what `verifyProperty`'s `isConfigurable()` asks. `native_object::name_erased`
+closes it — the fallback still answers for the 400 natives `define_native` makes
+with no own entry, and stops answering the moment one is deleted.
+
+### Measured, per area
+
+| area | tests | pass 2026-09-03 | pass 2026-09-07 | delta |
+|---|---:|---:|---:|---:|
+| `test/language` | 23,726 | 7,296 | **7,310** | +14 |
+| `built-ins/Array` | 3,082 | 741 | **1,905** | **+1,164** |
+| `built-ins/Object` | 3,411 | 1,913 | **1,997** | +84 |
+| `built-ins/Number` | 340 | 213 | **239** | +26 |
+| `built-ins/Math` | 327 | 199 | **271** | +72 |
+| `built-ins/String` | 1,223 | 596 | **730** | +134 |
+| `built-ins/Boolean` | 51 | 20 | **25** | +5 |
+| `built-ins/Function` | 509 | 164 | **193** | +29 |
+| `built-ins/Error` | 93 | 27 | **30** | +3 |
+| `built-ins/JSON` | 165 | 41 | **45** | +4 |
+| **total** | **32,927** | **11,210** | **12,745** | **+1,535** |
+
+`built-ins/Array` is 62.1% of the tests that ran, from 24.2%. `built-ins/Math`
+moving +72 with nothing written for it is the descriptors: `Math.max.length` is
+2 and every `verifyProperty` in that directory was failing on the arity.
+
+CRASH went 7 -> 10 and TIMEOUT 0 -> 1, both in `built-ins/Array` and
+`built-ins/JSON` and neither diagnosed. **That is a regression in the one column
+this suite has never had one in, and it is recorded here rather than left for
+someone to find.**
+
+### What else changed, each its own correctness fix
+
+`sort` puts `undefined` last and never hands one to the comparator;
+`sort`/`toSorted` refuse a comparator that is neither undefined nor callable;
+`includes` uses SameValueZero so `[NaN].includes(NaN)` is true;
+`indexOf`/`includes` honour `fromIndex`; `join(undefined)` is `"1,2"`; `at`
+coerces through ToIntegerOrInfinity so an object's `valueOf` is seen; a bound
+function's name is `"bound f"` and its length is the target's less the bound
+arguments; `String.raw` exists; `String.fromCodePoint` throws RangeError instead
+of wrapping through ToUint32; `Number.parseInt`/`parseFloat` exist and are the
+SAME function objects as the globals; and the `Number` predicates and the
+`String` statics are non-enumerable, so `Object.keys(Number)` is empty.
+
+`unittests/js/array_generics.cpp` is the regression net — 96 assertions, in the
+suite, no corpus needed — and `property_attributes.cpp` gained 32 more.
+
+### What is deliberately NOT done
+
+* **`push`/`pop`/`shift`/`unshift`/`splice`/`concat`/`reverse`/`flat`/`flatMap`
+  are still array-only** — about 330 files. They MUTATE, so a generic version has
+  to do Set/Delete in the right order with a `length` write-back; that is a
+  second pass, not a mechanical one.
+* **A real Array is iterated to `items.size()`, not to its `length` property.**
+  `array_object` records an index it refused to materialise and raises `length`
+  over it, so `a[4294967295] = 'x'` makes `length` four billion and iterating to
+  it turns an answer into a TIMEOUT. The deviation is `array_object`'s own and it
+  was kept rather than widened.
+* **`Symbol.species`, ArraySpeciesCreate, `Symbol.isConcatSpreadable` and
+  `Array.prototype[Symbol.unscopables]`** — the copying methods build a plain
+  Array whatever they were called on.
+* **`String.prototype.isWellFormed`/`toWellFormed`**, 16 files: strings here are
+  UTF-8 bytes, so a lone surrogate cannot be represented and both would be the
+  identity. Adding them buys the descriptor tests and gives wrong answers to the
+  rest. `normalize` is already the identity for the same reason and a second one
+  was not wanted.
+* **`Array.fromAsync`** — 95 files, 0 passing, and it needs async iteration.
+
+### The largest thing left, unchanged
+
+`negative parse/SyntaxError: got runtime` is still the single biggest cause in
+the corpus and still 2,812 tests: **the engine parses source that must be an
+early error.** It is the ctjs parser and the compiler rather than the standard
+library, and nothing in this session touched it.
+
+---
+
 `docs/script.md` is the engine's own account of what it implements and what it
 refuses by name; this file is the independent measurement of the same thing.
 Where they disagree, this one was measured.

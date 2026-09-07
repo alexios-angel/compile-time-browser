@@ -43,7 +43,14 @@ wrong", which is what they always were.
 exactly (8 / 148 / 15 / 0 / 21 / 29), which is the check that the instrument
 itself did not move underneath the comparison.
 
-## 2. The baseline, 2026-09-03
+## 2. The baseline, 2026-09-03 — and where it stands now
+
+§6 is the 2026-09-07 re-measurement. In short: `css/cssom` 8 -> **21** files and
+113 -> **220** passing subtests, `css/css-values` 16 -> **15** files and 549 ->
+**709** passing subtests. The suite that did not move up is the one whose cause
+is diagnosed there, seven files by name.
+
+### The 2026-09-03 baseline
 
 | suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -220,7 +227,108 @@ only acquires through `el.style` is not on the object at all — whatever it is
 called. Anyone taking that on should budget for the flush first and treat the
 IDL names as the second half of the same change.
 
-## 6. Re-running this
+## 6. The wall came down — 2026-09-07
+
+**`css/cssom` 12 -> 21 files and 113 -> 220 passing subtests; `css/css-values`
+16 -> 15 files and 549 -> 709 passing subtests.** §5's last section priced the
+camelCase spelling at nothing and said the flush had to come first. It was right,
+and the flush turned out to be TWO defects rather than one.
+
+### A one-word invalidation bug
+
+`dom_bindings`' mutation hook marked `dirty::paint`, which is BELOW
+`dirty::styles` in the ordering, so `frame()`'s
+`if (dirty_ >= dirty::styles) resolve_styles()` never fired for a script
+mutation. A page that wrote `el.style`, set an attribute or added a class got its
+display list re-recorded from the cascade resolved at LOAD. Every caller of
+`mutated()` is script changing the document and every one of them can change
+which rules match. The corpora never noticed because p5 and Phaser invalidate
+through `canvases_.total_revision()` instead.
+
+### And the reason that was invisible
+
+`load_one_page` does `mark(dirty::everything); run_scripts();` — **scripts run
+before the first layout ever happens** — and `observe_styles`, `observe_boxes`
+and `observe_layout` are called only from `run_layout()`. So at page-load script
+time, which is when every WPT test runs, all three of the pointers
+`getComputedStyle` reads were NULL. It was not answering the wrong value; it had
+nothing to read. That is why the throwaway camelCase patch in §5 moved nothing,
+and it is why the patch was the right experiment and the wrong conclusion.
+
+`getComputedStyle` is now wrapped to flush exactly the stages `dirty_` says are
+stale before it answers.
+
+### The object
+
+125 longhands from `style::css::known_properties()`, each published under the
+hyphenated CSS name AND the IDL one; the 23 shorthands present for `in` and for
+`getPropertyValue` but absent from the indexed properties, which is what
+`getComputedStyle-getter-v-properties` asserts both halves of; `length`,
+`item(i)` and indexed access enumerating lexicographically, which
+`getComputedStyle-property-order.html` requires outright; and a property nothing
+declared answering its initial value instead of `undefined`.
+
+Four correctness fixes came out of reading the corpus rather than writing the
+object: `line-height: normal` reports `normal` instead of the box's px;
+`border-*-width` and `outline-width` report `0px` when the style is `none` and
+resolve thin/medium/thick to 1/3/5px; `currentcolor` resolves to the element's
+computed `color`; and a detached element returns an empty declaration.
+
+### `el.style` is a CSSStyleDeclaration
+
+`style/css/properties.hpp` is the property table this file's §4 said did not
+exist: 143 properties, each with a value kind, a keyword set, its CSS initial
+value and whether it inherits. `el.style` validates through it and stores the
+canonical form, so `test_invalid_value` can be answered at all; `CSS.supports`
+and `CSS.escape` exist; and `getPropertyPriority`, `item`, `length`, indexed
+access and `cssText` are real.
+
+**The table is conservative and that is the design.** A property not in it is
+accepted verbatim exactly as before; a property in it as `freeform` is known to
+EXIST — which is what `CSS.supports(name)` and `name in getComputedStyle(e)` ask
+— but its values are still accepted verbatim; only a property with a real value
+kind can refuse anything. Every shorthand is freeform, because refusing
+`margin: 10px 20px` needs the expansion.
+
+### It cost seven files, and both causes were found by the instrument
+
+`css/css-values` went 16 -> 15. Two files were the value grammar re-serialising a
+value whose syntax it does not model — `random-item(auto ,serif)` came back with
+the spacing changed and `test_valid_value` asserts the round-trip exactly — and
+five were `CSS.supports` saying yes to everything, so files that had been
+guarding their assertions on it stopped guarding and started failing. Both are
+fixed: the author's bytes are kept for anything the table does not model, and
+`CSS.supports` refuses a value calling a function this engine cannot evaluate.
+
+### The Bootstrap baseline moved and was read
+
+`test/baseline/bootstrap-*.txt` grew by 631 lines and **not one number moved**:
+the geometry is byte-identical and what is new is the properties that used to be
+absent. `docs/wpt.md`'s commit for it lists the three answers in that diff worth
+reading twice.
+
+### What is still not done here
+
+* **The object is a SNAPSHOT, not live.** CSSOM says `getComputedStyle` returns a
+  live `CSSStyleDeclaration`. `test_computed_value` re-calls it every time, so
+  this does not block the bulk; a test that holds `let cs = gcs(el)` across a
+  write still reads stale.
+* **`number_text`'s 1/64 quantum blocks two whole files.**
+  `getComputedStyle-margins-roundtrip.html` and
+  `getComputedStyle-insets-absolute-roundtrip.html`, 8 subtests: they set
+  `20.7px` and expect it back, and we answer `20.703125px`. Chrome quantises USED
+  values and not a margin's computed value, so the honest fix is to skip the snap
+  for the properties whose computed value IS the specified length and keep it for
+  the fragment-derived `width`/`height`.
+* **Assignment to a computed style does not throw**, and **pseudo-elements are
+  still ignored** (~37 subtests) because nothing generates those boxes.
+* **`getBoundingClientRect`, `offsetWidth` and `clientHeight` do not flush.**
+  They have exactly the same staleness `getComputedStyle` had, in
+  `lib/Shell/bindings/element.cpp`. One shared flush hook on `dom_bindings` is
+  the shape, and the `getComputedStyle` wrapper is deliberately written so it can
+  be deleted when that exists.
+
+## 7. Re-running this
 
 ```bash
 tools/wpt/fetch-wpt.sh                       # once; now includes css/support/
