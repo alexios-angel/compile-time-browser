@@ -430,6 +430,139 @@ private:
     // `el.style` about whether a value is valid.
     void install_css_interface(context & cx);
 
+    // --- one region per translation unit, so that several concerns can be
+    // --- worked on at once without two of them editing the same lines here.
+    // --- Each block below belongs to exactly one file in bindings/.
+
+    // BEGIN reflection
+    // END reflection
+
+    // BEGIN mutation observers (bindings/mutation.cpp)
+public:
+    // WHAT `mutated()` HAS TO CALL, and the whole reason this is a diff.
+    //
+    // `mutated()` is the one funnel every DOM-changing native already goes
+    // through - 18 call sites in element.cpp, five in document.cpp - and it
+    // takes no arguments because the funnel does not know WHAT changed. So the
+    // records are reconstructed rather than reported: `observe()` takes a
+    // snapshot of every observed node's children, attributes and text, and this
+    // diffs that snapshot against the document as it is now, queues a record
+    // for each difference and re-snapshots. See lib/Shell/bindings/mutation.cpp
+    // for the three shapes of mutation a diff genuinely cannot recover.
+    //
+    // Costs nothing when no page script has ever constructed a
+    // MutationObserver, which is the overwhelmingly common case: the first line
+    // returns on an empty registration list.
+    void record_mutations();
+
+private:
+    // ONE `observe()` CALL'S OPTIONS, after the dictionary's own defaulting.
+    // `attributeOldValue` or `attributeFilter` PRESENT with `attributes`
+    // ABSENT turns `attributes` on - which is why `attributes` is a field here
+    // and not just a read of the dictionary.
+    struct mutation_options {
+        bool child_list = false;
+        bool attributes = false;
+        bool character_data = false;
+        bool attribute_old_value = false;
+        bool character_data_old_value = false;
+        bool subtree = false;
+        bool has_attribute_filter = false;
+        std::vector<std::string> attribute_filter;
+    };
+
+    // A REGISTERED OBSERVER, DOM §4.3.1: one (observer, target) pair with its
+    // options. `observe()` on a target already registered for this observer
+    // REPLACES the options rather than adding a second entry.
+    struct mutation_registration {
+        std::size_t observer = 0; // index into mutation_observers_
+        node_id target;
+        // `observe(document, ...)`: the document object carries no node handle
+        // here - this tree builder has no Document node above `<html>` - so the
+        // registration is on the root element and remembers that it stands for
+        // the document.
+        bool whole_document = false;
+        mutation_options options;
+    };
+
+    // ONE OBSERVED NODE AS IT WAS, which is what a record is a difference from.
+    // All three are captured for every observed node regardless of which the
+    // registration asked for: a node may be observed by two registrations that
+    // want different things, and one snapshot that answers both is cheaper than
+    // keeping the union of their options per node.
+    struct mutation_node_state {
+        std::vector<node_id> children;
+        std::vector<std::pair<atom, std::string>> attributes;
+        std::string text; // text and comment nodes only
+    };
+
+    void install_mutation_observer(context & cx);
+    // The MutationObserver instance at that index, and its pending record
+    // queue. The queue is a JavaScript ARRAY held on the instance rather than a
+    // std::vector<value> here, so that rooting the instance roots the records
+    // and there is one thing to keep alive instead of two.
+    [[nodiscard]] script::object_object * mutation_observer_at(std::size_t index);
+    [[nodiscard]] script::array_object * mutation_records_of(std::size_t index);
+    // A MutationRecord with every field the IDL names, absent ones null and the
+    // two node lists real empty arrays.
+    [[nodiscard]] value make_mutation_record(context & cx, std::string_view type, node_id target);
+    void queue_mutation_record(std::size_t observer, value record);
+    // The microtask side. `queue_microtask` fixes its arguments at QUEUE time
+    // and the record list has to stay open until the microtask RUNS, so what is
+    // queued is a native trampoline that calls the second of these.
+    void queue_mutation_delivery();
+    void deliver_mutation_records();
+    // Re-read every observed node. Called by observe(), by disconnect() and at
+    // the end of every record_mutations().
+    void take_mutation_snapshot();
+    void collect_observed(const read_txn & txn, node_id root, bool subtree,
+                          std::vector<node_id> & into) const;
+    // The observer's index, or npos when the value is not one of ours.
+    [[nodiscard]] std::size_t mutation_observer_index(value v) const;
+    // WHAT KEEPS ALL THIS ALIVE. `register_roots` belongs to bindings/
+    // document.cpp and there is one external-roots hook, so these hang off the
+    // `MutationObserver` interface object's `retained` list instead - see
+    // script::native_object::retained. Refilled whenever the set changes,
+    // which is rare and tiny.
+    void sync_mutation_roots();
+
+    std::vector<value> mutation_observers_;
+    std::vector<mutation_registration> mutation_registrations_;
+    flat_map<std::uint64_t, mutation_node_state> mutation_snapshot_;
+    value mutation_observer_prototype_;
+    value mutation_record_prototype_;
+    value mutation_trampoline_;
+    // The interface object, whose `retained` list is the root set above.
+    script::native_object * mutation_interface_ = nullptr;
+    // Whether a delivery microtask is already queued. Cleared when it runs,
+    // which is what makes several mutations in one script turn arrive as ONE
+    // callback holding several records.
+    bool mutation_delivery_queued_ = false;
+    // END mutation observers
+
+    // BEGIN style sheets
+    // END style sheets
+
+    // BEGIN selectors (bindings/document.cpp)
+public:
+    // THE CASCADE'S OWN ENGINE, so that a selector cannot mean one thing in a
+    // stylesheet and another in a script. `query()` runs `style::engine::select`,
+    // which is the matcher a rule goes through; handing over the browser's engine
+    // rather than making one here is what keeps `:hover` and the interned atoms the
+    // same on both sides.
+    //
+    // Optional: bindings built without a browser - which several unit tests do -
+    // fall back to an engine of their own. Matching needs the atom table and the
+    // traversal state, not the rules, so an engine with no sheets in it answers a
+    // query exactly as well.
+    void observe_style_engine(style::engine & engine) { selector_engine_ = &engine; }
+
+private:
+    [[nodiscard]] style::engine & selector_engine();
+    style::engine * selector_engine_ = nullptr;
+    std::unique_ptr<style::engine> own_selector_engine_;
+    // END selectors
+
     [[nodiscard]] node_id id_or_nothing(context & c) { return receiver(c); }
 
     // The 2D context. Its methods close over the canvas node, so the object can
@@ -772,8 +905,15 @@ private:
     // `window` proxy already uses, and the reason a second one is cheap.
     [[nodiscard]] value make_live_collection(context & cx,
                                              std::function<std::vector<node_id>()> members);
-    // Compound selectors only - see the definition.
-    [[nodiscard]] std::vector<node_id> query(std::string_view selector, node_id within = node_id{});
+    // `querySelectorAll`, on the real Selectors engine - see the definition.
+    //
+    // `invalid` comes back true when the text is not a selector at all, which is
+    // the only case `querySelector` may throw SyntaxError for. It is an out
+    // parameter rather than a throw so that this stays callable from a place that
+    // has no context, and defaulted so the four call sites that predate it do not
+    // have to care.
+    [[nodiscard]] std::vector<node_id> query(std::string_view selector, node_id within = node_id{},
+                                             bool * invalid = nullptr, bool first_only = false);
     // The document's own live properties - title and activeElement.
     void refresh_document();
 

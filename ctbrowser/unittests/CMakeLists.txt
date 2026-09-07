@@ -47,6 +47,11 @@ ctbrowser_test(unit/style_basics)
 # The CSS tokenizer, against the cases the submodule it replaced got wrong.
 ctbrowser_test(unit/css_syntax)
 ctbrowser_test(unit/css_values)
+# `querySelector` and the Selectors engine behind it. Its own file rather than
+# more of css_syntax: that one asks what the parser BUILDS, and this asks what a
+# script gets back when it matches with it - which used to be a second, weaker
+# matcher entirely.
+ctbrowser_test(unit/selectors)
 ctbrowser_test(unit/layout_basics)
 # The flex formatting context. Its own file rather than more of layout_basics:
 # S9.7's freeze loop has more cases than the other three contexts together.
@@ -61,6 +66,12 @@ ctbrowser_test(unit/svg_basics)
 ctbrowser_test(unit/pipeline_basics)
 ctbrowser_test(unit/shell_basics)
 ctbrowser_test(unit/bindings_basics)
+# MutationObserver. Its own file rather than more of bindings_basics because
+# what it asks about is a DIFF - records reconstructed from a snapshot rather
+# than reported by the mutation - and every case in it is about the SHAPE of a
+# record and about WHEN the callback runs, neither of which any other test
+# observes. See lib/Shell/bindings/mutation.cpp.
+ctbrowser_test(unit/mutation_observer)
 ctbrowser_test(unit/widgets_basics)
 ctbrowser_test(unit/chrome_basics)
 # The Bootstrap fixtures against test/baseline/. The Chrome half of that harness

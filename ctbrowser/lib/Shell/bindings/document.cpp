@@ -8,6 +8,7 @@
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/bindings.hpp>
 #include <ctbrowser/shell/net/url.hpp>
+#include <ctbrowser/style/css/parser.hpp>
 
 #include <algorithm>
 #include <charconv>
@@ -308,6 +309,7 @@ void dom_bindings::install(context & cx) {
     // BEFORE anything that may throw one.
     install_dom_exception(cx);
     install_css_interface(cx);
+    install_mutation_observer(cx);
     install_timers(cx);
     install_resources(cx);
     install_navigation(cx);
@@ -377,6 +379,10 @@ std::vector<std::string_view> dom_bindings::split(std::string_view text) {
 }
 
 void dom_bindings::mutated() {
+    // THE MUTATION OBSERVERS FIRST, and from here rather than from each of the 23
+    // natives that change the document: this is the funnel they all already go
+    // through. It costs one branch on a page that never made an observer.
+    record_mutations();
     if (on_mutation_) { on_mutation_(); }
 }
 
@@ -691,12 +697,31 @@ void dom_bindings::install_document(context & cx) {
         return value::boolean(!dispatch_to(event, path_step{node_id{}, listen_on::document}));
     });
 
+    // A SELECTOR THAT IS NOT A SELECTOR IS A SyntaxError, and the DOM says so for
+    // both of these and for `matches`/`closest`. It could not be said before,
+    // because `query` gave up on any selector with a combinator in it and would
+    // have thrown on perfectly valid input; now that it parses the whole grammar,
+    // the only thing it refuses is text that is not a selector at all. An
+    // UNSUPPORTED selector - `:has()`, `ns|div` - still returns null, which is a
+    // missing answer rather than a wrong one.
     method("querySelector", [this](context & c, std::span<value> args) {
-        const std::vector<node_id> found = query(arg_string(c, args, 0));
+        bool invalid = false;
+        const std::string selector = arg_string(c, args, 0);
+        const std::vector<node_id> found = query(selector, node_id{}, &invalid, true);
+        if (invalid) {
+            throw_dom_exception(c, "SyntaxError", "'" + selector + "' is not a valid selector");
+            return value::undefined();
+        }
         return found.empty() ? value::null() : wrap(c, found.front());
     });
     method("querySelectorAll", [this](context & c, std::span<value> args) {
-        const std::vector<node_id> found = query(arg_string(c, args, 0));
+        bool invalid = false;
+        const std::string selector = arg_string(c, args, 0);
+        const std::vector<node_id> found = query(selector, node_id{}, &invalid);
+        if (invalid) {
+            throw_dom_exception(c, "SyntaxError", "'" + selector + "' is not a valid selector");
+            return value::undefined();
+        }
         // An ARRAY, not a NodeList: everything a page does with one - index it,
         // read length, walk it - an array already does, and p5 spreads the
         // result into an array anyway.
@@ -1295,104 +1320,43 @@ node_id dom_bindings::find_by_id(const std::string & want) {
     return found;
 }
 
-// `querySelector` / `querySelectorAll`, for COMPOUND selectors.
+// `querySelector` / `querySelectorAll`, ON THE REAL SELECTORS ENGINE.
 //
-// A compound selector is a tag and any number of `#id` and `.class` parts -
-// `canvas`, `#sketch`, `.row.selected`, `div#main` - and a comma-separated
-// list of them. That covers what p5.js needs on its load path
-// (`document.querySelectorAll('script')`) and what `select()` is used for in
-// practice.
+// This used to be a hand-rolled compound matcher that gave up on any selector
+// containing a space or a `>` - its own comment said "a combinator: not
+// supported, matches nothing" - while `lib/Style/css/selector.cpp` and
+// `style::engine` had a full one that combinators, attribute selectors, `:not`,
+// `:is` and the sibling forms all went through. Two matchers, and the weaker one
+// was the one a script reached. `matches` and `closest` are defined in terms of
+// this function precisely so that the three cannot disagree, so all three moved
+// together.
 //
-// TODO: support combinators by reaching the style engine's real matcher. It
-// needs element_facts and an ancestor_filter, so either those move somewhere
-// both callers can use or the engine grows a `matches(node, selector)` entry
-// point that builds them itself.
-// COMBINATORS ARE NOT SUPPORTED: `div p`, `ul > li`, `a + b` all match
-// nothing. The style engine has a real matcher for those, but it is built
-// around the cascade - element facts, an ancestor bloom filter, a rule index -
-// and reaching it from here would mean exposing all of that. Saying so is
-// better than a half-matcher that silently gets descendants wrong.
-std::vector<node_id> dom_bindings::query(std::string_view selector, node_id within) {
-    struct compound {
-        std::string tag;
-        std::string id;
-        std::vector<std::string> classes;
-    };
-    std::vector<compound> wanted;
-    for (std::size_t at = 0; at <= selector.size();) {
-        const std::size_t comma = selector.find(',', at);
-        std::string_view one = selector.substr(
-            at, comma == std::string_view::npos ? std::string_view::npos : comma - at);
-        at = comma == std::string_view::npos ? selector.size() + 1 : comma + 1;
-        while (!one.empty() && one.front() == ' ') { one.remove_prefix(1); }
-        while (!one.empty() && one.back() == ' ') { one.remove_suffix(1); }
-        if (one.empty() || one.find(' ') != std::string_view::npos ||
-            one.find('>') != std::string_view::npos) {
-            continue; // a combinator: not supported, matches nothing
-        }
-        compound part;
-        std::size_t i = 0;
-        while (i < one.size() && one[i] != '#' && one[i] != '.') { ++i; }
-        part.tag = std::string{one.substr(0, i)};
-        while (i < one.size()) {
-            const char kind = one[i++];
-            const std::size_t start = i;
-            while (i < one.size() && one[i] != '#' && one[i] != '.') { ++i; }
-            std::string name{one.substr(start, i - start)};
-            if (kind == '#') {
-                part.id = std::move(name);
-            } else {
-                part.classes.push_back(std::move(name));
-            }
-        }
-        wanted.push_back(std::move(part));
-    }
-    if (wanted.empty()) { return {}; }
-
+// The selector is PARSED PER CALL. A compiled_selector owns everything it holds -
+// atoms and, for an attribute selector, a std::string - so nothing here points
+// into the parse, and a selector string is a handful of tokens. Caching it is an
+// optimisation with a lifetime question attached and there is no measurement
+// asking for one yet.
+//
+// AN UNSUPPORTED SELECTOR MATCHES NOTHING AND DOES NOT THROW. `parse_selector_text`
+// separates that from a syntax error, and the distinction is the whole reason it
+// takes an out parameter: `:has(.x)` is valid CSS this engine cannot answer, and a
+// SyntaxError for it would be a wrong answer rather than a missing one.
+std::vector<node_id> dom_bindings::query(std::string_view selector, node_id within, bool * invalid,
+                                         bool first_only) {
+    bool bad = false;
+    const style::css::stylesheet parsed = style::css::parse_selector_text(selector, *atoms_, bad);
+    if (invalid) { *invalid = bad; }
+    if (parsed.selectors.empty()) { return {}; }
     const auto txn = doc_->read();
-    const atom id_attribute = atoms_->intern("id");
-    const atom class_attribute = atoms_->intern("class");
-    std::vector<node_id> found;
-    const auto fits = [&](node_id node, const compound & part) {
-        const auto tagged = txn.tag(node);
-        if (!tagged) { return false; }
-        if (!part.tag.empty() && part.tag != "*" && *tagged != atoms_->intern_lower(part.tag)) {
-            return false;
-        }
-        if (!part.id.empty() && txn.attribute_value(node, id_attribute) != part.id) {
-            return false;
-        }
-        if (!part.classes.empty()) {
-            const std::string_view list = txn.attribute_value(node, class_attribute);
-            for (const std::string & want : part.classes) {
-                bool present = false;
-                for (std::size_t from = 0; from < list.size();) {
-                    const std::size_t end = list.find(' ', from);
-                    const std::string_view one =
-                        list.substr(from, end == std::string_view::npos ? end : end - from);
-                    if (one == want) { present = true; }
-                    if (end == std::string_view::npos) { break; }
-                    from = end + 1;
-                }
-                if (!present) { return false; }
-            }
-        }
-        return true;
-    };
-    const auto walk = [&](auto && self, node_id at, bool include) -> void {
-        if (include) {
-            for (const compound & part : wanted) {
-                if (fits(at, part)) {
-                    found.push_back(at);
-                    break;
-                }
-            }
-        }
-        for (const node_id child : txn.children(at)) { self(self, child, true); }
-    };
-    // A search rooted at an ELEMENT looks at its descendants, not itself.
-    walk(walk, within ? within : txn.root(), false);
-    return found;
+    return selector_engine().select(txn, within, parsed.selectors, first_only);
+}
+
+// The engine `query` matches through. The browser's own when it has handed one
+// over, so states and atoms are shared; otherwise one of our own, made once.
+style::engine & dom_bindings::selector_engine() {
+    if (selector_engine_) { return *selector_engine_; }
+    if (!own_selector_engine_) { own_selector_engine_ = std::make_unique<style::engine>(*atoms_); }
+    return *own_selector_engine_;
 }
 
 std::vector<node_id> dom_bindings::all_by_tag(std::string_view tag) {

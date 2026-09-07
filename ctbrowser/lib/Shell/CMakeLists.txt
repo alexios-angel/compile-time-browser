@@ -21,6 +21,10 @@ target_sources(ctbrowser-shell
     # Error and cannot be built by context::throw_error. Its own file because
     # every binding throws through it and none of them owns it.
     bindings/exceptions.cpp
+    # MutationObserver: its own file because it is not a binding over the DOM so
+    # much as a diff of it - `mutated()` reports THAT the document changed and
+    # never what, so the records are reconstructed from a snapshot.
+    bindings/mutation.cpp
     # the `CSS` namespace object: CSS.supports gates every computed-value test
     # in css/css-values, and it is a binding over style/css/properties.hpp
     bindings/css.cpp
