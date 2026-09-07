@@ -34,6 +34,7 @@
 // --convert-scf-to-emitc, which already handles `scf.if`, `scf.for` and
 // `scf.while`. A TypeConverter converts by TYPE, and every JavaScript value
 // has the same type; the lattice is per VALUE.
+#include "../Analysis/OwnedMethodTableSlots.h"
 #include "Admission/Admission.h"
 #include "ClosureLifting/ClosureLifter.h"
 #include "EmitC/Emitter.h"
@@ -152,6 +153,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // census both read it, so a field a method touches is the same field
         // the literal has in both.
         const receiverGroups groups = TypeInference::groupReceivers(module);
+        const OwnedMethodTableSlots ownedTableSlots(module);
 
         // All three, and none optional - TypeInference.h says why.
         mlir::DataFlowSolver solver;
@@ -173,7 +175,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                             mlir::StringAttr::get(&getContext(), "unstructured control flow"));
                 continue;
             }
-            admission check{solver, {}, &groups};
+            admission check{solver, {}, &groups, &ownedTableSlots};
             if (check.function(fn)) {
                 accepted.push_back(fn);
             } else {

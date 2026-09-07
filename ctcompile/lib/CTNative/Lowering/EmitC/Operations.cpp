@@ -211,10 +211,14 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
             ec::VariableOp::create(b, where, classType(site), ec::OpaqueAttr::get(context, ""));
         // THE MEMBER TAKES THE SITE'S CONCRETE CARRIER, never the family's
         // template parameter: the assign and the load after it are typed
-        // ops over a `double` or a `bool`, and `T0` is a spelling that
-        // exists only inside the class.
+        // ops over the actual carrier, and `T0` is a spelling that exists
+        // only inside the class.
         for (unsigned i = 0; i < f.fields.size(); ++i) {
             const mlir::Type type = site.types[i];
+            // The other admitted opaque field is an owning method-table
+            // shared_ptr. Its default constructor creates an empty handle;
+            // the checked slot initialization precedes every possible read.
+            if (llvm::isa<ec::OpaqueType>(type) && !isNullableCarrier(type)) { continue; }
             mlir::Value member =
                 ec::MemberOp::create(b, where, ec::LValueType::get(type), f.fields[i], local);
             mlir::Value init =

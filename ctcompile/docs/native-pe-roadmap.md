@@ -324,12 +324,14 @@ For Bootstrap, the [entry-prefix proof](native-host-prefix.md) now follows the
 factory's retained resource/cell captures and published method table. Optional
 empty-Map read summaries advance exact Data discovery through `get` and `remove`
 to the first `set`, retaining all method bodies and observer branches. Native
-admission remains 0/7. The next native storage slice is designed in
+admission remains 0/7. The native local-storage prerequisite is implemented in
 [owning method-table fields on confined objects](native-owned-method-table-slots.md):
-prove one fresh local object's fixed store-to-load edge, preserve the existing
-owning table carrier, and let ordinary capture/type admission establish the
-callables. Its proposed fixture currently admits 0/6; require 6/6 with standalone
-execution and lifetime checks. This does not close global/realm export uses.
+one fresh local object's proved store-to-load edge preserves the existing
+owning table carrier, while ordinary capture/type admission establishes the
+callables. Its fixture advances 0/6 to 6/6 with standalone execution and lifetime
+checks. This does not close global/realm export uses. The next provider increment
+is designed in [transactional Map mutation summaries](native-provider-mutations.md),
+with runtime effects retained and unknown error/reentry behavior as a boundary.
 Then connect normal-return retention facts to native ownership and call analysis
 for exported callables. Extend
 [checked host slots](native-host-slots.md) with supported intrinsic/error effects,

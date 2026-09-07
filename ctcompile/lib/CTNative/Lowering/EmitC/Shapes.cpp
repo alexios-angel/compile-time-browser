@@ -4,18 +4,20 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
-// The C++ spelling of a scalar field carrier. Definite numbers and booleans
-// retain their ordinary types; mixed or optional scalars retain their tags.
+// The C++ spelling of an admitted field carrier. Scalars retain their tags;
+// a checked method-table slot carries the existing owning shared pointer.
 // A template argument needs text where a field's type is an mlir::Type.
-const char * lowering::spelled(mlir::Type type) {
+std::string lowering::spelled(mlir::Type type) {
     if (isNullableCarrier(type)) { return "ctnative::nullable_scalar"; }
     if (llvm::isa<mlir::Float64Type>(type)) { return "double"; }
     if (auto integer = llvm::dyn_cast_or_null<mlir::IntegerType>(type);
         integer && integer.getWidth() == 1) {
         return "bool";
     }
-    llvm::report_fatal_error("ctnative lowering: a struct field whose carrier is neither a "
-                             "double nor a bool - admission should have refused it");
+    if (auto opaque = llvm::dyn_cast_or_null<ec::OpaqueType>(type)) {
+        return opaque.getValue().str();
+    }
+    llvm::report_fatal_error("ctnative lowering: a struct field has no admitted C++ carrier");
 }
 
 // THE TYPE OF ONE SITE. A family that agrees everywhere is spelled by its
@@ -106,7 +108,13 @@ const lowering::siteShape & lowering::shapeAt(mlir::Value object) const {
 // read `get.getResult().getType()`. The census runs before any of that and
 // asks the solver the question retype() would have asked.
 llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::Value object) {
-    const auto carried = [&](mlir::Value v) { return carrierType(context, carrierOf(typeOf(v))); };
+    const auto carried = [&](mlir::Value v) {
+        auto type = typeOf(v);
+        if (auto table = llvm::dyn_cast_or_null<MethodTableType>(type)) {
+            return methodTableCarrierType(table);
+        }
+        return carrierType(context, carrierOf(type));
+    };
     llvm::StringMap<mlir::Type> stored;
     llvm::StringMap<mlir::Type> read;
     // OVER THE GROUP. A lifted method's `this.x` is a read of this shape

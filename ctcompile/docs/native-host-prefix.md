@@ -271,6 +271,11 @@ ordinary-call receiver. Existing shared-body continuation guards are unchanged.
 Stale source, forged report attributes or exhausted work expose no usable
 read summaries or rewrite plan.
 
+The next [private Map mutation design](native-provider-mutations.md) proposes
+transactional state across successful Data.set/remove paths and an explicit
+stop before console/error effects. It is not implemented; the predicted
+four-to-thirteen resolved-call advance is separate from the measurements below.
+
 Reports add `summarized_provider_calls`, `runtime_provider_reads`, and
 `provider_reads`. Each completed summary records its target, zero-based
 `factory_index`, exact primitive result and read members/resource indices.

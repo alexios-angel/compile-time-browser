@@ -34,6 +34,13 @@ on that literal, with a closure created and stored only there. Every field
 initialization must dominate every read, argument handoff and return in the
 creating function. Flow joins describe schemas, never runtime identity.
 
+[Confined owning fields](native-owned-method-table-slots.md) also transport a
+table through a fresh local object's fixed own-data slot. The slot needs one
+initialization dominating every read and a complete nonescaping owner-use proof.
+Loading the field copies the table handle, preserving ownership after that local
+container dies. This adds no permission for global/realm publication or mutable
+slots.
+
 Every field read must be a call with the same table as receiver. Each target
 needs visible invocations proving its parameter types and no callers outside
 the field flow. Methods cannot read `this` or `new.target`. Captures and

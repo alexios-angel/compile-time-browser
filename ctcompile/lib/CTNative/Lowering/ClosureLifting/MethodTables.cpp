@@ -23,6 +23,8 @@ void closureLifter::returnedMethodTableCensus() {
     });
     closedValueFlow flow;
     flow.build(module);
+    OwnedMethodTableSlots slots(module);
+    flow.connectOwnedMethodTableSlots(slots);
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> families;
     for (mlir::Value value : flow.nodes) { families[flow.find(value)].push_back(value); }
     llvm::DenseMap<mlir::Operation *, unsigned> creations;
@@ -70,6 +72,11 @@ void closureLifter::returnedMethodTableCensus() {
                 if (!closedValueFlow::closed(fn) || flow.returns[fn].empty()) {
                     reject("result requires a closed function with visible returns");
                 }
+            } else if (auto read = value.getDefiningOp<ctjs::GetPropertyOp>();
+                       read && slots.lookup(read)) {
+                // The field is a fixed own-data slot on a confined local
+                // owner. Its complete incoming table family is checked here;
+                // the slot query by itself does not prove a table carrier.
             } else {
                 reject("flow contains another object or a non-table producer");
             }
@@ -77,6 +84,10 @@ void closureLifter::returnedMethodTableCensus() {
                 auto * user = use.getOwner();
                 if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
                     const auto key = constantKeyOf(set.getKey());
+                    if (use.getOperandNumber() == 2 && slots.lookup(set)) {
+                        boundaries.push_back(user);
+                        continue;
+                    }
                     if (use.getOperandNumber() != 0 || value != object.getResult()) {
                         reject("is written through an alias or stored into another object");
                     } else if (!fieldKey(key)) {

@@ -587,6 +587,13 @@ if(COMMAND ctcompile_add_native_claims)
                               28 15 24 21)
 endif()
 
+# A confined ordinary field owns a returned table beyond its container's lifetime.
+if(COMMAND ctcompile_add_native_pipeline)
+  ctcompile_add_native_pipeline(owned_method_table_slots
+                                "${CMAKE_CURRENT_SOURCE_DIR}/native-owned-method-table-slot-fixture.js"
+                                NO_DEFAULT_OPTIMIZATIONS)
+endif()
+
 # Finite nested Map schemas own child handles; every child lookup proves presence.
 if(COMMAND ctcompile_add_native_pipeline)
   ctcompile_add_native_pipeline(nested_maps

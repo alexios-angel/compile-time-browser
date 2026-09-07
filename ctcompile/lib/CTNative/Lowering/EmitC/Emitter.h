@@ -52,15 +52,10 @@ struct lowering {
     // front of every read at both sites to pay for a polymorphism neither site
     // has (part 24 Phase 56C, steps 2 and 3).
     //
-    // THE REACHABLE DOMAIN IS TWO CARRIERS, AND THE PLAN'S OWN EXAMPLE IS NOT
-    // EXPRESSIBLE. A field is a number or a boolean - obligation O-2, enforced
-    // by admission - so the only disagreement this tier can build a template
-    // over today is `double` against `bool`. Phase 56C's written example, "the
-    // same {x, y} literal at three sites, two numeric and one string", cannot
-    // be written: string fields are not supported, and `field `x` is stored a
-    // !ctnative.str<utf8>, not a number or a boolean` refuses the function
-    // before any shape is formed. The mechanism below is general over the
-    // field types; the fixture that exercises it has to be a boolean.
+    // Admission permits scalar fields and checked owning method-table slots.
+    // A shared field-name family can therefore vary between scalar carriers
+    // and table schemas at different allocation sites. Each site's field
+    // remains monomorphic; ordinary string/object fields are still refused.
     struct family {
         llvm::SmallVector<std::string> fields;     // the field names, sorted - the family key
         llvm::SmallVector<mlir::Type> types;       // the first site's carrier, per position
@@ -129,7 +124,7 @@ struct lowering {
     bool replaceMethodTable(mlir::Operation * op);
     void censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted);
     bool replaceEnvironment(mlir::Operation * op);
-    static const char * spelled(mlir::Type type);
+    static std::string spelled(mlir::Type type);
 
     std::string spelling(const siteShape & site) const;
 

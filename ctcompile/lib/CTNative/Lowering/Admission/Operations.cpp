@@ -1,7 +1,23 @@
 // Admission/Operations.cpp - native lowering implementation.
+#include "../../Analysis/OwnedMethodTableSlots.h"
 #include "Admission.h"
 
 namespace ctcompile::ctnative::lowering_detail {
+
+bool admission::ownedTableField(ctjs::SetPropertyOp store) {
+    const auto * slot = ownedTableSlots ? ownedTableSlots->lookup(store) : nullptr;
+    auto table = llvm::dyn_cast_or_null<MethodTableType>(typeOf(store.getValue()));
+    if (!slot || !table) {
+        return refuse("owned method-table field needs one initialization on a confined local "
+                      "object that dominates every read");
+    }
+    for (ctjs::GetPropertyOp read : slot->reads) {
+        if (typeOf(read.getResult()) != table) {
+            return refuse("owned method-table field has no single definite schema at every read");
+        }
+    }
+    return true;
+}
 
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
@@ -127,6 +143,10 @@ bool admission::op(mlir::Operation * o) {
             }
             if (auto set = llvm::dyn_cast<SetPropertyOp>(user)) {
                 const carrier c = carrierOf(typeOf(set.getValue()));
+                if (c == carrier::methodTable) {
+                    if (!ownedTableField(set)) { return false; }
+                    continue;
+                }
                 if (!isScalarCarrier(c)) {
                     return refuse(("field `" + key + "` is stored a " +
                                    printed(typeOf(set.getValue())) + ", not a number or a boolean")

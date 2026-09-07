@@ -8,6 +8,23 @@ committing. There is no CI. Do not build on the small local machine.
 
 ## Current native staging checkpoint, 2026-09-06
 
+[Owning method-table fields](native-owned-method-table-slots.md) now connect a
+returned table through one fixed own-data field on a confined local object.
+The exact six-function fixture advances **0/6 → 6/6 native**, returning 4211.
+Field loads copy the existing owning handle, preserving callable/Map lifetime
+after the container dies. The bounded structural query is explicitly consumed
+by returned-table flow and rebuilt for final admission; existing capture and
+Map checks still apply. Global/realm owners, slot rewrites, uncertain
+initialization and incompatible incoming schemas remain refused.
+The additional lifetime and shared-field-family fixtures admit 14/14 and 10/10
+functions; their seven combined observations (including the six-function
+specimen) agree with the interpreter in explicit/deduced GCC/Clang builds and
+ASan/UBSan runs. Twenty-one refusal cases, forged/rerun annotations and every
+incomplete budget cutoff retain the boundary.
+External sample `../ctcompile-samples/07-owning-method-table-fields` contains
+the specimen's source and generated C++. All seven samples pass 18 observations;
+the first six generated files remain byte-identical to the preceding checkpoint.
+
 Native C++ now spells JavaScript numbers through `using js_num = double;`.
 [Returned closures](native-returned-closures.md) now appear directly at their
 creation site inside the factory. Their owning init-captures copy source values,
@@ -51,11 +68,11 @@ The three new differentials pass 62 observations under Node, the interpreter
 and boxed script/wrapper execution, including GC stress. The focused suite
 checks 23 source cases plus stale/forged contracts and work limits.
 
-Final devbox gate: **451/451 CTests**, **145/145 lit cases**, **525.70 seconds**;
-all **538 C++ files** pass formatting. The callable adapter also passes its
-separate formatting check; `git diff --check` passes. Named owning closures pass ASan/UBSan,
-stack-use-after-return and leak checks. String-snapshot sanitizer checks passed
-at the preceding checkpoint.
+Final devbox gate: **457/457 CTests**, **146/146 lit cases**, **533.78 seconds**;
+all **541 C++ files** pass formatting. The callable adapter also passes its
+separate formatting check; `git diff --check` passes. Owning table fields pass
+ASan/UBSan, stack-use-after-return and leak checks in explicit and deduced forms.
+Existing closure and string-snapshot sanitizer regressions remain green.
 Default native coverage stays
 Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725**; exact Data probes remain
 **0/7, 0/7, 0/8 native**. Full Bootstrap initialization is still unfinished.
@@ -194,12 +211,14 @@ documents and the [source layout](source-layout.md).
 
 Full native Bootstrap remains unfinished. The selected wrapper, factory return,
 retained Map/cell captures and initial read-only method paths are now proved.
-The next bounded native admission design is
-[owning method-table fields on confined objects](native-owned-method-table-slots.md).
-Its six-function fixture currently returns 4211 in the interpreter and admits
-0/6 native functions; the planned gate is 6/6 with lifetime and independent-state
-checks. A live, complete store-to-load proof must connect existing table/capture
-ownership to one confined field. Prefix observations cannot make exports private.
+The local storage prerequisite,
+[owning method-table fields on confined objects](native-owned-method-table-slots.md),
+now admits its six-function fixture fully, with lifetime and independent-state
+checks. Its live store-to-load proof connects existing table/capture ownership
+to a confined field. The next provider step is designed in
+[transactional Map mutation summaries](native-provider-mutations.md); it must
+retain runtime effects and stop before unknown error/reentry behavior.
+Prefix observations cannot make exports private.
 Global/realm storage still needs native ownership/call analysis for exported
 callables, supported provider/error effects and current mutable slot values.
 Initial provider identity alone does not authorize Map execution or console

@@ -353,3 +353,11 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
         -P ${CMAKE_CURRENT_SOURCE_DIR}/check-escape-oracle-aot.cmake)
   endif()
 endif()
+
+# A slot census is usable only after its entire bounded proof completes.
+if(CTCOMPILE_ENABLE_MLIR)
+  add_executable(ctcompile-test-owned-method-table-slots OwnedMethodTableSlots.cpp)
+  target_link_libraries(ctcompile-test-owned-method-table-slots PRIVATE CTNativeAnalysis MLIRParser)
+  ctcompile_target(ctcompile-test-owned-method-table-slots)
+  add_test(NAME ctcompile_owned_method_table_slots COMMAND ctcompile-test-owned-method-table-slots)
+endif()

@@ -2,6 +2,10 @@
 
 #include "../LoweringSupport.h"
 
+namespace ctcompile::ctnative {
+class OwnedMethodTableSlots;
+}
+
 namespace ctcompile::ctnative::lowering_detail {
 
 struct admission {
@@ -11,6 +15,7 @@ struct admission {
     // through it then reads a literal's own uses, which is what it did before
     // a receiver could be a parameter.
     const receiverGroups * groups = nullptr;
+    const OwnedMethodTableSlots * ownedTableSlots = nullptr;
     // The carrier every `return` in the function agrees on; `none` until the
     // first return is seen. A function with no return at all returns NaN -
     // undefined's carrier - which lower() picks when this stays `none`.
@@ -25,6 +30,7 @@ struct admission {
 
     bool printable(mlir::Value v, llvm::StringRef where);
     bool identityField(mlir::Operation * op);
+    bool ownedTableField(ctjs::SetPropertyOp store);
 
     static bool isDeclarationClosure(mlir::Operation * o);
 

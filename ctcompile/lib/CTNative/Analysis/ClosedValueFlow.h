@@ -1,5 +1,6 @@
 #pragma once
 
+#include "OwnedMethodTableSlots.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
@@ -40,6 +41,16 @@ struct closedValueFlow {
     static bool closed(ctjs::FuncOp fn) {
         return fn && !fn.getBody().empty() &&
                mlir::SymbolTable::getSymbolVisibility(fn) == mlir::SymbolTable::Visibility::Private;
+    }
+    // Only the returned-table census requests these structural storage edges.
+    // Other flow consumers must not acquire new escape permissions implicitly.
+    void connectOwnedMethodTableSlots(const OwnedMethodTableSlots & slots) {
+        for (const OwnedMethodTableSlot & slot : slots.slots()) {
+            auto initialization = slot.initialization;
+            for (ctjs::GetPropertyOp read : slot.reads) {
+                join(initialization.getValue(), read.getResult());
+            }
+        }
     }
     void build(mlir::ModuleOp module) {
         module.walk([&](ctjs::FuncOp fn) {

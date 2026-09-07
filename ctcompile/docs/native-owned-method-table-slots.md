@@ -1,21 +1,20 @@
 # Owning method-table fields on confined objects
 
-**Status: Planned.** This is a local-storage prerequisite for native publication
+**Status: Implemented.** This is a local-storage prerequisite for native publication
 flow. It does not implement host exports, admit the exact Bootstrap Data module,
 or extend the effects permitted by the host contract.
 
-The existing [returned method-table lowering](native-method-tables.md) owns a
-table and its captured state after factory return. It refuses storing that
-table into another object. This increment would allow one fixed own-data field
+The [returned method-table lowering](native-method-tables.md) owns a
+table and its captured state after factory return. This increment allows a fixed own-data field
 on a fresh, confined ordinary object to hold the existing owning table carrier.
-Returning the field's value would preserve the table after its local container
-dies. The container itself would remain confined.
+Returning the field's value preserves the table after its local container
+dies. The container itself remains confined.
 
-## Proposed fixture
+## Native fixture
 
-This program has six imported functions, counting the script entry. The proposed
-gate is 6/6 native with `result=4211`; native admission is still an acceptance
-target, not a completed result.
+This program has six imported functions, counting the script entry. The
+implemented gate is **6/6 native with `result=4211`**, with no skipped or pruned
+functions and default optimizations disabled.
 
 ```js
 function makeData(seed) {
@@ -43,14 +42,14 @@ var result = run();
 binding. The same proof must work with another supported property name. The
 two factory calls share a schema but allocate separate tables and Maps.
 
-The 2026-09-06 devbox baseline, including the provider-read and callable-naming
-changes, confirms interpreter output `result=4211`. Native
+The 2026-09-06 baseline at `031f62a`, including the provider-read and callable-naming
+changes, confirms interpreter output `result=4211`. Its native
 coverage is **0/6 claimed, 6 refused, 0 skipped, 0 pruned**. Refusals identify
 table storage into another object (one), the unsupported field carrier (one),
 implicit closure use (two) and unresolved boxed values (two). The source and
 census were recorded as `/tmp/ctcompile-slot-next.{js,json}` on the devbox,
 with the orchestration log at `/tmp/ctcompile-slot-next.log`. This baseline
-does not include the planned slot implementation.
+does not include the slot implementation.
 
 ## Live proof requirements
 
@@ -85,32 +84,66 @@ them pure, nonthrowing or eligible for early execution.
 
 ## Integration
 
-Add a private `Analysis/OwnedMethodTableSlots` query returning checked owner,
-initialization and read operations. Let `Analysis/ClosedValueFlow.h` consume its
-store-to-load edges without treating schema equivalence as runtime identity.
-`Lowering/ClosureLifting/MethodTables.cpp` would accept those specific storage and
-load uses while retaining its other returned-table restrictions.
+The private `Analysis/OwnedMethodTableSlots` query returns checked owner,
+initialization and read operations. It charges a bounded module/environment scan
+and each owner use, field and dominance check. Exhaustion exposes no successful
+prefix. It reads no proof annotations. Initialization must share the creation
+block and dominate every read, excluding conditional or loop-only initialization
+of an owner created outside that region.
+
+Only `Lowering/ClosureLifting/MethodTables.cpp` requests the query's explicit
+store-to-load edges from `Analysis/ClosedValueFlow.h`; other flow consumers keep
+their previous escape rules. Schema equivalence does not imply runtime identity.
+The returned-table census accepts those specific storage and load uses while
+retaining its other restrictions, and reconstructs the query after each lift.
 
 After ordinary owning-closure lifting exposes capture parameters, the existing
-Map proof and type inference should establish the resource carriers. Do not
-bypass `NativeMap.cpp`'s instance-use or standard-intrinsic checks. Extend field
-indexing in `Analysis/TypeInference.cpp` as needed, then the scalar-only field
-guard in `Lowering/Admission/Operations.cpp` and field-type planning to accept
-the proved `MethodTableType`. The field stores the existing `shared_ptr` carrier;
-this increment needs neither a new callable representation nor global storage.
+Map proof and type inference establish the resource carriers. Existing
+`Analysis/TypeInference.cpp` field indexing and dominance checks already carry
+the definite `MethodTableType`; no new inference exception is needed.
+`NativeMap.cpp`'s instance-use and standard-intrinsic checks remain mandatory.
+Final admission rebuilds the slot query against the current IR and requires the
+stored table and every field read to have the same definite schema.
+
+Field planning stores the existing `std::shared_ptr<ctnative::method_table_N>`
+carrier by value. A field read copies the owning handle. Default construction
+creates an empty handle before source initialization, which precedes every
+proved read. Method-table definitions precede the ordinary classes containing
+them. Sites with the same field names can instantiate one class template using
+different table carriers or scalar carriers; heterogeneous values within one
+slot remain refused. This needs neither a new callable representation nor
+global storage, and preserves source allocation and initialization order.
 
 ## Validation and remaining boundaries
 
-Require the fixture to compile standalone under GCC and Clang, produce the
-expected result, agree with the interpreter and contain no VM symbols. Check
-both explicit and deduced output. Exercise saved table lifetime after the local
-container dies, shared aliases, distinct factory instances and allocation churn
-under ASan/UBSan and leak checks.
+`test/native-owned-method-table-slot-fixture.js` is the exact six-function gate.
+`test/CTNative/Lowering/native-owned-method-table-slots.mlir` and its Python
+checker cover three standalone programs:
 
-Refusal tests should cover every proof boundary above, including alias writes,
+- **6/6:** the specimen above, returning 4211.
+- **14/14:** five lifetime observations for saved tables, shared aliases,
+  independent factories, nested closed-call/slot transport, long captured strings
+  and allocation churn.
+- **10/10:** one field-name family with two different table schemas and a scalar
+  site, returning 4223 and checking the three template instantiations.
+
+Each program compares with the interpreter, compiles in explicit and deduced
+forms with GCC and Clang, and checks source and binary VM-symbol absence with
+an interpreter positive control. Both forms run under ASan/UBSan with
+stack-use-after-return and leak detection.
+
+Twenty-one refusal tests cover the proof boundaries above, including alias writes,
 conditional initialization, escaped owners, unknown calls, different incoming
 schemas, mutable captures, descriptor/prototype changes and forged annotations
-on initial runs and reruns. Preserve existing method-table and Map refusals.
+on initial runs and reruns. A direct analysis test sweeps work limits through
+completion, checking both lookup APIs and absence of successful-prefix leakage
+after exhaustion. Existing method-table and Map refusals remain covered.
+
+The complete 2026-09-06 devbox gate passes **457/457 CTests** and **146/146 lit
+cases** in 533.78 seconds. All 541 C++ files pass formatting. External sample
+`../ctcompile-samples/07-owning-method-table-fields` contains the six-function
+source and 10,128-byte generated C++; all seven sample pairs agree on 18
+observations under GCC, Clang and the interpreter with no VM symbols.
 
 The [host-prefix analysis](native-host-prefix.md) separately proves selected
 wrapper calls, normal-return resource retention and current publication targets.
@@ -121,6 +154,6 @@ this increment. Do not mark published functions private from a prefix observatio
 
 Keep the fixture's six-function denominator separate from the exact Bootstrap
 fragment's seven-function CommonJS/browser/realm-fallback probes. With provider
-read summaries those exact probes still remain 0/7 native. Passing this planned
-local-storage gate would not by itself change that result or establish native
+read summaries those exact probes still remain 0/7 native. Passing this
+local-storage gate does not by itself change that result or establish native
 Bootstrap execution.
