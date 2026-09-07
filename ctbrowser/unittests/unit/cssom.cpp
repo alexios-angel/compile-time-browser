@@ -933,6 +933,46 @@ void test_an_omitted_index_is_zero() {
     CHECK_EQ(logged(page, "group="), std::string{"group=2"});
 }
 
+// A MEDIUM IS ONE QUERY, AND DELETING ONE DELETES ALL OF THEM.
+//
+// Three separate readings of CSSOM 6.5's three-line methods, each of which the
+// suite has a file for. `appendMedium` parses A media query, singular, so a
+// comma-separated argument parses to null and the call is a no-op rather than
+// two appends or one query called `screen, print`. `deleteMedium` removes EVERY
+// query that matches, because a list may hold the same one twice and removing
+// the first leaves behind the one the page just asked to be rid of. And its
+// argument is REQUIRED, so calling it with none is a TypeError and not a
+// NotFoundError about the empty string.
+void test_the_three_readings_of_a_media_list() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>
+        @media screen, print, screen { * {} }
+    </style></head><body><script>
+        const media = document.styleSheets[0].cssRules[0].media;
+        console.log('start=' + media.length + '|' + media.mediaText);
+        media.appendMedium('speech, tv');
+        console.log('comma=' + media.length + '|' + media.mediaText);
+        media.appendMedium('print');
+        console.log('dup=' + media.length);
+        media.deleteMedium('screen');
+        console.log('all=' + media.length + '|' + media.mediaText);
+        let caught = 'none';
+        try { media.deleteMedium(); } catch (e) { caught = e.name; }
+        console.log('bare=' + caught);
+        caught = 'none';
+        try { media.deleteMedium('nosuchmedium'); } catch (e) { caught = e.name; }
+        console.log('absent=' + caught);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "start="), std::string{"start=3|screen, print, screen"});
+    CHECK_EQ(logged(page, "comma="), std::string{"comma=3|screen, print, screen"});
+    CHECK_EQ(logged(page, "dup="), std::string{"dup=3"});
+    CHECK_EQ(logged(page, "all="), std::string{"all=1|print"});
+    CHECK_EQ(logged(page, "bare="), std::string{"bare=TypeError"});
+    // The one place in the CSSOM where deleting something absent is an error.
+    CHECK_EQ(logged(page, "absent="), std::string{"absent=NotFoundError"});
+}
+
 } // namespace
 
 int main() {
@@ -957,5 +997,6 @@ int main() {
     test_the_at_rules_that_are_all_prelude();
     test_where_a_rule_may_be_inserted();
     test_an_omitted_index_is_zero();
+    test_the_three_readings_of_a_media_list();
     REPORT("cssom");
 }

@@ -1858,7 +1858,13 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     method(media_proto, "appendMedium", [this](context & c, std::span<value> a) {
         std::vector<std::string> * queries = receiver_media(c);
         if (queries == nullptr) { return value::undefined(); }
-        const std::string added = serialize_media_query_text(arg_string(c, a, 0));
+        // "Parse A MEDIA QUERY" - singular. `appendMedium("screen, print")` is
+        // not two appends and it is not one query called `screen, print`
+        // either: the parse returns null, and step 1 says return. A top-level
+        // comma is the whole test for it.
+        const std::string one = arg_string(c, a, 0);
+        if (split_on_commas(one).size() != 1) { return value::undefined(); }
+        const std::string added = serialize_media_query_text(one);
         if (added.empty()) { return value::undefined(); }
         // "If comparing medium with any of the media queries in the collection
         // returns true, then return" - appending a medium twice is a no-op.
@@ -1873,15 +1879,25 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     method(media_proto, "deleteMedium", [this](context & c, std::span<value> a) {
         std::vector<std::string> * queries = receiver_media(c);
         if (queries == nullptr) { return value::undefined(); }
-        const std::string wanted = serialize_media_query_text(arg_string(c, a, 0));
-        const auto found = std::find(queries->begin(), queries->end(), wanted);
-        if (wanted.empty() || found == queries->end()) {
+        // A REQUIRED ARGUMENT, so calling it with none is a TypeError and not a
+        // NotFoundError about the empty string - `medialist-interfaces-002.html`
+        // asserts which of the two by name.
+        if (a.empty()) {
+            c.throw_error("TypeError", "deleteMedium requires a medium");
+            return value::undefined();
+        }
+        const std::string wanted = serialize_media_query_text(c.to_string(a[0]));
+        // "Remove ALL media queries in the collection that match" - a list may
+        // hold the same query twice (`screen, print, screen`) and removing only
+        // the first leaves one behind that the page has just asked to be rid of.
+        const auto gone = std::remove(queries->begin(), queries->end(), wanted);
+        if (wanted.empty() || gone == queries->end()) {
             // "If nothing was removed, then throw a NotFoundError" - the one
             // place in the CSSOM where deleting something absent is an error.
             throw_dom_exception(c, "NotFoundError", "that medium is not in the list");
             return value::undefined();
         }
-        queries->erase(found);
+        queries->erase(gone, queries->end());
         refresh_media_list(c, c.current_this());
         style_sheets_changed();
         return value::undefined();
