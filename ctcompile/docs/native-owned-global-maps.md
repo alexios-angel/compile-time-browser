@@ -9,8 +9,9 @@ remains **0/4**. The method may now mutate its Map with standard `set`, `get`,
 getter sharing that Map now advance **0/5 -> 5/5 native**, preserving `trace=1`.
 A three-method variant admits **6/6**. Full native Bootstrap Data is unfinished.
 The shared specimen stays **0/5** without the manifest or standard Map identity.
-The setter may take independently proved primitive arguments: the `set(key)`
-version below also advances **0/5 -> 5/5**, with the getter still zero-argument.
+The setter may take independently proved primitive arguments, including the
+live result of its sibling getter. The `set(key)` version below advances
+**0/5 -> 5/5**, with `trace=1` and the getter still zero-argument.
 
 ```js
 var host = {};
@@ -23,7 +24,7 @@ var host = {};
         set(key) { state.set(key, 1); return state.size; }
     };
 });
-host.slot.set("x");
+host.slot.set(host.slot.get());
 var trace = host.slot.get();
 ```
 
@@ -39,15 +40,20 @@ Repeated capture loads and fluent `set` returns alias the same Map. Publication
 and the entire source function chain remain; allocation, mutations, calls and the
 observation execute at runtime. No previous invocation supplies a later result.
 
-Before checking any family body, the query discovers every current method call
-and independently classifies each explicit actual. Every formal must receive
-the same primitive tag at every call; the proof retains each live SSA operand,
-formal and tag. Distinct strings or numbers need not have the same value.
+Before checking any family body, the query discovers and validates every current
+method call. A bounded dependency worklist classifies actuals from primitive
+source expressions or already completed producer proofs. Every formal must
+receive the same primitive tag at every call; the proof retains each live SSA
+operand, formal and tag. Distinct strings or numbers need not have the same value.
 The body may treat a formal as primitive only after this evidence succeeds.
 Source and prepared functions retain exact arities, receiver/callee identity,
-and the prepared Map environment before the explicit arguments. Call results
-are not independently classified by this increment, preventing recursive
-property-call queries from authorizing their own family. Unique initialized
+and the prepared Map environment before the explicit arguments. Only a complete
+body/effect/use census publishes a result tag: `size` is numeric, `has`/`delete`
+are boolean, and literal or typed-formal returns retain their category. A
+consumer declared before its producer waits for a later worklist pass. No
+optimistic tag seeds a circular dependency, and no recursive `propertyCall`
+query supplies authority. `Map.get` remains untagged here: primitive contents
+alone do not establish a definite result type or presence. Unique initialized
 global actuals are checked against the full initialization proof.
 
 This is an ownership/effects proof. Native admission must still prove supported
@@ -82,7 +88,37 @@ by value. Native output links neither the interpreter nor the collector. Escape
 analysis still reports global publication as `StoredGlobal`; general global
 loads remain external. The new owner does not require a weaker escape verdict.
 
-## Measured gate, 2026-09-07
+## Measured result gate, 2026-09-07
+
+Commit `c18b94b` passes **34 complete native programs**: fourteen **4/4**,
+fifteen **5/5**, and five **6/6**, matching Node, the interpreter, and standalone
+explicit/deduced GCC 13 and Clang 18 binaries. Nine new result cases cover the
+exact `set(get())` boundary, reversed method declaration order, repeated calls,
+local aliases, two mutating actuals, boolean `has`/`delete`, an owning string,
+and a typed-formal return. The two-actual witness observes **3**; reversing its
+arguments observes **4**. Generated C++ retains every producing call, consuming
+SSA operand and final observation in order, and all linked-symbol gates pass.
+
+The five existing lifetime variants below pass unchanged in both C++ forms;
+no new runtime carrier was introduced. Nine new result-proof refusals retain
+every original call. An additional implicit-undefined result establishes a
+complete owner but refuses its unsupported Map key at **0/6 native**. That
+control checks the retained prepared calls and their result operands; valid
+ownership preparation is allowed to precede a carrier refusal.
+
+Source/prepared result units check every incomplete budget at **4789/4656**,
+including changed producer return tags, stale/fresh fingerprints and unknown
+returns. Ordinary two-method, three-method and parameter units complete at
+**2877/2785**, **6603/6418**, and **2883/2792**. The six source admission
+budget specimens complete at **1239/50004/1353/3297/3261/5336**, checking
+**31/31/31/29/32/29** cutoffs. None reaches a natural speculative rollback
+interval; these numbers do not claim improved analysis performance.
+
+Focused CTests pass **3/3 in 7.50 seconds**, followed by the full native
+program/lifetime/refusal gate. Log: `/tmp/ctcompile-map-results-integrated2.log`.
+The full generated gate is recorded in [HANDOFF.md](HANDOFF.md).
+
+## Preceding argument gate, 2026-09-07
 
 `CTNative/native-owned-global-maps.test` covers **25 complete native programs**:
 fourteen at **4/4**, ten shared setter/getter variants at **5/5**, and one
@@ -172,17 +208,15 @@ devbox build passes **475/475 CTests** in **652.00 seconds**, including
 
 ## Next boundary
 
-Replacing the string actual with `host.slot.set(host.slot.get())` is retained as
-`parameter_call_result` and still refuses the complete five-function source.
-The fresh devbox check measures **0/5 native** and Node/interpreter `trace=1`;
-source and named refusals are recorded in `/tmp/ctcompile-arguments-boundary.json`.
-It needs independent result/effect evidence for the actual's producing call,
-with the source order and every call operand intact. The initial getter returns
-the empty Map's size; the setter then inserts that numeric key. The family proof
-must not authorize itself by recursively assuming the sibling call succeeds.
-Keep unsupported or circular dependencies as refusals. Current-call proofs
-alone cannot authorize arbitrary future external arguments or establish an
-export ABI.
+The retained `result_seeded_map_get` replaces the getter with
+`get() { state.set(0, 1); return state.get(0); }` and still calls
+`host.slot.set(host.slot.get())`. It remains **0/5 native**, retaining every
+source call. Its producer needs independent contents, presence and result-type
+evidence before the consuming formal can be admitted. The unseeded
+`get() { return state.get(0); }` stays refused too. Never infer a definite tag
+from the first observed invocation or from an incomplete family. Current-call
+proofs alone cannot authorize arbitrary future external arguments or establish
+an export ABI.
 
 Separately, `state.get(1)` used as a later key still infers a nullable numeric
 key, even after a local `set(1, 3)`. Its numeric observation is `trace=1` in both

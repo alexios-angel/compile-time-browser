@@ -128,16 +128,27 @@ preserve all actual operands; source/prepared proof units check both formal
 positions, global initialization, environment offsets and every incomplete
 budget. These current-call proofs do not establish a future-call ABI contract.
 
-## Next: independent call-result actuals
+## Completed: independent call-result actuals
 
 `host.slot.set(host.slot.get())` is the retained `parameter_call_result`
-refusal, freshly measured **0/5 native** with Node/interpreter `trace=1`.
-It preserves the same five source functions and needs a live result
-and effects proof for the producing getter before classifying the setter's
-actual. Do not recursively authorize the family through its own property-call
-query. All calls, publication and mutations must remain runtime operations.
-Nullable `Map.get` results used as keys remain a separate presence/carrier
-boundary. Exact Bootstrap Data remains **0/7** per mode; complete native
+specimen, now **5/5 native** with Node/interpreter `trace=1`. A bounded
+dependency worklist waits for a completed producer body/effect proof before
+using its definite primitive result tag for the consuming formal. It handles
+consumer-before-producer declaration order without optimistic recursive
+authority. All calls, publication and mutations remain runtime operations.
+The gate now passes **34 complete programs**, including nine result variants,
+and all five existing lifetime variants; see [the Map gate](native-owned-global-maps.md).
+
+## Next: definite Map.get results across the method boundary
+
+The retained `result_seeded_map_get` uses
+`get() { state.set(0, 1); return state.get(0); }` with the same `set(get())`
+entry. It remains **0/5 native** with source calls intact. Closing primitive
+contents does not yet prove this result's presence and definite tag; provide
+live evidence for both before classifying the consuming parameter. The
+unseeded `Map.get` result stays refused. Nullable `Map.get` keys within one
+method remain a separate **0/4** carrier boundary. Exact Bootstrap Data remains
+**0/7** per mode; complete native
 initialization, realm owners and future-call contracts remain unfinished.
 
 Exceptions do not make a callback or allocation inert. Native try/catch covers
@@ -151,8 +162,13 @@ and the invoked helper's normal returns. Ordinary call inference remains
 conservative on throw exits. An internal `CheckedInvocations` recovery mode now
 constructs those regions and connects the two completions to the enclosing try
 through a value-only tuple, retaining pre-call state on unwind. The default
-mode and all native throwing-call refusals remain. Admission still needs live
-effect proofs for the other status edges and the complete call component;
+mode and all native throwing-call refusals remain. An additional
+`EffectCheckedInvocations` mode validates other status and continuation effects
+before adopting the recovered clone. It refuses source global callee lookups
+until their initialized, immutable binding and getter-free access are proved;
+normal result types cannot discharge those effects. Its focused gate passes
+all 924 incomplete work budgets and thirteen live effect mutations. Admission
+still needs these source binding proofs and the complete call component;
 target emission must consume the accepted invokes. Throwing callees, general
 finally, reentry and object payloads require
 further work. The [source invocation gate](native-source-invocations.md) now

@@ -6,7 +6,80 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Current typed-Map and provenance checkpoint, 2026-09-07
+## Current Map-result and invocation-effects checkpoint, 2026-09-07
+
+Saved locally on `ctcompile-v1`: **`0977572`** (live invocation effect validation)
+and **`c18b94b`** (published Map arguments from independent call results). Main
+implementation and two parallel agent workstreams were integrated. The escape
+contents agent hit a service rate limit before implementation; no contents
+proof or escape verdict changed. No browser files were changed and no push was
+performed.
+
+The [published Map boundary](native-owned-global-maps.md) now accepts
+`host.slot.set(host.slot.get())`, advancing **0/5 -> 5/5 native** and retaining
+Node/interpreter `trace=1`. The initial getter, setter mutation and final getter
+all remain runtime calls. The existing manifest, standard Map identity, owning
+Map environment and typed callable carriers remain required. A complete current
+call census precedes a bounded dependency worklist. Only a completed producer
+body/effect/use proof publishes a primitive result tag; consumers declared
+before producers wait for another pass. No recursive property-call query or
+optimistic tag seeds a cyclic family. `Map.get` has no definite result tag here.
+
+The native gate passes **34 complete programs**: fourteen **4/4**, fifteen
+**5/5**, five **6/6**, comparing Node/interpreter and explicit/deduced GCC 13 and
+Clang 18. Nine new variants cover nested results, reversed member order, aliases,
+repeated calls, two mutating actuals, boolean results, an owning string and a
+formal return. The argument-order witness observes **3**, while reversed actuals
+observe **4**. Generated C++ checks preserve producer SSA operands and runtime
+call order; linked binaries contain no interpreter symbols. All five existing
+lifetime variants pass ASan/UBSan, use-after-scope/return and leak checks in both
+forms. Nine new result-proof refusals retain all original calls. The additional
+undefined-result case proves ownership but refuses the unsupported Map key at
+**0/6**, retaining its prepared calls and actual-result edges.
+
+The focused gate passes **3/3 CTests in 7.50 seconds**, followed by the complete
+native program/lifetime/refusal gate. Log: `/tmp/ctcompile-map-results-integrated2.log`.
+Source/prepared result proofs check every incomplete budget at **4789/4656**,
+including live producer-return mutations and stale/fresh fingerprints.
+Two-method, three-method and parameterized owner units complete at
+**2877/2785**, **6603/6418** and **2883/2792**. First complete source admission
+budgets are **1239/50004/1353/3297/3261/5336**, with **31/31/31/29/32/29**
+cutoffs for ordinary, sixteen-call, growing, shared-growing, parameter and result
+specimens. No natural speculative rollback interval is reached; no performance
+improvement is claimed.
+
+The parallel [source invocation increment](native-source-invocations.md) adds
+`EffectCheckedInvocations` to the existing recovery transaction. It validates
+normal/catch operations while their original status edges still exist, before
+adopting a clone. Primitive predecessor proofs include both edges to a shared
+successor and reject unknown alternatives. An unconditional numeric result is
+not a nonthrowing producer proof. The unit passes thirteen live effect mutations,
+all **924** incomplete work budgets, exact completion and exact rollback. The
+three imported direct-call fixtures retain their original checks because their
+global callee lookups lack independent live binding/getter proofs. Default
+recovery and ordinary native throwing-call admission remain unchanged.
+
+The full frozen generated build and CTest run is in progress in
+`/tmp/ctcompile-map-results-full.log`; no full-gate result is claimed yet.
+The frozen browser bytes are the committed `ce728c0` baseline (unchanged since
+`7a755dd`), excluding Claude's unmerged WPT branch and the ten browser carryover
+paths. Compiler files pass formatting; the whole-tree check flags only the
+known untouched browser `style/selector.hpp`, `DOM/document.cpp` and
+`Style/css/selector.cpp`.
+
+**Exact next native boundary:** `result_seeded_map_get` changes the producer to
+`get() { state.set(0, 1); return state.get(0); }`, keeping `set(get())` and the
+same five functions. Its focused refusal is **0/5 native**, with every original
+call retained. Add independent live contents, presence and result-type evidence
+before admitting the consuming formal. Neither a completed ownership proof nor
+an observed first-call value supplies that evidence. The unseeded Map.get result
+also remains refused. Nullable Map keys within one method remain a separate
+**0/4** carrier boundary. Exact Bootstrap Data, realm ownership, future external
+callers, complete contents analysis and full native application startup remain
+unfinished. Source invocation integration next needs live callee-binding effects,
+the complete native call component, and owning payload/state emission.
+
+## Preceding typed-Map and provenance checkpoint, 2026-09-07
 
 Saved locally on `ctcompile-v1`: **`84c4b89`** (bounded load provenance),
 **`ce2fd8a`** (primitive actuals for published Map methods), **`f81d803`**
