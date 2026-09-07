@@ -1028,33 +1028,31 @@ private:
         if (seen > 1) { report("an object literal may not set `__proto__` twice", second); }
     }
 
-    // A RESERVED WORD IS NOT AN IDENTIFIER, 13.1.1.
+    // A RESERVED WORD USED AS AN IDENTIFIER IS *NOT* CHECKED, and this is the
+    // one rule that was written, measured, and then TAKEN OUT AGAIN. It is
+    // recorded here so it is not attempted a second time from the same
+    // reasoning.
     //
-    // ctjs's parser is deliberately lenient about a keyword in expression
-    // position - it falls back to reading one as a plain name - and it has to
-    // be, because `of`, `get`, `set`, `static`, `async`, `let`, `await` and
-    // `yield` are CONTEXTUAL: `const of = 1` and `function set(x)` are valid
-    // JavaScript and p5.js has both. What that leniency also accepts is
-    // `typeof import` and `[default] = []`, which are not.
+    // 13.1.1 reserves `const`, `return`, `class` and twenty more in every
+    // context, and ctjs's parser reads a keyword in expression position as a
+    // plain name - which it HAS to, because `of`, `get`, `set`, `static`,
+    // `async`, `let`, `await` and `yield` are contextual and `const of = 1` is
+    // valid JavaScript. Refusing the unconditionally-reserved ones scored +52
+    // negative parse tests and refused NOTHING in the 41,163 valid test262
+    // files.
     //
-    // So the list here is the words that are reserved UNCONDITIONALLY and
-    // nothing else. `true`, `false`, `null`, `this` and `super` are absent
-    // because the parser gives each of them a node kind of its own; so are
-    // `delete`, `typeof`, `void`, `new`, `in` and `instanceof`, which are
-    // operators and never reach this.
-    void check_identifier(std::int32_t idx) {
-        static constexpr std::string_view reserved[] = {
-            "break",  "case",   "catch",  "class",   "const",   "continue", "default",  "do",
-            "else",   "enum",   "export", "extends", "finally", "for",      "function", "if",
-            "import", "return", "switch", "throw",   "try",     "var",      "while"};
-        const std::string_view name = at(idx).text;
-        for (const std::string_view word : reserved) {
-            if (name == word) {
-                report(quoted(name) + " is a reserved word and cannot be used as a name here", idx);
-                return;
-            }
-        }
-    }
+    // It refused p5.js. The bundle contains
+    //
+    //     if (strandsContext._builtinGlobalsAccessorsInstalled) return
+    //     const getRuntimeP5Instance = () => ...
+    //
+    // and this parser has no automatic semicolon insertion after a bare
+    // `return`, so it reads the `const` as that return's OPERAND - an
+    // identifier named `const`. The rule is therefore not a rule about the
+    // language here, it is a rule about a parser gap, and any statement
+    // following an argument-less `return` at the end of a line can be caught by
+    // it. That is a page that does not load, and the whole point of this file
+    // is not to be that.
 
     // A NUMERIC LITERAL'S OWN GRAMMAR, 12.9.3, read back off the lexeme.
     //
@@ -1237,8 +1235,6 @@ private:
             return;
 
         case nk::num: check_number(idx); return;
-
-        case nk::ident: check_identifier(idx); return;
 
         case nk::new_target:
             // 16.1.1: a Script may not contain `new.target`; the grammar only
