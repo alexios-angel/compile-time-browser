@@ -2345,7 +2345,13 @@ enum class reflect_type : std::uint8_t {
     limited_unsigned_long,  // 2.6.9: greater than zero; setting zero throws
     unsigned_long_fallback, // 2.6.10: as above, but a bad set writes the default
     clamped_unsigned_long,  // 2.6.11: parsed then clamped into [low, high]
-    enumerated              // 2.6.5: limited to only known values
+    enumerated,             // 2.6.5: limited to only known values
+    // A NULLABLE DOMString: `null` when the attribute is absent rather than "",
+    // and setting `null` or `undefined` REMOVES it rather than writing the four
+    // or nine characters. It is the shape every `aria-*` property and `role`
+    // have, and it is the one thing `dom_string` above cannot say - which is
+    // why `crossOrigin` is recorded as deliberately absent from the table.
+    nullable_dom_string
 };
 
 // ONE REFLECTED IDL ATTRIBUTE. The four columns the plan asked for - interface,
@@ -2384,6 +2390,14 @@ constexpr reflected_attribute text_attr(std::string_view iface, std::string_view
                                         std::string_view content = {}) {
     return {iface, idl, content.empty() ? idl : content, reflect_type::dom_string, 0, 0, 0, {},
             {},    {}};
+}
+// The ARIA shape, and the only place a nullable DOMString appears: the content
+// attribute is always the IDL name in another spelling, so it is spelled out
+// rather than derived - `ariaAutoComplete` is `aria-autocomplete` and
+// `ariaBrailleRoleDescription` is `aria-brailleroledescription`, and no rule
+// relates the two.
+constexpr reflected_attribute aria_attr(std::string_view idl, std::string_view content) {
+    return {"Element", idl, content, reflect_type::nullable_dom_string, 0, 0, 0, {}, {}, {}};
 }
 constexpr reflected_attribute url_attr(std::string_view iface, std::string_view idl,
                                        std::string_view content = {}) {
@@ -2511,6 +2525,67 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("Element", "id"),
     text_attr("Element", "className", "class"),
     text_attr("Element", "slot"),
+
+    // --- ARIA, WHICH IS ALSO ON EVERYTHING and is the same six lines of rule
+    // --- applied forty-one more times.
+    //
+    // `role` and every `aria-*` content attribute reflect as an IDL attribute
+    // on Element (ARIA 1.3 §9, "Reflection"), and they are NULLABLE where every
+    // row above is not: an absent one reads `null` rather than "", and writing
+    // `null` or `undefined` REMOVES it. `aria-attribute-reflection.html` runs
+    // `testNullable` on every one of them, so a row that answered "" would fail
+    // its own subtest twice over.
+    //
+    // THE ELEMENT-VALUED ONES ARE NOT HERE, on purpose. `ariaLabelledByElements`
+    // and its five siblings reflect an IDREF list as an array of ELEMENTS
+    // rather than as a string, which needs an explicit-set store on the element
+    // and a live lookup per read - a different mechanism, not a different row,
+    // and `aria-element-reflection*.html` is what measures it. The strings are
+    // a table and the table is what is affordable.
+    aria_attr("role", "role"),
+    aria_attr("ariaAtomic", "aria-atomic"),
+    aria_attr("ariaAutoComplete", "aria-autocomplete"),
+    aria_attr("ariaBrailleLabel", "aria-braillelabel"),
+    aria_attr("ariaBrailleRoleDescription", "aria-brailleroledescription"),
+    aria_attr("ariaBusy", "aria-busy"),
+    aria_attr("ariaChecked", "aria-checked"),
+    aria_attr("ariaColCount", "aria-colcount"),
+    aria_attr("ariaColIndex", "aria-colindex"),
+    aria_attr("ariaColIndexText", "aria-colindextext"),
+    aria_attr("ariaColSpan", "aria-colspan"),
+    aria_attr("ariaCurrent", "aria-current"),
+    aria_attr("ariaDescription", "aria-description"),
+    aria_attr("ariaDisabled", "aria-disabled"),
+    aria_attr("ariaExpanded", "aria-expanded"),
+    aria_attr("ariaHasPopup", "aria-haspopup"),
+    aria_attr("ariaHidden", "aria-hidden"),
+    aria_attr("ariaInvalid", "aria-invalid"),
+    aria_attr("ariaKeyShortcuts", "aria-keyshortcuts"),
+    aria_attr("ariaLabel", "aria-label"),
+    aria_attr("ariaLevel", "aria-level"),
+    aria_attr("ariaLive", "aria-live"),
+    aria_attr("ariaModal", "aria-modal"),
+    aria_attr("ariaMultiLine", "aria-multiline"),
+    aria_attr("ariaMultiSelectable", "aria-multiselectable"),
+    aria_attr("ariaOrientation", "aria-orientation"),
+    aria_attr("ariaPlaceholder", "aria-placeholder"),
+    aria_attr("ariaPosInSet", "aria-posinset"),
+    aria_attr("ariaPressed", "aria-pressed"),
+    aria_attr("ariaReadOnly", "aria-readonly"),
+    aria_attr("ariaRelevant", "aria-relevant"),
+    aria_attr("ariaRequired", "aria-required"),
+    aria_attr("ariaRoleDescription", "aria-roledescription"),
+    aria_attr("ariaRowCount", "aria-rowcount"),
+    aria_attr("ariaRowIndex", "aria-rowindex"),
+    aria_attr("ariaRowIndexText", "aria-rowindextext"),
+    aria_attr("ariaRowSpan", "aria-rowspan"),
+    aria_attr("ariaSelected", "aria-selected"),
+    aria_attr("ariaSetSize", "aria-setsize"),
+    aria_attr("ariaSort", "aria-sort"),
+    aria_attr("ariaValueMax", "aria-valuemax"),
+    aria_attr("ariaValueMin", "aria-valuemin"),
+    aria_attr("ariaValueNow", "aria-valuenow"),
+    aria_attr("ariaValueText", "aria-valuetext"),
 
     // --- HTMLElement: the global attributes, which the corpus tests once per
     // --- element and which are therefore worth more than any other rows here.
@@ -3069,6 +3144,12 @@ value dom_bindings::reflected_get(context & cx, const void * row_ptr) {
     const std::string_view raw = present ? txn.attribute_value(id, name) : std::string_view{};
     switch (row.type) {
     case reflect_type::dom_string: return cx.string(std::string{raw});
+    // NULL, NOT "", and the difference is the whole of `testNullable`: an
+    // absent `aria-label` has no value rather than an empty one, and a page
+    // that branches on `el.ariaLabel === null` is asking whether the author
+    // wrote one.
+    case reflect_type::nullable_dom_string:
+        return present ? cx.string(std::string{raw}) : value::null();
     case reflect_type::boolean: return value::boolean(present);
     case reflect_type::url: {
         // "If the content attribute is absent, return the empty string.
@@ -3150,6 +3231,18 @@ value dom_bindings::reflected_set(context & cx, const void * row_ptr, std::span<
             (void)doc_->remove_attribute(id, name);
             mutated();
         }
+        return value::undefined();
+    case reflect_type::nullable_dom_string:
+        // "If the given value is null, remove the content attribute" - so
+        // `el.ariaLabel = null` is a removal and not the four characters
+        // "null", which is what the ToString below would have written.
+        // `undefined` is the same state, which `testNullable` checks by name.
+        if (args.empty() || args[0].is_nullish()) {
+            (void)doc_->remove_attribute(id, name);
+            mutated();
+            return value::undefined();
+        }
+        write(arg_string(cx, args, 0));
         return value::undefined();
     case reflect_type::dom_string:
     case reflect_type::url:

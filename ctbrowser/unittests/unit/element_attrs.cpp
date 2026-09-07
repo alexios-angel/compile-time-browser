@@ -378,6 +378,55 @@ void test_an_element_searches_its_own_subtree_by_namespace() {
        "1,1,0,0");
 }
 
+// --- ARIA, which is the reflection table's one nullable type ----------------
+
+void test_aria_reflects_as_a_nullable_string() {
+    // `role` and the forty-odd `aria-*` names reflect on Element, so a <div>
+    // and an <svg> both have them. The content attribute is spelled out in the
+    // table rather than derived: no rule turns `ariaBrailleRoleDescription`
+    // into `aria-brailleroledescription`.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.setAttribute('role', 'button');
+        e.setAttribute('aria-brailleroledescription', 'x');
+        e.setAttribute('aria-multiselectable', 'true');
+        return e.role + ',' + e.ariaBrailleRoleDescription + ',' + e.ariaMultiSelectable;
+    })())JS",
+       "button,x,true");
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.ariaLabel = 'y';
+        e.ariaValueNow = '51';
+        return e.getAttribute('aria-label') + ',' + e.getAttribute('aria-valuenow');
+    })())JS",
+       "y,51");
+    // NULLABLE, which is the whole reason this is a type of its own: an absent
+    // one is `null` and not "", and writing null or undefined REMOVES it rather
+    // than writing those four or nine characters. `testNullable` in
+    // aria-attribute-reflection.html runs exactly this on every row.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        var absent = e.ariaChecked;
+        e.setAttribute('aria-checked', 'mixed');
+        var set = e.ariaChecked;
+        e.ariaChecked = null;
+        var cleared = e.ariaChecked + ',' + e.hasAttribute('aria-checked');
+        e.ariaChecked = 'true';
+        e.ariaChecked = undefined;
+        return (absent === null) + ',' + set + ',' + cleared + ',' + e.ariaChecked + ',' +
+               e.hasAttribute('aria-checked');
+    })())JS",
+       "true,mixed,null,false,null,false");
+    // A plain DOMString row is NOT nullable, and the two must not converge:
+    // `el.id` is "" when absent and assigning null writes "null".
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.id = null;
+        return '[' + e.id + '],[' + document.createElement('div').id + ']';
+    })())JS",
+       "[null],[]");
+}
+
 } // namespace
 
 int main() {
@@ -389,5 +438,6 @@ int main() {
     test_the_map_is_iterable_and_named();
     test_a_parsed_attribute_keeps_the_namespace_it_was_given();
     test_an_element_searches_its_own_subtree_by_namespace();
+    test_aria_reflects_as_a_nullable_string();
     REPORT("element_attrs");
 }
