@@ -4069,12 +4069,15 @@ void dom_bindings::install_character_data(context & cx) {
             c.throw_error("TypeError", "substringData needs an offset and a count");
             return value::undefined();
         }
+        // CONVERTED FIRST, THEN THE NODE IS READ. WebIDL converts a call's
+        // arguments before the operation runs, and a page can tell: a `toString`
+        // on an argument may edit the very node this is about to measure.
+        const auto offset = static_cast<unsigned long long>(to_uint32(c.to_number_value(a[0])));
+        auto count = static_cast<unsigned long long>(to_uint32(c.to_number_value(a[1])));
         node_id id;
         std::string text;
         (void)data_of(c, id, text);
         const auto length = static_cast<unsigned long long>(utf16_length(text));
-        const auto offset = static_cast<unsigned long long>(to_uint32(context::to_number(a[0])));
-        auto count = static_cast<unsigned long long>(to_uint32(context::to_number(a[1])));
         if (offset > length) {
             throw_dom_exception(c, "IndexSizeError",
                                 "substringData: offset " + std::to_string(offset) +
@@ -4093,12 +4096,13 @@ void dom_bindings::install_character_data(context & cx) {
             c.throw_error("TypeError", "appendData needs the data to append");
             return value::undefined();
         }
+        const std::string with = c.to_string(a[0]);
         node_id id;
         std::string text;
         if (!data_of(c, id, text)) { return value::undefined(); }
         // AT THE END, WHICH CANNOT THROW: the offset IS the length.
         (void)replace_data(c, id, text, "appendData", static_cast<double>(utf16_length(text)), 0.0,
-                           c.to_string(a[0]));
+                           with);
         return value::undefined();
     });
 
@@ -4107,15 +4111,17 @@ void dom_bindings::install_character_data(context & cx) {
             c.throw_error("TypeError", "insertData needs an offset and the data to insert");
             return value::undefined();
         }
+        // IN ARGUMENT ORDER, INTO NAMED LOCALS, AND BEFORE THE NODE IS READ.
+        // WebIDL converts a call's arguments left to right and a page can SEE
+        // that order - the corpus asserts it with a `toString` that records
+        // when it ran - while the order C++ evaluates a call's own arguments in
+        // is unspecified. Reading the node afterwards matters for the same
+        // reason: a `toString` may have edited it.
+        const double offset = c.to_number_value(a[0]);
+        const std::string with = c.to_string(a[1]);
         node_id id;
         std::string text;
         if (!data_of(c, id, text)) { return value::undefined(); }
-        // IN ARGUMENT ORDER, INTO NAMED LOCALS. WebIDL converts a call's
-        // arguments left to right and a page can SEE that order - the corpus
-        // asserts it with a `toString` that records when it ran - while the
-        // order C++ evaluates a call's own arguments in is unspecified.
-        const double offset = context::to_number(a[0]);
-        const std::string with = c.to_string(a[1]);
         (void)replace_data(c, id, text, "insertData", offset, 0.0, with);
         return value::undefined();
     });
@@ -4125,11 +4131,11 @@ void dom_bindings::install_character_data(context & cx) {
             c.throw_error("TypeError", "deleteData needs an offset and a count");
             return value::undefined();
         }
+        const double offset = c.to_number_value(a[0]);
+        const double count = c.to_number_value(a[1]);
         node_id id;
         std::string text;
         if (!data_of(c, id, text)) { return value::undefined(); }
-        const double offset = context::to_number(a[0]);
-        const double count = context::to_number(a[1]);
         (void)replace_data(c, id, text, "deleteData", offset, count, std::string{});
         return value::undefined();
     });
@@ -4139,12 +4145,12 @@ void dom_bindings::install_character_data(context & cx) {
             c.throw_error("TypeError", "replaceData needs an offset, a count and the data");
             return value::undefined();
         }
+        const double offset = c.to_number_value(a[0]);
+        const double count = c.to_number_value(a[1]);
+        const std::string with = c.to_string(a[2]);
         node_id id;
         std::string text;
         if (!data_of(c, id, text)) { return value::undefined(); }
-        const double offset = context::to_number(a[0]);
-        const double count = context::to_number(a[1]);
-        const std::string with = c.to_string(a[2]);
         (void)replace_data(c, id, text, "replaceData", offset, count, with);
         return value::undefined();
     });
@@ -4156,11 +4162,12 @@ void dom_bindings::install_character_data(context & cx) {
     // none - "Split root" asserts exactly that - which is why the insertion is
     // conditional rather than the obvious appendChild.
     method(*text_proto, "splitText", [this, data_of](context & c, std::span<value> a) {
+        const auto offset =
+            static_cast<unsigned long long>(to_uint32(c.to_number_value(arg(a, 0))));
         node_id id;
         std::string text;
         if (!data_of(c, id, text)) { return value::null(); }
         const auto length = static_cast<unsigned long long>(utf16_length(text));
-        const auto offset = static_cast<unsigned long long>(to_uint32(arg_number(a, 0)));
         if (offset > length) {
             throw_dom_exception(c, "IndexSizeError",
                                 "splitText: offset " + std::to_string(offset) +

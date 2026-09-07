@@ -232,6 +232,24 @@ void test_an_offset_throws_where_a_count_clamps() {
     // A FAILED CALL CHANGES NOTHING, which is the half of "with invalid offset"
     // that a throw in the wrong place would still pass.
     both("try { node.replaceData(5, 1, 'x'); } catch (e) {} return node.data;", "test");
+    // THE ARGUMENTS ARE CONVERTED FIRST, LEFT TO RIGHT, AND THEN THE NODE IS
+    // READ. Both halves are observable through a `toString`: the order the
+    // three conversions run in, and the fact that an edit one of them makes is
+    // in the text the operation then edits. An offset argument that is an
+    // OBJECT is what makes the first half visible at all, and it is why these
+    // go through the re-entering ToNumber rather than the static one - the
+    // static form cannot call back into the VM and answers NaN for every
+    // object, which would have made this offset 0.
+    both(R"(var seen = [];
+            node.replaceData({ toString: function () { seen.push('a'); return 4; } },
+                             { toString: function () { seen.push('b'); return 0; } },
+                             { toString: function () {
+                                   seen.push('c');
+                                   node.appendData('X');
+                                   return '!';
+                               } });
+            return seen.join('') + ',' + node.data;)",
+         "abc,test!X");
 }
 
 void test_the_five_methods_edit_one_string() {
