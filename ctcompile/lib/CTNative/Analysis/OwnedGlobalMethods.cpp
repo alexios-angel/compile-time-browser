@@ -92,6 +92,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                          edge.capturedMap->cell != capture->cell ||
                          edge.capturedMap->initialization != capture->initialization ||
                          edge.capturedMap->closures != capture->closures ||
+                         edge.capturedMap->parameters != capture->parameters ||
                          edge.capturedMap->upvalues != capture->upvalues ||
                          edge.capturedMap->reads != capture->reads ||
                          edge.capturedMap->calls != capture->calls)) ||

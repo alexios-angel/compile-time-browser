@@ -200,6 +200,147 @@ void checkCallables(mlir::MLIRContext & context) {
     std::printf("host callable proof: %u charged steps and incomplete budgets checked\n", steps);
 }
 
+void checkCapturedParameters(mlir::MLIRContext & context, const std::string & shared) {
+    auto source =
+        replaced(shared, "@put$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value)",
+                 "@put$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, "
+                 "%entryKey: !ctjs.value, %value: !ctjs.value)");
+    source = replaced(source, "    %entryKey = ctjs.constant #ctjs.string<\"x\">\n", "");
+    source = replaced(source, "    %value = ctjs.constant #ctjs.number<4607182418800017408>\n", "");
+    source = replaced(source, "    %putResult = ctjs.call %putter(%owned)", R"MLIR(
+    %actualKey = ctjs.constant #ctjs.string<"x">
+    %actualValue = ctjs.constant #ctjs.number<4607182418800017408>
+    %putResult = ctjs.call %putter(%owned, %actualKey, %actualValue)
+    %nextKey = ctjs.constant #ctjs.string<"y">
+    %nextValue = ctjs.constant #ctjs.number<4611686018427387904>
+    %putterAgain = ctjs.get_property %owned[%putKey]
+    %putAgain = ctjs.call %putterAgain(%owned, %nextKey, %nextValue)
+)MLIR");
+    const auto prepare = [](std::string text) {
+        for (unsigned index : {2u, 3u}) {
+            const auto name = index == 2 ? "get$2" : "put$3";
+            text = replaced(text, "captures %cell", "captures %state");
+            text = replaced(text,
+                            std::string("@") + name +
+                                "(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value",
+                            std::string("@") + name +
+                                "(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, "
+                                "%state: !ctjs.value");
+            text = replaced(text,
+                            "attributes {upvalue_count = 1 : i32} {\n"
+                            "    %state = ctjs.load_upvalue %callee[0]\n",
+                            "attributes {upvalue_count = 0 : i32} {\n");
+        }
+        text = replaced(text, "%putResult = ctjs.call %putter(%owned, %actualKey, %actualValue)",
+                        "%putEnvironment = ctjs.load_upvalue %putter[0]\n"
+                        "    %putResult = ctjs.call_direct @put$3(%owned, %u, %putter, "
+                        "%putEnvironment, %actualKey, %actualValue)");
+        text = replaced(text, "%putAgain = ctjs.call %putterAgain(%owned, %nextKey, %nextValue)",
+                        "%nextEnvironment = ctjs.load_upvalue %putterAgain[0]\n"
+                        "    %putAgain = ctjs.call_direct @put$3(%owned, %u, %putterAgain, "
+                        "%nextEnvironment, %nextKey, %nextValue)");
+        return replaced(text, "%answer = ctjs.call %getter(%owned)",
+                        "%getEnvironment = ctjs.load_upvalue %getter[0]\n"
+                        "    %answer = ctjs.call_direct @get$2(%owned, %u, %getter, "
+                        "%getEnvironment)");
+    };
+    const auto query = [&](const std::string & program, bool prepared, bool expected,
+                           const char * message) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(prepared ? prepare(program) : program,
+                                                              &context);
+        check(static_cast<bool>(module), "two-parameter source and prepared host fixture parses");
+        if (!module) { return; }
+        auto requested = contractFor(*module);
+        requested.initialIntrinsics = {"Map"};
+        HostContractAnalysis result(*module, requested);
+        check(result.proved() == expected && !result.exhausted(), message);
+        check(hostContractFingerprint(*module) == requested.moduleSha256,
+              "parameter classification preserves the live SSA source");
+        if (!expected) {
+            check(result.callables().empty(), "failed actual proof exposes no callable family");
+            module->walk([&](mlir::Operation * operation) {
+                check(!result.callable(operation), "failed actual exposes no callable lookup");
+                if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
+                    check(!result.property(read), "failed actual exposes no slot lookup");
+                }
+            });
+            return;
+        }
+        if (!result.proved()) {
+            std::fprintf(stderr, "parameter host: %s\n", result.reason().str().c_str());
+            return;
+        }
+        check(result.callables().size() == 3,
+              "both setter calls and the zero-argument getter remain");
+        auto setter = module->lookupSymbol<ctjs::FuncOp>("put$3");
+        auto getter = module->lookupSymbol<ctjs::FuncOp>("get$2");
+        const auto stringTag = mlir::TypeID::get<ctjs::StringAttr>();
+        const auto numberTag = mlir::TypeID::get<ctjs::NumberAttr>();
+        unsigned setters = 0;
+        mlir::Value previousKey, previousValue;
+        for (const auto & edge : result.callables()) {
+            check(edge.capturedMap && edge.capturedMap->parameters.size() == 2,
+                  "every call retains the complete per-method primitive parameter family");
+            if (!edge.capturedMap || edge.capturedMap->parameters.size() != 2) { continue; }
+            check(static_cast<bool>(edge.capturedMap->argument) == prepared &&
+                      edge.capturedMap->parameters.front().function == getter &&
+                      edge.capturedMap->parameters.front().primitiveTags.empty() &&
+                      edge.capturedMap->parameters.back().function == setter &&
+                      edge.capturedMap->parameters.back().primitiveTags ==
+                          std::vector{stringTag, numberTag},
+                  "the getter remains zero-argument and setter tags retain formal order");
+            if (edge.function == getter) {
+                check(edge.arguments.empty(), "the Map environment is not a getter parameter");
+                continue;
+            }
+            ++setters;
+            check(edge.function == setter && edge.arguments.size() == 2,
+                  "the setter retains both independently proved actual operands");
+            if (edge.arguments.size() != 2) { continue; }
+            auto & body = setter.getBody().front();
+            check(edge.arguments[0].parameter == body.getArgument(prepared ? 4 : 3) &&
+                      edge.arguments[1].parameter == body.getArgument(prepared ? 5 : 4) &&
+                      edge.arguments[0].actual == edge.call->getOperand(prepared ? 4 : 2) &&
+                      edge.arguments[1].actual == edge.call->getOperand(prepared ? 5 : 3) &&
+                      edge.arguments[0].primitiveTag == stringTag &&
+                      edge.arguments[1].primitiveTag == numberTag &&
+                      edge.arguments[0].actual != previousKey &&
+                      edge.arguments[1].actual != previousValue,
+                  "each call keeps its own key and payload SSA values after the capture offset");
+            previousKey = edge.arguments[0].actual;
+            previousValue = edge.arguments[1].actual;
+        }
+        check(setters == 2, "current calls agree on tags without sharing their actual values");
+    };
+    const auto global = replaced(source, "%actualKey = ctjs.constant #ctjs.string<\"x\">",
+                                 "%keyValue = ctjs.constant #ctjs.string<\"x\">\n"
+                                 "    ctjs.store_global \"key\", %keyValue\n"
+                                 "    %actualKey = ctjs.load_global \"key\"");
+    for (bool prepared : {false, true}) {
+        query(source, prepared, true,
+              "two primitive formals retain ordered source/prepared evidence");
+        query(global, prepared, true, "a sole definite global initialization proves an actual tag");
+        query(replaced(global,
+                       "    ctjs.store_global \"key\", %keyValue\n"
+                       "    %actualKey = ctjs.load_global \"key\"",
+                       "    %actualKey = ctjs.load_global \"key\"\n"
+                       "    ctjs.store_global \"key\", %keyValue"),
+              prepared, false, "a later initialization cannot type an already loaded actual");
+        query(replaced(global, "    %actualKey = ctjs.load_global \"key\"",
+                       "    ctjs.store_global \"key\", %keyValue\n"
+                       "    %actualKey = ctjs.load_global \"key\""),
+              prepared, false, "multiple global stores cannot inherit a unique primitive actual");
+        query(replaced(global, "    ctjs.store_global \"trace\", %answer",
+                       "    ctjs.store_global \"key\", %nextKey\n"
+                       "    ctjs.store_global \"trace\", %answer"),
+              prepared, false,
+              "even a later same-tag reassignment withholds global actual evidence");
+        query(replaced(source, "#ctjs.number<4611686018427387904>", "#ctjs.boolean<true>"),
+              prepared, false,
+              "a second formal tag mismatch cannot reuse the first call's evidence");
+    }
+}
+
 void checkCapturedCallables(mlir::MLIRContext & context) {
     auto source = replaced(callableFixture, "%getter = ctjs.create_closure %callee[2] this %u",
                            "%cell = ctjs.create_cell %u\n"
@@ -351,6 +492,7 @@ void checkCapturedCallables(mlir::MLIRContext & context) {
                   "restoring the sibling body restores the independently proved family");
         }
     }
+    checkCapturedParameters(context, shared);
 
     constexpr llvm::StringLiteral set = R"MLIR(
     %entryKey = ctjs.constant #ctjs.string<"x">

@@ -2,6 +2,7 @@
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/Support/TypeID.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/Error.h"
 
@@ -49,6 +50,22 @@ struct HostSlotEdge {
     ctjs::GetPropertyOp read;
 };
 
+// The tag is the existing CTJS primitive constant attribute's TypeID. It
+// describes the value category, never the value of an earlier invocation.
+struct HostMethodParameters {
+    ctjs::FuncOp function;
+    std::vector<mlir::TypeID> primitiveTags;
+    bool operator==(const HostMethodParameters & other) const {
+        return function == other.function && primitiveTags == other.primitiveTags;
+    }
+};
+
+struct HostPrimitiveArgument {
+    mlir::BlockArgument parameter;
+    mlir::Value actual;
+    mlir::TypeID primitiveTag;
+};
+
 // One immutable environment slot owns this exact standard Map, constructed
 // empty. The complete live census of every closure sharing that slot permits
 // only primitive contents and
@@ -62,6 +79,7 @@ struct HostCapturedMap {
     ctjs::CreateCellOp cell;
     ctjs::CellSetOp initialization;
     std::vector<ctjs::CreateClosureOp> closures;
+    std::vector<HostMethodParameters> parameters;
     // Complete family effects; argument below belongs to this actual call.
     std::vector<ctjs::LoadUpvalueOp> upvalues;
     std::vector<ctjs::GetPropertyOp> reads;
@@ -79,6 +97,7 @@ struct HostCallableEdge {
     ctjs::CreateClosureOp closure;
     ctjs::FuncOp function;
     std::optional<HostCapturedMap> capturedMap;
+    std::vector<HostPrimitiveArgument> arguments;
 };
 
 struct HostSlotReport {

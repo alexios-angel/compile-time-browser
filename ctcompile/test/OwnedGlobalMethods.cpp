@@ -256,11 +256,11 @@ void checkSharedMap(mlir::MLIRContext & context) {
             const auto signature = std::string("@") + name +
                                    "(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value";
             if (text.find(signature) == std::string::npos) { continue; }
-            text = replaced(text, signature + ")", signature + ", %state: !ctjs.value)");
-            const auto call = std::string("%") + result + " = ctjs.call %" + closure + "(%owned)";
+            text = replaced(text, signature, signature + ", %state: !ctjs.value");
+            const auto call = std::string("%") + result + " = ctjs.call %" + closure + "(%owned";
             const auto lifted = std::string("%") + closure + "Env = ctjs.load_upvalue %" + closure +
                                 "[0]\n    %" + result + " = ctjs.call_direct @" + name +
-                                "(%owned, %u, %" + closure + ", %" + closure + "Env)";
+                                "(%owned, %u, %" + closure + ", %" + closure + "Env";
             text = replaced(text, call, lifted);
         }
         return text;
@@ -394,7 +394,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
     refuse(replaced(source, "ctjs.call %putter(%owned)", "ctjs.call %putter(%host)"),
            "every method needs its actual receiver in the checked table family");
     refuse(replaced(source, "ctjs.call %putter(%owned)", "ctjs.call %putter(%owned, %u)"),
-           "public parameters remain outside the zero-argument shared Map boundary");
+           "surplus actuals cannot extend the source method signature");
     refuse(replaced(source, "ctjs.set_property %table[%putKey], %putter",
                     "ctjs.set_property %table[%key], %putter"),
            "fixed shared methods cannot replace each other");
@@ -435,6 +435,104 @@ void checkSharedMap(mlir::MLIRContext & context) {
     mixed = replaced(mixed, "%putter = ctjs.create_closure %callee[4] this %u captures %cell",
                      "%putter = ctjs.create_closure %callee[4] this %u captures %state");
     refuse(mixed, "raw-resource and original-cell siblings cannot mix capture ownership stages");
+
+    auto parameterized =
+        replaced(source, "@put$4(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value)",
+                 "@put$4(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, "
+                 "%entryKey: !ctjs.value)");
+    parameterized =
+        replaced(parameterized, "    %entryKey = ctjs.constant #ctjs.string<\"x\">\n", "");
+    parameterized = replaced(parameterized, "    %putResult = ctjs.call %putter(%owned)",
+                             "    %actual = ctjs.constant #ctjs.string<\"x\">\n"
+                             "    %putResult = ctjs.call %putter(%owned, %actual)");
+    for (const bool lifted : {false, true}) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(
+            lifted ? prepare(parameterized) : parameterized, &context);
+        check(static_cast<bool>(module), "parameterized shared source and prepared forms parse");
+        if (!module) { continue; }
+        const auto contract = requested(*module);
+        OwnedGlobalRoots query(*module, contract);
+        if (!query.proved()) {
+            std::fprintf(stderr, "parameter owner: %s\n", query.reason().str().c_str());
+        }
+        check(query.proved(), "a current primitive actual proves the explicit Map parameter");
+        if (!query.proved()) { continue; }
+        const auto & table = *query.roots().front().methodTable;
+        check(table.calls.size() == 2 && table.capturedMap->parameters.size() == 2,
+              "parameter proof retains the complete shared method family");
+        auto edge = table.calls.front();
+        auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
+        const auto tag = mlir::TypeID::get<ctjs::StringAttr>();
+        check(edge.function == setter && edge.arguments.size() == 1 &&
+                  edge.arguments.front().parameter ==
+                      setter.getBody().front().getArgument(lifted ? 4 : 3) &&
+                  edge.arguments.front().actual == edge.call->getOperand(lifted ? 4 : 2) &&
+                  edge.arguments.front().primitiveTag == tag &&
+                  table.calls.back().arguments.empty() &&
+                  table.capturedMap->parameters.back().function == setter &&
+                  table.capturedMap->parameters.back().primitiveTags == std::vector{tag},
+              "formal/actual SSA evidence separates the Map environment from the explicit key");
+        const auto actual = edge.arguments.front().actual;
+        const unsigned operand = lifted ? 4u : 2u;
+        for (mlir::Value replacement : {edge.read.getResult(), edge.read.getObject()}) {
+            edge.call->setOperand(operand, replacement);
+            OwnedGlobalRoots stale(*module, contract);
+            check(!stale.proved() && stale.reason().contains("fingerprint") &&
+                      empty(*module, stale),
+                  "changing an actual invalidates its supplied source fingerprint");
+            OwnedGlobalRoots fresh(*module, requested(*module));
+            check(!fresh.proved() && empty(*module, fresh),
+                  "fresh fingerprints cannot turn callable or object actuals into primitives");
+        }
+        edge.call->setOperand(operand, actual);
+        check(OwnedGlobalRoots(*module, contract).proved(),
+              "restoring the actual restores the proof");
+
+        mlir::OpBuilder builder(&context);
+        builder.setInsertionPoint(edge.call);
+        auto different = ctjs::ConstantOp::create(builder, edge.call->getLoc(),
+                                                  ctjs::StringAttr::get(&context, "different"));
+        edge.call->setOperand(operand, different.getResult());
+        OwnedGlobalRoots changed(*module, requested(*module));
+        check(changed.proved() &&
+                  changed.roots().front().methodTable->calls.front().arguments.front().actual ==
+                      different.getResult(),
+              "a different key of the same type retains its own live SSA actual");
+        edge.call->setOperand(operand, actual);
+        different.erase();
+        const unsigned completion = query.steps();
+        check(completion < 10000, "parameterized family proof remains bounded");
+        if (completion < 10000) {
+            for (unsigned budget = 0; budget < completion; ++budget) {
+                OwnedGlobalRoots limited(*module, contract, budget);
+                check(!limited.proved() && limited.exhausted() && empty(*module, limited),
+                      "incomplete argument census never publishes a partial owning plan");
+            }
+            check(OwnedGlobalRoots(*module, contract, completion).proved(),
+                  "exact argument census budget reproduces the complete proof");
+        }
+        std::printf("parameter Map %s proof and all %u incomplete budgets checked\n",
+                    lifted ? "prepared" : "source", completion);
+    }
+    refuse(
+        replaced(parameterized, "ctjs.call %putter(%owned, %actual)", "ctjs.call %putter(%owned)"),
+        "a missing primitive actual is unproved");
+    refuse(replaced(parameterized, "ctjs.call %putter(%owned, %actual)",
+                    "ctjs.call %putter(%owned, %actual, %actual)"),
+           "a surplus primitive actual is unproved");
+    refuse(replaced(parameterized, "    %putResult = ctjs.call %putter(%owned, %actual)", ""),
+           "an uncalled parameterized sibling has no independently proved parameter tags");
+    refuse(replaced(parameterized, "    %answer = ctjs.call %getter(%owned)",
+                    "    %second = ctjs.call %putter(%owned, %u)\n"
+                    "    %answer = ctjs.call %getter(%owned)"),
+           "all current actuals must agree on each parameter's primitive tag");
+    refuse(replaced(parameterized, "    %putResult = ctjs.call %putter(%owned, %actual)",
+                    "    %prior = ctjs.call %getter(%owned)\n"
+                    "    %putResult = ctjs.call %putter(%owned, %prior)"),
+           "a sibling result cannot circularly authorize a parameter proof");
+    refuse(replaced(prepare(parameterized), "@put$4(%owned, %u, %putter, %putterEnv, %actual)",
+                    "@put$4(%owned, %u, %putter, %actual, %putterEnv)"),
+           "prepared capture and explicit actual positions are not interchangeable");
 
     auto distinct =
         replaced(source, "%putter = ctjs.create_closure %callee[4] this %u captures %cell",
