@@ -18,7 +18,7 @@ field and the probe beside it — disagree loudly rather than quietly.
 |---|---|
 | `Math.PI`, `Math.E` -> `std::numbers::pi`, `std::numbers::e` | **correct** |
 | `Math.abs/sin/pow/floor/...` -> `std::abs/sin/pow/floor` | **mixed** - `sin` and `floor` are exact, `abs` is the wrong spelling, `pow` is a different function |
-| `JSON.parse` / `JSON.stringify` -> `boost::json` | **wrong** - a different number formatter, and a different failure mechanism |
+| `JSON.parse` / `JSON.stringify` -> `boost::json` | **wrong** - parsing integer `-0` loses its sign, and serialization uses a different number formatter |
 | `new Set()` -> `std::unordered_set<T>` | **wrong** - key equality and iteration order, independently |
 | `new Map()` -> `std::unordered_map<K,V>` | **wrong** - the same, and a NaN key becomes unreachable |
 | `new RegExp(...)` -> `boost::regex` | **wrong** - a different regex engine; disagrees silently in both directions |
@@ -42,7 +42,10 @@ Measured on the devbox on 2026-09-07: `ctcompile_stdlib_map` passes in
 **0.01 seconds**, with **50 probes: 29 agreements and 21 divergences**. The
 interpreter and Node 26.8.1 both trim the NBSP and BOM witnesses to `"x"`.
 The C++ ASCII helper and Boost with the classic locale retain those bytes.
-Log: `/tmp/ctcompile-map-effects-recovery-full-gate.log`.
+The follow-up signed-zero JSON witness also passes: the interpreter produces
+`8000000000000000` and Boost `0000000000000000`, retaining the same row/probe
+counts. Its focused devbox CTest passes **1/1** in **0.01 seconds**.
+Log: `/tmp/ctcompile-native-json-inventory-gate.log`.
 
 **The oracle is the interpreter, not ECMAScript.** That is the dialect's own
 policy — *"when a CTJS operation and the ctbrowser VM disagree, the VM is
@@ -281,15 +284,18 @@ terminators inside `.` has not been compared. A regex that silently matches
 differently is the failure this phase exists to prevent, so the whole row is
 refused until a subset is *proved* rather than assumed.
 
-### `JSON.parse` → `boost::json::parse` — the failure path is a different mechanism
+### `JSON.parse` → `boost::json::parse` — integer syntax loses signed zero
 
-`builtins/async.cpp` answers **`undefined`** for a document that does not parse —
-this VM has no exceptions — where `boost::json::parse` throws
-`boost::system::system_error`.
+`JSON.parse('-0')` produces the JavaScript Number **negative zero**. The VM
+preserves its IEEE-754 token `8000000000000000`, also required by Node.
+Boost.JSON stores the same integer syntax as `int64_t(0)`; converting that value
+to `double` yields positive zero, token `0000000000000000`.
 
-Which path a call takes depends on the **input**, so no static analysis can rule
-the failure path out, and a page written as `if (parsed === undefined)` would
-instead have an exception unwind through it.
+The input therefore changes observable Number identity after a direct parser
+substitution. No numeric-subset proof or conversion repair is implemented. The
+old malformed-input witness depended on an interpreter bug; a conforming
+throwing parser makes both sides throw, so that example no longer establishes
+a divergence. The signed-zero witness is independent of that correction.
 
 ### `JSON.stringify` → `boost::json::serialize` — a different number formatter
 

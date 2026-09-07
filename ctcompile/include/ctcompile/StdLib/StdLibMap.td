@@ -289,15 +289,15 @@ def RegExp_ctor : Divergent<"new RegExp(...)", "boost::regex", "<boost/regex.hpp
     "disagrees in BOTH directions, and neither direction fails loudly. There is "
     "no proved subset yet: `.` and the flags would each need their own proof">;
 
-// JSON, WHERE THE PARSER AND THE SERIALISER FAIL DIFFERENTLY.
+// JSON, WHERE NUMBER REPRESENTATION AND SERIALISATION DIFFER.
 def JSON_parse : Divergent<"JSON.parse", "boost::json::parse", "<boost/json.hpp>",
-    "JSON.parse('{oops')",
-    "the FAILURE PATH is a different mechanism. builtins/async.cpp answers "
-    "`undefined` for a document that does not parse - this VM has no exceptions "
-    "- where boost::json::parse throws boost::system::system_error. Which path "
-    "a call takes depends on the INPUT, so no static proof can rule the failure "
-    "path out, and a page testing `if (parsed === undefined)` would instead see "
-    "an exception unwind through it">;
+    "JSON.parse('-0')",
+    "integer syntax loses SIGNED ZERO. JavaScript JSON.parse produces the "
+    "Number -0, which the interpreter preserves. Boost.JSON stores integer "
+    "-0 as int64 zero; converting that value to double produces +0. Their "
+    "IEEE-754 tokens differ: 8000000000000000 versus 0000000000000000. A "
+    "direct parser substitution therefore changes observable Number identity; "
+    "no proved numeric subset or conversion repair is implemented">;
 def JSON_stringify : Divergent<"JSON.stringify", "boost::json::serialize", "<boost/json.hpp>",
     "JSON.stringify(0.1)",
     "a DIFFERENT NUMBER FORMATTER. JavaScript's Number::toString is the "

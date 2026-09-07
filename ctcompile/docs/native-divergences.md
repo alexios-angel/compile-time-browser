@@ -809,7 +809,7 @@ and the reason, and they are not corner cases:
 | `new Set()` | `{NaN, NaN, +0, -0}` | SameValueZero keying and insertion order; `unordered_set` has neither |
 | `new Map()` | the same | worse: a second NaN key makes the first unreachable |
 | `new RegExp()` | `/(.)\1/.test('aa')` | this engine has no backreferences or lookbehind; Boost has both, and they disagree in BOTH directions |
-| `JSON.parse` | `JSON.parse('{oops')` | this VM answers `undefined` where `boost::json` throws, and which path runs depends on the input |
+| `JSON.parse` | `JSON.parse('-0')` | JavaScript preserves negative zero; Boost.JSON stores integer zero and loses its sign before conversion to double |
 | `JSON.stringify` | `JSON.stringify(0.1)` | a different number formatter: `"0.1"` here, `"1E-1"` there |
 | `String.prototype.trim` → `ctbrowser::trim(s, js_whitespace)` | `"\u00a0x\u00a0".trim()` | JavaScript removes Unicode whitespace; the helper retains its UTF-8 bytes |
 | `String.prototype.trim` → `boost::algorithm::trim_copy` | the same, with the classic locale pinned | byte classification retains NBSP and BOM; the default overload additionally depends on the global locale |

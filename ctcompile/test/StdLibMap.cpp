@@ -305,13 +305,10 @@ const probe probes[] = {
          return std::string(
              boost::regex_search(std::string("ab"), boost::regex("(?<=a)b")) ? "true" : "false");
      }},
-    // A FAILED PARSE IS A VALUE HERE AND AN EXCEPTION THERE.
-    {"JSON_parse", R"JS(JSON.parse("{oops"))JS",
-     [] {
-         try {
-             return boost::json::serialize(boost::json::parse("{oops"));
-         } catch (const std::exception &) { return std::string("<threw>"); }
-     }},
+    // Integer syntax still denotes a JavaScript Number, including signed zero.
+    // Boost stores integer -0 as int64 zero before conversion to double.
+    {"JSON_parse", "JSON.parse('-0')",
+     [] { return number_token(boost::json::parse("-0").to_number<double>()); }},
     // A DIFFERENT NUMBER FORMATTER, on the most ordinary number there is.
     {"JSON_stringify", "JSON.stringify(0.1)",
      [] { return boost::json::serialize(boost::json::value(0.1)); }},
