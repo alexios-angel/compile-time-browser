@@ -59,6 +59,181 @@ void install_json(context & cx) {
     cx.define_global("JSON", value::object(json));
 }
 
+namespace {
+
+// A PROMISE THAT HAS NOT SETTLED. Three of the combinators below hand one back
+// and settle it later, which is the whole difference between them and
+// `Promise.resolve`.
+[[nodiscard]] value pending_promise(context & cx) {
+    const value made = detail::make_promise(cx, value::undefined(), false);
+    static_cast<object_object *>(made.as_heap())
+        ->define("__settled", value::boolean(false), attr_builtin);
+    return made;
+}
+
+// ATTACH A REACTION THE WAY `then` ATTACHES ONE, and for the same reason it has
+// to be the same way: a combinator is specified over arbitrary values, so all
+// three of "already settled", "still pending" and "not a promise at all" have
+// to reach the same code. `Promise.allSettled([p, 1])` must wait for `p` and
+// must report the 1 as fulfilled.
+//
+// The reaction runs at the END OF THE TURN in every case, because that is what
+// `settle` and `settle_with` do - a handler that runs the instant it is
+// attached would order `Promise.allSettled([1]).then(f); after();` backwards.
+void react(context & cx, value input, native_object * on_ok, native_object * on_err) {
+    object_object * record = detail::new_table(cx);
+    record->set("ok", value::object(on_ok));
+    record->set("err", value::object(on_err));
+    // `deliver` DROPS A RECORD WITH NO `next` before it calls anything: that
+    // slot is the promise a `then` would have returned. Nothing reads this one,
+    // and leaving it out silently loses the reaction.
+    record->set("next", pending_promise(cx));
+
+    if (input.is_object()) {
+        auto * p = static_cast<object_object *>(input.as_heap());
+        if (value * settled = p->find("__settled"); settled != nullptr) {
+            if (context::truthy(*settled)) {
+                const value * held = p->find("__value");
+                const value * state = p->find("__rejected");
+                detail::enqueue_delivery(cx, value::object(record),
+                                         held == nullptr ? value::undefined() : *held,
+                                         state != nullptr && context::truthy(*state));
+                return;
+            }
+            if (value * handlers = p->find("__handlers");
+                handlers != nullptr && handlers->is_array()) {
+                static_cast<array_object *>(handlers->as_heap())
+                    ->items.push_back(value::object(record));
+                return;
+            }
+        }
+    }
+    // Not a promise: 27.2.4.7.1 resolves it with itself.
+    detail::enqueue_delivery(cx, value::object(record), input, false);
+}
+
+// The argument, as the list of things to wait for.
+//
+// AN ARRAY, NOT AN ITERABLE. A general iterable needs Symbol.iterator dispatch,
+// which is the gap `for..of` has here too (docs/script.md), and `Promise.all`
+// has always read its argument this way. A non-array is an empty list rather
+// than the TypeError the specification asks for, which is the same deviation
+// and is named rather than fixed in passing.
+[[nodiscard]] std::vector<value> entries_of(std::span<value> a) {
+    if (!a.empty() && a[0].is_array()) {
+        return static_cast<array_object *>(a[0].as_heap())->items;
+    }
+    return {};
+}
+
+// A COMBINATOR'S SHARED STATE, reachable rather than captured.
+//
+// A `value` held only by a C++ lambda is invisible to the collector - the
+// comment on `new Promise`'s resolve/reject says what that cost - so the
+// result promise, the results array and the counter live in one object that
+// every reaction RETAINS.
+[[nodiscard]] object_object * combinator_state(context & cx, value out, value results,
+                                               std::size_t count) {
+    object_object * state = detail::new_table(cx);
+    state->set("out", out);
+    state->set("results", results);
+    state->set("left", value::number(static_cast<double>(count)));
+    return state;
+}
+
+[[nodiscard]] double count_down(object_object * state) {
+    const value * left = state->find("left");
+    const double remaining = (left == nullptr ? 0.0 : left->as_number()) - 1.0;
+    state->set("left", value::number(remaining));
+    return remaining;
+}
+
+[[nodiscard]] value slot_of(object_object * state, const char * name) {
+    const value * held = state->find(name);
+    return held == nullptr ? value::undefined() : *held;
+}
+
+void put_result(object_object * state, std::size_t index, value entry) {
+    const value * results = state->find("results");
+    if (results == nullptr || !results->is_array()) { return; }
+    auto & items = static_cast<array_object *>(results->as_heap())->items;
+    if (index < items.size()) { items[index] = entry; }
+}
+
+// 27.2.4.2.2: every reaction writes `{ status, value }` or
+// `{ status, reason }` into its own slot, and the last one to finish resolves.
+[[nodiscard]] native_object * allsettled_reaction(context & cx, value state, std::size_t index,
+                                                  bool rejected) {
+    auto * made = cx.allocate<native_object>(
+        rejected ? "rejected" : "fulfilled",
+        [state, index, rejected](context & c, std::span<value> args) {
+            auto * held = static_cast<object_object *>(state.as_heap());
+            const value entry = c.make_object();
+            auto * record = static_cast<object_object *>(entry.as_heap());
+            record->set("status", c.string(rejected ? "rejected" : "fulfilled"));
+            record->set(rejected ? "reason" : "value", args.empty() ? value::undefined() : args[0]);
+            put_result(held, index, entry);
+            if (count_down(held) <= 0) {
+                detail::settle(c, slot_of(held, "out"), slot_of(held, "results"), false);
+            }
+            return value::undefined();
+        });
+    made->retained.push_back(state);
+    return made;
+}
+
+// THE ERROR `Promise.any` REJECTS WITH when every input rejected.
+//
+// AggregateError is a constructor this engine does not have (docs/test262.md
+// names it as deliberately absent), so `make_error` falls back to
+// Error.prototype plus an own `name` - which keeps `e.name === "AggregateError"`
+// and `e instanceof Error` true. `errors` is the array 27.2.4.3.2 requires, in
+// input order.
+[[nodiscard]] value aggregate_error(context & cx, value errors) {
+    const value made = cx.make_error("AggregateError", "All promises were rejected");
+    static_cast<object_object *>(made.as_heap())->set("errors", errors);
+    return made;
+}
+
+// 27.2.4.3.2, and it is `all` with the two outcomes swapped: the first
+// FULFILMENT wins, and it takes every rejection to fail.
+[[nodiscard]] native_object * any_reaction(context & cx, value state, std::size_t index,
+                                           bool rejected) {
+    auto * made = cx.allocate<native_object>(
+        rejected ? "rejected" : "fulfilled",
+        [state, index, rejected](context & c, std::span<value> args) {
+            auto * held = static_cast<object_object *>(state.as_heap());
+            const value with = args.empty() ? value::undefined() : args[0];
+            if (!rejected) {
+                detail::settle(c, slot_of(held, "out"), with, false);
+                return value::undefined();
+            }
+            put_result(held, index, with);
+            if (count_down(held) <= 0) {
+                detail::settle(c, slot_of(held, "out"),
+                               aggregate_error(c, slot_of(held, "results")), true);
+            }
+            return value::undefined();
+        });
+    made->retained.push_back(state);
+    return made;
+}
+
+// 27.2.4.5.2: whichever settles first settles the result, however it settled.
+[[nodiscard]] native_object * race_reaction(context & cx, value state, bool rejected) {
+    auto * made = cx.allocate<native_object>(
+        rejected ? "rejected" : "fulfilled", [state, rejected](context & c, std::span<value> args) {
+            auto * held = static_cast<object_object *>(state.as_heap());
+            detail::settle(c, slot_of(held, "out"), args.empty() ? value::undefined() : args[0],
+                           rejected);
+            return value::undefined();
+        });
+    made->retained.push_back(state);
+    return made;
+}
+
+} // namespace
+
 // Promise
 void install_promise(context & cx) {
     using detail::method;
@@ -106,6 +281,93 @@ void install_promise(context & cx) {
             }
         }
         return detail::make_promise(c, out, false);
+    });
+    // `Promise.allSettled` - 27.2.4.2. It never rejects: every input's outcome
+    // is reported, in input order, as `{ status: "fulfilled", value }` or
+    // `{ status: "rejected", reason }`.
+    //
+    // UNLIKE `all` ABOVE, this one waits. `all` reads `__value` off each entry
+    // as it walks them, which answers immediately - and wrongly - for an input
+    // that has not settled; these three go through `react`, which is the same
+    // path `then` takes. Bringing `all` onto it is the obvious next change and
+    // is NOT made here: p5.js opens with a `Promise.all` whose inputs may never
+    // settle headless, and that ratchet cannot be run from this worktree.
+    method(cx, promise_ctor, "allSettled", 1, [](context & c, std::span<value> a) {
+        const std::vector<value> entries = entries_of(a);
+        const value out = pending_promise(c);
+        const value results = c.make_array();
+        static_cast<array_object *>(results.as_heap())
+            ->items.assign(entries.size(), value::undefined());
+        if (entries.empty()) {
+            detail::settle(c, out, results, false);
+            return out;
+        }
+        const value state = value::object(combinator_state(c, out, results, entries.size()));
+        for (std::size_t i = 0; i < entries.size(); ++i) {
+            react(c, entries[i], allsettled_reaction(c, state, i, false),
+                  allsettled_reaction(c, state, i, true));
+        }
+        return out;
+    });
+    // `Promise.any` - 27.2.4.3. The first FULFILMENT wins; if every input
+    // rejects it rejects with an AggregateError carrying `errors` in order.
+    method(cx, promise_ctor, "any", 1, [](context & c, std::span<value> a) {
+        const std::vector<value> entries = entries_of(a);
+        const value out = pending_promise(c);
+        const value errors = c.make_array();
+        static_cast<array_object *>(errors.as_heap())
+            ->items.assign(entries.size(), value::undefined());
+        if (entries.empty()) {
+            // 27.2.4.3.1 step 5: an empty list is already "all rejected".
+            detail::settle(c, out, aggregate_error(c, errors), true);
+            return out;
+        }
+        const value state = value::object(combinator_state(c, out, errors, entries.size()));
+        for (std::size_t i = 0; i < entries.size(); ++i) {
+            react(c, entries[i], any_reaction(c, state, i, false), any_reaction(c, state, i, true));
+        }
+        return out;
+    });
+    // `Promise.race` - 27.2.4.5. An EMPTY list stays pending forever, which is
+    // the specified answer and not an oversight.
+    method(cx, promise_ctor, "race", 1, [](context & c, std::span<value> a) {
+        const std::vector<value> entries = entries_of(a);
+        const value out = pending_promise(c);
+        const value state = value::object(combinator_state(c, out, value::undefined(), 0));
+        for (const value & entry : entries) {
+            react(c, entry, race_reaction(c, state, false), race_reaction(c, state, true));
+        }
+        return out;
+    });
+    // `Promise.withResolvers` - 27.2.4.8, and the reason this file was opened:
+    // WPT's `url-import-referrer-policy.html` fails on exactly this name. It is
+    // `new Promise(executor)` turned inside out - the same promise and the same
+    // two functions, handed back as an object instead of to a callback, so a
+    // page does not have to smuggle them out of the executor's scope.
+    method(cx, promise_ctor, "withResolvers", 0, [](context & c, std::span<value>) {
+        const value promise = pending_promise(c);
+        // RETAINED, not merely captured. These two hold the only reference to
+        // the promise that outlives this call - a page keeps `resolve` - and a
+        // C++ lambda capture is not a root. See `new Promise` below, where the
+        // same omission cost an async function that could suspend exactly once.
+        auto * resolve_fn =
+            c.allocate<native_object>("resolve", [promise](context & inner, std::span<value> args) {
+                detail::settle(inner, promise, args.empty() ? value::undefined() : args[0], false);
+                return value::undefined();
+            });
+        auto * reject_fn =
+            c.allocate<native_object>("reject", [promise](context & inner, std::span<value> args) {
+                detail::settle(inner, promise, args.empty() ? value::undefined() : args[0], true);
+                return value::undefined();
+            });
+        resolve_fn->retained.push_back(promise);
+        reject_fn->retained.push_back(promise);
+        const value out = c.make_object();
+        auto * fields = static_cast<object_object *>(out.as_heap());
+        fields->set("promise", promise);
+        fields->set("resolve", value::object(resolve_fn));
+        fields->set("reject", value::object(reject_fn));
+        return out;
     });
     // `new Promise(executor)`. The executor runs IMMEDIATELY and is handed
     // resolve and reject; a promise it does not settle stays pending until
