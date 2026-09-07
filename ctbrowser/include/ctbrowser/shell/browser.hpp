@@ -570,6 +570,13 @@ private:
     // no socket here. That is enough for a page that ships its own stylesheet
     // beside it, which is what every fixture and every real local page is.
     void load_author_styles();
+    // The `<style>` and `<link>` text of the document as it is NOW, concatenated
+    // in document order. One sheet rather than one per element, for the source-
+    // order reason load_author_styles' comment gives.
+    [[nodiscard]] std::string collect_author_styles();
+    // ...and rebuild the author origin from it if it has changed. See the
+    // definition for why it does not go through the CSSOM.
+    void refresh_author_styles();
 
     // Push the window size and the user's preferences into the style engine, and say
     // whether any media query's truth moved. A resize calls it and only re-resolves the
@@ -1779,6 +1786,9 @@ private:
     node_id pressed_;
     dirty dirty_ = dirty::everything;
     bool author_sheet_loaded_ = false;
+    // What the author sheet was built from, so a restyle can tell whether the
+    // page has changed its stylesheets since.
+    std::string author_css_;
     std::uint64_t frames_ = 0;
 };
 

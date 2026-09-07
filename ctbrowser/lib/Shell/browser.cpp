@@ -743,6 +743,39 @@ namespace {
 
 void browser::load_author_styles() {
     if (author_sheet_loaded_) { return; }
+    author_css_ = collect_author_styles();
+    if (!author_css_.empty()) { styles_->add_sheet(author_css_, ctbrowser::style::author_origin); }
+    author_sheet_loaded_ = true;
+}
+
+// AUTHOR STYLES CAN CHANGE AFTER THE PAGE HAS LOADED, and until this they could
+// not: `load_author_styles` latched, so a `<style>` a script appended, a
+// `<style>` whose text it rewrote and a `<link>` it inserted all did nothing at
+// all. That is not a small gap - injecting a stylesheet and then reading
+// `getComputedStyle` is how a great many tests and no few libraries work.
+//
+// Re-collected rather than diffed, and only when the cascade is being re-run
+// anyway: a restyle already walks the whole document and re-resolves every
+// element, so one more walk to rebuild the text is proportionate. The rules are
+// replaced only when the TEXT differs, so the ordinary case - a script that
+// changed a class - pays the walk and nothing else.
+//
+// It goes through the DOM's own text and NOT through the CSSOM's serialisation,
+// deliberately. `dom_bindings::author_style_text()` would also carry a page's
+// `insertRule` edits, and it is a canonical re-serialisation: a rule this
+// front end cannot represent comes back changed, and `p::before` comes back as
+// `*`, which would apply a rule to every element on the page. Making an
+// `insertRule` reach the cascade needs that serialisation to be lossless first.
+void browser::refresh_author_styles() {
+    if (!author_sheet_loaded_) { return; }
+    std::string css = collect_author_styles();
+    if (css == author_css_) { return; }
+    author_css_ = std::move(css);
+    styles_->clear_origin(ctbrowser::style::author_origin);
+    if (!author_css_.empty()) { styles_->add_sheet(author_css_, ctbrowser::style::author_origin); }
+}
+
+std::string browser::collect_author_styles() {
     const auto txn = doc_->read();
     const atom style_tag = atoms_.intern_lower("style");
     const atom link_tag = atoms_.intern_lower("link");
@@ -787,8 +820,7 @@ void browser::load_author_styles() {
         for (const node_id child : txn.children(at)) { self(self, child); }
     };
     walk(walk, txn.root());
-    if (!css.empty()) { styles_->add_sheet(css, ctbrowser::style::author_origin); }
-    author_sheet_loaded_ = true;
+    return css;
 }
 
 std::string browser::extract_title() {
@@ -812,6 +844,7 @@ std::string browser::extract_title() {
 }
 
 void browser::resolve_styles() {
+    refresh_author_styles();
     const auto txn = doc_->read();
     resolved_ = styles_->resolve_all(txn);
 }

@@ -27,6 +27,19 @@ std::uint32_t engine::state_of(node_id id) const {
     return it == states_.end() ? 0u : it->second;
 }
 
+void engine::clear_origin(std::uint8_t origin) {
+    const auto drop = [origin](std::vector<rule> & rules) {
+        std::erase_if(rules, [origin](const rule & r) { return r.origin == origin; });
+    };
+    for (auto & [key, rules] : index_.by_id) { drop(rules); }
+    for (auto & [key, rules] : index_.by_class) { drop(rules); }
+    for (auto & [key, rules] : index_.by_tag) { drop(rules); }
+    drop(index_.universal);
+    // The @font-face list is not indexed by origin and is not cleared: a face is
+    // a resource the browser has already been asked to load, and unloading one
+    // because a rule was edited is a different question from unsaying the rule.
+}
+
 void engine::add_sheet(std::string_view css, std::uint8_t origin) {
     const css::stylesheet sheet = css::parse_stylesheet(css, *atoms_);
     for (const css::font_face & face : sheet.font_faces) {

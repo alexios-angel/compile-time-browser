@@ -154,6 +154,20 @@ public:
     // origin 0 = user agent, 1 = author. Author wins ties, per the cascade.
     void add_sheet(std::string_view css, std::uint8_t origin = 1);
 
+    // DROP EVERY RULE OF ONE ORIGIN, so the author's half can be rebuilt without
+    // rebuilding the engine and re-parsing the user-agent sheet beside it.
+    //
+    // A page can change what its author styles ARE - it can append a `<style>`,
+    // rewrite one's text, or reach the CSSOM - and `add_sheet` only ever appends,
+    // so before this the only way to unsay a rule was to throw the whole engine
+    // away. It filters the rule index, which is what matching consults; the
+    // compiled selectors and declarations those rules pointed at STAY in their
+    // vectors and are simply unreachable, because every other rule's indices
+    // point into the same two and renumbering them would be the expensive half of
+    // a rebuild. A page that edits its stylesheet in a loop therefore grows, and
+    // that is the trade recorded rather than hidden.
+    void clear_origin(std::uint8_t origin);
+
     // WHAT THE MEDIA QUERIES ARE ASKED ABOUT. It lives on the engine rather than in
     // the shell because a test needs to be able to pin the viewport and
     // `prefers-reduced-motion` without a browser, and because the cascade is the thing

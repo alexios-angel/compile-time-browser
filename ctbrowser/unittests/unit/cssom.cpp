@@ -286,6 +286,37 @@ void test_the_text_the_cascade_would_get() {
     CHECK_EQ(off.bindings().author_style_text(), std::string{});
 }
 
+// A `<style>` A SCRIPT APPENDS ACTUALLY APPLIES. `browser::load_author_styles`
+// latched, so until `refresh_author_styles` this did nothing at all - injecting
+// a stylesheet and then reading `getComputedStyle` is how a great many tests
+// and no few libraries work, and the page simply kept the styles it loaded with.
+void test_an_injected_style_element_restyles() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body><p id=t>x</p><script>
+        const before = getComputedStyle(document.getElementById('t')).color;
+        const s = document.createElement('style');
+        s.textContent = '#t { color: rgb(1, 2, 3) }';
+        document.body.appendChild(s);
+        const after = getComputedStyle(document.getElementById('t')).color;
+        console.log('color=' + before + '|' + after);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "color="), std::string{"color=rgb(0, 0, 0)|rgb(1, 2, 3)"});
+
+    // ...and REMOVING it puts the page back, which is the half a one-way
+    // "append to the sheet" hook would have got wrong.
+    browser undo{browser_options{400, 200}};
+    undo.load_html(R"(<html><head><style id=s>#t { color: rgb(1, 2, 3) }</style></head>
+    <body><p id=t>x</p><script>
+        const el = document.getElementById('t');
+        const was = getComputedStyle(el).color;
+        document.getElementById('s').remove();
+        console.log('gone=' + was + '|' + getComputedStyle(el).color);
+    </script></body></html>)");
+    CHECK(undo.script_error().empty());
+    CHECK_EQ(logged(undo, "gone="), std::string{"gone=rgb(1, 2, 3)|rgb(0, 0, 0)"});
+}
+
 } // namespace
 
 int main() {
@@ -295,5 +326,6 @@ int main() {
     test_a_constructed_sheet();
     test_the_sheet_of_an_element();
     test_the_text_the_cascade_would_get();
+    test_an_injected_style_element_restyles();
     REPORT("cssom");
 }
