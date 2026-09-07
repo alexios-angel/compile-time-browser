@@ -746,6 +746,51 @@ void test_interpolate_size_is_a_property() {
     CHECK(!supports_declaration("interpolate-size", "auto"));
 }
 
+// `<position>`, CSS Values 5 - the one multi-component value this table models,
+// and the only one whose canonical form REORDERS what the author wrote.
+void test_the_position_grammar() {
+    // ONE COMPONENT names one axis and the other is `center`, which is why a
+    // per-token matcher cannot produce this: `top` is `center top` and `10%` is
+    // `10% center`.
+    ok("object-position", "10%", "10% center");
+    ok("object-position", "left", "left center");
+    ok("object-position", "top", "center top");
+    ok("object-position", "center", "center center");
+    ok("object-position", "x-start", "x-start center"); // level 5's logical keywords
+    ok("object-position", "y-start", "center y-start");
+    // TWO COMPONENTS are horizontal then vertical, and the `&&` branch lets two
+    // KEYWORDS arrive the other way round - but only keywords, so `bottom right`
+    // is a position and `10px right` is not.
+    ok("object-position", "30px center", "30px center");
+    ok("object-position", "40px top", "40px top");
+    ok("object-position", "bottom right", "right bottom");
+    ok("object-position", "center left", "left center");
+    ok("object-position", "top center", "center top");
+    ok("object-position", "10px y-start", "10px y-start");
+    bad("object-position", "left right"); // two horizontals
+    bad("object-position", "bottom 10%"); // a vertical keyword in the first slot
+    // FOUR COMPONENTS are two `<side> <offset>` pairs, one per axis, in either
+    // order - and `center` takes no offset, so it cannot appear in this form.
+    ok("object-position", "right 30% top 60px", "right 30% top 60px");
+    ok("object-position", "bottom 10% right 20%", "right 20% bottom 10%");
+    ok("object-position", "y-end 20% left 10px", "left 10px y-end 20%");
+    bad("object-position", "bottom 10% top 20%"); // both pairs vertical
+    // THE THREE-VALUE FORM IS GONE in level 5. `left 4px top` is still a valid
+    // `background-position` and is no longer a `<position>`, which is eight of
+    // `position/position-invalid.tentative`'s twenty-one assertions.
+    bad("object-position", "left 4px top");
+    bad("object-position", "center left 1px");
+    bad("object-position", "right 3% center");
+    bad("object-position", "bottom right 8%");
+    bad("object-position", "1px 2px 3px");
+    bad("object-position", "auto");
+    bad("object-position", "garbage left top");
+    bad("object-position", "left 10px top 10px garbage");
+    // ...and a math function anywhere in it keeps the author's bytes rather than
+    // being refused: this reader does not evaluate the components.
+    ok("object-position", "calc(50% - 1px) center", "calc(50% - 1px) center");
+}
+
 } // namespace
 
 int main() {
@@ -769,5 +814,6 @@ int main() {
     test_an_integer_property_rounds_its_math();
     test_the_random_item_argument_list();
     test_interpolate_size_is_a_property();
+    test_the_position_grammar();
     REPORT("css_values");
 }
