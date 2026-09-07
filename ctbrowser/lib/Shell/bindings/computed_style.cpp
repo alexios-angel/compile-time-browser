@@ -334,6 +334,42 @@ struct computed_cache {
     std::uint64_t stamp = 0;
 };
 
+// DOES `getComputedStyle`'s SECOND ARGUMENT NAME A PSEUDO-ELEMENT?
+//
+// CSSOM §5.1 asks the question in exactly this order, and the order is the
+// whole rule: an argument that is null, absent, empty, or does NOT begin with a
+// colon is IGNORED - `getComputedStyle(div, "before")` and
+// `getComputedStyle(div, "totallynotapseudo")` both answer about the element
+// itself, which is why the first assertion of getComputedStyle-pseudo,
+// -pseudo-checkmark and -pseudo-picker-icon is "the argument is ignored (due to
+// no colon)". Anything that DOES begin with a colon is a pseudo-element
+// request, and it gets one of two answers: the pseudo-element's style, or - when
+// it does not parse, or names a pseudo-element the engine has no styles for - an
+// EMPTY CSSStyleDeclaration.
+//
+// THIS ENGINE HAS NO PSEUDO-ELEMENT STYLING AT ALL. `style/selector.hpp` models
+// pseudo-CLASSES and nothing else, so `::before` matches no rule, generates no
+// box and has no style to report. That makes the second answer the right one for
+// every colon-prefixed argument, and it is a very different answer from the one
+// this used to give: ignoring the argument reported the ORIGINATING ELEMENT's
+// style as the pseudo-element's, so `getComputedStyle(div, "::before").width`
+// came back as the div's `100px` where every engine says `""`. CSSOM is explicit
+// that a pseudo-element that does not exist reports an empty declaration -
+// `length === 0`, every property the empty string - and that is what
+// getComputedStyle-pseudo's "Unknown pseudo-elements",
+// -pseudo-with-argument's seventeen "should not parse" cases and -pseudo-picker's
+// six "invalid pseudo-element" cases all assert.
+//
+// It costs one subtest to say it this bluntly: `::picker(select)` is a real
+// pseudo-element that Chrome resolves, and we answer empty for it too. That is
+// the honest report of an engine that does not implement it, and the moment a
+// pseudo-element grows a cascade this becomes a lookup rather than a `true`.
+[[nodiscard]] bool names_a_pseudo_element(context & c, value given) {
+    if (given.is_nullish()) { return false; }
+    const std::string text = c.to_string(given);
+    return !text.empty() && text.front() == ':';
+}
+
 } // namespace
 
 // EVERY PROPERTY OF ONE ELEMENT, AS (css name, value) PAIRS: the longhands the
@@ -1086,12 +1122,19 @@ void dom_bindings::install_computed_style(context & cx) {
     // own write. See the note there, and the one on `refresh` above: a LIVE read
     // needs the same flush and reaches it back through this same global.
     cx.define_native("getComputedStyle", [this](context & c, std::span<value> args) {
-        // A second argument names a pseudo-element. Accepted and IGNORED rather
-        // than rejected: ::before and ::after generate no boxes yet, and throwing
-        // here would make the dump script engine-specific, which is the one thing
-        // a parity harness must never be.
         const node_id id = args.empty() ? node_id{} : handle_of(args[0]);
         if (!id) { return c.make_object(); }
+        // A SECOND ARGUMENT NAMING A PSEUDO-ELEMENT gets an EMPTY declaration,
+        // for the reason `names_a_pseudo_element` sets out - and it is spelled
+        // as an empty node handle rather than as a flag, because
+        // `computed_style_entries` ALREADY answers nothing for an element that
+        // is not in the document. A pseudo-element this engine does not style is
+        // the same case, gets the same answer, and gets it through the same
+        // object: every property reads back the empty string, `length` is zero,
+        // and every write still throws NoModificationAllowedError.
+        if (args.size() > 1 && names_a_pseudo_element(c, args[1])) {
+            return computed_style_object(c, node_id{});
+        }
         return computed_style_object(c, id);
     });
 }

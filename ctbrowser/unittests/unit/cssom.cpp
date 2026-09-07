@@ -568,6 +568,59 @@ void test_an_injected_style_element_restyles() {
     CHECK_EQ(logged(undo, "gone="), std::string{"gone=rgb(1, 2, 3)|rgb(0, 0, 0)"});
 }
 
+// A PSEUDO-ELEMENT ARGUMENT IS NOT AN ARGUMENT TO IGNORE. `getComputedStyle`
+// took a second argument and threw it away, so `getComputedStyle(el,
+// '::before')` reported the ORIGINATING ELEMENT's style as the
+// pseudo-element's - `100px` where every engine says `""`. CSSOM says a
+// pseudo-element that does not exist reports an EMPTY declaration, and this
+// engine has no pseudo-element styling at all, so every colon-prefixed argument
+// is that case.
+//
+// THE THREE SHAPES, which are what css/cssom's getComputedStyle-pseudo,
+// -pseudo-with-argument, -pseudo-picker and -pseudo-checkmark divide their
+// assertions into: no colon is IGNORED, one colon and two colons are both
+// pseudo-element requests, and an empty declaration is still a
+// CSSStyleDeclaration - it answers the empty string rather than `undefined`,
+// and it still refuses to be written to.
+void test_a_pseudo_element_argument_is_not_the_element() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>#t { color: rgb(255, 0, 0); width: 100px }
+    </style></head><body><div id=t></div><script>
+        const el = document.getElementById('t');
+        const own = getComputedStyle(el);
+        // No colon: the argument is ignored and the ELEMENT answers.
+        const ignored = getComputedStyle(el, 'totallynotapseudo');
+        const before = getComputedStyle(el, '::before');
+        const legacy = getComputedStyle(el, ':checkmark');
+        // A trailing token makes it unparseable, which is the same answer.
+        const broken = getComputedStyle(el, '::before,::after');
+        console.log('own=' + own.color + '|' + (own.length > 0));
+        console.log('ignored=' + ignored.color + '|' + (ignored.length > 0));
+        console.log('before=' + before.length + '|' + before.color + '|' + before.width);
+        console.log('legacy=' + legacy.length + '|' + broken.length);
+        // ...and null, undefined and the empty string are not pseudo-elements.
+        console.log('absent=' + getComputedStyle(el, null).color + '|' +
+                    getComputedStyle(el, '').color + '|' +
+                    getComputedStyle(el, undefined).color);
+        let threw = '';
+        try { before.color = 'blue'; } catch (e) { threw = e.name; }
+        let refused = '';
+        try { before.setProperty('color', 'blue'); } catch (e) { refused = e.name; }
+        console.log('readonly=' + threw + '|' + refused);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "own="), std::string{"own=rgb(255, 0, 0)|true"});
+    CHECK_EQ(logged(page, "ignored="), std::string{"ignored=rgb(255, 0, 0)|true"});
+    // Empty - and empty means the EMPTY STRING for every property, not the
+    // `undefined` a missing accessor would give.
+    CHECK_EQ(logged(page, "before="), std::string{"before=0||"});
+    CHECK_EQ(logged(page, "legacy="), std::string{"legacy=0|0"});
+    CHECK_EQ(logged(page, "absent="),
+             std::string{"absent=rgb(255, 0, 0)|rgb(255, 0, 0)|rgb(255, 0, 0)"});
+    CHECK_EQ(logged(page, "readonly="),
+             std::string{"readonly=NoModificationAllowedError|NoModificationAllowedError"});
+}
+
 } // namespace
 
 int main() {
@@ -584,5 +637,6 @@ int main() {
     test_an_adopted_sheet_reaches_the_author_css();
     test_replace_refuses_a_regular_sheet();
     test_an_injected_style_element_restyles();
+    test_a_pseudo_element_argument_is_not_the_element();
     REPORT("cssom");
 }
