@@ -660,6 +660,45 @@ void test_the_automatic_minimum_size() {
     CHECK_EQ(logged(page, "given="), std::string{"given=5px"});
 }
 
+// A FONT FAMILY IS NOT A KEYWORD, and `getComputedStyle` folded it like one:
+// `Twisty Tie` came back `twisty tie` on every element of every page that names
+// a font. The case is the author's. So is the QUOTING, which CSSOM decides
+// rather than copies: a name that is a valid identifier sequence loses its
+// quotes, one that is not keeps them, and the quotes it keeps are double ones
+// whichever the author wrote. css/cssom/font-family-serialization-001 makes
+// five assertions about the computed value and these are them.
+void test_the_computed_font_family_keeps_its_case() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body>
+    <div id=a style="font-family: Twisty Tie"></div>
+    <div id=b style="font-family: 'Times New Roman'"></div>
+    <div id=c style="font-family: '34J'"></div>
+    <div id=d style='font-family: "serif"'></div>
+    <div id=e style='font-family: Twisty Tie, "34J", "serif", Veronica, sans-serif'></div>
+    <div id=f style="font-family: 'A  B'"></div>
+    <script>
+        const fam = (id) => getComputedStyle(document.getElementById(id)).fontFamily;
+        console.log('bare=' + fam('a'));
+        console.log('unquoted=' + fam('b'));
+        console.log('digits=' + fam('c'));
+        console.log('generic=' + fam('d'));
+        console.log('list=' + fam('e'));
+        console.log('spaces=' + fam('f'));
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "bare="), std::string{"bare=Twisty Tie"});
+    // A quoted name that IS an identifier sequence loses its quotes...
+    CHECK_EQ(logged(page, "unquoted="), std::string{"unquoted=Times New Roman"});
+    // ...and one that is not keeps them: `34J` starts with a digit, `serif`
+    // would become the generic family, and the double space in `A  B` would not
+    // survive being written as identifiers.
+    CHECK_EQ(logged(page, "digits="), std::string{"digits=\"34J\""});
+    CHECK_EQ(logged(page, "generic="), std::string{"generic=\"serif\""});
+    CHECK_EQ(logged(page, "spaces="), std::string{"spaces=\"A  B\""});
+    CHECK_EQ(logged(page, "list="),
+             std::string{"list=Twisty Tie, \"34J\", \"serif\", Veronica, sans-serif"});
+}
+
 } // namespace
 
 int main() {
@@ -678,5 +717,6 @@ int main() {
     test_an_injected_style_element_restyles();
     test_a_pseudo_element_argument_is_not_the_element();
     test_the_automatic_minimum_size();
+    test_the_computed_font_family_keeps_its_case();
     REPORT("cssom");
 }
