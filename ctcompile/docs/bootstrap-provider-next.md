@@ -107,22 +107,34 @@ entry's Map, and observes destruction after the last callable releases it.
 Both forms pass ASan/UBSan and leak checks. Uncalled/unsafe siblings, replaced
 fields, capture-stage mixtures, stale proofs and incomplete budgets refuse.
 
-## Next: primitive arguments to each published method
+## Completed: primitive arguments to each published method
 
 The retained `set(key) { state.set(key, 1); return state.size; }` specimen,
-called with `"x"`, measures **0/5 native** with Node/interpreter `trace=1`.
-`HostContract/Values.cpp::callableCall` still rejects explicit indirect-call
-arguments. `capturedMap` requires three implicit source arguments or four
-prepared arguments including the Map environment; its sibling census enforces
-the same shape. `capturedMapBody` does not establish primitive formal arguments.
-Discover every current method call before checking the parameterized family
-bodies, then independently classify each actual and retain its SSA operand.
-Store per-call formal/actual evidence and per-method primitive parameter tags;
-body proofs must not recursively authorize themselves through property calls.
-Preserve distinct methods and one shared environment. Prepared setter
-arguments become `(this, new.target, callee, MapEnv, key)`; getter arguments stay
-unchanged. Existing capture lifting already shifts explicit arguments after the
-environment. A startup value does not establish a future-call ABI contract.
+called with `"x"`, advances **0/5 -> 5/5 native** with Node/interpreter `trace=1`.
+`HostContract/Values.cpp` discovers every current method call before checking
+the parameterized family bodies, independently classifies each actual and
+retains its live SSA operand. Per-call formal/actual evidence and per-method
+primitive tags seed the body proof without recursive property-call authority.
+Prepared setter arguments are `(this, new.target, callee, MapEnv, key)`;
+the getter remains zero-argument and both capture one Map owner. Existing
+capture lifting and typed owning callables need no replacement carrier.
+
+The [Map gate](native-owned-global-maps.md) now passes **25 complete native
+programs**, including six new string/number/boolean, repeated, alias and
+two-parameter variants. The fifth sanitizer lifetime case keeps typed string
+setters/getters after root/table release, mutates caller buffers and exercises
+1024 changing keys against independent saved/fresh Maps. Ten argument refusals
+preserve all actual operands; source/prepared proof units check both formal
+positions, global initialization, environment offsets and every incomplete
+budget. These current-call proofs do not establish a future-call ABI contract.
+
+## Next: independent call-result actuals
+
+`host.slot.set(host.slot.get())` is the retained `parameter_call_result`
+refusal. It preserves the same five source functions and needs a live result
+and effects proof for the producing getter before classifying the setter's
+actual. Do not recursively authorize the family through its own property-call
+query. All calls, publication and mutations must remain runtime operations.
 Nullable `Map.get` results used as keys remain a separate presence/carrier
 boundary. Exact Bootstrap Data remains **0/7** per mode; complete native
 initialization, realm owners and future-call contracts remain unfinished.
@@ -135,9 +147,13 @@ also follows homogeneous primitive payloads through defined EmitC helpers.
 Explicit `ctjs.invoke` regions now separate the normal result from an implicit
 thrown payload and pre-call state; bounded type flow now covers both payloads
 and the invoked helper's normal returns. Ordinary call inference remains
-conservative on throw exits. Source recovery still needs to construct those
-regions, and admission and target emission must then consume the
-regions. Throwing callees, general finally, reentry and object payloads require
+conservative on throw exits. An internal `CheckedInvocations` recovery mode now
+constructs those regions and connects the two completions to the enclosing try
+through a value-only tuple, retaining pre-call state on unwind. The default
+mode and all native throwing-call refusals remain. Admission still needs live
+effect proofs for the other status edges and the complete call component;
+target emission must consume the accepted invokes. Throwing callees, general
+finally, reentry and object payloads require
 further work. The [source invocation gate](native-source-invocations.md) now
 retains four source programs, sixteen functions and eleven observations for
 assignment snapshots, prior normal calls, argument mutation and receiver/key/
