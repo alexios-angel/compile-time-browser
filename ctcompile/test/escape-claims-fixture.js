@@ -61,6 +61,43 @@ storedByIndex();
 function storedGlobal() { G = { g: 1 }; }
 storedGlobal();
 
+// R3 composition: the external alternative must not erase a fresh site's
+// escape at a phi or a loop header. Each local site is made twice, confined
+// once and retained once; the external alternative is the already-global EXT.
+function globalAliasJoin(selectLocal) {
+    var local = { value: 11 };
+    var alias = selectLocal ? local : EXT;
+    G = alias;
+}
+globalAliasJoin(true); globalAliasJoin(false);
+function globalAliasLoop(replaceWithExternal) {
+    var local = { value: 12 }, alias = local;
+    for (var i = 0; i < 1; i++) {
+        if (replaceWithExternal) { alias = EXT; }
+    }
+    G = alias;
+}
+globalAliasLoop(true); globalAliasLoop(false);
+
+// The inner site escapes by Stored and the outer by StoredGlobal. Neither
+// object is returned or handed to a callee: globals is the only retaining root.
+function globalRetainedContainer() {
+    var child = { value: 13 };
+    var outer = { child: child };
+    G = outer;
+}
+globalRetainedContainer();
+
+// Replacing the original global cannot revoke publication: another alias
+// loaded from that global still keeps the object alive through an external base.
+function globalReplacedPublication() {
+    var local = { value: 14 };
+    G = local;
+    EXT.retained = G;
+    G = null;
+}
+globalReplacedPublication();
+
 // --- CAPTURED by a closure that outlives the frame ------------------------
 function captured() { var o = { c: 1 }; return function () { return o.c; }; }
 H.push(captured());

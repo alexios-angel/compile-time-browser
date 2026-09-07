@@ -81,6 +81,9 @@ struct row {
     bool capturesAllArguments = false;
     const char * wholeFunction = nullptr;
     bool alias = false;
+    // Inspect the first operand's alias set, including a block argument that
+    // has no defining operation to mark with `check`.
+    bool aliasOperand = false;
     // false: the solver runs WITHOUT EscapeAnalysis, so every lattice is
     // missing and the post-pass has to account for a live site it never saw.
     bool withAnalysis = true;
@@ -223,12 +226,15 @@ void check(mlir::MLIRContext & context, const row & r) {
     const EscapeVerdicts verdicts = computeVerdicts(solver, function);
 
     std::string got;
-    if (r.alias) {
+    if (r.alias || r.aliasOperand) {
         // The LAST result: ctjs.catch_land's first is an i32 pad id.
-        const AliasLattice * lattice =
-            marked->getNumResults() != 0
-                ? solver.lookupState<AliasLattice>(marked->getResult(marked->getNumResults() - 1))
-                : nullptr;
+        mlir::Value value;
+        if (r.aliasOperand && marked->getNumOperands() != 0) {
+            value = marked->getOperand(0);
+        } else if (!r.aliasOperand && marked->getNumResults() != 0) {
+            value = marked->getResult(marked->getNumResults() - 1);
+        }
+        const AliasLattice * lattice = value ? solver.lookupState<AliasLattice>(value) : nullptr;
         if (lattice == nullptr) {
             got = "<no lattice>";
         } else {
@@ -385,6 +391,33 @@ int main() {
          .body = "  %g = ctjs.load_global \"x\" {check}\n" + R,
          .expected = "{external}",
          .alias = true},
+        {.what = "reloading a just-published local through a global stays external",
+         .body = "  %o = ctjs.create_object\n"
+                 "  ctjs.store_global \"g\", %o\n"
+                 "  %g = ctjs.load_global \"g\" {check}\n" +
+                 R,
+         .expected = "{external}",
+         .alias = true},
+        {.what = "overwriting a global does not revoke the earlier publication",
+         .body = S +
+                 "  ctjs.store_global \"g\", %s\n"
+                 "  %alias = ctjs.load_global \"g\"\n"
+                 "  ctjs.store_global \"retained\", %alias\n"
+                 "  ctjs.store_global \"g\", %p\n" +
+                 R,
+         .expected = "escapes:stored_global"},
+        {.what = "a child published only through its container remains stored",
+         .body = S +
+                 "  %outer = ctjs.create_array [%s]\n"
+                 "  ctjs.store_global \"g\", %outer\n" +
+                 R,
+         .expected = "escapes:stored"},
+        {.what = "the enclosing container keeps its distinct global-publication reason",
+         .body = "  %child = ctjs.create_object\n"
+                 "  %outer = ctjs.create_array [%child] {check}\n"
+                 "  ctjs.store_global \"g\", %outer\n" +
+                 R,
+         .expected = "escapes:stored_global"},
         {.what = "set_property: $object NEITHER, the star proof (o.cpp:397-419 walks null)",
          .body = S + "  ctjs.set_property %s[%p], %q\n" + R,
          .expected = "confined",
@@ -712,6 +745,39 @@ int main() {
                  "  cf.cond_br %t, ^join(%s : !ctjs.value), ^join(%o : !ctjs.value)\n"
                  "^join(%x: !ctjs.value):\n"
                  "  ctjs.store_global \"g\", %x\n" +
+                 R,
+         .expected = "escapes:stored_global"},
+        // A global owner is separate from confinement. Joining a local site
+        // with an external value must retain BOTH facts: publication still
+        // sinks the site, and the joined value cannot become local-only.
+        {.what = "an external alternative does not erase a local site's global escape",
+         .body = S +
+                 "  %g = ctjs.load_global \"g\"\n"
+                 "  %t = ctjs.truthy %p\n"
+                 "  cf.cond_br %t, ^join(%s : !ctjs.value), ^join(%g : !ctjs.value)\n"
+                 "^join(%x: !ctjs.value):\n"
+                 "  ctjs.store_global \"published\", %x\n" +
+                 R,
+         .expected = "escapes:stored_global"},
+        {.what = "a fresh/global join retains both the local site and external identity",
+         .body = "  %s = ctjs.create_object\n"
+                 "  %g = ctjs.load_global \"g\"\n"
+                 "  %t = ctjs.truthy %p\n"
+                 "  cf.cond_br %t, ^join(%s : !ctjs.value), ^join(%g : !ctjs.value)\n"
+                 "^join(%x: !ctjs.value):\n"
+                 "  %joined = ctjs.truthy %x {check}\n" +
+                 R,
+         .expected = "{ctjs.create_object, external}",
+         .aliasOperand = true},
+        {.what = "an external back edge cannot erase a loop-carried local's global escape",
+         .body = S +
+                 "  %g = ctjs.load_global \"g\"\n"
+                 "  cf.br ^loop(%s : !ctjs.value)\n"
+                 "^loop(%x: !ctjs.value):\n"
+                 "  %t = ctjs.truthy %p\n"
+                 "  cf.cond_br %t, ^loop(%g : !ctjs.value), ^exit\n"
+                 "^exit:\n"
+                 "  ctjs.store_global \"published\", %x\n" +
                  R,
          .expected = "escapes:stored_global"},
 

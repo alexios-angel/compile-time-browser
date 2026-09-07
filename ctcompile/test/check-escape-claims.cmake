@@ -117,6 +117,44 @@ if(STRICT)
   if(NOT _partial EQUAL 0 OR NOT _pending EQUAL 0)
     message(FATAL_ERROR "${NAME}: partial ${_partial}, pending ${_pending} - the fixture must adjudicate every confined claim")
   endif()
+
+  # R3's composed publication cases need both halves of the evidence, not just
+  # the absence of a soundness violation. Assert the actual lifetime counts and
+  # globals route alongside the independent claim, joining by source coordinate.
+  # The two conditional sites deliberately mix retained and confined instances.
+  file(STRINGS "${_rec}" _recording_lines)
+  file(READ "${_claims}" _claim_text)
+  set(_publication_rows "")
+  foreach(_line IN LISTS _recording_lines)
+    if(_line MATCHES "^program ([0-9a-f]+) ")
+      set(_program_hash "${CMAKE_MATCH_1}")
+    elseif(_line MATCHES "^fn ([0-9]+) .* name ([^ ]+)$")
+      set(_function_index "${CMAKE_MATCH_1}")
+      set(_function_name "${CMAKE_MATCH_2}")
+    elseif(_function_name MATCHES "^global(AliasJoin|AliasLoop|RetainedContainer|ReplacedPublication)$" AND _line MATCHES "^site ")
+      if(NOT _line MATCHES "^site ([0-9]+) kind obj made ([0-9]+) confined ([0-9]+) escaped ([0-9]+) unresolved ([0-9]+) unchecked ([0-9]+) routes ([^ ]+)$")
+        message(FATAL_ERROR "${_function_name}: unexpected publication observation: ${_line}")
+      endif()
+      set(_pc "${CMAKE_MATCH_1}")
+      set(_row "${_function_name} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3} ${CMAKE_MATCH_4} ${CMAKE_MATCH_5} ${CMAKE_MATCH_6} ${CMAKE_MATCH_7}")
+      if(NOT _claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_pc} obj ([^\n]+)")
+        message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
+      endif()
+      list(APPEND _publication_rows "${_row} ${CMAKE_MATCH_1}")
+    endif()
+  endforeach()
+  set(_expected_publication_rows
+      "globalAliasJoin 2 1 1 0 0 globals:1 escapes:stored_global"
+      "globalAliasLoop 2 1 1 0 0 globals:1 escapes:stored_global"
+      "globalRetainedContainer 1 0 1 0 0 globals:1 escapes:stored"
+      "globalRetainedContainer 1 0 1 0 0 globals:1 escapes:stored_global"
+      "globalReplacedPublication 1 0 1 0 0 globals:1 escapes:stored_global")
+  list(SORT _publication_rows)
+  list(SORT _expected_publication_rows)
+  if(NOT _publication_rows STREQUAL _expected_publication_rows)
+    message(FATAL_ERROR "global publication evidence mismatch:\nexpected: ${_expected_publication_rows}\nobserved: ${_publication_rows}")
+  endif()
+  message(STATUS "global publication: five sites, seven objects, five retained through globals; live claims agree")
 endif()
 if(NOT _pyrc EQUAL 0)
   message(FATAL_ERROR "${NAME}: the checker exited ${_pyrc}")
