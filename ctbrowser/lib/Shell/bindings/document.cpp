@@ -66,6 +66,132 @@ struct qualified_name {
     return qualified_name{name.substr(0, colon), name.substr(colon + 1), true};
 }
 
+// WHAT A NAME MAY CONTAIN, AND WHY IT IS NOT THE XML `Name` PRODUCTION.
+//
+// The obvious reading of "createElement throws unless the name matches Name"
+// is wrong in both directions, and the DOM's own conformance tests are what
+// say so. What the platform enforces is a SERIALISATION rule: a name has to
+// survive being written into markup and read back, so the only characters it
+// bans are the ones that would end a tag name in the HTML tokenizer, plus a
+// first character that would stop the name being a tag name at all.
+//
+// Measured against the tables rather than inferred from prose, because the
+// tables are what an implementation is scored on:
+//
+//   dom/nodes/Document-createElement.html       "f}oo", "f<oo", a lone
+//       U+0300 combining accent and "\uFFFFfoo" are VALID names - none of
+//       which matches `Name`. "1foo", "-foo", ".foo", "}foo", "fo o" and
+//       "foo>" are not.
+//   dom/nodes/productions.js                    an ATTRIBUTE may be called
+//       "0", "~", "'" or "\\": the first-character rule is the ELEMENT one
+//       only, which is why the two have separate spellings below.
+//   dom/nodes/DOMImplementation-createDocumentType.html   of 81 doctype names,
+//       exactly two throw - the one with a `>` and the one with a space. Not
+//       even the first-character rule applies there, and "" is legal.
+//
+// BYTE-WISE ON PURPOSE, and it is exact rather than an approximation: every
+// character these rules name is ASCII, and no byte of a multi-byte UTF-8
+// sequence is ASCII. So "the first code point is not an ASCII code point" is
+// precisely "the first byte is >= 0x80", and scanning the rest of the string
+// byte by byte can never see the interior of a character. No decoder, and no
+// dependence on how the VM happens to store a string.
+constexpr std::string_view element_name_breaks = "\t\n\f\r />";
+// A doctype name is written between `<!DOCTYPE` and `>`, where a `/` is
+// ordinary - hence the shorter set, and hence `edi:/` being a legal doctype
+// name and an illegal element local name.
+constexpr std::string_view doctype_name_breaks = "\t\n\f\r >";
+
+[[nodiscard]] bool is_element_name_start(unsigned char c) {
+    return c >= 0x80 || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == ':' || c == '_';
+}
+
+// A "valid element local name": at least one code point, an element name start
+// first, and nothing after it that would end a tag name.
+[[nodiscard]] bool is_valid_element_local_name(std::string_view name) {
+    if (name.empty() || !is_element_name_start(static_cast<unsigned char>(name.front()))) {
+        return false;
+    }
+    return name.find_first_of(element_name_breaks) == std::string_view::npos;
+}
+
+[[nodiscard]] bool is_valid_doctype_name(std::string_view name) {
+    return name.find_first_of(doctype_name_breaks) == std::string_view::npos;
+}
+
+// One code point out of UTF-8, and the byte count it took. A truncated or
+// malformed sequence yields the lead byte itself, which is not a code point
+// any name production admits - so bad input is REJECTED rather than
+// approximated, which is the answer a name check wants.
+[[nodiscard]] char32_t next_code_point(std::string_view text, std::size_t & at) {
+    const auto lead = static_cast<unsigned char>(text[at]);
+    std::size_t extra = 0;
+    char32_t built = 0;
+    if (lead < 0x80u) {
+        ++at;
+        return static_cast<char32_t>(lead);
+    }
+    if ((lead & 0xE0u) == 0xC0u) {
+        extra = 1;
+        built = static_cast<char32_t>(lead & 0x1Fu);
+    } else if ((lead & 0xF0u) == 0xE0u) {
+        extra = 2;
+        built = static_cast<char32_t>(lead & 0x0Fu);
+    } else if ((lead & 0xF8u) == 0xF0u) {
+        extra = 3;
+        built = static_cast<char32_t>(lead & 0x07u);
+    } else {
+        ++at;
+        return static_cast<char32_t>(lead);
+    }
+    if (at + extra >= text.size()) {
+        ++at;
+        return static_cast<char32_t>(lead);
+    }
+    for (std::size_t i = 1; i <= extra; ++i) {
+        const auto byte = static_cast<unsigned char>(text[at + i]);
+        if ((byte & 0xC0u) != 0x80u) {
+            ++at;
+            return static_cast<char32_t>(lead);
+        }
+        built = static_cast<char32_t>((built << 6) | (byte & 0x3Fu));
+    }
+    at += extra + 1;
+    return built;
+}
+
+// THE XML `Name` PRODUCTION, in full, and the one place the engine needs it.
+//
+// `createProcessingInstruction` is the outlier: unlike createElement it really
+// is measured against XML's Name, and the test proves it character by
+// character - U+00B7 MIDDLE DOT is legal in the middle of a target and not at
+// the start, and U+00D7 MULTIPLICATION SIGN is legal nowhere, which no
+// serialisation rule would ever distinguish. A processing instruction is XML
+// syntax that HTML merely tolerates, so it is XML's rule that applies.
+[[nodiscard]] bool is_xml_name_start(char32_t c) {
+    return c == U':' || c == U'_' || (c >= U'A' && c <= U'Z') || (c >= U'a' && c <= U'z') ||
+           (c >= 0xC0u && c <= 0xD6u) || (c >= 0xD8u && c <= 0xF6u) ||
+           (c >= 0xF8u && c <= 0x2FFu) || (c >= 0x370u && c <= 0x37Du) ||
+           (c >= 0x37Fu && c <= 0x1FFFu) || (c >= 0x200Cu && c <= 0x200Du) ||
+           (c >= 0x2070u && c <= 0x218Fu) || (c >= 0x2C00u && c <= 0x2FEFu) ||
+           (c >= 0x3001u && c <= 0xD7FFu) || (c >= 0xF900u && c <= 0xFDCFu) ||
+           (c >= 0xFDF0u && c <= 0xFFFDu) || (c >= 0x10000u && c <= 0xEFFFFu);
+}
+
+[[nodiscard]] bool is_xml_name_char(char32_t c) {
+    return is_xml_name_start(c) || c == U'-' || c == U'.' || (c >= U'0' && c <= U'9') ||
+           c == 0xB7u || (c >= 0x300u && c <= 0x36Fu) || (c >= 0x203Fu && c <= 0x2040u);
+}
+
+[[nodiscard]] bool is_xml_name(std::string_view text) {
+    if (text.empty()) { return false; }
+    std::size_t at = 0;
+    if (!is_xml_name_start(next_code_point(text, at))) { return false; }
+    while (at < text.size()) {
+        if (!is_xml_name_char(next_code_point(text, at))) { return false; }
+    }
+    return true;
+}
+
 } // namespace
 
 // Every part of the URL, derived from href. Called wherever href is set, so
@@ -92,6 +218,16 @@ void dom_bindings::observe_location(std::string href, std::string hash) {
         loc->set("href", cx_->string(location_href_));
         loc->set("hash", cx_->string(location_hash_));
         write_location_parts(*cx_, *loc);
+    }
+    // AND THE DOCUMENT'S THREE NAMES FOR THE SAME STRING, for the same reason:
+    // `document.URL` set once at install is a snapshot, and a page that follows
+    // a link and then reads it gets the address it started at.
+    if (cx_ != nullptr) {
+        if (auto * doc = document_object()) {
+            for (const char * name : {"URL", "documentURI", "baseURI"}) {
+                doc->set(name, cx_->string(location_href_));
+            }
+        }
     }
 }
 
@@ -254,9 +390,21 @@ void dom_bindings::install_document(context & cx) {
         return wrap(c, find_by_id(arg_string(c, args, 0)));
     });
     method("createElement", [this](context & c, std::span<value> args) {
+        // A DOMString, so `createElement(null)` asks for an element called
+        // "null" and `createElement(undefined)` for one called "undefined" -
+        // both legal names, and the suite checks both.
+        const std::string name = arg_string(c, args, 0);
+        // AND IT THROWS. An element whose name cannot be written back into
+        // markup is not an element, and every browser reports that as an
+        // InvalidCharacterError rather than by inventing a name.
+        if (!is_valid_element_local_name(name)) {
+            throw_dom_exception(c, "InvalidCharacterError",
+                                "createElement: '" + name + "' is not a valid element name");
+            return value::undefined();
+        }
         // NOT a mutation: a created element is detached and changes nothing
         // on screen until it is appended.
-        return wrap(c, doc_->create_element(atoms_->intern_lower(arg_string(c, args, 0))));
+        return wrap(c, doc_->create_element(atoms_->intern_lower(name)));
     });
     method("createTextNode", [this](context & c, std::span<value> args) {
         return wrap(c, doc_->create_text(arg_string(c, args, 0)));
@@ -287,17 +435,27 @@ void dom_bindings::install_document(context & cx) {
         const std::string qualified =
             args.size() > 1 ? c.to_string(args[1]) : std::string{"undefined"};
         const qualified_name split = split_qualified(qualified);
-        // An empty name, an empty prefix (":x") and an empty local part ("x:")
-        // are the three shapes that cannot name anything.
-        if (qualified.empty() ||
-            (split.has_colon && (split.prefix.empty() || split.local.empty()))) {
-            c.throw_error("InvalidCharacterError",
-                          "createElementNS: '" + qualified + "' is not a qualified name");
+        // VALIDATE AND EXTRACT, in the order the DOM puts the two halves: the
+        // shape of the name is decided BEFORE the namespace is looked at, so
+        // `createElementNS(XMLNS_NS, "1foo")` is an InvalidCharacterError and
+        // not the NamespaceError its namespace would otherwise earn. Both
+        // orderings throw; only one of them throws what the suite asserts.
+        //
+        // A prefix is checked for being writable and non-empty and NOTHING
+        // ELSE - `createElementNS(ns, "0:a")` is legal and `"a:0"` is not,
+        // because it is the LOCAL name that has to be a name and the prefix is
+        // only ever a label in front of it.
+        const bool prefixed = split.has_colon;
+        const bool prefix_writable =
+            !split.prefix.empty() &&
+            split.prefix.find_first_of(element_name_breaks) == std::string_view::npos;
+        if ((prefixed && !prefix_writable) || !is_valid_element_local_name(split.local)) {
+            throw_dom_exception(c, "InvalidCharacterError",
+                                "createElementNS: '" + qualified + "' is not a qualified name");
             return value::undefined();
         }
-        const bool prefixed = split.has_colon;
-        const auto fail = [&c](const std::string & why) {
-            c.throw_error("NamespaceError", "createElementNS: " + why);
+        const auto fail = [this, &c](const std::string & why) {
+            throw_dom_exception(c, "NamespaceError", "createElementNS: " + why);
             return value::undefined();
         };
         if (prefixed && ns.empty()) { return fail("a prefix needs a namespace"); }
@@ -347,6 +505,49 @@ void dom_bindings::install_document(context & cx) {
     });
     method("createDocumentFragment",
            [this](context & c, std::span<value>) { return wrap(c, doc_->create_fragment()); });
+    // `createCDATASection` ALWAYS THROWS HERE, and that is the whole method.
+    //
+    // A CDATA section is XML syntax. The DOM says an HTML document must report
+    // a NotSupportedError for it, so this is not a gap being papered over - a
+    // method that threw the right exception and one that was absent are
+    // different answers, and only one of them is the specified one. There is no
+    // XML document in this engine for the other branch to exist for.
+    method("createCDATASection", [this](context & c, std::span<value>) {
+        throw_dom_exception(c, "NotSupportedError", "createCDATASection: this is an HTML document");
+        return value::undefined();
+    });
+    // `createProcessingInstruction(target, data)`.
+    //
+    // THE TARGET IS MEASURED AGAINST XML'S `Name`, which nothing else in this
+    // file is - see is_xml_name for why the two rules genuinely differ and how
+    // the suite proves it. `data` may not contain "?>", because that is what
+    // ends a processing instruction and a PI that cannot be serialised is not
+    // one.
+    //
+    // WHAT COMES BACK IS NOT A NODE, and it is worth being plain about that:
+    // there is no `processing_instruction` in `node_kind`, so this is an object
+    // carrying what a page reads off a PI and nothing more. `pi instanceof
+    // ProcessingInstruction` is false and the suite says so. What the method
+    // buys as it stands is the eight assertions about WHEN it throws, which are
+    // eight of the eleven in the file and none of which needed a node.
+    method("createProcessingInstruction", [this](context & c, std::span<value> args) {
+        const std::string target = arg_string(c, args, 0);
+        const std::string data = arg_string(c, args, 1);
+        if (!is_xml_name(target) || data.find("?>") != std::string::npos) {
+            throw_dom_exception(c, "InvalidCharacterError",
+                                "createProcessingInstruction: '" + target +
+                                    "' is not a processing instruction target");
+            return value::undefined();
+        }
+        auto * made = static_cast<script::object_object *>(c.make_object().as_heap());
+        made->set("target", c.string(target));
+        made->set("data", c.string(data));
+        made->set("nodeType", value::number(7));
+        made->set("nodeName", c.string(target));
+        made->set("nodeValue", c.string(data));
+        made->set("ownerDocument", document_);
+        return value::object(made);
+    });
     method("addEventListener", [this](context & c, std::span<value> args) {
         add_listener(make_listener(c, path_step{node_id{}, listen_on::document}, args));
         return value::undefined();
@@ -362,11 +563,25 @@ void dom_bindings::install_document(context & cx) {
     // The body is the window's, and identical on purpose: `listener::target`
     // empty means document-or-window by design, so the two share a bucket and
     // removing from one has always been able to remove the other's.
+    // AND THE CAPTURE FLAG IS PART OF THE IDENTITY. A listener is
+    // (type, callback, capture) and only `add_listener` was enforcing all
+    // three, so this removed by two: `removeEventListener(t, f)` took away a
+    // CAPTURING listener that a later `removeEventListener(t, f, true)` then
+    // could not find. Both subtests of `dom/events/EventListenerOptions-capture`.
+    //
+    // Reading the third argument is also how a page FEATURE-DETECTS the options
+    // dictionary - it passes an object with a `capture` getter and watches
+    // whether the getter runs - so the read has to happen even when the answer
+    // is the same as the boolean spelling's.
     method("removeEventListener", [this](context & c, std::span<value> args) {
         const std::string type = arg_string(c, args, 0);
         const value callback = arg(args, 1);
+        const value options = arg(args, 2);
+        const bool capture = options.is_object()
+                                 ? context::truthy(c.lookup_property(options, "capture"))
+                                 : context::truthy(options);
         std::erase_if(listeners_, [&](const listener & l) {
-            return l.on == listen_on::document && l.type == type &&
+            return l.on == listen_on::document && l.type == type && l.capture == capture &&
                    l.callback.bits() == callback.bits();
         });
         return value::undefined();
@@ -401,27 +616,78 @@ void dom_bindings::install_document(context & cx) {
     // `document.createEvent(interface)` - the OLDER way to make an event, and
     // still the way most of the DOM's own test suite makes one. It hands back an
     // UNINITIALISED event: type "", bubbles false, cancelable false, to be given
-    // all three by `initEvent`. The interface name is matched loosely on
-    // purpose - "Event", "Events", "HTMLEvents", "UIEvents", "MouseEvent" and a
-    // dozen more all produce an Event here, because this engine has one event
-    // class and pretending otherwise would mean an interface hierarchy nothing
-    // reads. "CustomEvent" is the exception, because `detail` is observable.
+    // all three by `initEvent`.
+    //
+    // THE INTERFACE NAME PICKS THE PROTOTYPE, which is the whole of what the
+    // legacy factory still means now that `install_event_interfaces` builds a
+    // real hierarchy. `createEvent("MouseEvent")` has to produce an object on
+    // `MouseEvent.prototype` - `Document-createEvent.js` asserts exactly
+    // `Object.getPrototypeOf(ev) === window[iface].prototype` for every alias
+    // it lists - and the interface object is looked up by NAME through the
+    // globals rather than through a member per interface, because the globals
+    // are where the prototypes already are and a second copy of the mapping is
+    // a second thing to keep in step.
+    //
+    // AN UNKNOWN NAME STILL SUCCEEDS and yields a plain Event. The DOM says
+    // NotSupportedError, and that is deliberately NOT what happens here:
+    // `EventTarget-dispatchEvent.html` walks all twenty aliases and needs each
+    // `createEvent` to return something so that `dispatchEvent` can then refuse
+    // the UNINITIALISED result with an InvalidStateError - which is the
+    // assertion the file is actually about. Throwing here would take that away
+    // and buy nothing measurable back, the file that checks the throw being
+    // `Document-createEvent.https.html`, which needs a TLS origin and is
+    // skipped.
+    //
+    // NOTHING HERE SETS THE INITIALISED FLAG. Leaving it clear is the point:
+    // an event `createEvent` made and `initEvent` has not touched must not be
+    // dispatchable.
     method("createEvent", [this](context & c, std::span<value> args) {
         const std::string want = ascii_lower_copy(arg_string(c, args, 0));
+        struct alias {
+            std::string_view spelling;
+            std::string_view interface_name;
+        };
+        // The DOM's own table, lowercased, minus every entry this engine has no
+        // interface object for - those fall through to Event, which is what
+        // they would get anyway.
+        static constexpr alias aliases[] = {
+            {"customevent", "CustomEvent"}, {"uievent", "UIEvent"},
+            {"uievents", "UIEvent"},        {"mouseevent", "MouseEvent"},
+            {"mouseevents", "MouseEvent"},  {"keyboardevent", "KeyboardEvent"},
+            {"focusevent", "FocusEvent"},   {"compositionevent", "CompositionEvent"},
+            {"wheelevent", "WheelEvent"}};
         value made = make_event_object(c, "", false, false);
-        if (want == "customevent") {
-            auto * object = static_cast<script::object_object *>(made.as_heap());
-            object->prototype = custom_event_prototype_;
-            object->set("detail", value::null());
+        auto * object = static_cast<script::object_object *>(made.as_heap());
+        for (const alias & entry : aliases) {
+            if (entry.spelling != want) { continue; }
+            const value interface_object = c.global(entry.interface_name);
+            if (!interface_object.is_undefined()) {
+                const value proto = c.lookup_property(interface_object, "prototype");
+                if (proto.is_object()) { object->prototype = proto; }
+            }
+            // `detail` is the one member a CustomEvent has that an Event does
+            // not, and it reads null until `initCustomEvent` gives it one.
+            if (want == "customevent") { object->set("detail", value::null()); }
+            break;
         }
         return made;
     });
     // `document.dispatchEvent`. The document is a stop on every path, so this
     // runs the document's listeners and then the window's - which is what
     // dispatching AT the document means.
-    method("dispatchEvent", [this](context &, std::span<value> args) {
+    //
+    // `dispatchEvent(null)` IS A TypeError, not a quiet true. The argument is a
+    // non-nullable `Event` in the IDL, so passing anything else fails argument
+    // conversion before the method runs at all - and answering "nothing
+    // cancelled it" for an event that was never supplied tells a page its
+    // dispatch worked.
+    method("dispatchEvent", [this](context & c, std::span<value> args) {
         const value event = arg(args, 0);
-        if (!event.is_object()) { return value::boolean(true); }
+        if (!event.is_object()) {
+            c.throw_error("TypeError", "Failed to execute 'dispatchEvent' on 'Document': "
+                                       "parameter 1 is not of type 'Event'.");
+            return value::undefined();
+        }
         return value::boolean(!dispatch_to(event, path_step{node_id{}, listen_on::document}));
     });
 
@@ -446,12 +712,134 @@ void dom_bindings::install_document(context & cx) {
         return value::boolean(true);
     });
 
+    // `document.write` AND `document.writeln`, AS FAR AS AN ENGINE THAT RUNS
+    // SCRIPT AFTER THE PARSE CAN HONESTLY GO.
+    //
+    // The specification's version writes into the PARSER'S INSERTION POINT: the
+    // bytes go back into the tokenizer at the position the running <script> was
+    // reached, so they are parsed as though the author had typed them there,
+    // and a `document.write` of an unbalanced `<div>` changes how the REST of
+    // the file parses. None of that is reachable here. `browser::run_scripts`
+    // collects every <script> from a document that is already fully built and
+    // runs them afterwards, so at the moment a page calls this there is no
+    // tokenizer, no insertion point and no remainder to reparse.
+    //
+    // What is implemented instead is the one thing that is well-defined without
+    // a parser: the argument is parsed as a fragment and APPENDED - to <head>
+    // for what the fragment parser routes there, to <body> for the rest. So
+    //
+    //     document.write("<p>late</p>")           appends a paragraph
+    //     document.write("<div>")                 appends an empty div
+    //     document.write("<b>") ... "</b>"        does NOT span two calls
+    //
+    // and the third is the deviation. Two things follow from that and neither
+    // is hidden: a write of one half of an element is not joined to the other
+    // half, and a written <script> is INERT - the script collection ran before
+    // this could be called, so nothing executes it and nothing fetches its src.
+    // The last is not a limitation for the tests that reach here: WPT's
+    // `generateParserDelay` writes exactly such a <script> to stall a real
+    // browser's parser, and a parser that has already finished has nothing to
+    // stall.
+    //
+    // NOT IMPLEMENTED, AND ABSENT RATHER THAN FAKED: `document.open()`. Its job
+    // is to THROW THE DOCUMENT AWAY and start a new parse, and an open() that
+    // did not would let a page that means to replace its content quietly append
+    // to it instead. A page can detect the missing method; it cannot detect a
+    // lying one.
+    {
+        const auto write_markup = [this](context & c, std::span<value> args, bool newline) {
+            std::string markup;
+            for (const value & piece : args) { markup += c.to_string(piece); }
+            if (newline) { markup += '\n'; }
+            if (markup.empty() || atoms_ == nullptr) { return value::undefined(); }
+            // Through the same WHATWG tokenizer and tree builder the page went
+            // through, into a scratch document that shares this one's atom
+            // table - so copying across needs no name remapping. Exactly what
+            // set_inner_html does, and for the same reason: a second, worse
+            // parser for markup a page produced is not a trade worth making.
+            document scratch{*atoms_};
+            (void)parse_html(scratch, markup);
+            const auto from = scratch.read();
+            const auto section = [&](std::string_view which, node_id into) {
+                if (!into) { return; }
+                const atom want = atoms_->intern_lower(which);
+                node_id found{};
+                const auto walk = [&](auto && self, node_id at) -> void {
+                    if (!found && from.tag(at).value_or(atom{}) == want) { found = at; }
+                    for (const node_id child : from.children(at)) { self(self, child); }
+                };
+                walk(walk, from.root());
+                if (!found) { return; }
+                for (const node_id child : from.children(found)) {
+                    copy_subtree(from, child, into);
+                }
+            };
+            section("head", find_by_tag("head"));
+            section("body", find_by_tag("body"));
+            mutated();
+            return value::undefined();
+        };
+        method("write", [write_markup](context & c, std::span<value> args) {
+            return write_markup(c, args, false);
+        });
+        method("writeln", [write_markup](context & c, std::span<value> args) {
+            return write_markup(c, args, true);
+        });
+        // `close` ends the parse a `document.open` started, and there is never
+        // one open here - so it is a no-op that succeeds rather than a missing
+        // method, which is what a page that writes and then closes needs.
+        method("close", [](context &, std::span<value>) { return value::undefined(); });
+    }
+
     // 'complete' BY THE TIME SCRIPT RUNS, which is this engine's model: a page
     // is parsed, its resources are resolved, and only then does anything
     // execute. A library that branches on this - p5.js starts immediately when
     // it reads 'complete' and waits for a `load` event otherwise - takes the
     // branch that matches what actually happened.
     doc->set("readyState", cx.string("complete"));
+    // THE DOCUMENT'S OWN METADATA, none of which existed and every one of which
+    // a page reads without a guard.
+    //
+    // Each answer below is a FACT about this engine rather than a plausible
+    // string:
+    //
+    //   characterSet   the tokenizer decodes bytes as UTF-8 and there is no
+    //                  <meta charset> override path, so UTF-8 is not a default
+    //                  it is the only answer. `charset` and `inputEncoding` are
+    //                  the two legacy aliases of the same value, and a page
+    //                  that feature-detects picks whichever it learned first.
+    //   contentType    a document only ever gets here through the HTML parser.
+    //   compatMode     the doctype's quirks decision, which the tree builder now
+    //                  carries: `<!DOCTYPE html>` is "CSS1Compat" and a document
+    //                  with no doctype, or one naming anything else, is
+    //                  "BackCompat". `all_by_class` still assumes standards and
+    //                  says so - whether quirks mode changes MATCHING is a
+    //                  separate, render-visible decision and this is a reporting
+    //                  one.
+    //   nodeType/Name  a Document is node 9 and is called "#document". It has
+    //                  no value and no owner - `nodeValue` and `ownerDocument`
+    //                  are null on a Document in every browser.
+    //   doctype        NULL, and this is the one that is a gap rather than a
+    //                  fact: `node_kind` has no document_type, so a page with a
+    //                  <!DOCTYPE html> reports the same null as one without.
+    //                  Null is still the better of the two answers available -
+    //                  `undefined` says "this engine has never heard of
+    //                  doctypes", which is a different and less useful claim.
+    for (const char * name : {"characterSet", "charset", "inputEncoding"}) {
+        doc->set(name, cx.string("UTF-8"));
+    }
+    doc->set("contentType", cx.string("text/html"));
+    doc->set("compatMode", cx.string(doc_->quirks() ? "BackCompat" : "CSS1Compat"));
+    doc->set("nodeType", value::number(9));
+    doc->set("nodeName", cx.string("#document"));
+    doc->set("nodeValue", value::null());
+    doc->set("ownerDocument", value::null());
+    doc->set("doctype", value::null());
+    // VISIBLE AND NOT HIDDEN, for the same reason `hasFocus` answers true:
+    // there is one window, the page in it is the thing being looked at, and a
+    // page that reads "hidden" pauses its own animation.
+    doc->set("visibilityState", cx.string("visible"));
+    doc->set("hidden", value::boolean(false));
     // NULL, NOT ABSENT. `document.fullscreenElement` is how a page asks whether
     // it is fullscreen - p5's own `fullscreen()` with no argument is exactly that
     // read - and undefined there is indistinguishable from "the property does not
@@ -546,14 +934,31 @@ void dom_bindings::install_document(context & cx) {
         // A DocumentType is three strings and no behaviour. It is not a node
         // here - there is no Document node for one to hang off - so it is a
         // plain object carrying exactly what a page reads off one.
+        //
+        // ITS NAME IS BARELY CHECKED, and that is not laziness: a doctype name
+        // is written between `<!DOCTYPE` and `>`, so "1foo", "{" and even ""
+        // are all legal and only a name carrying a `>` or a space is not. The
+        // suite's own table is 81 names of which exactly two throw. See
+        // is_valid_doctype_name.
         method("createDocumentType", [this](context & c, std::span<value> args) {
+            const std::string name = arg_string(c, args, 0);
+            if (!is_valid_doctype_name(name)) {
+                throw_dom_exception(c, "InvalidCharacterError",
+                                    "createDocumentType: '" + name +
+                                        "' cannot be written as a doctype name");
+                return value::undefined();
+            }
             auto * doctype = static_cast<script::object_object *>(c.make_object().as_heap());
-            doctype->set("name", c.string(arg_string(c, args, 0)));
+            doctype->set("name", c.string(name));
             doctype->set("publicId", c.string(arg_string(c, args, 1)));
             doctype->set("systemId", c.string(arg_string(c, args, 2)));
             doctype->set("nodeType", value::number(10));
-            doctype->set("nodeName", c.string(arg_string(c, args, 0)));
-            (void)this;
+            doctype->set("nodeName", c.string(name));
+            // A DocumentType has no data, and it belongs to the document whose
+            // implementation made it - the two things the suite reads off one
+            // beside the three strings.
+            doctype->set("nodeValue", value::null());
+            doctype->set("ownerDocument", document_);
             return value::object(doctype);
         });
         // `createHTMLDocument` and `createDocument` are ABSENT, deliberately and
@@ -562,15 +967,78 @@ void dom_bindings::install_document(context & cx) {
         // keyed on a node id that only means anything against it. Returning
         // something document-shaped that shares this document's nodes would be
         // a worse answer than the missing method a page can detect.
+        //
+        // WHAT THE SECOND DOCUMENT WOULD COST, since "it is hard" is not a
+        // measurement. `node_id` is a slot plus a generation into ONE slab, and
+        // `wrappers_`/`namespaces_`/`mirrors_`/`webgl_*` are all keyed on
+        // `pack(node_id)` - so two documents give two nodes the same key and
+        // `getElementById` on one hands back the other's wrapper. The change is
+        // not a `createDocument` binding, it is:
+        //   * a document HANDLE beside the node handle in every key, and in
+        //     `receiver()`, `handle_of()` and `wrap()`;
+        //   * `doc_` becoming "the document this call is about" rather than a
+        //     member - every one of the ~90 `doc_->` uses in these six files;
+        //   * `adoptNode`/`importNode`, which only mean anything once there are
+        //     two, plus the WrongDocumentError that the DOM raises when there
+        //     are and a page mixes them.
+        // It is a tree-model change with a bindings-shaped symptom, and doing
+        // the bindings half alone produces a Document that answers `nodeType`
+        // and shares its caller's `<body>`.
         doc->set("implementation", value::object(implementation));
     }
     doc->set("body", wrap(cx, find_by_tag("body")));
-    // `document.head`, which was missing beside its two neighbours. It is where
-    // a page appends a <style> or a <script> it built, and where any code that
-    // walks the document from the top starts - and an undefined one is a
-    // TypeError on the first property read, not a missing feature a page can
-    // detect.
-    doc->set("head", wrap(cx, find_by_tag("head")));
+    // `document.head` IS AN ACCESSOR, and both halves of that are load-bearing.
+    //
+    // IT RECOMPUTES. The head is "the FIRST `head` child of the document
+    // element", so inserting another head before the existing one changes the
+    // answer - and a property written once at install cannot follow that.
+    // (`body` and `documentElement` above are still written once, which is
+    // wrong in the same way and is left alone here because assigning to
+    // `document.body` DOES replace it and that setter is a separate piece of
+    // work.)
+    //
+    // AND IT IS READ-ONLY. `document.head = x` is defined to do nothing, and a
+    // data property got that backwards in the worst direction: the assignment
+    // stuck, so `document.head = ""` left the document with a head that was the
+    // empty string for the rest of the page's life.
+    //
+    // THE MATCH IS ON THE LOCAL NAME AND THE HTML NAMESPACE, not on the tag
+    // atom. `createElementNS(HTML, "blah:head")` IS the head - its local name
+    // is `head` and it is in the HTML namespace - and
+    // `createElementNS("http://www.example.org/", "blah:head")` is not,
+    // which is exactly the pair html/dom's second head test inserts.
+    doc->define_accessor("head",
+                         value::object(cx.allocate<script::native_object>(
+                             "head",
+                             [this](context & c, std::span<value>) {
+                                 const node_id root = find_by_tag("html");
+                                 if (!root) { return value::null(); }
+                                 node_id found{};
+                                 {
+                                     const auto txn = doc_->read();
+                                     for (const node_id child : txn.children(root)) {
+                                         if (txn.element_ns(child) != node_ns::html) { continue; }
+                                         const auto tagged = txn.tag(child);
+                                         if (!tagged.has_value()) { continue; }
+                                         const std::string_view name = atoms_->text(*tagged);
+                                         const std::size_t colon = name.find(':');
+                                         const std::string_view local =
+                                             colon == std::string_view::npos
+                                                 ? name
+                                                 : name.substr(colon + 1);
+                                         if (local == "head") {
+                                             found = child;
+                                             break;
+                                         }
+                                     }
+                                 }
+                                 // OUTSIDE the transaction: `wrap` opens one of
+                                 // its own to refresh the wrapper, and a read
+                                 // that nests inside another read is a shape
+                                 // nothing else in these bindings has.
+                                 return found ? wrap(c, found) : value::null();
+                             })),
+                         value::undefined());
     doc->set("documentElement", wrap(cx, find_by_tag("html")));
     document_ = value::object(doc);
     cx.define_global("document", document_);
@@ -598,7 +1066,39 @@ void dom_bindings::install_navigation(context & cx) {
     // `document.location` and `window.location` are the SAME object as the
     // global one, not three copies - a page reads whichever it learned, and
     // they have to agree.
-    if (auto * doc = document_object()) { doc->set("location", location_); }
+    if (auto * doc = document_object()) {
+        doc->set("location", location_);
+        // `document.URL`, `documentURI` and `baseURI` are the same string as
+        // location.href and are set beside it so they cannot drift. Three
+        // spellings because three specifications named it: URL is HTML's,
+        // documentURI is the DOM's, and baseURI is what a relative link is
+        // resolved against - which is the document's URL here, there being no
+        // <base> support to move it.
+        for (const char * name : {"URL", "documentURI", "baseURI"}) {
+            doc->set(name, cx.string(location_href_));
+        }
+        // `document.defaultView` IS THE WINDOW, and it has to be the PROXY -
+        // the same object `window` and `self` name - rather than the object
+        // behind it. A page compares the two by identity, and a second window
+        // object that answered the same questions would still fail
+        // `document.defaultView === window`.
+        //
+        // MEASURED, and it is worth the note because the failure was nowhere
+        // near the cause. `assert_throws_dom` takes an optional DOMException
+        // CONSTRUCTOR as its second argument so a test can say which global the
+        // exception must have come from, and `Document-createElementNS.html`
+        // passes `doc.defaultView.DOMException` for every one of its throwing
+        // cases. With defaultView undefined that argument was undefined, so
+        // testharness took its no-constructor branch, treated the undefined as
+        // the FUNCTION to call, and reported 110 assertions as "threw an object
+        // that is not a DOMException" - a message about the exception, from a
+        // test that had not yet called anything.
+        //
+        // Set here rather than in install_document because the window proxy
+        // does not exist until install_window has run, and install_navigation
+        // is the first thing after it that already reaches for both.
+        doc->set("defaultView", cx.global("window"));
+    }
     if (auto * window = window_object()) { window->set("location", location_); }
 }
 

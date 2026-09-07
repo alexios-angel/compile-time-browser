@@ -213,9 +213,16 @@ constexpr property_syntax table[] = {
     // --- typography ------------------------------------------------------
     {"font", k::freeform, "", "", true, false, true},
     {"font-family", k::freeform, "", "sans-serif", true, false},
+    // THE INITIAL IS `medium` AND THE COMPUTED VALUE IS A LENGTH. `initial` is
+    // read by `getComputedStyle` for an element with no box, and a computed
+    // style reports lengths - Chrome answers `16px` for a `display: none`
+    // element, never `medium`. The keyword stays in the accepted set; what is
+    // recorded here is what the property COMPUTES to when nothing declares it,
+    // which is the medium font size and is 16px in this engine
+    // (layout/values.hpp's `rem` basis is the same number for the same reason).
     {"font-size", k::length_percentage,
-     "xx-small x-small small medium large x-large xx-large xxx-large larger smaller", "medium",
-     true, true},
+     "xx-small x-small small medium large x-large xx-large xxx-large larger smaller", "16px", true,
+     true},
     {"font-style", k::freeform, "", "normal", true, false},
     {"font-weight", k::number, "normal bold bolder lighter", "400", true, true},
     {"font-variant", k::freeform, "", "normal", true, false},

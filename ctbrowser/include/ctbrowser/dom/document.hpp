@@ -177,10 +177,30 @@ public:
     };
     [[nodiscard]] builder build() noexcept { return builder{*this}; }
 
+    // QUIRKS MODE, THE ONE BIT THE DOCTYPE TOKEN LEAVES BEHIND. Nothing here
+    // renders differently for the doctype's name or its identifiers - the tree
+    // builder drops the token and says so - but `<!DOCTYPE html>` is what puts
+    // the document in STANDARDS mode, and `document.compatMode` is the answer
+    // to that and nothing else.
+    //
+    // TRUE by default, because a document with no doctype at all never reaches
+    // the tree builder's doctype case and is in quirks mode by definition.
+    //
+    // Deliberately NOT wired into the selector engine's case folding: whether
+    // quirks mode changes MATCHING is a separate, render-visible decision and
+    // this is a reporting one.
+    [[nodiscard]] bool quirks() const noexcept { return quirks_.load(std::memory_order_acquire); }
+    void set_quirks(bool on) noexcept { quirks_.store(on, std::memory_order_release); }
+
 private:
     friend class read_txn;
 
     static constexpr std::size_t stripe_count = 256;
+
+    // Atomic for the same reason `version_` is: the tree builder writes it on
+    // one thread and a binding reads it on another, and a torn bool is a data
+    // race whatever the hardware does about it in practice.
+    std::atomic<bool> quirks_{true};
 
     [[nodiscard]] node * find(node_id id) const noexcept { return nodes_.get(id); }
     [[nodiscard]] std::mutex & stripe_of(node_id id) const noexcept {

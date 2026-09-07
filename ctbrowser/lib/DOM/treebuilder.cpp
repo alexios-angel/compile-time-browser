@@ -72,7 +72,11 @@ void tree_builder::sync_foreign(tokenizer & lexer) const {
 
 void tree_builder::handle(const token & t, tokenizer & lexer) {
     switch (t.kind) {
-    case token_kind::doctype: return; // nothing downstream renders differently
+    // NOTHING DOWNSTREAM RENDERS DIFFERENTLY for the doctype's name or its
+    // public and system identifiers, and one bit of it is still observable:
+    // `document.compatMode` is quirks mode and nothing else, and the tokenizer
+    // has already worked it out (`force_quirks`).
+    case token_kind::doctype: doc_->set_quirks(t.force_quirks); return;
     case token_kind::comment: return; // dropped: nothing reads comments yet
     case token_kind::character: return insert_text(t.data);
     case token_kind::start_tag: return start(t, lexer);

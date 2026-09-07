@@ -199,12 +199,27 @@ void dom_bindings::install_window(context & cx) {
             this->add_listener(make_listener(c, path_step{node_id{}, listen_on::window}, args));
             return value::undefined();
         }));
+    // THE CAPTURE FLAG IS PART OF A LISTENER'S IDENTITY, and reading it here is
+    // what makes removal the exact inverse of registration. `add_listener`
+    // enforces (type, callback, capture); this used to match on the first two,
+    // so `removeEventListener(t, f)` took away a listener registered WITH
+    // capture and `removeEventListener(t, f, true)` then found nothing to
+    // remove. `dom/events/EventListenerOptions-capture.html` is both halves.
+    //
+    // The third argument is a boolean OR a dictionary, and a page detects
+    // support for the dictionary by passing one with a `capture` getter and
+    // watching whether it runs - so the property read is observable and has to
+    // happen either way.
     const value remove_listener = value::object(cx.allocate<script::native_object>(
         "removeEventListener", [this](context & c, std::span<value> args) {
             const std::string type = arg_string(c, args, 0);
             const value callback = arg(args, 1);
+            const value options = arg(args, 2);
+            const bool capture = options.is_object()
+                                     ? context::truthy(c.lookup_property(options, "capture"))
+                                     : context::truthy(options);
             std::erase_if(listeners_, [&](const listener & l) {
-                return l.on == listen_on::window && l.type == type &&
+                return l.on == listen_on::window && l.type == type && l.capture == capture &&
                        l.callback.bits() == callback.bits();
             });
             return value::undefined();

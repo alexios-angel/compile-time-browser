@@ -115,6 +115,12 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
             obj.set("nodeType", value::number(11));
             break;
         }
+        // `ownerDocument` - null on the Document itself and `document` on
+        // everything else, there being exactly one document for it to be. Six
+        // files in `dom/nodes` read it off a node the test has just created,
+        // including every valid case of `Document-createElement{,NS}` and all of
+        // the Comment and Text constructor tests.
+        obj.set("ownerDocument", kind == node_kind::document ? value::null() : document_);
         // `localName`, `prefix` and `namespaceURI` - the three halves of a
         // qualified name, and the pair `tagName` is compared against.
         //
