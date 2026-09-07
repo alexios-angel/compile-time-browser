@@ -689,6 +689,53 @@ void test_width_and_height_reflect_the_type_their_interface_names() {
        "12,0,7,7");
 }
 
+// --- what a page may NOT overwrite -----------------------------------------
+
+void test_a_same_object_attribute_survives_being_assigned_to() {
+    // `[SameObject] readonly attribute DOMTokenList classList`, and it was a
+    // writable data property: `e.classList = 'foo'` REPLACED the token list
+    // with the string, so every `add`, `contains` and `item` after it was a
+    // method on a primitive. `Element-classlist.html` is 1,420 subtests and its
+    // FIRST case is that assignment - so the whole file ran against a string.
+    // A write to a readonly property is discarded in sloppy mode, silently,
+    // which is what the corpus expects.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.classList = 'foo';
+        e.classList.add('bar');
+        return (typeof e.classList) + ',' + e.className + ',' + e.classList.contains('bar');
+    })())JS",
+       "object,bar,true");
+    // `style` is readonly TOO, and its write has a meaning:
+    // [PutForwards=cssText] sends `el.style = "color: red"` to
+    // `el.style.cssText`. Losing the declaration object is what made
+    // `testEl.style = ""` - the first line of every css/css-values case -
+    // replace the proxy with a string and every later property write vanish.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.style.color = 'red';
+        e.style = 'margin-top: 4px';
+        var forwarded = e.getAttribute('style');
+        e.style = '';
+        e.style.color = 'blue';
+        return (typeof e.style) + ',[' + forwarded + '],' + e.style.color;
+    })())JS",
+       "object,[margin-top: 4px],blue");
+    // The same rule for the rest of them: a page that assigns to one of these
+    // must not be able to put a string where the next reader looks.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.dataset = 'x';
+        e.attributes = 'x';
+        e.children = 'x';
+        e.childNodes = 'x';
+        e.parentNode = 'x';
+        return (typeof e.dataset) + ',' + (typeof e.attributes) + ',' + (typeof e.children) +
+               ',' + (typeof e.childNodes) + ',' + e.parentNode;
+    })())JS",
+       "object,object,object,object,null");
+}
+
 } // namespace
 
 int main() {
@@ -705,5 +752,6 @@ int main() {
     test_an_enumerated_attribute_is_limited_to_its_keywords();
     test_a_nullable_enumerated_attribute_defaults_to_null();
     test_width_and_height_reflect_the_type_their_interface_names();
+    test_a_same_object_attribute_survives_being_assigned_to();
     REPORT("element_attrs");
 }

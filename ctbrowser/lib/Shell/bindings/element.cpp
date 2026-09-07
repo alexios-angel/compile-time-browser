@@ -1170,7 +1170,33 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         }
         return c.string("");
     });
-    obj.set("style", style_view);
+    // `style` IS READONLY, AND A WRITE TO IT FORWARDS.
+    //
+    // CSSOM declares it `[PutForwards=cssText] readonly attribute
+    // CSSStyleDeclaration style`, and it was a plain writable data property -
+    // so `el.style = "color: red"` REPLACED the declaration object with the
+    // string, and every `el.style.color = v` after it wrote a property onto a
+    // primitive and vanished. `css/support/numeric-testcommon.js` opens every
+    // one of its cases with `testEl.style = ""`, so nineteen files in
+    // `css/css-values` failed every subtest they had for this one line.
+    //
+    // The same shape bindings/stylesheets.cpp gives `rule.style`, and for the
+    // same two reasons: the object is [SameObject], and the assignment has a
+    // defined meaning that is not "replace me".
+    {
+        auto * reader = cx.allocate<script::native_object>(
+            "style", [style_view](context &, std::span<value>) { return style_view; });
+        // The declaration proxy is reachable only from that lambda, and a
+        // capture is not a GC edge - see the note on the dataset map.
+        reader->retained.push_back(style_view);
+        auto * writer = cx.allocate<script::native_object>(
+            "style", [style_view](context & c, std::span<value> a) {
+                c.store_property(style_view, "cssText", a.empty() ? c.string("") : a[0]);
+                return value::undefined();
+            });
+        writer->retained.push_back(style_view);
+        obj.define_accessor("style", value::object(reader), value::object(writer));
+    }
 
     // --- the reflected attributes
     //
@@ -1543,7 +1569,10 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             // nothing-was-chosen.
             const value files = cx.make_array();
             static_cast<script::array_object *>(files.as_heap())->items.clear();
-            obj.set("files", files);
+            // Readonly, as every [SameObject] attribute here is: a page that
+            // assigns to `input.files` must not be able to put a string where
+            // the next `for (const f of input.files)` looks.
+            obj.define("files", files, script::attr_enumerable | script::attr_configurable);
         } else if ((txn.has_attribute(id, atoms_->intern("width")) ||
                     txn.has_attribute(id, atoms_->intern("height"))) &&
                    !interface_reflects_size(tag)) {
@@ -1637,7 +1666,14 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                                   return value::number(static_cast<double>(tokens_now().size()));
                               })),
                           value::undefined());
-    obj.set("classList", value::object(list));
+    // READONLY, and this one had a price. `classList` is `[SameObject] readonly
+    // attribute DOMTokenList` and it was a writable data property, so
+    // `Element-classlist.html` - 1,420 subtests - assigned a STRING to it in
+    // its first case and every case after it called `add`, `contains` and
+    // `item` on that string. A write to a readonly property is silently
+    // discarded in sloppy mode, which is what the corpus expects to happen.
+    obj.define("classList", value::object(list),
+               script::attr_enumerable | script::attr_configurable);
 
     // --- element.dataset
     //
