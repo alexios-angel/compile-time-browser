@@ -464,7 +464,31 @@ int main() {
     accepted("var x = 08;");
 
     // ================================================================
-    // 17. WHAT IS STILL ACCEPTED, ON PURPOSE
+    // 17. A RESERVED WORD IS NOT AN IDENTIFIER - 13.1.1
+    // ================================================================
+    // The parser is deliberately lenient about a keyword in expression
+    // position, and it HAS to be: `of`, `get`, `set`, `static`, `async`, `let`,
+    // `await` and `yield` are contextual, so `const of = 1` and
+    // `function set(x)` are valid JavaScript and p5.js has both. What that
+    // leniency also accepts is `typeof import`, which is not.
+    refused("var f = () => typeof import;");
+    refused("var x = [default] = [];");
+
+    // Every contextual keyword, still a name.
+    accepted("var of = 1; var get = 2; var set = 3; var async = 4; var yield = 5; var let2 = 6;");
+    accepted("function set(x) { return x; } function get() { return 1; } get();");
+    // A reserved word is still a PROPERTY name, in a literal and on a member -
+    // that is a different production and always was legal.
+    accepted("var o = { if: 1, class: 2, default: 3 }; o.if + o.class + o.default;");
+    accepted("var o = {}; o.default = 1; o['class'] = 2;");
+    accepted("var o = { get x() { return 1; }, set x(v) {} }; o.x;");
+    // `with` IS ABSENT FROM THE LIST, and not by oversight: this parser has no
+    // `with` statement, so `with (o) {}` arrives as a CALL of something named
+    // `with` - and refusing that would refuse every `with` in the corpus and
+    // every `import ... with {}` attribute clause.
+
+    // ================================================================
+    // 18. WHAT IS STILL ACCEPTED, ON PURPOSE
     // ================================================================
     // Each of these is an early error in STRICT mode and legal sloppy
     // JavaScript, and this engine has no strict mode. They are here so that

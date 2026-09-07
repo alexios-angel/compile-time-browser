@@ -1028,6 +1028,34 @@ private:
         if (seen > 1) { report("an object literal may not set `__proto__` twice", second); }
     }
 
+    // A RESERVED WORD IS NOT AN IDENTIFIER, 13.1.1.
+    //
+    // ctjs's parser is deliberately lenient about a keyword in expression
+    // position - it falls back to reading one as a plain name - and it has to
+    // be, because `of`, `get`, `set`, `static`, `async`, `let`, `await` and
+    // `yield` are CONTEXTUAL: `const of = 1` and `function set(x)` are valid
+    // JavaScript and p5.js has both. What that leniency also accepts is
+    // `typeof import` and `[default] = []`, which are not.
+    //
+    // So the list here is the words that are reserved UNCONDITIONALLY and
+    // nothing else. `true`, `false`, `null`, `this` and `super` are absent
+    // because the parser gives each of them a node kind of its own; so are
+    // `delete`, `typeof`, `void`, `new`, `in` and `instanceof`, which are
+    // operators and never reach this.
+    void check_identifier(std::int32_t idx) {
+        static constexpr std::string_view reserved[] = {
+            "break",  "case",   "catch",  "class",   "const",   "continue", "default",  "do",
+            "else",   "enum",   "export", "extends", "finally", "for",      "function", "if",
+            "import", "return", "switch", "throw",   "try",     "var",      "while"};
+        const std::string_view name = at(idx).text;
+        for (const std::string_view word : reserved) {
+            if (name == word) {
+                report(quoted(name) + " is a reserved word and cannot be used as a name here", idx);
+                return;
+            }
+        }
+    }
+
     // A NUMERIC LITERAL'S OWN GRAMMAR, 12.9.3, read back off the lexeme.
     //
     // The lexer is deliberately total: it takes `0` followed by `x`, `o` or `b`
@@ -1209,6 +1237,8 @@ private:
             return;
 
         case nk::num: check_number(idx); return;
+
+        case nk::ident: check_identifier(idx); return;
 
         case nk::new_target:
             // 16.1.1: a Script may not contain `new.target`; the grammar only
