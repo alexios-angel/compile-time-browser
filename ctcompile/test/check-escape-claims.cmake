@@ -125,6 +125,7 @@ if(STRICT)
   file(STRINGS "${_rec}" _recording_lines)
   file(READ "${_claims}" _claim_text)
   set(_publication_rows "")
+  set(_spread_rows "")
   foreach(_line IN LISTS _recording_lines)
     if(_line MATCHES "^program ([0-9a-f]+) ")
       set(_program_hash "${CMAKE_MATCH_1}")
@@ -141,6 +142,18 @@ if(STRICT)
         message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
       endif()
       list(APPEND _publication_rows "${_row} ${CMAKE_MATCH_1}")
+    elseif(_function_name MATCHES "^spreadRetained(Call|Construct|Receiver)$" AND _line MATCHES "^site ")
+      if(NOT _line MATCHES "^site ([0-9]+) kind (obj|arr) made ([0-9]+) confined ([0-9]+) escaped ([0-9]+) unresolved ([0-9]+) unchecked ([0-9]+) routes ([^ ]+)$")
+        message(FATAL_ERROR "${_function_name}: unexpected spread observation: ${_line}")
+      endif()
+      set(_pc "${CMAKE_MATCH_1}")
+      set(_kind "${CMAKE_MATCH_2}")
+      set(_row "${_function_name} ${_kind} ${CMAKE_MATCH_3} ${CMAKE_MATCH_4} ${CMAKE_MATCH_5} ${CMAKE_MATCH_6} ${CMAKE_MATCH_7} ${CMAKE_MATCH_8}")
+      if(_claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_pc} ${_kind} ([^\n]+)")
+        list(APPEND _spread_rows "${_row} ${CMAKE_MATCH_1}")
+      else()
+        list(APPEND _spread_rows "${_row} unclaimed")
+      endif()
     endif()
   endforeach()
   set(_expected_publication_rows
@@ -155,6 +168,29 @@ if(STRICT)
     message(FATAL_ERROR "global publication evidence mismatch:\nexpected: ${_expected_publication_rows}\nobserved: ${_publication_rows}")
   endif()
   message(STATUS "global publication: five sites, seven objects, five retained through globals; live claims agree")
+
+  # Both source and packing arrays are confined, but their retained object
+  # elements are not. The spread receiver is an independent Passed sink.
+  # Construction also allocates an instance and its lazily created prototype
+  # at one unclaimed runtime site: one confined and one retained through the
+  # constructor's global closure. Neither is an object-literal claim.
+  set(_expected_spread_rows
+      "spreadRetainedCall obj 1 0 1 0 0 globals:1 escapes:stored"
+      "spreadRetainedCall arr 1 1 0 0 0 - confined"
+      "spreadRetainedCall arr 1 1 0 0 0 - confined"
+      "spreadRetainedConstruct obj 1 0 1 0 0 globals:1 escapes:stored"
+      "spreadRetainedConstruct arr 1 1 0 0 0 - confined"
+      "spreadRetainedConstruct arr 1 1 0 0 0 - confined"
+      "spreadRetainedConstruct obj 2 1 1 0 0 globals:1 unclaimed"
+      "spreadRetainedReceiver obj 1 0 1 0 0 globals:1 escapes:passed"
+      "spreadRetainedReceiver arr 1 1 0 0 0 - confined"
+      "spreadRetainedReceiver arr 1 1 0 0 0 - confined")
+  list(SORT _spread_rows)
+  list(SORT _expected_spread_rows)
+  if(NOT _spread_rows STREQUAL _expected_spread_rows)
+    message(FATAL_ERROR "spread argument evidence mismatch:\nexpected: ${_expected_spread_rows}\nobserved: ${_spread_rows}")
+  endif()
+  message(STATUS "spread arguments: six confined arrays, three retained literal objects, one unclaimed constructor site; live claims agree")
 endif()
 if(NOT _pyrc EQUAL 0)
   message(FATAL_ERROR "${NAME}: the checker exited ${_pyrc}")

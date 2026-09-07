@@ -109,6 +109,33 @@ passed();
 function passedAsReceiver() { var a = [1]; a.push(2); H.push(a); }   // `a.push` is a call with `a` as receiver
 passedAsReceiver();
 
+// Spread copies elements into the callee window without retaining the argument
+// array. The object element must escape even though both the source array and
+// the compiler's spread argument array stay confined. These are distinct sites,
+// and the oracle checks their lifetimes independently of the compiler claims.
+function spreadRetainedCall() {
+    var child = { value: 15 };
+    var args = [child];
+    hold(...args);
+}
+spreadRetainedCall();
+function SpreadRetainer(child) { H.push(child); }
+function spreadRetainedConstruct() {
+    var child = { value: 16 };
+    var args = [child];
+    new SpreadRetainer(...args);
+}
+spreadRetainedConstruct();
+
+// The receiver is a separate sink even on a spread call. Its empty source and
+// argument arrays remain confined while the actual receiver is kept globally.
+function keepSpreadReceiver() { H.push(this); }
+function spreadRetainedReceiver() {
+    var receiver = { keep: keepSpreadReceiver };
+    receiver.keep(...[]);
+}
+spreadRetainedReceiver();
+
 // --- THE PINNED BLIND SPOT: passed, but the callee dropped it -------------
 function ident(x) { return x; }
 function transit() { var o = { t: 1 }; ident(o); return 1; }   // analysis: escapes:passed; oracle: confined

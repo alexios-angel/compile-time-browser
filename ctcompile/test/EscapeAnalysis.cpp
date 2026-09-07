@@ -669,6 +669,54 @@ int main() {
         {.what = "construct_spread: $args NEITHER (c.cpp:734-741)",
          .body = A + "  %r = ctjs.construct_spread %p(%s)\n" + R,
          .expected = "confined"},
+        // Spread copies the argument array's CONTENTS into the callee window.
+        // The array may stay confined while one of those contents outlives it;
+        // the create_array/append sink must survive the spread's NEITHER row.
+        {.what = "call_spread keeps its local argument array confined despite an object element",
+         .body = "  %child = ctjs.create_object\n"
+                 "  %args = ctjs.create_array [%child] {check}\n"
+                 "  %r = ctjs.call_spread %p(%q, %args)\n" +
+                 R,
+         .expected = "confined"},
+        {.what = "call_spread cannot revoke the escape of an element stored in its arguments",
+         .body = S +
+                 "  %args = ctjs.create_array [%s]\n"
+                 "  %r = ctjs.call_spread %p(%q, %args)\n" +
+                 R,
+         .expected = "escapes:stored"},
+        {.what = "construct_spread keeps its local argument array confined with an object element",
+         .body = "  %child = ctjs.create_object\n"
+                 "  %args = ctjs.create_array [] {check}\n"
+                 "  ctjs.append %child to %args\n"
+                 "  %r = ctjs.construct_spread %p(%args)\n" +
+                 R,
+         .expected = "confined"},
+        {.what = "construct_spread cannot revoke an appended element's escape",
+         .body = S +
+                 "  %args = ctjs.create_array []\n"
+                 "  ctjs.append %s to %args\n"
+                 "  %r = ctjs.construct_spread %p(%args)\n" +
+                 R,
+         .expected = "escapes:stored"},
+        {.what = "an iterable alias of the spread argument array remains confined",
+         .body = A +
+                 "  %args = ctjs.iterable of %s\n"
+                 "  %r = ctjs.call_spread %p(%q, %args)\n" +
+                 R,
+         .expected = "confined"},
+        {.what = "a spread receiver that aliases the argument array still escapes",
+         .body = A +
+                 "  %args = ctjs.iterable of %s\n"
+                 "  %r = ctjs.call_spread %p(%s, %args)\n" +
+                 R,
+         .expected = "escapes:passed"},
+        {.what = "later publication of an iterable argument alias sinks the original array",
+         .body = A +
+                 "  %args = ctjs.iterable of %s\n"
+                 "  %r = ctjs.call_spread %p(%q, %args)\n"
+                 "  ctjs.store_global \"arguments\", %args\n" +
+                 R,
+         .expected = "escapes:stored_global"},
         {.what = "dynamic_import SINK(converted) - the specifier's toString is user code",
          .body = S + "  %m = ctjs.dynamic_import %s\n" + R,
          .expected = "escapes:converted",
