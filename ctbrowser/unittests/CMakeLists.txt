@@ -89,6 +89,12 @@ ctbrowser_test(unit/chrome_basics)
 # is tools/check/css-parity.py and is deliberately not a ctest; this is the half
 # that catches a regression without a browser download. See docs/plans/bootstrap.md.
 ctbrowser_test(unit/bootstrap_layout)
+# The attribute API on Element. Its own file rather than more of
+# bindings_basics because every case in it turns on a DISTINCTION - the
+# qualified lookup against the namespaced one, an HTML element against a
+# foreign one, a name that SERIALISES against a name that parses - and each of
+# those used to have one answer where two belong.
+ctbrowser_test(unit/element_attrs)
 
 # The language, against V8. The nine per-type suites were carved out of
 # vm_basics and share js_expect.hpp; number_format and obfuscated ask the
