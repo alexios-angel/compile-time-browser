@@ -16,10 +16,10 @@
 // wide is 50%" twice, in two places, is how the two answers start to differ.
 // What layout used IS the computed value here.
 //
-// ...AND A FOURTH, WHICH IS NEW: style/css/properties.hpp's table says WHICH
-// properties exist and what each one's initial value is. The three sources above
-// can only answer about a property something DECLARED, so every other property
-// was absent from the object entirely - which is what
+// ...AND A FOURTH: style/css/properties.hpp's table says WHICH properties exist,
+// which of them are shorthands, and what each one's initial value is. The three
+// sources above can only answer about a property something DECLARED, so every
+// other property was absent from the object entirely - which is what
 // `getComputedStyle(el).someProperty === undefined` meant in 1,034 css/cssom
 // subtests (docs/css-conformance.md §4). A property nothing declared has a
 // computed value all the same, and it is the initial one.
@@ -30,13 +30,29 @@
 // either spelling fails the test before a value is ever compared. The conversion
 // itself is style/css/properties.hpp's, because `el.style` needs the same one.
 //
-// NOTHING HERE OUTLIVES THE CALL EXCEPT STRINGS. The probe holds raw pointers
-// into the box and fragment trees, and those trees are rebuilt by the next
-// layout - which now happens INSIDE a script turn, because getComputedStyle
-// flushes a pending restyle before it reads (browser::run_scripts installs the
-// flush; docs/css-conformance.md §5 measured that without it the camelCase names
-// alone move nothing, since a page reads the state from before its own write).
-// So every value is computed eagerly here and the methods close over the strings.
+// --- WHAT IS RESOLVED AND WHAT IS COMPUTED -------------------------------
+//
+// CSSOM §6.7.2's resolved value is the USED value for a handful of properties
+// and the COMPUTED value for everything else - AND for those same few whenever
+// there is no used value to report. That "otherwise" is not an edge case: an
+// element with `display: none`, one with `display: contents`, and a
+// non-replaced inline all generate no box that has a width, and CSSOM says each
+// of them reports the computed value. So does an inset on a static box, and so
+// does an inset on a box that is OVER-CONSTRAINED. `computed_length` below is
+// that half - a percentage survives, `auto` survives, and everything else
+// becomes an absolute px - and it is asked for by name at each of those points
+// rather than being the fallback when a pointer happens to be null.
+//
+// THE OBJECT IS LIVE. CSSOM says `getComputedStyle` returns a live
+// CSSStyleDeclaration, and every property on it is an ACCESSOR that re-derives
+// from the current trees. It was a snapshot, so a test holding
+// `let cs = gcs(el)` across a write read the state from before it -
+// getComputedStyle-display-none-001, -002 and -resolved-min-max-clamping are
+// all written exactly that way and could not pass at all. What outlives the
+// call is the element's node_id and a shared cache; the raw pointers into the
+// box and fragment trees are gathered inside `computed_style_entries` and never
+// escape it, because the next layout - which now happens INSIDE a script turn -
+// frees them.
 //
 // INHERITANCE IS NOT DONE HERE ANY MORE. This file used to walk DOM ancestors for an
 // inherited property, because the cascade produced only the declarations that MATCHED
@@ -51,11 +67,14 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -68,10 +87,13 @@ namespace {
 // what that inherits from layout: `rem` has a hardcoded 16px basis and vh/vw/pt
 // fall through to pixels (include/ctbrowser/layout/values.hpp). Those are real
 // differences from Chrome and they are supposed to show up in the diff.
-constexpr std::array<std::string_view, 16> length_properties{
+//
+// THE FOUR INSETS ARE NOT HERE any more: their resolved value is a used value
+// for a positioned box and a computed value otherwise, which is a rule of its
+// own further down rather than a length lookup.
+constexpr std::array<std::string_view, 12> length_properties{
     "margin-top",  "margin-right",  "margin-bottom",  "margin-left",
     "padding-top", "padding-right", "padding-bottom", "padding-left",
-    "top",         "right",         "bottom",         "left",
     "min-width",   "max-width",     "min-height",     "max-height"};
 
 // The four sizing constraints, whose percentages survive into the computed value.
@@ -85,35 +107,15 @@ constexpr std::array<std::string_view, 16> length_properties{
            length_properties.end();
 }
 
+[[nodiscard]] bool is_inset_property(std::string_view property) {
+    return property == "top" || property == "right" || property == "bottom" || property == "left";
+}
+
 [[nodiscard]] bool is_color_property(std::string_view property) {
     return property == "color" || property == "background-color" || property == "border-color" ||
            property == "border-top-color" || property == "border-right-color" ||
            property == "border-bottom-color" || property == "border-left-color" ||
            property == "outline-color";
-}
-
-// THE SHORTHANDS IN style/css/properties.hpp's TABLE. CSSOM §6.7 says a computed
-// style's INDEXED properties are the supported LONGHANDS, and css/cssom's
-// getComputedStyle-getter-v-properties asserts both halves of that at once:
-// `'border' in style` is true and `Array.from(style)` does not contain it.
-// serialize-all-longhands asserts the consequence - every enumerated name must
-// serialise to something, and a shorthand here would serialise to nothing,
-// because reconstructing one means deciding how each engine rebuilds it.
-//
-// A LIST HERE RATHER THAN A FLAG ON `property_syntax`, because that table is not
-// this file's to change. It belongs there and should move the moment the struct
-// grows a `shorthand` bit; until then a shorthand added to the table and not to
-// this list is enumerated, which is the failure mode to watch for.
-[[nodiscard]] bool is_shorthand(std::string_view property) {
-    static constexpr std::array<std::string_view, 19> names{
-        "animation",    "background",    "border",
-        "border-color", "border-radius", "border-style",
-        "border-width", "flex",          "flex-flow",
-        "font",         "gap",           "inset",
-        "list-style",   "margin",        "outline",
-        "overflow",     "padding",       "text-decoration",
-        "transition"};
-    return std::find(names.begin(), names.end(), property) != names.end();
 }
 
 // A BORDER WIDTH IS NOT REPORTED AS THE KEYWORD IT WAS WRITTEN AS, and it is not
@@ -147,25 +149,49 @@ constexpr std::array<std::string_view, 16> length_properties{
     return len.resolve(0.0f, font_size);
 }
 
-// A CSS number, serialised so a person can read the report: no trailing zeros and
-// an integer prints as an integer. Rounded to 1/64 - Chrome's LayoutUnit quantum,
-// and the same rounding the harness compares at - so the text and the comparison
-// agree about what this number is. Without that, two values that differ only
-// below the quantum print as different strings and read as a difference.
+// A CSS number, serialised as CSSOM §6.7.2 requires: the SHORTEST decimal that
+// reads back as the same number, with no exponent, no trailing zeros, and an
+// integer printed as an integer. `std::to_chars` in `fixed` format is exactly
+// that definition, and it is asked about a FLOAT rather than a double on
+// purpose - every value here is one, and the shortest string for the float is
+// the author's `20.7` where the shortest string for the double it widens to is
+// `20.700000762939453`.
+//
+// IT DOES NOT ROUND. It used to snap to 1/64 - Chrome's LayoutUnit quantum - so
+// that two values differing below the quantum could not print as a difference.
+// That is right for a value layout produced and wrong for one the author wrote:
+// `margin-left: 20.7px` came back as `20.703125px`, which is
+// getComputedStyle-margins-roundtrip and getComputedStyle-insets-absolute-roundtrip
+// in full, 8 subtests, and is the Chromium bug both files are named after. The
+// snap lives in `used_px_text` below, and only the values that genuinely come
+// out of layout arithmetic go through it. tools/check/css-parity.py quantises
+// BOTH sides to 1/64 itself before comparing (EPSILON_PX), so nothing in the
+// parity report depends on this rounding here.
 [[nodiscard]] std::string number_text(float value) {
     if (!std::isfinite(value)) { return "0"; }
-    const float snapped = std::round(value * 64.0f) / 64.0f;
-    std::string out = std::to_string(static_cast<double>(snapped));
-    if (out.find('.') != std::string::npos) {
-        while (!out.empty() && out.back() == '0') { out.pop_back(); }
-        if (!out.empty() && out.back() == '.') { out.pop_back(); }
-    }
+    std::array<char, 64> buffer{};
+    const std::to_chars_result written = std::to_chars(buffer.data(), buffer.data() + buffer.size(),
+                                                       value, std::chars_format::fixed);
+    if (written.ec != std::errc{}) { return "0"; }
+    std::string out{buffer.data(), static_cast<std::size_t>(written.ptr - buffer.data())};
     if (out.empty() || out == "-0") { return "0"; }
     return out;
 }
 
+// A COMPUTED length: the number as it is.
 [[nodiscard]] std::string px_text(float value) {
     return number_text(value) + "px";
+}
+
+// A USED length - one layout arrived at by adding and subtracting fragment
+// bounds - rounded to 1/64. Chrome's LayoutUnit cannot represent anything finer,
+// so a used value that differs from Chrome's below the quantum is not a
+// difference; and our own arithmetic drifts there too, so `784 - 763.3 - 0`
+// prints as `20.70001` without this and as `20.703125` with it. Both are honest
+// about a number nobody wrote down.
+[[nodiscard]] std::string used_px_text(float value) {
+    if (!std::isfinite(value)) { return "0px"; }
+    return number_text(std::round(value * 64.0f) / 64.0f) + "px";
 }
 
 // A colour in the one form both engines normalise to. Chrome prints
@@ -174,11 +200,18 @@ constexpr std::array<std::string_view, 16> length_properties{
 // earns its keep: `#0d6efd` and `rgb(13,110,253)` then compare equal without the
 // tool knowing Bootstrap's palette, and a colour that does NOT parse comes back
 // as its raw text rather than silently as black.
+//
+// THE ALPHA IS QUANTISED, unlike every other number here. It is not a length and
+// it is not the author's number either: an 8-bit channel divided by 255 is
+// 0.5019608 for the `rgba(0, 0, 0, .5)` a page wrote, and rounding to 1/64
+// recovers the `0.5` every engine prints. The precision that is lost was never
+// there - the colour is stored in eight bits.
 [[nodiscard]] std::string color_text(color c) {
     const auto channel = [](std::uint8_t v) { return std::to_string(static_cast<int>(v)); };
     const std::string rgb = channel(c.red()) + ", " + channel(c.green()) + ", " + channel(c.blue());
     if (c.opaque()) { return "rgb(" + rgb + ")"; }
-    return "rgba(" + rgb + ", " + number_text(static_cast<float>(c.alpha()) / 255.0f) + ")";
+    const float alpha = static_cast<float>(c.alpha()) / 255.0f;
+    return "rgba(" + rgb + ", " + number_text(std::round(alpha * 64.0f) / 64.0f) + ")";
 }
 
 [[nodiscard]] const layout::box_node * box_for(const layout::box_node * root, node_id id) {
@@ -226,19 +259,33 @@ constexpr std::array<std::string_view, 16> length_properties{
 // every property in the table, and rebuilding this for each of them would mean
 // 125 walks over the whole box tree per getComputedStyle call.
 //
-// The ancestor CHAIN is held as ids rather than as a read transaction, so the
-// snapshot does not pin a document version for as long as a page keeps the
+// The ancestor CHAIN is held as ids rather than as a read transaction, so
+// gathering does not pin a document version for as long as a page keeps the
 // object alive.
 struct probe {
     const layout::box_node * box = nullptr;
     const layout::fragment * frag = nullptr;
-    float basis = 0; // the containing block's content width
+    float basis = 0;        // the containing block's content width
+    float basis_height = 0; // and its content height, for a relative inset
     float font_size = 16;
     // Is this element a FLEX ITEM? A fact about its parent rather than about it,
     // and the two properties whose reported value depends on it - `min-width`
     // and `min-height` - are answered nowhere else, so it is gathered with the
     // rest of the parent lookup rather than costing a second tree walk.
     bool flex_item = false;
+    // DOES THIS ELEMENT GENERATE A PRINCIPAL BOX? Everything CSSOM reports as a
+    // USED value has no answer when it does not - `display: none`,
+    // `display: contents`, and anything inside such a subtree - and the rule
+    // then is the computed value. Read from the box tree AND from the cascade,
+    // because the two disagree about `display: contents`: it generates no box by
+    // definition and this engine's layout makes one anyway, which is a layout
+    // gap rather than a licence to report a used width for a box the page
+    // cannot see.
+    bool has_box = false;
+    // A NON-REPLACED INLINE has no used width or height either (CSS 2.1 §10.3.1),
+    // and css/cssom's getComputedStyle-resolved-min-max-clamping asserts that
+    // for a <span> beside the two boxless cases.
+    bool inline_non_replaced = false;
     // POSITIONING, for the four inset properties. Chrome reports their USED
     // values for a positioned element - a number, not the `auto` that was
     // written - and `auto` only for a static one, so answering the declared text
@@ -266,10 +313,38 @@ struct probe {
     return out;
 }
 
+// ONE ELEMENT'S ANSWERS, CACHED FOR AS LONG AS THE DOCUMENT DOES NOT MOVE.
+//
+// The object below is live, so every property read has to be able to re-derive -
+// and re-deriving means the probe's three tree walks plus 148 values, which a
+// page reading one property per element after another would pay 148 times over.
+// `stamp` is the document version the answers were computed at: a script cannot
+// change what the cascade says without changing the document, and
+// `document::version()` counts exactly that. A read at the same version is the
+// same answer.
+//
+// WHAT THE STAMP DOES NOT SEE: a stylesheet edited through the CSSOM
+// (insertRule, replaceSync) changes which rules match without touching the DOM.
+// The browser is told about those through `set_author_styles_hook` and nothing
+// reaches this file, so a page that edits a sheet and then reads a computed
+// style it is already holding reads the previous answer. Naming it here because
+// the fix is the same shared flush hook `refresh` below wants.
+struct computed_cache {
+    std::vector<std::pair<std::string, std::string>> entries;
+    std::uint64_t stamp = 0;
+};
+
 } // namespace
 
-value dom_bindings::computed_style_object(context & cx, node_id id) {
-    auto * held = static_cast<script::object_object *>(cx.make_object().as_heap());
+// EVERY PROPERTY OF ONE ELEMENT, AS (css name, value) PAIRS: the longhands the
+// table knows, lexicographically, then the shorthands that can be reassembled,
+// then whatever the element declared that the table has never heard of. Empty
+// for an element that is not in the document.
+//
+// The order is the object's: the leading run is exactly the set CSSOM's indexed
+// properties enumerate, and it is already sorted.
+std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_entries(node_id id) {
+    std::vector<std::pair<std::string, std::string>> answers;
 
     probe at;
     at.box = box_for(boxes_, id);
@@ -319,24 +394,34 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
         }
 
         at.basis = static_cast<float>(viewport_width_);
+        at.basis_height = fragments_ != nullptr ? fragments_->bounds.height : 0.0f;
         if (at.chain.size() >= 2) {
             const node_id parent = at.chain[1];
             const layout::box_node * up_box = box_for(boxes_, parent);
             at.flex_item = up_box != nullptr && up_box->kind == layout::box_kind::flex;
             if (const layout::fragment * up = fragment_for(fragments_, parent)) {
                 at.basis = up->bounds.width;
+                at.basis_height = up->bounds.height;
                 if (up_box != nullptr) {
-                    at.basis -= up_box->padding.left.resolve(at.basis, up_box->font_size) +
-                                up_box->padding.right.resolve(at.basis, up_box->font_size);
+                    const layout::side_lengths & pad = up_box->padding;
+                    // A PERCENTAGE PADDING RESOLVES AGAINST THE WIDTH on all four
+                    // sides (CSS 2.1 §8.4), so the vertical pair is subtracted
+                    // using the horizontal basis too. Taking the height as the
+                    // basis there is the classic way to get a containing block
+                    // that is a few pixels short.
+                    at.basis -= pad.left.resolve(at.basis, up_box->font_size) +
+                                pad.right.resolve(at.basis, up_box->font_size);
+                    at.basis_height -= pad.top.resolve(at.basis, up_box->font_size) +
+                                       pad.bottom.resolve(at.basis, up_box->font_size);
                 }
             }
         }
     }
+    if (!connected) { return answers; }
 
-    // The cascade's text for one property, walking the chain when it inherits.
-    // Empty when nothing declared it, and the caller substitutes the property
-    // table's initial value - which is what a computed value IS for a property
-    // no rule reached.
+    // The cascade's text for one property. Empty when nothing declared it, and
+    // the caller substitutes the property table's initial value - which is what
+    // a computed value IS for a property no rule reached.
     // BY VALUE, all of it. The probe is a handful of pointers and a short vector
     // of node ids, so a copy is nothing; the pointers are the browser's and stay
     // valid for exactly as long as this call, which is why every answer is
@@ -355,7 +440,43 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
         return found->second->get(atoms->intern(property));
     };
 
-    const auto value_of = [at, declared](std::string_view property) -> std::string {
+    // THE FONT SIZE OF AN ELEMENT WITH NO BOX. Every `em` below resolves against
+    // it, and the box is where it normally lives - but a `display: none` element
+    // has no box and still has a computed font-size, which Chrome reports and
+    // which css/cssom's getComputedStyle-insets-nobox depends on: it declares
+    // `font-size: 10px` beside `top: 1em` and expects `10px`. Only an absolute
+    // length can be honoured here; a percentage or an em needs the parent's
+    // computed size, and the cascade does not resolve one for a box that was
+    // never built.
+    if (at.box == nullptr) {
+        const layout::length declared_size = layout::parse_length(declared("font-size"));
+        if (!declared_size.is_auto() && declared_size.u != layout::unit::percent &&
+            declared_size.u != layout::unit::em) {
+            at.font_size = declared_size.resolve(0.0f, 16.0f);
+        }
+    }
+    // THE PRINCIPAL BOX, and the two ways there is not one.
+    const std::string declared_display = collapse_keyword(declared("display"));
+    at.has_box = at.box != nullptr && declared_display != "none" && declared_display != "contents";
+    at.inline_non_replaced = at.box != nullptr && at.box->kind == layout::box_kind::inline_;
+
+    // A LENGTH AS A COMPUTED VALUE - CSS Values 3 §5.2 and CSSOM's "otherwise,
+    // the computed value". `auto` and every other keyword survive verbatim, a
+    // percentage survives as a percentage, and an absolute or font-relative
+    // length becomes px. Nothing here needs a containing block, which is the
+    // whole point: this is the answer for the cases where there is not one.
+    const auto computed_length = [at](std::string_view text) -> std::string {
+        const std::string_view given = trim(text, html_whitespace);
+        if (given.empty()) { return {}; }
+        const layout::length len = layout::parse_length(given);
+        // `auto`, `min-content`, a percentage and anything parse_length does not
+        // model are all their own computed value.
+        if (len.is_auto() || len.u == layout::unit::percent) { return collapse_keyword(given); }
+        return px_text(len.resolve(0.0f, at.font_size));
+    };
+
+    const auto value_of = [at, declared,
+                           computed_length](std::string_view property) -> std::string {
         // 0. A CUSTOM PROPERTY IS NOT A KEYWORD. Its value is an arbitrary token
         //    sequence whose case is significant and whose computed value is the
         //    substituted text, so it is handed back as written rather than folded
@@ -375,8 +496,17 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
         //    Bootstrap sets `box-sizing: border-box` on `*`, so this is not an edge
         //    case on any page that uses it - it was 399 of 3,518 differences, all of
         //    them exactly the padding.
+        //
+        //    ...UNLESS THERE IS NO USED SIZE. An element with no box and a
+        //    non-replaced inline both report the computed value instead, and
+        //    getComputedStyle-resolved-min-max-clamping asserts it for all three
+        //    of them: `width: 10%` reads back `10%`, and a `width` outside its own
+        //    min/max is NOT clamped, because clamping is something the used value
+        //    goes through and there is no used value here.
         if (property == "width" || property == "height") {
-            if (at.frag == nullptr) { return {}; }
+            if (!at.has_box || at.inline_non_replaced || at.frag == nullptr) {
+                return computed_length(declared(property));
+            }
             const bool horizontal = property == "width";
             float used = horizontal ? at.frag->bounds.width : at.frag->bounds.height;
             const bool border_box = ascii_iequals(declared("box-sizing"), "border-box");
@@ -387,7 +517,7 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
                                    : pad.top.resolve(at.basis, at.font_size) +
                                          pad.bottom.resolve(at.basis, at.font_size);
             }
-            return px_text(std::max(0.0f, used));
+            return used_px_text(std::max(0.0f, used));
         }
         // 2. FONT SIZE and LINE HEIGHT, already absolute on the box - the two
         //    lengths this engine resolves eagerly, and font-size is the basis every
@@ -409,7 +539,9 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
         //    all. css/cssom's getComputedStyle-line-height is four assertions
         //    about exactly this.
         if (property == "font-size") {
-            return at.box != nullptr ? px_text(at.box->font_size) : std::string{};
+            // NOT `at.box->font_size` directly: a boxless element's size is the
+            // one the cascade declared, gathered above.
+            return px_text(at.font_size);
         }
         if (property == "line-height") {
             const std::string_view given = declared(property);
@@ -462,41 +594,79 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
         //     what the specification says and what moved 566 differences the WRONG
         //     way when css-parity.py tried it, because most elements on most pages
         //     are not flex items.
-        if (text.empty() && (property == "min-width" || property == "min-height")) {
-            return at.flex_item ? "auto" : "0px";
-        }
-        // 2d. THE INSETS, as USED values. Chrome answers `auto` only for a static
-        //     element; for a positioned one it answers the number the box ended
-        //     up at, whether or not the sheet wrote it. So `position: relative`
-        //     with nothing else reports `0px` on all four sides, and an absolute
-        //     box with only `top` and `left` still reports a `right` and a
-        //     `bottom` - derived from where it is.
         //
-        //     Derived from the GEOMETRY rather than re-resolved from the text,
-        //     for the same reason `width` is: layout already answered this
-        //     question, and asking it twice is how two answers start to differ.
-        if (property == "top" || property == "right" || property == "bottom" ||
-            property == "left") {
-            if (at.position == layout::position_kind::static_) { return "auto"; }
+        //     `auto` "resolves to zero when no box is generated" whatever the
+        //     parent is (CSS Sizing 3), which is the second half of
+        //     getComputedStyle-resolved-min-size-auto.
+        if (text.empty() && (property == "min-width" || property == "min-height")) {
+            return at.flex_item && at.has_box ? "auto" : "0px";
+        }
+        // 2d. THE INSETS. CSSOM §6.7.2 gives them the longest special case in the
+        //     specification, and all three of its arms are here:
+        //
+        //       no box, or not positioned  -> the COMPUTED value. An inset does
+        //         not apply to a static box, so `top: 10%` reads back `10%` and
+        //         `top: auto` reads back `auto`. This answered `auto` for all
+        //         four sides of every static element, which is every element on
+        //         most pages, and is what getComputedStyle-insets-static and
+        //         -insets-nobox assert 216 times each.
+        //       over-constrained           -> the COMPUTED value, again. When
+        //         both sides and the size in that axis are given, one of the
+        //         three is ignored, and CSSOM refuses to report a used value it
+        //         would have to pick a loser for.
+        //       otherwise                  -> the USED value.
+        //
+        //     A SIDE THE AUTHOR GAVE A LENGTH IS ITS OWN USED VALUE. Deriving it
+        //     from the geometry instead - `containing.width - left - width` -
+        //     is arithmetic on floats that the author's `20.7px` does not
+        //     survive, which is getComputedStyle-insets-absolute-roundtrip. The
+        //     geometry is still what answers for a side that says `auto`,
+        //     because that one really was decided by layout.
+        if (is_inset_property(property)) {
+            const bool horizontal = property == "left" || property == "right";
+            const bool start = property == "top" || property == "left";
+            const std::string_view start_text = declared(horizontal ? "left" : "top");
+            const std::string_view end_text = declared(horizontal ? "right" : "bottom");
+            const layout::length mine = layout::parse_length(text);
+            const bool start_auto = layout::parse_length(start_text).is_auto();
+            const bool end_auto = layout::parse_length(end_text).is_auto();
+            const float basis = horizontal ? at.containing.width : at.containing.height;
+
+            if (!at.has_box || at.position == layout::position_kind::static_) {
+                return computed_length(text);
+            }
             if (at.position == layout::position_kind::relative ||
                 at.position == layout::position_kind::sticky) {
-                // A relative box's used inset is what it was OFFSET by, and an
-                // omitted one is zero - it did not move.
-                if (text.empty()) { return "0px"; }
-                const layout::length len = layout::parse_length(text);
-                if (len.is_auto()) { return "0px"; }
-                const bool horizontal = property == "left" || property == "right";
-                return px_text(len.resolve(horizontal ? at.containing.width : at.containing.height,
-                                           at.font_size));
+                // A relative box's containing block is the one it would have had
+                // staying put - its parent's content box - and NOT the nearest
+                // positioned ancestor, which is the absolute rule.
+                const float relative_basis = horizontal ? at.basis : at.basis_height;
+                // Both sides given: CSS 9.4.3 ignores one of them, so this is
+                // over-constrained and the computed value is the answer.
+                if (!start_auto && !end_auto) { return computed_length(text); }
+                if (!mine.is_auto()) { return px_text(mine.resolve(relative_basis, at.font_size)); }
+                // `auto` against a given opposite side is its negation: the box
+                // moved, and this side records the move from the other end.
+                const layout::length other = layout::parse_length(start ? end_text : start_text);
+                if (other.is_auto()) { return "0px"; }
+                return px_text(-other.resolve(relative_basis, at.font_size));
             }
+            // Absolute or fixed. Over-constrained needs the SIZE as well: with
+            // both insets and a definite size, CSS 10.3.7 ignores `right` (and
+            // 10.6.4 ignores `bottom`), and CSSOM reports computed values for
+            // the whole axis rather than a used value with a loser in it.
+            const bool size_auto =
+                layout::parse_length(declared(horizontal ? "width" : "height")).is_auto();
+            if (!start_auto && !end_auto && !size_auto) { return computed_length(text); }
+            if (!mine.is_auto()) { return px_text(mine.resolve(basis, at.font_size)); }
             const float left = at.box_abs.x - at.containing.x;
             const float top = at.box_abs.y - at.containing.y;
-            if (property == "left") { return px_text(left); }
-            if (property == "top") { return px_text(top); }
+            if (property == "left") { return used_px_text(left); }
+            if (property == "top") { return used_px_text(top); }
             if (property == "right") {
-                return px_text(at.containing.width - left - at.box_abs.width);
+                return used_px_text(at.containing.width - left - at.box_abs.width);
             }
-            return px_text(at.containing.height - top - at.box_abs.height);
+            return used_px_text(at.containing.height - top - at.box_abs.height);
         }
         // 2e. THE BORDER AND OUTLINE WIDTHS, whose used value is zero unless the
         //     matching style draws something. Answered here rather than left to
@@ -515,6 +685,13 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
         //    `auto` stays `auto`, which is what Chrome returns for a margin that
         //    was never resolved to a used value.
         if (is_length_property(property)) {
+            // ...WHEN THERE IS A BOX. A margin and a padding are on CSSOM's list
+            // of properties whose resolved value is the USED one, and that list
+            // is conditioned on the element generating a box: a `display: none`
+            // element has no used margin, so `margin-left: 10%` reads back as
+            // `10%` rather than as a share of a containing block it does not
+            // have. Same sentence, same rule, as `width` above.
+            if (!at.has_box) { return computed_length(text); }
             const layout::length len = layout::parse_length(text);
             if (len.is_auto()) { return "auto"; }
             // A PERCENTAGE MIN OR MAX STAYS A PERCENTAGE. Their computed value is the
@@ -533,6 +710,25 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
             }
             return px_text(len.resolve(at.basis, at.font_size));
         }
+        // 3b. EVERY OTHER LENGTH-VALUED PROPERTY, ABSOLUTIZED. A computed value
+        //     is an absolute length wherever the specified value was a relative
+        //     one, and that is a rule about the property's TYPE rather than
+        //     about the eleven names above - which is why it is asked of the
+        //     table rather than of a third list. `letter-spacing: 1em` under a
+        //     20px font computes to `20px` in every engine and was reported here
+        //     as `1em`; so were `word-spacing`, `text-indent`, `vertical-align`,
+        //     `flex-basis`, `row-gap`, `column-gap` and `outline-offset`.
+        //
+        //     A PERCENTAGE STAYS A PERCENTAGE for all of them, which is the
+        //     difference from the rule above: none of these is in CSSOM's list
+        //     of properties whose resolved value is the used one, so there is no
+        //     containing block in the question at all. `text-indent: 10%`
+        //     computes to `10%`.
+        const style::css::property_syntax * known = style::css::find_property(property);
+        if (known != nullptr && (known->kind == style::css::value_kind::length ||
+                                 known->kind == style::css::value_kind::length_percentage)) {
+            return computed_length(text);
+        }
         // 4. COLOURS, resolved so the two engines' spellings converge.
         if (is_color_property(property)) {
             if (const std::optional<color> c = paint::parse_color(text)) { return color_text(*c); }
@@ -541,15 +737,6 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
         // 5. Everything else is a keyword or a list, and its computed value IS
         //    its specified text.
         return collapse_keyword(text);
-    };
-
-    // ONE PUBLISHED PROPERTY. `idl` is empty when the two spellings coincide,
-    // which is true of every one-word property - there is no point storing
-    // `width` twice.
-    struct entry {
-        std::string css;
-        std::string idl;
-        std::string text;
     };
 
     // `currentcolor` IS NOT A COLOUR. It is the initial value of all six border
@@ -571,26 +758,36 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
     // `property in getComputedStyle(target)` before every single computed-value
     // test, and a property the cascade never reached failed there rather than on
     // its value.
-    std::vector<entry> published;
-    published.reserve(style::css::known_properties().size());
+    //
+    // A SHORTHAND IS SKIPPED, AND THE TABLE IS ASKED WHICH ONE IS. CSSOM §6.7
+    // says a computed style's INDEXED properties are the supported LONGHANDS,
+    // and css/cssom's getComputedStyle-getter-v-properties asserts both halves
+    // of that at once: `'border' in style` is true and `Array.from(style)` does
+    // not contain it. serialize-all-longhands asserts the consequence - every
+    // enumerated name must serialise to something, and a shorthand here would
+    // serialise to nothing, because reconstructing one means deciding how each
+    // engine rebuilds it.
+    //
+    // THIS FILE USED TO KEEP ITS OWN LIST, on the grounds that the table was not
+    // this file's to change. The table has a `shorthand` bit now, and the two
+    // had already drifted: `border-top`, `border-right`, `border-bottom` and
+    // `border-left` are shorthands there and were missing from the list, so all
+    // four were enumerated as longhands - which is the exact assertion
+    // getComputedStyle-getter-v-properties makes about each of them by name.
     for (const style::css::property_syntax & p : style::css::known_properties()) {
-        if (is_shorthand(p.name)) { continue; }
-        std::string text;
-        if (connected) {
-            text = value_of(p.name);
-            if (text.empty()) { text = std::string{p.initial}; }
-            if (ascii_iequals(text, "currentcolor")) { text = current_color; }
-        }
-        std::string idl = style::css::idl_name_of(p.name);
-        if (std::string_view{idl} == p.name) { idl.clear(); }
-        published.push_back(entry{std::string{p.name}, std::move(idl), std::move(text)});
+        if (p.shorthand) { continue; }
+        std::string text = value_of(p.name);
+        if (text.empty()) { text = std::string{p.initial}; }
+        if (ascii_iequals(text, "currentcolor")) { text = current_color; }
+        answers.emplace_back(std::string{p.name}, std::move(text));
     }
     // SORTED, WHICH THE TABLE IS NOT. css/cssom's getComputedStyle-property-order
     // requires the indexed properties to come out in lexicographic order;
     // style/css/properties.hpp is written box-model-first because that is the
     // order a person reads it in. Sorting here keeps both true, and there are no
     // vendor-prefixed names in the table, so plain byte order is the whole rule.
-    std::ranges::sort(published, [](const entry & a, const entry & b) { return a.css < b.css; });
+    std::ranges::sort(answers, [](const auto & a, const auto & b) { return a.first < b.first; });
+    const std::size_t longhand_count = answers.size();
 
     // THE SHORTHANDS, PRESENT BUT NOT INDEXED. CSSOM gives a computed style an
     // attribute for every SUPPORTED property, shorthands included, and
@@ -607,9 +804,9 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
     // Chrome disagrees with itself across versions - and CSSOM already says a
     // shorthand that cannot be represented serialises to the empty string. That
     // is the same answer, and the same reason, as `cssText` below.
-    const auto longhand = [&published](std::string_view name) -> std::string {
-        for (const entry & one : published) {
-            if (std::string_view{one.css} == name) { return one.text; }
+    const auto longhand = [&answers, longhand_count](std::string_view name) -> std::string {
+        for (std::size_t i = 0; i < longhand_count; ++i) {
+            if (std::string_view{answers[i].first} == name) { return answers[i].second; }
         }
         return {};
     };
@@ -633,13 +830,11 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
         if (first.empty() || second.empty()) { return {}; }
         return first == second ? first : first + " " + second;
     };
-    std::vector<entry> shorthands;
+    std::vector<std::pair<std::string, std::string>> shorthands;
     for (const style::css::property_syntax & p : style::css::known_properties()) {
-        if (!is_shorthand(p.name)) { continue; }
+        if (!p.shorthand) { continue; }
         std::string text;
-        if (!connected) {
-            // nothing to assemble - a detached element has no longhands either
-        } else if (p.name == "margin") {
+        if (p.name == "margin") {
             text = sides("margin-top", "margin-right", "margin-bottom", "margin-left");
         } else if (p.name == "padding") {
             text = sides("padding-top", "padding-right", "padding-bottom", "padding-left");
@@ -676,47 +871,131 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
                 text = grow + " " + shrink + " " + basis;
             }
         }
-        std::string idl = style::css::idl_name_of(p.name);
-        if (std::string_view{idl} == p.name) { idl.clear(); }
-        shorthands.push_back(entry{std::string{p.name}, std::move(idl), std::move(text)});
+        shorthands.emplace_back(std::string{p.name}, std::move(text));
     }
+    answers.insert(answers.end(), std::make_move_iterator(shorthands.begin()),
+                   std::make_move_iterator(shorthands.end()));
 
     // AND EVERY PROPERTY THE ELEMENT ITSELF DECLARED that the table has never
     // heard of - a CUSTOM property above all, which no fixed table can enumerate.
     // Readable, and answering to `in`, but NOT indexed: CSSOM's indexed
     // properties are the supported longhands and a page's `--brand` is not one.
-    std::vector<entry> extra;
-    if (connected && styles_ != nullptr) {
+    if (styles_ != nullptr) {
         const auto found = styles_->find(style::engine::key_of(id));
         if (found != styles_->end() && found->second) {
             for (const style::declaration & d : found->second->declarations) {
                 const std::string_view name = atoms_->text(d.property);
                 if (style::css::find_property(name) != nullptr) { continue; }
-                const auto seen = std::find_if(extra.begin(), extra.end(), [name](const entry & e) {
-                    return std::string_view{e.css} == name;
-                });
-                if (seen != extra.end()) { continue; }
+                const auto seen =
+                    std::find_if(answers.begin(), answers.end(), [name](const auto & e) {
+                        return std::string_view{e.first} == name;
+                    });
+                if (seen != answers.end()) { continue; }
                 std::string text = value_of(name);
                 if (text.empty()) { continue; }
-                std::string idl = style::css::idl_name_of(name);
-                if (std::string_view{idl} == name) { idl.clear(); }
-                extra.push_back(entry{std::string{name}, std::move(idl), std::move(text)});
+                answers.emplace_back(std::string{name}, std::move(text));
             }
         }
     }
+    return answers;
+}
 
-    // BOTH SPELLINGS, SHARING ONE STRING OBJECT. `background-color` and
-    // `backgroundColor` are one property read two ways, and allocating the value
-    // twice would double the ~250 heap objects a getComputedStyle call already
-    // costs on a page that asks for one per element.
-    const auto publish = [&](const entry & one) {
-        const value text = cx.string(one.text);
-        held->set(one.css, text);
-        if (!one.idl.empty()) { held->set(one.idl, text); }
+value dom_bindings::computed_style_object(context & cx, node_id id) {
+    auto * held = static_cast<script::object_object *>(cx.make_object().as_heap());
+
+    const auto cached = std::make_shared<computed_cache>();
+    cached->entries = computed_style_entries(id);
+    cached->stamp = doc_->version();
+
+    // THE LIVE READ, and the flush it needs.
+    //
+    // Every property below re-derives, so a page holding the object across a
+    // write sees the write - which is the whole of CSSOM's "live" and of
+    // getComputedStyle-display-none-001/-002. Re-deriving is only correct if the
+    // pipeline has caught up first, though: `el.style.color = 'green'` marks the
+    // cascade stale and nothing resolves it until the next frame, so a read
+    // that skipped the flush would answer from before the page's own write -
+    // exactly the defect docs/css-conformance.md §6 measured for the call
+    // itself.
+    //
+    // REACHED THROUGH THE GLOBAL, which is the only channel a binding has.
+    // browser::run_scripts wraps `getComputedStyle` with a native that runs
+    // precisely the stages `dirty_` says are stale; the bindings deliberately do
+    // not know that layout exists ("a native that changes the document calls
+    // on_mutation, and the browser decides what that invalidates", at the top of
+    // shell/bindings.hpp), so calling that wrapper with no arguments is how a
+    // property read asks for the same flush. With no argument the inner native
+    // makes one empty object and returns, so the call costs the flush and
+    // nothing else. A page that has REPLACED the global gets no flush rather
+    // than a call into its own function: the kind check is what makes that safe.
+    //
+    // It is a stand-in for the shared flush hook on dom_bindings that
+    // getBoundingClientRect, offsetWidth and clientHeight all want too, and it
+    // is written to be deleted the moment that exists.
+    const auto refresh = [this, id, cached](context & c) {
+        const std::uint64_t now = doc_->version();
+        if (now == cached->stamp) { return; }
+        const value flush = c.global("getComputedStyle");
+        if (flush.is_kind(script::heap_kind::native)) {
+            (void)c.call(flush, std::span<const value>{});
+        }
+        cached->entries = computed_style_entries(id);
+        cached->stamp = doc_->version();
     };
-    for (const entry & one : published) { publish(one); }
-    for (const entry & one : shorthands) { publish(one); }
-    for (const entry & one : extra) { publish(one); }
+    const auto answer = [cached](std::string_view name) -> std::string {
+        for (const auto & [key, text] : cached->entries) {
+            if (std::string_view{key} == name) { return text; }
+        }
+        return {};
+    };
+
+    // A COMPUTED STYLE IS READ-ONLY, and CSSOM §6.7.2 says how: every mutating
+    // member throws NoModificationAllowedError. Doing nothing instead let a page
+    // write to it and believe the write had landed.
+    //
+    // ONE SETTER OBJECT FOR ALL OF THEM. The property-assignment half of this
+    // rule used to be left out on the grounds that it would cost "a setter
+    // accessor on each of the 125 published names, per call" - which was true
+    // while the names were data properties. They are accessors now, for
+    // liveness, so each already has a descriptor to hang this on and the whole
+    // rule costs one extra allocation. computed-style-001 and
+    // computed-style-set-property assert it three ways: `style.color = 'blue'`,
+    // `style.cssText = '...'` and `style.setProperty(...)`.
+    const value refuse = value::object(
+        cx.allocate<script::native_object>("set", [this](context & c, std::span<value>) {
+            throw_dom_exception(c, "NoModificationAllowedError",
+                                "a computed style declaration is read-only");
+            return value::undefined();
+        }));
+    const auto reader = [&cx, refresh, answer](const std::string & name) {
+        return value::object(cx.allocate<script::native_object>(
+            name, [refresh, answer, name](context & c, std::span<value>) {
+                refresh(c);
+                return c.string(answer(name));
+            }));
+    };
+
+    // EVERY NAME THE OBJECT ANSWERS TO: the whole table - longhands and
+    // shorthands alike, because CSSOM gives a computed style an attribute for
+    // every SUPPORTED property - and then whatever this element declared that
+    // the table has never heard of.
+    //
+    // BOTH SPELLINGS SHARE ONE GETTER. `background-color` and `backgroundColor`
+    // are one property read two ways, and a second native per name would double
+    // the allocations a getComputedStyle call costs on a page that asks for one
+    // per element.
+    const auto publish = [&](const std::string & css_name) {
+        const value get = reader(css_name);
+        held->define_accessor(css_name, get, refuse);
+        const std::string idl = style::css::idl_name_of(css_name);
+        if (idl != css_name) { held->define_accessor(idl, get, refuse); }
+    };
+    for (const style::css::property_syntax & p : style::css::known_properties()) {
+        publish(std::string{p.name});
+    }
+    for (const auto & [name, text] : cached->entries) {
+        if (style::css::find_property(name) == nullptr) { publish(name); }
+    }
 
     // THE INDEXED GETTER AND `length`, CSSOM §6.7 - as DATA properties, which is
     // also what makes the object ITERABLE. `[...style]` and `for (const p of
@@ -724,70 +1003,72 @@ value dom_bindings::computed_style_object(context & cx, node_id id) {
     // carrying a numeric `length` beside indexed properties; there is no
     // Symbol.iterator dispatch in this VM to hook instead. serialize-all-longhands
     // and getComputedStyle-property-order both spread one.
-    if (connected) {
-        for (std::size_t i = 0; i < published.size(); ++i) {
-            held->set(std::to_string(i), cx.string(published[i].css));
-        }
+    //
+    // THE SUPPORTED LONGHANDS, in the lexicographic order computed_style_entries
+    // put them in - and none of the shorthands or custom properties that follow
+    // them there. Empty for an element that is not being rendered, which is
+    // `length === 0` in getComputedStyle-detached-subtree.
+    //
+    // FIXED WHEN THE OBJECT IS MADE, unlike every value on it. The set of
+    // supported longhands cannot change under a page; what can is whether the
+    // element is in the document at all, so a declaration taken for a detached
+    // element keeps `length === 0` after the element is appended. Making the
+    // index list live too would mean an accessor per index and a `length` that
+    // is not a data property, and `context::iterable_values` finds the object
+    // iterable by reading exactly that data property.
+    std::vector<std::string> indexed;
+    for (const auto & [name, text] : cached->entries) {
+        const style::css::property_syntax * known = style::css::find_property(name);
+        if (known != nullptr && !known->shorthand) { indexed.push_back(name); }
     }
-    held->set("length", value::number(connected ? static_cast<double>(published.size()) : 0.0));
+    for (std::size_t i = 0; i < indexed.size(); ++i) {
+        held->set(std::to_string(i), cx.string(indexed[i]));
+    }
+    held->set("length", value::number(static_cast<double>(indexed.size())));
 
     const auto method = [&](std::string name, script::native_fn fn) {
         held->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
     };
     // THE SPELLING THE DUMP USES, and the only one both engines agree on. It
     // takes a CSS name and accepts the IDL one too, because a page holding
-    // `backgroundColor` should not have to hyphenate it itself. It reads the
-    // table computed above rather than recomputing, so the object holds no
-    // pointer into a box tree that the next layout - which may now happen inside
-    // the same script turn - is about to free.
-    std::vector<entry> answers = published;
-    answers.insert(answers.end(), shorthands.begin(), shorthands.end());
-    answers.insert(answers.end(), extra.begin(), extra.end());
-    method("getPropertyValue", [answers](context & c, std::span<value> args) {
+    // `backgroundColor` should not have to hyphenate it itself. Live, like the
+    // accessors: css-style-declaration-modifications edits a stylesheet rule and
+    // reads the computed value back through this.
+    method("getPropertyValue", [refresh, answer](context & c, std::span<value> args) {
         if (args.empty()) { return c.string(std::string{}); }
         const std::string asked = style::css::css_name_of(c.to_string(args[0]));
-        for (const entry & one : answers) {
-            if (one.css == asked) { return c.string(one.text); }
-        }
-        return c.string(std::string{});
+        refresh(c);
+        return c.string(answer(asked));
     });
     // Always empty. Importance is a cascade INPUT, and by the time a value is
     // computed the question has been settled; this engine does not keep which
     // declaration won past resolve().
     method("getPropertyPriority", [](context & c, std::span<value>) { return c.string(""); });
-    std::vector<std::string> names;
-    if (connected) {
-        names.reserve(published.size());
-        for (const entry & one : published) { names.push_back(one.css); }
-    }
-    method("item", [names](context & c, std::span<value> args) {
+    method("item", [indexed](context & c, std::span<value> args) {
         if (args.empty()) { return c.string(std::string{}); }
         const double i = context::to_number(args[0]);
-        if (!(i >= 0) || static_cast<std::size_t>(i) >= names.size()) { return c.string(""); }
-        return c.string(names[static_cast<std::size_t>(i)]);
+        if (!(i >= 0) || static_cast<std::size_t>(i) >= indexed.size()) { return c.string(""); }
+        return c.string(indexed[static_cast<std::size_t>(i)]);
     });
-    // A COMPUTED STYLE IS READ-ONLY, and CSSOM §6.7.2 says how: every mutating
-    // member throws NoModificationAllowedError. Doing nothing instead let a page
-    // write to it and believe the write had landed.
-    //
-    // The property-ASSIGNMENT half of the same rule is deliberately absent:
-    // `style.color = "blue"` has to throw too, and making it would mean a setter
-    // accessor on each of the 125 published names, per call. That is a real cost
-    // for one subtest, and computed-style-001 asserts it beside two other things
-    // that already fail.
-    const auto refuse = [this](context & c, std::span<value>) {
+    const auto refuse_method = [this](context & c, std::span<value>) {
         throw_dom_exception(c, "NoModificationAllowedError",
                             "a computed style declaration is read-only");
         return value::undefined();
     };
-    method("setProperty", refuse);
-    method("removeProperty", refuse);
+    method("setProperty", refuse_method);
+    method("removeProperty", refuse_method);
     // Empty rather than reconstructed - which is also what the specification
     // says: a computed style's cssText getter returns the empty string, because
     // serialising one means deciding how to rebuild every shorthand and engines,
     // including Chrome across its own versions, disagree there. Which is exactly
-    // why the compared property set is longhands only.
-    held->set("cssText", cx.string(std::string{}));
+    // why the compared property set is longhands only. An ACCESSOR so that the
+    // setter can refuse: `cs.cssText = "color: blue"` is the first of
+    // computed-style-001's three read-only assertions.
+    held->define_accessor(
+        "cssText",
+        value::object(cx.allocate<script::native_object>(
+            "cssText", [](context & c, std::span<value>) { return c.string(std::string{}); })),
+        refuse);
     // A computed style belongs to no rule.
     held->set("parentRule", value::null());
     return value::object(held);
@@ -802,7 +1083,8 @@ void dom_bindings::install_computed_style(context & cx) {
     // browser::run_scripts WRAPS THIS GLOBAL to flush a pending restyle before
     // it runs - the bindings deliberately do not know that layout exists, and
     // without the flush every answer below is the one from before the script's
-    // own write. See the note there; it is half of what makes this file useful.
+    // own write. See the note there, and the one on `refresh` above: a LIVE read
+    // needs the same flush and reaches it back through this same global.
     cx.define_native("getComputedStyle", [this](context & c, std::span<value> args) {
         // A second argument names a pseudo-element. Accepted and IGNORED rather
         // than rejected: ::before and ::after generate no boxes yet, and throwing
