@@ -209,3 +209,18 @@ ctbrowser_test(js/array_generics)
 # file for the same reason the four above have one: it asks what a value
 # SERIALISES to and what text is REFUSED, not what an expression computes.
 ctbrowser_test(js/json_basics)
+# --- the early errors, the largest gap test262 had left ---------------------
+# 2,812 tests asserted that source text is a SyntaxError while this engine
+# parsed it, ran it, and reported whatever happened next. Its own file for the
+# same reason the five above have one: every case asks whether source is
+# REFUSED rather than what an expression computes - and each refusal is paired
+# with the valid near-miss that must still run, which is the half that stops a
+# rule growing into a false positive that would stop a page loading.
+ctbrowser_test(js/early_errors)
+# --- the four Promise statics that were missing -----------------------------
+# `withResolvers` is the one WPT asked for by name; `allSettled`, `any` and
+# `race` were absent beside it. Its own file because every case has to WAIT -
+# a combinator's reaction is a microtask, so what it produced is only readable
+# after the turn drains, and each one is exercised over an input that is still
+# pending when the combinator is called.
+ctbrowser_test(js/promise_combinators)
