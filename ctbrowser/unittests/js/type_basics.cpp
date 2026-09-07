@@ -210,8 +210,26 @@ int main() {
     // And String(sym) describes rather than exposing the internal key.
     js_expect("String(Symbol(\"s\"))", "Symbol(s)");
 
-    // --- KNOWN WRONG, pinned so a fix trips over it ---------------------------
-    js_expect("String((function(){}))", "function"); // V8: the source text
+    // --- A FUNCTION STRINGIFIES TO ITS SOURCE --------------------------------
+    //
+    // `String((function(){}))` was pinned here as KNOWN WRONG and read
+    // "function" - the bare word, for EVERY function, so two different ones
+    // stringified alike. `to_string` short-circuited on is_callable() before
+    // ToPrimitive could reach `Function.prototype.toString`, which has returned
+    // the real source text since `function_proto` gained its span. The
+    // shortcut was not standing in for a missing answer; it was hiding one.
+    js_expect("String(function(){})", "function(){}");
+    js_expect("String(function foo(a){ return a; })", "function foo(a){ return a; }");
+    js_expect("'' + ((a, b) => a + b)", "(a, b) => a + b");
+    // ONE ANSWER FOR BOTH SPELLINGS, which is the property that matters: a
+    // library reading its own source takes whichever is shorter to write.
+    js_expect("(function(){var f = function named(){ return 1; };"
+              "return String(f) === f.toString();})()",
+              "true");
+    // A native says so, which is what every engine says and what a feature
+    // probe written as `('' + fn).indexOf('native code')` reads.
+    js_expect("String(Math.max) === Math.max.toString()", "true");
+    js_expect("String(Math.max).indexOf('native code') >= 0", "true");
 
     REPORT("type_basics");
 }
