@@ -4,10 +4,11 @@
 acyclic importer handler and emits real C++ `throw` and typed `catch`, with
 number, boolean or owning string payloads and catch state. Each handler must
 have one proved payload type; mixed, null, undefined and object payloads refuse.
-Recovery is transactional;
+Catch bodies can call closed nonthrowing primitive helpers, including transitive
+calls and owning string arguments/results. Recovery is transactional;
 type/effect admission must prove every other protected operation cannot throw a
-JavaScript value. General throwing callees, nested handlers and finally
-completions remain further work. This is separate from
+JavaScript value. Throwing callees, nested handlers and finally completions
+remain further work. This is separate from
 [private provider mutation summaries](native-provider-mutations.md).
 
 `console.error(...)` is an ordinary call, not a JavaScript `throw`. Its callback
@@ -105,8 +106,9 @@ annotation.
 
 1. `ctjs-lift-to-scf` preserves primitive handler candidates before ordinary
    simplification can erase register correspondence. The syntactic filter
-   excludes calls, closures, properties, allocation, cells and global effects;
-   those functions keep the existing simplification needed by closure lifting.
+   excludes unresolved calls, closures, properties, allocation, cells and global
+   effects. It preserves resolved direct calls and callee-only global loads;
+   other functions keep the existing simplification needed by closure lifting.
    This filter grants no type/effect proof. Native recovery in
    [Exceptions/Recovery.cpp](../lib/CTNative/Lowering/Exceptions/Recovery.cpp)
    checks one entry handler, a dedicated landing, complete register vectors,
@@ -129,8 +131,13 @@ annotation.
    [Admission.cpp](../lib/CTNative/Lowering/Exceptions/Admission.cpp) permits
    only proved nonthrowing primitive operations inside both regions. Owning
    string constants, concatenation, equality, truthiness and `typeof` use the
-   existing native string semantics. Calls, properties, object allocation and
-   unknown effects refuse. String allocation failures remain foreign C++
+   existing native string semantics. A direct call must resolve to a private,
+   structured body with primitive operands and a live proof of every transitive
+   operation. The query examines at most 4096 helper operations and 32 active
+   helpers; recursion, properties, object allocation, global mutation and
+   unknown effects refuse. Cached answers exist only during that query, and
+   ordinary operation/carrier admission and the closed native component check
+   still apply. String allocation failures remain foreign C++
    failures, never JavaScript catch payloads. Recovery is rolled back
    if admission or the closed call-component check fails.
    Completed computations can update scratch registers before a later status
@@ -154,7 +161,9 @@ copies remain valid after the exception and protected temporaries are destroyed.
 A separate outer slot carries the normal/catch result.
 Ordinary SSA temporaries retain the existing const/constexpr printing policy.
 For a future throwing assignment, the pre-call value must be saved and the
-assigned value published only on normal return; calls are refused for now.
+assigned value published only on normal return. An admitted helper here cannot
+throw a JavaScript value, so its ordinary result assignment supplies no proof
+of that future exceptional state transfer.
 
 The implementation is organized under `Lowering/Exceptions/` and
 `Target/Cpp/Exceptions/`, keeping recovery, admission and printing separate.
@@ -278,6 +287,50 @@ Exception edges invalidate normal-return-only provider facts. A successfully
 summarized Map mutation describes the path after normal return; it says nothing
 about a catch continuation after allocation, mutation or callback failure.
 Keep that distinction even after C++ exceptions are available.
+
+## Closed catch helper boundary, 2026-09-07
+
+The source importer exposes an earlier prerequisite than exception unwinding:
+a helper name loaded inside `try` flows through `ctjs.check` register vectors.
+`ctjs-resolve-globals` currently treats that use as open and leaves its call
+indirect. Ordinary CFG simplification then erases correspondence needed for
+exception recovery. The preserved `protected_nothrow_callee` specimen records
+this boundary even though its helper performs only numeric addition.
+
+A helper called from the catch has no active status edge around its global
+load and can already resolve. The preservation filter now keeps its complete
+handler CFG, and admission follows the actual helper body instead of equating
+its result type with an effect proof. The numeric source calls two levels of
+helpers and assigns their completed result. The boolean source copies the
+catch binding before reassigning it. The string source passes an owning payload
+through a helper, retains the returned copy after another helper call and then
+observes it after leaving the catch and another function invocation.
+
+The source controls retain protected nonthrowing calls, throwing calls on a
+right-hand side, potentially throwing catch helpers, transitive global effects,
+object/property operations and recursion as refusals. A 33-helper chain and a
+helper with 2050 sequential additions exceed the finite query limits. A late
+helper mutation is rechecked with the old resolver report and a forged
+`ctnative.nothrow` marker still present; a subsequent lowering rerun must refuse
+again. None of those annotations supplies an effect or lifetime proof.
+
+The devbox source gate now passes **16 complete programs, 38/38 functions and
+31 observations** across Node, the interpreter and explicit/deduced GCC 13 and
+Clang 18 output, with no VM symbols. The three helper additions account for
+**11 functions and six observations**. Numeric and owning-string helper cases
+also pass default native optimizations. The string helper's explicit/deduced
+output passes ASan/UBSan, use-after-scope, stack-use-after-return and leak checks.
+All **20 source refusals**, mutation/rerun controls and finite query limits retain
+the original exception operations and source-function accounting. The existing
+recovery-budget and executed wrong-state controls still pass.
+
+**Next:** preserve and resolve the checked callee value flow before adding a
+throwing protected call. That call then needs an exceptional region edge with
+the pre-call register snapshot, an owning payload type propagated through its
+closed native component and assignment publication only on normal return.
+The existing `try_exit` carries the final completion state and cannot encode a
+call that unwinds before reaching it. Uncaught entry points still need an
+explicit adapter; callback/provider effects remain a separate obligation.
 
 ## Primitive payload checkpoint, 2026-09-07
 

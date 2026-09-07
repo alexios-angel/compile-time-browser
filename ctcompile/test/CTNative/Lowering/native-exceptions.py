@@ -37,13 +37,31 @@ PROGRAMS = {
     "catch_finally": (2, {"finally121": 121}),
     "nested_catch": (2, {"nested7": 7}),
     "throwing_callee": (3, {"called42": 42}),
+    "numeric_catch_helper": (4, {"caught42": 42, "normal20": 20}),
+    "boolean_catch_helper": (3, {"true42": 42, "false20": 20}),
+    "string_catch_helper": (4, {"caught42": 42, "normal20": 20}),
+    "protected_nothrow_callee": (3, {"caught42": 42, "normal20": 20}),
+    "effectful_catch_helper": (4, {"caught42": 42, "counter": 1}),
+    "property_catch_helper": (3, {"caught42": 42}),
+    "recursive_catch_helper": (3, {"caught42": 42}),
+    "throwing_catch_helper": (3, {"caught42": 42}),
+    "helper_depth_limit": (35, {"caught42": 42}),
+    "helper_work_limit": (3, {"caught42": 42}),
 }
 POSITIVES = ("guarded", "two_sites", "continuation", "normal_return",
              "unconditional", "boolean_state", "finally_override", "boolean_payload",
-             "string_payload", "boolean_value", "string_value", "string_sites", "numeric_bits")
+             "string_payload", "boolean_value", "string_value", "string_sites", "numeric_bits",
+             "numeric_catch_helper", "boolean_catch_helper", "string_catch_helper")
 TWO_THROW_SITES = ("two_sites", "finally_override", "boolean_value", "string_sites", "numeric_bits")
-STRING_LIFETIMES = ("string_value", "string_sites")
-DEFAULT_OPTIMIZATIONS = ("guarded", "string_value")
+STRING_LIFETIMES = ("string_value", "string_sites", "string_catch_helper")
+DEFAULT_OPTIMIZATIONS = ("guarded", "string_value", "numeric_catch_helper", "string_catch_helper")
+CALLEE_EFFECT_REFUSALS = ("effectful_catch_helper", "property_catch_helper",
+                         "recursive_catch_helper", "helper_depth_limit", "helper_work_limit")
+CPP_HELPER_CALLS = {
+    "numeric_catch_helper": {"increment_1": 2, "addTwo_2": 1},
+    "boolean_catch_helper": {"invert_1": 1},
+    "string_catch_helper": {"decorate_1": 2},
+}
 IMPORT_REFUSALS = ("catch_finally", "nested_catch")
 IMPORT_REASON = "more than one protected region in a function"
 # Existing interpreter behavior for null property access differs from Node:
@@ -191,6 +209,10 @@ def refused(prepared, output, imported, label):
         raise RuntimeError(f"{label}: lowering hid an omitted source function")
     if operation_count(text, "try") or re.search(r"^\s*ctnative\.cpp_try\b", text, re.M):
         raise RuntimeError(f"{label}: refused recovery retained a speculative try region")
+    if label in CALLEE_EFFECT_REFUSALS:
+        reason = "native try/catch cannot prove a nonthrowing operation: `ctjs.call_direct`"
+        if reason not in text:
+            raise RuntimeError(f"{label}: refusal did not exercise the callee effect proof\n{text}")
 
 
 def budget_controls(args, prepared):
@@ -206,6 +228,46 @@ def budget_controls(args, prepared):
                   '"native exception recovery work budget exhausted"')
         if reason not in output.read_text():
             raise RuntimeError(f"{name}: refusal did not exercise the exception work budget")
+
+
+def callee_mutation_controls(args, prepared):
+    # Start from the source-derived module that just admitted 4/4 functions.
+    # A late helper body change revokes the proof even while the resolver's
+    # old report and a forged nonthrowing marker remain attached.
+    text = prepared.read_text()
+    helper = re.search(r"ctjs\.func private @increment\$1\b[\s\S]*?"
+                       r"(?P<returned>^\s*ctjs\.return (?P<value>%\w+))", text, re.M)
+    if not helper:
+        raise RuntimeError("callee mutation control lost its increment helper")
+    insertion = f'    ctjs.store_global "lateMutation", {helper["value"]}\n'
+    text = text[:helper.start("returned")] + insertion + text[helper.start("returned"):]
+    text = text.replace("upvalue_count = 0 : i32",
+                        "ctnative.nothrow = true, upvalue_count = 0 : i32")
+    changed = args.work / "callee-mutated.prepared.mlir"
+    changed.write_text(text)
+    for name in ("callee-mutated", "callee-mutated-rerun"):
+        output = lower(args, changed, name)
+        refused(prepared, output, 4, name)
+        reason = "native try/catch cannot prove a nonthrowing operation: `ctjs.call_direct`"
+        if reason not in output.read_text():
+            raise RuntimeError(f"{name}: late helper mutation retained a stale effect proof")
+        changed = output
+
+
+def generated_helper_limits(fixtures):
+    # Both programs really execute and retain exact importer denominators;
+    # neither recursion nor unsupported JavaScript supplies the refusal.
+    depth = "\n".join(
+        f"function helper{index}(value) {{ return " +
+        (f"helper{index + 1}(value)" if index < 32 else "value") + "; }"
+        for index in range(33))
+    suffix = ("\nfunction helperLimit() { try { throw 42; } "
+              "catch (value) { return helper0(value); } }\n"
+              "var caught42 = helperLimit();\n")
+    (fixtures / "helper_depth_limit.js").write_text(depth + suffix)
+    work = ("function helper0(value) {\n" + "value = value + 0;\n" * 2050 +
+            "return value;\n}")
+    (fixtures / "helper_work_limit.js").write_text(work + suffix)
 
 
 def execution_tools(args):
@@ -237,6 +299,11 @@ def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False
             raise RuntimeError(f"{name}/{mode}: native output lost its runtime try/catch")
         if not re.search(r"\bthrow\s+", cpp):
             raise RuntimeError(f"{name}/{mode}: native output lost its runtime throw")
+        for helper, count in CPP_HELPER_CALLS.get(name, {}).items():
+            # Dead result slots disappear, but their calls still execute.
+            calls = r"(?:=\s*|^\s*)" + re.escape(helper) + r"\("
+            if len(re.findall(calls, cpp, re.M)) != count:
+                raise RuntimeError(f"{name}/{mode}: native output lost its calls to {helper}")
         catches = re.findall(r"\bcatch\s*\(([^)]*)\)", cpp)
         if any("..." in caught or "std::exception" in caught or
                not re.search(r"\bconst\b.*&", caught) for caught in catches):
@@ -283,6 +350,7 @@ def main():
     parser.add_argument("--work", type=Path, required=True)
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
+    generated_helper_limits(args.fixtures)
     node = node_executable(args)
     oracles = {}
     for name, (_, expected) in PROGRAMS.items():
@@ -331,6 +399,8 @@ def main():
             standalone(args, output, name, expected, compilers, nm)
             if name == "guarded":
                 budget_controls(args, prepared)
+            if name == "numeric_catch_helper":
+                callee_mutation_controls(args, prepared)
             if name in DEFAULT_OPTIMIZATIONS:
                 default_name = name + "-default"
                 defaults = lower(args, prepared, default_name, default_options=True)
@@ -357,10 +427,11 @@ def main():
     (args.work / "native.json").write_text(json.dumps(report, indent=2) + "\n")
     print(f"native exceptions: {len(POSITIVES)} complete native programs plus numeric/string defaults, "
           "throw-site state/two throws/catch continuation/normal return/unconditional "
-          "throw/boolean and owning string payloads/state/finally override/NaN/negative zero; "
+          "throw/boolean and owning string payloads/state/closed catch helpers/"
+          "finally override/NaN/negative zero; "
           "Node and interpreter agree with GCC/Clang explicit/deduced, no VM; "
           f"owning string ASan/UBSan/lifetime checks; {len(PROGRAMS) - len(POSITIVES)} "
-          "refusals, zero/tight budget "
+          "refusals, callee mutation/rerun/depth/work controls, zero/tight recovery budget "
           "refusals and executed wrong-state control; null-property refusal pins "
           "the existing interpreter/Node divergence")
 

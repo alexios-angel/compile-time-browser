@@ -346,3 +346,115 @@ function callThrower() {
     return mark;
 }
 var called42 = callThrower();
+
+//--- numeric_catch_helper.js
+function increment(value) { return value + 1; }
+function addTwo(value) { return increment(increment(value)); }
+function numericCatchHelper(flag) {
+    var mark = 1;
+    try {
+        mark = 10;
+        if (flag) { throw 30; }
+        return 20;
+    } catch (value) {
+        // Both calls remain real C++ calls. The assigned result belongs to
+        // the normal continuation after both helpers have completed.
+        mark = addTwo(mark + value);
+        return mark;
+    }
+}
+var caught42 = numericCatchHelper(true);
+var normal20 = numericCatchHelper(false);
+
+//--- boolean_catch_helper.js
+function invert(value) { return !value; }
+function booleanCatchHelper(flag) {
+    try {
+        throw flag;
+    } catch (value) {
+        var original = value;
+        value = invert(value);
+        return original ? (value ? -1 : 42) : (value ? 20 : -1);
+    }
+}
+var true42 = booleanCatchHelper(true);
+var false20 = booleanCatchHelper(false);
+
+//--- string_catch_helper.js
+function decorate(value) { return "owned: " + value; }
+function stringCatchHelper(flag) {
+    try {
+        if (flag) { throw "payload beyond small string storage with embedded\u0000data"; }
+        return "normal";
+    } catch (value) {
+        var saved = decorate(value);
+        value = decorate("replacement after the independent catch copy");
+        return saved;
+    }
+}
+function inspectCatchHelper(flag) {
+    var saved = stringCatchHelper(flag);
+    var churn = stringCatchHelper(!flag);
+    var expected = "owned: payload beyond small string storage with embedded\u0000data";
+    var caught = (saved === expected) * (churn === "normal");
+    var normal = (saved === "normal") * (churn === expected);
+    return flag * caught * 42 + (!flag) * normal * 20;
+}
+var caught42 = inspectCatchHelper(true);
+var normal20 = inspectCatchHelper(false);
+
+//--- protected_nothrow_callee.js
+function incrementProtected(value) { return value + 1; }
+function protectedNothrow(flag) {
+    var mark = 1;
+    try {
+        // The complete register CFG carries this global callee through a
+        // check. Resolving that flow remains a separate proof obligation.
+        mark = incrementProtected(9);
+        if (flag) { throw 32; }
+        return mark + 10;
+    } catch (value) {
+        return mark + value;
+    }
+}
+var caught42 = protectedNothrow(true);
+var normal20 = protectedNothrow(false);
+
+//--- effectful_catch_helper.js
+var counter = 0;
+function changeGlobal(value) { counter = counter + 1; return value; }
+function forwardEffect(value) { return changeGlobal(value); }
+function effectfulCatchHelper() {
+    try { throw 32; }
+    catch (value) { return forwardEffect(value) + 10; }
+}
+var caught42 = effectfulCatchHelper();
+
+//--- property_catch_helper.js
+function readProperty(value) { return ({value: value}).value; }
+function propertyCatchHelper() {
+    try { throw 32; }
+    catch (value) { return readProperty(value) + 10; }
+}
+var caught42 = propertyCatchHelper();
+
+//--- recursive_catch_helper.js
+function count(value) { return value ? count(value - 1) + 1 : 0; }
+function recursiveCatchHelper() {
+    try { throw 2; }
+    catch (value) { return count(value) + 40; }
+}
+var caught42 = recursiveCatchHelper();
+
+//--- throwing_catch_helper.js
+function maybeThrow(flag, value) {
+    if (flag) { throw 7; }
+    return value;
+}
+function throwingCatchHelper(flag) {
+    try { throw 32; }
+    catch (value) { return maybeThrow(flag, value) + 10; }
+}
+// This invocation does not throw, but a normal return type does not prove
+// that the helper has no exceptional path. Keep its handler CFG intact.
+var caught42 = throwingCatchHelper(false);

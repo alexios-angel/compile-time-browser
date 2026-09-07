@@ -179,10 +179,25 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
                 mlir::Operation * handler = nullptr;
                 bool primitiveCandidate = true;
                 body.getFunctionBody().walk([&](mlir::Operation * operation) {
+                    // A resolved call in the catch has no importer status
+                    // edges around its callee load. Preserve that candidate
+                    // too; the native consumer still proves the live target
+                    // and every transitive operation unable to throw. An
+                    // unresolved protected call keeps the existing path.
+                    if (auto load = llvm::dyn_cast<LoadGlobalOp>(operation)) {
+                        if (!load.getResult().use_empty() &&
+                            llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
+                                return llvm::isa<CallDirectOp>(use.getOwner()) &&
+                                       use.getOperandNumber() == 2;
+                            })) {
+                            return mlir::WalkResult::advance();
+                        }
+                    }
                     if (!llvm::isa<FrameEnterOp, FrameExitOp, RootOp, ConstantOp, BinaryOp, UnaryOp,
                                    CompareOp, TruthyOp, FromBoolOp, PushHandlerOp, PopHandlerOp,
-                                   CheckOp, CatchLandOp, ThrowOp, ReturnOp, mlir::cf::BranchOp,
-                                   mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(operation)) {
+                                   CheckOp, CatchLandOp, ThrowOp, ReturnOp, CallDirectOp,
+                                   mlir::cf::BranchOp, mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(
+                            operation)) {
                         primitiveCandidate = false;
                         return mlir::WalkResult::interrupt();
                     }
