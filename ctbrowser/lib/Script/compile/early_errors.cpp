@@ -365,8 +365,39 @@ private:
     }
 
     // --- statements ------------------------------------------------------------
+    // HOW DEEP THIS WALK MAY GO, and why there is a limit at all.
+    //
+    // The walk recurses once per level of nesting, and ctjs's expression parser
+    // does NOT - its Pratt loop is iterative - so a minifier's
+    // `"a" + "b" + ... ` chain of fifty thousand terms parses into a tree fifty
+    // thousand deep that nothing has recursed over yet. This pass would be the
+    // first thing to try, and the first thing to overflow the C++ stack.
+    //
+    // The COMPILER recurses over the same shape immediately afterwards, with
+    // three larger frames per term, so any input that overflows here was going
+    // to take the process down a moment later - measured, this walk survives
+    // 20,000 terms and dies before 50,000. The guard is not a fix for that; it
+    // is so that a new pass is not the thing that appears to have broken a page
+    // that was already too deep to compile. Past the limit the subtree is
+    // simply not checked, which is a MISS and never a refusal.
+    static constexpr int max_depth = 2000;
+
+    class deeper {
+    public:
+        explicit deeper(int & at) : at_(at) { ++at_; }
+        ~deeper() { --at_; }
+        deeper(const deeper &) = delete;
+        deeper & operator=(const deeper &) = delete;
+        deeper(deeper &&) = delete;
+        deeper & operator=(deeper &&) = delete;
+
+    private:
+        int & at_;
+    };
+
     void walk_statement(std::int32_t idx, list_kind kind, std::vector<binding> & vars) {
-        if (idx < 0) { return; }
+        if (idx < 0 || depth_ >= max_depth) { return; }
+        const deeper nesting{depth_};
         const vp::node & n = at(idx);
         switch (n.kind) {
         case nk::empty: return;
@@ -1181,7 +1212,8 @@ private:
     }
 
     void walk_expression(std::int32_t idx) {
-        if (idx < 0) { return; }
+        if (idx < 0 || depth_ >= max_depth) { return; }
+        const deeper nesting{depth_};
         const vp::node & n = at(idx);
         switch (n.kind) {
         case nk::assign:
@@ -1323,7 +1355,8 @@ private:
     }
 
     void walk_pattern(std::int32_t idx) {
-        if (idx < 0) { return; }
+        if (idx < 0 || depth_ >= max_depth) { return; }
+        const deeper nesting{depth_};
         const vp::node & n = at(idx);
         switch (n.kind) {
         case nk::array:
@@ -1405,6 +1438,7 @@ private:
 
     const vp::ast & ast_;
     std::string_view source_;
+    int depth_ = 0;
     std::vector<frame> frames_;
     std::optional<early_error> found_;
 };
