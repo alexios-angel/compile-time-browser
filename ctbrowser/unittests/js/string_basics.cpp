@@ -181,6 +181,204 @@ int main() {
     js_expect("\"a\" === \"a\"", "true");
     js_expect("\"a\" !== \"b\"", "true");
 
+    // --- RequireObjectCoercible: the step 1 that was missing everywhere -----
+    //
+    // 22.1.3 opens EVERY method with RequireObjectCoercible(this value), and
+    // this file did only the ToString that follows it - so
+    // `String.prototype.trim.call(null)` answered "null" and
+    // `charAt.call(undefined)` answered "u". test262 has 45 files asserting the
+    // TypeError instead. `e.name` rather than a message, because the message is
+    // not the behaviour.
+    const auto throws = [](std::string_view code) {
+        return "(function () { try { " + std::string{code} +
+               "; return 'no'; } catch (e) { return e.name; } })()";
+    };
+    js_expect(throws("String.prototype.trim.call(null)"), "TypeError");
+    js_expect(throws("String.prototype.trim.call(undefined)"), "TypeError");
+    js_expect(throws("String.prototype.charAt.call(null, 0)"), "TypeError");
+    js_expect(throws("String.prototype.at.call(undefined, 0)"), "TypeError");
+    js_expect(throws("String.prototype.charCodeAt.call(null, 0)"), "TypeError");
+    js_expect(throws("String.prototype.codePointAt.call(null, 0)"), "TypeError");
+    js_expect(throws("String.prototype.indexOf.call(null, 'a')"), "TypeError");
+    js_expect(throws("String.prototype.lastIndexOf.call(null, 'a')"), "TypeError");
+    js_expect(throws("String.prototype.includes.call(null, 'a')"), "TypeError");
+    js_expect(throws("String.prototype.startsWith.call(null, 'a')"), "TypeError");
+    js_expect(throws("String.prototype.endsWith.call(null, 'a')"), "TypeError");
+    js_expect(throws("String.prototype.slice.call(null, 0)"), "TypeError");
+    js_expect(throws("String.prototype.substring.call(null, 0)"), "TypeError");
+    js_expect(throws("String.prototype.substr.call(null, 0)"), "TypeError");
+    js_expect(throws("String.prototype.split.call(null, ',')"), "TypeError");
+    js_expect(throws("String.prototype.replace.call(null, 'a', 'b')"), "TypeError");
+    js_expect(throws("String.prototype.replaceAll.call(null, 'a', 'b')"), "TypeError");
+    js_expect(throws("String.prototype.match.call(null, /a/)"), "TypeError");
+    js_expect(throws("String.prototype.matchAll.call(null, /a/g)"), "TypeError");
+    js_expect(throws("String.prototype.search.call(null, /a/)"), "TypeError");
+    js_expect(throws("String.prototype.concat.call(null, 'a')"), "TypeError");
+    js_expect(throws("String.prototype.repeat.call(null, 1)"), "TypeError");
+    js_expect(throws("String.prototype.padStart.call(null, 3)"), "TypeError");
+    js_expect(throws("String.prototype.padEnd.call(null, 3)"), "TypeError");
+    js_expect(throws("String.prototype.trimStart.call(null)"), "TypeError");
+    js_expect(throws("String.prototype.trimEnd.call(null)"), "TypeError");
+    js_expect(throws("String.prototype.toUpperCase.call(null)"), "TypeError");
+    js_expect(throws("String.prototype.toLowerCase.call(null)"), "TypeError");
+    js_expect(throws("String.prototype.toLocaleUpperCase.call(null)"), "TypeError");
+    js_expect(throws("String.prototype.toLocaleLowerCase.call(null)"), "TypeError");
+    js_expect(throws("String.prototype.localeCompare.call(null, 'a')"), "TypeError");
+    js_expect(throws("String.prototype.normalize.call(null)"), "TypeError");
+    // A receiver that is merely NOT A STRING is still fine - the methods are
+    // generic over everything ToString accepts, which is what makes
+    // `String.prototype.trim.call(false)` answer "false" and not throw.
+    js_expect("String.prototype.trim.call(false)", "false");
+    js_expect("String.prototype.trim.call(123)", "123");
+    js_expect("String.prototype.charAt.call(123, 1)", "2");
+    js_expect("String.prototype.indexOf.call({toString: function () { return 'abc'; }}, 'b')", "1");
+
+    // --- toString and valueOf are NOT generic (22.1.3.28, 22.1.3.35) --------
+    // thisStringValue, not ToString: a Number receiver is a TypeError, and it
+    // has to be - `''.concat({toString: String.prototype.toString})` is an
+    // infinite regress if this coerces instead of refusing. That last case is
+    // NOT asserted here: the throw happens inside context::to_primitive_string,
+    // which reads the native's return value rather than checking for a pending
+    // throw, so what a `catch` sees around it is the engine's unwinding and not
+    // this method's contract.
+    js_expect(throws("String.prototype.toString.call(1)"), "TypeError");
+    js_expect(throws("String.prototype.toString.call(false)"), "TypeError");
+    js_expect(throws("String.prototype.toString.call({})"), "TypeError");
+    js_expect(throws("String.prototype.toString.call(['s'])"), "TypeError");
+    js_expect(throws("String.prototype.valueOf.call(1)"), "TypeError");
+    // String.prototype's own [[StringData]] is the empty String, which is why
+    // this is "" and not a TypeError - the same rule that makes
+    // `Number.prototype.toString()` answer "0".
+    js_expect("String.prototype.toString()", "");
+    js_expect("String.prototype.valueOf()", "");
+
+    // --- argument coercion: observable, once, and in the specified order ----
+    // The index arguments went through the STATIC ToNumber, which cannot run a
+    // user `valueOf` at all - so every object index read NaN and became 0.
+    js_expect("\"abc\".charAt({valueOf: function () { return 1; }})", "b");
+    js_expect("\"abc\".at({valueOf: function () { return -1; }})", "c");
+    js_expect("\"abc\".charCodeAt({valueOf: function () { return 1; }})", "98");
+    js_expect("\"abc\".codePointAt({valueOf: function () { return 1; }})", "98");
+    js_expect("\"aaa\".indexOf(\"a\", {valueOf: function () { return 1; }})", "1");
+    js_expect("\"aaa\".lastIndexOf(\"a\", {valueOf: function () { return 1; }})", "1");
+    js_expect("\"abc\".includes(\"a\", {valueOf: function () { return 1; }})", "false");
+    js_expect("\"abc\".startsWith(\"b\", {valueOf: function () { return 1; }})", "true");
+    js_expect("\"abc\".endsWith(\"b\", {valueOf: function () { return 2; }})", "true");
+    js_expect("\"abc\".slice({valueOf: function () { return 1; }})", "bc");
+    js_expect("\"abc\".substring({valueOf: function () { return 1; }})", "bc");
+    js_expect("\"abc\".substr({valueOf: function () { return 1; }})", "bc");
+    js_expect("\"a,b,c\".split(\",\", {valueOf: function () { return 2; }}).length", "2");
+    // 22.1.3.9 steps 3 and 4: ToString(searchString) BEFORE
+    // ToIntegerOrInfinity(position). Reversing them is invisible until one of
+    // the two has a side effect, and then it is a wrong log with a right answer.
+    js_expect(R"((function () {
+        var log = '';
+        var needle = {toString: function () { log += 's'; return 'b'; }};
+        var position = {valueOf: function () { log += 'p'; return 0; }};
+        "abc".indexOf(needle, position);
+        return log;
+    })())",
+              "sp");
+    js_expect(R"((function () {
+        var log = '';
+        var needle = {toString: function () { log += 's'; return 'b'; }};
+        var position = {valueOf: function () { log += 'p'; return 0; }};
+        "abc".lastIndexOf(needle, position);
+        return log;
+    })())",
+              "sp");
+
+    // --- IsRegExp: includes/startsWith/endsWith REFUSE a pattern (7.2.8) ----
+    // `'a/b'.includes(/b/)` searching for the six characters of the source is a
+    // mistake often enough that the specification made it loud. This
+    // stringified the pattern, found nothing, and answered false.
+    js_expect(throws("\"abc\".includes(/b/)"), "TypeError");
+    js_expect(throws("\"abc\".startsWith(/a/)"), "TypeError");
+    js_expect(throws("\"abc\".endsWith(/c/)"), "TypeError");
+    // @@match decides it, so an ordinary object can claim to be a pattern...
+    js_expect(throws("(function () { var o = {}; o[Symbol.match] = true;"
+                     " return \"abc\".includes(o); })()"),
+              "TypeError");
+    // ...and a real RegExp can disclaim it, at which point it is stringified
+    // like anything else.
+    js_expect("(function () { var r = /b/; r[Symbol.match] = false;"
+              " return \"a/b/c\".includes(r); })()",
+              "true");
+    js_expect("typeof Symbol.match", "symbol");
+
+    // --- trim over the SPECIFIED whitespace set (12.2 + 12.3) ---------------
+    // The set was the ASCII six; fourteen more code points belong to it and all
+    // of them are non-ASCII, so - unlike case folding - they are answerable
+    // exactly from UTF-8 bytes with no table and no locale.
+    js_expect("\"\\u00a0x\\u00a0\".trim()", "x");
+    js_expect("\"\\ufeffx\\ufeff\".trim()", "x");
+    js_expect("\"\\u2028\\u2029x\\u3000\".trim()", "x");
+    js_expect("\"\\u2000\\u200ax\".trimStart()", "x");
+    js_expect("\"x\\u205f\\u202f\".trimEnd()", "x");
+    js_expect("\"\\u1680\\u2003x\".trim()", "x");
+    js_expect("\"\\u00a0\\u2000\\ufeff\".trim().length", "0");
+    // U+180E was a space separator in Unicode 6.2 and stopped being one in 6.3.
+    // It is three UTF-8 bytes and must survive untouched.
+    js_expect("\"\\u180ex\\u180e\".trim().length", "7");
+    // A byte that is not part of a well-formed sequence is NOT the character it
+    // resembles: a lone 0xA0 is not U+00A0 and must not be trimmed away.
+    js_expect("\"\\u00e9\".trim().length", "2");
+
+    // --- match / search / matchAll take a PATTERN, not only a RegExp --------
+    // 22.1.3.13, 22.1.3.21 and 22.1.3.14 each RegExpCreate their argument.
+    // A non-object answered "no match" - null, or -1 - which is the commonest
+    // spelling of all and is silent: `if (s.match(x))` reads null as "absent".
+    js_expect("\"1234567890\".match(3)[0]", "3");
+    js_expect("\"1234567890\".match(3).index", "2");
+    js_expect("\"1234567890\".match(3).input", "1234567890");
+    js_expect("\"abc\".match(\"b\")[0]", "b");
+    js_expect("\"abc\".match(\"z\")", "null");
+    js_expect("\"abc\".search(\"b\")", "1");
+    js_expect("\"a2c\".search(2)", "1");
+    js_expect("\"abc\".search(\"z\")", "-1");
+    // matchAll builds its RegExp with `g`, which is what makes this three
+    // matches rather than the first one forever.
+    js_expect("\"aaa\".matchAll(\"a\").length", "3");
+    js_expect("\"abc\".matchAll(\"z\").length", "0");
+    // ...and REFUSES a RegExp that has no `g`, because the answer would be
+    // wrong either way (22.1.3.14 step 2b).
+    js_expect(throws("\"aaa\".matchAll(/a/)"), "TypeError");
+    js_expect("\"aaa\".matchAll(/a/g).length", "3");
+    js_expect(throws("\"aaa\".replaceAll(/a/, \"b\")"), "TypeError");
+    js_expect("\"aaa\".replaceAll(/a/g, \"b\")", "bbb");
+
+    // --- normalize checks its form even though it normalises nothing --------
+    // The identity is a stated deviation (strings are bytes, so there is no
+    // decomposition to compose); the RangeError of 22.1.3.15 step 4 is not, and
+    // it is what tells a page that wrote "NFKC1" that it made a typo.
+    js_expect("\"abc\".normalize()", "abc");
+    js_expect("\"abc\".normalize(undefined)", "abc");
+    js_expect("\"abc\".normalize(\"NFD\")", "abc");
+    js_expect(throws("\"abc\".normalize(\"bar\")"), "RangeError");
+    js_expect(throws("\"abc\".normalize(\"NFC1\")"), "RangeError");
+    js_expect(throws("\"abc\".normalize(null)"), "RangeError");
+
+    // --- localeCompare's missing argument is "undefined", not "" -----------
+    js_expect("\"undefined\".localeCompare()", "0");
+    js_expect("\"a\".localeCompare(\"b\")", "-1");
+    js_expect("\"b\".localeCompare(\"a\")", "1");
+
+    // --- every built-in's own length and name (10.2.5, clause 17) ----------
+    js_expect("String.prototype.trim.length", "0");
+    js_expect("String.prototype.indexOf.length", "1");
+    js_expect("String.prototype.slice.length", "2");
+    js_expect("String.prototype.replaceAll.length", "2");
+    js_expect("String.prototype.normalize.length", "0");
+    js_expect("String.prototype.at.name", "at");
+    js_expect("String.prototype.padStart.name", "padStart");
+    js_expect("Object.getOwnPropertyDescriptor(String.prototype.trim, 'name').writable", "false");
+    js_expect("Object.getOwnPropertyDescriptor(String.prototype.trim, 'name').configurable",
+              "true");
+    js_expect("Object.getOwnPropertyDescriptor(String.prototype.trim, 'length').enumerable",
+              "false");
+    js_expect("String.fromCharCode.length", "1");
+    js_expect("String.raw.length", "1");
+
     // --- the UTF-16 gap: CURRENT BEHAVIOUR, KNOWN WRONG ---------------------
     //
     // Everything in this block disagrees with V8, and every line says what V8
