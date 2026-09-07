@@ -62,6 +62,7 @@ mlir::Value lowering::memberAccess(mlir::OpBuilder & b, mlir::Location where, ml
 }
 
 void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType) {
+    if (replaceException(o)) { return; }
     if (replaceMethodTable(o)) { return; }
     if (replaceEnvironment(o)) { return; }
     using namespace ctjs;
@@ -110,6 +111,17 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                 expected = loop.getBefore().front().getArgument(index).getType();
             } else if (llvm::isa<mlir::scf::ForOp>(user) && index >= 3) {
                 expected = user->getResult(index - 3).getType();
+            } else if (auto exit = llvm::dyn_cast<ctjs::TryExitOp>(user)) {
+                auto parent = exit->getParentOfType<ctjs::TryOp>();
+                if (index == 1) {
+                    expected = parent.getResult().getType();
+                } else if (index == 2) {
+                    expected = mlir::Float64Type::get(context);
+                } else if (index > 2) {
+                    expected = llvm::cast<ec::LValueType>(
+                                   exceptionSlots[parent].state[index - 3].getType())
+                                   .getValueType();
+                }
             }
             if (expected == carrierType(context, carrier::string)) {
                 if (!emptyString) { emptyString = stringConstant(b, where, ""); }

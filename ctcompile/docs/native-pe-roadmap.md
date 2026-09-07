@@ -333,8 +333,9 @@ one fresh local object's proved store-to-load edge preserves the existing
 owning table carrier, while ordinary capture/type admission establishes the
 callables. Its fixture advances 0/6 to 6/6 with standalone execution and lifetime
 checks. This does not close global/realm export uses. The next provider increment
-needs a live effect/reentry proof before following console callbacks and the
-conflict path's snapshot operations. Keep runtime effects and refuse unknown
+is designed in [the next provider proof](bootstrap-provider-next.md): checked
+conflict-path snapshots followed by a live proof of the actual recorder's
+global effects. Keep runtime effects and refuse unknown
 callbacks. Connect normal-return retention facts to native ownership and call analysis
 for exported callables. Extend
 [checked host slots](native-host-slots.md) with supported intrinsic/error effects,
@@ -350,11 +351,12 @@ script receiver and callee/accessor evaluation-order differences are fixed.
 Native receiver admission remains a separate proof obligation. Callback lifting
 now bridges exact pre-resolved direct calls in closed wrappers; it does not
 authorize globally published callback identities.
-The [native exception design](native-exceptions.md) proposes C++ unwinding after
-structured exception-region recovery and exception-aware type/effect admission.
-Its first gate is a two-function single-catch program preserving local state at
-the throw site (42 caught, 20 normal). Finally and nested handlers require
-completion handling and importer work before admission can expand.
+The first [native exception implementation](native-exceptions.md) recovers one
+acyclic handler, reuses LLVM CFG-to-SCF, and emits typed C++ throw/catch after
+numeric payload and primitive nonthrowing admission. It preserves live state
+at the throw site, with original CFG rollback on refusal. Throwing callees,
+general finally completions and nested handlers need further effect, completion
+and importer work before admission can expand.
 The current conditional queries remain behind
 their own closed-environment proof and do not relax PE/native module guards.
 

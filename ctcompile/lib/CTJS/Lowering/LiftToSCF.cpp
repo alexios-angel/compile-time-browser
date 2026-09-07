@@ -34,6 +34,7 @@
 #include "ctcompile/CTJS/Transforms/Passes.h"
 
 #include "mlir/Conversion/ControlFlowToSCF/ControlFlowToSCF.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -167,6 +168,39 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
         const mlir::WalkResult walked =
             getOperation()->walk([&](mlir::FunctionOpInterface body) -> mlir::WalkResult {
                 if (body.getFunctionBody().empty()) { return mlir::WalkResult::advance(); }
+
+                // Primitive exception candidates need the complete importer
+                // register vectors: throw has no successor operands, so its
+                // block arguments identify the catch-visible state. This is
+                // only a preservation filter; recovery and native admission
+                // still prove the actual control flow, types and effects.
+                // Other handler functions keep legacy simplification, which
+                // exposes the value flow needed by closure/callback lifting.
+                mlir::Operation * handler = nullptr;
+                bool primitiveCandidate = true;
+                body.getFunctionBody().walk([&](mlir::Operation * operation) {
+                    if (!llvm::isa<FrameEnterOp, FrameExitOp, RootOp, ConstantOp, BinaryOp, UnaryOp,
+                                   CompareOp, TruthyOp, FromBoolOp, PushHandlerOp, PopHandlerOp,
+                                   CheckOp, CatchLandOp, ThrowOp, ReturnOp, mlir::cf::BranchOp,
+                                   mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(operation)) {
+                        primitiveCandidate = false;
+                        return mlir::WalkResult::interrupt();
+                    }
+                    if (!handler && llvm::isa<PushHandlerOp, CheckOp>(operation)) {
+                        handler = operation;
+                    }
+                    return mlir::WalkResult::advance();
+                });
+                if (handler && primitiveCandidate) {
+                    body->setAttr(
+                        "ctjs.not_structured",
+                        mlir::StringAttr::get(
+                            &getContext(),
+                            ("'" + handler->getName().getStringRef() +
+                             "' op transformation does not support terminators with side effects")
+                                .str()));
+                    return mlir::WalkResult::advance();
+                }
 
                 // UNREACHABLE BLOCKS FIRST, because the utility refuses a
                 // region containing one outright - "transformation does not

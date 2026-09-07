@@ -14,6 +14,7 @@ add_mlir_library(CTNativeDialect
   CTNativeDialect.cpp
   CTNativeInterfaces.cpp
   CTNativeLattice.cpp
+  CTNativeOps.cpp
   CTNativeTypes.cpp
 
   DEPENDS
@@ -23,6 +24,7 @@ add_mlir_library(CTNativeDialect
 
   LINK_LIBS PUBLIC
     MLIRIR
+    MLIRSideEffectInterfaces
 )
 
 # THE TWO INCLUDE ROOTS, ON THE TARGET, so drivers that link this library

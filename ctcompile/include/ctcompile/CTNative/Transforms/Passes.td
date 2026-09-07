@@ -230,7 +230,12 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
     untouched for the upstream conversion that already handles it.
 
     Runs AFTER --ctjs-resolve-globals and --ctjs-lift-to-scf; a function that
-    still carries `cf` branches is refused as unstructured.
+    still carries ordinary `cf` branches is refused as unstructured. Preserved
+    handler CFGs first get a bounded, transactional recovery attempt: one
+    acyclic handler, numeric throws and numeric/boolean catch state. Protected
+    operations must be proved unable to throw implicitly. Successful recovery
+    reuses LLVM CFG-to-SCF and emits typed native C++ try/throw operations;
+    failed recovery or admission retains the original exception CFG.
 
     By default, runs bounded primitive precomputation followed by private
     reachability pruning before closure lifting and type inference. These
@@ -267,6 +272,8 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
            "Maximum symbolic analysis and rewrite work in the default pipeline">,
     Option<"reachabilityMaxSteps", "reachability-max-steps", "unsigned", "100000",
            "Maximum graph discovery work in the default pipeline">,
+    Option<"exceptionMaxSteps", "exception-max-steps", "unsigned", "100000",
+           "Maximum exception-region recovery work per function">,
     Option<"optimizationReport", "optimization-report", "bool", "false",
            "Report precomputation and reachability counts for the default pipeline">,
     Option<"report", "report", "bool", /*default=*/"false",
@@ -288,7 +295,8 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
     "::mlir::emitc::EmitCDialect",
     "::mlir::pdl::PDLDialect",
     "::mlir::pdl_interp::PDLInterpDialect",
-    "::mlir::scf::SCFDialect"
+    "::mlir::scf::SCFDialect",
+    "::mlir::ub::UBDialect"
   ];
 }
 

@@ -106,6 +106,9 @@ add_library(ctcompile-ctnative-lowering
   ../PartialEvaluation/Primitives.cpp
   ../PartialEvaluation/Residualize.cpp
   LowerToEmitC.cpp
+  Exceptions/Admission.cpp
+  Exceptions/Recovery.cpp
+  Exceptions/Emit.cpp
   LoweringSupport.cpp
   ClosureLifting/Calls.cpp
   ClosureLifting/Callbacks.cpp
@@ -153,6 +156,8 @@ target_link_libraries(ctcompile-ctnative-lowering
     CTJSDialect
     MLIRIR
     MLIRPass
+    MLIRControlFlowToSCF
+    MLIRUBDialect
     MLIRAnalysis
     MLIREmitCDialect
     MLIRSCFDialect

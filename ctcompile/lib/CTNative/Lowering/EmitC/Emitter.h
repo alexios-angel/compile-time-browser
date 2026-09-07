@@ -113,6 +113,14 @@ struct lowering {
     bool needsObjectIdentity = false;
     bool needsObjectValue = false;
     bool needsNullable = false;
+    bool needsExceptions = false;
+    struct exceptionStorage {
+        mlir::Value result;
+        llvm::SmallVector<mlir::Value> state;
+    };
+    llvm::DenseMap<mlir::Operation *, exceptionStorage> exceptionSlots;
+    void prepareExceptions(ctjs::FuncOp fn);
+    bool replaceException(mlir::Operation * op);
     llvm::SmallVector<std::string> environments;
     llvm::SmallVector<std::string> methodTables;
     llvm::SmallVector<std::string> callableBuilders;

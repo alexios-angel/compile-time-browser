@@ -23,6 +23,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "ctcompile/CTNative/IR/CTNativeDialect.h"
 #include "ctcompile/Target/Cpp/CppEmitter.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
@@ -55,7 +56,7 @@ void registerToCppTranslation() {
         },
         [](mlir::DialectRegistry & registry) {
             registry.insert<mlir::cf::ControlFlowDialect, mlir::emitc::EmitCDialect,
-                            mlir::func::FuncDialect>();
+                            mlir::func::FuncDialect, ctnative::CTNativeDialect>();
         });
 }
 

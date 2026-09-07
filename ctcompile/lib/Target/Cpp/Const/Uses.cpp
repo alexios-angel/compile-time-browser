@@ -1,5 +1,7 @@
 #include "Bindings.h"
 
+#include "ctcompile/CTNative/IR/CTNativeOps.h"
+
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -43,7 +45,7 @@ bool readsBinding(mlir::OpOperand & operand) {
                      ec::ConditionalOp, ec::CastOp, ec::LoadOp, ec::MemberOp, ec::MemberOfPtrOp,
                      ec::GetFieldOp, ec::SubscriptOp, ec::DereferenceOp, ec::ReturnOp, ec::YieldOp,
                      ec::ExpressionOp, ec::IfOp, ec::ForOp, ec::SwitchOp, mlir::cf::BranchOp,
-                     mlir::cf::CondBranchOp, mlir::func::ReturnOp>(op);
+                     mlir::cf::CondBranchOp, mlir::func::ReturnOp, ctnative::CppThrowOp>(op);
 }
 
 } // namespace ctcompile::cpp

@@ -98,6 +98,13 @@ void lowering::declareGlobals() {
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cmath"), b.getUnitAttr());
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstdio"), b.getUnitAttr());
     ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr("using js_num = double;"));
+    if (needsExceptions) {
+        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstdint"), b.getUnitAttr());
+        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstddef"), b.getUnitAttr());
+        ec::VerbatimOp::create(
+            b, module.getLoc(),
+            b.getStringAttr("namespace ctnative { struct js_exception { js_num value; }; }"));
+    }
     if (needsString || needsNullable || needsMap || needsVector || !globals.empty()) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("string"), b.getUnitAttr());
     }

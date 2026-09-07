@@ -25,9 +25,11 @@ add_library(ctcompile-target-cpp
   TranslateToCpp.cpp
   TranslateRegistration.cpp)
 llvm_update_compile_flags(ctcompile-target-cpp)
+add_dependencies(ctcompile-target-cpp MLIRCTNativeOpsIncGen)
 
 target_link_libraries(ctcompile-target-cpp
   PUBLIC
+    CTNativeDialect
     MLIRIR
     MLIRSupport
     MLIREmitCDialect

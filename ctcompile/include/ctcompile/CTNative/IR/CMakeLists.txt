@@ -14,9 +14,8 @@ include_directories("${PROJECT_SOURCE_DIR}/include")
 # THE TYPES COME OUT OF THIS ONE CALL. add_mlir_dialect runs the op, dialect AND
 # typedef backends over the file it is named for, which is why CTNativeOps.td
 # includes CTNativeTypes.td and why the generated header is CTNativeOpsTypes.h.inc
-# rather than CTNativeTypes.h.inc. Phase 53 has no operations, so the two op
-# outputs are empty files; that costs nothing and means the first operation is a
-# change to a .td rather than to this file.
+# rather than CTNativeTypes.h.inc. The same invocation generates the typed
+# native operation declarations and definitions.
 set(LLVM_TARGET_DEFINITIONS CTNativeOps.td)
 add_mlir_dialect(CTNativeOps ctnative)
 add_mlir_doc(CTNativeOps CTNativeDialect ctcompile/CTNative/ -gen-dialect-doc)

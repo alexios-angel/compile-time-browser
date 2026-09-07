@@ -45,6 +45,7 @@
 #include "Names/SourceNames.h"
 #include "ReadableFloat.h"
 #include "UnusedParameters.h"
+#include "ctcompile/CTNative/IR/CTNativeOps.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -238,6 +239,9 @@ struct CppEmitter {
 
   /// Return the existing or a new name for a Value.
   StringRef getOrCreateName(Value val);
+  std::string getTemporaryName(StringRef prefix) {
+    return sourceNames.temporary(prefix);
+  }
 
   /// Prepare native printing policies independently of the declaration cache.
   void prepareFunction(Operation *function,
@@ -302,6 +306,11 @@ struct CppEmitter {
       emitter.increaseLoopNestingLevel();
     }
     ~LoopScope() { emitter.decreaseLoopNestingLevel(); }
+  };
+
+  /// Keep declarations within a native try or catch lexical block.
+  struct ExceptionScope : Scope {
+    ExceptionScope(CppEmitter &emitter) : Scope(emitter) {}
   };
 
   /// Returns wether the Value is assigned to a C++ variable in the scope.
@@ -1517,6 +1526,7 @@ static LogicalResult printRegularFunction(CppEmitter &emitter,
 }
 
 #include "Callables/Emit.inc"
+#include "Exceptions/Emit.inc"
 
 static LogicalResult printOperation(CppEmitter &emitter,
                                     DeclareFuncOp declareFuncOp) {
@@ -1997,6 +2007,8 @@ LogicalResult CppEmitter::emitLabel(Block &block) {
 }
 
 LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
+  if (isa<ctcompile::ctnative::CppTryEndOp>(op))
+    return success();
   if (ctcompile::cpp::omitParameterSuppression(op))
     return success();
   auto omitted = omitCallableDefinition(op);
@@ -2024,6 +2036,9 @@ LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
       llvm::TypeSwitch<Operation *, LogicalResult>(&op)
           // Builtin ops.
           .Case<ModuleOp>([&](auto op) { return printOperation(*this, op); })
+          // Typed native exception boundaries.
+          .Case<ctcompile::ctnative::CppTryOp, ctcompile::ctnative::CppThrowOp>(
+              [&](auto op) { return printOperation(*this, op); })
           // CF ops.
           .Case<cf::BranchOp, cf::CondBranchOp>(
               [&](auto op) { return printOperation(*this, op); })
@@ -2069,7 +2084,7 @@ LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
   trailingSemicolon &=
       !isa<cf::CondBranchOp, emitc::DeclareFuncOp, emitc::DoOp, emitc::FileOp,
            emitc::ForOp, emitc::IfOp, emitc::IncludeOp, emitc::SwitchOp,
-           emitc::VerbatimOp>(op);
+           emitc::VerbatimOp, ctcompile::ctnative::CppTryOp>(op);
 
   os << (trailingSemicolon ? ";\n" : "\n");
 

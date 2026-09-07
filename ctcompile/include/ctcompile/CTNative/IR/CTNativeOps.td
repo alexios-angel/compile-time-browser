@@ -1,22 +1,8 @@
 //===- CTNativeOps.td - the ctnative dialect's TableGen entry point -------===//
 //
-// THERE ARE NO OPERATIONS IN THIS FILE AND THAT IS THE PHASE, not an omission.
-// Part 24's Stage 53A is "types, every one a TypeDef", and part 24 §A.1 says
-// what the emptiness buys: "53 (types) unblocks everything ... Do not start 55,
-// 56, 57, 59 or 60 before 53 lands - they would each invent a type lattice."
-// Operations belong to those phases, and shipping a speculative one here would
-// be this phase inventing part of theirs.
-//
-// SO WHY THE FILE EXISTS. add_mlir_dialect(CTNativeOps ctnative) is the single
-// TableGen invocation that generates the dialect, its operations AND its
-// typedefs, and it runs over the file it is named for. CTJSOps.td says the same
-// thing about itself - "IT INCLUDES THE TYPES, and that is load-bearing rather
-// than tidy". Splitting the typedef generation out into its own
-// mlir_tablegen call would be a second wiring pattern in a project that has
-// one.
-//
-// The op decls and defs it emits are empty files. That costs nothing and keeps
-// the day an operation arrives a one-line change here rather than a CMake one.
+// Typed native operations and the type lattice share the dialect's existing
+// TableGen entry point. The C++ exception operations preserve structured
+// unwind boundaries after CTJS admission and lowering to EmitC value types.
 //
 //===----------------------------------------------------------------------===//
 #ifndef CTCOMPILE_CTNATIVE_OPS
@@ -26,5 +12,37 @@ include "ctcompile/CTNative/IR/CTNativeBase.td"
 include "ctcompile/CTNative/IR/CTNativeTypes.td"
 include "ctcompile/CTNative/IR/CTNativeEnums.td"
 include "ctcompile/CTNative/IR/CTNativeInterfaces.td"
+include "mlir/Interfaces/SideEffectInterfaces.td"
+
+def CTNative_CppTryOp : CTNative_Op<"cpp_try", [SingleBlock, RecursiveMemoryEffects]> {
+  let summary = "Catch an owning numeric JavaScript exception in native C++";
+  let description = [{
+    Executes body and catches only ctnative::js_exception. The catch region's
+    sole f64 argument is a by-value copy of the thrown JavaScript number.
+    Foreign C++ exceptions are not caught. Both regions are single blocks;
+    both must terminate with cpp_try_end, with no yielded values.
+    Mutable state crossing the boundary is explicit in the enclosing EmitC IR.
+  }];
+  let regions = (region AnyRegion:$body, AnyRegion:$catchBody);
+  let assemblyFormat = "$body `catch` $catchBody attr-dict";
+  let hasVerifier = 1;
+}
+
+def CTNative_CppThrowOp : CTNative_Op<"cpp_throw"> {
+  let summary = "Throw an owning numeric JavaScript exception";
+  let description = [{
+    Emits a side-effecting C++ throw statement. It immediately precedes the
+    enclosing region's terminator, including emitc.yield in an EmitC if arm.
+    That terminator remains structurally present but is not reached at runtime.
+  }];
+  let arguments = (ins F64:$value);
+  let assemblyFormat = "$value attr-dict `:` type($value)";
+  let hasVerifier = 1;
+}
+
+def CTNative_CppTryEndOp : CTNative_Op<"cpp_try_end", [Terminator, HasParent<"CppTryOp">]> {
+  let summary = "Complete a native try or catch region normally";
+  let assemblyFormat = "attr-dict";
+}
 
 #endif // CTCOMPILE_CTNATIVE_OPS

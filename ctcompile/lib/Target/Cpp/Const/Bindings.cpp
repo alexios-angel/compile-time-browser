@@ -55,7 +55,7 @@ bool ConstBindings::qualifies(mlir::Value value) const {
         return false;
     }
     auto result = llvm::dyn_cast<mlir::OpResult>(value);
-    if (!result) { return true; } // The printer asks only for entry parameters.
+    if (!result) { return true; } // Function parameters and copied catch payloads.
     mlir::Operation * op = result.getOwner();
     if (op->getNumResults() != 1 || llvm::isa<ec::VariableOp>(op)) { return false; }
     if (auto constant = llvm::dyn_cast<ec::ConstantOp>(op)) {

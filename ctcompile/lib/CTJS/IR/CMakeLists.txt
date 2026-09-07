@@ -12,6 +12,7 @@ add_mlir_library(CTJSDialect
   CTJSDialect.cpp
   CTJSOps.cpp
   CTJSTypes.cpp
+  Exceptions.cpp
 
   DEPENDS
     MLIRCTJSOpsIncGen

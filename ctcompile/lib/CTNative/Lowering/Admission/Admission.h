@@ -89,6 +89,7 @@ struct admission {
     bool op(mlir::Operation * o);
 
     bool function(ctjs::FuncOp fn);
+    bool exceptionRegion(ctjs::TryOp attempt);
 };
 
 } // namespace ctcompile::ctnative::lowering_detail

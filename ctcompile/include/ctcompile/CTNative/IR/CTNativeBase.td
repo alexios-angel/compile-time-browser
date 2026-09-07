@@ -53,17 +53,8 @@ def CTNative_Dialect : Dialect {
   // and `!ctnative.variant<...>` both round-trip without a hand-written parser.
   let useDefaultTypePrinterParser = 1;
 
-  // NO ATTRIBUTES AND NO CONSTANT MATERIALIZER, and both absences are
-  // deliberate rather than unfinished. This dialect has no operations yet -
-  // Phase 53 is TYPES ONLY, and Phases 55-60 bring the operations that consume
-  // them - so there is nothing for a materializer to rebuild and no inherent
-  // attribute for anything to carry. CTJSBase.td sets hasConstantMaterializer
-  // and then answers the obligation with a truthful nullptr; the honest
-  // equivalent here is not to make the claim at all.
-
-  // Inherent attributes stored as properties, for the same reason CTJS does it:
-  // cheaper, and uniquified less. Costs nothing while there are no operations
-  // and does not have to be revisited when there are.
+  // The typed exception operations introduce neither attributes nor a
+  // constant materializer. Their payload values use ordinary EmitC types.
 
   // Split for the same reason CTJS splits it: addTypes<> needs the STORAGE
   // classes complete, and those are emitted into CTNativeTypes.cpp by
@@ -72,12 +63,8 @@ def CTNative_Dialect : Dialect {
     void registerTypes();
   }];
 
-  // NO dependentDialects. A dependent dialect is a promise that loading this
-  // one loads that one too, and it exists so a PASS can build operations of a
-  // dialect the context has not seen. This dialect builds nothing; the passes
-  // that will - Phase 54's inference and Phase 55's lowering - declare their
-  // own in their Passes.td, which is where MLIR wants that declaration and
-  // where a reader looking for "what does this pass create" will find it.
+  // Passes declare the dialects whose operations they build in Passes.td.
+  // The native type and exception definitions require no dependent dialect.
 }
 
 class CTNative_Type<string name, string typeMnemonic, list<Trait> traits = []>

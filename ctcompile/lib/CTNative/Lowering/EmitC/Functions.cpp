@@ -46,6 +46,7 @@ void lowering::lower(ctjs::FuncOp fn) {
     applyDeclarativeRules(fn);
     retype(fn);
     convertBoundaries(fn);
+    prepareExceptions(fn);
 
     // The signature takes the parameters after the three implicit
     // arguments and returns the proved carrier. A function that returns

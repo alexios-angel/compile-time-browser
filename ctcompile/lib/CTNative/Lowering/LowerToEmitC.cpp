@@ -38,6 +38,7 @@
 #include "Admission/Admission.h"
 #include "ClosureLifting/ClosureLifter.h"
 #include "EmitC/Emitter.h"
+#include "Exceptions/Recovery.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/Pass/PassManager.h"
 
@@ -86,6 +87,25 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // one.
         closureLifter lifter{module, census};
         const liftReport lifted = lifter.run();
+        // Recovery is speculative until type/effect admission and the entire
+        // closed call component pass. Refused functions keep their original
+        // status edges for boxed lowering; a diagnostic is never a proof.
+        llvm::SmallVector<std::pair<ctjs::FuncOp, mlir::OwningOpRef<ctjs::FuncOp>>, 0>
+            exceptionOriginals;
+        module.walk([&](ctjs::FuncOp fn) {
+            fn->removeAttr("ctnative.exception_refusal");
+            bool handlers = false;
+            fn.walk([&](ctjs::PushHandlerOp) { handlers = true; });
+            if (!handlers) { return; }
+            auto recovery = recoverNumericExceptionRegion(fn, exceptionMaxSteps);
+            if (recovery.recovered) {
+                fn->removeAttr("ctjs.not_structured");
+                exceptionOriginals.emplace_back(fn, std::move(recovery.original));
+            } else if (!recovery.refusal.empty()) {
+                fn->setAttr("ctnative.exception_refusal",
+                            mlir::StringAttr::get(&getContext(), recovery.refusal));
+            }
+        });
         prepareNativeMaps(module);
         prepareNativeObjectIdentities(module);
         if (census) {
@@ -336,6 +356,13 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // creation site, and whether a shape's definition is a template is a
         // property of every site in the program at once, so no site's type can
         // be spelled until all of them have been seen.
+        for (auto & [fn, original] : exceptionOriginals) {
+            if (llvm::is_contained(accepted, fn)) { continue; }
+            fn.getBody().takeBody(original->getBody());
+            if (auto marker = (*original)->getAttr("ctjs.not_structured")) {
+                fn->setAttr("ctjs.not_structured", marker);
+            }
+        }
         lower.censusScalars(accepted);
         lower.censusShapes(accepted);
         lower.censusIdentityFields(accepted);

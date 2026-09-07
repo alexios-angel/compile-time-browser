@@ -6,7 +6,26 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Current native staging checkpoint, 2026-09-06
+## Current native staging checkpoint, 2026-09-07
+
+[Native JavaScript exceptions](native-exceptions.md) now recover one acyclic
+handler and emit real typed C++ throw/catch. The recovery preserves throw-site
+register state, uses LLVM CFG-to-SCF without a fork, and requires numeric
+payloads and proved nonthrowing primitive operations. Unsupported structure,
+types/effects, call components and exhausted work retain the original CFG.
+Mutable slots carry catch-visible state; copied catch bindings use the existing
+const analysis. General throwing callees, nested handlers, finally completions
+and foreign-call adapters require further work. A finally that already reduces
+to an equivalent unconditional return can use the recovered completion shape.
+Seven source programs admit 2/2 functions each, with fourteen observations
+matching Node/interpreter and standalone GCC/Clang in explicit/deduced modes.
+The guarded specimen also passes default optimizations. Eleven refusals,
+zero/tight work limits, seventeen malformed-IR controls and an executed
+wrong-state control pass. One refusal records the existing null-property
+interpreter/Node discrepancy separately; it is never admitted as native.
+This is separate from console callback effects, whose
+[next provider proof](bootstrap-provider-next.md) is designed in two stages:
+checked diagnostic snapshots, then the actual recorder's global write effects.
 
 [Private Map mutation summaries](native-provider-mutations.md) now extend the
 host prefix under `follow-provider-mutations=true`, requiring both publication
@@ -29,12 +48,6 @@ The fixture admits 10/10 functions in indirect, resolved and mixed call forms,
 with four matching observations in explicit/deduced GCC/Clang builds. Eight
 proof refusals and two malformed-signature controls cover unproved identity,
 mixed targets, argument-window observations and constructor calls.
-
-[Native JavaScript exceptions](native-exceptions.md) have a measured design for
-C++ unwinding. No native throw/catch implementation is claimed. The first target
-is one structured catch with an owning primitive payload and the correct local
-state at the throw site. Nested handlers, finally completions and foreign-call
-adapters require further work. This is separate from console callback effects.
 
 [Owning method-table fields](native-owned-method-table-slots.md) now connect a
 returned table through one fixed own-data field on a confined local object.
@@ -96,13 +109,14 @@ The three new differentials pass 62 observations under Node, the interpreter
 and boxed script/wrapper execution, including GC stress. The focused suite
 checks 23 source cases plus stale/forged contracts and work limits.
 
-Final devbox gate: **461/461 CTests**, **148/148 lit cases**, **563.20 seconds**;
-all **546 C++ files** pass formatting; `git diff --check` passes. Owning table fields pass
+Final devbox gate: **461/461 CTests**, **151/151 lit cases**, **539.89 seconds**;
+all **553 C++ files** pass formatting; `git diff --check` passes. Owning table fields pass
 ASan/UBSan, stack-use-after-return and leak checks in explicit and deduced forms.
 Existing closure and string-snapshot sanitizer regressions remain green.
 Default native coverage stays
 Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725**; exact Data probes remain
-**0/7, 0/7, 0/8 native**. Full Bootstrap initialization is still unfinished.
+**0/7 native** in CommonJS/browser/realm-fallback modes (the separate AMD probe
+remains **0/8**). Full Bootstrap initialization is still unfinished.
 
 [Constant-expression bindings](native-constexpr-bindings.md) combine the existing
 backward immutability proof with forward target binding-time analysis. Typed
@@ -245,7 +259,8 @@ checks. Its live store-to-load proof connects existing table/capture ownership
 to a confined field. The implemented
 [transactional Map mutation summaries](native-provider-mutations.md) retain
 runtime effects and stop before unknown error/reentry behavior. The next
-provider step needs a live effect/reentry proof for console and snapshot calls;
+provider step is designed in [the next provider proof](bootstrap-provider-next.md)
+and needs a live effect/reentry proof for console and snapshot calls;
 their names or initial intrinsic identities alone are insufficient.
 Prefix observations cannot make exports private.
 Global/realm storage still needs native ownership/call analysis for exported
@@ -254,8 +269,8 @@ Initial provider identity alone does not authorize Map execution or console
 errors during PE. Explicit script
 receivers, boxed public parameters and open method-table shapes still refuse
 native admission. Unchecked mixed-result property access also needs stronger
-presence/refinement evidence or an exception boundary; the first native
-exception target is designed in [native exceptions](native-exceptions.md).
+presence/refinement evidence or an exception boundary; the initial numeric
+catch implementation is described in [native exceptions](native-exceptions.md).
 Keep exact vendor probe
 coverage distinct from the component fixtures. Recursive Lumberhack fusion,
 shared mutable capture environments and region splitting remain separate work.

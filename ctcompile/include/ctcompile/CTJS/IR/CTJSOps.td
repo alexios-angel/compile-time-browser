@@ -54,6 +54,7 @@ include "ctcompile/CTJS/IR/Ops/Containers.td"
 include "ctcompile/CTJS/IR/Ops/Modules.td"
 include "ctcompile/CTJS/IR/Ops/Calls.td"
 include "ctcompile/CTJS/IR/Ops/Functions.td"
+include "ctcompile/CTJS/IR/Ops/Exceptions.td"
 include "ctcompile/CTJS/IR/Ops/Suspension.td"
 include "ctcompile/CTJS/IR/Ops/Frames.td"
 

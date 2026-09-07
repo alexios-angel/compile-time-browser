@@ -18,6 +18,7 @@ by their implementation files. Public APIs remain under `include/ctcompile/`.
 | Native pass | `lib/CTNative/Lowering/LowerToEmitC.cpp` | Default optimization policy, pass setup, inference, admission fixpoint and lowering order |
 | Closure lifting | `lib/CTNative/Lowering/ClosureLifting/` | Calls, callbacks, bindings, cells, captures, returned closures and method tables, constructors, diagnostics and rewriting |
 | Native admission | `lib/CTNative/Lowering/Admission/` | Value, object, operation and function checks |
+| Native exceptions | `lib/CTNative/Lowering/Exceptions/` | Bounded handler recovery using LLVM CFG-to-SCF, numeric payload/effect admission, transactional rollback and catch-state storage |
 | Native emission | `lib/CTNative/Lowering/EmitC/` | Shapes, types, owning environments and method tables, Maps, expressions, operations, functions, module declarations and runtime helper text |
 | Object value carriers | `lib/CTNative/Lowering/ObjectValues/` | Identity/scalar union classification, fixed scalar field layouts and owning runtime helpers |
 | String value carriers | `lib/CTNative/Lowering/StringValues/` | Nullable owning strings, scalar consumers and ordered string snapshot helpers |
@@ -31,10 +32,11 @@ by their implementation files. Public APIs remain under `include/ctcompile/`.
 | C++ const bindings | `lib/Target/Cpp/Const/` and `lib/CTNative/Lowering/EmitC/Calls.cpp` | Backward binding-mutability data flow, lvalue/capture aliases and native helper operand ABI contracts |
 | C++ constexpr bindings | `lib/Target/Cpp/Constexpr/` | Forward scalar binding time, checked integer/float evaluation, representable conversions and C++ constant-expression eligibility |
 | C++ callable bodies | `lib/Target/Cpp/Callables/` | Final-IR lambda bodies at creation sites, validated bounded expansion, independent nested printer state and retained helper/function references |
+| C++ exception regions | `lib/Target/Cpp/Exceptions/` | Typed native try/throw printing with scoped catch declarations and collision-safe names |
 | C++ parameter suppression | `lib/Target/Cpp/UnusedParameters.h` | Final printed-use analysis for compiler-generated unused-parameter casts |
 | Global effects | `lib/CTJS/Lowering/Globals/` | Reflection, global identity and effects retained for refused bodies |
 | Bytecode import | `lib/CTJS/Import/Bytecode/` | Per-function state, instruction dispatch, operator tables and support routines |
-| Operation definitions | `include/ctcompile/CTJS/IR/Ops/` | TableGen records grouped by bindings, properties, runtime, operators, containers, modules, calls, functions, suspension and frames |
+| Operation definitions | `include/ctcompile/CTJS/IR/Ops/` | TableGen records grouped by bindings, properties, runtime, operators, containers, modules, calls, functions, structured exceptions, suspension and frames |
 | Test registration | `test/cmake/` | Core/boxed, lit, runtime, analysis, native, native guards and native fixtures |
 | Oracle fixtures | `test/TypeOracle/` | JavaScript programs with hand-computed observations |
 

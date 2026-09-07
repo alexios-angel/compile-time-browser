@@ -23,6 +23,7 @@ public:
     bool enabled() const { return active; }
     void finish() { active = false; }
     llvm::StringRef get(mlir::Value value, llvm::StringRef fallback = "v");
+    std::string temporary(llvm::StringRef prefix);
 
 private:
     bool active = false;

@@ -467,6 +467,8 @@ bool admission::op(mlir::Operation * o) {
                 refuse(where + " requires a numeric global")) &&
                printable(store.getValue(), where);
     }
+    if (auto attempt = llvm::dyn_cast<TryOp>(o)) { return exceptionRegion(attempt); }
+    if (llvm::isa<TryExitOp, TryYieldOp>(o)) { return true; }
     if (auto ret = llvm::dyn_cast<ReturnOp>(o)) {
         const carrier c = carrierOf(typeOf(ret.getValue()));
         if (c == carrier::none) { return refuse("returns " + printed(typeOf(ret.getValue()))); }

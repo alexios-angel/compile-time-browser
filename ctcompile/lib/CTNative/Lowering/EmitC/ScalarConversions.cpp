@@ -105,6 +105,15 @@ void lowering::convertBoundaries(ctjs::FuncOp fn) {
                     convert(i, params[i]);
                 }
             }
+        } else if (auto exit = llvm::dyn_cast<ctjs::TryExitOp>(op)) {
+            auto parent = exit->getParentOfType<ctjs::TryOp>();
+            convert(1, parent.getResult().getType());
+            for (auto [index, argument] :
+                 llvm::enumerate(parent.getCatchBody().front().getArguments())) {
+                convert(static_cast<unsigned>(index) + 2, argument.getType());
+            }
+        } else if (auto yielded = llvm::dyn_cast<ctjs::TryYieldOp>(op)) {
+            convert(0, yielded->getParentOfType<ctjs::TryOp>().getResult().getType());
         } else if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(op)) {
             for (unsigned i = 0; i < op->getNumOperands(); ++i) {
                 convert(i, loop.getBefore().front().getArgument(i).getType());

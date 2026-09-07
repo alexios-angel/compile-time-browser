@@ -1,5 +1,7 @@
 #include "SourceNames.h"
 
+#include "ctcompile/CTNative/IR/CTNativeOps.h"
+
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/DenseSet.h"
@@ -16,9 +18,13 @@ void SourceNames::prepare(mlir::Operation * function,
     unavailable.clear();
     nextTemporary = 0;
     const auto module = function->getParentOfType<mlir::ModuleOp>();
+    bool exceptions = false;
+    function->walk([&](mlir::Operation * op) {
+        exceptions |= llvm::isa<ctnative::CppTryOp, ctnative::CppThrowOp>(op);
+    });
     // A callable's fixed capture names also need collision-free locals when
     // a hand-written EmitC module has not requested general source naming.
-    active = !parameters.empty() ||
+    active = exceptions || !parameters.empty() ||
              (module && module->hasAttrOfType<mlir::UnitAttr>("ctnative.readable_names"));
     if (!active) { return; }
     mlir::Operation * root = function;
@@ -29,6 +35,13 @@ void SourceNames::prepare(mlir::Operation * function,
         reservedRoot = root;
     }
     for (const auto & name : moduleIdentifiers) { unavailable.insert(name.getKey()); }
+    if (exceptions) {
+        // These names are introduced by the exception printer itself, even
+        // when the runtime carrier arrives through an external include.
+        for (const char * name : {"ctnative", "js_exception", "js_num"}) {
+            unavailable.insert(name);
+        }
+    }
     if (!parameters.empty()) {
         const auto arguments = function->getRegion(0).front().getArguments();
         assert(parameters.size() == arguments.size());
@@ -116,12 +129,16 @@ void SourceNames::prepare(mlir::Operation * function,
 llvm::StringRef SourceNames::get(mlir::Value value, llvm::StringRef fallback) {
     auto found = names.find(value);
     if (found != names.end()) { return found->second; }
+    return names.try_emplace(value, temporary(fallback)).first->second;
+}
+
+std::string SourceNames::temporary(llvm::StringRef prefix) {
     std::string candidate;
     do {
-        candidate = fallback.str() + std::to_string(++nextTemporary);
+        candidate = prefix.str() + std::to_string(++nextTemporary);
     } while (unavailable.contains(candidate));
     unavailable.insert(candidate);
-    return names.try_emplace(value, std::move(candidate)).first->second;
+    return candidate;
 }
 
 } // namespace ctcompile::cpp
