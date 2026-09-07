@@ -698,9 +698,13 @@ void dom_bindings::install_document(context & cx) {
     // `document.getElementsByName`, which is keyed on the `name` ATTRIBUTE and
     // not on `id`. It is HTML's, not the DOM's - hence the document only, and
     // hence HTML elements only.
+    // A NodeList, NOT an HTMLCollection - the one live collection on the
+    // Document that is the other interface, and
+    // `document.getElementsByName-liveness.html` asserts `e instanceof NodeList`
+    // before it checks a single length.
     method("getElementsByName", [this](context & c, std::span<value> args) {
         const std::string name = arg_string(c, args, 0);
-        return make_live_collection(c, [this, name] { return all_by_name(name); });
+        return make_live_collection(c, [this, name] { return all_by_name(name); }, "NodeList");
     });
 
     // `document.createEvent(interface)` - the OLDER way to make an event, and
@@ -2901,7 +2905,8 @@ std::vector<node_id> dom_bindings::all_by_name(std::string_view name) {
 // the trap's fallback - an ordinary lookup on the target - finds them along with
 // everything Object.prototype provides.
 value dom_bindings::make_live_collection(context & cx,
-                                         std::function<std::vector<node_id>()> members) {
+                                         std::function<std::vector<node_id>()> members,
+                                         std::string_view interface_name) {
     auto * target = static_cast<script::object_object *>(cx.make_object().as_heap());
     auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
     // `children instanceof HTMLCollection` IS A SUBTEST, and it is the only
@@ -2916,7 +2921,7 @@ value dom_bindings::make_live_collection(context & cx,
     // `undefined` and `instanceof HTMLCollection` was false for the first
     // collection a page made and true for every one after it.
     ensure_dom_interfaces(cx);
-    target->prototype = interface_prototype("HTMLCollection");
+    target->prototype = interface_prototype(interface_name);
     // Shared rather than copied into each trap: `members` walks the document, and
     // three copies of the same walk is three chances for them to disagree.
     const auto live = std::make_shared<std::function<std::vector<node_id>()>>(std::move(members));

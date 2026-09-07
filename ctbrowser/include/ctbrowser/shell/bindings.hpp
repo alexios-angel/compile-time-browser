@@ -1285,8 +1285,15 @@ private:
     // new number. An array cannot answer that, so this is a Proxy whose `get`
     // and `has` traps re-run `members` on every read - the same mechanism the
     // `window` proxy already uses, and the reason a second one is cheap.
+    //
+    // WHICH INTERFACE it claims to be is a parameter, because two of the DOM's
+    // live collections are the same object with different names on it:
+    // `getElementsByTagName` is an HTMLCollection and `getElementsByName` is a
+    // NodeList, and `document.getElementsByName-liveness.html` asserts
+    // `e instanceof NodeList` before it checks a single length.
     [[nodiscard]] value make_live_collection(context & cx,
-                                             std::function<std::vector<node_id>()> members);
+                                             std::function<std::vector<node_id>()> members,
+                                             std::string_view interface_name = "HTMLCollection");
     // `querySelectorAll`, on the real Selectors engine - see the definition.
     //
     // `invalid` comes back true when the text is not a selector at all, which is

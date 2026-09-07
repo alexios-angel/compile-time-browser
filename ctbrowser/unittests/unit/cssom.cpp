@@ -731,7 +731,9 @@ void test_the_inline_style_follows_the_attribute() {
     CHECK_EQ(logged(page, "before="), std::string{"before=|0"});
     CHECK_EQ(logged(page, "after="), std::string{"after=rgb(1, 2, 3)|2|10px|color"});
     CHECK_EQ(logged(page, "again="), std::string{"again=|2px|1"});
-    CHECK_EQ(logged(page, "wrote="), std::string{"wrote=height: 2px; color: rgb(4, 5, 6);"});
+    // The trailing space is `style_attribute`'s and deliberate - see the note
+    // above `css_text_of`, which is the one CSSOM does specify.
+    CHECK_EQ(logged(page, "wrote="), std::string{"wrote=height: 2px; color: rgb(4, 5, 6); "});
     CHECK_EQ(logged(page, "unset="), std::string{"unset=|true|true"});
 }
 
