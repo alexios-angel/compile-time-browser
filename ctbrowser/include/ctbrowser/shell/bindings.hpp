@@ -527,6 +527,28 @@ private:
     // Set once the chain is built AND linked to `event_target_prototype_`,
     // which install_event_interfaces publishes after the first wrapper exists.
     bool interfaces_linked_ = false;
+
+    // --- CharacterData workstream ---
+    //
+    // `CharacterData.prototype` AND `Text.prototype`, filled in once the
+    // interface chain exists. On the PROTOTYPES rather than on every wrapper,
+    // for the reason reflection is: `substringData` is one function per page
+    // here and was one per text node in the shape install_element_methods uses.
+    //
+    // Every offset in them is a UTF-16 CODE UNIT and this engine stores UTF-8 -
+    // see the helpers above install_character_data in element.cpp, and the note
+    // there on what a surrogate pair costs.
+    void install_character_data(context & cx);
+    // `new Text("x")`, `new Comment("x")` and `new DocumentFragment()` - the
+    // three node interfaces a page may construct. The other eighty-eight throw
+    // "Illegal constructor", which is what a browser does too; these three make
+    // a node owned by this document and NOT in its tree.
+    [[nodiscard]] value construct_node_interface(context & cx, std::string_view which,
+                                                 std::span<value> args);
+    // `Node.prototype.isEqualNode` - the DOM's structural comparison, in which
+    // two elements' attributes are UNORDERED SETS compared by (namespace, local
+    // name, value) and the prefix takes no part.
+    [[nodiscard]] bool nodes_are_equal(const read_txn & txn, node_id left, node_id right) const;
     // END reflection
 
     // BEGIN mutation observers (bindings/mutation.cpp)

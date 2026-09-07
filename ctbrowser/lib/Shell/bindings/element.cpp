@@ -619,6 +619,21 @@ atom dom_bindings::attribute_key(const read_txn & txn, node_id id,
 // spellings, because on an Attr that is what they are. They are exactly what
 // `dom/nodes/attributes.js`'s `attr_is` reads, and it reads all nine of these
 // properties on every case of three files.
+//
+// AN EMPTY `owner` MEANS DETACHED, and that is the whole of the second half of
+// this function. An Attr that has been REMOVED still exists - `removeNamedItem`
+// and `removeAttributeNode` both HAND IT BACK, which is how a page moves an
+// attribute from one element to another - and DOM 4.9.2 leaves its value, name
+// and namespace exactly as they were at the moment of removal while setting its
+// ownerElement to null. Reading through to the element it used to name answers
+// "" for every one of them, because the element no longer has the attribute:
+//
+//     var gone = e.attributes.removeNamedItem('a');
+//     gone.value                                  // "1" in a browser, "" here
+//
+// So a detached Attr carries its OWN value as three ordinary data properties -
+// which also gives `gone.value = "x"` the right meaning, a write to a node that
+// is not in any element rather than a write to an element that has moved on.
 value dom_bindings::attribute_object(context & cx, node_id owner, const attribute & held) {
     const std::string qualified{atoms_->text(held.name)};
     const std::string ns{atoms_->text(held.ns)};
@@ -630,6 +645,10 @@ value dom_bindings::attribute_object(context & cx, node_id owner, const attribut
     auto * attr = static_cast<script::object_object *>(cx.make_object().as_heap());
     for (const char * spelling : {"value", "nodeValue", "textContent"}) {
         const std::string property{spelling};
+        if (!owner) {
+            attr->set(property, cx.string(held.value));
+            continue;
+        }
         attr->define_accessor(
             property,
             value::object(cx.allocate<script::native_object>(
@@ -700,6 +719,56 @@ void dom_bindings::refresh_attribute_map(context & cx, script::object_object & m
         (void)map.erase(std::to_string(i));
     }
     map.set("length", value::number(static_cast<double>(held.size())));
+    // THE NAMED PROPERTIES. `element.attributes.x` is the attribute called `x`
+    // - a NamedNodeMap is a legacy platform object with a named property getter
+    // and `attributes-namednodemap.html` is five subtests of exactly this. The
+    // indexed half was here from the start and this half was not, so a page
+    // could reach an attribute by position and not by name.
+    //
+    // NEVER OVER A METHOD OR OVER `length`, which is the rest of that file:
+    // `setAttributeNS("foo", "setNamedItem", v)` must leave
+    // `attributes.setNamedItem` a function and `setAttributeNS("foo", "length",
+    // v)` must leave `attributes.length` the count. A named property that
+    // shadowed either would be an attribute a page can write breaking the map
+    // it was written into.
+    {
+        // "Is this key an array index" is object_object's own question - the
+        // one that decides property ORDER - so it is asked with its function
+        // rather than with a second spelling that could disagree.
+        const auto is_index = [](std::string_view key) {
+            std::uint32_t at = 0;
+            return script::object_object::array_index_key(key, at);
+        };
+        std::vector<std::string> stale;
+        for (const auto & [key, current] : map.props) {
+            if (key == "length" || is_index(key)) { continue; }
+            // A METHOD STAYS. Everything else on this object is a named
+            // property this function put there on an earlier refresh, and it
+            // goes: an attribute that has been removed must stop answering.
+            if (current.is_callable()) { continue; }
+            stale.push_back(key);
+        }
+        for (const std::string & key : stale) { (void)map.erase(key); }
+        for (std::size_t i = 0; i < held.size(); ++i) {
+            const std::string qualified{atoms_->text(held[i].name)};
+            if (qualified == "length" || is_index(qualified)) { continue; }
+            // THE SAME Attr OBJECT THE INDEX HOLDS, not a second one. Sharing
+            // is both cheaper - a wrapper per attribute per read rather than
+            // two - and RIGHT: `el.attributes[0] === el.attributes.x` is true
+            // in a browser, an Attr being one node under two ways of reaching
+            // it. It is read back out of the map rather than kept in a C++
+            // local because the map is what roots it.
+            //
+            // ALREADY TAKEN means leave it alone, which covers both the methods
+            // and the case DOM's named getter is actually about: two attributes
+            // may share a qualified name in different namespaces, and the FIRST
+            // is the one the name answers with.
+            if (map.find(qualified) != nullptr) { continue; }
+            const value * indexed = map.find(std::to_string(i));
+            if (indexed == nullptr) { continue; }
+            map.set(qualified, *indexed);
+        }
+    }
     if (!map.prototype.is_object()) {
         // LATE, because the interfaces are built lazily: the first two element
         // wrappers exist before `EventTarget` does. See ensure_dom_interfaces.
@@ -838,10 +907,11 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                                 "removeNamedItem: no attribute called '" + qualified + "'");
             return value::null();
         }
-        const value answer = attribute_object(c, id, *held);
+        // DETACHED, and made AFTER the removal so it cannot be read live: the
+        // Attr this hands back keeps the value it had, and no element.
         (void)doc_->remove_attribute(id, held->name);
         mutated();
-        return answer;
+        return attribute_object(c, node_id{}, *held);
     });
     map_method("removeNamedItemNS", [this, id, found_by_pair](context & c, std::span<value> a) {
         const std::string ns = namespace_argument(c, a, 0);
@@ -852,10 +922,9 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                                 "removeNamedItemNS: no attribute called '" + local + "'");
             return value::null();
         }
-        const value answer = attribute_object(c, id, *held);
         (void)doc_->remove_attribute_ns(id, ns, local);
         mutated();
-        return answer;
+        return attribute_object(c, node_id{}, *held);
     });
     {
         // THE MAP IS ROOTED THROUGH THE GETTER. A C++ lambda's captures are
@@ -1142,7 +1211,16 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             [this, id](context & c, std::span<value> a) {
                 const auto kind = doc_->read().kind(id).value_or(node_kind::element);
                 if (kind == node_kind::text || kind == node_kind::comment) {
-                    (void)doc_->set_text(id, arg_string(c, a, 0));
+                    // NULL IS THE EMPTY STRING, not "null". `data` is
+                    // [LegacyNullToEmptyString] and `nodeValue` is a nullable
+                    // DOMString whose null means "no value"; both land on "",
+                    // and ToString would have written the four letters instead.
+                    // `CharacterData-data.html` asserts `.data = null` leaves a
+                    // node of length 0 - and the very next case asserts
+                    // `.data = undefined` writes "undefined", so this is a test
+                    // for null ALONE and not for nullish.
+                    const value given = arg(a, 0);
+                    (void)doc_->set_text(id, given.is_null() ? std::string{} : arg_string(c, a, 0));
                     mutated();
                 }
                 return value::undefined();
@@ -1832,7 +1910,13 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         const value ns_property = c.lookup_property(given, "namespaceURI");
         const std::string ns = ns_property.is_nullish() ? std::string{} : c.to_string(ns_property);
         const std::string local = c.to_string(c.lookup_property(given, "localName"));
-        if (!doc_->read().has_attribute_ns(id, ns, local)) {
+        std::optional<attribute> held;
+        {
+            const auto txn = doc_->read();
+            const attribute * found = txn.find_attribute_ns(id, ns, local);
+            if (found != nullptr) { held = *found; }
+        }
+        if (!held) {
             throw_dom_exception(c, "NotFoundError",
                                 "removeAttributeNode: '" + local +
                                     "' is not an attribute of this "
@@ -1841,6 +1925,17 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         }
         (void)doc_->remove_attribute_ns(id, ns, local);
         mutated();
+        // THE ARGUMENT IS THE ANSWER, and it is the ARGUMENT that has to be
+        // detached: this is the one removal that hands back an object the page
+        // already holds rather than one made here, so the live accessors on it
+        // are still reading through to an element that no longer has the
+        // attribute. Frozen in place, for the reason attribute_object gives.
+        auto * detaching = static_cast<script::object_object *>(given.as_heap());
+        for (const char * spelling : {"value", "nodeValue", "textContent"}) {
+            (void)detaching->erase_accessor(spelling);
+            detaching->set(spelling, c.string(held->value));
+        }
+        detaching->set("ownerElement", value::null());
         return given;
     });
     // `toggleAttribute(name, force)` - the boolean-attribute spelling, and it
@@ -3427,6 +3522,62 @@ constexpr dom_interface interface_table[] = {
 
 constexpr long long max_int32 = 2147483647;
 
+// --- UTF-16 CODE UNITS OVER UTF-8 BYTES -------------------------------------
+//
+// EVERY OFFSET IN `CharacterData` IS A UTF-16 CODE UNIT and this engine stores
+// UTF-8, so the two are the same number only for ASCII. `CharacterData-*.html`
+// tests exactly that difference and tests it twice: once on CJK, where a code
+// unit is three bytes, and once on U+1F320, where ONE character is two code
+// units and four bytes. A byte offset passes the whole English half of the
+// corpus and is wrong for every page that is not in English.
+//
+// The width of a UTF-8 sequence from its lead byte. A continuation byte or an
+// invalid lead counts as one, which keeps this total on any bytes at all - the
+// document's text comes from a tokenizer that does not promise well-formedness.
+[[nodiscard]] std::size_t utf8_width(unsigned char lead) {
+    if (lead < 0x80u) { return 1; }
+    if ((lead & 0xE0u) == 0xC0u) { return 2; }
+    if ((lead & 0xF0u) == 0xE0u) { return 3; }
+    if ((lead & 0xF8u) == 0xF0u) { return 4; }
+    return 1;
+}
+
+[[nodiscard]] std::size_t utf16_length(std::string_view text) {
+    std::size_t units = 0;
+    for (std::size_t at = 0; at < text.size();) {
+        const std::size_t width = utf8_width(static_cast<unsigned char>(text[at]));
+        // A character outside the BMP is a SURROGATE PAIR: two code units for
+        // the four bytes UTF-8 spends on it, and the only place these two
+        // counts diverge.
+        units += width == 4 ? 2u : 1u;
+        at += width;
+    }
+    return units;
+}
+
+// The byte offset a code-unit offset names. An offset past the end is the end.
+//
+// AN OFFSET THAT FALLS BETWEEN THE TWO HALVES OF A SURROGATE PAIR resolves to
+// the boundary BEFORE it, and that is a deviation said out loud: the DOM lets a
+// page split a pair and keep the halves, because a JavaScript string is a
+// sequence of code units and a lone surrogate is one of them. UTF-8 cannot hold
+// a lone surrogate, so `CharacterData-surrogates.html` - which asserts
+// `substringData(1, 8)` yields "\uDF20 test \uD83C" - cannot pass here whatever
+// this function does. Rounding down at least keeps the text WELL-FORMED, which
+// is the property every other reader of the document relies on.
+[[nodiscard]] std::size_t utf16_to_byte(std::string_view text, std::size_t want) {
+    std::size_t units = 0;
+    std::size_t at = 0;
+    while (at < text.size() && units < want) {
+        const std::size_t width = utf8_width(static_cast<unsigned char>(text[at]));
+        const std::size_t cost = width == 4 ? 2u : 1u;
+        if (units + cost > want) { break; }
+        units += cost;
+        at += width;
+    }
+    return at;
+}
+
 } // namespace
 
 // One reflected attribute's getter: read the content attribute, apply the rule
@@ -3667,12 +3818,23 @@ void dom_bindings::install_dom_interfaces(context & cx) {
             // stub, which is a regression rather than a feature.
             ctor_value = cx.global(name);
         } else {
-            // NOT CONSTRUCTIBLE. `new HTMLDivElement()` throws in a browser too,
-            // and saying so is better than handing back an object that is not an
-            // element - the same choice install_window made for
-            // HTMLCanvasElement.
-            auto * ctor =
-                cx.allocate<script::native_object>(name, [name](context & c, std::span<value>) {
+            // NOT CONSTRUCTIBLE - for all but three of them. `new
+            // HTMLDivElement()` throws in a browser too, and saying so is
+            // better than handing back an object that is not an element - the
+            // same choice install_window made for HTMLCanvasElement.
+            //
+            // THE THREE THAT ARE: `new Text("x")`, `new Comment("x")` and `new
+            // DocumentFragment()`. The DOM makes exactly those constructible
+            // and nothing else in this table, because they are the three nodes
+            // a page can build without naming a document to build them in -
+            // there is no `new HTMLDivElement`, there is `createElement`. Seven
+            // files in `dom/nodes` open with one of them and lose every subtest
+            // they have to the throw; see construct_node_interface.
+            const bool constructible =
+                name == "Text" || name == "Comment" || name == "DocumentFragment";
+            auto * ctor = cx.allocate<script::native_object>(
+                name, [this, name, constructible](context & c, std::span<value> args) {
+                    if (constructible) { return construct_node_interface(c, name, args); }
                     c.throw_error("TypeError", "Illegal constructor: " + name +
                                                    " cannot be constructed by a page");
                     return value::undefined();
@@ -3736,6 +3898,42 @@ void dom_bindings::install_dom_interfaces(context & cx) {
                                    })));
     }
 
+    // THE OPERATIONS THAT ARE NOT REFLECTED ATTRIBUTES, and so far that is the
+    // whole of CharacterData and the two Text adds to it. Here rather than in
+    // the loop above because a table of five signatures would be longer than
+    // the five functions - see install_character_data.
+    install_character_data(cx);
+
+    // `isEqualNode` and `isSameNode`, ON Node.prototype - so an element, a text
+    // node, a comment and a fragment all have them, which is the point. The
+    // Document has its OWN pair as own properties (bindings/document.cpp) and
+    // those shadow these; with one document per page they can only agree.
+    if (const value node_interface = interface_prototype("Node"); node_interface.is_object()) {
+        auto * proto = static_cast<script::object_object *>(node_interface.as_heap());
+        const auto method = [&](const std::string & name, script::native_fn fn) {
+            proto->set(name,
+                       value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+            proto->set_attrs(name, script::attr_builtin);
+        };
+        method("isEqualNode", [this](context & c, std::span<value> args) {
+            const node_id self = receiver(c);
+            // A NULL ARGUMENT IS NOT AN ERROR AND IS NOT EQUAL. The IDL is
+            // `Node?`, so `isEqualNode(null)` is a question with the answer
+            // false rather than a TypeError.
+            const node_id other = handle_of(arg(args, 0));
+            if (!self || !other) { return value::boolean(false); }
+            const auto txn = doc_->read();
+            return value::boolean(nodes_are_equal(txn, self, other));
+        });
+        method("isSameNode", [this](context & c, std::span<value> args) {
+            // IDENTITY, and nothing else: this is `===` with a name, and it is
+            // a separate method because `isEqualNode` is not.
+            const node_id self = receiver(c);
+            const node_id other = handle_of(arg(args, 0));
+            return value::boolean(self && other && self == other);
+        });
+    }
+
     // The document and the window are EventTargets with interfaces of their own,
     // and `passive-by-default.html` reads `eventTarget.constructor.name` for
     // both of them before it can even name its subtests.
@@ -3755,6 +3953,355 @@ void dom_bindings::install_dom_interfaces(context & cx) {
         }
     }
     interfaces_linked_ = event_target_prototype_.is_object();
+}
+
+// `isEqualNode`: THE DOM'S STRUCTURAL COMPARISON, DOM 4.4 "equals".
+//
+// Not identity - that is `isSameNode` - and not a serialisation comparison
+// either, which is what a first attempt reaches for and which gets three things
+// wrong that this file's own corpus tests by name:
+//
+//   * ATTRIBUTES ARE AN UNORDERED SET, compared by (namespace, local name,
+//     value). Two elements carrying the same attributes in different ORDER are
+//     equal, and `innerHTML` would have said no.
+//   * A PREFIX TAKES NO PART in comparing an attribute. `setAttributeNS(ns,
+//     "prefix:local", v)` and `setAttributeNS(ns, "prefix2:local", v)` are the
+//     same attribute and the elements holding them ARE equal - which is the one
+//     subtest that a (qualified name, value) comparison fails.
+//   * ...but it DOES take part in comparing an ELEMENT, whose qualified name is
+//     compared whole. `prefix:localName` and `prefix2:localName` are different
+//     elements. The two rules are opposite on purpose and the file asserts both.
+//
+// Then the children, PAIRWISE AND IN ORDER, which is the recursion.
+bool dom_bindings::nodes_are_equal(const read_txn & txn, node_id left, node_id right) const {
+    if (!left || !right) { return false; }
+    if (left == right) { return true; }
+    const node_kind kind = txn.kind(left).value_or(node_kind::element);
+    if (kind != txn.kind(right).value_or(node_kind::element)) { return false; }
+    switch (kind) {
+    case node_kind::element: {
+        if (txn.tag(left).value_or(atom{}) != txn.tag(right).value_or(atom{})) { return false; }
+        if (namespace_of(left) != namespace_of(right)) { return false; }
+        const std::span<const attribute> held = txn.attributes(left);
+        if (held.size() != txn.attributes(right).size()) { return false; }
+        for (const attribute & one : held) {
+            const attribute * match = txn.find_attribute_ns(right, atoms_->text(one.ns),
+                                                            attribute_local_name(*atoms_, one));
+            if (match == nullptr || match->value != one.value) { return false; }
+        }
+        break;
+    }
+    case node_kind::text:
+    case node_kind::comment:
+        if (txn.text(left) != txn.text(right)) { return false; }
+        break;
+    // A Document and a DocumentFragment have nothing of their own to compare;
+    // they are their children, which is what the walk below does.
+    case node_kind::document:
+    case node_kind::document_fragment: break;
+    }
+    const std::span<const node_id> mine = txn.children(left);
+    const std::span<const node_id> theirs = txn.children(right);
+    if (mine.size() != theirs.size()) { return false; }
+    for (std::size_t i = 0; i < mine.size(); ++i) {
+        if (!nodes_are_equal(txn, mine[i], theirs[i])) { return false; }
+    }
+    return true;
+}
+
+// `new Text("x")`, `new Comment("x")`, `new DocumentFragment()`.
+//
+// THE NODE IS OWNED BY THIS DOCUMENT AND IS NOT IN ITS TREE, which is the whole
+// of what those three constructors do: `document.createTextNode` by another
+// name, reachable without naming the document. `Comment-Text-constructor.js`
+// asserts `object.ownerDocument === document` on every one of its fourteen
+// cases and asserts the prototype chain runs Text -> CharacterData -> Node,
+// which it does because `wrap` links a wrapper by the node's KIND and the chain
+// was already built by the time anything can call this.
+//
+// ONE ARGUMENT, CONVERTED ONCE. The IDL is `(DOMString data = "")`, so a missing
+// argument and an `undefined` one are both the empty string - and the second
+// argument is never looked at, which the corpus checks with a `toString` that
+// calls `assert_unreached`. `arg_string` would have made `undefined` the word
+// "undefined", which is right for `appendData` and wrong here for the same
+// reason a defaulted argument is not a passed one.
+// `which` rather than `interface`, which is a MACRO on Windows: the mingw SDK
+// headers define it as `struct`, and a parameter by that name is a build that
+// fails on one platform only - the exact shape of defect the devbox exists to
+// catch and the cross build finds later still.
+value dom_bindings::construct_node_interface(context & cx, std::string_view which,
+                                             std::span<value> args) {
+    if (which == "DocumentFragment") { return wrap(cx, doc_->create_fragment()); }
+    const value given = arg(args, 0);
+    const std::string data = given.is_undefined() ? std::string{} : cx.to_string(given);
+    return wrap(cx, which == "Comment" ? doc_->create_comment(data) : doc_->create_text(data));
+}
+
+// --- CharacterData, AND THE Text THAT IS ONE --------------------------------
+//
+// FOUR NODE TYPES SHARE ONE STRING, and the DOM gives them one interface to
+// edit it with: `data`, `length`, and the five methods that are all one
+// operation - "replace data", DOM 4.10.2 - with arguments filled in. Written
+// once here for that reason: five separate implementations is five chances to
+// disagree about which argument throws and which one clamps, and the corpus
+// tests that distinction on every one of them.
+//
+// ON THE PROTOTYPE, not on every wrapper. `install_element_methods` runs per
+// node and would have made one `substringData` closure per text node in the
+// document; these are one per page, which is what the specification means by
+// the operations belonging to an interface. `data` and `nodeValue` stay
+// per-wrapper because they close over the node - see install_element_views.
+//
+// WHAT IS NOT HERE: `ProcessingInstruction` and `CDATASection`. Both are in the
+// interface table because a page may name them, and neither is a `node_kind`
+// this DOM can produce, so nothing can be an instance of one. When they arrive
+// they inherit these methods by being in the chain and nothing here changes.
+void dom_bindings::install_character_data(context & cx) {
+    const value character_data = interface_prototype("CharacterData");
+    const value text_interface = interface_prototype("Text");
+    if (!character_data.is_object() || !text_interface.is_object()) { return; }
+    auto * proto = static_cast<script::object_object *>(character_data.as_heap());
+    auto * text_proto = static_cast<script::object_object *>(text_interface.as_heap());
+
+    const auto native = [&cx](const std::string & name, script::native_fn fn) {
+        return value::object(cx.allocate<script::native_object>(name, std::move(fn)));
+    };
+    // NOT ENUMERABLE, which is what { writable, configurable } spells: an IDL
+    // operation is a built-in, and `Body-FrameSet-Event-Handlers.html` counts
+    // what a `for...in` over a node reports against the IDL.
+    const auto method = [&native](script::object_object & on, const std::string & name,
+                                  script::native_fn fn) {
+        on.set(name, native(name, std::move(fn)));
+        on.set_attrs(name, script::attr_builtin);
+    };
+
+    // THE RECEIVER'S TEXT. False when `this` is not a character data node - a
+    // wrapper for a node that has since been collected, or one of these methods
+    // taken off the prototype and called on an element. Every other native in
+    // this file answers the type's default rather than throwing in that case
+    // and these do the same: the text is empty and the write is skipped, so
+    // nothing is corrupted and nothing throws a LANGUAGE error where the page
+    // was told to expect a DOMException.
+    const auto data_of = [this](context & c, node_id & id, std::string & text) {
+        id = receiver(c);
+        if (!id) { return false; }
+        const auto txn = doc_->read();
+        const node_kind kind = txn.kind(id).value_or(node_kind::element);
+        if (kind != node_kind::text && kind != node_kind::comment) { return false; }
+        text = std::string{txn.text(id)};
+        return true;
+    };
+
+    // "REPLACE DATA", DOM 4.10.2. appendData, insertData, deleteData and
+    // replaceData are ALL this with arguments filled in, exactly as the
+    // specification defines them.
+    //
+    // THE TWO ARGUMENTS ARE NOT TREATED ALIKE, and that asymmetry is the whole
+    // of "with invalid offset" and "with clamped count":
+    //
+    //   offset  ToUint32'd and then COMPARED. `-1` is 4294967295 and therefore
+    //           past the end and therefore an IndexSizeError; `-0x100000000 + 2`
+    //           is 2 and is fine; `"test"` is NaN and therefore 0 and is fine.
+    //   count   ToUint32'd and then CLAMPED to what is left. `-1` deletes to
+    //           the end rather than throwing, and 20 on a four-character node
+    //           deletes four.
+    const auto replace_data = [this](context & c, node_id id, const std::string & text,
+                                     std::string_view where, double offset_arg, double count_arg,
+                                     const std::string & with) {
+        const auto length = static_cast<unsigned long long>(utf16_length(text));
+        const auto offset = static_cast<unsigned long long>(to_uint32(offset_arg));
+        if (offset > length) {
+            throw_dom_exception(c, "IndexSizeError",
+                                std::string{where} + ": offset " + std::to_string(offset) +
+                                    " is past the end of " + std::to_string(length) +
+                                    " code units");
+            return false;
+        }
+        auto count = static_cast<unsigned long long>(to_uint32(count_arg));
+        if (count > length - offset) { count = length - offset; }
+        std::string made{text.substr(0, utf16_to_byte(text, static_cast<std::size_t>(offset)))};
+        made += with;
+        made += text.substr(utf16_to_byte(text, static_cast<std::size_t>(offset + count)));
+        (void)doc_->set_text(id, made);
+        mutated();
+        return true;
+    };
+
+    // `length` IS IN CODE UNITS and so is every offset below it. See
+    // utf16_length: for ASCII it is the byte count and for nothing else.
+    proto->define_accessor("length",
+                           native("length",
+                                  [data_of](context & c, std::span<value>) {
+                                      node_id id;
+                                      std::string text;
+                                      (void)data_of(c, id, text);
+                                      return value::number(static_cast<double>(utf16_length(text)));
+                                  }),
+                           value::undefined());
+
+    method(*proto, "substringData", [this, data_of](context & c, std::span<value> a) {
+        // TWO REQUIRED ARGUMENTS, and the arity TypeError is a subtest by name:
+        // `substringData(0)` throws where `substringData(0, 0)` answers "".
+        if (a.size() < 2) {
+            c.throw_error("TypeError", "substringData needs an offset and a count");
+            return value::undefined();
+        }
+        // CONVERTED FIRST, THEN THE NODE IS READ. WebIDL converts a call's
+        // arguments before the operation runs, and a page can tell: a `toString`
+        // on an argument may edit the very node this is about to measure.
+        const auto offset = static_cast<unsigned long long>(to_uint32(c.to_number_value(a[0])));
+        auto count = static_cast<unsigned long long>(to_uint32(c.to_number_value(a[1])));
+        node_id id;
+        std::string text;
+        (void)data_of(c, id, text);
+        const auto length = static_cast<unsigned long long>(utf16_length(text));
+        if (offset > length) {
+            throw_dom_exception(c, "IndexSizeError",
+                                "substringData: offset " + std::to_string(offset) +
+                                    " is past the end of " + std::to_string(length) +
+                                    " code units");
+            return value::undefined();
+        }
+        if (count > length - offset) { count = length - offset; }
+        const std::size_t start = utf16_to_byte(text, static_cast<std::size_t>(offset));
+        const std::size_t stop = utf16_to_byte(text, static_cast<std::size_t>(offset + count));
+        return c.string(text.substr(start, stop - start));
+    });
+
+    method(*proto, "appendData", [data_of, replace_data](context & c, std::span<value> a) {
+        if (a.empty()) {
+            c.throw_error("TypeError", "appendData needs the data to append");
+            return value::undefined();
+        }
+        const std::string with = c.to_string(a[0]);
+        node_id id;
+        std::string text;
+        if (!data_of(c, id, text)) { return value::undefined(); }
+        // AT THE END, WHICH CANNOT THROW: the offset IS the length.
+        (void)replace_data(c, id, text, "appendData", static_cast<double>(utf16_length(text)), 0.0,
+                           with);
+        return value::undefined();
+    });
+
+    method(*proto, "insertData", [data_of, replace_data](context & c, std::span<value> a) {
+        if (a.size() < 2) {
+            c.throw_error("TypeError", "insertData needs an offset and the data to insert");
+            return value::undefined();
+        }
+        // IN ARGUMENT ORDER, INTO NAMED LOCALS, AND BEFORE THE NODE IS READ.
+        // WebIDL converts a call's arguments left to right and a page can SEE
+        // that order - the corpus asserts it with a `toString` that records
+        // when it ran - while the order C++ evaluates a call's own arguments in
+        // is unspecified. Reading the node afterwards matters for the same
+        // reason: a `toString` may have edited it.
+        const double offset = c.to_number_value(a[0]);
+        const std::string with = c.to_string(a[1]);
+        node_id id;
+        std::string text;
+        if (!data_of(c, id, text)) { return value::undefined(); }
+        (void)replace_data(c, id, text, "insertData", offset, 0.0, with);
+        return value::undefined();
+    });
+
+    method(*proto, "deleteData", [data_of, replace_data](context & c, std::span<value> a) {
+        if (a.size() < 2) {
+            c.throw_error("TypeError", "deleteData needs an offset and a count");
+            return value::undefined();
+        }
+        const double offset = c.to_number_value(a[0]);
+        const double count = c.to_number_value(a[1]);
+        node_id id;
+        std::string text;
+        if (!data_of(c, id, text)) { return value::undefined(); }
+        (void)replace_data(c, id, text, "deleteData", offset, count, std::string{});
+        return value::undefined();
+    });
+
+    method(*proto, "replaceData", [data_of, replace_data](context & c, std::span<value> a) {
+        if (a.size() < 3) {
+            c.throw_error("TypeError", "replaceData needs an offset, a count and the data");
+            return value::undefined();
+        }
+        const double offset = c.to_number_value(a[0]);
+        const double count = c.to_number_value(a[1]);
+        const std::string with = c.to_string(a[2]);
+        node_id id;
+        std::string text;
+        if (!data_of(c, id, text)) { return value::undefined(); }
+        (void)replace_data(c, id, text, "replaceData", offset, count, with);
+        return value::undefined();
+    });
+
+    // --- Text, WHICH IS CharacterData PLUS TWO -----------------------------
+
+    // `splitText(offset)`: this node keeps the head, a NEW node takes the tail
+    // and goes straight after it. The new node has NO PARENT when this one has
+    // none - "Split root" asserts exactly that - which is why the insertion is
+    // conditional rather than the obvious appendChild.
+    method(*text_proto, "splitText", [this, data_of](context & c, std::span<value> a) {
+        const auto offset =
+            static_cast<unsigned long long>(to_uint32(c.to_number_value(arg(a, 0))));
+        node_id id;
+        std::string text;
+        if (!data_of(c, id, text)) { return value::null(); }
+        const auto length = static_cast<unsigned long long>(utf16_length(text));
+        if (offset > length) {
+            throw_dom_exception(c, "IndexSizeError",
+                                "splitText: offset " + std::to_string(offset) +
+                                    " is past the end of " + std::to_string(length) +
+                                    " code units");
+            return value::null();
+        }
+        const std::size_t at = utf16_to_byte(text, static_cast<std::size_t>(offset));
+        const node_id made = doc_->create_text(text.substr(at));
+        (void)doc_->set_text(id, text.substr(0, at));
+        node_id parent;
+        node_id next;
+        {
+            const auto txn = doc_->read();
+            parent = txn.parent(id);
+            if (parent) {
+                const std::span<const node_id> kids = txn.children(parent);
+                for (std::size_t i = 0; i + 1 < kids.size(); ++i) {
+                    if (kids[i] == id) { next = kids[i + 1]; }
+                }
+            }
+        }
+        if (parent) { (void)insert_node(parent, made, next); }
+        mutated();
+        return wrap(c, made);
+    });
+
+    // `wholeText`: the CONTIGUOUS RUN of Text siblings this node is in,
+    // concatenated. An element between two text nodes ends the run, which is
+    // the only thing `Text-wholeText.html` is really asking - it puts an <a>
+    // in the middle of three text nodes and re-reads all three.
+    text_proto->define_accessor(
+        "wholeText",
+        native("wholeText",
+               [this, data_of](context & c, std::span<value>) {
+                   node_id id;
+                   std::string text;
+                   if (!data_of(c, id, text)) { return c.string(std::string{}); }
+                   const auto txn = doc_->read();
+                   const node_id parent = txn.parent(id);
+                   if (!parent) { return c.string(text); }
+                   const std::span<const node_id> kids = txn.children(parent);
+                   std::size_t at = 0;
+                   while (at < kids.size() && kids[at] != id) { ++at; }
+                   if (at >= kids.size()) { return c.string(text); }
+                   const auto is_text = [&txn](node_id one) {
+                       return txn.kind(one).value_or(node_kind::element) == node_kind::text;
+                   };
+                   std::size_t first = at;
+                   while (first > 0 && is_text(kids[first - 1])) { --first; }
+                   std::size_t last = at;
+                   while (last + 1 < kids.size() && is_text(kids[last + 1])) { ++last; }
+                   std::string whole;
+                   for (std::size_t i = first; i <= last; ++i) { whole += txn.text(kids[i]); }
+                   return c.string(whole);
+               }),
+        value::undefined());
 }
 
 } // namespace ctbrowser::shell

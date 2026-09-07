@@ -112,6 +112,12 @@ ctbrowser_test(unit/bootstrap_layout)
 # foreign one, a name that SERIALISES against a name that parses - and each of
 # those used to have one answer where two belong.
 ctbrowser_test(unit/element_attrs)
+# CharacterData and the constructible node interfaces. Its own file because
+# every offset in it is a UTF-16 CODE UNIT and this engine stores UTF-8 - a
+# byte offset answers `substringData(39, 2)` wrongly only once the text stops
+# being ASCII, which is exactly the case the corpus tests and a suite of
+# English fixtures never would.
+ctbrowser_test(unit/character_data)
 
 # The language, against V8. The nine per-type suites were carved out of
 # vm_basics and share js_expect.hpp; number_format and obfuscated ask the
