@@ -2042,6 +2042,12 @@ void test_the_listener_list_is_copied_before_it_runs() {
           })())") == "first,second",
           "a listener removed mid-dispatch is skipped and the one after it is not");
 
+    // "outer,outer,late", and reading the sequence out is the only way to see
+    // that it is right. The first dispatch runs `outer` alone - the listener it
+    // adds is not in the copy that dispatch is walking - and adds one `late`.
+    // The second walks [outer, late]: `outer` runs first because listeners fire
+    // in registration order, adding a THIRD listener nobody will reach, and
+    // then the `late` registered by the first dispatch runs.
     check(one_log(page, R"((function () {
             var t = new EventTarget(), ran = [];
             t.addEventListener('go', function () {
@@ -2051,7 +2057,7 @@ void test_the_listener_list_is_copied_before_it_runs() {
             t.dispatchEvent(new Event('go'));
             t.dispatchEvent(new Event('go'));
             console.log(ran.join(','));
-          })())") == "outer,late,outer",
+          })())") == "outer,outer,late",
           "a listener added mid-dispatch runs on the NEXT event, not on that one");
 
     // `{once: true}` is the same question asked from the other side: the
