@@ -63,6 +63,10 @@ ctbrowser_test(unit/selectors)
 # consistent with itself, including where it honestly refuses. See the block
 # above install_document_as_node in lib/Shell/bindings/document.cpp.
 ctbrowser_test(unit/document_node)
+# `document.title`, the eight HTML collections and named access. Its own file
+# because every case in it is the same shape - write and read back in ONE
+# statement - and that shape is what the accessors exist for.
+ctbrowser_test(unit/tree_accessors)
 ctbrowser_test(unit/layout_basics)
 # The flex formatting context. Its own file rather than more of layout_basics:
 # S9.7's freeze loop has more cases than the other three contexts together.

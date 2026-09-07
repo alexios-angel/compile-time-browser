@@ -327,6 +327,10 @@ void dom_bindings::register_roots(context & cx) {
         mark(css_interface_);
         mark(location_);
         mark(document_);
+        // The proxy traces its own target, so this is belt and braces - but the
+        // two are set in two statements and a collection between them would
+        // otherwise sweep the object the proxy is about to point at.
+        mark(document_target_);
         mark(window_);
     });
 }
@@ -1112,7 +1116,9 @@ void dom_bindings::install_document(context & cx) {
     // node in this tree and one has to be modelled - is a page of reasoning
     // that belongs in one place rather than spread over install_document.
     install_document_as_node(cx, *doc);
-    document_ = value::object(doc);
+    install_tree_accessors(cx, *doc);
+    document_target_ = value::object(doc);
+    document_ = make_document_proxy(cx, document_target_);
     cx.define_global("document", document_);
     refresh_document();
 }
@@ -1124,8 +1130,241 @@ void dom_bindings::install_document(context & cx) {
 void dom_bindings::refresh_document() {
     auto * doc = document_object();
     if (doc == nullptr || cx_ == nullptr) { return; }
-    doc->set("title", cx_->string(text_of(find_by_tag("title"))));
+    // `title` is NOT here any more - it is an accessor, installed once. A data
+    // property refreshed on the tick answered a read taken in the same
+    // statement as the write with the value from before it, which is the shape
+    // of nearly every test in html/dom's title group: set it, read it back.
     doc->set("activeElement", wrap(*cx_, focused_));
+}
+
+// ============================================================================
+// NAMED ACCESS ON THE DOCUMENT
+// ============================================================================
+//
+// `document.someName` for an element that carries that name - HTML 3.1.5,
+// "named access on the Document object". Sixteen files in `html/dom` are about
+// nothing else, and the reason it needs a Proxy rather than a set of properties
+// pushed on the tick is in every one of them: they remove an attribute and read
+// the property back IN THE SAME STATEMENT, expecting `undefined`.
+//
+// THE ELEMENT LIST IS NOT "anything with a name". It is five tags by their
+// `name` and two by their `id`, and the two are not the same two:
+//
+//   name= : embed, form, iframe, img, object
+//   id=   : object always; img ONLY IF it also has a non-empty name
+//
+// That last clause is the whole of `nameditem-01.html`'s third and fourth
+// cases. `<img id=a name=b>` answers to both `a` and `b`; removing `name`
+// removes BOTH, because the id route needs a name to exist; removing `id`
+// leaves `b` alone. An implementation that indexed ids unconditionally would
+// pass the first two subtests of that file and fail the next two.
+std::vector<node_id> dom_bindings::named_document_items(std::string_view name) {
+    std::vector<node_id> found;
+    if (name.empty()) { return found; }
+    const auto txn = doc_->read();
+    const atom id_attribute = atoms_->intern("id");
+    const atom name_attribute = atoms_->intern("name");
+    const auto walk = [&](auto && self, node_id at) -> void {
+        const auto tagged = txn.tag(at);
+        if (tagged.has_value() && txn.element_ns(at) == node_ns::html) {
+            const std::string_view local = atoms_->text(*tagged);
+            const std::string_view has_name = txn.attribute_value(at, name_attribute);
+            const bool by_name =
+                has_name == name && (local == "embed" || local == "form" || local == "iframe" ||
+                                     local == "img" || local == "object");
+            const bool by_id = txn.attribute_value(at, id_attribute) == name &&
+                               (local == "object" || (local == "img" && !has_name.empty()));
+            if (by_name || by_id) { found.push_back(at); }
+        }
+        for (const node_id child : txn.children(at)) { self(self, child); }
+    };
+    walk(walk, txn.root());
+    return found;
+}
+
+// THE PROXY. Two traps, and both of them consult the target FIRST.
+//
+// That order is the specification's: a named property is a fallback for a name
+// the object does not otherwise have, so `document.forms` is the collection
+// accessor installed above it and not the `<form name=forms>` on the page. It
+// is also the order that keeps everything else in these bindings working -
+// `document.title`, `document.body`, `createElement` and the twenty-two Node
+// members all live on the target and are found before the walk is ever run.
+//
+// The walk is O(nodes) and runs on every `document.x` that is not an own
+// property, an inherited one, or a name the tree answers - which includes
+// `document.hasOwnProperty`. That is the same trade `window`'s proxy already
+// makes, and the same answer if it ever shows in a measurement: an id and name
+// index on the document rather than a special case here.
+value dom_bindings::make_document_proxy(context & cx, value target) {
+    auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+    const auto native = [&](std::string name, script::native_fn fn) {
+        return value::object(cx.allocate<script::native_object>(std::move(name), std::move(fn)));
+    };
+    handler->set(
+        "get", native("get", [this](context & c, std::span<value> args) {
+            if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
+            auto * object = static_cast<script::object_object *>(args[0].as_heap());
+            const std::string name = c.to_string(args[1]);
+            if (object->find(name) != nullptr || object->find_accessor(name) != nullptr) {
+                return c.lookup_property(args[0], name);
+            }
+            if (const std::vector<node_id> named = named_document_items(name); !named.empty()) {
+                // ONE ELEMENT IS THE ELEMENT, several are a live
+                // HTMLCollection - and an `<iframe>` alone should be
+                // its content document, which this engine has no
+                // second browsing context to give. It hands back the
+                // iframe, which is wrong in a way that is visible and
+                // cheap rather than wrong in a way that is silent.
+                if (named.size() == 1) { return wrap(c, named.front()); }
+                return make_live_collection(c, [this, name] { return named_document_items(name); });
+            }
+            // ...and failing all that the prototype chain, which now
+            // ends at `Document.prototype` and `EventTarget.prototype`.
+            return c.lookup_property(args[0], name);
+        }));
+    handler->set("has", native("has", [this](context & c, std::span<value> args) {
+                     if (args.size() < 2 || !args[0].is_object()) { return value::boolean(false); }
+                     const std::string name = c.to_string(args[1]);
+                     // `'x' in document` must agree with `document.x`, or a
+                     // page's feature detection and its use of the feature
+                     // disagree.
+                     return value::boolean(!c.lookup_property(args[0], name).is_undefined() ||
+                                           !named_document_items(name).empty());
+                 }));
+    return value::object(cx.allocate<script::proxy_object>(target, value::object(handler)));
+}
+
+// ============================================================================
+// THE HTML TREE ACCESSORS
+// ============================================================================
+//
+// `document.title`, `document.body` and the eight collections HTML 3.1.5 hangs
+// off the Document. All of them are ACCESSORS and none of them is a property
+// refreshed on the tick, for one reason: every test in this group writes and
+// then reads back in the same statement. `refresh_document` runs when the
+// wrappers are pushed, which is at least a frame later, so a data property
+// answers a read with the value from before the write that provoked it - and
+// `document.title = "x"; assert_equals(document.title, "x")` is the entire
+// shape of html/dom's nine title tests.
+void dom_bindings::install_tree_accessors(context & cx, script::object_object & doc) {
+    const auto accessor = [&](std::string name, script::native_fn read, script::native_fn write) {
+        doc.define_accessor(
+            name, value::object(cx.allocate<script::native_object>(name, std::move(read))),
+            write == nullptr
+                ? value::undefined()
+                : value::object(cx.allocate<script::native_object>(name, std::move(write))));
+    };
+
+    // `document.title`, HTML 4.2.2, both halves.
+    //
+    // THE GETTER STRIPS AND COLLAPSES and the setter does not: the DOM keeps
+    // the bytes the page wrote and the IDL attribute reports them normalised,
+    // so `document.title = "two  spaces"` reads back "two spaces" while the
+    // text node still holds two.
+    //
+    // THE SETTER CAN DO NOTHING AT ALL, and that is not a failure. With no
+    // title element and no head there is nowhere to put one - HTML says return
+    // - so a page that removes its head and then assigns a title has a document
+    // whose title is the empty string. `document.title-01.html` asserts exactly
+    // that before it goes on to prove that a `<title>` appended to the BODY is
+    // found.
+    accessor(
+        "title",
+        [this](context & c, std::span<value>) {
+            const node_id title = title_element();
+            return c.string(title ? strip_and_collapse(text_content(title)) : std::string{});
+        },
+        [this](context & c, std::span<value> a) {
+            const std::string wanted = arg_string(c, a, 0);
+            node_id title = title_element();
+            if (!title) {
+                const auto txn = doc_->read();
+                const node_id root = txn.root();
+                const bool svg_root = txn.element_ns(root) == node_ns::svg;
+                // AN SVG ROOT AND A ROOT THAT IS NEITHER BOTH DO NOTHING
+                // HERE, for two different reasons. HTML says a non-HTML,
+                // non-SVG root makes the setter return - an XML document's
+                // title is not settable at all. An SVG root should get a new
+                // SVG `<title>` prepended, and does not yet: this engine can
+                // only be handed an SVG-rooted document by `createDocument`,
+                // which is absent, so there is no way to reach the branch and
+                // no way to test one written blind.
+                if (svg_root || txn.element_ns(root) != node_ns::html) {
+                    return value::undefined();
+                }
+                const node_id head = first_html_element("head");
+                if (!head) { return value::undefined(); }
+                const node_id made = doc_->create_element(atoms_->intern_lower("title"));
+                if (!made) { return value::undefined(); }
+                (void)doc_->append_child(head, made);
+                title = made;
+            }
+            set_text(title, wanted);
+            return value::undefined();
+        });
+
+    // THE EIGHT COLLECTIONS. Each is one predicate over the HTML elements of
+    // the document, live for the same reason `getElementsByTagName` is - a page
+    // appends a form and reads `document.forms.length` again in the next
+    // statement.
+    //
+    // `links` and `anchors` are the two that are NOT simply a tag: a link is an
+    // `<a>` or an `<area>` THAT HAS AN href, and an anchor is an `<a>` that has
+    // a `name`. `document.links.html` builds both kinds and counts.
+    const auto collection = [&](std::string name, std::function<std::vector<node_id>()> members) {
+        doc.define_accessor(name,
+                            value::object(cx.allocate<script::native_object>(
+                                name,
+                                [this, members](context & c, std::span<value>) {
+                                    return make_live_collection(c, members);
+                                })),
+                            value::undefined());
+    };
+    const auto tagged = [this](std::string_view local) {
+        return [this, local] { return all_html_elements(local); };
+    };
+    collection("images", tagged("img"));
+    collection("forms", tagged("form"));
+    collection("scripts", tagged("script"));
+    // `embeds` and `plugins` are THE SAME COLLECTION under two names, which is
+    // what the specification says and what document.embeds-document.plugins-01
+    // asserts by comparing their lengths after an insertion.
+    collection("embeds", tagged("embed"));
+    collection("plugins", tagged("embed"));
+    collection("links", [this] {
+        // ONE WALK, not two concatenated: `document.links` is in document order
+        // and an `<area>` inside a `<map>` can precede an `<a>` that follows
+        // it. Two tag walks appended would put every `<a>` first, and a
+        // collection out of order fails `assert_array_equals` before it fails
+        // anything else.
+        const auto txn = doc_->read();
+        const atom href = atoms_->intern("href");
+        std::vector<node_id> found;
+        const auto walk = [&](auto && self, node_id at) -> void {
+            if (const auto tag = txn.tag(at); tag.has_value() &&
+                                              txn.element_ns(at) == node_ns::html &&
+                                              txn.has_attribute(at, href)) {
+                const std::string_view local = atoms_->text(*tag);
+                if (local == "a" || local == "area") { found.push_back(at); }
+            }
+            for (const node_id child : txn.children(at)) { self(self, child); }
+        };
+        walk(walk, txn.root());
+        return found;
+    });
+    collection("anchors", [this] {
+        const atom name = atoms_->intern("name");
+        std::vector<node_id> found;
+        const auto txn = doc_->read();
+        for (const node_id at : all_html_elements("a")) {
+            if (txn.has_attribute(at, name)) { found.push_back(at); }
+        }
+        return found;
+    });
+    // `applets` IS ALWAYS EMPTY. HTML kept the property and removed the
+    // element, so an empty HTMLCollection is the whole specification for it.
+    collection("applets", [] { return std::vector<node_id>{}; });
 }
 
 // ============================================================================
@@ -1245,7 +1484,10 @@ constexpr unsigned position_implementation_specific = 0x20;
 } // namespace
 
 bool dom_bindings::is_the_document(value v) const {
-    return v.is_object() && document_.is_object() && v.bits() == document_.bits();
+    // `is_object_like` and NOT `is_object`: what a page holds as `document` is
+    // a Proxy - see `make_document_proxy` - and `is_object()` is false for one.
+    // The comparison is still pure identity; only the guard changed.
+    return v.is_object_like() && document_.is_object_like() && v.bits() == document_.bits();
 }
 
 // DOM 4.4, "locate a namespace", run at an ELEMENT and walked up its ancestors.
@@ -1892,9 +2134,13 @@ value dom_bindings::make_location(context & cx) {
     return value::object(loc);
 }
 
+// THE TARGET, not the proxy. Everything in these bindings that writes a
+// property on the document goes through here, and a write to the proxy would
+// be a write to a `set` trap that does not exist. See the two members.
 script::object_object * dom_bindings::document_object() {
-    return document_.is_object() ? static_cast<script::object_object *>(document_.as_heap())
-                                 : nullptr;
+    return document_target_.is_object()
+               ? static_cast<script::object_object *>(document_target_.as_heap())
+               : nullptr;
 }
 
 script::object_object * dom_bindings::window_object() {
@@ -2122,6 +2368,121 @@ std::vector<node_id> dom_bindings::all_by_tag(std::string_view tag) {
     };
     walk(walk, txn.root());
     return found;
+}
+
+// THE LOCAL NAME AND THE NAMESPACE, which is the pair HTML's own definitions
+// are written in and the pair `find_by_tag` below cannot ask about.
+//
+// It matters twice over in this engine. The tokenizer preserves case inside
+// foreign content on purpose - see CLAUDE.md - so an SVG `<title>` and an HTML
+// `<title>` can intern to the same atom while an SVG `<clipPath>` and an HTML
+// one do not, and `<svg><title>Chart</title></svg>` really did make
+// `document.title` answer "Chart".
+namespace {
+
+// The five, and not `isspace`: the same set `dom_whitespace` further down
+// names, spelled again here because that one is defined after its first use
+// and one constant cannot be in two anonymous namespaces at once.
+constexpr std::string_view ascii_whitespace = "\t\n\f\r ";
+
+[[nodiscard]] std::string_view local_name_of(std::string_view qualified) {
+    const std::size_t colon = qualified.find(':');
+    return colon == std::string_view::npos ? qualified : qualified.substr(colon + 1);
+}
+
+} // namespace
+
+node_id dom_bindings::first_html_element(std::string_view local) {
+    const auto txn = doc_->read();
+    node_id found{};
+    const auto walk = [&](auto && self, node_id at) -> void {
+        if (found) { return; }
+        if (const auto tagged = txn.tag(at); tagged.has_value() &&
+                                             txn.element_ns(at) == node_ns::html &&
+                                             local_name_of(atoms_->text(*tagged)) == local) {
+            found = at;
+            return;
+        }
+        for (const node_id child : txn.children(at)) { self(self, child); }
+    };
+    walk(walk, txn.root());
+    return found;
+}
+
+std::vector<node_id> dom_bindings::all_html_elements(std::string_view local) {
+    const auto txn = doc_->read();
+    std::vector<node_id> found;
+    const auto walk = [&](auto && self, node_id at) -> void {
+        if (const auto tagged = txn.tag(at); tagged.has_value() &&
+                                             txn.element_ns(at) == node_ns::html &&
+                                             local_name_of(atoms_->text(*tagged)) == local) {
+            found.push_back(at);
+        }
+        for (const node_id child : txn.children(at)) { self(self, child); }
+    };
+    walk(walk, txn.root());
+    return found;
+}
+
+// "The title element", HTML 4.2.2 - and the SVG branch is not a curiosity. A
+// document whose root is `<svg>` takes its title from that root's own first
+// SVG `<title>` CHILD, not from any HTML title anywhere; every other document
+// takes the first HTML title element in tree order, wherever it is. That
+// "wherever" is what `document.title-01.html` is about: it removes the head,
+// appends a `<title>` to the BODY, and expects the title to be that one.
+node_id dom_bindings::title_element() {
+    const auto txn = doc_->read();
+    const node_id root = txn.root();
+    const auto is_svg_root = [&] {
+        if (txn.element_ns(root) != node_ns::svg) { return false; }
+        const auto tagged = txn.tag(root);
+        return tagged.has_value() && local_name_of(atoms_->text(*tagged)) == "svg";
+    };
+    if (is_svg_root()) {
+        for (const node_id child : txn.children(root)) {
+            if (txn.element_ns(child) != node_ns::svg) { continue; }
+            const auto tagged = txn.tag(child);
+            if (tagged.has_value() && local_name_of(atoms_->text(*tagged)) == "title") {
+                return child;
+            }
+        }
+        return node_id{};
+    }
+    // Outside the transaction would be tidier, but `first_html_element` opens
+    // one of its own and a read nested inside another read is a shape nothing
+    // else in these bindings has - so the walk is repeated here instead.
+    node_id found{};
+    const auto walk = [&](auto && self, node_id at) -> void {
+        if (found) { return; }
+        if (const auto tagged = txn.tag(at); tagged.has_value() &&
+                                             txn.element_ns(at) == node_ns::html &&
+                                             local_name_of(atoms_->text(*tagged)) == "title") {
+            found = at;
+            return;
+        }
+        for (const node_id child : txn.children(at)) { self(self, child); }
+    };
+    walk(walk, root);
+    return found;
+}
+
+// Infra's "strip and collapse ASCII whitespace": the five ASCII whitespace
+// characters, not `isspace`, and a run of them becomes exactly one space.
+// `document.title-03.html` writes "two\t\ttabs" and reads back "two tabs".
+std::string dom_bindings::strip_and_collapse(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    bool pending = false;
+    for (const char c : text) {
+        if (ascii_whitespace.find(c) != std::string_view::npos) {
+            pending = !out.empty();
+            continue;
+        }
+        if (pending) { out.push_back(' '); }
+        pending = false;
+        out.push_back(c);
+    }
+    return out;
 }
 
 node_id dom_bindings::find_by_tag(std::string_view tag) {

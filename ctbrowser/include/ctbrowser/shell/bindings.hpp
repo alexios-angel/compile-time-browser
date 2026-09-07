@@ -1120,6 +1120,46 @@ private:
     // `name`, in document order. HTML only: `document.getElementsByName` is an
     // HTML method and an SVG element carrying `name=` is not one of its answers.
     [[nodiscard]] std::vector<node_id> all_by_name(std::string_view name);
+
+    // --- THE HTML TREE ACCESSORS (bindings/document.cpp) ------------------
+    //
+    // `find_by_tag` matches on the TAG ATOM, and that is the wrong question for
+    // anything HTML defines: `<title>` inside `<svg>` interns to the same atom
+    // as the document's own, and the tokenizer keeps foreign content's case so
+    // an SVG `<clipPath>` is a different atom from an HTML one. Everything HTML
+    // names - the title element, the head, `document.images` - is a LOCAL NAME
+    // in the HTML NAMESPACE, so these two ask that instead.
+    //
+    // The local name is what follows the first colon, because
+    // `createElementNS(HTML, "blah:title")` really is a title element: DOM
+    // "validate and extract" puts the prefix before the colon and the local
+    // name after it, and HTML's definitions are all in terms of the latter.
+    [[nodiscard]] node_id first_html_element(std::string_view local);
+    [[nodiscard]] std::vector<node_id> all_html_elements(std::string_view local);
+    // "THE TITLE ELEMENT", which is not simply the first `<title>`: in a
+    // document whose root is an SVG `<svg>` it is that root's first SVG
+    // `<title>` CHILD, and in every other document it is the first HTML title
+    // element anywhere in tree order. Empty when there is none.
+    [[nodiscard]] node_id title_element();
+    // "Strip and collapse ASCII whitespace", Infra - leading and trailing
+    // removed, every interior run replaced by ONE space. It is applied by
+    // `document.title`'s GETTER and not by its setter, which is why
+    // `document.title = "two  spaces"` reads back as "two spaces" while the
+    // attribute node still holds what was written.
+    [[nodiscard]] static std::string strip_and_collapse(std::string_view text);
+    // `document.title`, `document.images` and the seven collections beside it,
+    // all as ACCESSORS - see the definition for why not one of them can be a
+    // property refreshed on the tick.
+    void install_tree_accessors(context & cx, script::object_object & doc);
+    // HTML's "named access on the Document object" - the named elements with a
+    // given name, in tree order. `embed`, `form`, `iframe`, `img` and `object`
+    // by their `name`; `object` by its `id`; and `img` by its `id` ONLY when it
+    // also carries a non-empty `name`, which is the asymmetry
+    // `nameditem-01.html` tests by removing one attribute at a time.
+    [[nodiscard]] std::vector<node_id> named_document_items(std::string_view name);
+    // The Proxy a page sees as `document`. Installs the `get` and `has` traps
+    // over `document_target_` and returns it.
+    [[nodiscard]] value make_document_proxy(context & cx, value target);
     // The DOM's ORDERED SET PARSER: split on ASCII whitespace - space, tab, LF,
     // FF and CR, all five - and drop duplicates. `split` above splits on spaces
     // alone, which is right for nothing in particular and wrong for a class
@@ -1183,7 +1223,22 @@ private:
     // the global and `CSS.supports` must still be the same function afterwards.
     value css_interface_;
     value location_;
+    // THE DOCUMENT IS TWO VALUES, and which one a caller wants is not a detail.
+    //
+    // `document_` is what a PAGE holds: a Proxy, because HTML's named access
+    // (`document.someImgName`) has to answer for a name nobody ever defined as
+    // a property and has to STOP answering the moment the attribute behind it
+    // is removed. It is therefore what `ownerDocument`, `getRootNode` and every
+    // identity comparison must use, or a page's `document` and the engine's
+    // are two different objects.
+    //
+    // `document_target_` is the object BEHIND it, which is where every property
+    // the bindings install actually lives. `document_object()` returns it, so
+    // everything that writes a property on the document keeps working
+    // unchanged; the proxy falls through to it for every name that is not a
+    // named element.
     value document_;
+    value document_target_;
     value window_;
     // The first fault a timer or animation frame raised, and how many there
     // were. A page whose draw loop throws every frame has ONE bug, not a
