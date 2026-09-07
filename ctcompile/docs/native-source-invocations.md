@@ -2,9 +2,10 @@
 
 The next source exception increment is a protected direct call whose return is
 assigned to a local. The existing `ctjs.invoke` representation and live type
-queries cover its two completions; source recovery and native emission do not
-consume them yet. Ordinary lowering must retain its throwing-call refusal until
-both consumers preserve those completions. See [native exceptions](native-exceptions.md).
+queries cover its two completions. An internal structural recovery mode now
+connects them to the enclosing try; native admission and emission do not consume
+that mode yet. Ordinary lowering retains its throwing-call refusal. See
+[native exceptions](native-exceptions.md).
 
 [The source/import regression](../test/CTJS/Import/invocation-state.mlir) keeps
 four small programs at that boundary. It compares Node and the interpreter,
@@ -47,7 +48,40 @@ the old `mark` nor the argument's mutation may be reconstructed from the call's
 result. Global resolution must keep the original callee operand while naming
 the direct target; a name alone does not prove evaluation order or identity.
 
-## Extend the existing recovery transaction
+## Structural recovery prerequisite
+
+`ExceptionRecoveryMode::CheckedInvocations` extends the existing disposable
+recovery transaction. It accepts one checked direct call per status block with
+an unpublished result and the complete pre-call register vector. Preparation
+in that block must be ODS-pure or root bookkeeping; a fallible prefix requires
+its own earlier check. Each normal vector differs from its saved vector only
+at the call's single scratch-result position.
+
+The recovered invoke returns a value-only completion tuple: a JavaScript
+boolean, normal result, thrown payload and saved registers. Its unwind arm
+carries the implicit payload and pre-call state, with poison in the unavailable
+normal-result position. Outside the invoke, `ctjs.truthy` converts the boolean
+to the enclosing try's `i1` flag. Only normal completion reaches the original
+assignment continuation; unwind reaches `ctjs.try_exit` with the saved state.
+No branch leaves a region and no native runtime carrier is introduced.
+
+This mode is an internal structural prerequisite, with no CLI or ordinary
+native caller. The default remains `ExplicitThrows`. Other original status
+edges remain in the returned rollback snapshot; the structurally recovered
+clone is not executable permission to discard them. Live effect admission,
+supported parameter/result/payload carriers and the complete native call
+component must succeed before this mode can be adopted. Failure must restore
+the entire original graph.
+
+The focused `ctcompile_exception_recovery` unit imports the three direct-call
+source fixtures, verifies the resulting IR and checks normal/unwind SSA wiring
+against independently supplied helper completions. It checks the second call's
+saved state, argument-side mutation, malformed state vectors, result publication,
+fallible preparation, unresolved calls, work limits and exact rollback/reruns.
+These are structural checks, not native execution measurements. The four-source
+interpreter/import regression above remains the execution reference.
+
+## Remaining native recovery integration
 
 Use [Exceptions/Recovery.cpp](../lib/CTNative/Lowering/Exceptions/Recovery.cpp),
 which already clones, bounds and structures an acyclic handler CFG. Do not add
@@ -55,7 +89,8 @@ a parallel exception-recovery pass. Its current `cloneTail` converts every
 `check` into its normal edge, with the explicit requirement that later native
 admission prove all discarded exceptional operations nonthrowing.
 
-A direct throwing call needs a different clone plan:
+The complete native path requires all five stages. The internal mode implements
+the structural stages 1–3; stages 4–5 remain admission and emission work:
 
 1. Identify its actual `call_direct` and corresponding check, keeping the full
    pre-instruction vector. Prove there is no intervening fallible computation or

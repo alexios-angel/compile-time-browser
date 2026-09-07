@@ -10,6 +10,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/CFGToSCF.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/BitVector.h"
@@ -46,8 +47,11 @@ struct recovery {
     ctjs::FrameEnterOp frame;
     unsigned width = 0;
     unsigned throws = 0;
+    ExceptionRecoveryMode mode;
+    llvm::DenseMap<mlir::Operation *, ctjs::CallDirectOp> invocations;
 
-    recovery(ctjs::FuncOp function, unsigned maxSteps) : function(function), remaining(maxSteps) {}
+    recovery(ctjs::FuncOp function, unsigned maxSteps, ExceptionRecoveryMode mode)
+        : function(function), remaining(maxSteps), mode(mode) {}
 
     struct tail {
         llvm::SmallVector<mlir::Block *> blocks;
@@ -119,6 +123,53 @@ struct recovery {
         return true;
     }
 
+    bool inspectInvocation(ctjs::CheckOp check) {
+        ctjs::CallDirectOp call;
+        for (mlir::Operation & operation : check->getBlock()->without_terminator()) {
+            if (!spend()) { return false; }
+            if (auto found = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) {
+                if (call) {
+                    return reject("native invocation recovery needs one call per status edge");
+                }
+                call = found;
+            }
+        }
+        if (!call) { return true; }
+        for (mlir::Operation & operation : check->getBlock()->without_terminator()) {
+            if (&operation == call.getOperation()) { break; }
+            if (!spend()) { return false; }
+            if (!llvm::isa<ctjs::RootOp>(operation) && !mlir::isPure(&operation)) {
+                return reject("native invocation recovery needs independently checked fallible "
+                              "preparation before the call");
+            }
+        }
+        // The importer checks a call before its result is moved into the
+        // assignment target. Keep this boundary exact: even a pure operation
+        // after the call belongs to the normal continuation, not its unwind.
+        if (call->getNextNode() != check.getOperation() || !call.getResult().hasOneUse() ||
+            call.getResult().use_begin()->getOwner() != check.getOperation() ||
+            !llvm::equal(check.getHandlerOperands(), check->getBlock()->getArguments()) ||
+            check.getContOperands().size() != width) {
+            return reject("native invocation recovery needs an unpublished call result and its "
+                          "complete pre-call register snapshot");
+        }
+        unsigned resultSlots = 0;
+        for (auto [normal, saved] :
+             llvm::zip(check.getContOperands(), check.getHandlerOperands())) {
+            if (!spend()) { return false; }
+            if (normal == call.getResult()) {
+                ++resultSlots;
+            } else if (normal != saved) {
+                return reject("native invocation normal edge changes a non-result register");
+            }
+        }
+        if (resultSlots != 1) {
+            return reject("native invocation normal edge must publish one scratch result");
+        }
+        invocations.try_emplace(check.getOperation(), call);
+        return true;
+    }
+
     bool collect(tail & result, mlir::Block * start, bool initiallyActive, bool isCatch) {
         llvm::SmallVector<std::pair<mlir::Block *, bool>> pending{{start, initiallyActive}};
         while (!pending.empty()) {
@@ -182,6 +233,10 @@ struct recovery {
                     check.getHandlerOperands().size() != width) {
                     return reject(
                         "native exception check lacks a complete register vector for its handler");
+                }
+                if (mode == ExceptionRecoveryMode::CheckedInvocations &&
+                    !inspectInvocation(check)) {
+                    return false;
                 }
                 result.edges[block].push_back(check.getCont());
             } else if (llvm::isa<mlir::cf::BranchOp, mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(
@@ -253,6 +308,7 @@ struct recovery {
         llvm::SmallVector<operandsToMap> operands;
         for (mlir::Block * block : plan.blocks) {
             mlir::OpBuilder builder = mlir::OpBuilder::atBlockEnd(mapping.lookup(block));
+            ctjs::InvokeOp invocation;
             for (mlir::Operation & operation : *block) {
                 if (!spend(uint64_t(1) + operation.getNumOperands())) { return false; }
                 if (llvm::isa<ctjs::PopHandlerOp, ctjs::FrameExitOp, ctjs::CatchLandOp>(
@@ -261,7 +317,56 @@ struct recovery {
                 }
                 mlir::Operation * copied = nullptr;
                 llvm::SmallVector<mlir::Value> sources;
-                if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
+                if (!isCatch &&
+                    invocations.lookup(block->getTerminator()).getOperation() == &operation) {
+                    // The invocation returns a value-only completion tuple:
+                    // JS boolean, normal result, thrown payload, saved state.
+                    // Convert the boolean only after leaving the invocation;
+                    // try_exit's i1 never crosses a CTJS value region edge.
+                    if (!spend(uint64_t(20) + width * uint64_t(4))) { return false; }
+                    auto type = ctjs::ValueType::get(function.getContext());
+                    mlir::OperationState state(operation.getLoc(), "ctjs.invoke");
+                    llvm::SmallVector<mlir::Type> types(width + 3, type);
+                    state.addTypes(types);
+                    for (unsigned index = 0; index != 3; ++index) { state.addRegion(); }
+                    invocation = llvm::cast<ctjs::InvokeOp>(builder.create(state));
+                    auto & body = invocation.getBody().emplaceBlock();
+                    auto & normal = invocation.getNormalBody().emplaceBlock();
+                    auto & unwind = invocation.getUnwindBody().emplaceBlock();
+                    normal.addArgument(type, operation.getLoc());
+                    for (unsigned index = 0; index != width + 1; ++index) {
+                        unwind.addArgument(type, operation.getLoc());
+                    }
+                    mlir::OpBuilder callBuilder = mlir::OpBuilder::atBlockEnd(&body);
+                    copied = callBuilder.clone(operation, mapping);
+                    llvm::append_range(sources, operation.getOperands());
+                    auto check = llvm::cast<ctjs::CheckOp>(block->getTerminator());
+                    llvm::SmallVector<mlir::Value> stateValues{copied->getResult(0)};
+                    llvm::append_range(stateValues, check.getHandlerOperands());
+                    mlir::OperationState dispatch(operation.getLoc(), "ctjs.invoke_exit");
+                    dispatch.addOperands(stateValues);
+                    operands.push_back({callBuilder.create(dispatch), std::move(stateValues)});
+                    mapping.map(operation.getResult(0), invocation.getResult(1));
+                    for (auto [continuation, failed] :
+                         {std::pair{&normal, false}, std::pair{&unwind, true}}) {
+                        mlir::OpBuilder at = mlir::OpBuilder::atBlockEnd(continuation);
+                        auto flag = ctjs::ConstantOp::create(
+                            at, operation.getLoc(), type,
+                            ctjs::BooleanAttr::get(function.getContext(), failed));
+                        auto poison = mlir::ub::PoisonOp::create(at, operation.getLoc(), type);
+                        llvm::SmallVector<mlir::Value> completion{flag.getResult()};
+                        if (failed) {
+                            completion.push_back(poison.getResult());
+                            llvm::append_range(completion, unwind.getArguments());
+                        } else {
+                            completion.push_back(normal.getArgument(0));
+                            completion.append(width + 1, poison.getResult());
+                        }
+                        mlir::OperationState yield(operation.getLoc(), "ctjs.invoke_yield");
+                        yield.addOperands(completion);
+                        at.create(yield);
+                    }
+                } else if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
                     mlir::OperationState state(operation.getLoc(),
                                                isCatch ? "ctjs.try_yield" : "ctjs.try_exit");
                     if (!isCatch) {
@@ -290,9 +395,33 @@ struct recovery {
                     state.addOperands(sources);
                     copied = builder.create(state);
                 } else if (auto check = llvm::dyn_cast<ctjs::CheckOp>(operation)) {
-                    llvm::append_range(sources, check.getContOperands());
-                    copied = mlir::cf::BranchOp::create(builder, operation.getLoc(),
-                                                        mapping.lookup(check.getCont()), sources);
+                    if (invocation) {
+                        auto * thrown = new mlir::Block;
+                        destination.push_back(thrown);
+                        mlir::OpBuilder at = mlir::OpBuilder::atBlockEnd(thrown);
+                        auto flag =
+                            mlir::arith::ConstantIntOp::create(at, operation.getLoc(), 1, 1);
+                        auto poison = mlir::ub::PoisonOp::create(
+                            at, operation.getLoc(), ctjs::ValueType::get(function.getContext()));
+                        llvm::SmallVector<mlir::Value> completion{flag.getResult(),
+                                                                  poison.getResult()};
+                        llvm::append_range(completion, invocation.getResults().drop_front(2));
+                        mlir::OperationState exit(operation.getLoc(), "ctjs.try_exit");
+                        exit.addOperands(completion);
+                        at.create(exit);
+                        auto failed =
+                            ctjs::TruthyOp::create(builder, operation.getLoc(), builder.getI1Type(),
+                                                   invocation.getResult(0));
+                        llvm::append_range(sources, check.getContOperands());
+                        copied = mlir::cf::CondBranchOp::create(
+                            builder, operation.getLoc(), failed.getResult(), thrown,
+                            mlir::ValueRange{}, mapping.lookup(check.getCont()), sources);
+                        sources.insert(sources.begin(), failed.getResult());
+                    } else {
+                        llvm::append_range(sources, check.getContOperands());
+                        copied = mlir::cf::BranchOp::create(
+                            builder, operation.getLoc(), mapping.lookup(check.getCont()), sources);
+                    }
                 } else {
                     copied = builder.clone(operation, mapping);
                     llvm::append_range(sources, operation.getOperands());
@@ -531,7 +660,7 @@ struct recovery {
             !collect(caught, push.getHandler(), false, true)) {
             return false;
         }
-        if (throws == 0) {
+        if (throws == 0 && invocations.empty()) {
             return reject("native try/catch needs an explicit throw in its active handler");
         }
         mlir::OpBuilder builder(push);
@@ -577,11 +706,12 @@ struct recovery {
 
 } // namespace
 
-ExceptionRecoveryResult recoverPrimitiveExceptionRegion(ctjs::FuncOp function, unsigned maxSteps) {
+ExceptionRecoveryResult recoverPrimitiveExceptionRegion(ctjs::FuncOp function, unsigned maxSteps,
+                                                        ExceptionRecoveryMode mode) {
     // Bound the source scan and reserve another scan's cost for the initial
     // clone before allocating it. The caller selects handler-containing
     // functions; no rewrite is visible until every stage succeeds.
-    recovery attempt{function, maxSteps};
+    recovery attempt{function, maxSteps, mode};
     if (!attempt.inspect() || !attempt.spend(maxSteps - attempt.remaining)) {
         return {false, std::move(attempt.refusal)};
     }
