@@ -165,12 +165,17 @@ proof work, particularly for the sixteen-call case; no performance improvement
 is claimed. The focused gate passes **8/8 CTests** in **14.10 seconds**, followed
 by the complete twenty-five-program native execution/lifetime gate. Log:
 `/tmp/ctcompile-arguments-integrated-focused4.log`. See [HANDOFF.md](HANDOFF.md)
-for the full gate, corpus measurements and frozen browser baseline.
+for the corpus measurements and frozen browser baseline. The full generated
+devbox build passes **475/475 CTests** in **652.00 seconds**, including
+**163/163 lit cases** in **91.45 seconds**; log:
+`/tmp/ctcompile-arguments-full-gate.log`.
 
 ## Next boundary
 
 Replacing the string actual with `host.slot.set(host.slot.get())` is retained as
 `parameter_call_result` and still refuses the complete five-function source.
+The fresh devbox check measures **0/5 native** and Node/interpreter `trace=1`;
+source and named refusals are recorded in `/tmp/ctcompile-arguments-boundary.json`.
 It needs independent result/effect evidence for the actual's producing call,
 with the source order and every call operand intact. The initial getter returns
 the empty Map's size; the setter then inserts that numeric key. The family proof

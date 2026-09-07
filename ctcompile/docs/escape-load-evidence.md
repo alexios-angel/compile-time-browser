@@ -1,4 +1,4 @@
-# Direct load evidence
+# Direct loads and candidate provenance
 
 `EscapeVerdicts::directLoads` connects live top-level `ctjs.get_property`
 operations to the [direct writes](escape-storage-evidence.md) whose targets
@@ -43,7 +43,7 @@ CTest gate checks every live property read is covered and each link refers to
 an ordered, valid write sharing a local site. Precision counts are diagnostic;
 the existing execution oracle continues to gate zero false confinement.
 
-## Measured gate, 2026-09-07
+## Preceding direct-census measurement, 2026-09-07
 
 All **200 unit rows** and the two live-base mutations pass. The full devbox
 gate passes **474/474 CTests**; the four corpus oracles report zero violations.
@@ -114,6 +114,33 @@ newly propagated exposures, convergence, incomplete inputs and work. The CTest
 gate checks preservation of original candidates and coverage of all reads and
 sink operands; precision and convergence counts remain diagnostics. The table
 above measures the preceding direct census, not this new closure.
+
+## Measured provenance gate, 2026-09-07
+
+The focused and full devbox runs pass **209 unit rows**, including all three
+live-base states and every incomplete work budget. All four execution oracles report
+zero violations. The claims gate reports zero invalid provenance records and
+covers every live top-level read and sink operand:
+
+| Corpus | Reads | Sink operands | Read-site edges | Stored-site edges | Exposure-site edges | Newly propagated exposure edges |
+|---|---:|---:|---:|---:|---:|---:|
+| Fixture | 43 | 506 | 4 | 14 | 43 | 4 |
+| Bootstrap | 2946 | 15551 | 0 | 400 | 624 | 0 |
+| p5 | 38300 | 154902 | 557 | 1435 | 3930 | 324 |
+| Phaser | 45873 | 238652 | 180 | 1936 | 4307 | 52 |
+
+Every supported constraint graph converges within the default per-function
+limit: **47/588/4703/7723 functions**, respectively, with zero exhausted queries.
+Input completeness is independently **43/486/4058/6657** functions, leaving
+**4/102/645/1066** incomplete. Total work across each corpus is
+**1356/123846/1302930/1124814**. Convergence does not repair incomplete inputs or
+prove complete contents. Bootstrap still has no newly propagated exposure-site
+edges; the implementation does not imply a measured Bootstrap precision gain.
+The full generated gate passes **475/475 CTests** in **652.00 seconds**.
+Evidence: `/tmp/ctcompile-arguments-evidence.json`; logs:
+`/tmp/ctcompile-arguments-integrated-focused4.log` and
+`/tmp/ctcompile-arguments-full-gate.log`. See [HANDOFF.md](HANDOFF.md) for the
+browser baseline.
 
 The next proof must establish complete contents under a checked set of data
 property, prototype, accessor and indirect-transfer restrictions, then use all

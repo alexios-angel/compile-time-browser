@@ -6,7 +6,107 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Current shared-Map checkpoint, 2026-09-07
+## Current typed-Map and provenance checkpoint, 2026-09-07
+
+Saved locally on `ctcompile-v1`: **`84c4b89`** (bounded load provenance),
+**`ce2fd8a`** (primitive actuals for published Map methods), **`f81d803`**
+(checked source invocation recovery prerequisite), **`f188373`** (typed argument
+execution/lifetime gate), and **`c7a3569`** (native boundary documentation).
+Three disjoint agent workstreams were integrated and validated. No browser
+files were changed and no push was performed.
+
+The [published Map boundary](native-owned-global-maps.md) now accepts
+`set(key) { state.set(key, 1); return state.size; }` beside a zero-argument
+getter. Calling it with `"x"` advances **0/5 -> 5/5 native**, retaining
+Node/interpreter `trace=1`, under the fingerprinted manifest and standard Map
+identity. The family census discovers all current calls before checking bodies,
+independently classifies every actual, and retains each live SSA operand and
+formal with a consistent primitive tag. The prepared Map environment precedes
+explicit arguments. Existing typed owners and `std::function` carriers suffice;
+there is no new runtime model, VM dependency or future-call ABI authority.
+
+The expanded Map gate passes **25 complete programs**: fourteen **4/4**, ten
+**5/5**, one **6/6**, matching Node/interpreter and explicit/deduced GCC 13 and
+Clang 18 binaries. Six new variants cover string/number/boolean keys, repeated
+distinct actuals, a local alias and two parameters. A fifth lifetime variant
+retains typed string setter/getter callables after root/table release, changes
+caller buffers, checks **1024 further mutations each** against independent
+saved/fresh Maps, and observes destruction through weak witnesses. Both forms
+pass ASan/UBSan, use-after-scope/return and leak checks. Ten argument refusals
+retain every call operand. Missing/extra/mixed actuals, objects, callbacks,
+uncalled parameterized siblings, global initialization defects and circular
+sibling-result proofs remain refusals.
+
+The focused gate passes **8/8 CTests** in **14.10 seconds**, followed by all
+twenty-five native programs and five lifetime variants. Log:
+`/tmp/ctcompile-arguments-integrated-focused4.log`. Every one of the **17
+committed source/test paths** byte-matches the frozen full-gate snapshot.
+The full frozen generated devbox build passes **475/475 CTests** in **652.00
+seconds**: **367 compiler / 108 browser**, including **163/163 lit cases** in
+**91.45 seconds**. The browser source is the committed `e90db7d` baseline
+(the same browser tree content as `7a755dd`), excluding Claude's unmerged WPT
+branch and live carryover. Log: `/tmp/ctcompile-arguments-full-gate.log`.
+All compiler files pass formatting; the whole-tree check flags only the same
+untouched browser `style/selector.hpp`, `DOM/document.cpp` and
+`Style/css/selector.cpp`. The ten browser carryover paths remain untouched.
+
+Measured first complete admission budgets are **1236/49476/1350/3285/3249** for
+ordinary, sixteen-call, growing, shared-growing and parameterized shared
+specimens, checking **31/30/32/29/33** cutoffs including the sixteen immediately
+below completion. No natural speculative rollback interval is reached. The
+new census increases proof work; no performance improvement is claimed.
+Source/prepared owner units check every incomplete budget at **2865/2773**
+(two methods), **6576/6391** (three) and **2871/2780** (parameterized).
+
+The parallel [load-provenance query](escape-load-evidence.md) propagates
+diagnostic candidates through local contents, repeated loads, loaded storage
+targets, successor operands and loops. It keeps all external alternatives and
+every later sink even after the first escape verdict. Work exhaustion and
+incomplete inputs remain separate markers. **209 unit rows** and all four
+execution oracles pass with zero violations. Bootstrap covers **2946 reads /
+15551 sink operands**, **400 stored-site / 624 exposure-site edges**, and zero
+newly propagated exposure edges; all **588** supported graphs converge, while
+**102** have incomplete inputs. p5 and Phaser gain **324/52** propagated exposure
+edges. No load lattice, escape verdict or native admission is changed. Complete
+data-property/contents and indirect-retention proofs are still required.
+
+The internal [checked invocation recovery mode](native-source-invocations.md)
+now connects normal and unwind invoke completions to the enclosing try using a
+value-only tuple. It preserves pre-call state and publishes assignments only on
+normal return. The structural unit passes three direct-call fixtures with
+**one/two/one invokes** and **seven/ten/nine original checks**, including saved
+state, argument mutation, malformed edges, fallible prefixes, budgets and exact
+rollback. The default mode and all ordinary native throwing-call refusals stay
+unchanged. Live effect admission for other status edges, a complete native call
+component and owning exception emission remain prerequisites. The four-source
+execution/import regression still retains **16 functions / 11 observations**.
+
+Fresh full native component counts remain **19/574 Bootstrap**, **39/4754 p5**,
+**45/7725 Phaser** in both optimization modes, with zero pruned functions. These
+are component counts, not complete native applications. Corpus, unit and budget
+evidence: `/tmp/ctcompile-arguments-evidence.json`. The emitted setter/getter
+C++ was reviewed in `/tmp/ctcompile-arguments-parameter.cpp`: a typed string
+argument reaches the Map mutation at runtime and both methods own the same Map.
+
+**Exact next native boundary:** the retained `parameter_call_result` source
+calls `host.slot.set(host.slot.get())`, preserving the same five functions.
+A fresh devbox check measures **0/5 native** and Node/interpreter `trace=1`,
+with every original call and named refusal retained. Current reasons include
+`uses its own closure` and an unproved boxed parameter; the failed owner
+proof supplies no typed-call authority. Evidence:
+`/tmp/ctcompile-arguments-boundary.json`.
+Classify the producing call's result from independent live result/effect
+evidence before admitting the consuming formal. Do not recurse through the
+family's own property-call query as authority. Preserve the initial getter,
+setter mutation, final getter, publication and their runtime order.
+
+Nullable Map results used as keys remain a separate **0/4** presence/carrier
+boundary; exact Bootstrap Data remains **0/7** per mode. Object keys/payloads,
+realm ownership, future external callers, source throwing-call admission and
+complete contents analysis remain unfinished. Full native Bootstrap is not yet
+an executable native application.
+
+## Preceding shared-Map checkpoint, 2026-09-07
 
 Saved locally: **`c7a849c`** (recovered Map iterator correction), **`fec186e`**
 (iterator documentation), **`296cf33`** (shared published Map methods),

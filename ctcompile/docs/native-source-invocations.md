@@ -30,8 +30,8 @@ edge and requires its state checks to reject that corruption.
 The integrated devbox gate passes all four programs, **16 source functions**
 and **11 Node/interpreter observations**, with plain/default native refusals
 and reruns intact. The regression is one of **163/163 passing lit cases** in
-the **474/474 CTest** full gate. See [HANDOFF.md](HANDOFF.md) for the build
-baseline and `/tmp/ctcompile-native-integrated-full-gate.log` for the run.
+the **475/475 CTest** full gate. See [HANDOFF.md](HANDOFF.md) for the build
+baseline and `/tmp/ctcompile-arguments-full-gate.log` for the run.
 
 ## What the imported edges say
 
@@ -80,6 +80,14 @@ saved state, argument-side mutation, malformed state vectors, result publication
 fallible preparation, unresolved calls, work limits and exact rollback/reruns.
 These are structural checks, not native execution measurements. The four-source
 interpreter/import regression above remains the execution reference.
+
+The focused devbox unit passes all three direct-call fixtures: **one/two/one
+recovered invokes** and **seven/ten/nine original checks**, respectively.
+Normal and unwind results, the second call's saved state and argument mutation
+match the independent completion inputs. Every rollback restores the original
+graph and the rerun remains valid. This unit is one of **8/8 passing focused
+CTests** in `/tmp/ctcompile-arguments-integrated-focused4.log` and also passes
+in the full **475/475** gate.
 
 ## Remaining native recovery integration
 

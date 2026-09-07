@@ -131,7 +131,8 @@ budget. These current-call proofs do not establish a future-call ABI contract.
 ## Next: independent call-result actuals
 
 `host.slot.set(host.slot.get())` is the retained `parameter_call_result`
-refusal. It preserves the same five source functions and needs a live result
+refusal, freshly measured **0/5 native** with Node/interpreter `trace=1`.
+It preserves the same five source functions and needs a live result
 and effects proof for the producing getter before classifying the setter's
 actual. Do not recursively authorize the family through its own property-call
 query. All calls, publication and mutations must remain runtime operations.
