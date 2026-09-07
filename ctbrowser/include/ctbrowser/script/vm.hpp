@@ -611,6 +611,22 @@ public:
         if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
     }
 
+    // THROW SOMETHING THAT IS NOT AN ECMAScript Error. `throw_error` builds one
+    // by construction - right `name`, `Error` in the prototype chain - which is
+    // everything the language needs and not enough for the platform: a DOM
+    // method must throw a DOMException, and `assert_throws_dom` checks the
+    // thrown object's `code`, its `name` AND `e.constructor === DOMException`.
+    // A native had no way to say that, so every one of WPT's thousands of
+    // throwing assertions failed on the shape of the object rather than on
+    // whether the method threw at all.
+    //
+    // The unwinding is `throw_error`'s exactly: this is the same operation with
+    // the object supplied rather than made.
+    void throw_value(value thrown) {
+        thrown_ = thrown;
+        if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
+    }
+
     // --- THE CEILING THE C++ STACK NEVER HAD -------------------------------
     //
     // `frames_` counts INTERPRETED frames, so the 512-frame ceiling in
