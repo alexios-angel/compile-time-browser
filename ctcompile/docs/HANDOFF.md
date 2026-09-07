@@ -6,7 +6,94 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Current native captured-Map checkpoint, 2026-09-07
+## Current native Map-effects checkpoint, 2026-09-07
+
+Five work commits are saved locally on `ctcompile-v1`: **`e52897f`** (complete
+direct storage census), **`4b36cd1`** (checked invocation normal-return flow),
+**`6642912`** (live primitive Map effects), **`a6b0807`** (native mutation and
+lifetime gate), and **`0510988`** (Unicode trim inventory correction). No push
+was performed. Fifteen dirty compiler files and one untracked document from the
+interrupted loop were recovered and split by concern; browser edits were not
+included.
+
+The [published Map method](native-owned-global-maps.md) now supports standard
+`size`, `set`, `get`, `has` and `delete` over a completely checked primitive
+content/use graph. The `state.set("x", 1); return state.size` specimen advances
+**0/4 -> 4/4 native** with a fingerprinted host manifest and standard Map
+identity, retaining runtime mutation and `trace=1`. The original default and
+no-intrinsic modes remain **0/4**. Source allocations, all four functions,
+wrapper/factory calls and publication remain runtime operations.
+
+Fourteen **4/4** programs match Node, the interpreter and standalone GCC 13 /
+Clang 18 explicit/deduced binaries with no VM symbols. Ordinary, mutating and
+growing methods pass owning-lifetime ASan/UBSan, use-after-scope,
+stack-use-after-return and leak checks in both forms. Saved callables survive
+root/table release, and reentry creates distinct Map owners. The growing method
+mutates on every call; saved and fresh environments retain independent sizes
+through **1024 further calls each**. Thirty source refusals, three independent
+carrier refusals and contract/rerun controls pass.
+
+The first complete admission budgets are **1012** (ordinary), **8257** (sixteen
+calls) and **1113** (growing), with **31/31/32 cutoffs** checked. All sixteen
+budgets immediately below each cutoff preserve the source graph. None exposes
+a naturally reached speculative-clone rollback interval; existing scalar/table
+rollback controls remain. Owning a primitive Map does not prove a supported
+native key/value/result carrier.
+
+The escape increment records every direct `Stored` operand, including later
+stores and values whose first sink was different, with stored-value and target
+aliases. Unsupported targets, nested regions and whole-frame refusals preserve
+partial evidence with `complete=false`. No escape verdict is weakened and no
+native consumer uses this census as a contents proof. All **188 unit rows**,
+fixture and Bootstrap oracle gates pass, with zero violations. See
+[direct storage evidence](escape-storage-evidence.md).
+
+The invocation increment joins only the protected helper's normal return
+operands after a fresh bounded completion query. Passed arguments and SSA joins
+retain widening dependencies; transitive callees' returns do not join the outer
+result. Fifteen added rows and five live-mutation checks pass, including forged
+nothrow markers, unknown effects, recursion and exhausted work. Ordinary calls
+remain conservative on throw exits. Source recovery/admission/emission still
+need to consume the explicit invocation regions; the explicit-throw guard is
+unchanged. See [native exceptions](native-exceptions.md).
+
+Claude's `61416fc` makes JavaScript trim Unicode WhiteSpace/LineTerminator
+characters. The compiler inventory now marks both the ASCII helper and Boost
+candidate divergent, with NBSP/BOM witnesses and a pinned Boost locale. The
+focused test passes **35 rows** (**19 exact / 14 divergent / 2 refused**) and
+**50 probes** (**29 agreements / 21 expected divergences**). No runtime code or
+native string admission changed.
+
+The focused devbox build and **6/6 CTests** pass in **1.37 seconds**, followed
+by the complete fourteen-program native gate. The trim CTest passes **1/1** in
+**0.01 seconds**. Logs are `/tmp/ctcompile-map-effects-recovery-focused3.log`
+and `/tmp/ctcompile-map-effects-recovery-full-gate.log`.
+
+The first full devbox attempt stops before CTest in Claude's live
+`ctbrowser/lib/Script/builtins/objects.cpp:108`: `boost::container::small_vector`
+has no definition included. The exact diagnostic is in `AGENT-SYNC.md` for its
+owner; no browser file was edited. Full validation is pending that fix. Compiler
+formatting and whitespace checks pass; the latest whole-tree formatter flags
+only live browser `style/selector.hpp` and `Style/css/selector.cpp`. Earlier
+full-suite and corpus counts below are historical, not a fresh gate for this
+checkpoint.
+
+**Exact next native boundary:** two zero-argument published methods sharing the
+captured mutable Map. The retained setter/getter specimen measures **0/5
+native**, while Node and the interpreter both produce `trace=1`. The live cell
+census currently accepts capture by only the selected closure, and the owner
+query requires one method and four functions. Extend both proofs to all methods
+and their shared owner before Data's parameters/results. Separately, a
+`Map.get` result used as a key remains nullable and refuses **0/4** despite
+complete ownership and Node/interpreter `trace=1`; it needs presence/type
+proofs. Full native Bootstrap remains unfinished.
+
+**Parallel next boundaries:** recover importer throwing calls into invocation
+regions and connect both checked completion flows to admission and C++ emission.
+Escape precision still needs contents/points-to propagation through loads,
+indirect transfers and every exposure before weakening `Stored`.
+
+## Preceding native captured-Map checkpoint, 2026-09-07
 
 Five work commits are saved locally on `ctcompile-v1`: **`357ba41`** (captured
 Map source ownership), **`5f54358`** (direct storage-target diagnostics),
