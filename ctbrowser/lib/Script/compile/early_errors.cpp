@@ -83,6 +83,12 @@ struct frame {
     std::vector<std::string_view> loop_labels; // ...that names an iteration statement
     int loops = 0;
     int switches = 0;
+    // MAY `super(...)` APPEAR HERE? Exactly one thing may say yes: the
+    // constructor of a class that has a ClassHeritage. 15.7.1 puts it two ways
+    // and they come to the same rule - a MethodDefinition that is not that
+    // constructor may not Contain a SuperCall, and a class with no `extends`
+    // may not either.
+    bool super_call_ok = false;
 };
 
 [[nodiscard]] bool is_iteration(nk kind) {
@@ -149,7 +155,7 @@ public:
     checker(const vp::ast & tree, std::string_view source) : ast_(tree), source_(source) {}
 
     void run() {
-        frames_.push_back(frame{frame_kind::script, {}, {}, 0, 0});
+        frames_.push_back(frame{frame_kind::script, {}, {}, 0, 0, false});
         const vp::node & root = at(ast_.root);
         if (root.kind != nk::program) { return; }
         (void)check_list(kids(root), list_kind::script, nullptr, "");
@@ -410,16 +416,20 @@ private:
             // nested kind is what stops its name being var-declared here, and
             // five annexB tests are exactly this shape.
             walk_expression(n.a);
+            check_nested_declaration(n.b, true);
+            check_nested_declaration(n.c, true);
             walk_statement(n.b, nested, vars);
             walk_statement(n.c, nested, vars);
             return;
 
         case nk::while_stmt:
             walk_expression(n.a);
+            check_nested_declaration(n.b, false);
             walk_loop_body(n.b, vars);
             return;
 
         case nk::do_stmt:
+            check_nested_declaration(n.a, false);
             walk_loop_body(n.a, vars);
             walk_expression(n.b);
             return;
@@ -445,6 +455,89 @@ private:
         case nk::class_decl: check_class(idx); return;
 
         default: walk_expression(idx); return;
+        }
+    }
+
+    // A DECLARATION IS NOT A STATEMENT, and the grammar is where that is
+    // written rather than any early-error clause: the body of an `if`, a loop
+    // or a labelled statement is a Statement, and `let`, `const`, `class`, a
+    // generator and an async function are Declarations. `if (true) let x = 1;`
+    // does not parse in a conforming implementation.
+    //
+    // The exception is Annex B and it is narrow: B.3.3 admits a plain
+    // FunctionDeclaration as the body of an `if` clause, and B.3.2 as a
+    // LabelledItem, in sloppy code - which is all the code there is here. It
+    // does NOT admit one as the body of a loop, and it does not admit a
+    // generator or an async function anywhere.
+    // IS THERE A LINE TERMINATOR after this node's lexeme, before the next
+    // thing that is neither whitespace nor a comment? The one question this
+    // pass has to ask the SOURCE rather than the tree, because automatic
+    // semicolon insertion is not in the tree at all.
+    [[nodiscard]] bool newline_follows(std::int32_t idx, std::size_t lexeme) const {
+        const std::size_t where = offset_of(idx);
+        if (where == early_error::nowhere) { return false; }
+        for (std::size_t i = where + lexeme; i < source_.size();) {
+            const char c = source_[i];
+            if (c == '\n' || c == '\r') { return true; }
+            if (c == ' ' || c == '\t' || c == '\v' || c == '\f') {
+                ++i;
+                continue;
+            }
+            if (c == '/' && i + 1 < source_.size() && source_[i + 1] == '/') {
+                return true; // a line comment runs to a line terminator
+            }
+            if (c == '/' && i + 1 < source_.size() && source_[i + 1] == '*') {
+                const std::size_t end = source_.find("*/", i + 2);
+                if (end == std::string_view::npos) { return false; }
+                // A block comment CONTAINING a line terminator is one for the
+                // purposes of ASI, which is the rule people forget.
+                if (source_.substr(i, end - i).find('\n') != std::string_view::npos) {
+                    return true;
+                }
+                i = end + 2;
+                continue;
+            }
+            return false;
+        }
+        return true; // end of input ends the line too
+    }
+
+    void check_nested_declaration(std::int32_t idx, bool annex_b_function) {
+        if (idx < 0) { return; }
+        const vp::node & n = at(idx);
+        if (n.kind == nk::var_decl && n.text != "var") {
+            // `let` IS AN IDENTIFIER HERE WHEN A NEWLINE FOLLOWS IT.
+            //
+            // A Statement cannot be a Declaration, so in this position `let` is
+            // not a keyword at all - it is an IdentifierReference, and
+            // `if (false) let \n x = 1;` is two statements with a semicolon
+            // inserted between them. Legal sloppy JavaScript, and twelve
+            // test262 files (`let-identifier-with-newline`,
+            // `let-block-with-newline`, in six directories) are exactly it.
+            //
+            // ctjs's parser has no ASI here and reads the declaration, so the
+            // source is what has to be asked. `const` and `class` are reserved
+            // words and get no such reading.
+            if (n.text == "let" && newline_follows(idx, n.text.size())) { return; }
+            report("a `" + std::string{n.text} +
+                       "` declaration cannot be the body of a statement; it needs a block",
+                   idx);
+            return;
+        }
+        if (n.kind == nk::class_decl) {
+            report("a class declaration cannot be the body of a statement; it needs a block", idx);
+            return;
+        }
+        if (n.kind == nk::func_decl) {
+            const std::int32_t bits = n.c > 0 ? n.c : 0;
+            if ((bits & 3) != 0) {
+                report("a generator or async function declaration cannot be the body of a "
+                       "statement; it needs a block",
+                       idx);
+            } else if (!annex_b_function) {
+                report("a function declaration cannot be the body of a loop; it needs a block",
+                       idx);
+            }
         }
     }
 
@@ -508,6 +601,7 @@ private:
         walk_expression(n.c);
 
         std::vector<binding> body_vars;
+        check_nested_declaration(n.d, false);
         ++frames_.back().loops;
         walk_statement(n.d, nested, body_vars);
         --frames_.back().loops;
@@ -539,6 +633,7 @@ private:
         const vp::node & target = at(n.a);
         if (target.b >= 0) { walk_pattern(target.b); }
         walk_expression(n.b);
+        check_nested_declaration(n.c, false);
         walk_loop_body(n.c, vars);
     }
 
@@ -603,6 +698,7 @@ private:
                 break;
             }
         }
+        check_nested_declaration(n.a, true);
         const bool names_a_loop = labels_iteration(n.a);
         f.labels.push_back(n.text);
         if (names_a_loop) { f.loop_labels.push_back(n.text); }
@@ -664,7 +760,7 @@ private:
         return true;
     }
 
-    void check_function(std::int32_t idx, frame_kind what) {
+    void check_function(std::int32_t idx, frame_kind what, bool super_call_ok = false) {
         const vp::node & n = at(idx);
         const std::span<const std::int32_t> params = kids(n);
 
@@ -698,7 +794,7 @@ private:
             }
         }
 
-        frames_.push_back(frame{what, {}, {}, 0, 0});
+        frames_.push_back(frame{what, {}, {}, 0, 0, super_call_ok});
         for (const std::int32_t p : params) {
             const vp::node & param = at(p);
             if (param.b >= 0) { walk_pattern(param.b); }
@@ -715,10 +811,25 @@ private:
     }
 
     // --- classes -----------------------------------------------------------------
+
+    // WHAT A CLASS BODY HAS ALREADY BOUND UNDER A PRIVATE NAME. 15.7.1 lets one
+    // name appear twice and only twice: once as a getter and once as a setter,
+    // both static or both not. Anything else is a duplicate.
+    struct private_name {
+        std::string_view name;
+        std::size_t seen = 0;
+        bool getter = false;
+        bool setter = false;
+        bool is_static = false;
+        bool other = false; // a field or a method - anything that is not an accessor
+    };
+
     void check_class(std::int32_t idx) {
         const vp::node & n = at(idx);
         walk_expression(n.a); // `extends <expr>`
+        const bool derived = n.a >= 0;
 
+        std::vector<private_name> privates;
         std::size_t constructors = 0;
         for (const std::int32_t m : kids(n)) {
             const vp::node & member = at(m);
@@ -755,12 +866,48 @@ private:
             if (!computed && is_static && member.text == "prototype") {
                 report("a static class member may not be named `prototype`", m);
             }
+            // 15.7.1: `#constructor` is not a private name a class may bind.
+            if (!computed && member.text == "#constructor") {
+                report("`#constructor` is not a name a class member may have", m);
+            }
+            // 15.7.1: PrivateBoundIdentifiers may not contain a duplicate,
+            // unless the pair is one getter and one setter of the same
+            // staticness - which is how a private accessor is written.
+            if (!computed && member.text.starts_with('#')) {
+                private_name * seen = nullptr;
+                for (private_name & held : privates) {
+                    if (held.name == member.text) { seen = &held; }
+                }
+                if (seen == nullptr) {
+                    privates.push_back(
+                        private_name{member.text, 0, false, false, is_static, false});
+                    seen = &privates.back();
+                }
+                const bool getter = is_accessor && (member.d & 4) == 0;
+                const bool setter = is_accessor && (member.d & 4) != 0;
+                ++seen->seen;
+                const bool pairs_up = seen->seen == 2 && seen->is_static == is_static &&
+                                      !seen->other && !is_method && !is_field &&
+                                      ((seen->getter && setter) || (seen->setter && getter));
+                if (seen->seen > 1 && !pairs_up) {
+                    report("the private name " + quoted(member.text) +
+                               " is bound twice in this class",
+                           m);
+                }
+                seen->getter = seen->getter || getter;
+                seen->setter = seen->setter || setter;
+                seen->other = seen->other || is_method || is_field;
+            }
 
             if (computed) { walk_expression(member.a); }
             if (is_method || is_accessor) {
-                check_function(member.b, frame_kind::method);
+                // THE ONE PLACE `super(...)` IS ALLOWED: the constructor of a
+                // class that has a heritage.
+                const bool is_constructor =
+                    is_method && !is_static && !computed && member.text == "constructor";
+                check_function(member.b, frame_kind::method, derived && is_constructor);
             } else {
-                frames_.push_back(frame{frame_kind::field_init, {}, {}, 0, 0});
+                frames_.push_back(frame{frame_kind::field_init, {}, {}, 0, 0, false});
                 walk_expression(member.b);
                 frames_.pop_back();
             }
@@ -854,11 +1001,15 @@ private:
 
     // The frame `new.target` and `super` are answered against: the nearest one
     // that is not an arrow, since an arrow has neither of its own.
-    [[nodiscard]] frame_kind enclosing_non_arrow() const {
+    [[nodiscard]] const frame & enclosing_non_arrow_frame() const {
         for (std::size_t i = frames_.size(); i-- > 0;) {
-            if (frames_[i].what != frame_kind::arrow) { return frames_[i].what; }
+            if (frames_[i].what != frame_kind::arrow) { return frames_[i]; }
         }
-        return frame_kind::script;
+        return frames_.front();
+    }
+
+    [[nodiscard]] frame_kind enclosing_non_arrow() const {
+        return enclosing_non_arrow_frame().what;
     }
 
     void walk_expression(std::int32_t idx) {
@@ -885,10 +1036,30 @@ private:
             walk_expression(n.a);
             return;
 
-        case nk::arrow: check_function(idx, frame_kind::arrow); return;
+        case nk::arrow:
+            // AN ARROW INHERITS `super`, so the constructor's permission has to
+            // travel into it: `constructor() { const f = () => super(); }` is
+            // legal and is how a derived class defers the call.
+            check_function(idx, frame_kind::arrow, enclosing_non_arrow_frame().super_call_ok);
+            return;
         case nk::func_expr:
         case nk::func_decl: check_function(idx, frame_kind::function); return;
         case nk::class_decl: check_class(idx); return;
+
+        case nk::call:
+            // `super(...)` IS NOT A CALL OF THE VALUE `super`. It is its own
+            // production, and 15.7.1 admits it in exactly one place: the
+            // constructor of a class with a heritage. Handled here rather than
+            // in the `super_lit` arm below, which would otherwise report the
+            // callee as a `super` outside a method.
+            if (at(n.a).kind == nk::super_lit) {
+                if (!enclosing_non_arrow_frame().super_call_ok) {
+                    report("`super()` outside the constructor of a derived class", idx);
+                }
+                for (const std::int32_t argument : kids(n)) { walk_expression(argument); }
+                return;
+            }
+            break;
 
         case nk::object:
             check_proto_duplicates(idx);

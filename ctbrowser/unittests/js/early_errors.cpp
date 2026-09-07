@@ -333,7 +333,73 @@ int main() {
     accepted("function f() { return arguments.length; } f(1, ...[2, 3], 4);");
 
     // ================================================================
-    // 12. WHAT IS STILL ACCEPTED, ON PURPOSE
+    // 12. A DECLARATION IS NOT A STATEMENT - the grammar, not a clause
+    // ================================================================
+    // The body of an `if`, a loop or a labelled statement is a Statement, and
+    // `let`, `const`, `class`, a generator and an async function are
+    // Declarations. `if (true) let x = 1;` does not parse anywhere.
+    refused("if (true) let x = 1;");
+    refused("if (true) const x = 1;");
+    refused("if (true) class C {}");
+    refused("if (true) function* g() {}");
+    refused("if (true) async function g() {}");
+    refused("for (;;) let x = 1;");
+    refused("while (0) let x = 1;");
+    refused("do let x = 1; while (0);");
+    refused("while (0) function f() {}");
+    refused("label: class C {}");
+
+    // Annex B is the exception and it is narrow: B.3.3 admits a plain function
+    // declaration as an `if` clause and B.3.2 as a labelled item, in sloppy
+    // code - which is all the code there is here. A `var` was never a
+    // Declaration in this sense.
+    accepted("if (true) var x = 1;");
+    accepted("if (true) function f() {}");
+    accepted("if (false) function f() {} else function g() {}");
+    accepted("label: function f() {}");
+    accepted("if (true) { let x = 1; }");
+    accepted("while (0) { let x = 1; }");
+    accepted("for (;;) { let x = 1; break; }");
+    // `let` IN STATEMENT POSITION FOLLOWED BY A NEWLINE IS AN IDENTIFIER, and
+    // a semicolon is inserted after it. Twelve test262 files are this shape.
+    accepted("if (false) let \nx = 1;");
+
+    // ================================================================
+    // 13. THE PRIVATE NAMES OF A CLASS BODY - 15.7.1
+    // ================================================================
+    refused("class C { #m() {} #m() {} }");
+    refused("class C { #x; #x; }");
+    refused("class C { get #m() { return 1; } get #m() { return 2; } }");
+    refused("class C { #m() {} get #m() { return 1; } }");
+    refused("class C { #constructor; }");
+
+    // One getter and one setter of the same name is how a private accessor is
+    // written, and it is the one duplicate the specification allows.
+    accepted("class C { get #m() { return 1; } set #m(v) {} }");
+    accepted("class C { #m() {} #n() {} }");
+    accepted("class C { static #m() {} #n() {} }");
+    // ...and a static half and an instance half of ONE name are still a
+    // duplicate: the get/set exception needs both to be on the same side.
+    refused("class C { static get #m() { return 1; } set #m(v) {} }");
+
+    // ================================================================
+    // 14. `super()` - 15.7.1
+    // ================================================================
+    // A SuperCall is admitted in exactly one place: the constructor of a class
+    // that has a heritage.
+    refused("class C { constructor() { super(); } }");
+    refused("class C { m() { super(); } }");
+    refused("class B {} class C extends B { m() { super(); } }");
+    refused("var o = { m() { super(); } };");
+
+    accepted("class B {} class C extends B { constructor() { super(); } } new C();");
+    // An arrow inherits the constructor's permission, which is how a derived
+    // class defers the call.
+    accepted("class B {} class C extends B { constructor() { var f = () => super(); f(); } }");
+    accepted("class B {} class C extends B { m() { return super.toString; } }");
+
+    // ================================================================
+    // 15. WHAT IS STILL ACCEPTED, ON PURPOSE
     // ================================================================
     // Each of these is an early error in STRICT mode and legal sloppy
     // JavaScript, and this engine has no strict mode. They are here so that
