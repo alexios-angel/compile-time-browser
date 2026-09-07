@@ -121,11 +121,121 @@ void test_the_things_that_must_survive() {
 }
 
 void test_what_a_math_function_may_not_be() {
-    bad("width", "round()");             // the corpus case, verbatim
-    bad("width", "calc(1px");            // unbalanced
+    bad("width", "round()"); // the corpus case, verbatim
+    bad("width", "min()");   // ...and its two siblings
+    bad("width", "calc()");
     bad("width", "calc(1px) calc(2px)"); // two values where one belongs
     bad("width", "notafunction(1px)");
     bad("display", "calc(1px)"); // a keyword-only property takes no math at all
+    // AN UNTERMINATED FUNCTION IS CLOSED BY EOF, CSS Syntax 3 §5.4.9, so these
+    // are VALUES and refusing them deleted the declaration. It is not a corner
+    // case: `css/css-values/minmax-length-computed` writes the second one four
+    // times over and expects 40px.
+    ok("width", "calc(1px", "calc(1px)");
+    ok("width", "calc(min(1em, 21px) * 2", "calc(min(1em, 21px) * 2");
+
+    // THE ARITY IS PART OF THE GRAMMAR. `round-mod-rem-invalid` and
+    // `calc-invalid-parsing` are one assertion per line and this is what they
+    // say: a step is required and a fourth argument is not a thing.
+    bad("width", "round(nearest, 1px)");
+    bad("width", "round(nearest, 1px, 1px, 1px)");
+    bad("width", "clamp(1px, 2px)");
+    bad("width", "mod(1px)");
+    ok("width", "round(nearest, 10px, 6px)", "calc(12px)");
+
+    // ...AND SO IS THE TYPE ALGEBRA, CSS Values 4 §10.2. Every one of these is
+    // `calc-unit-analysis` verbatim.
+    bad("margin-left", "calc(0)");       // a unitless zero in a calc is a NUMBER
+    bad("margin-left", "calc(1px + 2)"); // a length plus a number
+    bad("margin-left", "calc(2 + 1px)");
+    bad("margin-left", "calc(1px - 2)");
+    bad("margin-left", "calc(2 - 1px)");
+    bad("margin-left", "calc(2px * 1px)");    // an area, which no property takes
+    bad("margin-left", "calc(20 / 0.75rem)"); // division by a non-number
+    ok("margin-left", "calc(0px)", "calc(0px)");
+    ok("margin-left", "calc(2px * 2)", "calc(4px)");
+    ok("margin-left", "calc(2 * 2px)", "calc(4px)");
+    // The same rule the other way round: a math function is refused where its
+    // RESOLVED TYPE is not a value. `width: calc(2 * 3)` was already invalid in
+    // the cascade and is now invalid in the CSSOM, which is where the corpus
+    // looks.
+    bad("width", "calc(2 * 3)");
+    bad("rotate", "calc(1s)");
+    bad("transition-duration", "calc(1px)");
+    bad("letter-spacing", "calc(10%)"); // <length>, not <length-percentage>
+    ok("text-indent", "calc(10%)", "calc(10%)");
+    ok("rotate", "calc(45deg + 45deg)", "calc(90deg)");
+    ok("transition-duration", "calc(1s / 2)", "calc(0.5s)");
+    ok("opacity", "calc(2 / 4)", "calc(0.5)");
+    ok("z-index", "calc(1 + 1)", "calc(2)");
+
+    // A BAD CALC ANYWHERE IN THE VALUE, not only when it is the whole of it.
+    // `transform` has no grammar in this table at all, and the corpus still
+    // expects the declaration refused.
+    bad("transform", "rotate(calc((0.25turn error)))");
+    bad("width", "calc([])");
+    bad("width", "calc(7px * up)");
+}
+
+// CSS Values 4 §10.9's numeric constants, and §10.4-§10.8's function set. None
+// of these parsed before: `infinity` and `NaN` are keywords rather than tokens,
+// and fourteen of the functions did not exist here at all.
+void test_the_rest_of_the_math_functions() {
+    ok("opacity", "calc(infinity)", "calc(infinity)");
+    ok("opacity", "calc(NaN)", "calc(NaN)");
+    ok("opacity", "calc(pi)", "calc(3.141593)");
+    ok("opacity", "calc(e)", "calc(2.718282)");
+    // A DIVISION BY ZERO IS AN INFINITY, not a syntax error - §10.9 - and an
+    // infinity keeps its calc() and moves the unit to a multiplier, because
+    // `infinitypx` is not a token.
+    ok("width", "calc(100px / 0)", "calc(infinity * 1px)");
+    ok("opacity", "calc(0 / 0)", "calc(NaN)");
+    ok("width", "abs(-10px)", "calc(10px)");
+    ok("z-index", "sign(1em - 1px)", "sign(1em - 1px)"); // a length's sign is a NUMBER
+    ok("width", "hypot(3px, 4px)", "calc(5px)");
+    ok("width", "calc(1px * pow(2, 3))", "calc(8px)");
+    ok("opacity", "sqrt(4)", "calc(2)");
+    ok("opacity", "log(10, 10)", "calc(1)");
+    ok("opacity", "exp(0)", "calc(1)");
+    ok("opacity", "cos(0)", "calc(1)");          // an angle in, a number out
+    ok("rotate", "atan2(1, 1)", "calc(45deg)");  // ...and a number in, an angle out
+    ok("rotate", "calc(1turn)", "calc(360deg)"); // canonical units, CSS Values 4 §6.5
+    ok("transition-duration", "calc(250ms)", "calc(0.25s)");
+    ok("width", "mod(10px, 6px)", "calc(4px)");
+    ok("width", "rem(10px, 6px)", "calc(4px)");
+    ok("width", "round(up, 101px, 10px)", "calc(110px)");
+    ok("width", "round(down, 106px, 10px)", "calc(100px)");
+    ok("width", "round(to-zero, 105px, 10px)", "calc(100px)");
+    // `mod` takes the sign of the DIVISOR and `rem` the sign of the dividend,
+    // which is the whole difference between them - §10.6.
+    ok("opacity", "mod(-18, 5)", "calc(2)");
+    ok("opacity", "rem(-18, 5)", "calc(-3)");
+    // A CONSTANT IS NOT A VALUE ON ITS OWN. `infinity` and `NaN` are not
+    // <number-token>s, which is the whole reason §10.9 spells them as keywords
+    // usable only inside a math function. It is asked of `opacity` rather than
+    // of `scale` because `scale` is `freeform` and a freeform property accepts
+    // any value at all - which is the table being conservative, not a bug.
+    bad("opacity", "infinity");
+    bad("width", "sign(1px)"); // a number where the property's value is a length
+
+    // A FUNCTION THIS FILE CANNOT EVALUATE IS NOT AN ERROR. Every one of these
+    // is `test_valid_value` in the corpus, and calling them invalid deleted 34
+    // declarations across `css/css-values/tree-counting/`.
+    ok("left", "calc(1px * sibling-index())", "calc(1px * sibling-index())");
+    ok("left", "calc(inherit(--x) + 1px)", "calc(inherit(--x) + 1px)");
+    ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
+    // A SIMPLIFIED SPECIFIED VALUE ONLY WHERE EVERY UNIT IS CONTEXT-FREE. CSS
+    // Values 4 §10.11 keeps `1em` and `5%` as written because neither has a
+    // basis yet, and this file has one evaluator rather than two, so it declines
+    // to simplify at all when either appears. `calc(1px + 2px)` above is the
+    // case that DOES simplify.
+    ok("width", "calc(1em + 10px)", "calc(1em + 10px)");
+    ok("width", "calc(100% - 10px)", "calc(100% - 10px)");
+    // ...and neither is a unit the specification names and this engine has no
+    // basis for. `1cqw` needs a container and `1lh` a line box; both are values.
+    ok("width", "calc(1px + 3cqw)", "calc(1px + 3cqw)");
+    ok("width", "calc(1px + 1lh)", "calc(1px + 1lh)");
+    bad("width", "calc(1px + 1nonsense)"); // a typo is not a unit
 }
 
 void test_important_and_the_empty_value() {
@@ -263,6 +373,7 @@ int main() {
     test_the_css_wide_keywords_apply_to_everything();
     test_the_things_that_must_survive();
     test_what_a_math_function_may_not_be();
+    test_the_rest_of_the_math_functions();
     test_important_and_the_empty_value();
     test_a_custom_property_takes_anything_that_tokenises();
     test_the_two_spellings_of_one_property();

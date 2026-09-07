@@ -54,7 +54,30 @@ struct length_context {
     float viewport_height = 0.0f;
 };
 
-// A length that may carry a percentage it could not resolve. `px` alone is the
+// WHICH OF CSS'S NUMERIC TYPES a math function came out as. CSS Values 4 §10.2
+// gives calc() a type algebra over SIX base types, not two, and modelling only
+// "number or length" is why `rotate: calc(10deg + 5deg)` and
+// `transition-delay: calc(1s / 2)` were syntax errors here: the evaluator asked
+// `unit_to_px` for `deg`, got nothing, and called the whole expression invalid.
+//
+// Each has ONE canonical unit and every member of the family converts to it, so
+// a term carries a plain number and this tag rather than the author's unit. That
+// is also what a computed value IS - CSS Values 4 §6.1 and §6.4 say an angle
+// computes to `deg` and a time to `s`, however it was written.
+enum class numeric_type : std::uint8_t {
+    number,     // no unit at all
+    length,     // canonical px
+    angle,      // canonical deg
+    time,       // canonical s
+    frequency,  // canonical Hz
+    resolution, // canonical dppx
+};
+
+// The canonical unit's spelling, or an empty view for a `<number>`. This is what
+// a computed value is serialised with.
+[[nodiscard]] std::string_view canonical_unit(numeric_type type) noexcept;
+
+// A value that may carry a percentage it could not resolve. `px` alone is the
 // ordinary case; `has_percent` is the `calc(100% - 12px)` one.
 //
 // `is_number` is the OTHER half of calc's type system, and leaving it out was a
@@ -65,11 +88,21 @@ struct length_context {
 // engine, because the evaluator answered "not a length" and the cascade read
 // that as "not a value". When `is_number` is set, `px` carries the number and
 // the unit is nothing at all.
+//
+// `px` IS A DOUBLE and the name is now a half-truth kept for its callers: it is
+// the value in `type`'s canonical unit, which is pixels only when `type` is
+// `length`. It was widened from `float` because `pow(20, 4)` and `3e+9px` are
+// both in the corpus and both lose their last digits at 24 bits of mantissa,
+// and because every intermediate of a trig or exponential function is worse.
 struct calc_result {
-    float px = 0.0f;
-    float percent = 0.0f;
+    double px = 0.0;
+    double percent = 0.0;
     bool has_percent = false;
     bool is_number = false;
+    // The unit family `px` is measured in. `number` exactly when `is_number` is
+    // set; the two are kept in step and both are published because callers that
+    // predate the type algebra ask the boolean.
+    numeric_type type = numeric_type::length;
 };
 
 // What came of one math function. THREE ANSWERS, NOT TWO, and the third is the
@@ -126,6 +159,19 @@ enum class math_context : std::uint8_t {
 [[nodiscard]] std::optional<float> unit_to_px(float value, std::string_view unit,
                                               const length_context & ctx);
 
+// ONE DIMENSION IN ITS CANONICAL UNIT, whatever family it belongs to: `1in` ->
+// `96px`, `10ms` -> `0.01s`, `100grad` -> `90deg`, `96dpi` -> `1dppx`. `nullopt`
+// for text that is not exactly one dimension, or one whose unit needs a basis
+// this engine has no answer for.
+//
+// This is `unit_to_px`'s sibling and NOT a replacement for it: a length is the
+// only family the layout tree can use, so the caller that wants a number keeps
+// asking for pixels. What this is for is the computed VALUE, which CSS Values 4
+// §6.4 and §6.5 say is the canonical unit for every family - `transition-delay:
+// 12ms` computes to `0.012s` and `rotate: 100grad` to `90deg` in every browser.
+[[nodiscard]] std::optional<std::string> canonical_dimension_text(std::string_view text,
+                                                                  const length_context & ctx);
+
 // Evaluate one expression - the inside of a calc(), or a whole `calc(...)`,
 // `min(...)`, `max(...)` or `clamp(...)`. The three outcomes are above.
 [[nodiscard]] math_answer evaluate_math(std::string_view expression, const length_context & ctx);
@@ -166,9 +212,27 @@ struct folded_value {
 [[nodiscard]] folded_value fold_math(std::string_view value, const length_context & ctx,
                                      math_context accepts = math_context::any);
 
-// Worth a look at all? A substring test for the four function names, so a
+// Worth a look at all? A substring test for the math function names, so a
 // `--custom: calc-ish-name` costs one wasted parse and nothing else.
 [[nodiscard]] bool may_have_math(std::string_view value) noexcept;
+
+// IS EVERY MATH FUNCTION IN THIS VALUE WELL FORMED? Not "does it fold" - a
+// `min(10px, 5%)` has no answer until layout and is perfectly well formed - but
+// "would a browser drop the declaration on sight". `round(nearest, 1px)` is
+// missing its step, `calc(7px * up)` multiplies by a keyword and
+// `rotate(calc((0.25turn error)))` has two values where one belongs; all three
+// are in `css/css-values` as `test_invalid_value`, and all three used to be
+// stored verbatim by `el.style` because nothing asked.
+//
+// It looks INSIDE other functions, which the fold deliberately does not have to:
+// the malformed calc above is an argument of `rotate()`, and `transform` is a
+// property whose grammar this engine does not model at all.
+//
+// A math function is checked only if this file IMPLEMENTS it. `calc-size()` and
+// anything else named in the specification and not here is left alone, because
+// "I cannot parse it" and "it is invalid" are different answers and only the
+// second one may delete a declaration.
+[[nodiscard]] bool math_syntax_ok(std::string_view value);
 
 // ONE already-folded length in text form to pixels: `12px`, `1.5rem`, `2em`, or a
 // bare number. `nullopt` for a percentage, a keyword, a calc that did not fold, or
@@ -184,8 +248,15 @@ struct folded_value {
 [[nodiscard]] std::optional<float> dimension_text_to_px(std::string_view text,
                                                         const length_context & ctx);
 
-// A folded result as CSS text: `12px`, `50%`, `calc(50% + 12px)` - or, for a
-// number answer, the bare number with no unit at all: `0.5`, `6`, `-8`.
+// A folded result as CSS text: `12px`, `50%`, `calc(50% + 12px)`, `90deg`,
+// `0.5s` - or, for a number answer, the bare number with no unit at all: `0.5`,
+// `6`, `-8`.
+//
+// AN INFINITY OR A NaN KEEPS ITS calc(). CSS Values 4 §10.12 says so and it is
+// not a formality: `infinity` and `NaN` are not <number-token>s, so `opacity:
+// infinity` is a syntax error while `opacity: calc(infinity)` is a value. The
+// dimensioned form is the specification's own spelling too - `calc(NaN * 1px)`,
+// because `NaNpx` is not a token either.
 [[nodiscard]] std::string serialize_calc(const calc_result & value);
 
 } // namespace ctbrowser::style::css

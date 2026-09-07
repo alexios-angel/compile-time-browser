@@ -431,7 +431,14 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
     const visited_element & subject = levels_[depth][index];
     const node_id node = subject.node;
     const element_facts & f = subject.facts;
-    if (c.tag && c.tag != f.tag) { return false; }
+    // A NAME FOLDS ONLY AGAINST AN HTML ELEMENT. Selectors 4 §6.1: a type or
+    // attribute name is matched ASCII case-insensitively in an HTML document, and
+    // that rule is about the ELEMENT's namespace rather than the document's. This
+    // tokenizer preserves case inside foreign content - which is what makes the
+    // spec's ~95 adjustment tables unnecessary here - so folding unconditionally
+    // meant no selector could ever name `linearGradient` or `[viewBox]`.
+    const bool folds = txn.element_ns(node) == node_ns::html;
+    if (c.tag && (folds ? c.tag : c.tag_exact) != f.tag) { return false; }
     if (c.id && c.id != f.id) { return false; }
     for (const atom want : c.classes) {
         if (std::ranges::find(f.classes, want) == f.classes.end()) { return false; }
@@ -442,9 +449,10 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
     // ATTRIBUTES: everything above compares interned integers, and this reads the
     // element's attribute list and then compares strings.
     for (const attribute_match & want : c.attributes) {
-        if (!txn.has_attribute(node, want.name)) { return false; }
+        const atom name = folds ? want.name : want.name_exact;
+        if (!txn.has_attribute(node, name)) { return false; }
         if (want.op == attr_op::present) { continue; }
-        if (!attribute_matches(txn.attribute_value(node, want.name), want)) { return false; }
+        if (!attribute_matches(txn.attribute_value(node, name), want)) { return false; }
     }
     // AND THE ARGUMENT-CARRYING PSEUDO-CLASSES LAST OF ALL, because a nested
     // selector list runs the matcher again - possibly with combinators of its own.

@@ -71,7 +71,15 @@ enum class attr_op : std::uint8_t {
 };
 
 struct attribute_match {
+    // THE NAME TWICE: folded to lowercase, and exactly as the author wrote it.
+    // Which one applies is a question about the ELEMENT, not about the selector -
+    // an attribute name in a selector is matched ASCII case-insensitively against
+    // an HTML element and case-sensitively against anything else, and this
+    // engine's tokenizer keeps `viewBox`'s capitals inside foreign content on
+    // purpose. Interning both here costs one atom per attribute selector and
+    // saves the matcher a fold per candidate.
     atom name;
+    atom name_exact;
     std::string value;
     attr_op op = attr_op::present;
     // The `i` flag. `s` is the default and needs no bit; both are CSS Selectors
@@ -138,7 +146,8 @@ struct pseudo_ref {
 // some attribute requirements, any required pseudo-state bits, and any structural
 // requirements. All optional.
 struct compound {
-    atom tag; // empty => universal
+    atom tag;       // empty => universal, folded to lowercase
+    atom tag_exact; // ...and as written, for a foreign element - see attribute_match
     atom id;  // empty => unconstrained
     boost::container::small_vector<atom, 2> classes;
     // Sized 1 rather than 2: an attribute selector is uncommon, and the ones that
@@ -287,6 +296,13 @@ struct rule_index {
             by_class[key.classes.front().id].push_back(r);
         } else if (key.tag) {
             by_tag[key.tag.id].push_back(r);
+            // BOTH SPELLINGS when they differ, because the bucket is looked up by
+            // the ELEMENT's tag atom and a foreign element's keeps its capitals.
+            // `linearGradient { }` filed only under the folded name is a rule the
+            // lookup can never reach, whatever the matcher would then say.
+            if (key.tag_exact && key.tag_exact != key.tag) {
+                by_tag[key.tag_exact.id].push_back(r);
+            }
         } else {
             universal.push_back(r);
         }

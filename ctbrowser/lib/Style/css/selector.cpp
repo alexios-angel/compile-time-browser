@@ -175,6 +175,7 @@ namespace {
     // Attribute names are ASCII case-insensitive in HTML, and the DOM interns them
     // lowercased - so folding here is what makes `[HREF]` match `href`.
     out.name = atoms.intern_lower(sheet.text_of(tok(inner.front())));
+    out.name_exact = atoms.intern(sheet.text_of(tok(inner.front())));
     inner = inner.subspan(1);
     while (!inner.empty() && is_ws(inner.front())) { inner = inner.subspan(1); }
     if (inner.empty()) {
@@ -420,7 +421,19 @@ private:
                 if (want_new_compound || compounds.empty()) { start_compound(); }
                 attribute_match match;
                 if (!parse_attribute(*sheet_, sheet_->children_of(v), *atoms_, match)) {
-                    dead = invalid_ = true;
+                    // A NAMESPACE PREFIX makes it unsupported rather than invalid.
+                    // `[xlink|href]` is a perfectly good attribute selector that this
+                    // engine cannot answer, and `querySelector` must return null for
+                    // it rather than throw - `[a=]` is the malformed case and still
+                    // reports one.
+                    bool namespaced = false;
+                    for (const component_value & inner : sheet_->children_of(v)) {
+                        namespaced = namespaced || (inner.kind == cv_kind::token &&
+                                                    token(inner).type == token_type::delim &&
+                                                    text(inner) == "|");
+                    }
+                    dead = true;
+                    invalid_ = invalid_ || !namespaced;
                     continue;
                 }
                 building & b = compounds.back();
@@ -461,8 +474,12 @@ private:
                     continue;
                 }
                 // Tags fold to lowercase: HTML tag names are ASCII
-                // case-insensitive and the DOM interns them lowercased.
+                // case-insensitive and the DOM interns them lowercased. The
+                // author's spelling is kept beside it because a FOREIGN element
+                // does not fold - `linearGradient` is a different name from
+                // `lineargradient` and only one of them exists in an SVG.
                 b.part.tag = atoms_->intern_lower(text(v));
+                b.part.tag_exact = atoms_->intern(text(v));
                 b.tags = 1;
                 continue;
             }
@@ -524,6 +541,11 @@ private:
                 // invalid, so `querySelector` returns null rather than throwing.
                 if (d == "|") {
                     dead = true;
+                    // AND THE LOCAL NAME AFTER IT STARTS A FRESH COMPOUND, so that
+                    // `svg|rect`'s `rect` is not read as a second type selector in
+                    // the compound `svg` already occupies - which would report a
+                    // syntax error for a selector that merely names a namespace.
+                    want_new_compound = true;
                     continue;
                 }
                 dead = invalid_ = true;

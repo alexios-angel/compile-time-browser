@@ -8,6 +8,7 @@
 #include <ctbrowser/style/css/properties.hpp>
 
 #include <ctbrowser/core/algorithms.hpp>
+#include <ctbrowser/style/css/calc.hpp>
 #include <ctbrowser/style/css/token.hpp>
 
 #include <algorithm>
@@ -425,7 +426,12 @@ struct scan {
         }
         out.significant.push_back(i);
     }
-    if (depth != 0) { out.malformed = true; }
+    // A BLOCK STILL OPEN AT THE END IS NOT MALFORMED. CSS Syntax 3 §5.4.9 says
+    // EOF closes every open block, so `calc(1px` is `calc(1px)` and not a parse
+    // error - `css/css-values/minmax-length-computed` relies on it four times
+    // over with `calc(min(1em, 21px) * 2`, and refusing it deleted a declaration
+    // every browser folds to 40px. A block closed too MANY times still is
+    // malformed, because there is no rule that invents an opener.
     return out;
 }
 
@@ -442,9 +448,15 @@ struct scan {
     // and without this test it was accepted as "a math function over the whole
     // value" - the exact `expected "" but got "round()"` this file exists to
     // end.
-    if (found.significant.size() < 3) { return false; }
+    //
+    // It asks whether the SECOND token closes the first rather than counting to
+    // three, because two tokens is also what an unterminated `calc(1px` has and
+    // that one is a value: EOF closes it.
+    if (found.significant.size() < 2) { return false; }
+    if (ts.tokens[found.significant[1]].type == token_type::close_paren) { return false; }
     // The matching `)` must be the last significant token; anything after it is
-    // a second value.
+    // a second value. A function left OPEN at the end of the value is closed by
+    // EOF and is therefore also the whole value.
     int depth = 0;
     for (const std::size_t at : found.significant) {
         const token_type type = ts.tokens[at].type;
@@ -453,7 +465,89 @@ struct scan {
             if (--depth == 0) { return at == found.significant.back(); }
         }
     }
-    return false;
+    return depth > 0;
+}
+
+// THE UNITS WHOSE VALUE IS THE SAME EVERYWHERE. An absolute length, an angle, a
+// time, a frequency and a resolution all convert to their canonical unit by a
+// constant; `em`, `vw`, `lh` and `%` do not, and a specified value is written
+// before any of their bases exist.
+constexpr std::array<std::string_view, 19> context_free_units{
+    "px",   "cm", "mm", "q",  "in",  "pt",  "pc",   "deg",  "grad", "rad",
+    "turn", "s",  "ms", "hz", "khz", "dpi", "dpcm", "dppx", "x"};
+
+// Can this math function be SIMPLIFIED where it stands - before a font size, a
+// viewport or a containing block exists?
+//
+// CSS Values 4 §10.12 says a math function's specified value is its simplified
+// form, and `css/css-values` compares that string exactly: `min(1in)` is
+// `calc(96px)` and `calc(100px / 0)` is `calc(infinity * 1px)`. But §10.11 is
+// just as exact about what may NOT be simplified - `calc(10px + 1em)` keeps both
+// terms, because the em has no length yet - and this engine's evaluator has only
+// one mode, which resolves an `em` against whatever context it is handed.
+//
+// So the test is deliberately narrow: EVERY dimension in the value converts by a
+// constant, and there is no percentage anywhere. That leaves `calc(1em + 10px)`
+// and `min(10px, 5%)` reported as the author wrote them, which is where they
+// were before this and is not a regression - and it makes the whole of
+// `calc-catch-divide-by-0` and the number half of `calc-infinity-nan-serialize-*`
+// answerable, because every one of their cases is px or unitless.
+[[nodiscard]] bool context_free(const token_stream & ts, const scan & found) {
+    for (const std::size_t at : found.significant) {
+        const css_token & t = ts.tokens[at];
+        if (t.type == token_type::percentage) { return false; }
+        if (t.type == token_type::dimension && !in_list(context_free_units, ts.unit_of(t))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// A simplified math function as a SPECIFIED value: `calc()` around the answer,
+// always. `serialize_calc` writes a computed value, where a bare `96px` is the
+// whole of it; a specified one keeps the function, which is how a page can tell
+// `width: calc(96px)` from `width: 96px` after the fact - and what every
+// `test_specified_serialization` in the corpus compares against.
+[[nodiscard]] std::string specified_math(const calc_result & value) {
+    std::string text = serialize_calc(value);
+    // An infinity or a NaN already carries its own calc(), because there is no
+    // way to write one without a function around it.
+    if (text.starts_with("calc(")) { return text; }
+    return "calc(" + text + ")";
+}
+
+// DOES THIS MATH FUNCTION'S ANSWER FIT THE PROPERTY? CSS Values 4 §10.2: a math
+// function is valid where its RESOLVED TYPE is, so `width: calc(2 * 3)` is a
+// syntax error for the same reason `width: 3` is, and `rotate: calc(1s)` for the
+// same reason `rotate: 1s` is.
+//
+// AN UNRESOLVED ANSWER IS ACCEPTED, always. `min(10px, 5%)` and `calc(1px +
+// 1cqw)` are well formed and have no answer until layout; §10.11 says their
+// computed value is the function as written, and refusing them here would delete
+// declarations that work today.
+[[nodiscard]] bool math_type_fits(const property_syntax & p, const math_answer & answer) {
+    if (answer.outcome != math_outcome::resolved) { return true; }
+    const calc_result & v = answer.value;
+    // A PERCENTAGE travels as a length carrying an unresolved part, so "this
+    // answer is a bare percentage" is the pair below rather than a type tag.
+    const bool bare_percentage = v.has_percent && v.px == 0;
+    const bool length = !v.is_number && v.type == numeric_type::length;
+    switch (p.kind) {
+    // A `<length>` and not a `<length-percentage>`: `letter-spacing: calc(10%)`
+    // is invalid where `text-indent: calc(10%)` is not.
+    case k::length: return length && !v.has_percent;
+    case k::length_percentage: return length;
+    case k::number_length: return length || v.is_number;
+    case k::number:
+    case k::integer: return v.is_number;
+    case k::number_percentage: return v.is_number || bare_percentage;
+    case k::percentage: return bare_percentage;
+    case k::angle: return v.type == numeric_type::angle;
+    case k::time: return v.type == numeric_type::time;
+    case k::freeform:
+    case k::keyword_only: return true;
+    }
+    return true;
 }
 
 // One typed component, matched and serialised. `false` means "not this type",
@@ -576,6 +670,16 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // means is not known until substitution.
     if (found.substituted) { return yes(verbatim); }
 
+    // A MALFORMED MATH FUNCTION KILLS THE DECLARATION WHEREVER IT SITS, and
+    // that has to be asked before the property's own grammar because most of the
+    // properties the corpus asks it about are `freeform` ones: `transform:
+    // rotate(calc((0.25turn error)))` is one value of a syntax this table does
+    // not model, wrapped around a calc() that is simply wrong. `calc.cpp` owns
+    // the question - it is the only thing here that knows what `round()` takes -
+    // and it answers only about the functions it implements, so a `calc-size()`
+    // is left alone rather than guessed at.
+    if (!math_syntax_ok(text)) { return {}; }
+
     if (p->kind == k::freeform) { return yes(verbatim); }
 
     if (found.significant.size() == 1) {
@@ -589,9 +693,23 @@ value_check check_declaration(std::string_view property, std::string_view value,
         }
     }
 
-    // A math function over the whole value, kept as written: `calc.cpp` owns
-    // the evaluation and has a third answer besides folded and invalid.
-    if (p->kind != k::keyword_only && whole_value_is_math(ts, found)) { return yes(verbatim); }
+    // A math function over the whole value, kept as written: `calc.cpp` owns the
+    // evaluation and has a third answer besides folded and invalid.
+    //
+    // ITS TYPE IS CHECKED HERE AND NOT ITS VALUE. What comes back is used only to
+    // ask "is a <length> a value for this property", never to substitute an
+    // answer, because the SPECIFIED value is what `el.style` reports and CSS
+    // Values 4 §10.12 keeps a math function's text there - `el.style.width =
+    // 'calc(1px + 2px)'` reads back as a calc() in every browser. The folding is
+    // the cascade's job, one layer up.
+    if (p->kind != k::keyword_only && whole_value_is_math(ts, found)) {
+        const math_answer answer = evaluate_math(text, length_context{});
+        if (!math_type_fits(*p, answer)) { return {}; }
+        if (answer.outcome == math_outcome::resolved && context_free(ts, found)) {
+            return yes(specified_math(answer.value));
+        }
+        return yes(verbatim);
+    }
     return {};
 }
 

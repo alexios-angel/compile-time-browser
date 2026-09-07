@@ -981,9 +981,16 @@ public:
             //
             // A BARE NUMBER IS LEFT ALONE, which is the case that makes this need
             // its own function rather than a flag: `line-height: 1.5` is not 1.5px.
+            //
+            // EVERY DIMENSION FAMILY, not only lengths. `transition-delay: 12ms`
+            // computes to `0.012s` and `rotate: 100grad` to `90deg` (CSS Values 4
+            // 6.4-6.5), and folding lengths alone meant a `round(10ms, 6ms)` that
+            // HAD been folded no longer equalled the raw `12ms` beside it - which
+            // is exactly what `test_math_used` compares. `canonical_dimension_text`
+            // is a superset of the length case and still answers `96px` for `1in`.
             const auto folded = [&](std::string text) {
-                if (const auto px = css::dimension_text_to_px(text, lengths)) {
-                    return css::serialize_calc(css::calc_result{*px, 0.0f, false});
+                if (auto canonical = css::canonical_dimension_text(text, lengths)) {
+                    return std::move(*canonical);
                 }
                 return text;
             };
