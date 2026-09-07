@@ -31,6 +31,14 @@ struct prefixValue {
     static prefixValue constant(mlir::Attribute value) { return {Kind::primitive, value, {}, 0}; }
 };
 
+struct prefixObject {
+    llvm::StringMap<prefixValue> fields;
+    ctjs::CreateObjectOp allocation;
+    mlir::Operation * invocation = nullptr;
+    bool retained = false;
+    bool published = false;
+};
+
 struct prefixAnalysis {
     mlir::ModuleOp module;
     const HostContract & contract;
@@ -40,6 +48,7 @@ struct prefixAnalysis {
     bool followProviderMutations;
     bool followProviderDiagnostics;
     bool followProviderCallbacks;
+    bool followProviderObjects;
     unsigned operationCount = 0;
     bool exhausted = false;
     bool reflective = false;
@@ -65,7 +74,7 @@ struct prefixAnalysis {
     llvm::StringMap<llvm::SmallVector<ctjs::StoreGlobalOp>> initializers;
     mlir::DominanceInfo dominance;
     llvm::DenseMap<mlir::Value, prefixValue> observedValues;
-    std::vector<llvm::StringMap<prefixValue>> objects;
+    std::vector<prefixObject> objects;
     using environment = llvm::DenseMap<mlir::Value, prefixValue>;
 
     struct completion {
@@ -79,7 +88,8 @@ struct prefixAnalysis {
 
     prefixAnalysis(mlir::ModuleOp module, const HostContract & contract, unsigned maxSteps,
                    bool followPublication, bool followProviderReads, bool followProviderMutations,
-                   bool followProviderDiagnostics, bool followProviderCallbacks);
+                   bool followProviderDiagnostics, bool followProviderCallbacks,
+                   bool followProviderObjects);
     bool step();
     bool spend(unsigned count);
     prefixValue stop(mlir::Operation * operation, llvm::StringRef reason);
@@ -105,5 +115,8 @@ std::optional<bool> prefixTruth(prefixValue value);
 prefixValue prefixUnary(ctjs::UnaryKind kind, prefixValue operand, mlir::MLIRContext * context);
 prefixValue prefixCompare(ctjs::CompareKind kind, prefixValue left, prefixValue right,
                           mlir::MLIRContext * context);
+prefixValue prefixObjectCompare(ctjs::CompareKind kind, prefixValue left, prefixValue right,
+                                mlir::MLIRContext * context);
+bool prefixPrimitive(prefixValue value);
 
 } // namespace ctcompile::ctnative::host_detail

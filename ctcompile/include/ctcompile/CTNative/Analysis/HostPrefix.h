@@ -71,6 +71,19 @@ struct HostPrefixProviderOperation {
     std::string member;
     mlir::Attribute result;
     unsigned resultMapId = 0;
+    unsigned resultObjectId = 0;
+};
+
+// Identity belongs to an actual source allocation in the one executed entry
+// invocation. These normal-path field facts do not establish native ownership.
+struct HostPrefixProviderObjectOperation {
+    mlir::Operation * operation;
+    ctjs::CreateObjectOp allocation;
+    mlir::Operation * invocation;
+    unsigned objectId;
+    std::string member;
+    std::string action;
+    mlir::Attribute result;
 };
 
 struct HostPrefixProviderGlobalWrite {
@@ -94,6 +107,8 @@ struct HostPrefixProviderSummary {
     std::vector<HostPrefixProviderAllocation> allocations;
     std::vector<HostPrefixProviderOperation> operations;
     std::vector<HostPrefixProviderCallback> callbacks;
+    unsigned resultObjectId = 0;
+    std::vector<HostPrefixProviderObjectOperation> objectOperations{};
 };
 
 // A narrower proof than HostContractAnalysis: only the executed prefix before
@@ -106,7 +121,8 @@ public:
                             unsigned maxSteps = 100000, bool followPublication = false,
                             bool followProviderReads = false, bool followProviderMutations = false,
                             bool followProviderDiagnostics = false,
-                            bool followProviderCallbacks = false);
+                            bool followProviderCallbacks = false,
+                            bool followProviderObjects = false);
 
     [[nodiscard]] bool valid() const { return refusal.empty(); }
     [[nodiscard]] llvm::StringRef reason() const { return refusal; }

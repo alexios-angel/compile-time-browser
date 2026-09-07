@@ -68,7 +68,8 @@ struct CTNativeSpecializeHostPrefixPass
         }
         HostEntryPrefixAnalysis analysis(module, *contract, maxSteps, followPublication,
                                          followProviderReads, followProviderMutations,
-                                         followProviderDiagnostics, followProviderCallbacks);
+                                         followProviderDiagnostics, followProviderCallbacks,
+                                         followProviderObjects);
         // Snapshot a checked plan before making the first semantic mutation.
         // No analysis query runs against partially rewritten IR.
         std::vector<HostPrefixBranch> branches(analysis.branches().begin(),
@@ -178,6 +179,7 @@ struct CTNativeSpecializeHostPrefixPass
                     row["member"] = operation.member;
                     row["result"] = providerResult(operation.result);
                     row["result_map_id"] = static_cast<std::int64_t>(operation.resultMapId);
+                    row["result_object_id"] = static_cast<std::int64_t>(operation.resultObjectId);
                     operations.push_back(std::move(row));
                     if (operation.member == "set" || operation.member == "delete") {
                         ++mutationCount;
@@ -203,12 +205,25 @@ struct CTNativeSpecializeHostPrefixPass
                                            {"writes", std::move(writes)}});
                     ++callbackCount;
                 }
+                llvm::json::Array objectOperations;
+                for (const auto & operation : proof.objectOperations) {
+                    objectOperations.push_back(llvm::json::Object{
+                        {"operation", ordinals.lookup(operation.operation)},
+                        {"object_id", static_cast<std::int64_t>(operation.objectId)},
+                        {"allocation_operation", ordinals.lookup(operation.allocation)},
+                        {"invocation_operation", ordinals.lookup(operation.invocation)},
+                        {"member", operation.member},
+                        {"action", operation.action},
+                        {"result", providerResult(operation.result)}});
+                }
                 providerCalls.push_back(llvm::json::Object{
                     {"target", proof.target.getSymName().str()},
                     {"call_operation", ordinals.lookup(proof.operation)},
                     {"factory_index",
                      static_cast<std::int64_t>(factory - analysis.factories().begin())},
                     {"result", providerResult(proof.result)},
+                    {"result_object_id", static_cast<std::int64_t>(proof.resultObjectId)},
+                    {"object_operations", std::move(objectOperations)},
                     {"allocations", std::move(allocations)},
                     {"operations", std::move(operations)},
                     {"callbacks", std::move(callbacks)}});

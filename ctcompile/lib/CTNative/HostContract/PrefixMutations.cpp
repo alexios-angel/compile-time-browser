@@ -1,6 +1,7 @@
 #include "ProviderPaths.h"
 
 #include "ProviderDiagnostics.h"
+#include "ProviderObjects.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "llvm/ADT/bit.h"
@@ -16,9 +17,10 @@ struct mapPathReader {
     providerState state;
     HostPrefixProviderSummary proof;
     providerDiagnosticState diagnostics{prefix, state, proof};
+    providerObjectState objects{prefix, proof, {}};
     using environment = prefixAnalysis::environment;
 
-    providerValue known(prefixValue value) const {
+    providerValue known(prefixValue value) {
         if (value.kind == prefixValue::Kind::primitive) {
             auto literal = value.literal;
             if (auto integer = llvm::dyn_cast_or_null<mlir::IntegerAttr>(literal)) {
@@ -29,18 +31,22 @@ struct mapPathReader {
             return providerValue::constant(literal);
         }
         if (value.kind == prefixValue::Kind::object && value.object < prefix.objects.size()) {
+            if (prefix.followProviderObjects && !objects.accepts(value.object)) { return {}; }
             return providerValue::object(value.object);
         }
         if (value.kind == prefixValue::Kind::resource) { return providerValue::map(value.object); }
         return {};
     }
 
-    prefixValue carried(providerValue value) const {
+    prefixValue carried(providerValue value) {
         if (value.kind == providerValue::Kind::primitive && value.literal) {
             return prefixValue::constant(value.literal);
         }
         if (value.kind == providerValue::Kind::map && state.get(value.id)) {
             return {prefixValue::Kind::resource, {}, {}, value.id};
+        }
+        if (value.kind == providerValue::Kind::object && objects.accepts(value.id)) {
+            return {prefixValue::Kind::object, {}, {}, value.id};
         }
         return {};
     }
@@ -54,13 +60,25 @@ struct mapPathReader {
              {map->provenance.allocation, map->provenance.invocation, id},
              member.str(),
              result.literal,
-             result.kind == prefixValue::Kind::resource ? result.object : 0});
+             result.kind == prefixValue::Kind::resource ? result.object : 0,
+             result.kind == prefixValue::Kind::object ? result.object + 1 : 0});
         return true;
     }
 
     prefixValue operation(mlir::Operation * operation, environment & values) {
         auto * context = prefix.module.getContext();
         const auto charge = [&](unsigned count) { return prefix.spend(count); };
+        if (prefix.followProviderObjects &&
+            llvm::isa<ctjs::GetPropertyOp, ctjs::SetPropertyOp, ctjs::DeletePropertyOp,
+                      ctjs::DeleteNamedOp>(operation)) {
+            const auto result = objects.operation(operation, values);
+            if (result.kind != prefixValue::Kind::unknown) {
+                if (!llvm::isa<ctjs::GetPropertyOp>(operation)) { diagnostics.mutated(); }
+                return result;
+            }
+            // A failed write must never fall through to another effect model.
+            if (!llvm::isa<ctjs::GetPropertyOp>(operation)) { return {}; }
+        }
         if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(operation)) {
             return prefixValue::constant(constant.getValue());
         }
@@ -149,8 +167,10 @@ struct mapPathReader {
             const auto key = known(values.lookup(call.getArgs()[0]));
             prefixValue result;
             if (member == "set") {
-                if (!state.set(receiver.object, key, known(values.lookup(call.getArgs()[1])),
-                               charge)) {
+                const auto value = known(values.lookup(call.getArgs()[1]));
+                if ((value.kind == providerValue::Kind::object &&
+                     (!prefix.followProviderObjects || !objects.retain(value.id, call))) ||
+                    !state.set(receiver.object, key, value, charge)) {
                     return {};
                 }
                 result = receiver;
@@ -179,6 +199,9 @@ struct mapPathReader {
         if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
             const auto left = values.lookup(compare.getLhs()),
                        right = values.lookup(compare.getRhs());
+            if (prefix.followProviderObjects) {
+                return prefixObjectCompare(compare.getKind(), left, right, context);
+            }
             if (left.kind != prefixValue::Kind::primitive ||
                 right.kind != prefixValue::Kind::primitive) {
                 return {};
@@ -218,6 +241,14 @@ struct mapPathReader {
                 if (entry.value.kind == providerValue::Kind::map) {
                     pending.push_back(entry.value.id);
                 }
+                if (prefix.followProviderObjects) {
+                    for (auto value : {entry.key, entry.value}) {
+                        if (value.kind == providerValue::Kind::object &&
+                            !objects.retain(value.id, proof.operation)) {
+                            return false;
+                        }
+                    }
+                }
             }
         }
         for (auto allocation : proof.allocations) {
@@ -249,6 +280,10 @@ prefixValue prefixAnalysis::providerMutation(ctjs::CallOp call, ctjs::FuncOp fun
                          function, {},    {call, function, owner.operation, {}, {}, {}, {}}};
     const auto charge = [&](unsigned count) { return spend(count); };
     if (!providers.cloneTo(reader.state, charge)) { return {}; }
+    if (followProviderObjects) {
+        if (!reader.objects.initialize()) { return {}; }
+        reader.diagnostics.objects = &reader.objects.objects;
+    }
     if (followProviderDiagnostics && !reader.diagnostics.initialize()) { return {}; }
     environment values;
     for (auto [argument, value] :
@@ -259,7 +294,9 @@ prefixValue prefixAnalysis::providerMutation(ctjs::CallOp call, ctjs::FuncOp fun
     mlir::Operation * stopped = nullptr;
     auto returned = providerRegion(reader, function.getBody(), values, &stopped);
     if (returned.kind != completion::Kind::returned || returned.values.size() != 1 ||
-        returned.values.front().kind != prefixValue::Kind::primitive ||
+        (returned.values.front().kind != prefixValue::Kind::primitive &&
+         !(returned.values.front().kind == prefixValue::Kind::object &&
+           reader.objects.accepts(returned.values.front().object))) ||
         reader.proof.operations.empty() || !reader.retained()) {
         if (stopped) {
             providerBoundary =
@@ -271,7 +308,11 @@ prefixValue prefixAnalysis::providerMutation(ctjs::CallOp call, ctjs::FuncOp fun
         return {};
     }
     reader.proof.result = returned.values.front().literal;
+    if (returned.values.front().kind == prefixValue::Kind::object) {
+        reader.proof.resultObjectId = returned.values.front().object + 1;
+    }
     providers = std::move(reader.state);
+    if (followProviderObjects) { objects = std::move(reader.objects.objects); }
     if (followProviderDiagnostics) { globals = std::move(reader.diagnostics.globals); }
     providerCalls.push_back(std::move(reader.proof));
     discoveryOnly.insert(call->getParentOfType<ctjs::FuncOp>());

@@ -12,6 +12,7 @@ struct providerDiagnosticState {
     providerState & state;
     HostPrefixProviderSummary & proof;
     llvm::StringMap<prefixValue> globals;
+    const std::vector<prefixObject> * objects = nullptr;
 
     providerDiagnosticState(prefixAnalysis & prefix, providerState & state,
                             HostPrefixProviderSummary & proof)

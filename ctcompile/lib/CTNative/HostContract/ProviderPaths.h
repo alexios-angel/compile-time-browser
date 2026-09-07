@@ -50,10 +50,10 @@ prefixAnalysis::completion providerRegion(Reader & reader, mlir::Region & region
         }
         if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(operation)) { continue; }
         const auto value = reader.operation(&operation, values);
-        if (value.kind == prefixValue::Kind::unknown || operation.getNumResults() != 1) {
+        if (value.kind == prefixValue::Kind::unknown || operation.getNumResults() > 1) {
             return {};
         }
-        values[operation.getResult(0)] = value;
+        if (operation.getNumResults() == 1) { values[operation.getResult(0)] = value; }
     }
     return {};
 }

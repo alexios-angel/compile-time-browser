@@ -55,6 +55,8 @@ PROVIDER_CALLBACK_TARGETS = [
     *PROVIDER_MUTATION_TARGETS, "fn$4", "fn$5", "fn$5", "fn$6", "fn$5", "fn$5", "fn$6",
 ]
 
+PROVIDER_OBJECT_TARGETS = [*PROVIDER_CALLBACK_TARGETS, "fn$4", "fn$5", "fn$5", "fn$5", "fn$5"]
+
 
 def check_provider_mutations(report, boundary="unsupported provider path at `ctjs.load_global` (console)"):
     summaries = report["provider_calls"]
@@ -108,20 +110,22 @@ def check_provider_mutations(report, boundary="unsupported provider path at `ctj
         raise RuntimeError("wrong-key deletion lost the original element's nested Map")
 
 
-def check_provider_callbacks(report):
+def check_provider_callbacks(report, object_payloads=False):
     # These initial expectations follow the source's complete primitive prefix.
     # The compiler must measure them; source hashes and runtime observations are
     # independent gates, not evidence supplied by this forecast.
-    summaries = report["provider_calls"]
+    summaries = report["provider_calls"][:18] if object_payloads else report["provider_calls"]
     expected_results = [
         *PROVIDER_MUTATION_RESULTS, "#ctjs.undefined", "#ctjs.null", number_attribute(43),
         "#ctjs.undefined", "#ctjs.null", number_attribute(21), "#ctjs.undefined",
     ]
+    expected_counts = (23, 68, 10, 3, 1, 2) if object_payloads else (18, 52, 8, 2, 1, 2)
     if (report["summarized_provider_calls"], report["runtime_provider_reads"],
         report["runtime_provider_mutations"], report["runtime_nested_provider_allocations"],
-        report["runtime_provider_callbacks"], report["runtime_provider_global_writes"]) != (18, 52, 8, 2, 1, 2):
+        report["runtime_provider_callbacks"], report["runtime_provider_global_writes"]) != expected_counts:
         raise RuntimeError(f"provider callback proof did not reach the ordinary object payload: {report}")
-    if report["provider_reads"] or report["provider_boundary"] != "unsupported provider path at `ctjs.call`":
+    boundary = "" if object_payloads else "unsupported provider path at `ctjs.call`"
+    if report["provider_reads"] or report["provider_boundary"] != boundary:
         raise RuntimeError(f"provider callback traversal crossed its object-payload boundary: {report}")
     if ([entry["target"] for entry in summaries] != PROVIDER_CALLBACK_TARGETS or
         [entry["factory_index"] for entry in summaries] != [0] * 18 or
@@ -191,6 +195,64 @@ def check_provider_callbacks(report):
     if (any(type(operation) is not int or operation < 0 for operation in write_operations) or
         len(set(write_operations)) != 2 or callback_call in write_operations):
         raise RuntimeError("callback writes lost their distinct source operation identities")
+
+
+def check_provider_objects(report, entry_boundary=""):
+    check_provider_callbacks(report, object_payloads=True)
+    summaries = report["provider_calls"]
+    if report["boundary"] != entry_boundary or [row["target"] for row in summaries] != PROVIDER_OBJECT_TARGETS:
+        raise RuntimeError("object payload traversal did not complete the exact Data method sequence")
+    if [row["factory_index"] for row in summaries] != [0] * 23:
+        raise RuntimeError("object payload traversal lost its actual factory")
+    calls = [row["call_operation"] for row in summaries]
+    if len(set(calls)) != 23 or any(type(call) is not int or call < 0 for call in calls):
+        raise RuntimeError("object payload traversal lost its distinct source invocations")
+    tail = summaries[18:]
+    if [row["result"] for row in tail] != ["#ctjs.undefined", None, None, "#ctjs.null", number_attribute(21)]:
+        raise RuntimeError("object payload traversal lost primitive or identity-valued results")
+    object_id = tail[1]["result_object_id"]
+    if object_id <= 0 or [row["result_object_id"] for row in tail] != [0, object_id, object_id, 0, 0]:
+        raise RuntimeError("repeated Data.get did not retain the original object identity")
+    if any(row["result_object_id"] for row in summaries[:18]):
+        raise RuntimeError("object following changed an earlier primitive result")
+    if [len(row["allocations"]) for row in tail] != [1, 0, 0, 0, 0]:
+        raise RuntimeError("object insertion lost its single nested Map allocation")
+    allocations = [allocation for row in summaries for allocation in row["allocations"]]
+    if (len({row["map_id"] for row in allocations}) != 3 or
+        len({row["allocation_operation"] for row in allocations}) != 1 or
+        [row["invocation_operation"] for row in allocations] != [calls[2], calls[3], calls[18]]):
+        raise RuntimeError("object reinsertion reused an earlier nested Map identity")
+    provenance = {}
+    operations = [operation for row in summaries for operation in row["operations"]]
+    for row in summaries:
+        for operation in [*row["allocations"], *row["operations"]]:
+            map_id = operation["map_id"]
+            origin = operation["allocation_operation"], operation["invocation_operation"]
+            if (map_id <= 0 or min(origin) < 0 or
+                map_id in provenance and provenance[map_id] != origin):
+                raise RuntimeError("object traversal changed a Map's allocation/invocation provenance")
+            provenance[map_id] = origin
+    if len(provenance) != 4:
+        raise RuntimeError("object traversal did not retain one outer and three inner Map identities")
+    members = [operation["member"] for operation in operations]
+    if (members.count("set"), members.count("delete"), len(members) - members.count("set") - members.count("delete")) != (7, 3, 68):
+        raise RuntimeError("object traversal counters disagree with its runtime effects")
+    returned = [operation for operation in operations if operation["result_object_id"]]
+    if (len(returned) != 2 or any(operation["member"] != "get" or
+            operation["result_object_id"] != object_id or operation["result"] is not None or
+            operation["map_id"] != allocations[2]["map_id"] for operation in returned)):
+        raise RuntimeError("object payload was copied or read from the wrong nested Map")
+    origins = set()
+    for row in tail:
+        for operation in row["object_operations"]:
+            if operation["object_id"] != object_id:
+                continue
+            origin = operation["allocation_operation"], operation["invocation_operation"]
+            if min(origin) < 0 or operation["action"] != "retain":
+                raise RuntimeError("exact instance retention lost its live source proof")
+            origins.add(origin)
+    if len(origins) != 1 or any(row["callbacks"] for row in tail):
+        raise RuntimeError("object following changed instance provenance or invoked another callback")
 
 
 def fallback_program(probe, fragment):
@@ -268,6 +330,7 @@ def main():
     parser.add_argument("--follow-provider-mutations", action="store_true")
     parser.add_argument("--follow-provider-diagnostics", action="store_true")
     parser.add_argument("--follow-provider-callbacks", action="store_true")
+    parser.add_argument("--follow-provider-objects", action="store_true")
     parser.add_argument("--replace", choices=("method", "table"), help="replace the published callable/table before observation")
     parser.add_argument("--mode", choices=("commonjs", "browser", "browser_this_fallback", "global_reentry", "self_reentry", "resource_instances"), required=True)
     parser.add_argument("--work", type=Path, required=True)
@@ -289,6 +352,8 @@ def main():
         parser.error("--follow-provider-diagnostics requires --follow-provider-mutations")
     if args.follow_provider_callbacks and not args.follow_provider_diagnostics:
         parser.error("--follow-provider-callbacks requires --follow-provider-diagnostics")
+    if args.follow_provider_objects and not args.follow_provider_callbacks:
+        parser.error("exact object probes require --follow-provider-callbacks")
     args.work.mkdir(parents=True, exist_ok=True)
     spec = importlib.util.spec_from_file_location("bootstrap_probe", Path(__file__).with_name("bootstrap-data-probe.py"))
     probe = importlib.util.module_from_spec(spec)
@@ -345,6 +410,7 @@ var traceDistinct = first !== host.slot ? 1 : 0;
                        "follow_provider_mutations": args.follow_provider_mutations,
                        "follow_provider_diagnostics": args.follow_provider_diagnostics,
                        "follow_provider_callbacks": args.follow_provider_callbacks,
+                       "follow_provider_objects": args.follow_provider_objects,
                        "native_execution_claimed": False})
     if args.node:
         provenance["node_oracle"] = node_oracle(args.node, args.work, js, expected, realm_properties)
@@ -399,7 +465,7 @@ var traceDistinct = first !== host.slot ? 1 : 0;
         contract["entry_receiver"] = {"kind": "classic-script-realm", "own_data_properties": realm_properties}
     manifest.write_text(json.dumps(contract, indent=2) + "\n")
     result = run([args.opt, str(prepared),
-                  f"--ctnative-specialize-host-prefix=manifest={manifest} output={report_file} report=true follow-publication={str(args.follow_publication).lower()} follow-provider-reads={str(args.follow_provider_reads).lower()} follow-provider-mutations={str(args.follow_provider_mutations).lower()} follow-provider-diagnostics={str(args.follow_provider_diagnostics).lower()} follow-provider-callbacks={str(args.follow_provider_callbacks).lower()}",
+                  f"--ctnative-specialize-host-prefix=manifest={manifest} output={report_file} report=true follow-publication={str(args.follow_publication).lower()} follow-provider-reads={str(args.follow_provider_reads).lower()} follow-provider-mutations={str(args.follow_provider_mutations).lower()} follow-provider-diagnostics={str(args.follow_provider_diagnostics).lower()} follow-provider-callbacks={str(args.follow_provider_callbacks).lower()} follow-provider-objects={str(args.follow_provider_objects).lower()}",
                   "-o", str(specialized)])
     (args.work / "prefix.log").write_text(result.stderr)
     report = json.loads(report_file.read_text())
@@ -414,6 +480,8 @@ var traceDistinct = first !== host.slot ? 1 : 0;
         expected_targets = ["fn$3", *PROVIDER_MUTATION_TARGETS, "fn$4"]
     if args.follow_provider_callbacks:
         expected_targets = ["fn$3", *PROVIDER_CALLBACK_TARGETS, "fn$4"]
+    if args.follow_provider_objects:
+        expected_targets = ["fn$3", *PROVIDER_OBJECT_TARGETS]
     if not report["valid"] or report["selected_branches"] != expected_branches or report["targets"] != expected_targets:
         raise RuntimeError(f"exact wrapper proof did not advance as expected: {report}")
     if report["resolved_calls"] != len(expected_targets) or report["full_host_contract_claimed"]:
@@ -443,7 +511,12 @@ var traceDistinct = first !== host.slot ? 1 : 0;
         if not script or not re.search(r"ctjs.call_direct @" + last + r"\(", script[0]):
             raise RuntimeError("published target was not resolved in the script entry")
     if args.follow_provider_reads:
-        if args.follow_provider_callbacks:
+        if args.follow_provider_objects:
+            # The fallback appends realm-identity observers after every Data
+            # call. Their comparison remains outside the ordinary-object proof.
+            boundary = "unproved comparison behavior at `ctjs.compare`" if realm_fallback else ""
+            check_provider_objects(report, boundary)
+        elif args.follow_provider_callbacks:
             check_provider_callbacks(report)
         elif args.follow_provider_diagnostics:
             check_provider_mutations(report, "unsupported provider path at `ctjs.call`")
@@ -491,6 +564,8 @@ var traceDistinct = first !== host.slot ? 1 : 0;
     pruned = int(reachability[1]) if reachability else -1
     if refused != len(reasons) or claimed + refused + pruned != function_count:
         raise RuntimeError("native refusal/source accounting is incomplete")
+    if args.follow_provider_objects and (claimed, refused, pruned) != (0, 7, 0):
+        raise RuntimeError("provider object prefix evidence changed the exact native export boundary")
     provenance.update({"prefix": report,
                        "native_census": {"claimed": claimed, "refused": refused,
                                          "pruned": pruned, "reasons": reasons}})

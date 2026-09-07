@@ -40,8 +40,8 @@ struct providerMap {
 };
 
 // Transaction storage only. The caller proves standard Map construction,
-// member identity, receivers, privacy and normal return before committing a
-// copy. This helper neither executes source effects nor grants native admission.
+// member identity, receivers, object-token provenance/contents, privacy and normal return before
+// committing a copy. This helper neither executes source effects nor grants native admission.
 class providerState {
 public:
     using Spend = llvm::function_ref<bool(unsigned)>;

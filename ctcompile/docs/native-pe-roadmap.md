@@ -327,18 +327,21 @@ the exact probes from four to thirteen resolved calls, completing eleven
 methods before the conflict arm's console lookup. Optional
 [diagnostic and callback proofs](native-provider-diagnostics.md) now extend
 that path to twenty resolved calls and eighteen completed methods, preserving
-the actual diagnostic callback and its two scalar global writes. All method
-bodies and observer branches remain. Native admission stays 0/7.
+the actual diagnostic callback and its two scalar global writes. Optional
+[object payload following](native-provider-objects.md) then completes the
+exact Data method sequence through live identity and current scalar-field facts.
+All method bodies and observer branches remain. Native admission stays 0/7.
 The native local-storage prerequisite is implemented in
 [owning method-table fields on confined objects](native-owned-method-table-slots.md):
 one fresh local object's proved store-to-load edge preserves the existing
 owning table carrier, while ordinary capture/type admission establishes the
 callables. Its fixture advances 0/6 to 6/6 with standalone execution and lifetime
 checks. This does not close global/realm export uses. The
-[next provider increment](bootstrap-provider-next.md) needs ordinary object
-payload identity and current field facts across Map storage. Keep runtime
-effects and refuse unknown callbacks. Connect normal-return retention facts to native ownership and call analysis
-for exported callables. Extend
+[next native increment](bootstrap-provider-next.md) needs explicit ownership
+for a checked ordinary global root, then a live consumer for its current stored
+callable. The [export-boundary specimens](native-export-boundary.md) isolate
+these missing consumers without treating a completed startup trace as native
+ownership. Keep runtime effects and refuse unknown callbacks. Extend
 [checked host slots](native-host-slots.md) with supported intrinsic/error effects,
 preserving current method/table replacements. Initial provider identity alone
 does not establish these effect and lifetime contracts. The broader

@@ -22,6 +22,7 @@ add_mlir_library(CTNativeAnalysis
   ../HostContract/PrefixReads.cpp
   ../HostContract/PrefixMutations.cpp
   ../HostContract/ProviderState.cpp
+  ../HostContract/ProviderObjects.cpp
   ../HostContract/ProviderDiagnostics.cpp
   ../HostContract/ProviderCallbacks.cpp
   BindingTime/Analysis.cpp

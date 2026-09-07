@@ -57,11 +57,12 @@ prefixValue providerDiagnosticState::property(ctjs::GetPropertyOp read,
     if (key.kind != prefixValue::Kind::primitive) { return {}; }
     auto text = llvm::dyn_cast_if_present<ctjs::StringAttr>(key.literal);
     if (text && !chargeText(prefix, text.getValue())) { return {}; }
-    if (owner.kind == prefixValue::Kind::object && owner.object < prefix.objects.size() && text &&
+    const auto & heap = objects ? *objects : prefix.objects;
+    if (owner.kind == prefixValue::Kind::object && owner.object < heap.size() && text &&
         ordinaryKey(text.getValue())) {
         // These identities were initialized by the source prefix. A missing
         // slot could consult a prototype and therefore cannot be summarized.
-        const auto & fields = prefix.objects[owner.object];
+        const auto & fields = heap[owner.object].fields;
         const auto found = fields.find(text.getValue());
         return found == fields.end() ? prefixValue{} : found->second;
     }

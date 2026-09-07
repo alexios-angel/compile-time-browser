@@ -1,4 +1,5 @@
 #include "Prefix.h"
+#include "ProviderObjects.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
@@ -92,9 +93,9 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
     if (auto constant = llvm::dyn_cast<mlir::arith::ConstantOp>(operation)) {
         return prefixValue::constant(constant.getValue());
     }
-    if (llvm::isa<ctjs::CreateObjectOp>(operation)) {
+    if (auto made = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
         const unsigned id = static_cast<unsigned>(objects.size());
-        objects.emplace_back();
+        objects.push_back({{}, made, made->getParentOfType<ctjs::FuncOp>(), false, false});
         return {prefixValue::Kind::object, {}, {}, id};
     }
     if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
@@ -116,7 +117,16 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
         return found->second;
     }
     if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation)) {
-        globals[store.getName()] = values.lookup(store.getValue());
+        const auto value = values.lookup(store.getValue());
+        if (followProviderObjects) {
+            for (const auto & root : contract.roots) {
+                if (!step() ||
+                    (root.binding == store.getName() && !providerPublishObject(*this, value))) {
+                    return stop(operation, "provider object reaches host publication");
+                }
+            }
+        }
+        globals[store.getName()] = value;
         return {};
     }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
@@ -133,10 +143,10 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
         if (owner.kind != prefixValue::Kind::object || !text || !ordinaryKey(text.getValue())) {
             return stop(operation, "property read lacks a fresh ordinary receiver/key");
         }
-        auto field = objects[owner.object].find(text.getValue());
+        auto field = objects[owner.object].fields.find(text.getValue());
         // Missing properties could reach an intrinsic prototype. The first
         // slice reads only already initialized own fields.
-        return field == objects[owner.object].end()
+        return field == objects[owner.object].fields.end()
                    ? stop(operation, "property read lacks an initialized own slot")
                    : field->second;
     }
@@ -147,6 +157,9 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
         if (followPublication && owner.kind == prefixValue::Kind::realm && text &&
             llvm::is_contained(contract.realmOwnDataProperties, text.getValue())) {
             const auto value = values.lookup(write.getValue());
+            if (followProviderObjects && !providerPublishObject(*this, value)) {
+                return stop(operation, "provider object reaches realm publication");
+            }
             globals[text.getValue()] = value;
             publication(write, owner, value);
             return {};
@@ -154,9 +167,29 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
         if (owner.kind != prefixValue::Kind::object || !text || !ordinaryKey(text.getValue())) {
             return stop(operation, "property write lacks a fresh ordinary receiver/key");
         }
-        objects[owner.object][text.getValue()] = values.lookup(write.getValue());
-        publication(write, owner, values.lookup(write.getValue()));
+        const auto value = values.lookup(write.getValue());
+        if (followProviderObjects && objects[owner.object].retained && !prefixPrimitive(value)) {
+            return stop(operation, "provider object field no longer has scalar own data");
+        }
+        if (followProviderObjects && providerPublicationOwner(*this, owner) &&
+            !providerPublishObject(*this, value)) {
+            return stop(operation, "provider object reaches host publication");
+        }
+        objects[owner.object].fields[text.getValue()] = value;
+        publication(write, owner, value);
         return {};
+    }
+    if (followProviderObjects &&
+        llvm::isa<ctjs::DeletePropertyOp, ctjs::DeleteNamedOp>(operation)) {
+        auto computed = llvm::dyn_cast<ctjs::DeletePropertyOp>(operation);
+        auto named = llvm::dyn_cast<ctjs::DeleteNamedOp>(operation);
+        const auto owner = values.lookup(computed ? computed.getObject() : named.getObject());
+        const auto key = computed ? keyOf(computed.getKey()) : named.getName();
+        if (owner.kind != prefixValue::Kind::object || !ordinaryKey(key)) {
+            return stop(operation, "property deletion lacks a fresh ordinary receiver/key");
+        }
+        objects[owner.object].fields.erase(key);
+        return prefixValue::constant(ctjs::BooleanAttr::get(context, true));
     }
     if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
         auto result = prefixUnary(unary.getKind(), values.lookup(unary.getOperand()), context);
@@ -165,8 +198,11 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
                    : result;
     }
     if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
-        auto result = prefixCompare(compare.getKind(), values.lookup(compare.getLhs()),
-                                    values.lookup(compare.getRhs()), context);
+        auto result = followProviderObjects
+                          ? prefixObjectCompare(compare.getKind(), values.lookup(compare.getLhs()),
+                                                values.lookup(compare.getRhs()), context)
+                          : prefixCompare(compare.getKind(), values.lookup(compare.getLhs()),
+                                          values.lookup(compare.getRhs()), context);
         return result.kind == prefixValue::Kind::unknown
                    ? stop(operation, "unproved comparison behavior")
                    : result;

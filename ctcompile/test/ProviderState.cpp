@@ -277,12 +277,22 @@ void graphAndRefusals(mlir::MLIRContext & context, providerMapProvenance provena
               "unsupported key cannot change state");
     }
     const providerValue badValues[] = {
-        providerValue{}, providerValue::object(0), providerValue::map(0), providerValue::map(999),
+        providerValue{}, providerValue::map(0), providerValue::map(999),
         providerValue::constant(ctjs::BigIntAttr::get(&context, "1"))};
     for (providerValue value : badValues) {
         check(!state.set(first, edge, value, unlimited) && same(state, saved),
-              "unknown, object or invalid resource payload refuses atomically");
+              "unknown or invalid resource payload refuses atomically");
     }
+    providerState objectPayloads;
+    check(state.cloneTo(objectPayloads, unlimited),
+          "object payload transaction starts from a copy");
+    check(objectPayloads.set(first, edge, providerValue::object(0), unlimited) &&
+              same(read(objectPayloads, first, edge), providerValue::object(0)),
+          "proved object payload retains token zero rather than becoming an unknown value");
+    check(objectPayloads.set(first, edge, providerValue::object(1), unlimited) &&
+              same(read(objectPayloads, first, edge), providerValue::object(1)) &&
+              same(state, saved),
+          "object payload replacement preserves identity and does not modify the original state");
     unsigned outputId = 77;
     check(!state.create({}, outputId, unlimited) && outputId == 77 && same(state, saved),
           "missing allocation provenance cannot publish a MapId");

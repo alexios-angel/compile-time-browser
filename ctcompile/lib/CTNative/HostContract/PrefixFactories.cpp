@@ -65,7 +65,7 @@ prefixValue prefixAnalysis::factory(ctjs::CallOp call, ctjs::FuncOp function) {
             values[construct.getResult()] = {prefixValue::Kind::resource, {}, {}, id};
         } else if (auto made = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
             const auto id = static_cast<unsigned>(objects.size());
-            objects.emplace_back();
+            objects.push_back({{}, made, call, false, false});
             tables[id] = made;
             values[made.getResult()] = {prefixValue::Kind::object, {}, {}, id};
         } else if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation)) {
@@ -99,7 +99,7 @@ prefixValue prefixAnalysis::factory(ctjs::CallOp call, ctjs::FuncOp function) {
                  value.kind != prefixValue::Kind::primitive)) {
                 return {};
             }
-            objects[owner.object][key] = value;
+            objects[owner.object].fields[key] = value;
         } else if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
             returned = values.lookup(result.getValue());
         } else if (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(operation)) {
@@ -147,7 +147,7 @@ prefixValue prefixAnalysis::factory(ctjs::CallOp call, ctjs::FuncOp function) {
         }
     }
     llvm::DenseSet<mlir::Operation *> retained;
-    for (const auto & field : objects[returned.object]) {
+    for (const auto & field : objects[returned.object].fields) {
         auto value = field.second;
         if (value.kind != prefixValue::Kind::closure) { continue; }
         for (auto [index, capture] : llvm::enumerate(value.made.getUpvalues())) {

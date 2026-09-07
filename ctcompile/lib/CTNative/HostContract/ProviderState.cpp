@@ -100,7 +100,7 @@ const providerMap * providerState::get(unsigned mapId) const {
 }
 
 bool providerState::acceptsValue(providerValue value) const {
-    return primitive(value) ||
+    return keyIsKnown(value) ||
            (value.kind == providerValue::Kind::map && !value.literal && get(value.id));
 }
 

@@ -8,11 +8,12 @@ namespace ctcompile::ctnative::host_detail {
 prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contract,
                                unsigned maxSteps, bool followPublication, bool followProviderReads,
                                bool followProviderMutations, bool followProviderDiagnostics,
-                               bool followProviderCallbacks)
+                               bool followProviderCallbacks, bool followProviderObjects)
     : module(module), contract(contract), remaining(maxSteps), followPublication(followPublication),
       followProviderReads(followProviderReads), followProviderMutations(followProviderMutations),
       followProviderDiagnostics(followProviderDiagnostics),
-      followProviderCallbacks(followProviderCallbacks), dominance(module) {
+      followProviderCallbacks(followProviderCallbacks),
+      followProviderObjects(followProviderObjects), dominance(module) {
     refusal = initialBindingProblem(module, contract);
     module.walk([&](ctjs::StoreGlobalOp store) {
         if (step()) { initializers[store.getName()].push_back(store); }
@@ -229,12 +230,14 @@ prefixAnalysis::completion prefixAnalysis::region(mlir::Region & region, environ
 
 namespace ctcompile::ctnative {
 
-HostEntryPrefixAnalysis::HostEntryPrefixAnalysis(mlir::ModuleOp module,
-                                                 const HostContract & contract, unsigned maxSteps,
-                                                 bool followPublication, bool followProviderReads,
-                                                 bool followProviderMutations,
-                                                 bool followProviderDiagnostics,
-                                                 bool followProviderCallbacks) {
+HostEntryPrefixAnalysis::HostEntryPrefixAnalysis(
+    mlir::ModuleOp module, const HostContract & contract, unsigned maxSteps, bool followPublication,
+    bool followProviderReads, bool followProviderMutations, bool followProviderDiagnostics,
+    bool followProviderCallbacks, bool followProviderObjects) {
+    if (followProviderObjects && !followProviderMutations) {
+        refusal = "provider objects require follow-provider-mutations";
+        return;
+    }
     if (followProviderCallbacks && !followProviderDiagnostics) {
         refusal = "provider callbacks require follow-provider-diagnostics";
         return;
@@ -255,9 +258,9 @@ HostEntryPrefixAnalysis::HostEntryPrefixAnalysis(mlir::ModuleOp module,
         refusal = "host prefix module fingerprint mismatch";
         return;
     }
-    host_detail::prefixAnalysis analysis(module, contract, maxSteps, followPublication,
-                                         followProviderReads, followProviderMutations,
-                                         followProviderDiagnostics, followProviderCallbacks);
+    host_detail::prefixAnalysis analysis(
+        module, contract, maxSteps, followPublication, followProviderReads, followProviderMutations,
+        followProviderDiagnostics, followProviderCallbacks, followProviderObjects);
     auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
     if (!entry || entry.getBody().empty() || entry.getBody().front().getNumArguments() != 3 ||
         entry.getUpvalueCount() != 0 || !analysis.callers[entry].empty() ||
