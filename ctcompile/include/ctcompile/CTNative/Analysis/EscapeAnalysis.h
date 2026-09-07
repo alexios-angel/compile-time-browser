@@ -263,6 +263,50 @@ struct EscapeVerdicts {
     std::optional<EscapeReason> wholeFunction;
 };
 
+/// Diagnostic candidates after closing direct writes and property reads over
+/// local sites, successor operands and ODS carries. The external alternative
+/// of every original load result is preserved; this is not a points-to proof.
+struct PropertyReadProvenance {
+    mlir::Operation * by = nullptr;
+    AliasValue base;
+    AliasValue value;
+};
+
+/// Every top-level SINK operand, including exposures after the site's first
+/// verdict and exposures reached through candidate loaded aliases.
+struct EscapeExposure {
+    mlir::Operation * by = nullptr;
+    unsigned position = 0;
+    EscapeReason reason = EscapeReason::Confined;
+    AliasValue value;
+};
+
+struct LoadProvenanceEvidence {
+    llvm::SmallVector<DirectStorageWrite, 0> writes;
+    llvm::SmallVector<PropertyReadProvenance, 0> reads;
+    llvm::SmallVector<EscapeExposure, 0> exposures;
+    /// The supported constraints reached a fixed point within the work limit.
+    /// A false value preserves partial candidates and forbids reading missing
+    /// candidates as evidence. This does not claim all JS transfers are modeled.
+    bool converged = false;
+    /// The original direct census and every queried lattice were initialized,
+    /// with no unsupported target, region or raw-frame refusal. Even together
+    /// with converged this does NOT establish complete contents: keys, order,
+    /// accessors, prototypes, calls and indirect transfers remain unproved.
+    bool inputsComplete = true;
+    /// Constraint visits and site joins performed during propagation. Building
+    /// the census and reporting its partial result do not consume this limit.
+    std::size_t work = 0;
+};
+
+/// Recompute from the live solver and verdict census for the SAME IR snapshot.
+/// This separate, bounded diagnostic query never changes an AliasLattice or a
+/// Verdict, and no native admission may consume it as a confinement proof.
+[[nodiscard]] LoadProvenanceEvidence computeLoadProvenance(mlir::DataFlowSolver & solver,
+                                                           ctjs::FuncOp function,
+                                                           const EscapeVerdicts & verdicts,
+                                                           std::size_t workLimit = 100000);
+
 /// The post-pass. Takes the solver by non-const reference only because
 /// DataFlowSolver::getProgramPointBefore(Block *) interns its anchor and is
 /// not const; nothing here changes a lattice.

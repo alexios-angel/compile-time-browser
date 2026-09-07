@@ -22,8 +22,8 @@ evidence, so it does not clear this census marker, but it adds no local-site
 link. An empty candidate list therefore does not establish absence of aliases.
 
 The marker does not establish complete contents or points-to information.
-Loads still produce the original external alias lattice, so a second read
-through a loaded container is not connected to its writes. Prototype access,
+Loads still produce the original external alias lattice, so this direct census
+does not connect a second read through a loaded container to its writes. Prototype access,
 accessors, calls, `copy_props` and other indirect transfers require additional
 proofs. No native admission consumes this evidence and every escape verdict,
 including `Stored`, remains unchanged. Consumers must recompute it after IR
@@ -66,8 +66,58 @@ describe the census and do not authorize a change to any escape verdict.
 Evidence: `/tmp/ctcompile-native-integrated-evidence.json`; see
 [HANDOFF.md](HANDOFF.md) for the exact build baseline.
 
-The next step remains a complete contents/points-to proof through loads and
-indirect transfers, with every exposure followed after the first escape sink.
-External contents, accessors and unsupported retention paths must be refused
-before any `Stored` verdict changes. Native automatic storage also requires
-the plan's separate type, identity and frame-lifetime obligations.
+## Bounded candidate provenance
+
+The separate `computeLoadProvenance` query now follows those diagnostic
+candidates through local contents. It starts from the original alias lattices,
+unions every direct stored value into each known target site, and imports those
+candidates at property reads. It repeats after loads reveal additional stored
+values or target containers. Successor operands and ODS carries transport the
+candidates across branches and loops. This handles nested local loads, writes
+through loaded containers, loaded values stored into another container, and
+self or mutual cycles.
+
+Every original external alternative remains present. Keys, execution order,
+overwrites and distinct dynamic instances of one allocation site still do not
+filter candidates. Branch copies retain each successor's actual operand list,
+including repeated edges to the same block; an edge between two live blocks is
+included conservatively even if only another incoming edge was executable.
+Dead blocks contribute no constraints or exposures.
+
+The query returns candidate reads, candidate writes, and **every live top-level
+sink operand** with its operation, position, reason and candidate aliases. A
+child's first verdict can remain `Stored` while its later loaded alias appears
+in both a global store and a return. An earlier `Passed` verdict likewise does
+not hide the later stores or loaded throws. The query changes neither the
+original `AliasLattice` nor any escape verdict, and native admission does not
+consume it.
+
+The default propagation limit is 100,000 constraint visits/site joins per
+function. `converged` says the supported constraint graph reached a fixed
+point; exhaustion preserves all census records and partial candidates with
+`converged=false`. `inputsComplete` separately records initialized lattice
+inputs and the original direct-census coverage. Missing lattices, unsupported
+storage targets or successor operands, nested regions and raw-frame refusals
+keep it false. Neither flag, separately or together, establishes complete
+contents or permits treating absent candidates as proof of confinement.
+Accessors, prototypes, `copy_props`, calls and other indirect transfers are
+still outside this query's modeled contents graph.
+
+Nine additional unit rows cover the propagation paths above, cycle identity,
+later writes, dead returns and earlier call sinks. Existing controls also
+assert incomplete inputs for missing lattices, unsupported targets, regions
+and late arguments capture. All three live read-base states independently
+rebuild the solver and query, check the newly exposed return, and exercise
+every budget below the actual completion point plus the exact completion
+budget. The claims executable reports candidate read/store/exposure edges,
+newly propagated exposures, convergence, incomplete inputs and work. The CTest
+gate checks preservation of original candidates and coverage of all reads and
+sink operands; precision and convergence counts remain diagnostics. The table
+above measures the preceding direct census, not this new closure.
+
+The next proof must establish complete contents under a checked set of data
+property, prototype, accessor and indirect-transfer restrictions, then use all
+exposures when considering a different escape verdict. External contents and
+unsupported retention paths must be refused before any `Stored` verdict
+changes. Native automatic storage also requires the plan's separate type,
+identity and frame-lifetime obligations.

@@ -119,6 +119,24 @@ if(NOT CMAKE_MATCH_1 EQUAL CMAKE_MATCH_3 OR NOT CMAKE_MATCH_2 EQUAL CMAKE_MATCH_
   message(FATAL_ERROR "${NAME}: the direct-load census did not cover every live property read or classify every function")
 endif()
 
+# The separately bounded closure must preserve all original candidates and
+# cover every direct read and sink even when its work limit is exhausted.
+# Convergence and candidate counts do not authorize new escape claims.
+if(NOT "${_out}${_err}" MATCHES "load-provenance candidates: ([0-9]+) read-site edges, ([0-9]+) stored-site edges, ([0-9]+) exposure-site edges, ([0-9]+) propagated exposure edges, ([0-9]+) invalid records")
+  message(FATAL_ERROR "the claims emitter did not report candidate provenance:\n${_out}${_err}")
+endif()
+if(NOT CMAKE_MATCH_5 EQUAL 0)
+  message(FATAL_ERROR "${NAME}: invalid or narrowed candidate provenance")
+endif()
+if(NOT "${_out}${_err}" MATCHES "load-provenance coverage: ([0-9]+) reads of ([0-9]+) live reads, ([0-9]+) exposures of ([0-9]+) live sinks, ([0-9]+) converged and ([0-9]+) exhausted of ([0-9]+) functions, ([0-9]+) complete and ([0-9]+) incomplete inputs")
+  message(FATAL_ERROR "the claims emitter did not report provenance coverage:\n${_out}${_err}")
+endif()
+math(EXPR _provenance_functions "${CMAKE_MATCH_5} + ${CMAKE_MATCH_6}")
+math(EXPR _provenance_inputs "${CMAKE_MATCH_8} + ${CMAKE_MATCH_9}")
+if(NOT CMAKE_MATCH_1 EQUAL CMAKE_MATCH_2 OR NOT CMAKE_MATCH_3 EQUAL CMAKE_MATCH_4 OR NOT _provenance_functions EQUAL CMAKE_MATCH_7 OR NOT _provenance_inputs EQUAL CMAKE_MATCH_7)
+  message(FATAL_ERROR "${NAME}: candidate provenance lost live reads, sinks or function classification")
+endif()
+
 execute_process(
   COMMAND "${PYTHON}" "${SCRIPT}" --recording "${_rec}" --claims "${_claims}"
           --name "${NAME}" --max-report 0 --expect-violations 0

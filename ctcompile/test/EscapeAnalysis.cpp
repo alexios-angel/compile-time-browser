@@ -110,6 +110,11 @@ struct row {
     // their presence nor their absence describes the read's current contents.
     const char * loadReads = nullptr;
     std::optional<bool> completeLoads = std::nullopt;
+    // Separate bounded closure: deterministic labelled candidates per read,
+    // and ALL exposures of the marked site, even after its first Stored sink.
+    const char * provenanceReads = nullptr;
+    const char * provenanceExposures = nullptr;
+    std::optional<bool> provenanceInputs = std::nullopt;
 };
 
 // The header every row shares - TypeInference.cpp's: three implicit arguments
@@ -157,6 +162,22 @@ std::string roleThroughInterface(ctjs::EscapeEffectOpInterface roles, unsigned i
 void fail(const row & r, const std::string & message) {
     std::printf("FAIL %s\n  %s\n", r.what, message.c_str());
     ++failures;
+}
+
+std::string labelledAliases(const AliasValue & aliases) {
+    if (aliases.isUninitialized()) { return "<uninitialized>"; }
+    // Sort labels, not allocation addresses, so same-kind sites stay distinct.
+    std::vector<std::string> names;
+    for (mlir::Operation * site : aliases.getSites()) {
+        std::string name = site->getName().getStringRef().str();
+        if (auto label = site->getAttrOfType<mlir::StringAttr>("storage_test_id")) {
+            name += "@" + label.getValue().str();
+        }
+        names.push_back(std::move(name));
+    }
+    std::sort(names.begin(), names.end());
+    if (aliases.isExternal()) { names.emplace_back("external"); }
+    return "{" + llvm::join(names, ", ") + "}";
 }
 
 void checkRoles(const row & r, mlir::ModuleOp module) {
@@ -310,31 +331,10 @@ void check(mlir::MLIRContext & context, const row & r) {
     if (r.storageWrites != nullptr) {
         std::string writes;
         llvm::raw_string_ostream os{writes};
-        const auto printAliases = [&](const AliasValue & aliases) {
-            if (aliases.isUninitialized()) {
-                os << "<uninitialized>";
-                return;
-            }
-            // Optional test labels distinguish two sites of the same kind.
-            // Sort by text so their allocator addresses cannot reorder a row.
-            std::vector<std::string> names;
-            for (mlir::Operation * site : aliases.getSites()) {
-                std::string name = site->getName().getStringRef().str();
-                if (auto label = site->getAttrOfType<mlir::StringAttr>("storage_test_id")) {
-                    name += "@" + label.getValue().str();
-                }
-                names.push_back(std::move(name));
-            }
-            std::sort(names.begin(), names.end());
-            if (aliases.isExternal()) { names.emplace_back("external"); }
-            os << '{' << llvm::join(names, ", ") << '}';
-        };
         for (const DirectStorageWrite & write : verdicts.directStorage.writes) {
             if (!writes.empty()) { os << "; "; }
-            os << write.by->getName().getStringRef() << '[' << write.position << "] ";
-            printAliases(write.value);
-            os << " -> ";
-            printAliases(write.target);
+            os << write.by->getName().getStringRef() << '[' << write.position << "] "
+               << labelledAliases(write.value) << " -> " << labelledAliases(write.target);
         }
         if (writes != r.storageWrites) {
             fail(r, "direct writes: expected " + std::string{r.storageWrites} + ", got " + writes);
@@ -360,6 +360,44 @@ void check(mlir::MLIRContext & context, const row & r) {
     }
     if (r.completeLoads && verdicts.directLoads.complete != *r.completeLoads) {
         fail(r, "direct-load census has the wrong completeness marker");
+    }
+    if (r.provenanceReads != nullptr || r.provenanceExposures != nullptr || r.provenanceInputs) {
+        const LoadProvenanceEvidence provenance = computeLoadProvenance(solver, function, verdicts);
+        if (!provenance.converged) { fail(r, "candidate provenance unexpectedly exhausted work"); }
+        if (r.provenanceInputs && provenance.inputsComplete != *r.provenanceInputs) {
+            fail(r, "candidate provenance has the wrong input completeness marker");
+        }
+        if (r.provenanceReads != nullptr) {
+            std::string reads;
+            llvm::raw_string_ostream os{reads};
+            for (const PropertyReadProvenance & read : provenance.reads) {
+                if (!reads.empty()) { os << "; "; }
+                os << labelledAliases(read.base) << " -> " << labelledAliases(read.value);
+                const AliasLattice * lattice =
+                    solver.lookupState<AliasLattice>(read.by->getResult(0));
+                if (lattice == nullptr || lattice->getValue() != AliasValue::external()) {
+                    fail(r, "candidate provenance changed the original load result lattice");
+                }
+            }
+            if (reads != r.provenanceReads) {
+                fail(r, "provenance reads: expected " + std::string{r.provenanceReads} + ", got " +
+                            reads);
+            }
+        }
+        if (r.provenanceExposures != nullptr) {
+            std::string exposures;
+            llvm::raw_string_ostream os{exposures};
+            for (const EscapeExposure & exposure : provenance.exposures) {
+                if (!llvm::is_contained(exposure.value.getSites(), marked)) { continue; }
+                if (!exposures.empty()) { os << "; "; }
+                os << exposure.by->getName().getStringRef() << '[' << exposure.position
+                   << "]:" << stringifyEscapeReason(exposure.reason);
+            }
+            if (exposures != r.provenanceExposures) {
+                fail(r, "provenance exposures: expected " + std::string{r.provenanceExposures} +
+                            ", got " + exposures);
+            }
+        }
     }
     // Every first Stored witness must also occur in the all-write census.
     // One write can contain more than one site after an alias join.
@@ -460,6 +498,45 @@ void checkReadEvidenceMutation(mlir::MLIRContext & context) {
         const AliasLattice * result = solver.lookupState<AliasLattice>(read.getResult());
         if (result == nullptr || result->getValue() != AliasValue::external()) {
             fail(r, "read evidence changed the load result lattice");
+        }
+        const LoadProvenanceEvidence provenance = computeLoadProvenance(solver, function, verdicts);
+        mlir::Operation * child = arrays.front().getElements().front().getDefiningOp();
+        const bool loadsChild = indices == llvm::SmallVector<std::size_t, 2>{0};
+        if (!provenance.converged || !provenance.inputsComplete || provenance.reads.size() != 1 ||
+            !provenance.reads.front().value.isExternal() ||
+            llvm::is_contained(provenance.reads.front().value.getSites(), child) != loadsChild) {
+            fail(r, "candidate contents retained an obsolete loaded child");
+        }
+        const bool returned = llvm::any_of(provenance.exposures, [&](const EscapeExposure & use) {
+            return use.reason == EscapeReason::Returned &&
+                   llvm::is_contained(use.value.getSites(), child);
+        });
+        if (returned != loadsChild) { fail(r, "candidate exposure retained an obsolete return"); }
+
+        // Every prefix of this actual fixed-point computation must report
+        // incomplete convergence, including cutoffs inside a site's joins.
+        for (std::size_t budget = 0; budget < provenance.work; ++budget) {
+            const LoadProvenanceEvidence partial =
+                computeLoadProvenance(solver, function, verdicts, budget);
+            if (partial.converged || partial.work != budget ||
+                partial.reads.size() != provenance.reads.size() ||
+                partial.writes.size() != provenance.writes.size() ||
+                partial.exposures.size() != provenance.exposures.size()) {
+                fail(r,
+                     "an exhausted provenance prefix claimed convergence or lost census records");
+                break;
+            }
+            const EscapeVerdicts after = computeVerdicts(solver, function);
+            if (verdictString(after, child) != "escapes:stored" ||
+                result->getValue() != AliasValue::external()) {
+                fail(r, "an incomplete provenance query changed an original escape claim");
+                break;
+            }
+        }
+        const LoadProvenanceEvidence exact =
+            computeLoadProvenance(solver, function, verdicts, provenance.work);
+        if (!exact.converged || exact.work != provenance.work) {
+            fail(r, "the exact provenance completion budget did not converge");
         }
     };
     expect({0}, false);
@@ -1840,7 +1917,8 @@ int main() {
          .alias = true,
          .withAnalysis = false,
          .loadReads = "ctjs.get_property <uninitialized> <- []",
-         .completeLoads = false},
+         .completeLoads = false,
+         .provenanceInputs = false},
         {.what = "unsupported write targets preserve known read links with incomplete evidence",
          .body =
              S +
@@ -1850,7 +1928,8 @@ int main() {
              R,
          .expected = "escapes:stored",
          .loadReads = "ctjs.get_property {ctjs.create_array} <- [0]",
-         .completeLoads = false},
+         .completeLoads = false,
+         .provenanceInputs = false},
         {.what = "nested reads require region proof and leave top-level evidence incomplete",
          .body =
              S +
@@ -1863,7 +1942,8 @@ int main() {
              R,
          .expected = "escapes:stored",
          .loadReads = "ctjs.get_property {ctjs.create_array} <- [0]",
-         .completeLoads = false},
+         .completeLoads = false,
+         .provenanceInputs = false},
         {.what = "raw-frame retention cannot present load candidates as a complete census",
          .body =
              S +
@@ -1875,7 +1955,130 @@ int main() {
          .capturesAllArguments = true,
          .wholeFunction = "arguments_late",
          .loadReads = "ctjs.get_property {ctjs.create_array} <- [0]",
-         .completeLoads = false},
+         .completeLoads = false,
+         .provenanceInputs = false},
+
+        // The separate provenance closure follows candidate contents without
+        // changing the original result lattice or first escape verdict.
+        {.what = "nested local loads expose the stored child at every later sink",
+         .body = "  %s = ctjs.create_object {check, storage_test_id = \"child\"}\n"
+                 "  %inner = ctjs.create_array [%s] {storage_test_id = \"inner\"}\n"
+                 "  %outer = ctjs.create_array [%inner] {storage_test_id = \"outer\"}\n"
+                 "  %base = ctjs.get_property %outer[%q]\n"
+                 "  %read = ctjs.get_property %base[%q]\n"
+                 "  ctjs.store_global \"g\", %read\n"
+                 "  ctjs.return %read\n",
+         .expected = "escapes:stored",
+         .provenanceReads =
+             "{ctjs.create_array@outer} -> {ctjs.create_array@inner, external}; "
+             "{ctjs.create_array@inner, external} -> {ctjs.create_object@child, external}",
+         .provenanceExposures = "ctjs.create_array[0]:stored; ctjs.store_global[0]:stored_global; "
+                                "ctjs.return[0]:returned",
+         .provenanceInputs = true},
+        {.what = "a store through a loaded target contributes to that local container",
+         .body = "  %s = ctjs.create_object {check}\n"
+                 "  %inner = ctjs.create_array [] {storage_test_id = \"inner\"}\n"
+                 "  %outer = ctjs.create_array [%inner] {storage_test_id = \"outer\"}\n"
+                 "  %base = ctjs.get_property %outer[%q]\n"
+                 "  ctjs.set_property %base[%q], %s\n"
+                 "  %read = ctjs.get_property %inner[%q]\n"
+                 "  ctjs.return %read\n",
+         .expected = "escapes:stored",
+         .provenanceReads = "{ctjs.create_array@outer} -> {ctjs.create_array@inner, external}; "
+                            "{ctjs.create_array@inner} -> {ctjs.create_object, external}",
+         .provenanceExposures = "ctjs.set_property[2]:stored; ctjs.return[0]:returned",
+         .provenanceInputs = true},
+        {.what = "a loaded stored value propagates through a second local container",
+         .body = "  %s = ctjs.create_object {check}\n"
+                 "  %a = ctjs.create_array [%s] {storage_test_id = \"a\"}\n"
+                 "  %b = ctjs.create_array [] {storage_test_id = \"b\"}\n"
+                 "  %first = ctjs.get_property %a[%q]\n"
+                 "  ctjs.append %first to %b\n"
+                 "  %second = ctjs.get_property %b[%q]\n"
+                 "  ctjs.return %second\n",
+         .expected = "escapes:stored",
+         .provenanceReads = "{ctjs.create_array@a} -> {ctjs.create_object, external}; "
+                            "{ctjs.create_array@b} -> {ctjs.create_object, external}",
+         .provenanceExposures =
+             "ctjs.create_array[0]:stored; ctjs.append[1]:stored; ctjs.return[0]:returned",
+         .provenanceInputs = true},
+        {.what = "loaded candidates cross duplicate successor edges and an ODS carry",
+         .body =
+             S +
+             "  %outer = ctjs.create_array [%s]\n"
+             "  %read = ctjs.get_property %outer[%q]\n"
+             "  %t = ctjs.truthy %p\n"
+             "  cf.cond_br %t, ^join(%read : !ctjs.value), ^join(%p : !ctjs.value)\n"
+             "^join(%value: !ctjs.value):\n"
+             "  %carried = ctjs.iterable of %value\n"
+             "  ctjs.store_global \"g\", %carried\n" +
+             R,
+         .expected = "escapes:stored",
+         .provenanceReads = "{ctjs.create_array} -> {ctjs.create_object, external}",
+         .provenanceExposures = "ctjs.create_array[0]:stored; ctjs.store_global[0]:stored_global",
+         .provenanceInputs = true},
+        {.what = "self-cycle provenance converges and does not prove the cycle confined",
+         .body = S + "  ctjs.set_property %s[%q], %s\n"
+                     "  %first = ctjs.get_property %s[%q]\n"
+                     "  %second = ctjs.get_property %first[%q]\n"
+                     "  ctjs.return %second\n",
+         .expected = "escapes:stored",
+         .provenanceReads = "{ctjs.create_object} -> {ctjs.create_object, external}; "
+                            "{ctjs.create_object, external} -> {ctjs.create_object, external}",
+         .provenanceExposures = "ctjs.set_property[2]:stored; ctjs.return[0]:returned",
+         .provenanceInputs = true},
+        {.what = "mutual-cycle provenance retains exact distinct allocation identities",
+         .body = "  %s = ctjs.create_object {check, storage_test_id = \"s\"}\n"
+                 "  %other = ctjs.create_object {storage_test_id = \"other\"}\n"
+                 "  ctjs.set_property %s[%q], %other\n"
+                 "  ctjs.set_property %other[%q], %s\n"
+                 "  %first = ctjs.get_property %s[%q]\n"
+                 "  %second = ctjs.get_property %first[%q]\n"
+                 "  ctjs.return %second\n",
+         .expected = "escapes:stored",
+         .provenanceReads =
+             "{ctjs.create_object@s} -> {ctjs.create_object@other, external}; "
+             "{ctjs.create_object@other, external} -> {ctjs.create_object@s, external}",
+         .provenanceExposures = "ctjs.set_property[2]:stored; ctjs.return[0]:returned",
+         .provenanceInputs = true},
+        {.what =
+             "loaded candidates cross loop-carried aliases without asserting per-instance identity",
+         .body = S + "  %outer = ctjs.create_array [%s]\n"
+                     "  %read = ctjs.get_property %outer[%q]\n"
+                     "  cf.br ^loop(%read : !ctjs.value)\n"
+                     "^loop(%value: !ctjs.value):\n"
+                     "  %t = ctjs.truthy %p\n"
+                     "  cf.cond_br %t, ^loop(%p : !ctjs.value), ^exit(%value : !ctjs.value)\n"
+                     "^exit(%last: !ctjs.value):\n"
+                     "  ctjs.return %last\n",
+         .expected = "escapes:stored",
+         .provenanceReads = "{ctjs.create_array} -> {ctjs.create_object, external}",
+         .provenanceExposures = "ctjs.create_array[0]:stored; ctjs.return[0]:returned",
+         .provenanceInputs = true},
+        {.what = "provenance keeps later writes and excludes dead returns",
+         .body =
+             S +
+             "  %outer = ctjs.create_array []\n"
+             "  %read = ctjs.get_property %outer[%q]\n"
+             "  ctjs.append %s to %outer\n"
+             "  ctjs.store_global \"g\", %read\n" +
+             R +
+             "^dead:\n"
+             "  ctjs.return %read\n",
+         .expected = "escapes:stored",
+         .provenanceReads = "{ctjs.create_array} -> {ctjs.create_object, external}",
+         .provenanceExposures = "ctjs.append[1]:stored; ctjs.store_global[0]:stored_global",
+         .provenanceInputs = true},
+        {.what = "an earlier call verdict cannot hide loaded later exposures",
+         .body = S + "  %called = ctjs.call %p(%q, %s)\n"
+                     "  %outer = ctjs.create_array [%s]\n"
+                     "  %read = ctjs.get_property %outer[%q]\n"
+                     "  ctjs.throw %read\n",
+         .expected = "escapes:passed",
+         .provenanceReads = "{ctjs.create_array} -> {ctjs.create_object, external}",
+         .provenanceExposures =
+             "ctjs.call[2]:passed; ctjs.create_array[0]:stored; ctjs.throw[0]:thrown",
+         .provenanceInputs = true},
     };
 
     for (const row & r : rows) { check(context, r); }

@@ -169,6 +169,19 @@ int main(int argc, char ** argv) {
     std::size_t invalidReadLinks = 0;
     std::size_t completeLoadFunctions = 0;
     std::size_t incompleteLoadFunctions = 0;
+    std::size_t provenanceReads = 0;
+    std::size_t provenanceReadSites = 0;
+    std::size_t provenanceStoredSites = 0;
+    std::size_t provenanceExposures = 0;
+    std::size_t provenanceExposureSites = 0;
+    std::size_t propagatedExposureSites = 0;
+    std::size_t invalidProvenance = 0;
+    std::size_t liveSinks = 0;
+    std::size_t convergedProvenance = 0;
+    std::size_t exhaustedProvenance = 0;
+    std::size_t completeProvenanceInputs = 0;
+    std::size_t incompleteProvenanceInputs = 0;
+    std::size_t provenanceWork = 0;
 
     imported.module->walk([&](ctcompile::ctjs::FuncOp fn) {
         ++functions;
@@ -186,6 +199,62 @@ int main(int argc, char ** argv) {
             }
         }
         EscapeVerdicts verdicts = computeVerdicts(solver, fn);
+        const LoadProvenanceEvidence provenance = computeLoadProvenance(solver, fn, verdicts);
+        if (provenance.converged) {
+            ++convergedProvenance;
+        } else {
+            ++exhaustedProvenance;
+        }
+        if (provenance.inputsComplete) {
+            ++completeProvenanceInputs;
+        } else {
+            ++incompleteProvenanceInputs;
+        }
+        provenanceWork += provenance.work;
+        provenanceReads += provenance.reads.size();
+        provenanceExposures += provenance.exposures.size();
+        const auto extends = [](const AliasValue & original, const AliasValue & candidate) {
+            return AliasValue::join(original, candidate) == candidate;
+        };
+        if (provenance.writes.size() != verdicts.directStorage.writes.size() ||
+            provenance.reads.size() != verdicts.directLoads.reads.size()) {
+            ++invalidProvenance;
+        }
+        for (const auto & [index, write] : llvm::enumerate(provenance.writes)) {
+            provenanceStoredSites += write.value.getSites().size();
+            if (index >= verdicts.directStorage.writes.size()) { continue; }
+            const DirectStorageWrite & original = verdicts.directStorage.writes[index];
+            if (write.by != original.by || write.position != original.position ||
+                !extends(original.value, write.value) || !extends(original.target, write.target)) {
+                ++invalidProvenance;
+            }
+        }
+        for (const auto & [index, read] : llvm::enumerate(provenance.reads)) {
+            provenanceReadSites += read.value.getSites().size();
+            if (index >= verdicts.directLoads.reads.size()) { continue; }
+            const DirectPropertyRead & original = verdicts.directLoads.reads[index];
+            const AliasLattice * result = solver.lookupState<AliasLattice>(read.by->getResult(0));
+            if (read.by != original.by || !extends(original.base, read.base) ||
+                (result != nullptr && !extends(result->getValue(), read.value))) {
+                ++invalidProvenance;
+            }
+        }
+        for (const EscapeExposure & exposure : provenance.exposures) {
+            const RoleOf role = operandRole(exposure.by, exposure.position);
+            const AliasLattice * original =
+                solver.lookupState<AliasLattice>(exposure.by->getOperand(exposure.position));
+            if (role.role != OperandRole::Sink || role.reason != exposure.reason ||
+                (original != nullptr && !extends(original->getValue(), exposure.value))) {
+                ++invalidProvenance;
+            }
+            provenanceExposureSites += exposure.value.getSites().size();
+            for (mlir::Operation * site : exposure.value.getSites()) {
+                if (original == nullptr ||
+                    !llvm::is_contained(original->getValue().getSites(), site)) {
+                    ++propagatedExposureSites;
+                }
+            }
+        }
         unvisitedSites += verdicts.unvisitedSites;
         unvisitedOperands += verdicts.unvisitedOperands;
         if (verdicts.directStorage.complete) {
@@ -284,6 +353,11 @@ int main(int argc, char ** argv) {
             const bool live = executable != nullptr && executable->isLive();
             if (live) { ++liveBlocks; }
             for (mlir::Operation & op : block) {
+                if (live) {
+                    for (unsigned index = 0; index < op.getNumOperands(); ++index) {
+                        if (operandRole(&op, index).role == OperandRole::Sink) { ++liveSinks; }
+                    }
+                }
                 if (live && llvm::isa<ctcompile::ctjs::GetPropertyOp>(op)) {
                     ++livePropertyReads;
                     if (llvm::any_of(
@@ -376,5 +450,17 @@ int main(int argc, char ** argv) {
                  "or contents proof)\n",
                  directReads, coveredPropertyReads, livePropertyReads, completeLoadFunctions,
                  incompleteLoadFunctions, functions);
+    std::fprintf(stderr,
+                 "load-provenance candidates: %zu read-site edges, %zu stored-site edges, "
+                 "%zu exposure-site edges, %zu propagated exposure edges, %zu invalid records\n",
+                 provenanceReadSites, provenanceStoredSites, provenanceExposureSites,
+                 propagatedExposureSites, invalidProvenance);
+    std::fprintf(stderr,
+                 "load-provenance coverage: %zu reads of %zu live reads, %zu exposures of %zu "
+                 "live sinks, %zu converged and %zu exhausted of %zu functions, %zu complete "
+                 "and %zu incomplete inputs, %zu work (diagnostic candidates; no contents proof)\n",
+                 provenanceReads, livePropertyReads, provenanceExposures, liveSinks,
+                 convergedProvenance, exhaustedProvenance, functions, completeProvenanceInputs,
+                 incompleteProvenanceInputs, provenanceWork);
     return 0;
 }

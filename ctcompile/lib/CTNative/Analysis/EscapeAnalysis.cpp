@@ -281,16 +281,24 @@ mlir::LogicalResult EscapeAnalysis::visitOperation(mlir::Operation * op,
 
 // --- the post-pass ------------------------------------------------------------
 
-AliasValue directStorageTarget(const mlir::DataFlowSolver & solver, const Verdict & verdict) {
+namespace {
+
+mlir::Value storageTargetValue(const Verdict & verdict) {
     if (verdict.reason != EscapeReason::Stored || verdict.by == nullptr) { return {}; }
-    mlir::Value target;
     if (auto array = llvm::dyn_cast<ctjs::CreateArrayOp>(verdict.by)) {
-        if (verdict.position < array.getElements().size()) { target = array.getResult(); }
+        if (verdict.position < array.getElements().size()) { return array.getResult(); }
     } else if (auto append = llvm::dyn_cast<ctjs::AppendOp>(verdict.by)) {
-        if (verdict.position == 1) { target = append.getArray(); }
+        if (verdict.position == 1) { return append.getArray(); }
     } else if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(verdict.by)) {
-        if (verdict.position == 2) { target = store.getObject(); }
+        if (verdict.position == 2) { return store.getObject(); }
     }
+    return {};
+}
+
+} // namespace
+
+AliasValue directStorageTarget(const mlir::DataFlowSolver & solver, const Verdict & verdict) {
+    const mlir::Value target = storageTargetValue(verdict);
     if (!target) { return {}; }
     const AliasLattice * lattice = solver.lookupState<AliasLattice>(target);
     return lattice != nullptr ? lattice->getValue() : AliasValue{};
@@ -489,6 +497,164 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
             out.directLoads.reads.push_back(std::move(read));
         }
     }
+    return out;
+}
+
+LoadProvenanceEvidence computeLoadProvenance(mlir::DataFlowSolver & solver, ctjs::FuncOp function,
+                                             const EscapeVerdicts & verdicts,
+                                             std::size_t workLimit) {
+    LoadProvenanceEvidence out;
+    out.inputsComplete = verdicts.directLoads.complete;
+    llvm::DenseMap<mlir::Value, AliasValue> values;
+    llvm::DenseMap<mlir::Operation *, AliasValue> contents;
+    const auto aliases = [&](mlir::Value value) {
+        if (!value) {
+            out.inputsComplete = false;
+            return AliasValue{};
+        }
+        auto found = values.find(value);
+        if (found != values.end()) { return found->second; }
+        const AliasLattice * lattice = solver.lookupState<AliasLattice>(value);
+        const AliasValue initial = lattice != nullptr ? lattice->getValue() : AliasValue{};
+        if (initial.isUninitialized()) { out.inputsComplete = false; }
+        values.insert({value, initial});
+        return initial;
+    };
+    const auto mergeValue = [&](mlir::Value value, const AliasValue & incoming) {
+        const AliasValue before = aliases(value);
+        const AliasValue joined = AliasValue::join(before, incoming);
+        if (before == joined) { return false; }
+        values[value] = joined;
+        return true;
+    };
+    const auto live = [&](mlir::Block * block) {
+        const auto * executable =
+            solver.lookupState<mlir::dataflow::Executable>(solver.getProgramPointBefore(block));
+        return executable != nullptr && executable->isLive();
+    };
+
+    // Branch copies are edge-specific, including duplicate successor blocks.
+    // If both blocks are live we retain the edge conservatively, even when
+    // another edge made the successor live. This can add candidates, not erase
+    // them. Produced arguments and opaque successor semantics stay incomplete.
+    llvm::SmallVector<std::pair<mlir::Value, mlir::Value>, 0> copies;
+    llvm::SmallVector<EscapeExposure, 0> sinks;
+    for (mlir::Block & block : function.getBody()) {
+        if (!live(&block)) { continue; }
+        for (mlir::Operation & op : block) {
+            if (auto branch = llvm::dyn_cast<mlir::BranchOpInterface>(&op)) {
+                for (unsigned index = 0; index < op.getNumSuccessors(); ++index) {
+                    mlir::Block * target = op.getSuccessor(index);
+                    if (!live(target)) { continue; }
+                    mlir::SuccessorOperands passed = branch.getSuccessorOperands(index);
+                    for (mlir::BlockArgument argument : target->getArguments()) {
+                        if (!isValueTyped(argument)) { continue; }
+                        const unsigned position = argument.getArgNumber();
+                        if (position >= passed.size() || passed.isOperandProduced(position)) {
+                            out.inputsComplete = false;
+                            continue;
+                        }
+                        copies.emplace_back(passed[position], argument);
+                    }
+                }
+            } else if (op.getNumSuccessors() != 0) {
+                out.inputsComplete = false;
+            }
+            for (unsigned index = 0; index < op.getNumOperands(); ++index) {
+                const RoleOf role = operandRole(&op, index);
+                if (role.role == OperandRole::Sink) {
+                    sinks.push_back({&op, index, role.reason, {}});
+                } else if (role.role == OperandRole::Carry) {
+                    for (mlir::Value result : op.getResults()) {
+                        if (isValueTyped(result)) {
+                            copies.emplace_back(op.getOperand(index), result);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // This private candidate map starts with the original aliases and only
+    // grows. In particular get_property keeps its external alternative. Every
+    // store contributes to every known target site, irrespective of key/order;
+    // every load imports that site's recorded candidates. Repeated instances,
+    // overwrites and cycles are unions, never strong updates or copied objects.
+    const auto spend = [&]() {
+        if (out.work == workLimit) { return false; }
+        ++out.work;
+        return true;
+    };
+    bool exhausted = false;
+    bool changed = true;
+    while (changed && !exhausted) {
+        changed = false;
+        for (const auto & [source, target] : copies) {
+            if (!spend()) {
+                exhausted = true;
+                break;
+            }
+            changed |= mergeValue(target, aliases(source));
+        }
+        if (exhausted) { break; }
+        for (const DirectStorageWrite & write : verdicts.directStorage.writes) {
+            if (!spend()) {
+                exhausted = true;
+                break;
+            }
+            const AliasValue value = aliases(write.by->getOperand(write.position));
+            const AliasValue target =
+                aliases(storageTargetValue({EscapeReason::Stored, write.by, write.position}));
+            for (mlir::Operation * site : target.getSites()) {
+                if (!spend()) {
+                    exhausted = true;
+                    break;
+                }
+                AliasValue & before = contents[site];
+                const AliasValue joined = AliasValue::join(before, value);
+                changed |= !(before == joined);
+                before = joined;
+            }
+            if (exhausted) { break; }
+        }
+        if (exhausted) { break; }
+        for (const DirectPropertyRead & read : verdicts.directLoads.reads) {
+            if (!spend()) {
+                exhausted = true;
+                break;
+            }
+            auto load = llvm::cast<ctjs::GetPropertyOp>(read.by);
+            const AliasValue base = aliases(load.getObject());
+            for (mlir::Operation * site : base.getSites()) {
+                if (!spend()) {
+                    exhausted = true;
+                    break;
+                }
+                const auto found = contents.find(site);
+                if (found != contents.end()) {
+                    changed |= mergeValue(load.getResult(), found->second);
+                }
+            }
+            if (exhausted) { break; }
+        }
+    }
+    out.converged = !exhausted;
+
+    // Keep all records even on budget exhaustion. They describe the partial
+    // candidate graph; the original verdicts remain the only escape claims.
+    for (const DirectStorageWrite & write : verdicts.directStorage.writes) {
+        out.writes.push_back(
+            {write.by, write.position, aliases(write.by->getOperand(write.position)),
+             aliases(storageTargetValue({EscapeReason::Stored, write.by, write.position}))});
+    }
+    for (const DirectPropertyRead & read : verdicts.directLoads.reads) {
+        auto load = llvm::cast<ctjs::GetPropertyOp>(read.by);
+        out.reads.push_back({read.by, aliases(load.getObject()), aliases(load.getResult())});
+    }
+    for (EscapeExposure & exposure : sinks) {
+        exposure.value = aliases(exposure.by->getOperand(exposure.position));
+    }
+    out.exposures = std::move(sinks);
     return out;
 }
 

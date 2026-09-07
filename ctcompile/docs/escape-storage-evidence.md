@@ -63,8 +63,15 @@ Bootstrap execution oracles still report zero violations. The p5 and Phaser
 rows are static diagnostics, not execution or confinement claims. Evidence is
 saved in `/tmp/ctcompile-map-effects-recovery-evidence.json`.
 
-The next proof must follow contents through loads and indirect transfers,
-propagate every exposure including sinks after the first `Stored` witness,
-and refuse external contents, accessors, unsupported regions and raw-frame
-retention before changing a verdict. Automatic storage additionally needs the
-plan's O-2 contents/type obligation and O-3/O-4 identity/frame obligations.
+The separate [bounded load-provenance query](escape-load-evidence.md#bounded-candidate-provenance)
+now follows candidate local contents through loads, successor operands and
+carries, including stores whose value or target is loaded. It records every
+top-level sink exposure after the first witness and retains partial candidates
+when its work limit is exhausted. This does not change this direct census or
+the original escape verdicts.
+
+The next proof must establish complete contents across supported transfers and
+refuse external contents, accessors, unsupported regions and raw-frame retention
+before changing a verdict. Candidate convergence is not that proof. Automatic
+storage additionally needs the plan's O-2 contents/type obligation and O-3/O-4
+identity/frame obligations.
