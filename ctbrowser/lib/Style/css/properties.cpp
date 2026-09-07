@@ -612,12 +612,6 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // Variables 1 §2): its value is a token stream, not a value.
     if (property.starts_with("--")) { return yes(std::string{text}); }
 
-    const property_syntax * p = find_property(property);
-    // AN UNKNOWN PROPERTY IS STORED, NOT REFUSED. CSSOM says a page may set one
-    // and read it back; refusing here would be a behaviour change for every
-    // property this table has not reached yet, and the corpora write several.
-    if (p == nullptr) { return yes(verbatim); }
-
     // A value holding var()/env()/attr() is valid by construction - what it
     // means is not known until substitution.
     if (found.substituted) { return yes(verbatim); }
@@ -640,6 +634,20 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // bytes for everything it cannot answer, so a value with no math in it and a
     // value whose math needs a font size both come back untouched.
     const std::string simplified = may_have_math(text) ? simplify_math(text) : verbatim;
+
+    const property_syntax * p = find_property(property);
+    // AN UNKNOWN PROPERTY IS STORED, NOT REFUSED. CSSOM says a page may set one
+    // and read it back; refusing here would be a behaviour change for every
+    // property this table has not reached yet, and the corpora write several.
+    //
+    // ...BUT ITS MATH IS STILL MATH, which is why the two questions above are
+    // asked before this one rather than after it. `offset-rotate:
+    // calc(sign(50%) * 1deg)` and `offset-path: ray(calc(sign(50%) * 1deg))` are
+    // two properties this table has never heard of carrying an expression that
+    // is a syntax error in every property there is, and `calc()` is simplified
+    // by CSS Values 4 §10.12 wherever it stands - the table knowing the name is
+    // not one of the conditions.
+    if (p == nullptr) { return yes(simplified); }
 
     if (p->kind == k::freeform) { return yes(simplified); }
 

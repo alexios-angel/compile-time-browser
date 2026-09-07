@@ -257,6 +257,25 @@ public:
         // A trailing token means the expression did not consume its input -
         // `calc(1px 2px)` - which is an error and not a partial answer.
         if (!ok_ || !value || !at_end()) { return math_answer{math_outcome::invalid, {}}; }
+        // A PERCENTAGE HAS TO BE A PERCENTAGE OF SOMETHING. CSS Values 4 §10.11
+        // calls it the calculation context, and the only one this engine ever
+        // supplies is a length: no property resolves a percentage into an angle,
+        // a time, a frequency or a resolution, so a percentage in an expression
+        // that answers with one has nothing to be measured against and the
+        // expression is a syntax error rather than a value waiting for layout.
+        // `animation-duration: calc(sign(50%) * 1s)` and
+        // `transform: rotate(calc(sign(50%) * 1deg))` are two of the twelve
+        // `percentage-without-context` writes, and every one of them folded to a
+        // number here by reading the percentage's own digits as its magnitude.
+        //
+        // A <number> ANSWER IS NOT COVERED and must not be: `progress(1%, (10% -
+        // 10%), 100%)` is `calc(0.01)` and `calc(1px * pow(tan(atan2(50%, 1px)),
+        // 1))` is a valid width, because there the percentages sit in a length
+        // context that the property does supply.
+        if (saw_percent_ && value->type != numeric_type::number &&
+            value->type != numeric_type::length) {
+            return math_answer{math_outcome::invalid, {}};
+        }
         calc_result out;
         // A NUMBER IS AN ANSWER. `calc()` of a bare number used to be reported as
         // no answer at all, which the cascade read as an invalid declaration and
@@ -346,6 +365,7 @@ private:
         }
         case token_type::percentage: {
             ++at_;
+            saw_percent_ = true;
             term out;
             // A percentage has no type of its own until the property says what it
             // is a percentage OF, and every property this engine resolves one
@@ -776,6 +796,11 @@ private:
     std::size_t at_ = 0;
     bool ok_ = true;
     bool unresolved_ = false;
+    // Whether a <percentage-token> was read ANYWHERE in the expression, which is
+    // not the same question as whether the ANSWER carries one: `sign(50%)` is a
+    // plain number and has nothing left to resolve, but the percentage was still
+    // written and still had to mean something.
+    bool saw_percent_ = false;
 };
 
 // Trailing zeros off a double, so a folded `12px` is not `12.000000px`. CSS
@@ -1181,12 +1206,21 @@ struct function_span {
     return "calc(" + text + ")";
 }
 
-// Is `body` exactly ONE math function and nothing else? That is the test for
+// Is `body` exactly ONE `calc()` and nothing else? That is the test for
 // §10.12's redundant-calc rule below.
-[[nodiscard]] bool is_lone_math_function(std::string_view body) {
-    const std::string_view name = math_name_at(body, 0);
-    if (name.empty()) { return false; }
-    return span_of(body, 0, name).end == body.size();
+//
+// ONE calc() INSIDE ANOTHER, and not one math function inside another, which is
+// where this was and was too wide. `clamp-length-serialize` asks for
+// `calc(calc(0px + clamp(1px, 1em, 1vh)))` back as `calc(0px + clamp(1px, 1em,
+// 1vh))` - a calc in a calc - four times over, and generalising that to every
+// function read the same rule out of `calc(pow(2, sign(1em - 18px)))`, which
+// `calc-complex-unresolved-serialize` wants back WITH its outer calc() on all
+// six of its values. A math function that is not a calc() is a term like any
+// other and the calc() around it is the author's, not this file's to remove.
+[[nodiscard]] bool is_lone_calc(std::string_view body) {
+    constexpr std::string_view calc = "calc(";
+    if (!ascii_iequals(body.substr(0, calc.size()), calc)) { return false; }
+    return span_of(body, 0, calc).end == body.size();
 }
 
 } // namespace
@@ -1226,12 +1260,11 @@ std::string simplify_math(std::string_view value) {
         const std::string_view whole = value.substr(at, span.end - at);
         const std::string_view body = body_of(value, at, name, span);
         at = span.end;
-        // A calc() AROUND ONE OTHER MATH FUNCTION IS REDUNDANT. §10.12's
-        // simplification returns a lone child rather than wrapping it, so
-        // `calc(clamp(1px, 1em, 1vh))` is `clamp(1px, 1em, 1vh)` and
-        // `calc(calc(0px + clamp(...)))` loses exactly one layer. Chrome prints
-        // both that way and `clamp-length-serialize` asserts it four times.
-        if (ascii_iequals(name, "calc(") && is_lone_math_function(trim(body, html_whitespace))) {
+        // A calc() AROUND ONE OTHER calc() IS REDUNDANT. §10.12's simplification
+        // returns a lone child rather than wrapping it, so
+        // `calc(calc(0px + clamp(...)))` loses exactly one layer.
+        // `clamp-length-serialize` asserts that four times.
+        if (ascii_iequals(name, "calc(") && is_lone_calc(trim(body, html_whitespace))) {
             out.append(simplify_math(trim(body, html_whitespace)));
             continue;
         }

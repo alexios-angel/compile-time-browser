@@ -289,11 +289,16 @@ void test_a_math_function_is_simplified_wherever_it_sits() {
     ok("background-image", "image-set(url(\"a)b\") calc(1x * 2))",
        "image-set(url(\"a)b\") calc(2dppx))");
 
-    // A calc() AROUND ONE OTHER MATH FUNCTION IS REDUNDANT and loses exactly one
-    // layer, which is what §10.12's simplification does with a lone child.
-    ok("margin-top", "calc(clamp(1px, 1em, 1vh))", "clamp(1px, 1em, 1vh)");
+    // A calc() AROUND ONE OTHER calc() IS REDUNDANT and loses exactly one layer,
+    // which is what §10.12's simplification does with a lone child.
     ok("margin-top", "calc(calc(0px + clamp(1px, 1em, 1vh)))", "calc(0px + clamp(1px, 1em, 1vh))");
     ok("width", "calc(calc(calc(10px)))", "calc(10px)");
+    // ...AND A calc() AROUND ANY OTHER MATH FUNCTION IS NOT. That generalisation
+    // was read out of `clamp-length-serialize`, which only ever writes a calc in
+    // a calc; `calc-complex-unresolved-serialize` writes the other case six
+    // times and wants the outer function back on every one of them.
+    ok("orphans", "calc(pow(2, sign(1em - 18px)))", "calc(pow(2, sign(1em - 18px)))");
+    ok("margin-top", "calc(clamp(1px, 1em, 1vh))", "calc(clamp(1px, 1em, 1vh))");
 
     // ...AND EVERYTHING ELSE KEEPS THE AUTHOR'S BYTES. A function with no answer
     // until layout, one whose units have no basis yet, and one this file cannot
@@ -330,6 +335,34 @@ void test_the_percentage_half_of_simplification() {
     ok("text-indent", "max(3%, 4%)", "max(3%, 4%)");
     ok("text-indent", "clamp(1%, 2%, 3%)", "clamp(1%, 2%, 3%)");
     ok("text-indent", "min(10px, 5%)", "min(10px, 5%)"); // and the mixed case, as before
+}
+
+// A PERCENTAGE HAS TO BE A PERCENTAGE OF SOMETHING, CSS Values 4 §10.11. The
+// only calculation context this engine ever supplies is a length - no property
+// resolves a percentage into an angle or a time - so an expression that answers
+// with one of those and mentions a percentage is a syntax error, not a value
+// waiting for layout. `percentage-without-context` is twelve of these and every
+// one folded here by reading the percentage's own digits as its magnitude.
+void test_a_percentage_needs_a_context() {
+    bad("transform", "rotate(calc(sign(50%) * 1deg))");
+    bad("filter", "hue-rotate(calc(sign(50%) * 1deg))");
+    bad("font-style", "oblique calc(sign(50%) * 1deg)");
+    bad("color", "hsl(calc(sign(50%) * 1deg) 82% 43%)");
+    bad("animation-duration", "calc(sign(50%) * 1s)");
+    bad("transition-delay", "calc(sign(50%) * 1s)");
+    // ...INCLUDING FOR A PROPERTY THIS TABLE HAS NEVER HEARD OF. An unknown name
+    // is stored rather than refused, but the math in it is still math: these two
+    // are `percentage-without-context`'s last pair and both used to be kept
+    // because `offset-rotate` is not in the table.
+    bad("offset-rotate", "calc(sign(50%) * 1deg)");
+    bad("offset-path", "ray(calc(sign(50%) * 1deg))");
+    ok("offset-rotate", "calc(45deg + 45deg)", "calc(90deg)"); // ...and simplified, too
+
+    // A <number> ANSWER IS NOT COVERED and must not be: there the percentage
+    // sits in a length context that the property does supply.
+    ok("width", "calc(1px * pow(tan(atan2(50%, 1px)), 1))",
+       "calc(1px * pow(tan(atan2(50%, 1px)), 1))");
+    ok("width", "calc(50% + 1px)", "calc(50% + 1px)");
 }
 
 void test_important_and_the_empty_value() {
@@ -470,6 +503,7 @@ int main() {
     test_the_rest_of_the_math_functions();
     test_a_math_function_is_simplified_wherever_it_sits();
     test_the_percentage_half_of_simplification();
+    test_a_percentage_needs_a_context();
     test_important_and_the_empty_value();
     test_a_custom_property_takes_anything_that_tokenises();
     test_the_two_spellings_of_one_property();
