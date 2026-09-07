@@ -53,9 +53,10 @@ constexpr std::array<std::string_view, 2> time_units{"s", "ms"};
 // owns the evaluation and answers `unresolved` for the cases that have no
 // answer until layout (`min(10px, 5%)`), so refusing here would condemn a
 // declaration the cascade deliberately keeps.
-constexpr std::array<std::string_view, 22> math_functions{
-    "calc", "min",  "max",  "clamp", "round", "mod", "rem",  "abs",   "sign", "sin", "cos",
-    "tan",  "asin", "acos", "atan",  "atan2", "pow", "sqrt", "hypot", "log",  "exp", "calc-size"};
+constexpr std::array<std::string_view, 23> math_functions{
+    "calc", "min",  "max",   "clamp", "round", "mod",       "rem",     "abs",
+    "sign", "sin",  "cos",   "tan",   "asin",  "acos",      "atan",    "atan2",
+    "pow",  "sqrt", "hypot", "log",   "exp",   "calc-size", "progress"};
 
 // A value containing one of these is valid by construction: what it means is
 // not known until substitution, so the declaration survives parsing with its

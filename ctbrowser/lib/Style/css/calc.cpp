@@ -317,6 +317,26 @@ enum class round_to : std::uint8_t {
     return std::fmod(a, b);
 }
 
+// CSS Values 5 §progress: how far `a` lies from `b` to `c`, as a <number>.
+//
+// AN EMPTY RANGE IS NEITHER AN ERROR NOR A NaN. `progress(1rad, 1rad, 1rad)` is
+// nought over nought, which IEEE calls NaN and the specification calls no
+// progress at all. The unclamped form keeps the numerator's SIGN, so
+// `progress(no-clamp 2rad, 1rad, 1rad)` is an infinity and
+// `progress(no-clamp 0rad, 1rad, 1rad)` its negative; the clamped form is nought
+// whichever way it points, because there is no range to be anywhere in.
+// `progress-serialize` asserts all six of those.
+[[nodiscard]] double progress_one(bool clamped, double a, double b, double c) {
+    if (c == b) {
+        if (clamped || a == b) { return 0.0; }
+        return a > b ? std::numeric_limits<double>::infinity()
+                     : -std::numeric_limits<double>::infinity();
+    }
+    const double how_far = (a - b) / (c - b);
+    if (!clamped || std::isnan(how_far)) { return how_far; }
+    return std::min(std::max(how_far, 0.0), 1.0);
+}
+
 // WHAT A DIMENSION IS MEASURED AGAINST. Two answers, and the second is what a
 // SPECIFIED value needs: there are no bases yet when one is written, so `1em`
 // and `1cqw` are terms in their own right rather than numbers of pixels.
@@ -626,6 +646,7 @@ private:
         if (named("rem(")) { return stepped(true); }
         if (named("abs(")) { return sign_or_abs(false); }
         if (named("sign(")) { return sign_or_abs(true); }
+        if (named("progress(")) { return progress_of(); }
         if (named("hypot(")) { return hypot_of(); }
         if (named("sqrt(")) {
             return numeric(1, 1, [](double a, double) { return std::sqrt(a); });
@@ -814,6 +835,40 @@ private:
         // A ZERO KEEPS ITS SIGN. `sign(-0px)` is -0 and not 0, which is
         // observable through `1 / sign(x)` - the corpus's own way of asking.
         out.value = std::isnan(a) ? a : (a > 0.0 ? 1.0 : (a < 0.0 ? -1.0 : a));
+        return out;
+    }
+
+    // progress( [no-clamp]? A, B, C ), CSS Values 5 §progress. Three arguments
+    // of ONE type and a <number> out - the fraction of the way A lies from B to
+    // C - with the keyword, when it is there, sitting before the first argument
+    // and taking no comma of its own.
+    [[nodiscard]] std::optional<term> progress_of() {
+        ++at_; // the function token, `(` included
+        skip_whitespace();
+        bool clamped = true;
+        if (peek().type == token_type::ident && ascii_iequals(t_.text_of(peek()), "no-clamp")) {
+            ++at_;
+            clamped = false;
+        }
+        const std::optional<std::vector<term>> args = arguments(3, 3);
+        if (!args) { return std::nullopt; }
+        // ONE TYPE FOR ALL THREE, THE PERCENTAGE INCLUDED - and this is where it
+        // parts company with `uniform()`. A RATIO of percentages is decidable
+        // because the basis cancels, so `progress(1%, 0%, 100%)` is `calc(0.01)`
+        // with nothing left to resolve; but `progress(5%, 0px, 10px)` does not
+        // have three arguments that agree on what they measure, and that is a
+        // type error rather than a comparison awaiting layout.
+        for (const term & one : *args) {
+            if (one.type != args->front().type || one.has_percent != args->front().has_percent) {
+                return fail();
+            }
+        }
+        for (const term & one : *args) {
+            if (!is_scalar(one)) { return unresolvable(); }
+        }
+        term out;
+        out.value = progress_one(clamped, scalar_of((*args)[0]), scalar_of((*args)[1]),
+                                 scalar_of((*args)[2]));
         return out;
     }
 
@@ -1214,10 +1269,10 @@ namespace {
 //
 // `calc-size()` is deliberately ABSENT although CSS Values 5 lists it as a math
 // function: this file cannot evaluate it, and a name here is a promise to try.
-constexpr std::string_view math_names[] = {"clamp(", "atan2(", "hypot(", "round(", "sqrt(", "asin(",
-                                           "acos(",  "atan(",  "sign(",  "calc(",  "min(",  "max(",
-                                           "mod(",   "rem(",   "abs(",   "pow(",   "log(",  "exp(",
-                                           "sin(",   "cos(",   "tan("};
+constexpr std::string_view math_names[] = {
+    "progress(", "clamp(", "atan2(", "hypot(", "round(", "sqrt(", "asin(", "acos(",
+    "atan(",     "sign(",  "calc(",  "min(",   "max(",   "mod(",  "rem(",  "abs(",
+    "pow(",      "log(",   "exp(",   "sin(",   "cos(",   "tan("};
 
 // A `(`-terminated function name AT `at`, or an empty view. The boundary test is
 // the whole point: `-webkit-calc(` and a custom property called `--my-calc` both

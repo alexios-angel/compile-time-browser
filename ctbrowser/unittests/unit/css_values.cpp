@@ -237,6 +237,28 @@ void test_the_rest_of_the_math_functions() {
     // which is the whole difference between them - §10.6.
     ok("opacity", "mod(-18, 5)", "calc(2)");
     ok("opacity", "rem(-18, 5)", "calc(-3)");
+    // progress( [no-clamp]? A, B, C ), CSS Values 5. Three arguments of one type
+    // and a <number> out. AN EMPTY RANGE IS NEITHER AN ERROR NOR A NaN: the
+    // unclamped form keeps the numerator's sign and the clamped one is nought
+    // whichever way it points, because there is no range to be anywhere in.
+    ok("opacity", "progress(100px, 0px, 100px)", "calc(1)");
+    ok("opacity", "progress(1%, (10% - 10%), 100%)", "calc(0.01)"); // a ratio of two of them
+    ok("opacity", "progress(-100px, 0px, 100px)", "calc(0)");       // clamped into [0, 1]
+    ok("opacity", "progress(no-clamp -100px, 0px, 100px)", "calc(-1)");
+    ok("opacity", "progress(2rad, 1rad, 1rad)", "calc(0)");
+    ok("opacity", "progress(no-clamp 2rad, 1rad, 1rad)", "calc(infinity)");
+    ok("opacity", "progress(no-clamp 1rad, 1rad, 1rad)", "calc(0)");
+    ok("opacity", "progress(no-clamp 0rad, 1rad, 1rad)", "calc(-infinity)");
+    ok("opacity", "progress(10em, 0px, 10em)", "progress(10em, 0px, 10em)"); // no basis yet
+    bad("opacity", "progress(1)");
+    bad("opacity", "progress(0, 1,)");
+    bad("opacity", "progress(no-clamp, 1, 0 1)");
+    bad("opacity", "progress(1 no-clamp, 0, 1)");
+    bad("opacity", "progress(5, 0deg, 8deg)");
+    // A MIXED PERCENTAGE IS A TYPE ERROR HERE and not an undecidable comparison:
+    // three arguments that do not agree on what they measure have no ratio.
+    bad("opacity", "progress(5%, 0px, 10px)");
+    bad("letter-spacing", "calc(1px * progress(10deg, 0, 10))");
     // A CONSTANT IS NOT A VALUE ON ITS OWN. `infinity` and `NaN` are not
     // <number-token>s, which is the whole reason §10.9 spells them as keywords
     // usable only inside a math function. It is asked of `opacity` rather than
@@ -251,17 +273,15 @@ void test_the_rest_of_the_math_functions() {
     ok("left", "calc(1px * sibling-index())", "calc(1px * sibling-index())");
     ok("left", "calc(inherit(--x) + 1px)", "calc(inherit(--x) + 1px)");
     ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
-    // A SIMPLIFIED SPECIFIED VALUE ONLY WHERE EVERY UNIT IS CONTEXT-FREE. CSS
-    // Values 4 §10.11 keeps `1em` and `5%` as written because neither has a
-    // basis yet, and this file has one evaluator rather than two, so it declines
-    // to simplify at all when either appears. `calc(1px + 2px)` above is the
-    // case that DOES simplify.
+    // A UNIT WITH NO BASIS KEEPS ITS TERM, AND ITS TERM KEEPS ITS PLACE. CSS
+    // Values 4 §10.11 does not resolve `1em` or `5%` here, so both survive to
+    // the specified value; §10.13 says what order they survive in.
     ok("width", "calc(1em + 10px)", "calc(1em + 10px)");
     ok("width", "calc(100% - 10px)", "calc(100% - 10px)");
-    // ...and neither is a unit the specification names and this engine has no
-    // basis for. `1cqw` needs a container and `1lh` a line box; both are values.
-    ok("width", "calc(1px + 3cqw)", "calc(1px + 3cqw)");
-    ok("width", "calc(1px + 1lh)", "calc(1px + 1lh)");
+    // ...and a unit the specification names and this engine has no basis for is
+    // the same case: `1cqw` needs a container and `1lh` a line box.
+    ok("width", "calc(1px + 3cqw)", "calc(3cqw + 1px)");
+    ok("width", "calc(1px + 1lh)", "calc(1lh + 1px)");
     bad("width", "calc(1px + 1nonsense)"); // a typo is not a unit
 }
 
