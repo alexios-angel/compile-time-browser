@@ -188,3 +188,11 @@ ctbrowser_test(js/array_generics)
 # file for the same reason the four above have one: it asks what a value
 # SERIALISES to and what text is REFUSED, not what an expression computes.
 ctbrowser_test(js/json_basics)
+# --- the early errors, the largest gap test262 had left ---------------------
+# 2,812 tests asserted that source text is a SyntaxError while this engine
+# parsed it, ran it, and reported whatever happened next. Its own file for the
+# same reason the five above have one: every case asks whether source is
+# REFUSED rather than what an expression computes - and each refusal is paired
+# with the valid near-miss that must still run, which is the half that stops a
+# rule growing into a false positive that would stop a page loading.
+ctbrowser_test(js/early_errors)
