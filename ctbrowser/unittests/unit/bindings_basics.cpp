@@ -2506,13 +2506,19 @@ void test_collection_happens_on_its_own() {
     // A page that makes garbage on a timer must not grow without bound. Before
     // this, nothing was ever freed for the life of the document.
     std::size_t peak = 0;
+    std::size_t ticked = 0;
     for (int i = 0; i < 60; ++i) {
-        (void)page.tick(20);
+        ticked += page.tick(20);
         peak = std::max(peak, page.live_script_objects());
     }
     const std::size_t settled = page.live_script_objects();
-    check(peak > 3000, "the page really did allocate");
-    check(settled < peak, "and the heap came back down on its own");
+    // The numbers are IN the message: both of these are thresholds over a live
+    // heap, and a bare "failed" tells whoever reads it nothing about whether the
+    // page allocated less than expected or never ran its timer at all.
+    check(peak > 3000, "the page really did allocate (peak " + std::to_string(peak) + ", ticks " +
+                           std::to_string(ticked) + ")");
+    check(settled < peak, "and the heap came back down on its own (settled " +
+                              std::to_string(settled) + " of " + std::to_string(peak) + ")");
 }
 
 // A LINK LEAVES THE PAGE THROUGH run_app, and lands in the SYSTEM BROWSER.

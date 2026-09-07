@@ -892,7 +892,51 @@ void dom_bindings::install_window(context & cx) {
         window_handler->set(name,
                             value::object(cx.allocate<script::native_object>(name, std::move(fn))));
     };
-    window_trap("get", [](context & c, std::span<value> args) {
+    // NAMED ACCESS ON THE WINDOW - `window.someId`, and `window.someName` for the
+    // handful of elements whose `name` attribute is exposed that way. It is HTML
+    // 7.3.3, it is why an inline `onclick="doThing(theForm)"` works at all, and
+    // pages use it far more than they should. Without it a WPT file that reads
+    // `window.x` for an `<div id=x>` reports a harness error rather than a result.
+    //
+    // The tag list is the specification's and not "any element with a name":
+    // `<input name=q>` is NOT a named property of the window, and treating it as
+    // one would shadow a global a page had defined.
+    //
+    // IT WALKS THE DOCUMENT, and it is consulted on every `window.x` that is
+    // neither an own property nor a global - which includes `window.hasOwnProperty`
+    // and the rest of the prototype chain, because a named property beats
+    // Object.prototype in the specification's own order. That is a document walk on
+    // a path libraries use for feature detection. It is O(nodes) with no cache
+    // because a cache would have to be invalidated by every mutation; if it ever
+    // shows up in a measurement, the answer is an id index on the document rather
+    // than a special case here.
+    const auto named_element = [this](std::string_view name) -> std::vector<node_id> {
+        std::vector<node_id> found;
+        if (name.empty()) { return found; }
+        const auto txn = doc_->read();
+        const atom id_attribute = atoms_->intern("id");
+        const atom name_attribute = atoms_->intern("name");
+        const auto exposes_name = [&](node_id node) {
+            const atom tag = txn.tag(node).value_or(atom{});
+            for (const std::string_view exposed :
+                 {"a", "area", "embed", "form", "frame", "frameset", "iframe", "img", "object"}) {
+                if (tag == atoms_->intern_lower(exposed)) { return true; }
+            }
+            return false;
+        };
+        const auto walk = [&](auto && self, node_id at) -> void {
+            if (txn.kind(at).value_or(node_kind::text) == node_kind::element) {
+                if (txn.attribute_value(at, id_attribute) == name ||
+                    (exposes_name(at) && txn.attribute_value(at, name_attribute) == name)) {
+                    found.push_back(at);
+                }
+            }
+            for (const node_id child : txn.children(at)) { self(self, child); }
+        };
+        walk(walk, txn.root());
+        return found;
+    };
+    window_trap("get", [this, named_element](context & c, std::span<value> args) {
         if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
         auto * target = static_cast<script::object_object *>(args[0].as_heap());
         const std::string name = c.to_string(args[1]);
@@ -901,6 +945,17 @@ void dom_bindings::install_window(context & cx) {
         }
         // A GLOBAL, WHICH IS MOST OF WHY THIS PROXY EXISTS.
         if (c.has_global(name)) { return c.global(name); }
+        // ...then a named element, which comes BEFORE the prototype chain and
+        // after everything a page defined for itself. Several of one name is an
+        // HTMLCollection rather than the first of them, which is what makes
+        // `window.radios.length` answer.
+        if (const std::vector<node_id> named = named_element(name); !named.empty()) {
+            if (named.size() == 1) { return wrap(c, named.front()); }
+            return make_live_collection(c, [this, name, named_element] {
+                (void)this;
+                return named_element(name);
+            });
+        }
         // AND FAILING THAT, THE PROTOTYPE CHAIN - `window` is an ordinary
         // object as well as the global scope, so `window.hasOwnProperty(...)`
         // has to reach Object.prototype like any other object's would. Stopping
@@ -924,12 +979,15 @@ void dom_bindings::install_window(context & cx) {
         }
         return value::boolean(true);
     });
-    window_trap("has", [](context & c, std::span<value> args) {
+    window_trap("has", [named_element](context & c, std::span<value> args) {
         if (args.size() < 2 || !args[0].is_object()) { return value::boolean(false); }
         auto * target = static_cast<script::object_object *>(args[0].as_heap());
         const std::string name = c.to_string(args[1]);
+        // `'x' in window` has to agree with `window.x`, or a page's feature
+        // detection and its use of the feature disagree.
         return value::boolean(target->find(name) != nullptr ||
-                              target->find_accessor(name) != nullptr || c.has_global(name));
+                              target->find_accessor(name) != nullptr || c.has_global(name) ||
+                              !named_element(name).empty());
     });
     const value window_view = value::object(
         cx.allocate<script::proxy_object>(window_target, value::object(window_handler)));
