@@ -158,6 +158,17 @@ int main(int argc, char ** argv) {
     std::size_t coveredStoredWitnesses = 0;
     std::size_t completeStorageFunctions = 0;
     std::size_t incompleteStorageFunctions = 0;
+    std::size_t directReads = 0;
+    std::size_t livePropertyReads = 0;
+    std::size_t coveredPropertyReads = 0;
+    std::size_t linkedReads = 0;
+    std::size_t candidateLinks = 0;
+    std::size_t candidateStoredSites = 0;
+    std::size_t externalReadBases = 0;
+    std::size_t unresolvedReadBases = 0;
+    std::size_t invalidReadLinks = 0;
+    std::size_t completeLoadFunctions = 0;
+    std::size_t incompleteLoadFunctions = 0;
 
     imported.module->walk([&](ctcompile::ctjs::FuncOp fn) {
         ++functions;
@@ -181,6 +192,34 @@ int main(int argc, char ** argv) {
             ++completeStorageFunctions;
         } else {
             ++incompleteStorageFunctions;
+        }
+        if (verdicts.directLoads.complete) {
+            ++completeLoadFunctions;
+        } else {
+            ++incompleteLoadFunctions;
+        }
+        for (const DirectPropertyRead & read : verdicts.directLoads.reads) {
+            ++directReads;
+            if (!read.candidateWrites.empty()) { ++linkedReads; }
+            if (read.base.isExternal()) { ++externalReadBases; }
+            if (read.base.isUninitialized()) { ++unresolvedReadBases; }
+            std::optional<std::size_t> previous;
+            for (const std::size_t index : read.candidateWrites) {
+                ++candidateLinks;
+                if (index >= verdicts.directStorage.writes.size() ||
+                    (previous && index <= *previous)) {
+                    ++invalidReadLinks;
+                    continue;
+                }
+                previous = index;
+                const DirectStorageWrite & write = verdicts.directStorage.writes[index];
+                candidateStoredSites += write.value.getSites().size();
+                if (!llvm::any_of(read.base.getSites(), [&](mlir::Operation * site) {
+                        return llvm::is_contained(write.target.getSites(), site);
+                    })) {
+                    ++invalidReadLinks;
+                }
+            }
         }
         std::map<mlir::Operation *, std::size_t> storesPerSite;
         for (const DirectStorageWrite & write : verdicts.directStorage.writes) {
@@ -245,6 +284,14 @@ int main(int argc, char ** argv) {
             const bool live = executable != nullptr && executable->isLive();
             if (live) { ++liveBlocks; }
             for (mlir::Operation & op : block) {
+                if (live && llvm::isa<ctcompile::ctjs::GetPropertyOp>(op)) {
+                    ++livePropertyReads;
+                    if (llvm::any_of(
+                            verdicts.directLoads.reads,
+                            [&](const DirectPropertyRead & read) { return read.by == &op; })) {
+                        ++coveredPropertyReads;
+                    }
+                }
                 const char * kind = kindOf(&op);
                 if (kind == nullptr) { continue; }
                 if (!live) {
@@ -318,5 +365,16 @@ int main(int argc, char ** argv) {
                  "or retention proof)\n",
                  coveredStoredWitnesses, stored, completeStorageFunctions,
                  incompleteStorageFunctions, functions);
+    std::fprintf(stderr,
+                 "direct-load candidates: %zu links across %zu reads, %zu stored-site edges, "
+                 "%zu external-or-mixed bases, %zu unresolved bases, %zu invalid links\n",
+                 candidateLinks, linkedReads, candidateStoredSites, externalReadBases,
+                 unresolvedReadBases, invalidReadLinks);
+    std::fprintf(stderr,
+                 "direct-load coverage: %zu records, %zu covered of %zu live reads, %zu complete "
+                 "and %zu incomplete of %zu functions (shared local sites only; no points-to "
+                 "or contents proof)\n",
+                 directReads, coveredPropertyReads, livePropertyReads, completeLoadFunctions,
+                 incompleteLoadFunctions, functions);
     return 0;
 }

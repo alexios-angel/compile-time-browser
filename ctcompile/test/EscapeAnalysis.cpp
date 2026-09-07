@@ -106,6 +106,10 @@ struct row {
     // writes whose value has no tracked site. Semicolon-separated in IR order.
     const char * storageWrites = nullptr;
     std::optional<bool> completeStorage = std::nullopt;
+    // Diagnostic candidate write indices for each live property read. Neither
+    // their presence nor their absence describes the read's current contents.
+    const char * loadReads = nullptr;
+    std::optional<bool> completeLoads = std::nullopt;
 };
 
 // The header every row shares - TypeInference.cpp's: three implicit arguments
@@ -339,6 +343,24 @@ void check(mlir::MLIRContext & context, const row & r) {
     if (r.completeStorage && verdicts.directStorage.complete != *r.completeStorage) {
         fail(r, "direct-write census has the wrong completeness marker");
     }
+    if (r.loadReads != nullptr) {
+        std::string reads;
+        llvm::raw_string_ostream os{reads};
+        for (const DirectPropertyRead & read : verdicts.directLoads.reads) {
+            if (!reads.empty()) { os << "; "; }
+            os << read.by->getName().getStringRef() << ' ';
+            read.base.print(os);
+            os << " <- [";
+            llvm::interleaveComma(read.candidateWrites, os);
+            os << ']';
+        }
+        if (reads != r.loadReads) {
+            fail(r, "direct reads: expected " + std::string{r.loadReads} + ", got " + reads);
+        }
+    }
+    if (r.completeLoads && verdicts.directLoads.complete != *r.completeLoads) {
+        fail(r, "direct-load census has the wrong completeness marker");
+    }
     // Every first Stored witness must also occur in the all-write census.
     // One write can contain more than one site after an alias join.
     for (const auto & [site, verdict] : verdicts.sites) {
@@ -394,6 +416,57 @@ void check(mlir::MLIRContext & context, const row & r) {
     });
 
     if (r.roles != nullptr) { checkRoles(r, *module); }
+}
+
+void checkReadEvidenceMutation(mlir::MLIRContext & context) {
+    const row r{.what = "read candidates are recomputed from the live base after mutation",
+                .body = "  %child = ctjs.create_object\n"
+                        "  %a = ctjs.create_array [%child]\n"
+                        "  %b = ctjs.create_array [%p]\n"
+                        "  %read = ctjs.get_property %a[%q]\n"
+                        "  ctjs.return %read\n",
+                .expected = ""};
+    auto module =
+        mlir::parseSourceString<mlir::ModuleOp>(std::string{kPrologue} + r.body + "}\n", &context);
+    if (!module) {
+        fail(r, "the mutation fixture did not parse");
+        return;
+    }
+    ctjs::FuncOp function;
+    ctjs::GetPropertyOp read;
+    llvm::SmallVector<ctjs::CreateArrayOp, 2> arrays;
+    module->walk([&](ctjs::FuncOp op) { function = op; });
+    module->walk([&](ctjs::GetPropertyOp op) { read = op; });
+    module->walk([&](ctjs::CreateArrayOp op) { arrays.push_back(op); });
+    const auto expect = [&](llvm::SmallVector<std::size_t, 2> indices, bool external) {
+        mlir::DataFlowSolver solver;
+        solver.load<mlir::dataflow::DeadCodeAnalysis>();
+        solver.load<mlir::dataflow::SparseConstantPropagation>();
+        solver.load<EscapeAnalysis>();
+        if (failed(solver.initializeAndRun(module->getOperation()))) {
+            fail(r, "the mutated solver did not converge");
+            return;
+        }
+        const EscapeVerdicts verdicts = computeVerdicts(solver, function);
+        if (!verdicts.directLoads.complete || verdicts.directLoads.reads.size() != 1 ||
+            verdicts.directLoads.reads.front().candidateWrites != indices ||
+            verdicts.directLoads.reads.front().base.isExternal() != external) {
+            fail(r, "read evidence retained an obsolete target");
+        }
+        if (verdictString(verdicts, arrays.front().getElements().front().getDefiningOp()) !=
+            "escapes:stored") {
+            fail(r, "changing the read base weakened the stored child's verdict");
+        }
+        const AliasLattice * result = solver.lookupState<AliasLattice>(read.getResult());
+        if (result == nullptr || result->getValue() != AliasValue::external()) {
+            fail(r, "read evidence changed the load result lattice");
+        }
+    };
+    expect({0}, false);
+    read->setOperand(0, arrays.back().getResult());
+    expect({1}, false);
+    read->setOperand(0, function.getBody().front().getArgument(3));
+    expect({}, true);
 }
 
 } // namespace
@@ -1654,9 +1727,159 @@ int main() {
          .wholeFunction = "arguments_late",
          .storageWrites = "",
          .completeStorage = false},
+
+        // Direct load evidence connects known local target sites only. The
+        // links deliberately retain different keys, later stores and distinct
+        // dynamic instances; no row grants a new escape or result alias fact.
+        {.what = "array reads link both initializer and append writes without weakening Stored",
+         .body =
+             S +
+             "  %outer = ctjs.create_array [%s]\n"
+             "  ctjs.append %p to %outer\n"
+             "  %read = ctjs.get_property %outer[%q]\n" +
+             R,
+         .expected = "escapes:stored",
+         .loadReads = "ctjs.get_property {ctjs.create_array} <- [0, 1]",
+         .completeLoads = true},
+        {.what = "a linked property result remains external in the alias lattice",
+         .body = "  %child = ctjs.create_object\n"
+                 "  %outer = ctjs.create_array [%child]\n"
+                 "  %read = ctjs.get_property %outer[%q] {check}\n"
+                 "  ctjs.return %read\n",
+         .expected = "{external}",
+         .alias = true,
+         .loadReads = "ctjs.get_property {ctjs.create_array} <- [0]",
+         .completeLoads = true},
+        {.what = "read links retain later writes, overwrites and different keys",
+         .body =
+             S +
+             "  %outer = ctjs.create_object\n"
+             "  %zero = ctjs.constant #ctjs.number<0>\n"
+             "  %one = ctjs.constant #ctjs.number<1>\n"
+             "  %read = ctjs.get_property %outer[%zero]\n"
+             "  ctjs.set_property %outer[%zero], %s\n"
+             "  ctjs.set_property %outer[%zero], %zero\n"
+             "  ctjs.set_property %outer[%one], %p\n" +
+             R,
+         .expected = "escapes:stored",
+         .loadReads = "ctjs.get_property {ctjs.create_object} <- [0, 1, 2]",
+         .completeLoads = true},
+        {.what = "distinct same-kind bases select their own writes and joined links deduplicate",
+         .body =
+             S +
+             "  %a = ctjs.create_object\n"
+             "  %b = ctjs.create_object\n"
+             "  ctjs.set_property %a[%q], %s\n"
+             "  ctjs.set_property %b[%q], %p\n"
+             "  %t = ctjs.truthy %p\n"
+             "  cf.cond_br %t, ^join(%a : !ctjs.value), ^join(%b : !ctjs.value)\n"
+             "^join(%base: !ctjs.value):\n"
+             "  ctjs.set_property %base[%q], %p\n"
+             "  %read = ctjs.get_property %base[%q]\n"
+             "  %other = ctjs.get_property %a[%q]\n" +
+             R,
+         .expected = "escapes:stored",
+         .loadReads = "ctjs.get_property {ctjs.create_object, ctjs.create_object} <- [0, 1, 2]; "
+                      "ctjs.get_property {ctjs.create_object} <- [0, 2]",
+         .completeLoads = true},
+        {.what = "iterable carry keeps local read candidates beside its external alternative",
+         .body =
+             S +
+             "  %outer = ctjs.create_array [%s]\n"
+             "  %base = ctjs.iterable of %outer\n"
+             "  %read = ctjs.get_property %base[%q]\n"
+             "  %external = ctjs.get_property %p[%q]\n" +
+             R,
+         .expected = "escapes:stored",
+         .loadReads = "ctjs.get_property {ctjs.create_array, external} <- [0]; "
+                      "ctjs.get_property {external} <- []",
+         .completeLoads = true},
+        {.what = "a load through a loaded value remains outside the local-site candidate graph",
+         .body =
+             S +
+             "  %outer = ctjs.create_array [%s]\n"
+             "  ctjs.set_property %s[%q], %p\n"
+             "  %base = ctjs.get_property %outer[%q]\n"
+             "  %read = ctjs.get_property %base[%q]\n" +
+             R,
+         .expected = "escapes:stored",
+         .loadReads = "ctjs.get_property {ctjs.create_array} <- [0]; "
+                      "ctjs.get_property {external} <- []",
+         .completeLoads = true},
+        {.what = "loop-created bases share static candidates without asserting instance identity",
+         .body = "  cf.br ^loop\n"
+                 "^loop:\n" +
+                 S +
+                 "  %outer = ctjs.create_array [%s]\n"
+                 "  %read = ctjs.get_property %outer[%q]\n"
+                 "  %t = ctjs.truthy %p\n"
+                 "  cf.cond_br %t, ^loop, ^exit\n"
+                 "^exit:\n" +
+                 R,
+         .expected = "escapes:stored",
+         .loadReads = "ctjs.get_property {ctjs.create_array} <- [0]",
+         .completeLoads = true},
+        {.what = "dead CFG reads and writes cannot add candidates to the live census",
+         .body =
+             S +
+             "  %outer = ctjs.create_array [%s]\n"
+             "  %read = ctjs.get_property %outer[%q]\n" +
+             R +
+             "^dead:\n"
+             "  ctjs.append %p to %outer\n"
+             "  %dead = ctjs.get_property %outer[%q]\n" +
+             R,
+         .expected = "escapes:stored",
+         .loadReads = "ctjs.get_property {ctjs.create_array} <- [0]",
+         .completeLoads = true},
+        {.what = "a missing read base lattice keeps partial load evidence explicit",
+         .body = "  %read = ctjs.get_property %p[%q] {check}\n"
+                 "  ctjs.resume_throw\n",
+         .expected = "<no lattice>",
+         .unvisitedOperands = 1,
+         .alias = true,
+         .withAnalysis = false,
+         .loadReads = "ctjs.get_property <uninitialized> <- []",
+         .completeLoads = false},
+        {.what = "unsupported write targets preserve known read links with incomplete evidence",
+         .body =
+             S +
+             "  %outer = ctjs.create_array [%s]\n"
+             "  %cell = ctjs.create_cell %p\n"
+             "  %read = ctjs.get_property %outer[%q]\n" +
+             R,
+         .expected = "escapes:stored",
+         .loadReads = "ctjs.get_property {ctjs.create_array} <- [0]",
+         .completeLoads = false},
+        {.what = "nested reads require region proof and leave top-level evidence incomplete",
+         .body =
+             S +
+             "  %outer = ctjs.create_array [%s]\n"
+             "  %read = ctjs.get_property %outer[%q]\n"
+             "  %t = ctjs.truthy %p\n"
+             "  scf.if %t {\n"
+             "    %nested = ctjs.get_property %outer[%q]\n"
+             "  }\n" +
+             R,
+         .expected = "escapes:stored",
+         .loadReads = "ctjs.get_property {ctjs.create_array} <- [0]",
+         .completeLoads = false},
+        {.what = "raw-frame retention cannot present load candidates as a complete census",
+         .body =
+             S +
+             "  %outer = ctjs.create_array [%s]\n"
+             "  %read = ctjs.get_property %outer[%q]\n"
+             "  %arguments = ctjs.make_arguments\n" +
+             R,
+         .expected = "escapes:arguments_late",
+         .capturesAllArguments = true,
+         .wholeFunction = "arguments_late",
+         .loadReads = "ctjs.get_property {ctjs.create_array} <- [0]",
+         .completeLoads = false},
     };
 
     for (const row & r : rows) { check(context, r); }
+    checkReadEvidenceMutation(context);
 
     // allocationPc: the importer's NameLoc inside its FusedLoc, and nothing
     // else.

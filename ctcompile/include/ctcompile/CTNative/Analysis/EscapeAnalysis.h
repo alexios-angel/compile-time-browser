@@ -60,6 +60,7 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <cstddef>
 #include <optional>
 
 namespace ctcompile::ctnative {
@@ -211,6 +212,30 @@ struct DirectStorageEvidence {
     bool complete = true;
 };
 
+/// A live top-level get_property and the direct writes whose target may share
+/// a local allocation site with its base. Indices address directStorage.writes
+/// in ascending order, once each even when several joined sites overlap.
+struct DirectPropertyRead {
+    mlir::Operation * by = nullptr;
+    AliasValue base;
+    llvm::SmallVector<std::size_t, 2> candidateWrites;
+};
+
+struct DirectLoadEvidence {
+    llvm::SmallVector<DirectPropertyRead, 0> reads;
+    /// Every top-level get_property base has initialized aliases and the
+    /// direct-write census is complete. External bases are resolved evidence;
+    /// they contribute no local-site links, not proof that no write aliases.
+    ///
+    /// Links ignore keys, order, overwrites and distinct instances of one site.
+    /// They do not follow loaded aliases, prototypes, accessors, copy_props or
+    /// other indirect transfers. An empty candidate list says only that no
+    /// recorded write shares a known local site. Even a complete census is
+    /// NOT a points-to/contents proof, and never changes load result lattices
+    /// or escape verdicts. Recompute after any IR mutation.
+    bool complete = true;
+};
+
 struct EscapeVerdicts {
     /// Every tracked site in a LIVE top-level CFG block, in program order
     /// (a MapVector so the claims file is deterministic). Sites in dead CFG
@@ -218,6 +243,8 @@ struct EscapeVerdicts {
     llvm::MapVector<mlir::Operation *, Verdict> sites;
     /// Every direct Stored write, independently of the first-reason verdicts.
     DirectStorageEvidence directStorage;
+    /// Diagnostic local-site links from direct writes to property reads.
+    DirectLoadEvidence directLoads;
     unsigned deadSites = 0;
     /// A site in a live block whose result lattice the solver never
     /// initialized: `escapes(unvisited)`, counted, gated at zero.

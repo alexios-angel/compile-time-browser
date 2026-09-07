@@ -103,6 +103,22 @@ if(NOT CMAKE_MATCH_1 EQUAL _stored_claim_count OR NOT CMAKE_MATCH_2 EQUAL _store
   message(FATAL_ERROR "${NAME}: the all-write census did not cover every first Stored witness or classify every function")
 endif()
 
+# Property reads and shared-local-site write links are diagnostic evidence.
+# Gate coverage and link integrity, never a precision count or new confinement.
+if(NOT "${_out}${_err}" MATCHES "direct-load candidates: ([0-9]+) links across ([0-9]+) reads, ([0-9]+) stored-site edges, ([0-9]+) external-or-mixed bases, ([0-9]+) unresolved bases, ([0-9]+) invalid links")
+  message(FATAL_ERROR "the claims emitter did not report direct-load candidates:\n${_out}${_err}")
+endif()
+if(NOT CMAKE_MATCH_5 EQUAL 0 OR NOT CMAKE_MATCH_6 EQUAL 0)
+  message(FATAL_ERROR "${NAME}: unresolved bases or invalid write links in the direct-load census")
+endif()
+if(NOT "${_out}${_err}" MATCHES "direct-load coverage: ([0-9]+) records, ([0-9]+) covered of ([0-9]+) live reads, ([0-9]+) complete and ([0-9]+) incomplete of ([0-9]+) functions")
+  message(FATAL_ERROR "the claims emitter did not report direct-load coverage:\n${_out}${_err}")
+endif()
+math(EXPR _load_functions "${CMAKE_MATCH_4} + ${CMAKE_MATCH_5}")
+if(NOT CMAKE_MATCH_1 EQUAL CMAKE_MATCH_3 OR NOT CMAKE_MATCH_2 EQUAL CMAKE_MATCH_3 OR NOT _load_functions EQUAL CMAKE_MATCH_6)
+  message(FATAL_ERROR "${NAME}: the direct-load census did not cover every live property read or classify every function")
+endif()
+
 execute_process(
   COMMAND "${PYTHON}" "${SCRIPT}" --recording "${_rec}" --claims "${_claims}"
           --name "${NAME}" --max-report 0 --expect-violations 0

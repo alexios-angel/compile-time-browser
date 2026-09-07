@@ -29,6 +29,7 @@
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Location.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
@@ -36,6 +37,7 @@
 #include <algorithm>
 #include <cassert>
 #include <iterator>
+#include <utility>
 
 namespace ctcompile::ctnative {
 
@@ -451,6 +453,40 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
                     sink(value, EscapeReason::UnknownOp, nested, i);
                 }
             });
+        }
+    }
+
+    // Evidence only: a shared allocation site is a candidate connection, not
+    // a must-alias object or the value of a field at this read. Index writes
+    // once, then retain all matches, including writes after a read and writes
+    // to other keys. No fact feeds back into a lattice or a verdict.
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<std::size_t, 2>> writesByTarget;
+    for (const auto & [index, write] : llvm::enumerate(out.directStorage.writes)) {
+        for (mlir::Operation * site : write.target.getSites()) {
+            writesByTarget[site].push_back(index);
+        }
+    }
+    out.directLoads.complete = out.directStorage.complete;
+    for (mlir::Block * block : live) {
+        for (mlir::Operation & op : *block) {
+            auto load = llvm::dyn_cast<ctjs::GetPropertyOp>(&op);
+            if (!load) { continue; }
+            DirectPropertyRead read;
+            read.by = &op;
+            const AliasLattice * lattice = solver.lookupState<AliasLattice>(load.getObject());
+            if (lattice != nullptr) { read.base = lattice->getValue(); }
+            if (read.base.isUninitialized()) { out.directLoads.complete = false; }
+            for (mlir::Operation * site : read.base.getSites()) {
+                const auto found = writesByTarget.find(site);
+                if (found != writesByTarget.end()) {
+                    llvm::append_range(read.candidateWrites, found->second);
+                }
+            }
+            llvm::sort(read.candidateWrites);
+            read.candidateWrites.erase(
+                std::unique(read.candidateWrites.begin(), read.candidateWrites.end()),
+                read.candidateWrites.end());
+            out.directLoads.reads.push_back(std::move(read));
         }
     }
     return out;
