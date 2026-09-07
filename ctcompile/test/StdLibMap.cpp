@@ -51,6 +51,7 @@
 #include <cstdio>
 #include <iterator>
 #include <limits>
+#include <locale>
 #include <numbers>
 #include <random>
 #include <string>
@@ -194,16 +195,26 @@ const probe probes[] = {
     {"Math_LOG2E", "Math.LOG2E", [] { return number_token(std::numbers::log2e); }},
     {"Math_LOG10E", "Math.LOG10E", [] { return number_token(std::numbers::log10e); }},
 
-    // --- trim, against the engine's own helper -----------------------------
-    {"String_trim", R"JS(" \t\n\r\f\vx y \t\n\r\f\v".trim())JS",
-     [] {
-         return std::string(ctbrowser::trim(" \t\n\r\f\vx y \t\n\r\f\v", ctbrowser::js_whitespace));
-     }},
-    // NON-ASCII WHITESPACE, WHICH NEITHER SIDE TRIMS. ECMAScript trims U+00A0;
-    // this engine does not, on purpose, and the mapping inherits that. The probe
-    // pins the inheritance, so a future "fix" to one side alone is caught.
-    {"String_trim", R"JS(" x ".trim())JS",
+    // --- Unicode trim distinguishes both proposed byte-oriented targets ---
+    // The interpreter now agrees with ECMAScript on NBSP and BOM. Keep the
+    // library targets unchanged and pin Boost's locale so the witness does
+    // not depend on the process locale. Every divergent probe must disagree.
+    {"String_trim", R"JS("\u00a0x\u00a0".trim())JS",
      [] { return std::string(ctbrowser::trim("\xc2\xa0x\xc2\xa0", ctbrowser::js_whitespace)); }},
+    {"String_trim", R"JS("\ufeffx\ufeff".trim())JS",
+     [] {
+         return std::string(ctbrowser::trim("\xef\xbb\xbfx\xef\xbb\xbf", ctbrowser::js_whitespace));
+     }},
+    {"String_trim_boost", R"JS("\u00a0x\u00a0".trim())JS",
+     [] {
+         return boost::algorithm::trim_copy(std::string{"\xc2\xa0x\xc2\xa0"},
+                                            std::locale::classic());
+     }},
+    {"String_trim_boost", R"JS("\ufeffx\ufeff".trim())JS",
+     [] {
+         return boost::algorithm::trim_copy(std::string{"\xef\xbb\xbfx\xef\xbb\xbf"},
+                                            std::locale::classic());
+     }},
 
     // --- and now the rows that must DISAGREE -------------------------------
     //

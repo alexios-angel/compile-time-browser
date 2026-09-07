@@ -23,7 +23,7 @@ field and the probe beside it — disagree loudly rather than quietly.
 | `new Map()` -> `std::unordered_map<K,V>` | **wrong** - the same, and a NaN key becomes unreachable |
 | `new RegExp(...)` -> `boost::regex` | **wrong** - a different regex engine; disagrees silently in both directions |
 | `Date.now()` -> `std::chrono::system_clock::now()` | **wrong** - breaks the determinism invariant and ignores the host's clock |
-| `String.prototype.trim` -> `boost::algorithm::trim_copy` | **unprovable** - agrees today, but only because of the process's locale |
+| `String.prototype.trim` -> `boost::algorithm::trim_copy` | **wrong** - retains Unicode whitespace that JavaScript removes, even with the classic locale pinned |
 
 Four more rows the table's `...` implies were checked and are also wrong:
 `Math.round`, `Math.min`, `Math.max` and `Math.SQRT1_2`. A fifth, `Math.cbrt`,
@@ -34,17 +34,23 @@ being a table with verdicts rather than a `switch` somebody writes from memory.
 
 | verdict | count | meaning |
 |---|---|---|
-| `exact` | 20 | the C++ target and the interpreter agree, on inputs chosen to separate them |
-| `divergent` | 12 | they **disagree**, and the map names the expression that shows it |
-| `refused` | 3 | no lowering, and no witness is possible — the reason is all there is |
+| `exact` | 19 | the C++ target and the interpreter agree, on inputs chosen to separate them |
+| `divergent` | 14 | they **disagree**, and the map names the expression that shows it |
+| `refused` | 2 | no lowering, and no witness is possible — the reason is all there is |
+
+Measured on the devbox on 2026-09-07: `ctcompile_stdlib_map` passes in
+**0.01 seconds**, with **50 probes: 29 agreements and 21 divergences**. The
+interpreter and Node 26.8.1 both trim the NBSP and BOM witnesses to `"x"`.
+The C++ ASCII helper and Boost with the classic locale retain those bytes.
+Log: `/tmp/ctcompile-map-effects-recovery-full-gate.log`.
 
 **The oracle is the interpreter, not ECMAScript.** That is the dialect's own
 policy — *"when a CTJS operation and the ctbrowser VM disagree, the VM is
 correct by definition"* — so `exact` means *agrees with
 `ctbrowser/lib/Script/builtins/`*. Where the engine itself deviates from the
 standard, the mapping **inherits** the deviation, which is the right answer for
-a backend whose job is to agree with the tier beside it. The two places that
-happens are called out below.
+a backend whose job is to agree with the tier beside it. The host-libm
+qualification is called out below.
 
 ## How a row is checked
 
@@ -121,22 +127,28 @@ its last few places is invisible"*.
 
 `Math.SQRT1_2` is **not** in this group. See below.
 
-### `String.prototype.trim` → `ctbrowser::trim(s, ctbrowser::js_whitespace)`
-
-**Not `boost::algorithm::trim_copy`**, which the specification named and which
-is refused below.
-
-The engine already owns this function. `core/algorithms.hpp` has a `constexpr`
-`trim(text, set)` whose whitespace **set is a parameter**, because *"HTML,
-JavaScript and the GLSL preprocessor genuinely disagree about what whitespace is
-and unifying them would be a bug"* — and `js_whitespace` is the JavaScript one,
-`" \t\n\r\f\v"`, byte-for-byte what `builtins/text.cpp`'s `trim` uses. It
-returns a `string_view` rather than a `string`, which the same header records as
-**7× faster** over 200,000 trims (2.0 ms against 14.2 ms).
-
 ---
 
 ## The rows that diverge, with the witness
+
+### `String.prototype.trim` → the ASCII helper or Boost
+
+The interpreter now implements ECMAScript's fixed WhiteSpace + LineTerminator
+set over UTF-8 (`61416fc`, 2026-09-07). Its implementation is independent of
+the process locale. Both `"\u00a0x\u00a0".trim()` and
+`"\ufeffx\ufeff".trim()` produce `"x"`.
+
+`ctbrowser::trim(s, ctbrowser::js_whitespace)` still trims the six ASCII
+whitespace bytes. It leaves both Unicode witnesses unchanged, so its former
+`exact` classification is now `divergent`. This inventory correction does not
+change the helper or admit native string operations.
+
+`boost::algorithm::trim_copy` also leaves both UTF-8 witnesses unchanged when
+called with `std::locale::classic()`. The probes explicitly pin that locale.
+Its default overload additionally depends on the process's global locale, but
+there is now a concrete disagreement even under the classic locale. Its former
+`refused` classification therefore becomes `divergent`, with the same NBSP
+witness in TableGen and both NBSP/BOM probes in C++.
 
 ### `Math.round` → `std::round` — **different functions**
 
@@ -332,35 +344,15 @@ comment in `values.cpp` records a measurement that no longer reproduces on this
 box — the correction is still right to keep, but the number in the comment is
 from a different libm.)*
 
-### `String.prototype.trim` → `boost::algorithm::trim_copy` — locale, not program
-
-`trim_copy` classifies with `std::isspace` against the **global locale**, so what
-it trims is a property of the process rather than of the program. Under the
-classic locale that set is `" \t\n\v\f\r"` — byte-for-byte the engine's — so it
-**agrees today and there is no witness to write**. It stops agreeing the moment
-anything calls `std::locale::global`.
-
-`CLAUDE.md` rejects exactly this class of dependency: the engine's helpers are
-*"ASCII-only ON PURPOSE"*, because *"goldens are byte-compared across Linux and
-Windows, so a locale-aware fold would make a render depend on `LC_ALL`"*.
-Refused for **unprovability**, not for observed disagreement.
-
 ---
 
-## Declared divergences from ECMAScript, inherited from the engine
+## The inherited host-libm qualification
 
-These are not mapping errors. They are places where the engine deviates and the
-mapping is right to follow it — recorded here because the native backend's
-divergence list (part 24, Phase 63 step 5) has to be one list, not two.
-
-1. **`trim` does not trim non-ASCII whitespace.** ECMAScript trims U+00A0 and
-   U+FEFF among others; `ctbrowser::js_whitespace` is ASCII-only and deliberate.
-   `"\u{a0}x\u{a0}".trim()` returns the string unchanged. Both the engine and
-   Boost behave this way; only the standard disagrees. **Pinned by a probe**, so
-   a change to one side alone is caught.
-2. **The transcendentals are the host's libm.** Exact against the oracle,
-   unspecified by the standard, and not portable across libm implementations.
-   See the caveat above.
+The transcendentals follow the host's libm: exact against the oracle,
+implementation-approximated by the standard, and not portable across libm
+implementations. See the caveat above. Unicode trim is no longer an inherited
+runtime divergence; the remaining disagreement belongs to the proposed C++
+targets.
 
 ## What this leaves for Phase 53 and Phase 63
 
@@ -378,6 +370,8 @@ The refusal list *is* the roadmap. In the order the corpora would want them:
    silent in both directions.
 5. **JSON last.** It needs the engine's number formatter to be callable from
    generated code, which is a bigger question than the row.
+6. **Unicode trim with the fixed ECMAScript set.** Neither the ASCII helper nor
+   locale-based byte classification supplies this operation.
 
 ## Notes for whoever writes the lowering
 

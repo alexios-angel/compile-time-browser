@@ -166,25 +166,31 @@ def Math_LOG10E : Exact<"Math.LOG10E", "std::numbers::log10e", "<numbers>",
     "the engine sets Math.LOG10E from std::numbers::log10e">;
 
 //===----------------------------------------------------------------------===//
-// String.prototype.trim - mapped, but NOT to Boost
+// String.prototype.trim - two divergent byte-oriented targets
 //===----------------------------------------------------------------------===//
 
-// THE ENGINE ALREADY OWNS THIS FUNCTION, and it is not the one the
-// specification named. `core/algorithms.hpp` has a constexpr `trim(text, set)`
-// whose whitespace SET is a parameter, because "HTML, JavaScript and the GLSL
-// preprocessor genuinely disagree about what whitespace is and unifying them
-// would be a bug" - and `js_whitespace` is the JavaScript one. It returns a
-// string_view rather than a string, which the same header records as **7x
-// faster** over 200,000 trims (2.0 ms against 14.2 ms) than the Boost call.
-//
-// It is BYTE-FOR-BYTE the interpreter's set: builtins/text.cpp's `trim` uses
-// the literal " \t\n\r\f\v", which is `js_whitespace` spelled out.
-def String_trim : Exact<"String.prototype.trim",
+// The interpreter now decodes the ECMAScript WhiteSpace + LineTerminator set
+// without a locale (builtins/text.cpp, 61416fc). The core helper still trims
+// only the ASCII six. Its former exact classification no longer holds.
+def String_trim : Divergent<"String.prototype.trim",
     "ctbrowser::trim(s, ctbrowser::js_whitespace)",
     "<ctbrowser/core/algorithms.hpp>",
-    "the same character set the interpreter's builtin uses, spelled once; ASCII "
-    "only, which is deliberate - CLAUDE.md keeps this set locale-free so a "
-    "render cannot depend on LC_ALL">;
+    "\"\\u00a0x\\u00a0\".trim()",
+    "the interpreter removes Unicode whitespace including U+00A0 and U+FEFF; "
+    "the byte-oriented helper's ASCII js_whitespace set leaves their UTF-8 "
+    "bytes intact. Both witnesses are checked, so an ASCII-only helper cannot "
+    "be emitted as the general String.prototype.trim operation">;
+
+// The specification's Boost spelling has the same observable witness now,
+// even with the classic locale pinned. Global-locale dependence is an
+// additional obstacle, not a reason to hide the existing disagreement.
+def String_trim_boost : Divergent<"String.prototype.trim",
+    "boost::algorithm::trim_copy", "<boost/algorithm/string.hpp>",
+    "\"\\u00a0x\\u00a0\".trim()",
+    "trim_copy classifies bytes with std::isspace. Under the explicitly pinned "
+    "classic locale it leaves UTF-8 U+00A0 and U+FEFF intact, while the "
+    "interpreter removes both. Its default overload also depends on the "
+    "process's global locale, whereas ECMAScript's whitespace set is fixed">;
 
 //===----------------------------------------------------------------------===//
 // The divergent rows - a witness each, and the test pins it
@@ -328,20 +334,3 @@ def Math_cbrt : Refused<"Math.cbrt", "std::cbrt", "<cmath>",
     "the host's libm cannot be proved, and this project byte-compares renders "
     "across Linux and Windows. No witness exists on this box, which is the "
     "reason this row is refused rather than divergent">;
-
-// THE ROW THE SPECIFICATION NAMED FOR trim. It is not observably wrong today,
-// and that is not the same as being right.
-def String_trim_boost : Refused<"String.prototype.trim",
-    "boost::algorithm::trim_copy", "<boost/algorithm/string.hpp>",
-    "trim_copy classifies with std::isspace against the GLOBAL locale, so what "
-    "it trims is a property of the process rather than of the program. Under "
-    "the classic locale that set is \" \\t\\n\\v\\f\\r\" - byte-for-byte the "
-    "engine's - so it agrees today and there is no witness to write. It stops "
-    "agreeing the moment anything calls std::locale::global, and CLAUDE.md "
-    "rejects exactly this class of dependency: the engine's own helpers are "
-    "ASCII-only ON PURPOSE, because 'goldens are byte-compared across Linux and "
-    "Windows, so a locale-aware fold would make a render depend on LC_ALL'. "
-    "Refused for unprovability, not for observed disagreement. Note also that "
-    "the engine and Boost agree with each other and BOTH diverge from "
-    "ECMAScript, which trims U+00A0 and U+FEFF as well - a declared divergence "
-    "inherited from the engine rather than introduced by the mapping">;

@@ -335,7 +335,7 @@ The distinction is the whole design, so it is the first column:
 | ND-11 | `({class:1}).class`, `({NAN:1}).NAN` | `1` | does not compile | **refused** |
 | ND-12 | `a.length = 5`, `a[100] = 1`, `delete a[0]` | resizes, or goes sparse | `std::vector` cannot hold a hole | **refused** |
 | ND-13 | `[true,false][1]` | `false` | `vector<bool>`'s proxy | **refused** |
-| ND-14 | `Math.round(-0.5)`, `Math.min(1,NaN)`, ten more | see the twelve rows | see the twelve rows | **refused** (no builtin lowers yet) |
+| ND-14 | `Math.round(-0.5)`, `Math.min(1,NaN)`, twelve more | see the fourteen mappings | see the fourteen mappings | listed target substitutions are **refused** |
 
 **Where each one is tested.**
 
@@ -776,16 +776,16 @@ so the two messages stay distinguishable.
 
 ---
 
-## ND-14 — the library map: twelve functions whose obvious C++ spelling is wrong
+## ND-14 — the library map: fourteen mappings whose obvious C++ spelling is wrong
 
-**Status:** declared, **refused today**. **Against:** the ctbrowser VM.
+**Status:** declared, listed target substitutions **refused**. **Against:** the ctbrowser VM.
 **Introduced:** Phase 61 (`StdLibMap.td`).
 
 ### The divergence
 
 `ctcompile/include/ctcompile/StdLib/StdLibMap.td` classifies every library
-function the specification names as `exact` (20 rows), `divergent` (12) or
-`refused` (3). The twelve divergent rows each carry a **witness expression**
+function the specification names as `exact` (19 rows), `divergent` (14) or
+`refused` (2). The fourteen divergent rows each carry a **witness expression**
 and the reason, and they are not corner cases:
 
 | row | witness | why the obvious spelling is wrong |
@@ -802,16 +802,20 @@ and the reason, and they are not corner cases:
 | `new RegExp()` | `/(.)\1/.test('aa')` | this engine has no backreferences or lookbehind; Boost has both, and they disagree in BOTH directions |
 | `JSON.parse` | `JSON.parse('{oops')` | this VM answers `undefined` where `boost::json` throws, and which path runs depends on the input |
 | `JSON.stringify` | `JSON.stringify(0.1)` | a different number formatter: `"0.1"` here, `"1E-1"` there |
+| `String.prototype.trim` → `ctbrowser::trim(s, js_whitespace)` | `"\u00a0x\u00a0".trim()` | JavaScript removes Unicode whitespace; the helper retains its UTF-8 bytes |
+| `String.prototype.trim` → `boost::algorithm::trim_copy` | the same, with the classic locale pinned | byte classification retains NBSP and BOM; the default overload additionally depends on the global locale |
+
+The trim classifications changed after `61416fc` made the interpreter's trim
+use ECMAScript's fixed WhiteSpace + LineTerminator set. The former ASCII-helper
+`exact` row and Boost `refused` row now have observable divergence witnesses.
 
 ### What the tier does about it
 
-**Nothing yet, and that is the honest status.** `StdLibMap.td` is referenced
-from `LowerToEmitC.cpp` only in a comment: no builtin call lowers natively at
-all today, so every one of these is refused by the generic *"`ctjs.get_property`
-is not native yet"* / *"`ctjs.call` is not native yet"* path rather than by a
-row of its own. The table is the roadmap for when they do, and it exists so
-that the day a `Math.round` is lowered, the person doing it meets the witness
-before they write `std::round`.
+`StdLibMap.td` is a tested inventory, not a lowering table. Native builtin
+helpers and admission have their own proof paths; these classifications apply
+to the exact library expressions in each `Target` field. Repaired native
+helpers do not make those substitutions valid. The trim inventory correction
+authorizes no native string lowering.
 
 **Obligation (Phase 61).** No divergent row may be lowered to the target its
 `Target` field names. The field is kept so the refusal names the thing it
