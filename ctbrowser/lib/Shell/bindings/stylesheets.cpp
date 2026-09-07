@@ -1124,14 +1124,37 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
 
 std::string dom_bindings::author_style_text() {
     std::string out;
-    for (const std::size_t at : css_document_sheets_) {
-        if (at >= css_sheets_.size()) { continue; }
+    const auto emit = [&](std::size_t at) {
+        if (at >= css_sheets_.size()) { return; }
         const std::unique_ptr<css_sheet_record> & sheet = css_sheets_[at];
-        if (sheet->disabled) { continue; }
+        if (sheet->disabled) { return; }
         for (const std::size_t rule : sheet->rules) {
             if (rule >= css_rule_store_.size()) { continue; }
             out += rule_css_text(*css_rule_store_[rule]);
             out += '\n';
+        }
+    };
+    for (const std::size_t at : css_document_sheets_) { emit(at); }
+    // AND THE ADOPTED SHEETS, AFTER THEM AND IN THEIR OWN ORDER.
+    //
+    // They were in the object model and in nothing else: `adoptedStyleSheets`
+    // held an array, `document.styleSheets` correctly did not include it (a
+    // constructed sheet is not a document sheet), and so a sheet a page adopted
+    // reached the cascade through no route at all. CSSOM puts them LAST in the
+    // final list of style sheets, which is what makes
+    // `adoptedStyleSheets = [red, green]` green and `[green, red]` red -
+    // `adoptedstylesheets-cascade-order.html` asserts exactly that pair, and
+    // then asserts it again for a rotation, which only an ordered walk of the
+    // array can answer.
+    //
+    // Read from the ARRAY rather than from a mirror kept beside it, because the
+    // page owns that array and a mirror updated only on assignment would be a
+    // second answer to what has been adopted.
+    if (script::object_object * internals = as_object(cssom_internals_)) {
+        if (const value * held = internals->find("adopted"); held != nullptr && held->is_array()) {
+            for (const value each : static_cast<script::array_object *>(held->as_heap())->items) {
+                emit(slot_index(as_object(each), sheet_key));
+            }
         }
     }
     return out;
@@ -1848,28 +1871,38 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         (void)c.call(method_value, forwarded, self);
         return value::number(-1);
     });
+    // The two differ in HOW they refuse, not in what they refuse: `replaceSync`
+    // THROWS a NotAllowedError and `replace` returns a promise REJECTED with
+    // one. `CSSStyleSheet-constructable-replace-on-regular-sheet.html` asserts
+    // both halves separately, and a throw out of `replace` fails that test with
+    // an uncaught exception rather than the rejection it is waiting for.
     const auto replace_rules = [this](context & c, std::span<value> args) -> bool {
         css_sheet_record * sheet = receiver_sheet(c);
-        if (sheet == nullptr || !sheet->constructed) {
-            throw_dom_exception(c, "NotAllowedError",
-                                "replace is only allowed on a constructed stylesheet");
-            return false;
-        }
+        if (sheet == nullptr || !sheet->constructed) { return false; }
         const std::size_t at = slot_index(as_object(c.current_this()), sheet_key);
         parse_sheet_rules(at, args.empty() ? std::string{} : c.to_string(args[0]));
         style_sheets_changed();
         return true;
     };
-    method(sheet_proto, "replaceSync", [replace_rules](context & c, std::span<value> args) {
-        (void)replace_rules(c, args);
+    method(sheet_proto, "replaceSync", [this, replace_rules](context & c, std::span<value> args) {
+        if (!replace_rules(c, args)) {
+            throw_dom_exception(c, "NotAllowedError",
+                                "replace is only allowed on a constructed stylesheet");
+        }
         return value::undefined();
     });
-    method(sheet_proto, "replace", [replace_rules](context & c, std::span<value> args) {
+    method(sheet_proto, "replace", [this, replace_rules](context & c, std::span<value> args) {
         // The work is synchronous - there is no subresource to fetch, `@import`
-        // being ignored - so the promise is already resolved. What matters to a
-        // page is that it IS a promise and that it resolves with the sheet.
+        // being ignored - so the promise is already settled. What matters to a
+        // page is that it IS a promise, that it resolves with the sheet, and
+        // that a refusal arrives as a rejection.
         const value self = c.current_this();
-        if (!replace_rules(c, args)) { return value::undefined(); }
+        if (!replace_rules(c, args)) {
+            return c.make_promise(make_dom_exception(c, "NotAllowedError",
+                                                     "replace is only allowed on a "
+                                                     "constructed stylesheet"),
+                                  true);
+        }
         return c.make_promise(self, false);
     });
 

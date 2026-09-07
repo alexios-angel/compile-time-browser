@@ -41,6 +41,7 @@
 
 #include "check.hpp"
 
+#include <memory>
 #include <string>
 #include <string_view>
 
@@ -473,6 +474,69 @@ void test_the_text_the_cascade_would_get() {
     CHECK_EQ(off.bindings().author_style_text(), std::string{});
 }
 
+// AN ADOPTED SHEET REACHES THE AUTHOR CSS, and in the order it was adopted in.
+//
+// It was in the object model and in nothing else: `document.styleSheets`
+// correctly does not include a constructed sheet, so a sheet a page adopted
+// appeared in no serialisation of the document's styles at all. CSSOM puts the
+// adopted sheets LAST in the final list, which is what makes
+// `adoptedStyleSheets = [red, green]` green and `[green, red]` red -
+// `adoptedstylesheets-cascade-order.html` asserts that pair and then asserts it
+// again for a rotation that adds and removes nothing.
+//
+// THE TEXT AND NOT A PIXEL, for the same reason the case above asserts text:
+// `set_author_styles_hook` is still unfilled, so `browser::refresh_author_styles`
+// re-collects the `<style>` elements' own bytes and an adopted sheet is not one
+// of them. What this pins is the contract between the two rungs.
+void test_an_adopted_sheet_reaches_the_author_css() {
+    const auto adopt = [](const char * order) {
+        auto page = std::make_unique<browser>(browser_options{400, 200});
+        page->load_html(std::string{R"(<html><head><style>#t { color: rgb(1, 2, 3) }</style>
+        </head><body><p id=t>x</p><script>
+            const red = new CSSStyleSheet();
+            red.replaceSync('#t { color: rgb(255, 0, 0) }');
+            const green = new CSSStyleSheet();
+            green.replaceSync('#t { color: rgb(0, 128, 0) }');
+            document.adoptedStyleSheets = [)"} +
+                        order + R"(];
+        </script></body></html>)");
+        return page;
+    };
+    const std::unique_ptr<browser> first = adopt("red, green");
+    CHECK(first->script_error().empty());
+    CHECK_EQ(first->bindings().author_style_text(),
+             std::string{"#t { color: rgb(1, 2, 3); }\n#t { color: rgb(255, 0, 0); }\n"
+                         "#t { color: rgb(0, 128, 0); }\n"});
+    const std::unique_ptr<browser> second = adopt("green, red");
+    CHECK(second->script_error().empty());
+    CHECK_EQ(second->bindings().author_style_text(),
+             std::string{"#t { color: rgb(1, 2, 3); }\n#t { color: rgb(0, 128, 0); }\n"
+                         "#t { color: rgb(255, 0, 0); }\n"});
+    const std::unique_ptr<browser> none = adopt("");
+    CHECK(none->script_error().empty());
+    CHECK_EQ(none->bindings().author_style_text(), std::string{"#t { color: rgb(1, 2, 3); }\n"});
+}
+
+// `replace` and `replaceSync` REFUSE DIFFERENTLY: one throws and one rejects.
+void test_replace_refuses_a_regular_sheet() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>#t { color: rgb(1, 2, 3) }</style></head>
+    <body><p id=t>x</p><script>
+        let caught = '';
+        try { document.styleSheets[0].replaceSync('#t { color: red }'); }
+        catch (e) { caught = e.name; }
+        console.log('sync=' + caught);
+        document.styleSheets[0].replace('#t { color: red }').then(
+            function () { console.log('async=resolved'); },
+            function (e) { console.log('async=' + e.name); });
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "sync="), std::string{"sync=NotAllowedError"});
+    // A throw out of `replace` fails the suite's test with an uncaught exception
+    // rather than the rejection it is waiting for.
+    CHECK_EQ(logged(page, "async="), std::string{"async=NotAllowedError"});
+}
+
 // A `<style>` A SCRIPT APPENDS ACTUALLY APPLIES. `browser::load_author_styles`
 // latched, so until `refresh_author_styles` this did nothing at all - injecting
 // a stylesheet and then reading `getComputedStyle` is how a great many tests
@@ -517,6 +581,8 @@ int main() {
     test_a_constructed_sheet();
     test_the_sheet_of_an_element();
     test_the_text_the_cascade_would_get();
+    test_an_adopted_sheet_reaches_the_author_css();
+    test_replace_refuses_a_regular_sheet();
     test_an_injected_style_element_restyles();
     REPORT("cssom");
 }
