@@ -44,12 +44,15 @@
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Parser/Parser.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -99,6 +102,10 @@ struct row {
     // Query a synthetic Stored witness on the marked operation to exercise a
     // missing target lattice or a malformed operand position independently.
     std::optional<unsigned> storageWitnessPosition = std::nullopt;
+    // Full direct-write census, including writes after the first sink and
+    // writes whose value has no tracked site. Semicolon-separated in IR order.
+    const char * storageWrites = nullptr;
+    std::optional<bool> completeStorage = std::nullopt;
 };
 
 // The header every row shares - TypeInference.cpp's: three implicit arguments
@@ -294,6 +301,53 @@ void check(mlir::MLIRContext & context, const row & r) {
                 fail(r, "storage target verdicts: expected " +
                             std::string{r.storageTargetVerdicts} + ", got " + joined);
             }
+        }
+    }
+    if (r.storageWrites != nullptr) {
+        std::string writes;
+        llvm::raw_string_ostream os{writes};
+        const auto printAliases = [&](const AliasValue & aliases) {
+            if (aliases.isUninitialized()) {
+                os << "<uninitialized>";
+                return;
+            }
+            // Optional test labels distinguish two sites of the same kind.
+            // Sort by text so their allocator addresses cannot reorder a row.
+            std::vector<std::string> names;
+            for (mlir::Operation * site : aliases.getSites()) {
+                std::string name = site->getName().getStringRef().str();
+                if (auto label = site->getAttrOfType<mlir::StringAttr>("storage_test_id")) {
+                    name += "@" + label.getValue().str();
+                }
+                names.push_back(std::move(name));
+            }
+            std::sort(names.begin(), names.end());
+            if (aliases.isExternal()) { names.emplace_back("external"); }
+            os << '{' << llvm::join(names, ", ") << '}';
+        };
+        for (const DirectStorageWrite & write : verdicts.directStorage.writes) {
+            if (!writes.empty()) { os << "; "; }
+            os << write.by->getName().getStringRef() << '[' << write.position << "] ";
+            printAliases(write.value);
+            os << " -> ";
+            printAliases(write.target);
+        }
+        if (writes != r.storageWrites) {
+            fail(r, "direct writes: expected " + std::string{r.storageWrites} + ", got " + writes);
+        }
+    }
+    if (r.completeStorage && verdicts.directStorage.complete != *r.completeStorage) {
+        fail(r, "direct-write census has the wrong completeness marker");
+    }
+    // Every first Stored witness must also occur in the all-write census.
+    // One write can contain more than one site after an alias join.
+    for (const auto & [site, verdict] : verdicts.sites) {
+        if (verdict.reason != EscapeReason::Stored) { continue; }
+        if (!llvm::any_of(verdicts.directStorage.writes, [&](const DirectStorageWrite & write) {
+                return write.by == verdict.by && write.position == verdict.position &&
+                       llvm::is_contained(write.value.getSites(), site);
+            })) {
+            fail(r, "the direct-write census omitted a first Stored witness");
         }
     }
 
@@ -990,11 +1044,15 @@ int main() {
          .body = S + "  %r = ctjs.suspend await %p\n" + R,
          .expected = "escapes:suspended",
          .roles = "ctjs.suspend sink:stored",
-         .wholeFunction = "suspended"},
+         .wholeFunction = "suspended",
+         .storageWrites = "ctjs.suspend[0] {external} -> <uninitialized>",
+         .completeStorage = false},
         {.what = "suspend's own operand: the refusal is the first reason, not stored",
          .body = S + "  %r = ctjs.suspend yield %s\n" + R,
          .expected = "escapes:suspended",
-         .wholeFunction = "suspended"},
+         .wholeFunction = "suspended",
+         .storageWrites = "ctjs.suspend[0] {ctjs.create_object} -> <uninitialized>",
+         .completeStorage = false},
 
         // ===================================================================
         // THE CLOSURE HOLE - no untracked allocation ever enters an alias set
@@ -1288,7 +1346,9 @@ int main() {
          .body = S + "  ctjs.set_property %s[%q], %s\n" + R,
          .expected = "escapes:stored",
          .storageTarget = "{ctjs.create_object}",
-         .storageTargetVerdicts = "escapes:stored"},
+         .storageTargetVerdicts = "escapes:stored",
+         .storageWrites = "ctjs.set_property[2] {ctjs.create_object} -> {ctjs.create_object}",
+         .completeStorage = true},
         {.what = "a local target with an accessor does not prove direct field retention",
          .body =
              S +
@@ -1320,7 +1380,10 @@ int main() {
              R,
          .expected = "escapes:stored",
          .storageTarget = "{ctjs.create_object, external}",
-         .storageTargetVerdicts = "confined"},
+         .storageTargetVerdicts = "confined",
+         .storageWrites =
+             "ctjs.set_property[2] {ctjs.create_object} -> {ctjs.create_object, external}",
+         .completeStorage = true},
         {.what = "a local storage target join retains both confinement verdicts",
          .body =
              S +
@@ -1348,7 +1411,9 @@ int main() {
              R,
          .expected = "escapes:stored",
          .storageTarget = "{ctjs.create_array}",
-         .storageTargetVerdicts = "confined"},
+         .storageTargetVerdicts = "confined",
+         .storageWrites = "ctjs.append[1] {ctjs.create_object} -> {ctjs.create_array}",
+         .completeStorage = true},
         {.what = "a property-loaded target stays external without contents tracking",
          .body =
              S +
@@ -1370,7 +1435,10 @@ int main() {
          .expected = "escapes:stored",
          .by = "ctjs.create_array",
          .storageTarget = "{ctjs.create_array}",
-         .storageTargetVerdicts = "confined"},
+         .storageTargetVerdicts = "confined",
+         .storageWrites = "ctjs.create_array[0] {ctjs.create_object} -> {ctjs.create_array}; "
+                          "ctjs.set_property[2] {ctjs.create_object} -> {external}",
+         .completeStorage = true},
         {.what = "an earlier cell store is not reclassified from a later array store",
          .body =
              S +
@@ -1379,7 +1447,10 @@ int main() {
              R,
          .expected = "escapes:stored",
          .by = "ctjs.create_cell",
-         .storageTarget = "<uninitialized>"},
+         .storageTarget = "<uninitialized>",
+         .storageWrites = "ctjs.create_cell[0] {ctjs.create_object} -> <uninitialized>; "
+                          "ctjs.create_array[0] {ctjs.create_object} -> {ctjs.create_array}",
+         .completeStorage = false},
         {.what = "a dead block's store does not produce target evidence",
          .body = S + "  ctjs.return %p\n"
                      "^dead:\n"
@@ -1387,14 +1458,18 @@ int main() {
                      "  ctjs.return %p\n",
          .expected = "confined",
          .deadSites = 1,
-         .storageTarget = "<uninitialized>"},
+         .storageTarget = "<uninitialized>",
+         .storageWrites = "",
+         .completeStorage = true},
         {.what = "a missing storage target lattice stays unresolved",
          .body = "  ctjs.append %p to %q {check}\n" + R,
          .expected = "<no verdict>",
          .unvisitedOperands = 2,
          .withAnalysis = false,
          .storageTarget = "<uninitialized>",
-         .storageWitnessPosition = 1},
+         .storageWitnessPosition = 1,
+         .storageWrites = "ctjs.append[1] <uninitialized> -> <uninitialized>",
+         .completeStorage = false},
         {.what = "an append target is not its Stored operand",
          .body = "  ctjs.append %p to %q {check}\n" + R,
          .expected = "<no verdict>",
@@ -1410,6 +1485,175 @@ int main() {
          .expected = "<no verdict>",
          .storageTarget = "<uninitialized>",
          .storageWitnessPosition = 1},
+
+        // ALL-WRITE EVIDENCE: a first witness cannot describe later writes or
+        // the external/primitive values stored into a local target. The
+        // complete marker describes this census, never a confinement proof.
+        {.what = "a prior call escape does not hide later local and external writes",
+         .body =
+             S +
+             "  %called = ctjs.call %p(%q, %s)\n"
+             "  %outer = ctjs.create_array [%s]\n"
+             "  ctjs.set_property %p[%q], %s\n" +
+             R,
+         .expected = "escapes:passed",
+         .by = "ctjs.call",
+         .position = 2,
+         .storageWrites = "ctjs.create_array[0] {ctjs.create_object} -> {ctjs.create_array}; "
+                          "ctjs.set_property[2] {ctjs.create_object} -> {external}",
+         .completeStorage = true},
+        {.what = "repeated literal elements retain distinct write positions",
+         .body = S + "  %outer = ctjs.create_array [%s, %p, %s]\n" + R,
+         .expected = "escapes:stored",
+         .storageWrites = "ctjs.create_array[0] {ctjs.create_object} -> {ctjs.create_array}; "
+                          "ctjs.create_array[1] {external} -> {ctjs.create_array}; "
+                          "ctjs.create_array[2] {ctjs.create_object} -> {ctjs.create_array}",
+         .completeStorage = true},
+        {.what = "a primitive overwrite never erases the earlier object write",
+         .body =
+             S +
+             "  %outer = ctjs.create_object\n"
+             "  %zero = ctjs.constant #ctjs.number<0>\n"
+             "  ctjs.set_property %outer[%zero], %s\n"
+             "  ctjs.set_property %outer[%zero], %zero\n" +
+             R,
+         .expected = "escapes:stored",
+         .storageWrites = "ctjs.set_property[2] {ctjs.create_object} -> {ctjs.create_object}; "
+                          "ctjs.set_property[2] {} -> {ctjs.create_object}",
+         .completeStorage = true},
+        {.what = "a confined target's external and primitive contents both enter the census",
+         .body =
+             S +
+             "  %zero = ctjs.constant #ctjs.number<0>\n"
+             "  ctjs.set_property %s[%zero], %p\n"
+             "  ctjs.set_property %s[%zero], %zero\n" +
+             R,
+         .expected = "confined",
+         .storageWrites = "ctjs.set_property[2] {external} -> {ctjs.create_object}; "
+                          "ctjs.set_property[2] {} -> {ctjs.create_object}",
+         .completeStorage = true},
+        {.what = "a joined stored value retains its local and external alternatives",
+         .body =
+             S +
+             "  %outer = ctjs.create_array []\n"
+             "  %t = ctjs.truthy %p\n"
+             "  cf.cond_br %t, ^join(%s : !ctjs.value), ^join(%p : !ctjs.value)\n"
+             "^join(%value: !ctjs.value):\n"
+             "  ctjs.append %value to %outer\n" +
+             R,
+         .expected = "escapes:stored",
+         .storageWrites = "ctjs.append[1] {ctjs.create_object, external} -> {ctjs.create_array}",
+         .completeStorage = true},
+        {.what = "both live branch stores are retained after the first branch wins the verdict",
+         .body =
+             S +
+             "  %t = ctjs.truthy %p\n"
+             "  cf.cond_br %t, ^local, ^external\n"
+             "^local:\n"
+             "  %outer = ctjs.create_array [%s]\n"
+             "  cf.br ^exit\n"
+             "^external:\n"
+             "  ctjs.set_property %p[%q], %s\n"
+             "  cf.br ^exit\n"
+             "^exit:\n" +
+             R,
+         .expected = "escapes:stored",
+         .by = "ctjs.create_array",
+         .storageWrites = "ctjs.create_array[0] {ctjs.create_object} -> {ctjs.create_array}; "
+                          "ctjs.set_property[2] {ctjs.create_object} -> {external}",
+         .completeStorage = true},
+        {.what = "a spread call does not turn a complete direct-write census into confinement",
+         .body =
+             S +
+             "  %outer = ctjs.create_array [%s]\n"
+             "  %called = ctjs.call_spread %p(%q, %outer)\n" +
+             R,
+         .expected = "escapes:stored",
+         .storageWrites = "ctjs.create_array[0] {ctjs.create_object} -> {ctjs.create_array}",
+         .completeStorage = true},
+        {.what = "a two-object cycle preserves both directed writes without changing escape",
+         .body = "  %s = ctjs.create_object {check, storage_test_id = \"s\"}\n"
+                 "  %other = ctjs.create_object {storage_test_id = \"other\"}\n"
+                 "  ctjs.set_property %s[%q], %other\n"
+                 "  ctjs.set_property %other[%q], %s\n" +
+                 R,
+         .expected = "escapes:stored",
+         .storageWrites =
+             "ctjs.set_property[2] {ctjs.create_object@other} -> {ctjs.create_object@s}; "
+             "ctjs.set_property[2] {ctjs.create_object@s} -> {ctjs.create_object@other}",
+         .completeStorage = true},
+        {.what = "one joined write retains both distinct local child sites",
+         .body = "  %s = ctjs.create_object {check, storage_test_id = \"s\"}\n"
+                 "  %other = ctjs.create_object {storage_test_id = \"other\"}\n"
+                 "  %outer = ctjs.create_array []\n"
+                 "  %t = ctjs.truthy %p\n"
+                 "  cf.cond_br %t, ^join(%s : !ctjs.value), ^join(%other : !ctjs.value)\n"
+                 "^join(%value: !ctjs.value):\n"
+                 "  ctjs.append %value to %outer\n" +
+                 R,
+         .expected = "escapes:stored",
+         .storageWrites = "ctjs.append[1] {ctjs.create_object@other, ctjs.create_object@s} -> "
+                          "{ctjs.create_array}",
+         .completeStorage = true},
+        {.what = "loop-created instances and carried external provenance share one static write",
+         .body = "  %outer = ctjs.create_array []\n"
+                 "  cf.br ^loop(%p : !ctjs.value)\n"
+                 "^loop(%previous: !ctjs.value):\n" +
+                 S +
+                 "  ctjs.append %previous to %outer\n"
+                 "  %t = ctjs.truthy %p\n"
+                 "  cf.cond_br %t, ^loop(%s : !ctjs.value), ^exit\n"
+                 "^exit:\n" +
+                 R,
+         .expected = "escapes:stored",
+         .storageWrites = "ctjs.append[1] {ctjs.create_object, external} -> {ctjs.create_array}",
+         .completeStorage = true},
+        {.what = "an unsupported destination remains incomplete with no tracked stored child",
+         .body = S + "  %cell = ctjs.create_cell %p\n" + R,
+         .expected = "confined",
+         .storageWrites = "ctjs.create_cell[0] {external} -> <uninitialized>",
+         .completeStorage = false},
+        {.what = "a nested later store makes the direct-write census incomplete",
+         .body =
+             S +
+             "  %outer = ctjs.create_array [%s]\n"
+             "  %t = ctjs.truthy %p\n"
+             "  scf.if %t {\n"
+             "    ctjs.set_property %p[%q], %s\n"
+             "  }\n" +
+             R,
+         .expected = "escapes:stored",
+         .storageWrites = "ctjs.create_array[0] {ctjs.create_object} -> {ctjs.create_array}",
+         .completeStorage = false},
+        {.what = "even an unrelated live nested region prevents a complete direct-write census",
+         .body =
+             S +
+             "  %t = ctjs.truthy %p\n"
+             "  scf.if %t {\n"
+             "    ctjs.set_property %p[%q], %p\n"
+             "  }\n" +
+             R,
+         .expected = "confined",
+         .storageWrites = "",
+         .completeStorage = false},
+        {.what = "a nested store in a dead CFG block does not taint the live census",
+         .body = S + "  ctjs.return %p\n"
+                     "^dead:\n"
+                     "  %t = ctjs.truthy %p\n"
+                     "  scf.if %t {\n"
+                     "    ctjs.set_property %p[%q], %s\n"
+                     "  }\n"
+                     "  ctjs.return %p\n",
+         .expected = "confined",
+         .storageWrites = "",
+         .completeStorage = true},
+        {.what = "late arguments retention prevents a complete direct-write census",
+         .body = S + "  %arguments = ctjs.make_arguments\n" + R,
+         .expected = "escapes:arguments_late",
+         .capturesAllArguments = true,
+         .wholeFunction = "arguments_late",
+         .storageWrites = "",
+         .completeStorage = false},
     };
 
     for (const row & r : rows) { check(context, r); }

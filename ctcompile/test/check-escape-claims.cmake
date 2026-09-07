@@ -85,6 +85,24 @@ if(NOT _stored_targets EQUAL _classified_targets OR NOT _stored_targets EQUAL _s
   message(FATAL_ERROR "${NAME}: ${_stored_targets} storage witnesses, ${_classified_targets} classified targets, ${_stored_claim_count} Stored claims - incomplete storage evidence")
 endif()
 
+# The all-write census must cover each first witness, including joins where one
+# write stores several sites. Additional writes and other first reasons are
+# precision evidence, not new confinement claims. Unsupported targets/regions
+# retain partial records with an explicit incomplete marker.
+if(NOT "${_out}${_err}" MATCHES "stored direct-write census: ([0-9]+) writes, ([0-9]+) site edges, ([0-9]+) multiple-store sites, ([0-9]+) other-first sites, ([0-9]+) unresolved values, ([0-9]+) unresolved targets")
+  message(FATAL_ERROR "the claims emitter did not report its all-write census:\n${_out}${_err}")
+endif()
+if(CMAKE_MATCH_2 LESS _stored_claim_count OR NOT CMAKE_MATCH_5 EQUAL 0)
+  message(FATAL_ERROR "${NAME}: missing Stored site edges or unresolved stored values in the all-write census")
+endif()
+if(NOT "${_out}${_err}" MATCHES "stored direct-write coverage: ([0-9]+) first witnesses of ([0-9]+) Stored sites, ([0-9]+) complete and ([0-9]+) incomplete of ([0-9]+) functions")
+  message(FATAL_ERROR "the claims emitter did not report all-write completeness:\n${_out}${_err}")
+endif()
+math(EXPR _storage_functions "${CMAKE_MATCH_3} + ${CMAKE_MATCH_4}")
+if(NOT CMAKE_MATCH_1 EQUAL _stored_claim_count OR NOT CMAKE_MATCH_2 EQUAL _stored_claim_count OR NOT _storage_functions EQUAL CMAKE_MATCH_5)
+  message(FATAL_ERROR "${NAME}: the all-write census did not cover every first Stored witness or classify every function")
+endif()
+
 execute_process(
   COMMAND "${PYTHON}" "${SCRIPT}" --recording "${_rec}" --claims "${_claims}"
           --name "${NAME}" --max-report 0 --expect-violations 0

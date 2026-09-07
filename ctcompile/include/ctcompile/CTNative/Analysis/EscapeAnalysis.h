@@ -186,11 +186,38 @@ struct Verdict {
 [[nodiscard]] AliasValue directStorageTarget(const mlir::DataFlowSolver & solver,
                                              const Verdict & verdict);
 
+/// One live top-level operand whose ODS escape role is Stored. Unlike Verdict,
+/// this record survives earlier sinks and includes external/primitive values:
+/// those writes matter to the contents of a local target too. A variadic array
+/// initializer contributes one record per element, in operand order.
+struct DirectStorageWrite {
+    mlir::Operation * by = nullptr;
+    unsigned position = 0;
+    AliasValue value;
+    AliasValue target;
+};
+
+struct DirectStorageEvidence {
+    llvm::SmallVector<DirectStorageWrite, 0> writes;
+    /// All Stored operands in the live top-level CFG have initialized value
+    /// and supported direct-target aliases, with no nested-region or raw-frame
+    /// refusal. False preserves the partial records, never an empty success.
+    ///
+    /// This is completeness of the direct-write census ONLY. It says nothing
+    /// about indirect contents transfers (copy_props, loads, spread calls),
+    /// setters, other escape reasons or object instances sharing a site. Even
+    /// when true it is not a contents/retention proof or permission to weaken
+    /// Stored. External alternatives are complete evidence, not local owners.
+    bool complete = true;
+};
+
 struct EscapeVerdicts {
     /// Every tracked site in a LIVE top-level CFG block, in program order
     /// (a MapVector so the claims file is deterministic). Sites in dead CFG
     /// blocks are dropped and counted. Nested-region sites are out of scope.
     llvm::MapVector<mlir::Operation *, Verdict> sites;
+    /// Every direct Stored write, independently of the first-reason verdicts.
+    DirectStorageEvidence directStorage;
     unsigned deadSites = 0;
     /// A site in a live block whose result lattice the solver never
     /// initialized: `escapes(unvisited)`, counted, gated at zero.

@@ -321,6 +321,10 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
         ++out.liveBlocks;
         live.push_back(&block);
         for (mlir::Operation & op : block) {
+            // A region may hide writes that the top-level operand census
+            // cannot model. Keep the records from this CFG, but never present
+            // them as complete. The capture refusal below is still separate.
+            if (op.getNumRegions() != 0) { out.directStorage.complete = false; }
             if (isTrackedSite(&op)) {
                 Verdict verdict;
                 const AliasLattice * lattice = solver.lookupState<AliasLattice>(op.getResult(0));
@@ -355,6 +359,7 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
     };
     const auto refuseWholeFunction = [&](EscapeReason reason, mlir::Operation * by) {
         if (!out.wholeFunction) { out.wholeFunction = reason; }
+        out.directStorage.complete = false;
         for (auto & entry : out.sites) { mark(entry.first, reason, by, 0); }
     };
 
@@ -400,6 +405,14 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
     const auto sink = [&](mlir::Value value, EscapeReason reason, mlir::Operation * by,
                           unsigned position) {
         const AliasLattice * lattice = solver.lookupState<AliasLattice>(value);
+        if (reason == EscapeReason::Stored) {
+            const AliasValue aliases = lattice != nullptr ? lattice->getValue() : AliasValue{};
+            const AliasValue target = directStorageTarget(solver, Verdict{reason, by, position});
+            out.directStorage.writes.push_back({by, position, aliases, target});
+            if (aliases.isUninitialized() || target.isUninitialized()) {
+                out.directStorage.complete = false;
+            }
+        }
         if (lattice == nullptr || lattice->getValue().isUninitialized()) {
             // A gap: the solver never told us what this operand may denote,
             // so it may denote anything - every site of the function.

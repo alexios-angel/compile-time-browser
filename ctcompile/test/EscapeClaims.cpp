@@ -27,6 +27,7 @@
 #include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
+#include "llvm/ADT/STLExtras.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -148,6 +149,15 @@ int main(int argc, char ** argv) {
     std::size_t externalTargets = 0;
     std::size_t primitiveTargets = 0;
     std::size_t unresolvedTargets = 0;
+    std::size_t directWrites = 0;
+    std::size_t storageSiteEdges = 0;
+    std::size_t multipleStoreSites = 0;
+    std::size_t otherFirstSites = 0;
+    std::size_t unresolvedWriteValues = 0;
+    std::size_t unresolvedWriteTargets = 0;
+    std::size_t coveredStoredWitnesses = 0;
+    std::size_t completeStorageFunctions = 0;
+    std::size_t incompleteStorageFunctions = 0;
 
     imported.module->walk([&](ctcompile::ctjs::FuncOp fn) {
         ++functions;
@@ -167,13 +177,38 @@ int main(int argc, char ** argv) {
         EscapeVerdicts verdicts = computeVerdicts(solver, fn);
         unvisitedSites += verdicts.unvisitedSites;
         unvisitedOperands += verdicts.unvisitedOperands;
+        if (verdicts.directStorage.complete) {
+            ++completeStorageFunctions;
+        } else {
+            ++incompleteStorageFunctions;
+        }
+        std::map<mlir::Operation *, std::size_t> storesPerSite;
+        for (const DirectStorageWrite & write : verdicts.directStorage.writes) {
+            ++directWrites;
+            storageSiteEdges += write.value.getSites().size();
+            if (write.value.isUninitialized()) { ++unresolvedWriteValues; }
+            if (write.target.isUninitialized()) { ++unresolvedWriteTargets; }
+            for (mlir::Operation * site : write.value.getSites()) { ++storesPerSite[site]; }
+        }
+        for (const auto & [site, count] : storesPerSite) {
+            if (count > 1) { ++multipleStoreSites; }
+            const auto found = verdicts.sites.find(site);
+            if (found != verdicts.sites.end() && found->second.reason != EscapeReason::Stored) {
+                ++otherFirstSites;
+            }
+        }
         // Count FIRST WITNESSES, not complete ownership graphs. In particular,
         // a confined argument array can expose its children to a spread callee.
         // Keep this diagnostic separate from the oracle's retention claims.
         for (const auto & [site, verdict] : verdicts.sites) {
-            (void)site;
             if (verdict.reason != EscapeReason::Stored) { continue; }
             ++stored;
+            if (llvm::any_of(verdicts.directStorage.writes, [&](const DirectStorageWrite & write) {
+                    return write.by == verdict.by && write.position == verdict.position &&
+                           llvm::is_contained(write.value.getSites(), site);
+                })) {
+                ++coveredStoredWitnesses;
+            }
             const AliasValue target = directStorageTarget(solver, verdict);
             bool confinedTarget = false;
             bool escapingTarget = false;
@@ -272,5 +307,16 @@ int main(int argc, char ** argv) {
                  "unresolved (diagnostic only; Stored verdicts unchanged)\n",
                  stored, localConfinedTargets, localEscapingTargets, mixedLocalTargets,
                  externalTargets, primitiveTargets, unresolvedTargets);
+    std::fprintf(stderr,
+                 "stored direct-write census: %zu writes, %zu site edges, %zu multiple-store "
+                 "sites, %zu other-first sites, %zu unresolved values, %zu unresolved targets\n",
+                 directWrites, storageSiteEdges, multipleStoreSites, otherFirstSites,
+                 unresolvedWriteValues, unresolvedWriteTargets);
+    std::fprintf(stderr,
+                 "stored direct-write coverage: %zu first witnesses of %zu Stored sites, %zu "
+                 "complete and %zu incomplete of %zu functions (direct writes only; no contents "
+                 "or retention proof)\n",
+                 coveredStoredWitnesses, stored, completeStorageFunctions,
+                 incompleteStorageFunctions, functions);
     return 0;
 }
