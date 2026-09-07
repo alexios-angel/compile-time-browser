@@ -45,6 +45,7 @@
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Parser/Parser.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <optional>
 #include <sstream>
@@ -91,6 +92,13 @@ struct row {
     // false: the solver runs WITHOUT EscapeAnalysis, so every lattice is
     // missing and the post-pass has to account for a live site it never saw.
     bool withAnalysis = true;
+    // Direct target evidence for the first Stored witness. This never changes
+    // `expected`, which still asserts the original escape verdict.
+    const char * storageTarget = nullptr;
+    const char * storageTargetVerdicts = nullptr;
+    // Query a synthetic Stored witness on the marked operation to exercise a
+    // missing target lattice or a malformed operand position independently.
+    std::optional<unsigned> storageWitnessPosition = std::nullopt;
 };
 
 // The header every row shares - TypeInference.cpp's: three implicit arguments
@@ -257,6 +265,37 @@ void check(mlir::MLIRContext & context, const row & r) {
             fail(r, "escape witness does not name the expected operation and operand");
         }
     }
+    if (r.storageTarget != nullptr) {
+        const auto found = verdicts.sites.find(marked);
+        const Verdict witness =
+            r.storageWitnessPosition
+                ? Verdict{EscapeReason::Stored, marked, *r.storageWitnessPosition}
+                : (found != verdicts.sites.end() ? found->second : Verdict{});
+        const AliasValue target = directStorageTarget(solver, witness);
+        std::string aliases;
+        llvm::raw_string_ostream os{aliases};
+        target.print(os);
+        if (aliases != r.storageTarget) {
+            fail(r,
+                 "storage target: expected " + std::string{r.storageTarget} + ", got " + aliases);
+        }
+        if (r.storageTargetVerdicts != nullptr) {
+            std::vector<std::string> reasons;
+            for (mlir::Operation * site : target.getSites()) {
+                reasons.push_back(verdictString(verdicts, site));
+            }
+            std::sort(reasons.begin(), reasons.end());
+            std::string joined;
+            for (const std::string & reason : reasons) {
+                if (!joined.empty()) { joined += ","; }
+                joined += reason;
+            }
+            if (joined != r.storageTargetVerdicts) {
+                fail(r, "storage target verdicts: expected " +
+                            std::string{r.storageTargetVerdicts} + ", got " + joined);
+            }
+        }
+    }
 
     // THE COUNTERS, every one of them: a counter nobody asserts is a counter
     // that can silently stop counting.
@@ -334,7 +373,9 @@ int main() {
          .body = S + "  %a = ctjs.create_array [%s]\n" + R,
          .expected = "escapes:stored",
          .roles = "ctjs.create_array sink:stored",
-         .boxed = ""},
+         .boxed = "",
+         .storageTarget = "{ctjs.create_array}",
+         .storageTargetVerdicts = "confined"},
 
         // ===================================================================
         // ALLOCATION - the NEITHER/CARRY positives and the SINK negatives
@@ -345,12 +386,15 @@ int main() {
          .roles = "ctjs.append neither sink:stored"},
         {.what = "append: $element SINK(stored)",
          .body = S + "  %a = ctjs.create_array []\n  ctjs.append %s to %a\n" + R,
-         .expected = "escapes:stored"},
+         .expected = "escapes:stored",
+         .storageTarget = "{ctjs.create_array}",
+         .storageTargetVerdicts = "confined"},
         {.what = "create_cell: $initial SINK(stored), slot traced o.cpp:59; result phase59",
          .body = S + "  %c = ctjs.create_cell %s\n" + R,
          .expected = "escapes:stored",
          .roles = "ctjs.create_cell sink:stored",
-         .boxed = "phase59"},
+         .boxed = "phase59",
+         .storageTarget = "<uninitialized>"},
         {.what = "create_closure: $enclosing_closure NEITHER (c.cpp:881, 910-911 read only)",
          .body = S + "  %f = ctjs.create_closure %s[0] this %p captures %q\n" + R,
          .expected = "confined",
@@ -424,7 +468,9 @@ int main() {
                  "  %outer = ctjs.create_array [%s]\n"
                  "  ctjs.store_global \"g\", %outer\n" +
                  R,
-         .expected = "escapes:stored"},
+         .expected = "escapes:stored",
+         .storageTarget = "{ctjs.create_array}",
+         .storageTargetVerdicts = "escapes:stored_global"},
         {.what = "the enclosing container keeps its distinct global-publication reason",
          .body = "  %child = ctjs.create_object\n"
                  "  %outer = ctjs.create_array [%child] {check}\n"
@@ -440,7 +486,9 @@ int main() {
          .expected = "escapes:converted"},
         {.what = "set_property: $value SINK(stored), value.hpp:632-639",
          .body = S + "  ctjs.set_property %p[%q], %s\n" + R,
-         .expected = "escapes:stored"},
+         .expected = "escapes:stored",
+         .storageTarget = "{external}",
+         .storageTargetVerdicts = ""},
         {.what = "get_property: $object NEITHER (o.cpp:445-464, data-only find on the table)",
          .body = S + "  %r = ctjs.get_property %s[%p]\n" + R,
          .expected = "confined",
@@ -696,7 +744,9 @@ int main() {
                  "  %args = ctjs.create_array [%s]\n"
                  "  %r = ctjs.call_spread %p(%q, %args)\n" +
                  R,
-         .expected = "escapes:stored"},
+         .expected = "escapes:stored",
+         .storageTarget = "{ctjs.create_array}",
+         .storageTargetVerdicts = "confined"},
         {.what = "construct_spread keeps its local argument array confined with an object element",
          .body = "  %child = ctjs.create_object\n"
                  "  %args = ctjs.create_array [] {check}\n"
@@ -710,7 +760,9 @@ int main() {
                  "  ctjs.append %s to %args\n"
                  "  %r = ctjs.construct_spread %p(%args)\n" +
                  R,
-         .expected = "escapes:stored"},
+         .expected = "escapes:stored",
+         .storageTarget = "{ctjs.create_array}",
+         .storageTargetVerdicts = "confined"},
         {.what = "an iterable alias of the spread argument array remains confined",
          .body = A +
                  "  %args = ctjs.iterable of %s\n"
@@ -1213,6 +1265,151 @@ int main() {
          .expected = "escapes:unknown_op",
          .by = "ctjs.set_property",
          .position = 2},
+
+        // DIRECT STORAGE TARGETS ARE DIAGNOSTICS, not contents proofs. The
+        // original Stored verdict remains even when every target is confined.
+        {.what = "a fixed property store identifies its confined object target",
+         .body =
+             S +
+             "  %outer = ctjs.create_object\n"
+             "  %key = ctjs.constant #ctjs.string<\"child\">\n"
+             "  ctjs.set_property %outer[%key], %s\n" +
+             R,
+         .expected = "escapes:stored",
+         .storageTarget = "{ctjs.create_object}",
+         .storageTargetVerdicts = "confined"},
+        {.what = "a returned target remains escaping despite its local allocation",
+         .body = S + "  %outer = ctjs.create_array [%s]\n"
+                     "  ctjs.return %outer\n",
+         .expected = "escapes:stored",
+         .storageTarget = "{ctjs.create_array}",
+         .storageTargetVerdicts = "escapes:returned"},
+        {.what = "a self-cycle keeps its Stored verdict when target and value share one site",
+         .body = S + "  ctjs.set_property %s[%q], %s\n" + R,
+         .expected = "escapes:stored",
+         .storageTarget = "{ctjs.create_object}",
+         .storageTargetVerdicts = "escapes:stored"},
+        {.what = "a local target with an accessor does not prove direct field retention",
+         .body =
+             S +
+             "  %outer = ctjs.create_object\n"
+             "  ctjs.define_accessor \"child\" on %outer get %p set %q\n"
+             "  %key = ctjs.constant #ctjs.string<\"child\">\n"
+             "  ctjs.set_property %outer[%key], %s\n" +
+             R,
+         .expected = "escapes:stored",
+         .storageTarget = "{ctjs.create_object}",
+         .storageTargetVerdicts = "escapes:accessor_defined"},
+        {.what = "a primitive direct target is not an external target",
+         .body =
+             S +
+             "  %zero = ctjs.constant #ctjs.number<0>\n"
+             "  ctjs.set_property %zero[%q], %s\n" +
+             R,
+         .expected = "escapes:stored",
+         .storageTarget = "{}",
+         .storageTargetVerdicts = ""},
+        {.what = "an external alternative survives a storage target join",
+         .body =
+             S +
+             "  %outer = ctjs.create_object\n"
+             "  %t = ctjs.truthy %p\n"
+             "  cf.cond_br %t, ^join(%outer : !ctjs.value), ^join(%p : !ctjs.value)\n"
+             "^join(%target: !ctjs.value):\n"
+             "  ctjs.set_property %target[%q], %s\n" +
+             R,
+         .expected = "escapes:stored",
+         .storageTarget = "{ctjs.create_object, external}",
+         .storageTargetVerdicts = "confined"},
+        {.what = "a local storage target join retains both confinement verdicts",
+         .body =
+             S +
+             "  %local = ctjs.create_object\n"
+             "  %published = ctjs.create_object\n"
+             "  ctjs.store_global \"g\", %published\n"
+             "  %t = ctjs.truthy %p\n"
+             "  cf.cond_br %t, ^join(%local : !ctjs.value), ^join(%published : !ctjs.value)\n"
+             "^join(%target: !ctjs.value):\n"
+             "  ctjs.set_property %target[%q], %s\n" +
+             R,
+         .expected = "escapes:stored",
+         .storageTarget = "{ctjs.create_object, ctjs.create_object}",
+         .storageTargetVerdicts = "confined,escapes:stored_global"},
+        {.what = "a loop-carried storage target keeps its allocation identity",
+         .body =
+             S +
+             "  %outer = ctjs.create_array []\n"
+             "  cf.br ^loop(%outer : !ctjs.value)\n"
+             "^loop(%target: !ctjs.value):\n"
+             "  ctjs.append %s to %target\n"
+             "  %t = ctjs.truthy %p\n"
+             "  cf.cond_br %t, ^loop(%target : !ctjs.value), ^exit\n"
+             "^exit:\n" +
+             R,
+         .expected = "escapes:stored",
+         .storageTarget = "{ctjs.create_array}",
+         .storageTargetVerdicts = "confined"},
+        {.what = "a property-loaded target stays external without contents tracking",
+         .body =
+             S +
+             "  %inner = ctjs.create_object\n"
+             "  %outer = ctjs.create_array [%inner]\n"
+             "  %zero = ctjs.constant #ctjs.number<0>\n"
+             "  %loaded = ctjs.get_property %outer[%zero]\n"
+             "  ctjs.set_property %loaded[%q], %s\n" +
+             R,
+         .expected = "escapes:stored",
+         .storageTarget = "{external}",
+         .storageTargetVerdicts = ""},
+        {.what = "target evidence describes the first store, not every later retainer",
+         .body =
+             S +
+             "  %outer = ctjs.create_array [%s]\n"
+             "  ctjs.set_property %p[%q], %s\n" +
+             R,
+         .expected = "escapes:stored",
+         .by = "ctjs.create_array",
+         .storageTarget = "{ctjs.create_array}",
+         .storageTargetVerdicts = "confined"},
+        {.what = "an earlier cell store is not reclassified from a later array store",
+         .body =
+             S +
+             "  %cell = ctjs.create_cell %s\n"
+             "  %outer = ctjs.create_array [%s]\n" +
+             R,
+         .expected = "escapes:stored",
+         .by = "ctjs.create_cell",
+         .storageTarget = "<uninitialized>"},
+        {.what = "a dead block's store does not produce target evidence",
+         .body = S + "  ctjs.return %p\n"
+                     "^dead:\n"
+                     "  %outer = ctjs.create_array [%s]\n"
+                     "  ctjs.return %p\n",
+         .expected = "confined",
+         .deadSites = 1,
+         .storageTarget = "<uninitialized>"},
+        {.what = "a missing storage target lattice stays unresolved",
+         .body = "  ctjs.append %p to %q {check}\n" + R,
+         .expected = "<no verdict>",
+         .unvisitedOperands = 2,
+         .withAnalysis = false,
+         .storageTarget = "<uninitialized>",
+         .storageWitnessPosition = 1},
+        {.what = "an append target is not its Stored operand",
+         .body = "  ctjs.append %p to %q {check}\n" + R,
+         .expected = "<no verdict>",
+         .storageTarget = "<uninitialized>",
+         .storageWitnessPosition = 0},
+        {.what = "an out-of-range array element witness stays unresolved",
+         .body = "  %outer = ctjs.create_array [%p] {check}\n" + R,
+         .expected = "confined",
+         .storageTarget = "<uninitialized>",
+         .storageWitnessPosition = 1},
+        {.what = "a property key witness cannot stand in for its stored value",
+         .body = "  ctjs.set_property %p[%q], %p {check}\n" + R,
+         .expected = "<no verdict>",
+         .storageTarget = "<uninitialized>",
+         .storageWitnessPosition = 1},
     };
 
     for (const row & r : rows) { check(context, r); }

@@ -141,6 +141,13 @@ int main(int argc, char ** argv) {
     std::size_t blocks = 0;
     std::size_t liveBlocks = 0;
     std::size_t unparsed = 0;
+    std::size_t stored = 0;
+    std::size_t localConfinedTargets = 0;
+    std::size_t localEscapingTargets = 0;
+    std::size_t mixedLocalTargets = 0;
+    std::size_t externalTargets = 0;
+    std::size_t primitiveTargets = 0;
+    std::size_t unresolvedTargets = 0;
 
     imported.module->walk([&](ctcompile::ctjs::FuncOp fn) {
         ++functions;
@@ -160,6 +167,41 @@ int main(int argc, char ** argv) {
         EscapeVerdicts verdicts = computeVerdicts(solver, fn);
         unvisitedSites += verdicts.unvisitedSites;
         unvisitedOperands += verdicts.unvisitedOperands;
+        // Count FIRST WITNESSES, not complete ownership graphs. In particular,
+        // a confined argument array can expose its children to a spread callee.
+        // Keep this diagnostic separate from the oracle's retention claims.
+        for (const auto & [site, verdict] : verdicts.sites) {
+            (void)site;
+            if (verdict.reason != EscapeReason::Stored) { continue; }
+            ++stored;
+            const AliasValue target = directStorageTarget(solver, verdict);
+            bool confinedTarget = false;
+            bool escapingTarget = false;
+            bool unclassifiedTarget = target.isUninitialized();
+            for (mlir::Operation * targetSite : target.getSites()) {
+                auto found = verdicts.sites.find(targetSite);
+                if (found == verdicts.sites.end()) {
+                    unclassifiedTarget = true;
+                } else if (found->second.reason == EscapeReason::Confined) {
+                    confinedTarget = true;
+                } else {
+                    escapingTarget = true;
+                }
+            }
+            if (unclassifiedTarget) {
+                ++unresolvedTargets;
+            } else if (target.isExternal()) {
+                ++externalTargets;
+            } else if (confinedTarget && escapingTarget) {
+                ++mixedLocalTargets;
+            } else if (confinedTarget) {
+                ++localConfinedTargets;
+            } else if (escapingTarget) {
+                ++localEscapingTargets;
+            } else {
+                ++primitiveTargets;
+            }
+        }
 
         for (mlir::Block & block : fn.getBody()) {
             ++blocks;
@@ -224,5 +266,11 @@ int main(int argc, char ** argv) {
                  "locations, %zu of %zu blocks live, program %016llx -> %s\n",
                  functions, sites, confined, deadSites, unvisitedSites, unvisitedOperands, unparsed,
                  liveBlocks, blocks, static_cast<unsigned long long>(hash), out.c_str());
+    std::fprintf(stderr,
+                 "stored first-witness targets: %zu sites, %zu local-confined, %zu "
+                 "local-escaping, %zu local-mixed, %zu external-or-mixed, %zu primitive, %zu "
+                 "unresolved (diagnostic only; Stored verdicts unchanged)\n",
+                 stored, localConfinedTargets, localEscapingTargets, mixedLocalTargets,
+                 externalTargets, primitiveTargets, unresolvedTargets);
     return 0;
 }

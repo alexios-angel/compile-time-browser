@@ -70,6 +70,21 @@ if(NOT CMAKE_MATCH_1 EQUAL 0 OR NOT CMAKE_MATCH_2 EQUAL 0)
   message(FATAL_ERROR "${NAME}: ${CMAKE_MATCH_1} unvisited live site(s) and ${CMAKE_MATCH_2} unvisited operand(s) - a reachability gap in the analysis")
 endif()
 
+# The Stored backlog now reports the direct target of each first witness.
+# This is not a contents proof: even local-confined targets can expose children
+# through a spread call, and subsequent stores can retain elsewhere. Require a
+# complete partition of the unchanged Stored claims, without gating precision.
+if(NOT "${_out}${_err}" MATCHES "stored first-witness targets: ([0-9]+) sites, ([0-9]+) local-confined, ([0-9]+) local-escaping, ([0-9]+) local-mixed, ([0-9]+) external-or-mixed, ([0-9]+) primitive, ([0-9]+) unresolved")
+  message(FATAL_ERROR "the claims emitter did not report its storage target evidence:\n${_out}${_err}")
+endif()
+set(_stored_targets "${CMAKE_MATCH_1}")
+math(EXPR _classified_targets "${CMAKE_MATCH_2} + ${CMAKE_MATCH_3} + ${CMAKE_MATCH_4} + ${CMAKE_MATCH_5} + ${CMAKE_MATCH_6} + ${CMAKE_MATCH_7}")
+file(STRINGS "${_claims}" _stored_claims REGEX "^escape .* escapes:stored$")
+list(LENGTH _stored_claims _stored_claim_count)
+if(NOT _stored_targets EQUAL _classified_targets OR NOT _stored_targets EQUAL _stored_claim_count)
+  message(FATAL_ERROR "${NAME}: ${_stored_targets} storage witnesses, ${_classified_targets} classified targets, ${_stored_claim_count} Stored claims - incomplete storage evidence")
+endif()
+
 execute_process(
   COMMAND "${PYTHON}" "${SCRIPT}" --recording "${_rec}" --claims "${_claims}"
           --name "${NAME}" --max-report 0 --expect-violations 0

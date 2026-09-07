@@ -173,6 +173,19 @@ struct Verdict {
     unsigned position = 0;          // its operand index
 };
 
+/// The direct target of the first Stored witness: create_array's result,
+/// append's array, or set_property's base, read from the existing alias lattice.
+/// Uninitialized means an unsupported witness or a missing lattice; an empty
+/// initialized set means a non-object target. External may coexist with sites.
+///
+/// This is diagnostic evidence about the written operation, not a complete
+/// contents or retention proof. Other stores and loads are not followed, a
+/// setter may retain elsewhere, and distinct instances may share one site.
+/// In particular, even a confined target can expose its elements through a
+/// spread call. Nothing here permits weakening the stored value's verdict.
+[[nodiscard]] AliasValue directStorageTarget(const mlir::DataFlowSolver & solver,
+                                             const Verdict & verdict);
+
 struct EscapeVerdicts {
     /// Every tracked site in a LIVE top-level CFG block, in program order
     /// (a MapVector so the claims file is deterministic). Sites in dead CFG

@@ -279,6 +279,21 @@ mlir::LogicalResult EscapeAnalysis::visitOperation(mlir::Operation * op,
 
 // --- the post-pass ------------------------------------------------------------
 
+AliasValue directStorageTarget(const mlir::DataFlowSolver & solver, const Verdict & verdict) {
+    if (verdict.reason != EscapeReason::Stored || verdict.by == nullptr) { return {}; }
+    mlir::Value target;
+    if (auto array = llvm::dyn_cast<ctjs::CreateArrayOp>(verdict.by)) {
+        if (verdict.position < array.getElements().size()) { target = array.getResult(); }
+    } else if (auto append = llvm::dyn_cast<ctjs::AppendOp>(verdict.by)) {
+        if (verdict.position == 1) { target = append.getArray(); }
+    } else if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(verdict.by)) {
+        if (verdict.position == 2) { target = store.getObject(); }
+    }
+    if (!target) { return {}; }
+    const AliasLattice * lattice = solver.lookupState<AliasLattice>(target);
+    return lattice != nullptr ? lattice->getValue() : AliasValue{};
+}
+
 EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp function) {
     EscapeVerdicts out;
 
