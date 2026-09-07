@@ -1028,6 +1028,110 @@ private:
         if (seen > 1) { report("an object literal may not set `__proto__` twice", second); }
     }
 
+    // A NUMERIC LITERAL'S OWN GRAMMAR, 12.9.3, read back off the lexeme.
+    //
+    // The lexer is deliberately total: it takes `0` followed by `x`, `o` or `b`
+    // and then EVERY identifier character, and a decimal run of digits, dots
+    // and underscores, without asking whether the result is a number. That is
+    // the right shape for a lexer - `0o17` used to lex as `0` followed by the
+    // identifier `o17` - and it leaves `0b2`, `0x`, `1__0` and `1.5n` as tokens
+    // that parse and are not literals.
+    //
+    // WHAT IS NOT CHECKED: a legacy octal (`01`) and a non-octal decimal (`08`).
+    // Both are legal sloppy JavaScript and only an error in strict mode, which
+    // this engine does not have.
+    void check_number(std::int32_t idx) {
+        const std::string_view text = at(idx).text;
+        if (text.empty()) { return; }
+        const bool bigint = text.back() == 'n';
+        const std::string_view body = bigint ? text.substr(0, text.size() - 1) : text;
+        if (body.empty()) {
+            report("`" + std::string{text} + "` is not a number", idx);
+            return;
+        }
+        const auto decimal = [](char c) { return c >= '0' && c <= '9'; };
+        if (body.size() >= 2 && body[0] == '0' &&
+            (body[1] == 'x' || body[1] == 'X' || body[1] == 'o' || body[1] == 'O' ||
+             body[1] == 'b' || body[1] == 'B')) {
+            const char radix = body[1];
+            const auto belongs = [radix, decimal](char c) {
+                if (radix == 'b' || radix == 'B') { return c == '0' || c == '1'; }
+                if (radix == 'o' || radix == 'O') { return c >= '0' && c <= '7'; }
+                return decimal(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            };
+            const std::string_view digits = body.substr(2);
+            if (digits.empty()) {
+                report("`" + std::string{text} + "` has no digits after its prefix", idx);
+                return;
+            }
+            for (std::size_t i = 0; i < digits.size(); ++i) {
+                // 12.9.3: a separator goes BETWEEN two digits and nowhere else.
+                if (digits[i] == '_') {
+                    if (i == 0 || i + 1 == digits.size() || !belongs(digits[i - 1]) ||
+                        !belongs(digits[i + 1])) {
+                        report("`" + std::string{text} +
+                                   "` has a `_` that is not between two digits",
+                               idx);
+                        return;
+                    }
+                    continue;
+                }
+                if (!belongs(digits[i])) {
+                    report("`" + std::string{text} + "` has a digit its radix does not have", idx);
+                    return;
+                }
+            }
+            return;
+        }
+        // A BigInt IS AN INTEGER (12.9.3): no fraction and no exponent, and no
+        // leading zero - `01n` and `08n` are not legacy anything, they are
+        // errors even in sloppy code.
+        if (bigint) {
+            if (body.find('.') != std::string_view::npos ||
+                body.find('e') != std::string_view::npos ||
+                body.find('E') != std::string_view::npos) {
+                report("`" + std::string{text} + "` is not an integer, so it cannot be a BigInt",
+                       idx);
+                return;
+            }
+            if (body.size() > 1 && body[0] == '0') {
+                report("`" + std::string{text} + "` has a leading zero, which a BigInt may not",
+                       idx);
+                return;
+            }
+        }
+        // TWO DECIMAL POINTS ARE NOT CHECKED, and the reason is `0..toString(2)`
+        // - which is legal JavaScript, is how a page calls a method on a
+        // numeric literal, and arrives here as the single lexeme `0..` because
+        // the lexer takes every dot it can. Four test262 files are that shape.
+        // Refusing it would be refusing valid source to catch a case the parser
+        // already fails on.
+        // A LEGACY OCTAL OR NON-OCTAL DECIMAL TAKES NO SEPARATORS. `01` and `08`
+        // are legal sloppy and `0_1` is not: the separator is only in the
+        // modern productions.
+        // `body[1] == '_'` COUNTS AS ONE. After a leading `0` the only things
+        // the grammar admits are a radix prefix, a `.`, an exponent and a
+        // legacy octal digit run - so `0_1` is a legacy literal with a
+        // separator in it rather than a modern literal that happens to start
+        // with a zero.
+        const bool legacy =
+            body.size() > 1 && body[0] == '0' && (decimal(body[1]) || body[1] == '_') &&
+            body.find('.') == std::string_view::npos && body.find('e') == std::string_view::npos &&
+            body.find('E') == std::string_view::npos;
+        if (legacy && body.find('_') != std::string_view::npos) {
+            report("`" + std::string{text} + "` is a legacy octal literal and may not use `_`",
+                   idx);
+            return;
+        }
+        for (std::size_t i = 0; i < body.size(); ++i) {
+            if (body[i] != '_') { continue; }
+            if (i == 0 || i + 1 == body.size() || !decimal(body[i - 1]) || !decimal(body[i + 1])) {
+                report("`" + std::string{text} + "` has a `_` that is not between two digits", idx);
+                return;
+            }
+        }
+    }
+
     // 13.5.1.1: `delete` of a private member is an error wherever it appears -
     // no strict mode needed, unlike `delete` of a plain identifier.
     void check_delete(std::int32_t operand) {
@@ -1103,6 +1207,8 @@ private:
             check_proto_duplicates(idx);
             for (const std::int32_t p : kids(n)) { walk_property(p); }
             return;
+
+        case nk::num: check_number(idx); return;
 
         case nk::new_target:
             // 16.1.1: a Script may not contain `new.target`; the grammar only

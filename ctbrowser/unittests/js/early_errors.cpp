@@ -430,7 +430,41 @@ int main() {
     accepted("var o = { ['__proto__']: 1, __proto__: null };");
 
     // ================================================================
-    // 16. WHAT IS STILL ACCEPTED, ON PURPOSE
+    // 16. A NUMERIC LITERAL'S OWN GRAMMAR - 12.9.3
+    // ================================================================
+    // The lexer is total on purpose: it takes `0` plus a radix letter plus
+    // every identifier character, and a decimal run of digits, dots and
+    // underscores, without asking whether the result is a number. So `0b2` and
+    // `1__0` are tokens that parse and are not literals.
+    refused("var x = 0b2;");
+    refused("var x = 0o8;");
+    refused("var x = 0x;");
+    refused("var x = 1__0;");
+    refused("var x = 1_;");
+    refused("var x = 0b_1;");
+    refused("var x = 1e_5;");
+    refused("var x = 0_1;");
+    // A BigInt is an INTEGER, and it has no leading zero.
+    refused("var x = 1.5n;");
+    refused("var x = 1e1n;");
+    refused("var x = 01n;");
+    refused("var x = 08n;");
+
+    accepted("var x = 0;");
+    accepted("var x = 0.5;");
+    accepted("var x = .5;");
+    accepted("var x = 1e10 + 1E+10 + 1.5e-10;");
+    accepted("var x = 1_000 + 0.000_1;");
+    accepted("var x = 0x1F + 0b1010 + 0o17;");
+    accepted("var x = 1n + 0n + 1_000n + 0xFFn;");
+    accepted("var o = { 0: 1, 0.5: 2, 1e3: 3 };");
+    // A LEGACY OCTAL AND A NON-OCTAL DECIMAL ARE LEGAL SLOPPY JavaScript, and
+    // this engine has no strict mode - so both are accepted, deliberately.
+    accepted("var x = 01;");
+    accepted("var x = 08;");
+
+    // ================================================================
+    // 17. WHAT IS STILL ACCEPTED, ON PURPOSE
     // ================================================================
     // Each of these is an early error in STRICT mode and legal sloppy
     // JavaScript, and this engine has no strict mode. They are here so that
