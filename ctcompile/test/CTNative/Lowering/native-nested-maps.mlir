@@ -70,5 +70,5 @@ function probe() { var map = new Map(); put(map); return read(map); }
 probe();
 
 //--- snapshot.js
-function probe() { var map = new Map(); map.set(1, new Map()); return map.values().length; }
+function probe() { var map = new Map(); map.set(1, new Map()); return Array.from(map.values()).length; }
 probe();

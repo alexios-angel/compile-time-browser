@@ -66,7 +66,7 @@ function nestedSnapshots() {
     var outer = new Map();
     outer.set(2, leaf(20));
     outer.set(4, leaf(22));
-    var keys = outer.keys();
+    var keys = Array.from(outer.keys());
     return outer.get(2).get("value") + outer.get(4).get("value") + keys[0] + keys[1];
 }
 var snapshot48 = nestedSnapshots();

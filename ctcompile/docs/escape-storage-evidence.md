@@ -46,8 +46,22 @@ leaves its child `Stored`, demonstrating the limit of the marker.
 Measured on the devbox on 2026-09-07: the **188-row** escape unit passes in
 **0.01 seconds**; fixture and Bootstrap claims CTests pass in **0.08** and
 **0.23 seconds**, with zero oracle violations. The compiler files pass the
-formatting gate. Full-suite and corpus-wide census measurements are separate
-from these focused checks.
+formatting gate. The later frozen `86df9b1` full devbox run measured this census;
+these compiler checks passed even though unrelated browser and native iterator
+differentials failed elsewhere in that run:
+
+| Corpus | Direct writes | Site edges | Multiple-store sites | Other first sink | Unresolved targets | Complete / functions |
+|---|---:|---:|---:|---:|---:|---:|
+| Fixture | 78 | 12 | 0 | 0 | 8 | 43 / 47 |
+| Bootstrap | 2611 | 400 | 29 | 17 | 1093 | 486 / 588 |
+| p5 | 15816 | 1416 | 37 | 57 | 3279 | 4058 / 4703 |
+| Phaser | 37117 | 1930 | 9 | 41 | 6320 | 6657 / 7723 |
+
+All four censuses have zero unresolved stored values and cover every first
+`Stored` witness: **12 / 170 / 1304 / 1861** sites respectively. Fixture and
+Bootstrap execution oracles still report zero violations. The p5 and Phaser
+rows are static diagnostics, not execution or confinement claims. Evidence is
+saved in `/tmp/ctcompile-map-effects-recovery-evidence.json`.
 
 The next proof must follow contents through loads and indirect transfers,
 propagate every exposure including sinks after the first `Stored` witness,

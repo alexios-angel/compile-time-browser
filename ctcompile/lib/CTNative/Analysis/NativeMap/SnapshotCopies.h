@@ -14,6 +14,8 @@ struct snapshotCopies {
 
 // Collect candidates without trusting or publishing input annotations. The
 // caller also proves the module has no unknown calls or global reflection.
+// Each iterator must have one immediate Array.from consumer, so its eager
+// native vector cannot expose iterator state or move a read across effects.
 std::string collectSnapshotCopies(mlir::ModuleOp module,
                                   const llvm::DenseSet<mlir::Operation *> & mapCalls,
                                   snapshotCopies & out);

@@ -149,15 +149,15 @@ function probe() { var map = new Map(); map.set(1, 2); return map.get(1) === 2; 
 probe();
 
 //--- string-keys.js
-function probe() { var map = new Map(); map.set("key", 2); var keys = map.keys(); return keys.length; }
+function probe() { var map = new Map(); map.set("key", 2); var keys = Array.from(map.keys()); return keys.length; }
 probe();
 
 //--- snapshot-write.js
-function probe() { var map = new Map(); map.set(1, 2); var values = map.values(); values[0] = 3; return values[0]; }
+function probe() { var map = new Map(); map.set(1, 2); var values = Array.from(map.values()); values[0] = 3; return values[0]; }
 probe();
 
 //--- snapshot-return.js
-function probe() { var map = new Map(); return map.values(); }
+function probe() { var map = new Map(); return Array.from(map.values()); }
 probe();
 
 //--- entries.js

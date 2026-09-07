@@ -76,9 +76,11 @@ struct presenceAnalysis {
     llvm::DenseMap<mlir::Operation *, effects> summaries;
     llvm::DenseSet<mlir::Operation *> proved;
     llvm::function_ref<mlir::Value(mlir::Value)> familyOf;
+    const llvm::DenseSet<mlir::Operation *> & snapshotCopies;
 
-    explicit presenceAnalysis(llvm::function_ref<mlir::Value(mlir::Value)> family)
-        : familyOf(family) {}
+    presenceAnalysis(llvm::function_ref<mlir::Value(mlir::Value)> family,
+                     const llvm::DenseSet<mlir::Operation *> & copies)
+        : familyOf(family), snapshotCopies(copies) {}
 
     // set is the only alias edge that proves runtime identity. Closed
     // parameter/return edges merely share a schema and cannot be used here.
@@ -99,6 +101,7 @@ struct presenceAnalysis {
             effects & out = summaries[fn];
             fn.getBody().walk([&](mlir::Operation * op) {
                 if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
+                    if (snapshotCopies.contains(op)) { return; }
                     const auto action = actions.lookup(op);
                     if (action == "delete" || action == "clear") {
                         out.erased.insert(familyOf(call.getReceiver()));
@@ -217,6 +220,7 @@ struct presenceAnalysis {
             return;
         }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
+            if (snapshotCopies.contains(op)) { return; }
             const auto action = actions.lookup(op);
             if (action == "set") {
                 current.add(entry(call));
@@ -248,9 +252,10 @@ struct presenceAnalysis {
 
 std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> calls,
                           llvm::ArrayRef<ctjs::CallOp> reads,
+                          const llvm::DenseSet<mlir::Operation *> & snapshotCopies,
                           llvm::function_ref<mlir::Value(mlir::Value)> familyOf) {
     if (reads.empty()) { return {}; }
-    presenceAnalysis analysis(familyOf);
+    presenceAnalysis analysis(familyOf, snapshotCopies);
     for (ctjs::CallOp call : calls) { analysis.actions[call] = actionOf(call); }
     analysis.buildSummaries(module);
     module.walk([&](ctjs::FuncOp fn) {

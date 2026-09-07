@@ -46,7 +46,12 @@ std::string environmentProblem(mlir::ModuleOp module,
             }
         }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
-            if (load->hasAttr(kNativeMapConstructor)) { return; }
+            // prepareClosureHeapFacts freshly proves these standard builtins,
+            // including each iterator's single immediate Array.from consumer.
+            // Materialization itself stays runtime work in the evaluator.
+            if (load->hasAttr(kNativeMapConstructor) || load->hasAttr(kNativeMapSnapshotBuiltin)) {
+                return;
+            }
             for (mlir::OpOperand & use : load.getResult().getUses()) {
                 if (!llvm::isa<ctjs::CallDirectOp>(use.getOwner()) || use.getOperandNumber() != 2) {
                     reason = "module has host or mutable global reads";
@@ -54,7 +59,7 @@ std::string environmentProblem(mlir::ModuleOp module,
             }
         }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(op);
-            call && nativeMapAction(call).empty() &&
+            call && nativeMapAction(call).empty() && !call->hasAttr(kNativeMapSnapshotCopy) &&
             !(proof && proof->checkedEnvironment && proof->closedCalls.contains(op))) {
             reason = "module has an unknown call";
         }

@@ -300,7 +300,8 @@ std::string collect(plan & out, flowGraph & graph,
 }
 
 std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flowGraph & graph,
-                          llvm::DenseMap<mlir::Value, unsigned> & families) {
+                          llvm::DenseMap<mlir::Value, unsigned> & families,
+                          const llvm::DenseSet<mlir::Operation *> & snapshotCopies) {
     llvm::SmallVector<llvm::SmallVector<unsigned>, 4> children(plans.size());
     for (auto [index, candidate] : llvm::enumerate(plans)) {
         for (ctjs::CallOp call : candidate.calls) {
@@ -335,7 +336,7 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
             if (keyOf(method.getKey()) == "get") { reads.push_back(read); }
         }
     }
-    return map_detail::provePresence(module, calls, reads,
+    return map_detail::provePresence(module, calls, reads, snapshotCopies,
                                      [&](mlir::Value value) { return graph.find(value); });
 }
 
@@ -392,7 +393,6 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
         const std::string problem = collect(candidate, graph, sites);
         if (reason.empty()) { reason = problem; }
     }
-    if (reason.empty()) { reason = provePayloads(module, plans, graph, families); }
     llvm::DenseSet<mlir::Operation *> calls;
     for (const plan & candidate : plans) {
         for (ctjs::CallOp call : candidate.calls) { calls.insert(call); }
@@ -431,6 +431,9 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
             reason = "standard Map identity is unproved across dynamic invocation or deletion";
         }
     });
+    // Presence may preserve membership across a snapshot copy only after its
+    // live builtin, iterator-use and whole-module identity proofs succeed.
+    if (reason.empty()) { reason = provePayloads(module, plans, graph, families, copies.calls); }
     auto * context = module.getContext();
     if (!reason.empty()) {
         for (ctjs::LoadGlobalOp load : constructors) {

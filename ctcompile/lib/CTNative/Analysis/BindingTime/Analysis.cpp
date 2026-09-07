@@ -130,11 +130,13 @@ void BindingTimeAnalysis::Impl::seedArguments() {
                 callers[fn].push_back(call);
             }
         }
-        if (auto call = llvm::dyn_cast<ctjs::CallOp>(op); call && nativeMapAction(op).empty()) {
+        if (auto call = llvm::dyn_cast<ctjs::CallOp>(op);
+            call && nativeMapAction(op).empty() && !call->hasAttr(kNativeMapSnapshotCopy)) {
             opaque = true;
         }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
-            load && !load->hasAttr(kNativeMapConstructor) && !bookkeeping(load)) {
+            load && !load->hasAttr(kNativeMapConstructor) &&
+            !load->hasAttr(kNativeMapSnapshotBuiltin) && !bookkeeping(load)) {
             opaque = true;
         }
         if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op);
