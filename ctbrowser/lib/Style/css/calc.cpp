@@ -138,6 +138,11 @@ constexpr std::string_view known_units[] = {
         {"x", numeric_type::resolution, 1.0},
         {"dpi", numeric_type::resolution, 1.0 / 96.0},
         {"dpcm", numeric_type::resolution, 2.54 / 96.0},
+        // `fr` converts to itself and to nothing else. It is here for its TYPE,
+        // not for a basis: what a flex is worth is a grid track sizing question
+        // and no expression can answer it, but `1fr + 1fr` is 2fr and `1px +
+        // 1fr` is a type error, and both need the family named.
+        {"fr", numeric_type::flex, 1.0},
     };
     for (const fixed & one : table) {
         if (ascii_iequals(one.unit, unit)) {
@@ -396,8 +401,7 @@ private:
 
     enum class compare : std::uint8_t {
         smallest,
-        largest,
-        clamped
+        largest
     };
 
     // A comma-separated argument list, the function token already consumed and
@@ -455,7 +459,7 @@ private:
         if (named("calc(")) { return nested(); }
         if (named("min(")) { return comparison(compare::smallest); }
         if (named("max(")) { return comparison(compare::largest); }
-        if (named("clamp(")) { return comparison(compare::clamped); }
+        if (named("clamp(")) { return clamping(); }
         if (named("round(")) { return rounding(); }
         if (named("mod(")) { return stepped(false); }
         if (named("rem(")) { return stepped(true); }
@@ -509,7 +513,7 @@ private:
         return unresolvable();
     }
 
-    // min( sum [, sum]* ) | max( sum [, sum]* ) | clamp( sum, sum, sum )
+    // min( sum [, sum]* ) | max( sum [, sum]* )
     //
     // CSS Values 4 §10.3. Two things make this more than a fold over `sum()`:
     //
@@ -524,24 +528,9 @@ private:
     // a declaration deleted. `min(10%, 20%)` is decidable and is not affected.
     [[nodiscard]] std::optional<term> comparison(compare kind) {
         ++at_; // the function token, `(` included
-        const std::optional<std::vector<term>> args =
-            arguments(1, kind == compare::clamped ? 3 : ~std::size_t{0});
+        const std::optional<std::vector<term>> args = arguments(1, ~std::size_t{0});
         if (!args) { return std::nullopt; }
-        if (kind == compare::clamped && args->size() != 3) { return fail(); }
         if (!uniform(*args)) { return std::nullopt; }
-        if (kind == compare::clamped) {
-            // clamp(low, value, high) is max(low, min(value, high)) - and the
-            // spec's order matters when low > high: the LOW bound wins, because
-            // the min is taken first. A NaN anywhere poisons the result, which
-            // std::min/std::max do NOT do on their own.
-            const double low = scalar_of((*args)[0]);
-            const double mid = scalar_of((*args)[1]);
-            const double high = scalar_of((*args)[2]);
-            if (std::isnan(low) || std::isnan(mid) || std::isnan(high)) {
-                return with_scalar((*args)[1], std::nan(""));
-            }
-            return with_scalar((*args)[1], std::max(low, std::min(mid, high)));
-        }
         double best = scalar_of(args->front());
         for (const term & one : *args) {
             const double v = scalar_of(one);
@@ -552,6 +541,53 @@ private:
             best = kind == compare::smallest ? std::min(best, v) : std::max(best, v);
         }
         return with_scalar(args->front(), best);
+    }
+
+    // clamp( [<calc-sum> | none], <calc-sum>, [<calc-sum> | none] )
+    //
+    // §10.3, and it has its own function rather than a third case of the one
+    // above because of `none`: EITHER BOUND MAY BE ABSENT, and an absent one is
+    // not a missing argument but an unbounded side. `clamp(none, 33px, 30px)` is
+    // `min(33px, 30px)` and is 30px, which is what `clamp-length-serialize` asks
+    // for six times; before this it was a syntax error and the declaration went.
+    //
+    // An absent bound is spelled as the infinity it means, which keeps the NaN
+    // rule and the low-beats-high rule below in one place each.
+    [[nodiscard]] std::optional<term> clamping() {
+        ++at_; // the function token, `(` included
+        constexpr double huge = std::numeric_limits<double>::infinity();
+        std::vector<term> present; // for the type check, which `none` sits out of
+        double bound[3] = {-huge, 0.0, huge};
+        std::optional<term> middle;
+        for (int i = 0; i < 3; ++i) {
+            skip_whitespace();
+            const bool may_be_none = i != 1;
+            if (may_be_none && peek().type == token_type::ident &&
+                ascii_iequals(t_.text_of(peek()), "none")) {
+                ++at_;
+            } else {
+                const std::optional<term> one = sum();
+                if (!one) { return std::nullopt; }
+                present.push_back(*one);
+                if (i == 1) { middle = one; }
+                bound[i] = scalar_of(*one);
+            }
+            skip_whitespace();
+            if (i == 2) { break; }
+            if (peek().type != token_type::comma) { return fail(); }
+            ++at_;
+        }
+        if (!at_close()) { return fail(); }
+        take_close();
+        if (!uniform(present)) { return std::nullopt; }
+        // clamp(low, value, high) is max(low, min(value, high)) - and the spec's
+        // order matters when low > high: the LOW bound wins, because the min is
+        // taken first. A NaN anywhere poisons the result, which std::min and
+        // std::max do NOT do on their own.
+        if (std::isnan(bound[0]) || std::isnan(bound[1]) || std::isnan(bound[2])) {
+            return with_scalar(*middle, std::nan(""));
+        }
+        return with_scalar(*middle, std::max(bound[0], std::min(bound[1], bound[2])));
     }
 
     // round( <rounding-strategy>?, A, B )
@@ -736,6 +772,7 @@ std::string_view canonical_unit(numeric_type type) noexcept {
     case numeric_type::time: return "s";
     case numeric_type::frequency: return "hz";
     case numeric_type::resolution: return "dppx";
+    case numeric_type::flex: return "fr";
     }
     return {};
 }

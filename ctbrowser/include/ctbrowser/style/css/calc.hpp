@@ -71,6 +71,15 @@ enum class numeric_type : std::uint8_t {
     time,       // canonical s
     frequency,  // canonical Hz
     resolution, // canonical dppx
+    // `<flex>`, canonical fr. It has NO basis and never will have one here - a
+    // flex is resolved by grid track sizing and by nothing else - but it is a
+    // TYPE, and that is why it is in this list rather than left unresolved:
+    // `min(1px, 0fr)` is not "a comparison this engine cannot decide", it is
+    // `1px + 2` with different spelling, and `css/css-values` says so in six
+    // files at once (`minmax-{length,number,percentage,time}-invalid`,
+    // `exp-log-invalid`). Naming the type is what turns those from a value kept
+    // verbatim into the syntax error they are.
+    flex,
 };
 
 // The canonical unit's spelling, or an empty view for a `<number>`. This is what

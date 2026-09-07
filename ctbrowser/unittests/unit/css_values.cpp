@@ -143,6 +143,17 @@ void test_what_a_math_function_may_not_be() {
     bad("width", "mod(1px)");
     ok("width", "round(nearest, 10px, 6px)", "calc(12px)");
 
+    // EITHER OF clamp()'S BOUNDS MAY BE `none`, CSS Values 4 §10.3, and an
+    // absent bound is an unbounded side rather than a missing argument:
+    // `clamp(none, 33px, 30px)` is `min(33px, 30px)`. It was a syntax error here
+    // and the declaration went with it - `clamp-length-serialize` is six
+    // assertions of exactly this shape. The MIDDLE argument is still required.
+    ok("width", "clamp(none, 33px, 30px)", "calc(30px)");
+    ok("width", "clamp(33px, 30px, none)", "calc(33px)");
+    ok("width", "clamp(none, 30px, none)", "calc(30px)");
+    bad("width", "clamp(none, none, none)");
+    bad("width", "clamp(1px, none, 2px)");
+
     // ...AND SO IS THE TYPE ALGEBRA, CSS Values 4 §10.2. Every one of these is
     // `calc-unit-analysis` verbatim.
     bad("margin-left", "calc(0)");       // a unitless zero in a calc is a NUMBER
@@ -168,6 +179,22 @@ void test_what_a_math_function_may_not_be() {
     ok("transition-duration", "calc(1s / 2)", "calc(0.5s)");
     ok("opacity", "calc(2 / 4)", "calc(0.5)");
     ok("z-index", "calc(1 + 1)", "calc(2)");
+
+    // A `<flex>` IS A TYPE, NOT AN UNRESOLVED LENGTH. `fr` has no basis here and
+    // never will - a flex is sized by grid track resolution and by nothing else -
+    // but treating it as "a unit I cannot resolve" made `min(1px, 0fr)` a value
+    // that survived, where it is `1px + 2` with different spelling. Six corpus
+    // files say so at once: `minmax-{length,number,percentage,time}-invalid`,
+    // `minmax-length-percent-invalid` and `exp-log-invalid`.
+    bad("width", "min(0fr)");
+    bad("width", "min(1px, 0fr)");
+    bad("opacity", "max(1, 0fr)");
+    bad("opacity", "exp(0fr)");
+    bad("transition-delay", "min(1s, 0fr)");
+    bad("margin-left", "calc(1px + 1fr)");
+    // ...and two flexes add up perfectly well - the family was what was missing,
+    // not the arithmetic - but their sum is still not a length.
+    bad("margin-left", "calc(1fr + 1fr)");
 
     // A BAD CALC ANYWHERE IN THE VALUE, not only when it is the whole of it.
     // `transform` has no grammar in this table at all, and the corpus still
