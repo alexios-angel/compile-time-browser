@@ -143,6 +143,17 @@ void test_what_a_math_function_may_not_be() {
     bad("width", "mod(1px)");
     ok("width", "round(nearest, 10px, 6px)", "calc(12px)");
 
+    // EITHER OF clamp()'S BOUNDS MAY BE `none`, CSS Values 4 §10.3, and an
+    // absent bound is an unbounded side rather than a missing argument:
+    // `clamp(none, 33px, 30px)` is `min(33px, 30px)`. It was a syntax error here
+    // and the declaration went with it - `clamp-length-serialize` is six
+    // assertions of exactly this shape. The MIDDLE argument is still required.
+    ok("width", "clamp(none, 33px, 30px)", "calc(30px)");
+    ok("width", "clamp(33px, 30px, none)", "calc(33px)");
+    ok("width", "clamp(none, 30px, none)", "calc(30px)");
+    bad("width", "clamp(none, none, none)");
+    bad("width", "clamp(1px, none, 2px)");
+
     // ...AND SO IS THE TYPE ALGEBRA, CSS Values 4 §10.2. Every one of these is
     // `calc-unit-analysis` verbatim.
     bad("margin-left", "calc(0)");       // a unitless zero in a calc is a NUMBER
@@ -168,6 +179,22 @@ void test_what_a_math_function_may_not_be() {
     ok("transition-duration", "calc(1s / 2)", "calc(0.5s)");
     ok("opacity", "calc(2 / 4)", "calc(0.5)");
     ok("z-index", "calc(1 + 1)", "calc(2)");
+
+    // A `<flex>` IS A TYPE, NOT AN UNRESOLVED LENGTH. `fr` has no basis here and
+    // never will - a flex is sized by grid track resolution and by nothing else -
+    // but treating it as "a unit I cannot resolve" made `min(1px, 0fr)` a value
+    // that survived, where it is `1px + 2` with different spelling. Six corpus
+    // files say so at once: `minmax-{length,number,percentage,time}-invalid`,
+    // `minmax-length-percent-invalid` and `exp-log-invalid`.
+    bad("width", "min(0fr)");
+    bad("width", "min(1px, 0fr)");
+    bad("opacity", "max(1, 0fr)");
+    bad("opacity", "exp(0fr)");
+    bad("transition-delay", "min(1s, 0fr)");
+    bad("margin-left", "calc(1px + 1fr)");
+    // ...and two flexes add up perfectly well - the family was what was missing,
+    // not the arithmetic - but their sum is still not a length.
+    bad("margin-left", "calc(1fr + 1fr)");
 
     // A BAD CALC ANYWHERE IN THE VALUE, not only when it is the whole of it.
     // `transform` has no grammar in this table at all, and the corpus still
@@ -236,6 +263,73 @@ void test_the_rest_of_the_math_functions() {
     ok("width", "calc(1px + 3cqw)", "calc(1px + 3cqw)");
     ok("width", "calc(1px + 1lh)", "calc(1px + 1lh)");
     bad("width", "calc(1px + 1nonsense)"); // a typo is not a unit
+}
+
+// CSS Values 4 §10.12: A MATH FUNCTION'S SPECIFIED VALUE IS ITS SIMPLIFIED FORM,
+// wherever the function sits.
+//
+// "Wherever" is the half that was missing, and it is not a corner: the corpus
+// tests every one of the sixteen functions through `transform`,
+// `background-image` and `scale`, which are properties whose grammar this table
+// does not model at all - so it asked "is the WHOLE value one math function",
+// answered no, and handed back the author's text. That is ~290 assertions across
+// `acos-asin-atan-atan2-serialize`, `sin-cos-tan-serialize`, `exp-log-serialize`,
+// `hypot-pow-sqrt-serialize`, `round-mod-rem-serialize`, `signs-abs-serialize`,
+// `minmax-number-serialize` and three of the `calc-infinity-nan-serialize-*`.
+void test_a_math_function_is_simplified_wherever_it_sits() {
+    // Inside a function of a property with no grammar here at all.
+    ok("transform", "rotate(acos(1))", "rotate(calc(0deg))");
+    ok("transform", "rotate(calc(1deg * NaN))", "rotate(calc(NaN * 1deg))");
+    ok("transform", "scale(min(.3, .2, .1))", "scale(calc(0.1))");
+    ok("transform", "translate(calc(1px + 2px), calc(2px * 2))", "translate(calc(3px), calc(4px))");
+    ok("scale", "calc(sin(30deg) + cos(60deg))", "calc(1)");
+    // Beside other values, and beside a quoted string whose parentheses must not
+    // end the expression early.
+    ok("border", "calc(calc(10px)) solid pink", "calc(10px) solid pink");
+    ok("background-image", "image-set(url(\"a)b\") calc(1x * 2))",
+       "image-set(url(\"a)b\") calc(2dppx))");
+
+    // A calc() AROUND ONE OTHER MATH FUNCTION IS REDUNDANT and loses exactly one
+    // layer, which is what §10.12's simplification does with a lone child.
+    ok("margin-top", "calc(clamp(1px, 1em, 1vh))", "clamp(1px, 1em, 1vh)");
+    ok("margin-top", "calc(calc(0px + clamp(1px, 1em, 1vh)))", "calc(0px + clamp(1px, 1em, 1vh))");
+    ok("width", "calc(calc(calc(10px)))", "calc(10px)");
+
+    // ...AND EVERYTHING ELSE KEEPS THE AUTHOR'S BYTES. A function with no answer
+    // until layout, one whose units have no basis yet, and one this file cannot
+    // evaluate are all left exactly as written - which is where they were before
+    // this rule existed, so nothing that works today can start failing.
+    ok("transform", "translate(min(10px, 5%))", "translate(min(10px, 5%))");
+    ok("transform", "rotate(calc(1deg + 1cqw))", "rotate(calc(1deg + 1cqw))");
+    ok("transform", "scale(calc(1 * sibling-index()))", "scale(calc(1 * sibling-index()))");
+    ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
+    ok("font-family", "\"calc(1px + 1px)\"", "\"calc(1px + 1px)\""); // inside a string
+}
+
+// A PERCENTAGE SIMPLIFIES; COMPARING TWO OF THEM DOES NOT. The two halves are
+// separate rules and they used to be one over-cautious rule ("no percentage
+// anywhere, ever").
+void test_the_percentage_half_of_simplification() {
+    // The value model carries a percentage BESIDE the pixels rather than
+    // resolving it, so these need no basis and nothing is guessed.
+    ok("left", "calc(50px + calc(40%))", "calc(40% + 50px)");
+    ok("width", "calc(100% * 0.5)", "calc(50%)");
+    ok("text-indent", "min(1% + 1px)", "calc(1% + 1px)"); // one argument is not a comparison
+    // AN ABSENT COMPONENT IS NOT A ZERO ONE. `10%` has no length in it, and IEEE
+    // makes `0 * infinity` a NaN, so scaling one by an infinity used to invent a
+    // NaN length beside the right answer. A zero the AUTHOR wrote still does.
+    ok("width", "calc(1% * infinity)", "calc(infinity * 1%)");
+    ok("width", "calc(1% * NaN)", "calc(NaN * 1%)");
+    ok("width", "calc(1% / 0)", "calc(infinity * 1%)");
+    ok("width", "calc(0px * infinity)", "calc(NaN * 1px)");
+
+    // ...AND THE COMPARISON HALF. `min(1%, 2%)` looks decidable and is not: a
+    // percentage resolves against a basis that may be NEGATIVE, and then 2% is
+    // the smaller. `minmax-percentage-serialize` asks for both functions back.
+    ok("text-indent", "min(1%, 2%)", "min(1%, 2%)");
+    ok("text-indent", "max(3%, 4%)", "max(3%, 4%)");
+    ok("text-indent", "clamp(1%, 2%, 3%)", "clamp(1%, 2%, 3%)");
+    ok("text-indent", "min(10px, 5%)", "min(10px, 5%)"); // and the mixed case, as before
 }
 
 void test_important_and_the_empty_value() {
@@ -374,6 +468,8 @@ int main() {
     test_the_things_that_must_survive();
     test_what_a_math_function_may_not_be();
     test_the_rest_of_the_math_functions();
+    test_a_math_function_is_simplified_wherever_it_sits();
+    test_the_percentage_half_of_simplification();
     test_important_and_the_empty_value();
     test_a_custom_property_takes_anything_that_tokenises();
     test_the_two_spellings_of_one_property();
