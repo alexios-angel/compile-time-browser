@@ -1,12 +1,13 @@
 # Native captured Maps across global publication
 
-The four-function [publication specimen](../test/CTNative/native-export-boundary.js)
-now admits **4/4 native** with a fingerprinted `host-manifest` that selects
+The [publication specimen](../test/CTNative/native-export-boundary.js)
+admits **4/4 native** with a fingerprinted `host-manifest` that selects
 `host.slot`, the numeric `trace` observation and `initial_intrinsics: ["Map"]`.
 Without the manifest, or without its explicit standard Map identity, admission
 remains **0/4**. The method may now mutate its Map with standard `set`, `get`,
-`has` and `delete` operations over primitive contents. Full native Bootstrap
-Data is still unfinished.
+`has` and `delete` operations over primitive contents. A published setter and
+getter sharing that Map now advance **0/5 -> 5/5 native**, preserving `trace=1`.
+A three-method variant admits **6/6**. Full native Bootstrap Data is unfinished.
 
 ```js
 var host = {};
@@ -14,18 +15,25 @@ var host = {};
     host.slot = factory();
 })(function() {
     const state = new Map();
-    return {get() { state.set("x", 1); return state.size; }};
+    return {
+        get() { return state.size; },
+        set() { state.set("x", 1); return state.size; }
+    };
 });
+host.slot.set();
 var trace = host.slot.get();
 ```
 
 The compiler proves one ordinary root, one wrapper invocation, one factory,
 one immutable capture binding and one standard Map allocation, initially empty.
-The returned table has one fixed method, and every current call uses its actual
-table receiver. A complete body census retains every Map read and call, permits
-only primitive keys/contents and checks exact method receivers and arities.
+The returned table has distinct fixed methods, each with a current call using
+its actual table receiver. A complete family census follows every closure that
+captures the same binding, checks its publication and body, and retains every
+Map read and call. All methods must use primitive keys/contents and exact
+method receivers and arities. An uncalled or unsafe sibling withholds the
+complete owning plan. Separate Map allocations cannot inherit a shared owner.
 Repeated capture loads and fluent `set` returns alias the same Map. Publication
-and all four source functions remain; allocation, mutations, calls and the
+and the entire source function chain remain; allocation, mutations, calls and the
 observation execute at runtime. No previous invocation supplies a later result.
 
 This is an ownership/effects proof. Native admission must still prove supported
@@ -45,26 +53,30 @@ clone. Existing callback specialization, closure lifting and immutable-cell
 unboxing connect the Map to a typed owning environment. They preserve the
 wrapper/factory chain and the getter's real receiver. Native facts are rebuilt;
 input annotations cannot erase a field initialization or observation store.
-Each changed graph must pass a fresh complete ownership query. Map preparation
-may pass only host reads identified by that live ordinary-root proof; unrelated
+Every method's plan is checked before lifting any member. Cell unboxing waits
+until all closures have acquired their Map environment; source and prepared
+capture stages cannot mix. Each changed graph must pass a fresh complete
+ownership query. Map preparation may pass only host reads identified by that
+live ordinary-root proof; unrelated
 host reads still prevent the standard Map identity proof. Final admission
 reconstructs ownership again.
 
 Generated C++ reuses the shared root, shared method table, shared Map handle
-and `std::function<js_num()>` carriers. The getter captures the Map owner by
-value. Native output links neither the interpreter nor the collector. Escape
+and `std::function<js_num()>` carriers. Each method captures the same Map owner
+by value. Native output links neither the interpreter nor the collector. Escape
 analysis still reports global publication as `StoredGlobal`; general global
 loads remain external. The new owner does not require a weaker escape verdict.
 
 ## Measured gate, 2026-09-07
 
-`CTNative/native-owned-global-maps.test` covers **14 programs at 4/4 native**:
-the six previous publication variants plus mutation, growing keys, repeated
-growth, primitive operations, overwrite/deletion, fluent calls, and boolean
-`has`/`delete` results used by later mutations. All fourteen match Node, the
+`CTNative/native-owned-global-maps.test` covers **19 complete native programs**:
+fourteen at **4/4**, four shared setter/getter variants at **5/5**, and one
+three-method variant at **6/6**. They cover publication, mutation, growing keys,
+repeated growth, primitive operations, overwrite/deletion, fluent calls, and
+boolean `has`/`delete` results used by later mutations. Shared variants check
+reads before mutation and repeated calls. All nineteen match Node, the
 interpreter and standalone explicit/deduced GCC 13 and Clang 18 binaries.
-Linked-symbol checks reject VM use. The new mutation specimen advances
-**0/4 -> 4/4**, preserving `trace=1`.
+Linked-symbol checks reject VM use.
 
 The ordinary, mutating and growing methods pass ASan/UBSan, use-after-scope,
 stack-use-after-return and leak checks in both C++ forms. The harness retains
@@ -76,6 +88,14 @@ Map expires when its last callable owner is released. The growing method uses
 independent changing sizes through **1024 further invocations each**. A constant
 result or a startup summary cannot satisfy this witness.
 
+The shared growing-Map variant adds a fourth lifetime gate in both C++ forms.
+It saves setter and getter independently, releases root/table/global owners,
+churns **4096 allocations**, then reenters to create a distinct Map. Mutation
+through the saved setter is visible to the saved getter and independent of the
+fresh entry through **1024 further calls**. Releasing the setter retains the
+Map through the getter; copying and releasing the last getter expires it.
+The fresh getter likewise survives its root/table and frees its Map on release.
+
 Thirty source refusals cover mutable captures, non-primitive contents, cycles,
 wrong method receivers/arities, detached/escaping methods, Map publication,
 replaced intrinsics/prototypes, constructor arguments, additional allocation or
@@ -84,6 +104,16 @@ Stale/forged contracts, reruns, missing intrinsic identity and incomplete work
 retain the source operations and signatures. Three further controls establish
 that complete ownership still cannot supply a numeric export for nullable or
 boolean results, or a supported nullable Map key.
+
+Six shared-family source refusals cover an uncalled sibling, unknown effects,
+Map return, method replacement, detached publication and a parameterized setter.
+Proof units cover source/prepared two- and three-method families, every
+incomplete work budget, mixed capture stages, live sibling receiver/upvalue
+mutations and distinct Map identities. Both stale and freshly fingerprinted
+mutations must refuse; restoring the source restores the proof.
+
+The preceding single-method gate measured these budgets before the family proof
+was extended; they are historical, not current work limits:
 
 | Budget specimen | First complete admission | Cutoffs checked |
 |---|---:|---:|
@@ -97,21 +127,24 @@ proof exhausts. These are failed-attempt preservation checks, not a new
 Map-specific speculative rollback measurement. Existing scalar/table rollback
 controls remain.
 
-The focused devbox build and six ownership/host/type/escape CTests pass in
-**1.37 seconds**. The standalone gate passes all fourteen programs, three
+The preceding focused build and six ownership/host/type/escape CTests passed
+in **1.37 seconds**. That standalone gate passed all fourteen programs, three
 lifetime variants, thirty source refusals and three carrier refusals. Logs are
-`/tmp/ctcompile-map-effects-recovery-focused3.log`. See [HANDOFF.md](HANDOFF.md)
-for the full-session gate and corpus measurements.
+`/tmp/ctcompile-map-effects-recovery-focused3.log`. The current nineteen-program
+gate passes within `ctcompile_lit`; see [HANDOFF.md](HANDOFF.md) for the
+integrated gate and corpus measurements.
 
 ## Next boundary
 
-A table with both `set()` and `get()` methods sharing the captured Map measures
-**0/5 native**. Node and the interpreter both produce `trace=1` after the setter
-and getter run. This five-function specimen is retained in the gate. The live
-capture census currently permits the cell to feed only the selected closure;
-the owning source graph also requires one method and four functions. Extend
-both proofs to all methods and their shared owner before broadening to
-Bootstrap Data's method arguments/results.
+Changing the setter to `set(key) { state.set(key, 1); return state.size; }`
+and calling `host.slot.set("x")` retains five functions and Node/interpreter
+`trace=1`, but measures **0/5 native**. This exact source boundary is retained
+in the gate. Extend live callable arities and per-method primitive parameter
+proofs over every current actual call. The prepared setter needs the Map
+environment plus its explicit key argument, while the getter stays zero-argument.
+Existing capture lifting already transports the environment before explicit
+arguments; it needs a complete new proof, not a replacement owner carrier.
+Current-call proofs alone cannot authorize arbitrary future external arguments.
 
 Separately, `state.get(1)` used as a later key still infers a nullable numeric
 key, even after a local `set(1, 3)`. Its numeric observation is `trace=1` in both

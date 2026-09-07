@@ -6,7 +6,75 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Current native Map-effects checkpoint, 2026-09-07
+## Current shared-Map checkpoint, 2026-09-07
+
+Five work commits are saved locally: **`c7a849c`** (recovered Map iterator
+correction), **`fec186e`** (iterator boundary documentation), **`296cf33`**
+(shared published Map methods), **`e41893a`** (direct-load evidence), and
+**`78c2b15`** (source invocation-state regression). All inherited compiler
+changes were reviewed; browser carryover was left untouched. No push was
+performed.
+
+The next [published Map boundary](native-owned-global-maps.md) is implemented:
+two zero-argument methods sharing one mutable Map advance **0/5 -> 5/5 native**;
+a three-method table admits **6/6**. Complete live proofs follow every captured
+closure, fixed publication field, primitive body and current call. They require
+one Map identity and the exact source function chain. Preparation validates all
+methods before lifting and unboxes the shared cell after every member. It uses
+existing typed owners and callables, with no interpreter/collector dependency.
+
+The integrated lit run passes the nineteen-program shared-Map gate:
+fourteen **4/4**, four **5/5** and one **6/6** programs match Node/interpreter
+and explicit/deduced GCC 13/Clang 18 binaries. A fourth lifetime variant retains
+setter and getter independently after root/table release, churns 4096
+allocations, reenters with a distinct Map and performs 1024 further mutations
+and reads. ASan/UBSan, use-after-scope/return and leak checks pass in both forms;
+weak witnesses confirm destruction at the last callable release.
+
+The parallel [direct-load evidence](escape-load-evidence.md) links live property
+reads to direct writes sharing known local allocation sites. Links retain
+other keys, later writes and repeated dynamic instances, and do not change load
+result lattices, escape verdicts or native admission. Four corpus claims gates
+pass with zero oracle violations. The unit increment adds twelve rows and two
+live read-base mutations.
+
+The [source invocation gate](native-source-invocations.md) retains four programs,
+sixteen source functions and eleven observations for pre-call assignment state,
+a prior normal call, argument mutation and receiver/key/getter/argument order.
+Source recovery must connect invoke continuations to the enclosing try
+completion and preserve other status edges until effect admission; wrapping the
+call alone or removing the explicit-throw guard is insufficient.
+
+The focused devbox gate passes **8/8 CTests** in **79.86 seconds**, including
+**163/163 lit cases**, all **200 escape unit rows**, and the four corpus escape
+oracles with zero violations. Both proof-unit and source regression corrections
+were rebuilt and rerun. Log: `/tmp/ctcompile-native-integrated-focused2.log`.
+All compiler files pass the formatter; the whole-tree check flags untouched
+browser `style/selector.hpp`, `DOM/document.cpp` and `Style/css/selector.cpp`.
+A stale header ABI in the first build was fixed by refreshing frozen compiler
+source/header timestamps so every dependent object rebuilt. The full generated
+build/CTest is queued in `/tmp/ctcompile-native-integrated-full-gate.log`;
+no full-suite success is claimed yet.
+
+**Exact next native boundary:** the shared setter takes one key parameter,
+`set(key) { state.set(key, 1); return state.size; }`, while the getter stays
+zero-argument. Called with `"x"`, this retained source measures **0/5 native**
+and Node/interpreter `trace=1`. Discover every current method call before
+checking the family bodies; independently classify actuals, keep their SSA
+operands, and record per-call formal/actual evidence plus per-method primitive
+parameter tags. `HostContract/Values.cpp` currently rejects explicit indirect
+actuals, assumes three source/four prepared arguments and excludes parameters
+from its primitive-body proof. Existing capture lifting already prepends the
+Map environment before explicit arguments. The proof must not authorize itself
+through property-call recursion or turn one startup value into future-call
+permission. A typed external ABI is still a separate obligation.
+
+Nullable Map results used as keys remain a separate **0/4** carrier/presence
+boundary. Exact Bootstrap Data remains **0/7** per mode. Full native Bootstrap,
+source throwing-call recovery/admission/emission, and complete contents/points-to
+propagation through loads and indirect exposures remain unfinished.
+
+## Preceding native Map-effects checkpoint, 2026-09-07
 
 Five work commits are saved locally on `ctcompile-v1`: **`e52897f`** (complete
 direct storage census), **`4b36cd1`** (checked invocation normal-return flow),
@@ -69,14 +137,33 @@ by the complete fourteen-program native gate. The trim CTest passes **1/1** in
 **0.01 seconds**. Logs are `/tmp/ctcompile-map-effects-recovery-focused3.log`
 and `/tmp/ctcompile-map-effects-recovery-full-gate.log`.
 
-The first full devbox attempt stops before CTest in Claude's live
-`ctbrowser/lib/Script/builtins/objects.cpp:108`: `boost::container::small_vector`
-has no definition included. The exact diagnostic is in `AGENT-SYNC.md` for its
-owner; no browser file was edited. Full validation is pending that fix. Compiler
-formatting and whitespace checks pass; the latest whole-tree formatter flags
-only live browser `style/selector.hpp` and `Style/css/selector.cpp`. Earlier
-full-suite and corpus counts below are historical, not a fresh gate for this
-checkpoint.
+The frozen `86df9b1` full build succeeded; CTest measured **454/474** in
+**605.43 seconds**, including **161/161 lit cases**. Five failures belonged to
+that older browser snapshot. Fifteen compiler differential failures exposed
+raw `Map.keys()`/`values()` being treated as arrays after runtime `e6c77fc`
+changed them to iterator objects. That is a compiler boundary to fix, not a
+reason to reverse the runtime correction.
+
+The follow-up in `NativeMap/SnapshotCopies.cpp` requires each iterator to have
+one proved `Array.from` argument use in the same block, with only constants,
+root bookkeeping and proved Array builtin lookups between them. Direct reads,
+publication, mutation, repeated consumption and consumption across effects
+refuse. The six execution fixtures now explicitly materialize their intended
+arrays without changing observations. Partial evaluation recognizes only the
+freshly proved builtin/copy environment; actual snapshot evaluation stays
+runtime work. The production correction compiles on the devbox. Its ten-case
+source regression, lit and final full gate are pending the shared build lock;
+see `/tmp/ctcompile-iterator-focused2.log`. No browser sources were edited.
+
+`7a755dd` records the full-run direct-storage corpus census: Bootstrap has
+**2611 writes / 400 site edges**, with **29 multiple-store** and **17
+other-first-sink** sites. All first Stored witnesses are covered and execution
+oracles report zero violations. Both optimization modes still measure native
+**19/574 Bootstrap**, **39/4754 p5**, and **45/7725 Phaser**. These are component
+admission counts, not whole-program native compilation. Compiler formatting and
+whitespace pass; the whole-tree formatter flags only browser files left in the
+shared checkout. Historical full-suite counts below do not validate the pending
+iterator correction.
 
 **Exact next native boundary:** two zero-argument published methods sharing the
 captured mutable Map. The retained setter/getter specimen measures **0/5

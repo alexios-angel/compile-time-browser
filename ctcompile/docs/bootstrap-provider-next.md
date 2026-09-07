@@ -89,16 +89,39 @@ The mutating publication specimen advances **0/4 -> 4/4 native**, with
 Node/interpreter `trace=1`. Fourteen complete native programs and post-entry
 mutation/lifetime checks pass; see [the measured gate](native-owned-global-maps.md).
 
-## Next: one captured Map shared by multiple published methods
+## Completed: one captured Map shared by published methods
 
-Widen the fixed published table from one method to two zero-argument methods
-sharing its mutable Map, before tackling Data's method arguments and results.
-The live cell/use proof currently permits capture by only the selected closure;
-the owner query also requires one method and its exact four-function chain.
-Both need complete evidence for all methods, current calls and shared ownership.
-Existing returned-table and Map carriers can be reused after those proofs.
-The retained two-method specimen measures **0/5 native**, while Node and the
-interpreter both produce `trace=1` after its setter and getter execute.
+The fixed setter/getter specimen advances **0/5 -> 5/5 native**, retaining
+Node/interpreter `trace=1`. A three-method variant admits **6/6**. The complete
+live capture census now checks every sibling, its fixed field, primitive body
+and current calls. The owner query retains the exact source function chain and
+requires identical Map identity/family evidence across all calls. Preparation
+checks every plan before lifting and unboxes the shared cell after all members.
+The existing returned-table and Map carriers preserve ordinary owning calls.
+
+Nineteen complete programs pass Node/interpreter and explicit/deduced GCC/Clang
+execution. The shared lifetime gate retains setter/getter after root/table
+release, mutates and reads through them for 1024 calls, distinguishes a fresh
+entry's Map, and observes destruction after the last callable releases it.
+Both forms pass ASan/UBSan and leak checks. Uncalled/unsafe siblings, replaced
+fields, capture-stage mixtures, stale proofs and incomplete budgets refuse.
+
+## Next: primitive arguments to each published method
+
+The retained `set(key) { state.set(key, 1); return state.size; }` specimen,
+called with `"x"`, measures **0/5 native** with Node/interpreter `trace=1`.
+`HostContract/Values.cpp::callableCall` still rejects explicit indirect-call
+arguments. `capturedMap` requires three implicit source arguments or four
+prepared arguments including the Map environment; its sibling census enforces
+the same shape. `capturedMapBody` does not establish primitive formal arguments.
+Discover every current method call before checking the parameterized family
+bodies, then independently classify each actual and retain its SSA operand.
+Store per-call formal/actual evidence and per-method primitive parameter tags;
+body proofs must not recursively authorize themselves through property calls.
+Preserve distinct methods and one shared environment. Prepared setter
+arguments become `(this, new.target, callee, MapEnv, key)`; getter arguments stay
+unchanged. Existing capture lifting already shifts explicit arguments after the
+environment. A startup value does not establish a future-call ABI contract.
 Nullable `Map.get` results used as keys remain a separate presence/carrier
 boundary. Exact Bootstrap Data remains **0/7** per mode; complete native
 initialization, realm owners and future-call contracts remain unfinished.
@@ -114,7 +137,11 @@ and the invoked helper's normal returns. Ordinary call inference remains
 conservative on throw exits. Source recovery still needs to construct those
 regions, and admission and target emission must then consume the
 regions. Throwing callees, general finally, reentry and object payloads require
-further work.
+further work. The [source invocation gate](native-source-invocations.md) now
+retains four source programs, sixteen functions and eleven observations for
+assignment snapshots, prior normal calls, argument mutation and receiver/key/
+getter/argument order. All source throwing calls still refuse native lowering;
+the document identifies the required enclosing-try completion connection.
 Normal-return provider facts cannot authorize an exceptional continuation.
 
 Retain the eleven scenarios in
