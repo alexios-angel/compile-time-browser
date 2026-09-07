@@ -428,9 +428,9 @@ private:
                     // reports one.
                     bool namespaced = false;
                     for (const component_value & inner : sheet_->children_of(v)) {
-                        namespaced = namespaced || (inner.kind == cv_kind::token &&
-                                                    token(inner).type == token_type::delim &&
-                                                    text(inner) == "|");
+                        namespaced = namespaced ||
+                                     (inner.kind == cv_kind::token &&
+                                      token(inner).type == token_type::delim && text(inner) == "|");
                     }
                     dead = true;
                     invalid_ = invalid_ || !namespaced;

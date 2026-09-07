@@ -148,7 +148,7 @@ struct pseudo_ref {
 struct compound {
     atom tag;       // empty => universal, folded to lowercase
     atom tag_exact; // ...and as written, for a foreign element - see attribute_match
-    atom id;  // empty => unconstrained
+    atom id;        // empty => unconstrained
     boost::container::small_vector<atom, 2> classes;
     // Sized 1 rather than 2: an attribute selector is uncommon, and the ones that
     // appear almost always appear alone (`[type=checkbox]`, `[disabled]`).
