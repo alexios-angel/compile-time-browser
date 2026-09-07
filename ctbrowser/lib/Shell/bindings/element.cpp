@@ -2627,30 +2627,60 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         mutated();
         return arg(args, 0);
     });
-    // `matches` and `closest`, DEFINED IN TERMS OF THE SAME MATCHER
-    // `querySelectorAll` uses, so neither can be right about a selector the
-    // other is wrong about. That matcher is now `style::engine::select` - the
-    // one the cascade runs - rather than the hand-rolled compound matcher
-    // `query()` used to be, which gave up on any selector containing a space.
+    // `matches` and `closest`, THROUGH `element_matches` AND NOT THROUGH A
+    // DOCUMENT QUERY.
     //
-    // BOTH ARE STILL O(document) PER CALL, because they ask `query()` for every
-    // match in the tree and then look for this element in the answer. That is
-    // the shape to fix next: matching ONE element needs the traversal cursor
-    // for its ancestor chain and nothing else.
-    method("matches", [this](context & c, std::span<value> args) {
+    // Both used to ask `query()` for every match in the tree and then look for
+    // this element in the answer, which is O(document) per call and - worse -
+    // is a different QUESTION. A detached element is in no document, so it was
+    // never in that list: `document.createElement('div').matches('div')` was
+    // false, and so was every `matches` a page ran on an element it had just
+    // built. `style::engine::element_matches` builds the ancestor chain of one
+    // element and runs the matcher over that, which is the same matcher
+    // `select` runs - so the three still cannot disagree about what a selector
+    // MEANS - and it was fixed for exactly the detached case in e00268b while
+    // nothing called it.
+    //
+    // The selector is PARSED PER CALL, as it is in `query`: a compiled_selector
+    // owns everything it holds, and a selector string is a handful of tokens.
+    const auto compiled = [this](context & c, std::span<value> args, bool & bad) {
+        return style::css::parse_selector_text(arg_string(c, args, 0), *atoms_, bad);
+    };
+    method("matches", [this, compiled](context & c, std::span<value> args) {
         const node_id self = receiver(c);
-        if (!self) { return value::boolean(false); }
-        const std::vector<node_id> found = query(arg_string(c, args, 0), node_id{});
-        return value::boolean(std::find(found.begin(), found.end(), self) != found.end());
+        bool bad = false;
+        const style::css::stylesheet parsed = compiled(c, args, bad);
+        // "If s is not a valid selector, throw a SyntaxError" - DOM 4.9, and
+        // the same refusal shadowRoot.querySelector already makes. A selector
+        // that is valid CSS this engine cannot answer - `:has(.x)` - is not
+        // this, and matches nothing.
+        if (bad) {
+            throw_dom_exception(c, "SyntaxError",
+                                "matches: '" + arg_string(c, args, 0) +
+                                    "' is not a valid selector");
+            return value::boolean(false);
+        }
+        if (!self || parsed.selectors.empty()) { return value::boolean(false); }
+        const auto txn = doc_->read();
+        return value::boolean(selector_engine().element_matches(txn, self, parsed.selectors));
     });
-    method("closest", [this](context & c, std::span<value> args) {
+    method("closest", [this, compiled](context & c, std::span<value> args) {
         const node_id self = receiver(c);
-        if (!self) { return value::null(); }
-        const std::vector<node_id> found = query(arg_string(c, args, 0), node_id{});
+        bool bad = false;
+        const style::css::stylesheet parsed = compiled(c, args, bad);
+        if (bad) {
+            throw_dom_exception(c, "SyntaxError",
+                                "closest: '" + arg_string(c, args, 0) +
+                                    "' is not a valid selector");
+            return value::null();
+        }
+        if (!self || parsed.selectors.empty()) { return value::null(); }
         const auto txn = doc_->read();
         // INCLUSIVE, and upward: the element itself is the first candidate.
         for (node_id at = self; at; at = txn.parent(at)) {
-            if (std::find(found.begin(), found.end(), at) != found.end()) { return wrap(c, at); }
+            if (selector_engine().element_matches(txn, at, parsed.selectors)) {
+                return wrap(c, at);
+            }
         }
         return value::null();
     });
