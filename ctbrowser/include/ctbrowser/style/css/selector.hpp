@@ -33,8 +33,18 @@ namespace ctbrowser::style::css {
 // Never fails: an alternative it cannot represent is appended as one that can
 // never match, so the count always equals the number of alternatives written and
 // a caller does not have to reconcile them.
+//
+// `invalid`, when given, is set true if any alternative was refused because it is
+// not a SELECTOR AT ALL - `div >`, `a,,b`, `#0d6efd`, a bare `:`, a number where a
+// compound belongs. That is a different question from "this engine cannot match
+// it", and the two must not be confused: a stylesheet treats both the same way,
+// but `querySelector` has to throw SyntaxError for the first and return null for
+// the second. `:has(...)`, `::before`, `ns|div` and a `:not()` whose argument is
+// unrepresentable are all UNSUPPORTED here and none of them sets this flag - they
+// are valid CSS that a browser parses and this engine cannot answer, and throwing
+// on them would fail a test that a wrong answer merely fails differently.
 [[nodiscard]] std::uint32_t parse_selector_list(stylesheet & sheet,
                                                 std::span<const component_value> prelude,
-                                                atom_table & atoms);
+                                                atom_table & atoms, bool * invalid = nullptr);
 
 } // namespace ctbrowser::style::css

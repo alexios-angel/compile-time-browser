@@ -38,4 +38,18 @@ namespace ctbrowser::style::css {
 // rule early.
 [[nodiscard]] stylesheet parse_declaration_list(std::string_view css, atom_table & atoms);
 
+// A STANDALONE SELECTOR LIST - `querySelector`'s argument, and `matches`'s.
+//
+// Its own entry point for the same reason a style attribute has one: the sheet
+// parser wants a `{`, and wrapping the text in `x{}` to get one would let a `{` or
+// a `}` in an attribute value change what was parsed. The returned sheet holds one
+// `compiled_selector` per comma-separated alternative in `selectors`, and owns the
+// pool every view in them points into - so it must outlive the matching.
+//
+// `invalid` reports a SYNTAX error, which is a different thing from a selector this
+// engine cannot match; `parse_selector_list`'s declaration says which is which and
+// why `querySelector` must tell them apart.
+[[nodiscard]] stylesheet parse_selector_text(std::string_view text, atom_table & atoms,
+                                             bool & invalid);
+
 } // namespace ctbrowser::style::css

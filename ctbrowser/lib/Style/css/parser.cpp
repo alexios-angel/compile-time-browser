@@ -79,6 +79,15 @@ public:
         return std::move(sheet_);
     }
 
+    // A selector list on its own: no braces, no declarations. `invalid` comes back
+    // set when the text is not a selector at all.
+    [[nodiscard]] stylesheet take_selector_list(bool & invalid) {
+        std::vector<component_value> run;
+        while (!at_eof()) { run.push_back(consume_component_value()); }
+        (void)parse_selector_list(sheet_, span_of(run), *atoms_, &invalid);
+        return std::move(sheet_);
+    }
+
     // A style attribute: declarations, no braces, no selector.
     [[nodiscard]] stylesheet take_declaration_list() {
         std::vector<component_value> run;
@@ -492,6 +501,11 @@ private:
 stylesheet parse_stylesheet(std::string_view css, atom_table & atoms) {
     parser p{css, atoms};
     return p.take_stylesheet();
+}
+
+stylesheet parse_selector_text(std::string_view text, atom_table & atoms, bool & invalid) {
+    parser p{text, atoms};
+    return p.take_selector_list(invalid);
 }
 
 stylesheet parse_declaration_list(std::string_view css, atom_table & atoms) {

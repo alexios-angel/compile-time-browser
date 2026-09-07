@@ -1116,6 +1116,30 @@ public:
 
     [[nodiscard]] style_map resolve_all(const read_txn & txn);
 
+    // --- selector matching, for `querySelector` -------------------------------
+    //
+    // EVERY ELEMENT MATCHING ONE OF `list`, in document order. The same traversal
+    // resolve_all runs and the same `matches_from` a rule goes through, so a
+    // selector cannot mean one thing in a stylesheet and another in a script -
+    // which is exactly what it did while `dom_bindings::query` had a matcher of
+    // its own that gave up on any selector containing a space.
+    //
+    // It is a WALK rather than a lookup through the rule index on purpose: the
+    // index is keyed by a selector's rightmost compound and this list is not in
+    // it, and a document walk is what a browser does for querySelectorAll anyway.
+    //
+    // `root` empty means the whole document. A GIVEN ROOT RESTRICTS THE RESULTS to
+    // its descendants and nothing else - the match still sees the whole tree above
+    // it, because `div.querySelectorAll("body p")` must find the paragraphs inside
+    // that div whose ancestor chain runs through a body. Scoping the traversal
+    // instead would silently answer a different question.
+    //
+    // `first_only` stops at the first match, which is what `querySelector` wants
+    // and what keeps it from walking a large document to build a list of one.
+    [[nodiscard]] std::vector<node_id> select(const read_txn & txn, node_id root,
+                                              std::span<const compiled_selector> list,
+                                              bool first_only);
+
     // Start a level: clear the siblings seen at that depth and count what the
     // traversal cannot know from them alone - the level's element total and its
     // per-tag totals, which `:last-child` and the `-of-type` family need.

@@ -212,6 +212,75 @@ style_map engine::resolve_all(const read_txn & txn) {
     return out;
 }
 
+std::vector<node_id> engine::select(const read_txn & txn, node_id root,
+                                    std::span<const compiled_selector> list, bool first_only) {
+    std::vector<node_id> found;
+    if (list.empty()) { return found; }
+    // The cascade's traversal state, reset exactly as resolve_all resets it: the
+    // capacity is worth keeping across calls and the CONTENTS are the last walk's
+    // elements, which would make `html ~ x` match across two documents.
+    for (std::vector<visited_element> & level : levels_) { level.clear(); }
+    ancestor_filter ancestors;
+    enter_level(txn, txn.root(), 0);
+
+    // Returns false to unwind the whole walk, which is how first_only stops.
+    const auto walk = [&](auto && self, node_id node, std::size_t depth, bool collect) -> bool {
+        if (txn.kind(node).value_or(node_kind::text) != node_kind::element) {
+            // A non-element does not occupy a depth - see resolve_subtree, which has
+            // to agree with this or `+` would mean two different things.
+            for (const node_id child : txn.children(node)) {
+                if (!self(self, child, depth, collect)) { return false; }
+            }
+            return true;
+        }
+        if (levels_.size() <= depth) { levels_.resize(depth + 1); }
+        if (path_.size() <= depth) { path_.resize(depth + 1); }
+        if (totals_.size() <= depth) { totals_.resize(depth + 1); }
+        element_facts my_facts = facts_of(txn, node);
+        my_facts.sibling_index = static_cast<std::uint32_t>(levels_[depth].size()) + 1;
+        my_facts.sibling_count = totals_[depth].elements;
+        my_facts.type_index = totals_[depth].next_for(my_facts.tag);
+        my_facts.type_count = totals_[depth].total_for(my_facts.tag);
+        levels_[depth].push_back(visited_element{node, std::move(my_facts)});
+        path_[depth] = levels_[depth].size() - 1;
+
+        bool keep_going = true;
+        if (collect) {
+            for (const compiled_selector & sel : list) {
+                if (!matches(txn, ancestors, sel, depth)) { continue; }
+                found.push_back(node);
+                keep_going = !first_only;
+                break;
+            }
+        }
+        if (keep_going) {
+            // Read back from levels_ rather than from `my_facts`: matches() may have
+            // grown the vector and moved it, exactly as resolve_subtree warns.
+            const visited_element & me = levels_[depth][path_[depth]];
+            const atom my_tag = me.facts.tag;
+            const atom my_id = me.facts.id;
+            const boost::container::small_vector<atom, 4> my_classes = me.facts.classes;
+            ancestors.push(my_tag, my_id, my_classes);
+            enter_level(txn, node, depth + 1);
+            // A subtree search collects from BELOW the root, never the root itself:
+            // `element.querySelectorAll(s)` is over descendants.
+            const bool below = collect || node == root;
+            for (const node_id child : txn.children(node)) {
+                if (!self(self, child, depth + 1, below)) {
+                    keep_going = false;
+                    break;
+                }
+            }
+            ancestors.pop(my_tag, my_id, my_classes);
+        }
+        return keep_going;
+    };
+    // An empty root is the whole document, and the document's own root element is
+    // one of the answers - there is no Document node above <html> in this tree.
+    (void)walk(walk, txn.root(), 0, !root);
+    return found;
+}
+
 const engine::inline_block & engine::inline_style_of(const read_txn & txn, node_id id) {
     static const inline_block none;
     const std::string_view text = txn.attribute_value(id, style_name());

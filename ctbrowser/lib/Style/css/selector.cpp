@@ -263,6 +263,10 @@ class selector_parser {
 public:
     selector_parser(stylesheet & sheet, atom_table & atoms) : sheet_(&sheet), atoms_(&atoms) {}
 
+    // Whether anything in the list was not a selector at all, as opposed to one
+    // this engine cannot match. See parse_selector_list's declaration.
+    [[nodiscard]] bool invalid() const noexcept { return invalid_; }
+
     [[nodiscard]] std::uint32_t run(std::span<const component_value> prelude) {
         std::uint32_t written = 0;
         std::size_t at = 0;
@@ -305,7 +309,7 @@ private:
     // would need a second pass over the subtree rather than a lookup. Bootstrap uses
     // none. It stays unmatchable rather than silently wrong.
     [[nodiscard]] bool parse_functional(std::string_view name, const component_value & fn,
-                                        building & into) {
+                                        building & into, bool & invalid) {
         pseudo_ref ref;
         const auto inner = sheet_->children_of(fn);
         if (ascii_iequals(name, "nth-child") || ascii_iequals(name, "nth-last-child") ||
@@ -317,7 +321,13 @@ private:
             // `of S` is Selectors 4 and changes which elements are counted. Refused
             // rather than ignored: ignoring it would count the wrong set and match
             // the wrong elements, which is worse than not matching at all.
-            if (!parse_nth(*sheet_, inner, ref.a, ref.b)) { return false; }
+            // `of S` is refused above; anything else that will not read as An+B is a
+            // SYNTAX error rather than an unsupported feature - `:nth-child(fred)` is
+            // not a selector in any browser.
+            if (!parse_nth(*sheet_, inner, ref.a, ref.b)) {
+                invalid = true;
+                return false;
+            }
             ++into.classes; // a pseudo-class is class-level
             into.part.pseudos.push_back(std::move(ref));
             return true;
@@ -325,6 +335,9 @@ private:
         const bool is_not = ascii_iequals(name, "not");
         const bool is_is = ascii_iequals(name, "is");
         const bool is_where = ascii_iequals(name, "where");
+        // An unrecognised functional pseudo-class is NOT reported as invalid. `:has()`,
+        // `:lang()` and `:dir()` are real CSS this engine cannot answer, and there is no
+        // way from here to tell one of those from a name nobody has ever defined.
         if (!is_not && !is_is && !is_where) { return false; }
         ref.kind = is_not ? pseudo_kind::not_ : is_is ? pseudo_kind::is_ : pseudo_kind::where_;
 
@@ -333,7 +346,9 @@ private:
         // the real one's `selectors` vector is the rule's own list and a nested
         // selector is not an alternative of it.
         const std::size_t before = sheet_->selectors.size();
-        const std::uint32_t count = parse_selector_list(*sheet_, inner, *atoms_);
+        // The nested list's own syntax errors are this selector's: `:not(>)` is not a
+        // selector, and the flag has to come back out of the recursion to say so.
+        const std::uint32_t count = parse_selector_list(*sheet_, inner, *atoms_, &invalid);
         for (std::size_t i = 0; i < count; ++i) {
             ref.args.push_back(std::move(sheet_->selectors[before + i]));
         }
@@ -375,6 +390,11 @@ private:
         boost::container::small_vector<building, 2> compounds;
         boost::container::small_vector<combinator, 2> links; // left-to-right, size = n-1
         bool dead = false;
+        // A COMBINATOR STILL WAITING FOR ITS RIGHT-HAND SIDE. `div >` and `div ~ ` are
+        // syntax errors, and without this they parsed as plain `div`: `pending` is
+        // simply overwritten by the next compound, so a combinator with nothing after
+        // it left no trace at all.
+        bool dangling_combinator = false;
         bool want_new_compound = true;
         bool pending_pseudo = false; // a `:` was seen and a function follows it
         combinator pending = combinator::none;
@@ -384,6 +404,7 @@ private:
             compounds.push_back(building{});
             pending = combinator::descendant;
             want_new_compound = false;
+            dangling_combinator = false;
         };
 
         for (std::size_t i = 0; i < run.size(); ++i) {
@@ -393,13 +414,13 @@ private:
                 // was parsed as component values - so a `]` inside a quoted value
                 // cannot end it early and there is nothing to scan for.
                 if (v.open != '[') {
-                    dead = true; // a stray `(` or `{` in a prelude
+                    dead = invalid_ = true; // a stray `(` or `{` in a prelude
                     continue;
                 }
                 if (want_new_compound || compounds.empty()) { start_compound(); }
                 attribute_match match;
                 if (!parse_attribute(*sheet_, sheet_->children_of(v), *atoms_, match)) {
-                    dead = true;
+                    dead = invalid_ = true;
                     continue;
                 }
                 building & b = compounds.back();
@@ -412,13 +433,13 @@ private:
                 // colon branch below - which set `pending_pseudo` so this knows the
                 // function is one rather than a stray `f(...)` in a prelude.
                 if (!pending_pseudo || compounds.empty()) {
-                    dead = true;
+                    dead = invalid_ = true;
                     continue;
                 }
                 pending_pseudo = false;
                 std::string_view name = text(v);
                 if (!name.empty() && name.back() == '(') { name.remove_suffix(1); }
-                if (!parse_functional(name, v, compounds.back())) { dead = true; }
+                if (!parse_functional(name, v, compounds.back(), invalid_)) { dead = true; }
                 continue;
             }
             const css_token & t = token(v);
@@ -436,7 +457,7 @@ private:
                     // Two type selectors in one compound - `divp` cannot happen
                     // from the tokenizer, so this means something upstream is
                     // wrong rather than that the author wrote something odd.
-                    dead = true;
+                    dead = invalid_ = true;
                     continue;
                 }
                 // Tags fold to lowercase: HTML tag names are ASCII
@@ -452,7 +473,7 @@ private:
                 // is not a valid id selector, because an identifier may not begin
                 // with a digit. `#fff` IS one, and really does select id="fff".
                 if ((t.flags & flag_id_hash) == 0) {
-                    dead = true;
+                    dead = invalid_ = true;
                     continue;
                 }
                 std::string_view name = text(v);
@@ -467,7 +488,7 @@ private:
                     // The class NAME is the next token, which must be an ident.
                     if (i + 1 >= run.size() || run[i + 1].kind != cv_kind::token ||
                         token(run[i + 1]).type != token_type::ident) {
-                        dead = true;
+                        dead = invalid_ = true;
                         continue;
                     }
                     if (want_new_compound || compounds.empty()) { start_compound(); }
@@ -488,18 +509,24 @@ private:
                 // is what makes `a > b`, `a>b` and `a >b` one selector.
                 if (d == ">" || d == "+" || d == "~") {
                     if (compounds.empty()) {
-                        dead = true; // a combinator with nothing on its left
+                        dead = invalid_ = true; // a combinator with nothing on its left
                         continue;
                     }
                     pending = d == ">"   ? combinator::child
                               : d == "+" ? combinator::next_sibling
                                          : combinator::subsequent_sibling;
                     want_new_compound = true;
+                    dangling_combinator = true;
                     continue;
                 }
-                // `|` is a namespace separator, and the rest cannot appear in a
-                // selector at all.
-                dead = true;
+                // `|` IS A NAMESPACE SEPARATOR - valid CSS with an `@namespace` behind
+                // it, which this engine does not model. Unsupported rather than
+                // invalid, so `querySelector` returns null rather than throwing.
+                if (d == "|") {
+                    dead = true;
+                    continue;
+                }
+                dead = invalid_ = true;
                 continue;
             }
             case token_type::colon: {
@@ -523,7 +550,7 @@ private:
                 }
                 if (i + 1 >= run.size() || run[i + 1].kind != cv_kind::token ||
                     token(run[i + 1]).type != token_type::ident) {
-                    dead = true; // a bare `:`
+                    dead = invalid_ = true; // a bare `:`
                     continue;
                 }
                 const std::string_view name = text(run[i + 1]);
@@ -539,18 +566,25 @@ private:
                     ++b.classes;
                     continue;
                 }
+                // An unrecognised pseudo-class NAME, for the same reason the functional
+                // form above is not reported as invalid: `:focus-visible` and `:defined`
+                // are real and this engine cannot observe either.
                 dead = true;
                 continue;
             }
             default:
                 // A number, a string, a percentage - none of them can appear in a
                 // selector at this level.
-                dead = true;
+                dead = invalid_ = true;
                 continue;
             }
         }
 
-        if (dead || compounds.empty()) {
+        // AN EMPTY ALTERNATIVE IS A SYNTAX ERROR, and it is how `querySelector("")`,
+        // `a,,b` and a trailing comma all arrive here: `run` holds nothing but
+        // whitespace, so no compound was ever started.
+        if (compounds.empty() || dangling_combinator) { invalid_ = true; }
+        if (dead || compounds.empty() || dangling_combinator) {
             push_dead();
             return;
         }
@@ -571,14 +605,17 @@ private:
 
     stylesheet * sheet_;
     atom_table * atoms_;
+    bool invalid_ = false;
 };
 
 } // namespace
 
 std::uint32_t parse_selector_list(stylesheet & sheet, std::span<const component_value> prelude,
-                                  atom_table & atoms) {
+                                  atom_table & atoms, bool * invalid) {
     selector_parser parser{sheet, atoms};
-    return parser.run(prelude);
+    const std::uint32_t written = parser.run(prelude);
+    if (invalid && parser.invalid()) { *invalid = true; }
+    return written;
 }
 
 } // namespace ctbrowser::style::css
