@@ -57,36 +57,48 @@ requires a complete new proof before using that clone. It reconstructs native
 facts, preserving real stores despite stale annotations. Standalone GCC/Clang
 and post-entry owner/table/callable lifetime checks pass.
 
-## Next: captured Map environments across publication
+## Completed: captured Map environments across publication
 
-The Map-backed four-function publication specimen remains **0/4**, although its
-startup prefix completes. Its **4/4** native gate is proposed. Extend the live
-callable/source-owner proof to its immutable captured Map environment, preserving
-allocation identity and shared ownership. Then connect that proof to existing
-Map/capture types and table admission. Do not treat completed provider summaries
-as permission for future callers, mutable slots or a typed export ABI. See
-[the export design](native-export-boundary.md) for those obligations.
+The [Map-backed publication specimen](native-owned-global-maps.md) advances
+**0/4 -> 4/4 native** with an explicit host manifest and standard Map identity.
+Its default remains **0/4**. The complete live callable/source-owner proof
+follows the immutable capture, and existing Map/capture/table carriers preserve
+allocation identity and shared ownership. Six variants pass Node/interpreter,
+GCC/Clang and post-entry Map/table/callable lifetime checks. Completed provider
+summaries still supply no authority for future callers, mutable slots or a typed
+export ABI; see [the export design](native-export-boundary.md).
 
 The exact specimen has four functions and publishes inside its wrapper.
-`HostContract/Values.cpp::propertyCall()` currently accepts only uncaptured
-literal getters; `Analysis/OwnedGlobalMethods.cpp` requires three functions and
-entry-local publication. Extend those queries to one checked entry/wrapper/
-factory chain and one immutable capture cell referring to a standard empty Map.
-Then reuse capture/signature preparation for the getter's `size` read.
-`Analysis/NativeMap.cpp::prepareNativeMaps()` also rejects other host/global
-value reads while proving standard Map identity. It must consume the complete
-live owning-root proof for the permitted host reads; merely enabling Map
-preparation on the manifest path will still refuse. Keep mutable captures,
-shadowed/replaced Map bindings, separate Map publication, repeated invocations,
-reentry, throws, cycles and incomplete budgets as refusals. The proposed gate
-must retain and invoke the captured callable after entry/root/table release.
+The importer leaves `factory()` indirect. The host query now proves that actual
+callback through the entry's sole wrapper invocation before any rewriting.
+Native preparation validates the original fingerprint, works on a disposable
+clone and requires complete live proofs after callback/capture preparation and
+Map annotation. `prepareNativeMaps()` consumes only proved ordinary-root reads
+while checking standard Map identity. Mutable captures, replaced Map bindings,
+separate publication, additional factory invocations, reentry, throws, cycles
+and incomplete proofs remain refusals.
+
+## Next: supported Map operations in published methods
+
+The new callable proof only accepts a captured Map's `size` read. A getter that
+first executes `state.set("x", 1)` still refuses. Extend this complete live
+proof to supported standard Map operations and their effects, then widen the
+fixed published table to Data's multiple methods and their arguments/results.
+Reuse existing native Map/type machinery after source identity and ownership
+are established. Exact Bootstrap Data remains **0/7** per mode; complete native
+initialization, realm owners and future-call contracts remain unfinished.
 
 Exceptions do not make a callback or allocation inert. Native try/catch covers
 one acyclic handler with homogeneous number, boolean or owning string throws
 and proved nonthrowing primitive helpers in its try and catch. Checked callee
 resolution now follows preserved status/register vectors. Target verification
-also follows homogeneous primitive payloads through defined EmitC helpers;
-source throwing-call recovery still needs its exceptional edge. Throwing callees,
+also follows homogeneous primitive payloads through defined EmitC helpers.
+Explicit `ctjs.invoke` regions now separate the normal result from an implicit
+thrown payload and pre-call state; bounded type flow covers that payload.
+Source recovery still needs to construct those regions, and throwing callees
+need a checked normal-return transfer because upstream call inference remains
+conservative on throw exits. Admission and target emission must then consume the
+regions. Throwing callees,
 general finally, reentry and object payloads require further work.
 Normal-return provider facts cannot authorize an exceptional continuation.
 

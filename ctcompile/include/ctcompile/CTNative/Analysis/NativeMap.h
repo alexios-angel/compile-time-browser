@@ -9,6 +9,8 @@
 
 namespace ctcompile::ctnative {
 
+class OwnedGlobalRoots;
+
 inline constexpr llvm::StringLiteral kNativeMapSite = "ctnative.map_site";
 inline constexpr llvm::StringLiteral kNativeMapAction = "ctnative.map_action";
 inline constexpr llvm::StringLiteral kNativeMapMethod = "ctnative.map_method";
@@ -22,7 +24,7 @@ inline constexpr llvm::StringLiteral kNativeMapSnapshotBuiltin = "ctnative.map_s
 
 /// Annotate only after proving both the standard constructor/method identity
 /// and every instance use. No runtime assumption or boxed fallback is added.
-void prepareNativeMaps(mlir::ModuleOp module);
+void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals = nullptr);
 
 /// The operation performed by a proved call or size read, or empty.
 llvm::StringRef nativeMapAction(mlir::Operation * op);

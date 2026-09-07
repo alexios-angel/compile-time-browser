@@ -1,6 +1,6 @@
 # Native export ownership and calls
 
-**Status: scalar owner and native exported getter, 2026-09-07.** The explicit
+**Status: scalar, getter and captured Map owners, 2026-09-07.** The explicit
 [ordinary global owner](native-owned-globals.md) now admits the scalar specimen
 at **1/1 native** under a live driver contract. The baseline regression below
 intentionally runs without that option and retains **0/1**. Provider-prefix
@@ -10,6 +10,9 @@ The exported getter's live callable and owning source graph now feed native
 table storage and call admission: **3/3 native** with its explicit manifest,
 **1/3** without. Global confinement remains unchanged; published functions
 cannot become private from a prefix observation.
+
+The [captured Map getter](native-owned-global-maps.md) now admits **4/4** with
+the explicit manifest and standard Map identity; its default remains **0/4**.
 
 ## Measured boundary
 
@@ -22,7 +25,7 @@ reproducible and checks reports, final admission and reruns.
 |---|---|---|---|
 | One ordinary global root holding a number | Complete `HostContractAnalysis`: one usable write/read edge | **0/1** | `trace=42` |
 | Exported table with an uncaptured constant getter | Complete current callable and fixed owning source graph | **1/3** by default; **3/3** with manifest | `trace=42` |
-| Exported Map-backed getter below | Entire startup prefix completes: two resolved calls, one factory and one completed provider summary | **0/4** | `trace=0` |
+| Exported Map-backed getter below | Complete live immutable capture and owning source graph with explicit standard Map identity; startup prefix also completes | **0/4** by default; **4/4** with manifest and Map identity | `trace=0` |
 | Confined local root holding the same kind of owning table | Existing confined-field proof | **4/4** | `trace=0` |
 
 The scalar specimen isolates the owner consumer:
@@ -57,11 +60,13 @@ var trace = host.slot.get();
 With all publication/provider options enabled, its prefix report has no
 remaining entry or provider boundary. It records one runtime Map allocation,
 one capture edge, one publication and one Map `size` read. Allocation, closure
-creation and publication operations remain in the IR. The complete host
-contract still refuses `property receiver lacks a fresh own-data object proof`
-and exposes zero usable slot edges. The two analyses are separate.
+creation and publication operations remain in the IR. Without the explicit
+standard Map identity, the complete host contract still refuses
+`property receiver lacks a fresh own-data object proof` and exposes zero usable
+slot edges. Supplying that identity now enables the separate live ownership
+proof and native consumer.
 
-All four native refusals are unchanged after the prefix rewrite:
+Without a native host manifest, all four refusals remain after the prefix rewrite:
 
 - Script entry: `an object literal that escapes - it reaches ctjs.store_global`.
 - Wrapper: `global host is !ctnative.boxed, not a number`.
@@ -73,8 +78,9 @@ The regression also checks that a successful scalar host report, forged
 ownership. It compares four observations against both Node and the interpreter.
 The complete scalar report must identify the actual `host.slot` root, one
 write/read edge and one observation store; complete analysis of the published
-source before and after prefix rewriting must refuse with zero usable edges.
-The separate ordinary-owner and exported-getter gates execute standalone native
+source before and after prefix rewriting must refuse with zero usable edges
+when standard Map identity is absent. Its positive contract now admits all four
+functions. The ordinary-owner, exported-getter and captured-Map gates execute standalone native
 programs and check post-entry owning lifetimes. Existing confined-table
 execution and lifetime checks remain in the
 [owning field gate](native-owned-method-table-slots.md).
@@ -151,17 +157,19 @@ The standalone and post-entry lifetime gates pass; see
 
 `Analysis/ClosedValueFlow.h` and
 `Lowering/ClosureLifting/MethodTables.cpp` explicitly consume both the local
-slot query and the checked exported edge. The latter preserves the uncaptured
-table and callable after factory and script-entry return. Captured Map
-environments are the next source-proof boundary.
+slot query and the checked exported edge. The latter preserves the table,
+callable and admitted immutable Map environment after factory and script-entry
+return.
 
-The published Map specimen still needs a complete callable/environment proof.
+The published Map specimen now has a complete callable/environment proof.
 `HostContractAnalysis::property()` and `callable()` return no edge after any
-refusal. Callable lookup now follows an uncaptured literal getter's method
-property to its actual stored source closure; Map/capture/provider behavior
-remains outside that complete analysis. A prefix's retained factory/call rows
-cannot substitute for those missing checks. The table consumer must explicitly
-request the new live owning graph; it cannot infer it from reports.
+refusal. Callable lookup follows the method property to its actual stored
+source closure, the immutable capture binding and its standard empty Map.
+The actual indirect wrapper factory call is proved before preparation; no
+source call is silently resolved to make the original proof succeed. The
+current getter body is restricted to `size`. Map mutations and broader provider
+effects remain outside this tier. A prefix's retained factory/call rows cannot
+substitute for the live checks. See [the measured gate](native-owned-global-maps.md).
 
 Resolve each field read to its actual preceding stored closure and numeric
 source identity, preserving receiver, evaluated arguments and source order.

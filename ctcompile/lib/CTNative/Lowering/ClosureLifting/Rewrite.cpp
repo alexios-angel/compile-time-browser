@@ -240,7 +240,7 @@ bool closureLifter::admissionIsDeclaration(ctjs::CreateClosureOp c) {
 }
 
 void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosureOp> made,
-                         liftReport & out) {
+                         liftReport & out, bool preserveReceiver) {
     mlir::Block & entry = target.getBody().front();
     const auto valueType = ctjs::ValueType::get(context);
     const unsigned captures = static_cast<unsigned>(target.getUpvalueCount());
@@ -365,7 +365,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     ++out.functions;
 
     if (returnedClosures.contains(made.front())) {
-        liftReturnedClosure(made.front(), target, captures, parameters, out);
+        liftReturnedClosure(made.front(), target, captures, parameters, out, preserveReceiver);
         return;
     }
 

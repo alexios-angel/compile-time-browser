@@ -208,7 +208,7 @@ void BindingTimeAnalysis::Impl::analyze(ctjs::FuncOp fn) {
 }
 
 BindingTimeAnalysis::BindingTimeAnalysis(mlir::ModuleOp module)
-    : BindingTimeAnalysis(module, prepareNativeMaps) {}
+    : BindingTimeAnalysis(module, [](mlir::ModuleOp source) { prepareNativeMaps(source); }) {}
 BindingTimeAnalysis::BindingTimeAnalysis(mlir::ModuleOp module,
                                          llvm::function_ref<void(mlir::ModuleOp)> prepareHeapFacts)
     : impl(std::make_unique<Impl>(module, prepareHeapFacts)) {}

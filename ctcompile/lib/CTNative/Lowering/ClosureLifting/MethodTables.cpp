@@ -255,25 +255,68 @@ void closureLifter::discardNativeSourceFacts() {
 }
 
 std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
-    const OwnedGlobalRoots & globals) {
+    const OwnedGlobalRoots & globals, const HostContract & contract, unsigned maxSteps) {
     if (!globals.proved() || globals.roots().size() != 1 || !globals.roots().front().methodTable) {
         return std::nullopt;
     }
     discardNativeSourceFacts();
+    const auto sourceTable = *globals.roots().front().methodTable;
+    liftReport out;
+    if (sourceTable.capturedMap) {
+        // The input proof follows the factory through one call-only wrapper
+        // parameter. Reuse that parameter's checked removal and the ordinary
+        // local closure lift, retaining the source wrapper/factory calls.
+        indexAndNewTargets();
+        specializeCallbacks(out);
+    }
     census();
-    returnedMethodTableCensus(&globals);
-    const auto & table = *globals.roots().front().methodTable;
+    std::optional<OwnedGlobalRoots> prepared;
+    if (sourceTable.capturedMap) {
+        for (ctjs::FuncOp function : {sourceTable.wrapper, sourceTable.factory}) {
+            if (!function) { return std::nullopt; }
+            llvm::SmallVector<ctjs::CreateClosureOp, 1> sites;
+            for (ctjs::CreateClosureOp closure : closures) {
+                if (targetOf(closure) == function) { sites.push_back(closure); }
+            }
+            if (sites.size() != 1 || whyNotLiftable(sites.front())) { return std::nullopt; }
+            lift(function, sites, out);
+        }
+        // Reconstruct the source-owner graph after callback transport changes.
+        // The original manifest has already passed; this derived fingerprint
+        // cannot rescue stale input, and an incomplete query discards the clone.
+        HostContract transformed = contract;
+        transformed.moduleSha256 = hostContractFingerprint(module);
+        prepared.emplace(module, transformed, maxSteps);
+        if (!prepared->proved() || prepared->roots().size() != 1 ||
+            !prepared->roots().front().methodTable) {
+            return std::nullopt;
+        }
+    }
+    const auto & current = prepared ? *prepared : globals;
+    returnedMethodTableCensus(&current);
+    const auto table = *current.roots().front().methodTable;
     auto made = table.closure;
     const auto plan = returnedClosures.find(made);
     if (plan == returnedClosures.end() || !plan->second.reason.empty() ||
         whyNotReturnedClosure(made)) {
         return std::nullopt;
     }
-    // The checked tier has no captures or explicit parameters, so signatures
-    // and source allocations stay intact. Preserve the original receiver for
-    // the complete post-rewrite host proof; emission drops its unused value.
-    liftReport out;
-    liftReturnedClosure(made, table.method, 0, 0, out, true);
+    // Preserve the actual source receiver for the post-rewrite callable proof.
+    // The capture becomes a leading typed argument and an owning environment
+    // slot; the emitted call invokes the stored callable directly.
+    if (table.capturedMap) {
+        lift(table.method, {made}, out, true);
+        unboxCells(out);
+        llvm::SmallVector<ctjs::CreateCellOp> dead;
+        module.walk([&](ctjs::CreateCellOp cell) {
+            if (cell->hasAttr("ctnative.unboxed") && cell.getResult().use_empty()) {
+                dead.push_back(cell);
+            }
+        });
+        for (ctjs::CreateCellOp cell : dead) { cell.erase(); }
+    } else {
+        liftReturnedClosure(made, table.method, 0, 0, out, true);
+    }
     return out;
 }
 

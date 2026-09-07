@@ -110,7 +110,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         if (hostContract) {
             const OwnedGlobalRoots original(module, *hostContract, hostMaxSteps);
             if (original.proved() && original.roots().size() == 1) {
-                // Prepare only the checked uncaptured table, speculatively.
+                // Prepare only the checked table and environment, speculatively.
                 // A stale input never reaches this rewrite. Its internally
                 // derived contract is usable only if the complete live owner
                 // and callable queries succeed again on the transformed IR.
@@ -120,7 +120,8 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 closureLifter preparation{*prepared};
                 std::optional<liftReport> result;
                 if (original.roots().front().methodTable) {
-                    result = preparation.prepareOwnedGlobalMethodTables(source);
+                    result = preparation.prepareOwnedGlobalMethodTables(source, *hostContract,
+                                                                        hostMaxSteps);
                 } else {
                     // Scalar owners need no closure rewrite, but old native
                     // facts must not erase their live stores either.
@@ -132,9 +133,21 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                     transformed.moduleSha256 = hostContractFingerprint(*prepared);
                     const OwnedGlobalRoots checked(*prepared, transformed, hostMaxSteps);
                     if (checked.proved()) {
-                        module.getBodyRegion().takeBody(prepared->getBodyRegion());
-                        hostContract = std::move(transformed);
-                        lifted = *result;
+                        // Map identity may pass the proved ordinary-root reads,
+                        // never arbitrary host reads. Its annotations change
+                        // the prepared fingerprint, so final ownership is
+                        // independently checked once more before publication.
+                        if (checked.roots().front().methodTable &&
+                            checked.roots().front().methodTable->capturedMap) {
+                            prepareNativeMaps(*prepared, &checked);
+                            transformed.moduleSha256 = hostContractFingerprint(*prepared);
+                        }
+                        const OwnedGlobalRoots final(*prepared, transformed, hostMaxSteps);
+                        if (final.proved()) {
+                            module.getBodyRegion().takeBody(prepared->getBodyRegion());
+                            hostContract = std::move(transformed);
+                            lifted = *result;
+                        }
                     }
                 }
             }

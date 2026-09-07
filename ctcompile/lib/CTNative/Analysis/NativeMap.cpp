@@ -4,6 +4,7 @@
 
 #include "NativeMap/Presence.h"
 #include "NativeMap/SnapshotCopies.h"
+#include "OwnedGlobalRoots.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -340,7 +341,7 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
 
 } // namespace
 
-void prepareNativeMaps(mlir::ModuleOp module) {
+void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) {
     // Proof annotations are derived, not trusted input, including on reruns.
     module.walk([&](mlir::Operation * op) {
         for (llvm::StringRef name :
@@ -409,6 +410,10 @@ void prepareNativeMaps(mlir::ModuleOp module) {
             reason = "standard Map binding is assigned in this program";
         } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
                    load && load.getName() != "Map" && !copies.builtins.contains(op)) {
+            // A complete live source-owner proof identifies this load as the
+            // ordinary exported root. It cannot expose or replace the realm's
+            // Map binding. Arbitrary host reads keep the existing refusal.
+            if (globals && globals->proved() && globals->lookup(load)) { return; }
             for (mlir::OpOperand & use : load.getResult().getUses()) {
                 if (!llvm::isa<ctjs::CallDirectOp>(use.getOwner()) || use.getOperandNumber() != 2) {
                     reason = "standard Map identity is unproved with other host/global value reads";

@@ -2,6 +2,10 @@
 
 #include "../LoweringSupport.h"
 
+namespace ctcompile::ctnative {
+struct HostContract;
+}
+
 namespace ctcompile::ctnative::lowering_detail {
 
 struct liftReport {
@@ -643,7 +647,9 @@ struct closureLifter {
     void returnedClosureCensus();
     void returnedMethodTableCensus(const OwnedGlobalRoots * globals = nullptr);
     void discardNativeSourceFacts();
-    std::optional<liftReport> prepareOwnedGlobalMethodTables(const OwnedGlobalRoots & globals);
+    std::optional<liftReport> prepareOwnedGlobalMethodTables(const OwnedGlobalRoots & globals,
+                                                             const HostContract & contract,
+                                                             unsigned maxSteps);
     std::optional<std::string> whyNotReturnedClosure(ctjs::CreateClosureOp c);
     void liftReturnedClosure(ctjs::CreateClosureOp c, ctjs::FuncOp target, unsigned captures,
                              unsigned parameters, liftReport & out, bool preserveReceiver = false);
@@ -660,7 +666,8 @@ struct closureLifter {
 
     static bool admissionIsDeclaration(ctjs::CreateClosureOp c);
 
-    void lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosureOp> made, liftReport & out);
+    void lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosureOp> made, liftReport & out,
+              bool preserveReceiver = false);
 
     static bool namesACellArgument(mlir::Operation * call, mlir::OpOperand & use);
 

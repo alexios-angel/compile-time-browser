@@ -178,14 +178,25 @@ def main():
             or "host contract module fingerprint mismatch" not in repeated.read_text()):
         raise RuntimeError("plain_table: semantic native mutation reused the earlier manifest")
 
-    # This source has no remaining startup-prefix boundary. Its Map, closure
-    # and publication still execute at runtime and do not yet have a native path.
+    # The complete owning graph requires an explicit standard Map identity.
+    # Source allocation, closure and publication still execute at runtime.
     ir, count, reasons = prepared["published"]
     complete, _, _ = host.analyze(args.opt, ir, host.manifest(args.opt, ir),
                                   args.work / "published-complete-proof")
     if (complete["proved"] or complete["reason"] != "property receiver lacks a fresh own-data object proof"
             or any(slot["proved_edges"] for slot in complete["slots"])):
         raise RuntimeError(f"published: missing the complete ownership/call boundary: {complete}")
+    contract = dict(host.manifest(args.opt, ir), initial_intrinsics=["Map"])
+    complete, _, _ = host.analyze(args.opt, ir, contract,
+                                  args.work / "published-map-proof", strict=True)
+    if not complete["proved"] or complete["slots"][0]["proved_edges"] != 1:
+        raise RuntimeError("published: missing the live captured Map publication proof")
+    config = args.work / "published-map-proof.json"
+    checked, checked_reasons = native(args, ir, "published-map-owned", count, claimed=4,
+                                      options=f"host-manifest={config}")
+    if (checked_reasons or "ctnative.host_owner_proved = true" not in checked.read_text()
+            or "ctnative::map_size" not in checked.read_text()):
+        raise RuntimeError("published: missing the owning captured Map native component")
     report, followed = follow(args, ir, "published")
     measured = tuple(report[key] for key in (
         "resolved_calls", "summarized_factories", "summarized_provider_calls",
@@ -224,7 +235,8 @@ def main():
     if forged_reasons != reasons or rerun_reasons != reasons:
         raise RuntimeError("published: forged report supplied native authority")
     print("native export boundary: scalar/table without manifest remain 0/1 and 1/3 native; "
-          "checked table 3/3; complete published startup prefix remains 0/4; confined control 4/4; "
+          "checked table 3/3, checked captured Map 4/4; "
+          "published startup prefix without manifest remains 0/4; confined control 4/4; "
           "four Node/interpreter observations and forged/rerun controls pass")
 
 
