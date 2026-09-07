@@ -22,6 +22,14 @@ bool selectable(HostPrefixBranch proof) {
     return yield && yield.getNumOperands() == proof.operation.getNumResults();
 }
 
+llvm::json::Value providerResult(mlir::Attribute value) {
+    if (!value) { return nullptr; }
+    std::string text;
+    llvm::raw_string_ostream stream(text);
+    value.print(stream);
+    return text;
+}
+
 void select(HostPrefixBranch proof) {
     auto branch = proof.operation;
     auto & region = branch->getRegion(proof.selected ? 0u : 1u);
@@ -59,7 +67,7 @@ struct CTNativeSpecializeHostPrefixPass
             return;
         }
         HostEntryPrefixAnalysis analysis(module, *contract, maxSteps, followPublication,
-                                         followProviderReads);
+                                         followProviderReads, followProviderMutations);
         // Snapshot a checked plan before making the first semantic mutation.
         // No analysis query runs against partially rewritten IR.
         std::vector<HostPrefixBranch> branches(analysis.branches().begin(),
@@ -137,10 +145,58 @@ struct CTNativeSpecializeHostPrefixPass
                     {"result", result},
                     {"reads", std::move(operations)}});
             }
+            llvm::json::Array providerCalls;
+            std::int64_t mutationCount = 0, nestedCount = 0;
+            llvm::DenseMap<mlir::Operation *, std::int64_t> ordinals;
+            if (!analysis.providerCalls().empty()) {
+                module.walk([&](mlir::Operation * operation) {
+                    const auto index = static_cast<std::int64_t>(ordinals.size());
+                    ordinals[operation] = index;
+                });
+            }
+            const auto allocationRow = [&](HostPrefixProviderAllocation allocation) {
+                return llvm::json::Object{
+                    {"map_id", static_cast<std::int64_t>(allocation.mapId)},
+                    {"allocation_operation", ordinals.lookup(allocation.operation)},
+                    {"invocation_operation", ordinals.lookup(allocation.invocation)}};
+            };
+            for (auto proof : analysis.providerCalls()) {
+                const auto factory =
+                    llvm::find_if(analysis.factories(), [&](const auto & candidate) {
+                        return candidate.operation == proof.factory;
+                    });
+                llvm::json::Array allocations, operations;
+                for (auto allocation : proof.allocations) {
+                    allocations.push_back(allocationRow(allocation));
+                    ++nestedCount;
+                }
+                for (const auto & operation : proof.operations) {
+                    auto row = allocationRow(operation.resource);
+                    row["operation"] = ordinals.lookup(operation.operation);
+                    row["member"] = operation.member;
+                    row["result"] = providerResult(operation.result);
+                    row["result_map_id"] = static_cast<std::int64_t>(operation.resultMapId);
+                    operations.push_back(std::move(row));
+                    if (operation.member == "set" || operation.member == "delete") {
+                        ++mutationCount;
+                    } else {
+                        ++readCount;
+                    }
+                }
+                providerCalls.push_back(llvm::json::Object{
+                    {"target", proof.target.getSymName().str()},
+                    {"call_operation", ordinals.lookup(proof.operation)},
+                    {"factory_index",
+                     static_cast<std::int64_t>(factory - analysis.factories().begin())},
+                    {"result", providerResult(proof.result)},
+                    {"allocations", std::move(allocations)},
+                    {"operations", std::move(operations)}});
+            }
             llvm::json::Object document{
                 {"valid", analysis.valid()},
                 {"reason", analysis.reason().str()},
                 {"boundary", analysis.boundary().str()},
+                {"provider_boundary", analysis.providerBoundary().str()},
                 {"source_module_sha256", contract->moduleSha256},
                 {"selected_branches", static_cast<std::int64_t>(branches.size())},
                 {"resolved_calls", static_cast<std::int64_t>(calls.size())},
@@ -152,9 +208,13 @@ struct CTNativeSpecializeHostPrefixPass
                 {"factories", std::move(factories)},
                 {"publications", std::move(publications)},
                 {"summarized_provider_calls",
-                 static_cast<std::int64_t>(analysis.providerReads().size())},
+                 static_cast<std::int64_t>(analysis.providerReads().size() +
+                                           analysis.providerCalls().size())},
                 {"runtime_provider_reads", readCount},
                 {"provider_reads", std::move(providerReads)},
+                {"runtime_provider_mutations", mutationCount},
+                {"runtime_nested_provider_allocations", nestedCount},
+                {"provider_calls", std::move(providerCalls)},
                 {"full_host_contract_claimed", false}};
             stream << llvm::formatv("{0:2}\n", llvm::json::Value(std::move(document)));
         }

@@ -57,6 +57,31 @@ struct HostPrefixReadSummary {
     std::vector<HostPrefixProviderRead> reads;
 };
 
+struct HostPrefixProviderAllocation {
+    ctjs::ConstructOp operation;
+    ctjs::CallOp invocation;
+    unsigned mapId;
+};
+
+// A builtin operation's result on normal completion. Map identities are
+// one-based and distinct per executed allocation, including repeated sites.
+struct HostPrefixProviderOperation {
+    mlir::Operation * operation;
+    HostPrefixProviderAllocation resource;
+    std::string member;
+    mlir::Attribute result;
+    unsigned resultMapId = 0;
+};
+
+struct HostPrefixProviderSummary {
+    ctjs::CallOp operation;
+    ctjs::FuncOp target;
+    ctjs::CallOp factory;
+    mlir::Attribute result;
+    std::vector<HostPrefixProviderAllocation> allocations;
+    std::vector<HostPrefixProviderOperation> operations;
+};
+
 // A narrower proof than HostContractAnalysis: only the executed prefix before
 // the first unknown effect is interpreted. Branch/call proofs belong to
 // functions with one closed invocation path. Later behavior remains unknown.
@@ -65,11 +90,12 @@ class HostEntryPrefixAnalysis {
 public:
     HostEntryPrefixAnalysis(mlir::ModuleOp module, const HostContract & contract,
                             unsigned maxSteps = 100000, bool followPublication = false,
-                            bool followProviderReads = false);
+                            bool followProviderReads = false, bool followProviderMutations = false);
 
     [[nodiscard]] bool valid() const { return refusal.empty(); }
     [[nodiscard]] llvm::StringRef reason() const { return refusal; }
     [[nodiscard]] llvm::StringRef boundary() const { return stopped; }
+    [[nodiscard]] llvm::StringRef providerBoundary() const { return providerStopped; }
     [[nodiscard]] llvm::ArrayRef<HostPrefixBranch> branches() const { return branchProofs; }
     [[nodiscard]] llvm::ArrayRef<HostPrefixCall> calls() const { return callProofs; }
     [[nodiscard]] llvm::ArrayRef<HostPrefixFactory> factories() const { return factoryProofs; }
@@ -77,15 +103,20 @@ public:
         return publicationProofs;
     }
     [[nodiscard]] llvm::ArrayRef<HostPrefixReadSummary> providerReads() const { return readProofs; }
+    [[nodiscard]] llvm::ArrayRef<HostPrefixProviderSummary> providerCalls() const {
+        return providerProofs;
+    }
 
 private:
     std::string refusal;
     std::string stopped;
+    std::string providerStopped;
     std::vector<HostPrefixBranch> branchProofs;
     std::vector<HostPrefixCall> callProofs;
     std::vector<HostPrefixFactory> factoryProofs;
     std::vector<HostPrefixPublication> publicationProofs;
     std::vector<HostPrefixReadSummary> readProofs;
+    std::vector<HostPrefixProviderSummary> providerProofs;
 };
 
 } // namespace ctcompile::ctnative

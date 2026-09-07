@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Analysis.h"
+#include "ProviderState.h"
 #include "ctcompile/CTNative/Analysis/HostPrefix.h"
 
 namespace ctcompile::ctnative::host_detail {
@@ -13,6 +14,7 @@ struct prefixValue {
         realm,
         resource,
         resourceMethod,
+        mapConstructor,
         closure,
         absent
     } kind = Kind::unknown;
@@ -31,15 +33,20 @@ struct prefixAnalysis {
     unsigned remaining;
     bool followPublication;
     bool followProviderReads;
+    bool followProviderMutations;
     unsigned operationCount = 0;
     bool exhausted = false;
     bool reflective = false;
     std::string refusal, boundary;
+    std::string providerBoundary;
     std::vector<HostPrefixBranch> branches;
     std::vector<HostPrefixCall> calls;
     std::vector<HostPrefixFactory> factories;
     std::vector<HostPrefixPublication> publications;
     std::vector<HostPrefixReadSummary> reads;
+    std::vector<HostPrefixProviderSummary> providerCalls;
+    providerState providers;
+    std::vector<llvm::SmallVector<unsigned>> providerRoots;
     llvm::DenseSet<mlir::Operation *> discoveryOnly;
     llvm::DenseMap<unsigned, unsigned> factoryTables;
     llvm::DenseSet<mlir::Operation *> factoryClosures;
@@ -65,7 +72,7 @@ struct prefixAnalysis {
     };
 
     prefixAnalysis(mlir::ModuleOp module, const HostContract & contract, unsigned maxSteps,
-                   bool followPublication, bool followProviderReads);
+                   bool followPublication, bool followProviderReads, bool followProviderMutations);
     bool step();
     bool spend(unsigned count);
     prefixValue stop(mlir::Operation * operation, llvm::StringRef reason);
@@ -78,6 +85,8 @@ struct prefixAnalysis {
     prefixValue factory(ctjs::CallOp call, ctjs::FuncOp function);
     prefixValue providerRead(ctjs::CallOp call, ctjs::FuncOp function, prefixValue closure,
                              environment & values);
+    prefixValue providerMutation(ctjs::CallOp call, ctjs::FuncOp function, prefixValue closure,
+                                 environment & values);
     void publication(ctjs::SetPropertyOp write, prefixValue owner, prefixValue value);
     completion function(ctjs::FuncOp function, llvm::ArrayRef<prefixValue> arguments,
                         unsigned depth);

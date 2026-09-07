@@ -1,10 +1,12 @@
-# Planned private Map mutation summaries
+# Private Map mutation summaries
 
-**Status: design only, based on `031f62a`.** No mutation summary or additional
-native admission is implemented by this document. The next proposed option is
-`follow-provider-mutations=true`, requiring both `follow-provider-reads=true`
-and `follow-publication=true`. The default pipeline and existing options retain
-their current boundaries.
+`follow-provider-mutations=true` implements bounded transactional state for
+private Maps in the checked host prefix. It requires both
+`follow-provider-reads=true` and `follow-publication=true`. The default pipeline
+and existing options retain their previous boundaries. On the three exact
+Bootstrap Data probes, mutation following resolves 13 calls and completes
+eleven method summaries before console lookup stops discovery. Native
+admission remains 0/7 in each mode.
 
 This extends the [checked host prefix](native-host-prefix.md), whose retained
 factory/cell identities can describe a private Map before an unknown effect.
@@ -12,7 +14,7 @@ It does not replace the independent native type, ownership, closed-call or
 host-slot proofs. Global exports do not become closed native objects because
 one executed entry prefix was observed.
 
-## Measured starting point and exact next operation
+## Historical baseline and first mutation
 
 Bootstrap 5.3.8's exact Data declaration is in
 [bootstrap.bundle.js](../../ctbrowser/vendor/bootstrap/bootstrap.bundle.js):
@@ -36,9 +38,9 @@ The CommonJS baseline was checked against the devbox artifact
 `build/ctcompile/test/bootstrap-host-prefix/commonjs_provider_reads/evidence.json`
 and its `prepared.mlir`. Its program SHA-256 is
 `cc6c3960099f201b3e6c17f556c4cc5e08a7a47190e08cfba5628be40ea0a181`.
-The report's current public boundary is the first `Data.set` call. Inside
-`fn$4`, the existing reader derives `outer.has(element) == false`, then stops
-at `ctjs.get_property outer["set"]`. The subsequent source operations are:
+The read-only mode's public boundary is the first `Data.set` call. Inside
+`fn$4`, that reader derives `outer.has(element) == false`, then stops at
+`ctjs.get_property outer["set"]`. The subsequent source operations are:
 
 ```mlir
 %outer = ctjs.load_upvalue %arg2[0]
@@ -49,27 +51,28 @@ at `ctjs.get_property outer["set"]`. The subsequent source operations are:
 ```
 
 The actual IR then reads `outer.get(element)`, tests the inner Map's key and
-size, and calls `inner.set(key, value)`. These operations must remain in the
-original method body, including allocation and failure behavior. Merely
-allowing the first `set` call without carrying its post-state would make the
-existing empty-Map reader incorrect on later invocations.
+size, and calls `inner.set(key, value)`. Mutation following carries the proved
+post-state across a successful normal return. These operations remain in the
+original method body, including allocation and failure behavior. Later reads
+use committed state; they never fall back to an empty-Map assumption after a
+mutation.
 
-## Proposed scope and predicted progress
+## Implemented scope and measured progress
 
-Support finite, known private Map state through standard zero-argument nested
-Map construction and `has`, `get`, `size`, `set` and `delete`. Source keys may
-be supported primitives or already proved fresh ordinary object identities.
-Values may be supported primitives or private nested Maps. Ordinary object
-payloads, arbitrary callbacks, snapshots, errors and escaping resources remain
-outside this slice. A summary returns a proved primitive and leaves every
-source method and observer branch at runtime.
+The prefix interpreter supports finite, known private Map state through standard
+zero-argument nested Map construction and `has`, `get`, `size`, `set` and
+`delete`. Source keys may be supported primitives or already proved fresh
+ordinary object identities. Values may be supported primitives or private
+nested Maps. Ordinary object payloads, arbitrary callbacks, snapshots, errors
+and escaping resources remain outside this slice. A summary returns a proved
+primitive and leaves every source method and observer branch at runtime.
 
-The following is a **prediction to validate after implementation**, not a new
-measurement. The unchanged exact programs should resolve 13 calls in total:
-one factory, eleven completed method invocations, and the conflicting `set`
-that reaches the next unsupported effect.
+All three unchanged exact programs now resolve 13 calls: one factory, eleven
+completed method invocations, and the conflicting `set` that reaches the next
+unsupported effect. These measurements confirm the earlier design's predicted
+four-to-thirteen advance; the historical read-only result above is unchanged.
 
-| Entry call after the factory | Expected normal result | Predicted provider state/effect |
+| Entry call after the factory | Summarized normal result | Provider state/effect |
 |---|---|---|
 | `get(absent, "bs.alert")` | null | outer remains empty |
 | `remove(absent, "bs.alert")` | undefined | outer remains empty |
@@ -84,19 +87,32 @@ that reaches the next unsupported effect.
 | `get(element, "bs.alert")` | 43 | failed deletion preserved A |
 | `set(element, "bs.collapse", 99)` | no summary | stop at the conflict arm's `load_global "console"` |
 
-The eleven completed methods predict two nested allocations in addition to
-the factory's outer Map, five executed `set` operations and one executed
-`delete` attempt. That delete does not remove an entry; reports must distinguish
-an operation from a successful mutation. The original factory report still
-contains one resource allocation and three capture edges. Nested allocations
-belong to their method invocation reports, not to the factory source site.
-UMD branch counts should remain 2/5/6, and the seven-function native denominator
-and current 0/7 admission are separate measurements to rerun.
+The eleven completed summaries contain 31 provider reads, two nested
+allocations, five executed `set` operations and one executed `delete` attempt.
+That delete returns false and does not remove an entry. The report also retains
+one factory resource allocation, three capture edges and one publication.
+Nested allocations belong to their method invocation reports.
+The diagnostic boundary in each mode is
+``unsupported provider path at `ctjs.load_global` (console)``.
+
+| Exact mode | UMD branches | Resolved calls | Completed provider calls | Native claimed / refused | Observations |
+|---|---:|---:|---:|---|---:|
+| CommonJS | 2 | 13 | 11 | 0 / 7 | 19 |
+| Browser | 5 | 13 | 11 | 0 / 7 | 19 |
+| Browser with undefined globalThis and distinct self | 6 | 13 | 11 | 0 / 7 | 24 |
+
+Vendor and program hashes match the corresponding read-only probes. Node
+v26.8.1 matches all 62 observations. The three boxed differential CTests also
+pass all 62 observations against the interpreter under ordinary execution and
+GC stress, with generated script/wrapper entries and interpreter-dispatched
+factory/method bodies. The native refusals still concern script `this`, boxed
+wrapper parameters, the open method-table shape and implicit closure ownership.
+Neither the summaries nor these boxed checks claim native Bootstrap execution.
 
 ## State and identity schema
 
-Keep provider state separate from the prefix's ordinary object heap. Use these
-internal identities, derived from live IR and the executed path:
+Provider state is separate from the prefix's ordinary object heap. Its internal
+identities come from live IR and the executed path:
 
 | State | Required identity and contents |
 |---|---|
@@ -111,29 +127,31 @@ internal identities, derived from live IR and the executed path:
 Neither a ConstructOp nor a function symbol alone identifies an allocation:
 the two exact `set` invocations execute the same inner ConstructOp but must
 produce A and B. Likewise, copying the first factory's method into a second
-table must retain the first factory's capture token. Object and Map IDs need
-separate tagged domains, even if both counters start at zero.
+table retains the first factory's capture token. Object tokens and Map IDs
+occupy separate tagged domains: object token zero is valid; Map IDs start at
+one, with zero reserved for no Map result.
 
-Map key comparison must not use coercion or truthiness. Numbers use
+Map key comparison uses neither coercion nor truthiness. Numbers use
 SameValueZero: NaNs compare equal, and signed zeros compare equal; boolean,
-number and string keys remain different. Canonicalize signed zero when storing
-a numeric key. Object keys compare only their proved tokens; reading their
-fields or invoking `valueOf`/`toString` is unnecessary and unauthorized. An
-unknown key cannot be inserted. A nonempty lookup with unproved equality must
-stop; do not turn an unproved match into absence.
+number and string keys remain different. Stored numeric zero keys are
+canonicalized to positive zero. Object keys compare only their proved tokens;
+reading their fields or invoking `valueOf`/`toString` is unnecessary and
+unauthorized. The mutation mode refuses unknown keys, including lookup in an
+empty Map. The separate read-only mode retains its empty-Map lookup rule.
+Unproved equality never becomes a proved absence.
 
 Replacement preserves insertion position, deletion removes the entry, and
 reinsertion appends a new entry. This state representation does not authorize
-`keys`, iterators or Array.from yet. Allow Map values only within the proved
-private resource graph, and reject Map-valued cycles in this first slice.
+`keys`, iterators or Array.from yet. Map values stay within the proved private
+resource graph; Map-valued cycles and Map-valued keys are refused.
 An object key's token describes identity and retention, not an acyclic native
 owner for that object's reachable fields.
 
 ## Checked operation rules
 
 The existing `closed-source-v1` promise of unmodified initial intrinsic
-prototypes and explicit initial Map identity remains required. Keep all source
-replacement, reflection, descriptor, unknown-effect and receiver guards.
+prototypes and explicit initial Map identity remains required. All source
+replacement, reflection, descriptor, unknown-effect and receiver guards remain.
 The source's standard Map binding must reach construction directly with the
 same callee and new.target and no arguments. Accepting a provider name in a
 report or manifest must never replace this source proof.
@@ -180,8 +198,9 @@ observation merely because the Map was tracked earlier.
    retention checks and sufficient remaining work. Atomically publish all
    changed Map states, fresh IDs, result and summary facts. An accepted method
    cannot expose a private Map through a return, property, global, closure or
-   unknown call. New Maps may be retained through proved captured Map entries;
-   unretained temporaries must not masquerade as retained factory resources.
+   unknown call. Every newly allocated Map must be reachable through proved
+   captured Map entries at normal return. Even an otherwise harmless unretained
+   temporary allocation refuses this first slice.
 4. On a selected unsupported write, call, property read, throw, escape or
    control shape, discard the entire attempted summary and stop the prefix at
    that method invocation. Keep previously completed prefix facts, but supply
@@ -193,72 +212,114 @@ observation merely because the Map was tracked earlier.
    unsupported. Budget exhaustion or an invalid/stale contract discards the
    entire analysis result, including earlier candidate rewrites.
 
-Charge the existing `max-steps` budget for every visited operation, capture
-edge, key comparison, copied state entry, insertion/removal, allocation and
-resource-graph edge. A transaction copy is proportional to the copied state,
-not one nominal step. A copy-on-write implementation may charge only copied
-nodes, but must retain the same refusal behavior when work is exhausted.
-Bound structured nesting explicitly; loops, recursive calls and repeated
-unproved contexts stay unsupported. Check ID/count overflow before allocation.
-Do not grow a speculative heap or report vector after the budget is exhausted.
+The existing `max-steps` budget charges every visited operation, capture edge,
+key comparison, copied state entry, insertion/removal, allocation and
+resource-graph edge. A transaction clones the complete committed state and
+charges the copy before allocating it. Structured region nesting is bounded
+at 64; loops, recursive calls and repeated unproved contexts stay unsupported.
+ID/count overflow is checked before allocation. Work exhaustion exposes no
+speculative heap or report facts.
 
-## Integration sequence
+## Implementation and reports
 
-Add a private `HostContract/ProviderState.h/.cpp` containing the identity,
-SameValueZero and transactional Map-state helpers. `PrefixFactories.cpp`
-registers its successful captured roots in that state. Extend `PrefixReads.cpp`
-into a shared provider-path interpreter, with mutation operations enabled only
-by the new option. Crucially, the mutation mode must route subsequent reads
-through committed state rather than calling the old hard-coded empty reader.
-Existing read-only mode keeps its present behavior and tests.
+`HostContract/ProviderState.h/.cpp` implements the identity, SameValueZero and
+transactional Map-state helpers. `PrefixFactories.cpp` registers successful
+captured roots in that state. The new `PrefixMutations.cpp` interprets method
+paths against transaction-local state. `PrefixReads.cpp` retains the existing
+read-only semantics; both use the bounded structured-region walker in
+`ProviderPaths.h`. The mutation mode routes every subsequent read through
+committed state rather than through the empty-Map reader.
 
-Wire the option through `HostPrefix.h`, `Prefix.h`, `PrefixAnalysis.cpp`,
-`PrefixValues.cpp`, `PrefixPass.cpp` and `Passes.td`; add the helper TU to
-`Analysis/CMakeLists.txt`. Summaries should bind exact entry/method/factory
-calls and MapIds, distinguish factory from nested allocations, and record
-executed mutation operations and their results. Reports remain diagnostics,
-not admission authority; `full_host_contract_claimed` remains false.
-Keep this work out of native carriers, ClosureLifting, Admission and EmitC.
+`HostPrefix.h`, the prefix consumer and `Passes.td` expose the opt-in mode.
+The live result binds exact entry/method/factory calls and resource identities.
+`PrefixPass.cpp` reports their provenance before any rewrite:
 
-The only emitted change remains naming further actual entry call targets.
-Preserve actual callee values, raw receivers, argument evaluation and call
-order. Keep reusable methods, observer branches, source stores, construction
-and provider operations unchanged. Unknown later calls or accessors still
+| Report field | Meaning |
+|---|---|
+| `provider_reads` | Legacy read-only summaries; mutation mode uses `provider_calls` for reads too |
+| `provider_calls` | Completed mutation-mode invocations, including invocations that only read |
+| `summarized_provider_calls` | Total rows in `provider_reads` and `provider_calls` |
+| `runtime_provider_reads` | Executed `has`, `get` and `size` operations in completed summaries |
+| `runtime_provider_mutations` | Executed `set` and `delete` attempts in completed summaries, including unsuccessful deletion |
+| `runtime_provider_allocations` | Factory allocations only |
+| `runtime_nested_provider_allocations` | Nested allocations in completed method summaries |
+| `provider_boundary` | Diagnostic operation at an unsupported method path; no effect authority |
+
+Each `provider_calls` row records `target`, `call_operation`, zero-based
+`factory_index`, primitive `result`, `allocations` and `operations`.
+An allocation row records its one-based `map_id`, source
+`allocation_operation` and allocating `invocation_operation`. An operation
+row also records its own `operation`, `member`, `result` and `result_map_id`.
+Its allocation/invocation pair identifies the receiver Map's origin, which may
+be an earlier factory or method call. Operation ordinals refer to the global
+module walk before rewriting; repeated source allocation sites retain distinct
+Map IDs and allocating calls.
+
+Primitive results are printed CTJS attributes. A Map-valued operation result,
+such as `set`'s receiver, uses JSON null for `result` and a positive
+`result_map_id`; primitive results have `result_map_id` zero. A refused attempt
+supplies no row, allocation or post-state, although its resolved boundary target
+can remain in the prefix's call list. Reports are diagnostics, not admission
+authority; `full_host_contract_claimed` remains false. This mode adds no native
+carrier, ownership or admission rule.
+
+The mutation mode's additional emitted change names further actual entry call
+targets. It preserves callee values, raw receivers, argument evaluation and
+call order. Reusable methods, observer branches, source stores, construction
+and provider operations stay unchanged. Unknown later calls or accessors still
 stop discovery, and the existing in-place shared-body continuation guard is
 unchanged. An ordinary call's effective `this` stays unknown.
 
-## Acceptance, refusal and lifetime gates
+## Focused semantic and lifetime checks
 
-- Add focused source/IR tests for set/get/has/size/delete, replacement, failed
-  deletion, deletion/reinsertion, NaN and signed-zero keys, differently tagged
-  primitive keys, aliased versus distinct object keys, nested Map identity and
-  two factory invocations. Repeated execution of one nested ConstructOp must
-  produce distinct MapIds. Method/table replacement and copied methods must
-  use the current callee and original capture owner respectively.
-- Refuse unknown keys/values, object payloads and object/resource returns,
-  detached or mismatched receivers, provider/prototype/own-member replacement,
-  captured binding writes, resource cycles/escape, unproved branches and
-  arbitrary callbacks. Test a successful write followed by an unknown call,
-  throw or escape: no partial post-state or summary may survive, and a later
-  method must not be resolved from stale pre-call state.
-- Exhaust work during lookup, state copying, nested allocation and after a
-  tentative mutation. Verify all usable proofs are withheld. Stale manifests,
-  forged reports, omitted prerequisites and reruns after source mutation must
-  not preserve state or invocation IDs.
-- Extend the exact prefix driver with three new mutation modes. Preserve
-  vendor/program hashes, source-function counts and native refusal accounting;
-  assert the predicted 13 targets, eleven completed methods and new error
-  boundary only after measuring them. Compare reusable method IR byte-for-byte
-  and observer branch counts before/after.
-- Compile boxed script/wrapper entries and compare all 19/19/24 observations
-  with the interpreter and independent Node realms. Keep method/provider calls
-  runtime. GC-stress fixtures must retain keys and nested Maps after factory
-  return and publication replacement, preserve aliases, distinguish factories,
-  and exercise allocation churn. These are runtime semantic/lifetime checks,
-  not a standalone native or RAII claim.
-- Retain exact error-order, accessor and reentrant-error oracle controls and
-  an executed wrong-observation negative control. Run existing publication,
-  provider-read and native admission regressions before the full devbox gate.
+`host-provider-mutations.test` passes 38 source cases plus contract, rerun and
+work-limit controls. Independent Node execution matches all 38 source oracles.
+The tests cover:
+
+- `set`/`get`/`has`/`size`/`delete`, replacement, failed deletion and reinsertion;
+  positive sizes 1 and 2; primitive tags; NaN and signed-zero keys; aliased and
+  distinct object keys; nested Map sharing and replacement; two factories;
+  copied methods; and live method/table replacement. NaN and signed-zero
+  fixtures normalize exact constants in prepared IR, while a separate
+  arithmetic case confirms unsupported source arithmetic still refuses.
+- Unknown keys/values, ordinary object payloads, returned resources or methods,
+  detached receivers, provider/prototype/own-member replacement, mutable
+  captures, resource cycles and unretained allocations. A write followed by an
+  unknown call, throw, property access or escape supplies no partial summary,
+  state or later-call proof.
+- Byte-for-byte preservation of reusable method bodies and unchanged observer
+  branches and runtime operations. Stale fingerprints, forged attributes,
+  undeclared providers and omitted option prerequisites supply no facts. Fresh
+  analyses do not reuse state. Work-limit probes verify withholding at the
+  completion boundary, including earlier summaries and tentative allocations.
+
+The standalone `ProviderState` test passes key equality, insertion order,
+allocation provenance, resource-cycle and transaction checks. It exhausts
+budgets through lookup, replacement, insertion, deletion, allocation, size and
+complete state copying, checking failure leaves state and outputs unchanged.
+The existing `host-provider-reads.test` also passes its 23 source cases and
+controls with the original read-only boundary.
+
+The exact driver checks the measured counts above, source hashes and native
+denominator, unchanged reusable method bodies and observer branches, and
+allocation/operation provenance. Its three mutation differential CTests pass
+with runtime factory/provider operations and GC stress. These are boxed
+semantic/lifetime checks, not a standalone native or RAII claim. Reproduce the
+independent exact Node observations with:
+
+```sh
+python3 tools/check/bootstrap-host-prefix.py \
+  --bootstrap ctbrowser/vendor/bootstrap/bootstrap.bundle.js \
+  --mode browser --follow-publication --follow-provider-reads \
+  --follow-provider-mutations --node node --oracle-only \
+  --work /tmp/bootstrap-provider-mutations-node
+```
+
+The CMake mutation fixtures require Node for this independent oracle. Set
+`CTCOMPILE_BOOTSTRAP_NODE` to its executable when it is outside the standard
+search path or the devbox's `~/tools/node-*/bin` directories.
+
+## Remaining effect and ownership boundary
 
 The newly reachable conflict arm begins with console lookup, followed in the
 actual IR by error member lookup, Array.from member lookup, Map.keys lookup
@@ -267,6 +328,8 @@ The initial Array identity alone does not authorize the snapshot or console
 effects. A source-created console object does not prove its callback harmless:
 the callback can mutate publication, reenter Data, throw or change provider
 state. No Map state or current export target may be carried across it without
-a separate checked effect/reentry proof. The predicted 4-to-13 target advance
+a separate checked effect/reentry proof. The measured 4-to-13 target advance
 therefore leaves all error-path effects and full native Bootstrap admission
-explicitly unfinished.
+unfinished. The existing error-order, accessor and reentrant-error host oracles
+remain separate semantic checks; they do not authorize traversal across those
+effects.

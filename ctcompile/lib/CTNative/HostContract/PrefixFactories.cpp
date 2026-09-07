@@ -169,6 +169,22 @@ prefixValue prefixAnalysis::factory(ctjs::CallOp call, ctjs::FuncOp function) {
         return left.property < right.property ||
                (left.property == right.property && left.index < right.index);
     });
+    if (followProviderMutations) {
+        const auto charge = [&](unsigned count) { return spend(count); };
+        providerState next;
+        if (!providers.cloneTo(next, charge)) { return {}; }
+        llvm::SmallVector<unsigned> roots;
+        for (auto resource : proof.resources) {
+            unsigned id = 0;
+            if (!next.create({resource, call, static_cast<unsigned>(factories.size()) + 1}, id,
+                             charge)) {
+                return {};
+            }
+            roots.push_back(id);
+        }
+        providerRoots.push_back(std::move(roots));
+        providers = std::move(next);
+    }
     proof.table = tables.lookup(returned.object);
     factoryTables[returned.object] = static_cast<unsigned>(factories.size());
     factories.push_back(std::move(proof));

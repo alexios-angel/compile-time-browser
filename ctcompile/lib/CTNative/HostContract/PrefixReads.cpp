@@ -1,4 +1,4 @@
-#include "Prefix.h"
+#include "ProviderPaths.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
@@ -106,49 +106,6 @@ struct emptyMapReader {
         // exceptions or resource escape are supported by this provider slice.
         return {};
     }
-
-    completion region(mlir::Region & region, environment & values) {
-        if (region.empty()) {
-            return {completion::Kind::yielded, {}};
-        }
-        if (!llvm::hasSingleElement(region)) { return {}; }
-        for (mlir::Operation & operation : region.front()) {
-            if (!prefix.step()) { return {}; }
-            if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
-                return {completion::Kind::returned, {values.lookup(returned.getValue())}};
-            }
-            if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(operation)) {
-                completion result{completion::Kind::yielded, {}};
-                for (mlir::Value value : yield.getOperands()) {
-                    result.values.push_back(values.lookup(value));
-                }
-                return result;
-            }
-            if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(operation)) {
-                auto bit = prefixTruth(values.lookup(branch.getCondition()));
-                if (!bit) { return {}; }
-                auto selected = this->region(branch->getRegion(*bit ? 0u : 1u), values);
-                if (selected.kind == completion::Kind::returned) { return selected; }
-                if (selected.kind != completion::Kind::yielded ||
-                    selected.values.size() != branch.getNumResults()) {
-                    return {};
-                }
-                for (auto [result, value] : llvm::zip(branch.getResults(), selected.values)) {
-                    values[result] = value;
-                }
-                continue;
-            }
-            if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(operation)) {
-                continue;
-            }
-            const auto value = this->operation(&operation, values);
-            if (value.kind == prefixValue::Kind::unknown || operation.getNumResults() != 1) {
-                return {};
-            }
-            values[operation.getResult(0)] = value;
-        }
-        return {};
-    }
 };
 
 } // namespace
@@ -177,7 +134,7 @@ prefixValue prefixAnalysis::providerRead(ctjs::CallOp call, ctjs::FuncOp functio
          llvm::zip(function.getBody().front().getArguments().drop_front(3), call.getArgs())) {
         values[argument] = arguments.lookup(value);
     }
-    auto returned = reader.region(function.getBody(), values);
+    auto returned = providerRegion(reader, function.getBody(), values);
     if (returned.kind != completion::Kind::returned || returned.values.size() != 1 ||
         returned.values.front().kind != prefixValue::Kind::primitive ||
         reader.proof.reads.empty()) {

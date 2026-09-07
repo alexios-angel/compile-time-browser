@@ -322,17 +322,20 @@ contracts and budget exhaustion retain the whole module.
 
 For Bootstrap, the [entry-prefix proof](native-host-prefix.md) now follows the
 factory's retained resource/cell captures and published method table. Optional
-empty-Map read summaries advance exact Data discovery through `get` and `remove`
-to the first `set`, retaining all method bodies and observer branches. Native
-admission remains 0/7. The native local-storage prerequisite is implemented in
+[transactional Map mutation summaries](native-provider-mutations.md) advance
+the exact probes from four to thirteen resolved calls, completing eleven
+methods before the conflict arm's console lookup. Their 31 reads, five sets,
+one unsuccessful delete and two nested allocations remain runtime operations;
+all method bodies and observer branches remain. Native admission stays 0/7.
+The native local-storage prerequisite is implemented in
 [owning method-table fields on confined objects](native-owned-method-table-slots.md):
 one fresh local object's proved store-to-load edge preserves the existing
 owning table carrier, while ordinary capture/type admission establishes the
 callables. Its fixture advances 0/6 to 6/6 with standalone execution and lifetime
 checks. This does not close global/realm export uses. The next provider increment
-is designed in [transactional Map mutation summaries](native-provider-mutations.md),
-with runtime effects retained and unknown error/reentry behavior as a boundary.
-Then connect normal-return retention facts to native ownership and call analysis
+needs a live effect/reentry proof before following console callbacks and the
+conflict path's snapshot operations. Keep runtime effects and refuse unknown
+callbacks. Connect normal-return retention facts to native ownership and call analysis
 for exported callables. Extend
 [checked host slots](native-host-slots.md) with supported intrinsic/error effects,
 preserving current method/table replacements. Initial provider identity alone
@@ -344,7 +347,14 @@ The [string-key snapshot and Array.from prerequisite](native-string-snapshots.md
 is implemented for confined proved Maps, including absent and empty keys.
 Error reporting and typed export publication remain open. The host audit's
 script receiver and callee/accessor evaluation-order differences are fixed.
-Native receiver admission remains a separate proof obligation.
+Native receiver admission remains a separate proof obligation. Callback lifting
+now bridges exact pre-resolved direct calls in closed wrappers; it does not
+authorize globally published callback identities.
+The [native exception design](native-exceptions.md) proposes C++ unwinding after
+structured exception-region recovery and exception-aware type/effect admission.
+Its first gate is a two-function single-catch program preserving local state at
+the throw site (42 caught, 20 normal). Finally and nested handlers require
+completion handling and importer work before admission can expand.
 The current conditional queries remain behind
 their own closed-environment proof and do not relax PE/native module guards.
 

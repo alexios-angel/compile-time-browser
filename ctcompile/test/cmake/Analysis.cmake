@@ -361,3 +361,11 @@ if(CTCOMPILE_ENABLE_MLIR)
   ctcompile_target(ctcompile-test-owned-method-table-slots)
   add_test(NAME ctcompile_owned_method_table_slots COMMAND ctcompile-test-owned-method-table-slots)
 endif()
+
+# Private provider transactions preserve JS Map equality and withhold partial state.
+if(CTCOMPILE_ENABLE_MLIR)
+  add_executable(ctcompile-test-provider-state ProviderState.cpp)
+  target_link_libraries(ctcompile-test-provider-state PRIVATE CTNativeAnalysis MLIRParser)
+  ctcompile_target(ctcompile-test-provider-state)
+  add_test(NAME ctcompile_provider_state COMMAND ctcompile-test-provider-state)
+endif()

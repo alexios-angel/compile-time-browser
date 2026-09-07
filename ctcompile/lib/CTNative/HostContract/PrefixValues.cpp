@@ -223,7 +223,10 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
             if (result.kind != prefixValue::Kind::unknown) { return result; }
         }
         if (followProviderReads) {
-            const auto result = providerRead(invoked, callee, closure, values);
+            // A mutating prefix must never consult the old empty-Map model.
+            const auto result = followProviderMutations
+                                    ? providerMutation(invoked, callee, closure, values)
+                                    : providerRead(invoked, callee, closure, values);
             if (result.kind != prefixValue::Kind::unknown) { return result; }
         }
         // Naming this invocation requires its actual closure value, not a

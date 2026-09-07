@@ -8,6 +8,34 @@ committing. There is no CI. Do not build on the small local machine.
 
 ## Current native staging checkpoint, 2026-09-06
 
+[Private Map mutation summaries](native-provider-mutations.md) now extend the
+host prefix under `follow-provider-mutations=true`, requiring both publication
+and provider-read following. A bounded transaction carries Map state across
+completed method calls, including nested allocations and primitive/object keys.
+The exact CommonJS/browser/realm-fallback probes advance **4 → 13 resolved
+calls**, with eleven completed method summaries, 31 reads, five sets and one
+unsuccessful delete. Two distinct nested Maps retain allocation/invocation
+provenance. Method bodies, observer branches and runtime effects remain intact.
+The next boundary is the conflict arm's `load_global "console"`; native
+admission remains **0/7** in each mode. All 62 Node/interpreter/boxed observations
+agree, including GC stress. Thirty-eight focused cases and finite work-limit
+controls check identities, rollback and refusal behavior. The option is off by
+default and never falls back to the old empty-Map model after a mutation.
+
+Callback lifting now accepts an already resolved `ctjs.call_direct` use when its
+symbol matches the actual supplied closure. It preserves the call's receiver,
+arguments and metadata while removing a proved call-only callback parameter.
+The fixture admits 10/10 functions in indirect, resolved and mixed call forms,
+with four matching observations in explicit/deduced GCC/Clang builds. Eight
+proof refusals and two malformed-signature controls cover unproved identity,
+mixed targets, argument-window observations and constructor calls.
+
+[Native JavaScript exceptions](native-exceptions.md) have a measured design for
+C++ unwinding. No native throw/catch implementation is claimed. The first target
+is one structured catch with an owning primitive payload and the correct local
+state at the throw site. Nested handlers, finally completions and foreign-call
+adapters require further work. This is separate from console callback effects.
+
 [Owning method-table fields](native-owned-method-table-slots.md) now connect a
 returned table through one fixed own-data field on a confined local object.
 The exact six-function fixture advances **0/6 → 6/6 native**, returning 4211.
@@ -68,9 +96,8 @@ The three new differentials pass 62 observations under Node, the interpreter
 and boxed script/wrapper execution, including GC stress. The focused suite
 checks 23 source cases plus stale/forged contracts and work limits.
 
-Final devbox gate: **457/457 CTests**, **146/146 lit cases**, **533.78 seconds**;
-all **541 C++ files** pass formatting. The callable adapter also passes its
-separate formatting check; `git diff --check` passes. Owning table fields pass
+Final devbox gate: **461/461 CTests**, **148/148 lit cases**, **563.20 seconds**;
+all **546 C++ files** pass formatting; `git diff --check` passes. Owning table fields pass
 ASan/UBSan, stack-use-after-return and leak checks in explicit and deduced forms.
 Existing closure and string-snapshot sanitizer regressions remain green.
 Default native coverage stays
@@ -210,14 +237,16 @@ original boxed callees and published declarations. See their linked implementati
 documents and the [source layout](source-layout.md).
 
 Full native Bootstrap remains unfinished. The selected wrapper, factory return,
-retained Map/cell captures and initial read-only method paths are now proved.
+retained Map/cell captures and bounded private mutation paths are now proved.
 The local storage prerequisite,
 [owning method-table fields on confined objects](native-owned-method-table-slots.md),
 now admits its six-function fixture fully, with lifetime and independent-state
 checks. Its live store-to-load proof connects existing table/capture ownership
-to a confined field. The next provider step is designed in
-[transactional Map mutation summaries](native-provider-mutations.md); it must
-retain runtime effects and stop before unknown error/reentry behavior.
+to a confined field. The implemented
+[transactional Map mutation summaries](native-provider-mutations.md) retain
+runtime effects and stop before unknown error/reentry behavior. The next
+provider step needs a live effect/reentry proof for console and snapshot calls;
+their names or initial intrinsic identities alone are insufficient.
 Prefix observations cannot make exports private.
 Global/realm storage still needs native ownership/call analysis for exported
 callables, supported provider/error effects and current mutable slot values.
@@ -225,7 +254,9 @@ Initial provider identity alone does not authorize Map execution or console
 errors during PE. Explicit script
 receivers, boxed public parameters and open method-table shapes still refuse
 native admission. Unchecked mixed-result property access also needs stronger
-presence/refinement evidence or an exception boundary. Keep exact vendor probe
+presence/refinement evidence or an exception boundary; the first native
+exception target is designed in [native exceptions](native-exceptions.md).
+Keep exact vendor probe
 coverage distinct from the component fixtures. Recursive Lumberhack fusion,
 shared mutable capture environments and region splitting remain separate work.
 

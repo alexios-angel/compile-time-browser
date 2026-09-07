@@ -9,6 +9,7 @@ by their implementation files. Public APIs remain under `include/ctcompile/`.
 | Partial evaluation | `lib/CTNative/PartialEvaluation/` | Factory admission, static entry prefixes, bounded evaluation, call-target and heap-equivalence proofs, primitive adapter and residualisation |
 | Binding time | `lib/CTNative/Analysis/BindingTime/` and `BindingTime/` | Argument/callee facts, conditional effect summaries and queries, heap flow and annotation pass |
 | Host contracts | `lib/CTNative/HostContract/` | Fingerprinted closed-source manifests, fresh allocation identity, own-data slot flow, bounded proof reports and entry-prefix specialization |
+| Private provider state | `lib/CTNative/HostContract/ProviderState.*`, `ProviderPaths.h` and `PrefixMutations.cpp` | Transactional Map state, allocation/call provenance and bounded normal-return path summaries, separate from ordinary prefix objects |
 | Precomputation | `lib/CTNative/Symbolic/` | Primitive and normal-result facts, bounded propagation, PDLL scalar replacements and native region splicing |
 | Specialization | `lib/CTNative/Specialization/` | Closed direct-call candidates, exact argument tuples and bounded residual variants |
 | Reachability | `lib/CTNative/Reachability/` | Bounded graph proof and transactional removal of private helpers |

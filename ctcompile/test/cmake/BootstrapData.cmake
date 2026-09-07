@@ -5,6 +5,9 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
    AND TARGET ctcompile-test-native-reference AND Python3_EXECUTABLE)
   set(_bootstrap_data_probe "${CTBROWSER_MONOREPO_ROOT}/tools/check/bootstrap-data-probe.py")
   set(_bootstrap_data_source "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js")
+  file(GLOB _bootstrap_node_bins LIST_DIRECTORIES TRUE "$ENV{HOME}/tools/node-*/bin")
+  find_program(CTCOMPILE_BOOTSTRAP_NODE NAMES node nodejs
+    HINTS ${_bootstrap_node_bins} REQUIRED)
   foreach(_mode commonjs browser amd)
     add_test(NAME ctcompile_bootstrap_host_slots_${_mode}
       COMMAND ${Python3_EXECUTABLE} "${CTBROWSER_MONOREPO_ROOT}/tools/check/bootstrap-host-slots.py"
@@ -21,11 +24,17 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
   foreach(_mode commonjs browser browser_this_fallback global_reentry self_reentry
       commonjs_publication browser_publication browser_this_fallback_publication
       commonjs_provider_reads browser_provider_reads browser_this_fallback_provider_reads
+      commonjs_provider_mutations browser_provider_mutations browser_this_fallback_provider_mutations
       browser_method_replacement browser_table_replacement resource_instances)
     set(_prefix_source_mode "${_mode}")
     set(_prefix_options)
     set(_prefix_script FALSE)
-    if(_mode MATCHES "_provider_reads$")
+    if(_mode MATCHES "_provider_mutations$")
+      string(REGEX REPLACE "_provider_mutations$" "" _prefix_source_mode "${_mode}")
+      set(_prefix_options --follow-provider-mutations --follow-provider-reads
+        --node "${CTCOMPILE_BOOTSTRAP_NODE}")
+      set(_prefix_script TRUE)
+    elseif(_mode MATCHES "_provider_reads$")
       string(REGEX REPLACE "_provider_reads$" "" _prefix_source_mode "${_mode}")
       set(_prefix_options --follow-provider-reads)
       set(_prefix_script TRUE)

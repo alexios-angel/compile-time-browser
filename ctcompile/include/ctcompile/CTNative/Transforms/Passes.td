@@ -50,6 +50,7 @@ def CTNativeSpecializeHostPrefix : Pass<"ctnative-specialize-host-prefix", "mlir
     Option<"maxSteps", "max-steps", "unsigned", "100000", "Maximum prefix discovery work">,
     Option<"followPublication", "follow-publication", "bool", "false", "Follow checked runtime factory allocation and publication">,
     Option<"followProviderReads", "follow-provider-reads", "bool", "false", "Follow private empty-Map read paths without rewriting method bodies">,
+    Option<"followProviderMutations", "follow-provider-mutations", "bool", "false", "Track transactional private Map mutations while retaining runtime effects">,
     Option<"report", "report", "bool", "false", "Report selected branches and resolved calls">
   ];
   let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect",

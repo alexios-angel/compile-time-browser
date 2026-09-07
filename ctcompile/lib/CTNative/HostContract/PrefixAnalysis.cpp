@@ -6,9 +6,11 @@
 namespace ctcompile::ctnative::host_detail {
 
 prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contract,
-                               unsigned maxSteps, bool followPublication, bool followProviderReads)
+                               unsigned maxSteps, bool followPublication, bool followProviderReads,
+                               bool followProviderMutations)
     : module(module), contract(contract), remaining(maxSteps), followPublication(followPublication),
-      followProviderReads(followProviderReads), dominance(module) {
+      followProviderReads(followProviderReads), followProviderMutations(followProviderMutations),
+      dominance(module) {
     refusal = initialBindingProblem(module, contract);
     module.walk([&](ctjs::StoreGlobalOp store) {
         if (step()) { initializers[store.getName()].push_back(store); }
@@ -227,7 +229,12 @@ namespace ctcompile::ctnative {
 
 HostEntryPrefixAnalysis::HostEntryPrefixAnalysis(mlir::ModuleOp module,
                                                  const HostContract & contract, unsigned maxSteps,
-                                                 bool followPublication, bool followProviderReads) {
+                                                 bool followPublication, bool followProviderReads,
+                                                 bool followProviderMutations) {
+    if (followProviderMutations && (!followProviderReads || !followPublication)) {
+        refusal = "provider mutations require follow-provider-reads and follow-publication";
+        return;
+    }
     if (followProviderReads && !followPublication) {
         refusal = "provider reads require follow-publication";
         return;
@@ -237,7 +244,7 @@ HostEntryPrefixAnalysis::HostEntryPrefixAnalysis(mlir::ModuleOp module,
         return;
     }
     host_detail::prefixAnalysis analysis(module, contract, maxSteps, followPublication,
-                                         followProviderReads);
+                                         followProviderReads, followProviderMutations);
     auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
     if (!entry || entry.getBody().empty() || entry.getBody().front().getNumArguments() != 3 ||
         entry.getUpvalueCount() != 0 || !analysis.callers[entry].empty() ||
@@ -270,6 +277,7 @@ HostEntryPrefixAnalysis::HostEntryPrefixAnalysis(mlir::ModuleOp module,
                 analysis.factories.clear();
                 analysis.publications.clear();
                 analysis.reads.clear();
+                analysis.providerCalls.clear();
                 analysis.boundary = "continuation may expose the active callable identity";
                 break;
             }
@@ -277,12 +285,14 @@ HostEntryPrefixAnalysis::HostEntryPrefixAnalysis(mlir::ModuleOp module,
     }
     refusal = analysis.exhausted ? "host prefix analysis work budget exhausted" : analysis.refusal;
     stopped = analysis.boundary;
+    providerStopped = analysis.providerBoundary;
     if (refusal.empty()) {
         branchProofs = std::move(analysis.branches);
         callProofs = std::move(analysis.calls);
         factoryProofs = std::move(analysis.factories);
         publicationProofs = std::move(analysis.publications);
         readProofs = std::move(analysis.reads);
+        providerProofs = std::move(analysis.providerCalls);
     }
 }
 

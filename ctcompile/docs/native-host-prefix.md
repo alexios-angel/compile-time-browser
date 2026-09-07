@@ -271,17 +271,48 @@ ordinary-call receiver. Existing shared-body continuation guards are unchanged.
 Stale source, forged report attributes or exhausted work expose no usable
 read summaries or rewrite plan.
 
-The next [private Map mutation design](native-provider-mutations.md) proposes
-transactional state across successful Data.set/remove paths and an explicit
-stop before console/error effects. It is not implemented; the predicted
-four-to-thirteen resolved-call advance is separate from the measurements below.
-
 Reports add `summarized_provider_calls`, `runtime_provider_reads`, and
 `provider_reads`. Each completed summary records its target, zero-based
 `factory_index`, exact primitive result and read members/resource indices.
 The live API also binds the actual source call, factory call and read operations.
 `full_host_contract_claimed` stays false. These facts describe the prefix before
 an effect boundary; they are not a C++ owner or type for a retained Map.
+
+## Following private Map mutations
+
+`follow-provider-mutations=true` additionally requires both
+`follow-provider-reads=true` and `follow-publication=true`. It carries finite
+private Map state across proved normal returns using transactional summaries
+of standard `has`, `get`, `size`, `set`, `delete` and zero-argument nested
+`new Map()`. Keys are known primitives with SameValueZero equality or proved
+ordinary object identities. Values are primitives or private nested Maps.
+Factory/capture tokens, fresh allocation identities and the live published
+callee remain required; neither source replacement nor future calls are frozen.
+
+A method commits only after a primitive normal return with every new Map
+retained through captured Maps. Unknown keys/values, ordinary object payloads,
+cycles, resource escape and unsupported effects refuse. Any write followed by
+an unknown call, throw or escape discards that entire attempted summary and
+stops discovery; later calls cannot use its pre-call state. Work exhaustion or
+invalid contracts withhold all usable facts. The original read-only mode keeps
+its empty-Map boundary when mutation following is disabled.
+
+Method bodies, source writes/allocations and entry observer branches remain
+runtime. Only further actual entry call targets can be named. No new native
+carrier, ownership or complete host-effect proof follows from this mode.
+The [private Map mutation contract](native-provider-mutations.md) describes the
+state/identity schema, bounded work, refusal rules and implementation.
+
+Reports put all completed mutation-mode invocations, including reads, in
+`provider_calls`; legacy `provider_reads` remains read-only. Rows bind source
+call/factory identities, primitive results and allocation/operation provenance
+with fresh Map IDs. `runtime_provider_mutations` counts executed `set`/`delete`
+attempts, including failed deletion. `runtime_nested_provider_allocations`
+counts completed method allocations separately from factory-only
+`runtime_provider_allocations`. `runtime_provider_reads` counts reads in both
+modes, and `summarized_provider_calls` totals both row arrays.
+`provider_boundary` describes the unsupported internal operation;
+`full_host_contract_claimed` stays false.
 
 ## Exact-source evidence
 
@@ -430,3 +461,22 @@ python3 tools/check/bootstrap-host-prefix.py \
   --mode browser --follow-publication --follow-provider-reads \
   --node node --oracle-only --work /tmp/bootstrap-provider-reads-node
 ```
+
+Mutation following advances the same three exact programs from four to 13
+resolved calls: one factory, eleven completed method invocations and the
+conflicting `Data.set` at the new boundary. Each report contains 31 reads,
+five `set` operations and one unsuccessful `delete`, two nested Map allocations,
+one factory Map, three capture edges and one publication. UMD branch counts
+remain 2/5/6. The diagnostic is
+``unsupported provider path at `ctjs.load_global` (console)``; console/error,
+snapshots and later object-payload observations remain unsupported.
+
+Vendor/program hashes, seven source functions, unchanged method bodies and
+observer branches, and native admission 0/7 are preserved. The three mutation
+differential CTests pass all 19/19/24 observations against the interpreter with
+compiled boxed script/wrapper entries and GC stress. Node v26.8.1 independently
+matches those 62 observations. `host-provider-mutations.test` passes 38 source
+cases plus contract/work-limit controls, and the standalone `ProviderState`
+test passes state/equality/provenance and transaction budget checks. These
+results establish prefix traversal and boxed semantics, without a native
+Bootstrap execution claim.

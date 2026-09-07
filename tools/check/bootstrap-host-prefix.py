@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Generate an exact Data prefix proof and a boxed differential wrapper.
 
-Only the checked UMD wrapper is installed in the differential executable.
+The checked UMD wrapper and optionally the publication-following script are
+installed in the differential executable. Provider methods remain runtime.
 This tests the semantic transformation, not native Bootstrap admission.
 """
 
@@ -10,6 +11,7 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import struct
 import subprocess
 
 
@@ -24,6 +26,80 @@ REALM_OBSERVATIONS = {
     "traceRealmPublished": "1", "traceRealmStable": "1", "traceRealmDistinct": "1",
     "traceSelfUntouched": "1", "traceAliasUndefined": "1",
 }
+
+# These are the unchanged provider-read programs measured before enabling
+# mutation summaries. The new option changes analysis, never JavaScript.
+PROVIDER_PROGRAM_SHA256 = {
+    "commonjs": "cc6c3960099f201b3e6c17f556c4cc5e08a7a47190e08cfba5628be40ea0a181",
+    "browser": "80a6fd87cbfdaafa6b2a3c6aab05bfc66ca36bf23f3827c29b4fe79b93ab3722",
+    "browser_this_fallback": "a8dd4151142665d7aebd72bb7b099c4956ab9def0a8d304b134e057151293a00",
+}
+
+PROVIDER_MUTATION_TARGETS = [
+    "fn$5", "fn$6", "fn$4", "fn$4", "fn$5", "fn$5", "fn$4", "fn$5", "fn$5", "fn$6", "fn$5",
+]
+
+
+def number_attribute(value):
+    # CTJS NumberAttr prints the uint64 bit pattern, including signed zero.
+    return f"#ctjs.number<{struct.unpack('<Q', struct.pack('<d', value))[0]}>"
+
+
+def check_provider_mutations(report):
+    summaries = report["provider_calls"]
+    if (report["summarized_provider_calls"], report["runtime_provider_mutations"],
+        report["runtime_nested_provider_allocations"]) != (11, 6, 2) or report["provider_reads"]:
+        raise RuntimeError(f"private Map mutation summaries did not reach the conflict call: {report}")
+    if report["provider_boundary"] != "unsupported provider path at `ctjs.load_global` (console)":
+        raise RuntimeError(f"provider mutation traversal did not stop at the console boundary: {report}")
+    expected_results = [
+        "#ctjs.null", "#ctjs.undefined", "#ctjs.undefined", "#ctjs.undefined",
+        number_attribute(42), number_attribute(21), "#ctjs.undefined", number_attribute(43),
+        "#ctjs.null", "#ctjs.undefined", number_attribute(43),
+    ]
+    if ([entry["target"] for entry in summaries] != PROVIDER_MUTATION_TARGETS or
+        [entry["factory_index"] for entry in summaries] != [0] * 11 or
+        [entry["result"] for entry in summaries] != expected_results):
+        raise RuntimeError("provider mutation summaries lost call order, captured factory or result identity")
+    calls = [entry["call_operation"] for entry in summaries]
+    if any(type(call) is not int or call < 0 for call in calls) or len(set(calls)) != 11:
+        raise RuntimeError("provider mutation summaries lost their actual entry-call identities")
+    if [len(entry["allocations"]) for entry in summaries] != [0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0]:
+        raise RuntimeError("nested Maps were not allocated by the two first successful set invocations")
+    allocations = [allocation for entry in summaries for allocation in entry["allocations"]]
+    first, second = allocations
+    if (first["map_id"] == second["map_id"] or
+        first["allocation_operation"] != second["allocation_operation"] or
+        first["invocation_operation"] != calls[2] or second["invocation_operation"] != calls[3]):
+        raise RuntimeError("repeated execution of the nested ConstructOp conflated runtime Maps")
+
+    provenance = {}
+    for entry in summaries:
+        for operation in [*entry["allocations"], *entry["operations"]]:
+            map_id = operation["map_id"]
+            origin = (operation["allocation_operation"], operation["invocation_operation"])
+            if (type(map_id) is not int or map_id <= 0 or
+                any(type(ordinal) is not int or ordinal < 0 for ordinal in origin)):
+                raise RuntimeError("provider Map identity/provenance was not source-derived")
+            if map_id in provenance and provenance[map_id] != origin:
+                raise RuntimeError("one provider Map acquired inconsistent allocation provenance")
+            provenance[map_id] = origin
+    if len(provenance) != 3:
+        raise RuntimeError("exact provider prefix did not retain one outer and two inner Maps")
+    operations = [operation for entry in summaries for operation in entry["operations"]]
+    if any(operation["member"] not in {"has", "get", "size", "set", "delete"} for operation in operations):
+        raise RuntimeError("provider mutation mode summarized an unsupported builtin")
+    reads = [operation for operation in operations if operation["member"] in {"has", "get", "size"}]
+    sets = [operation for operation in operations if operation["member"] == "set"]
+    deletes = [operation for operation in operations if operation["member"] == "delete"]
+    if (report["runtime_provider_reads"], len(reads), len(sets), len(deletes)) != (31, 31, 5, 1):
+        raise RuntimeError("provider operation counts disagree with their per-invocation reports")
+    if any(operation["result"] is not None or operation["result_map_id"] != operation["map_id"] for operation in sets):
+        raise RuntimeError("Map.set did not preserve its receiver-valued normal result")
+    if deletes[0]["result"] != "#ctjs.boolean<false>" or deletes[0]["result_map_id"] != 0:
+        raise RuntimeError("unsuccessful Map.delete was counted as successful removal")
+    if deletes[0]["map_id"] != first["map_id"]:
+        raise RuntimeError("wrong-key deletion lost the original element's nested Map")
 
 
 def fallback_program(probe, fragment):
@@ -98,6 +174,7 @@ def main():
     parser.add_argument("--oracle-only", action="store_true", help="generate source and run Node without compiler tools")
     parser.add_argument("--follow-publication", action="store_true")
     parser.add_argument("--follow-provider-reads", action="store_true")
+    parser.add_argument("--follow-provider-mutations", action="store_true")
     parser.add_argument("--replace", choices=("method", "table"), help="replace the published callable/table before observation")
     parser.add_argument("--mode", choices=("commonjs", "browser", "browser_this_fallback", "global_reentry", "self_reentry", "resource_instances"), required=True)
     parser.add_argument("--work", type=Path, required=True)
@@ -113,6 +190,8 @@ def main():
     if args.follow_provider_reads and (not args.follow_publication or args.replace or
                                         args.mode not in {"commonjs", "browser", "browser_this_fallback"}):
         parser.error("--follow-provider-reads requires an unchanged exact publication mode")
+    if args.follow_provider_mutations and (not args.follow_provider_reads or not args.follow_publication):
+        parser.error("--follow-provider-mutations requires --follow-provider-reads and --follow-publication")
     args.work.mkdir(parents=True, exist_ok=True)
     spec = importlib.util.spec_from_file_location("bootstrap_probe", Path(__file__).with_name("bootstrap-data-probe.py"))
     probe = importlib.util.module_from_spec(spec)
@@ -160,10 +239,13 @@ var traceDistinct = first !== host.slot ? 1 : 0;
     manifest = args.work / "contract.json"
     report_file = args.work / "prefix.json"
     js.write_bytes(program.encode("utf-8"))
+    if args.follow_provider_mutations and probe.sha256(program) != PROVIDER_PROGRAM_SHA256[args.mode]:
+        raise RuntimeError("provider mutation mode changed the exact provider-read JavaScript")
     provenance.update({"mode": args.mode, "program_sha256": probe.sha256(program),
                        "source_functions": function_count, "declared_observations": sorted(expected),
                        "follow_publication": args.follow_publication, "replacement": args.replace,
                        "follow_provider_reads": args.follow_provider_reads,
+                       "follow_provider_mutations": args.follow_provider_mutations,
                        "native_execution_claimed": False})
     if args.node:
         provenance["node_oracle"] = node_oracle(args.node, args.work, js, expected, realm_properties)
@@ -218,7 +300,7 @@ var traceDistinct = first !== host.slot ? 1 : 0;
         contract["entry_receiver"] = {"kind": "classic-script-realm", "own_data_properties": realm_properties}
     manifest.write_text(json.dumps(contract, indent=2) + "\n")
     result = run([args.opt, str(prepared),
-                  f"--ctnative-specialize-host-prefix=manifest={manifest} output={report_file} report=true follow-publication={str(args.follow_publication).lower()} follow-provider-reads={str(args.follow_provider_reads).lower()}",
+                  f"--ctnative-specialize-host-prefix=manifest={manifest} output={report_file} report=true follow-publication={str(args.follow_publication).lower()} follow-provider-reads={str(args.follow_provider_reads).lower()} follow-provider-mutations={str(args.follow_provider_mutations).lower()}",
                   "-o", str(specialized)])
     (args.work / "prefix.log").write_text(result.stderr)
     report = json.loads(report_file.read_text())
@@ -229,8 +311,12 @@ var traceDistinct = first !== host.slot ? 1 : 0;
         expected_targets.append("replacement$7" if args.replace else "fn$5")
     if args.follow_provider_reads:
         expected_targets.extend(["fn$6", "fn$4"])
+    if args.follow_provider_mutations:
+        expected_targets = ["fn$3", *PROVIDER_MUTATION_TARGETS, "fn$4"]
     if not report["valid"] or report["selected_branches"] != expected_branches or report["targets"] != expected_targets:
         raise RuntimeError(f"exact wrapper proof did not advance as expected: {report}")
+    if report["resolved_calls"] != len(expected_targets) or report["full_host_contract_claimed"]:
+        raise RuntimeError("prefix target accounting or incomplete-host boundary changed")
     after = specialized.read_text()
     if len(re.findall(r"\bctjs\.func\b", after)) != function_count:
         raise RuntimeError("prefix specialization lost a source function")
@@ -256,14 +342,17 @@ var traceDistinct = first !== host.slot ? 1 : 0;
         if not script or not re.search(r"ctjs.call_direct @" + last + r"\(", script[0]):
             raise RuntimeError("published target was not resolved in the script entry")
     if args.follow_provider_reads:
-        if (report["summarized_provider_calls"], report["runtime_provider_reads"]) != (2, 2):
-            raise RuntimeError(f"initial empty-Map reads did not advance to the first mutation: {report}")
-        summaries = report["provider_reads"]
-        if ([entry["target"] for entry in summaries] != ["fn$5", "fn$6"] or
-            [entry["factory_index"] for entry in summaries] != [0, 0] or
-            [entry["result"] for entry in summaries] != ["#ctjs.null", "#ctjs.undefined"]):
-            raise RuntimeError("read summaries lost actual captures or null/undefined identity")
-        for name in ("_script_$0", "fn$4", "fn$5", "fn$6"):
+        if args.follow_provider_mutations:
+            check_provider_mutations(report)
+        else:
+            if (report["summarized_provider_calls"], report["runtime_provider_reads"]) != (2, 2):
+                raise RuntimeError(f"initial empty-Map reads did not advance to the first mutation: {report}")
+            summaries = report["provider_reads"]
+            if ([entry["target"] for entry in summaries] != ["fn$5", "fn$6"] or
+                [entry["factory_index"] for entry in summaries] != [0, 0] or
+                [entry["result"] for entry in summaries] != ["#ctjs.null", "#ctjs.undefined"]):
+                raise RuntimeError("read summaries lost actual captures or null/undefined identity")
+        for name in ("_script_$0", "fn$1", "fn$3", "fn$4", "fn$5", "fn$6"):
             pattern = r"ctjs\.func (?:private )?@" + re.escape(name) + r"\(.*?(?=\n  ctjs\.func |\n})"
             original = re.search(pattern, before, re.S)[0]
             current = re.search(pattern, after, re.S)[0]
@@ -273,6 +362,9 @@ var traceDistinct = first !== host.slot ? 1 : 0;
                 raise RuntimeError(f"provider traversal specialized reusable Data method {name}")
     elif report["summarized_provider_calls"] or report["runtime_provider_reads"]:
         raise RuntimeError("provider-read traversal became implicit")
+    if not args.follow_provider_mutations and (report["provider_calls"] or
+            report["runtime_provider_mutations"] or report["runtime_nested_provider_allocations"]):
+        raise RuntimeError("provider mutation traversal became implicit")
 
     # Native accounting remains an independent four-bucket census. Keep the
     # imported denominator even if ordinary default pruning becomes applicable.

@@ -64,6 +64,18 @@ void closureLifter::specializeCallbacks(liftReport & out) {
             continue;
         }
         mlir::Block & entry = wrapper.getBody().front();
+        if (llvm::any_of(callers, [&](ctjs::CallDirectOp call) {
+                return call->getNumOperands() != entry.getNumArguments();
+            })) {
+            refuse("the wrapper call has a missing or surplus argument");
+            continue;
+        }
+        if (llvm::any_of(callers, [&](ctjs::CallDirectOp call) {
+                return !isUndefinedConstant(call.getNewTarget());
+            })) {
+            refuse("the wrapper call has a non-undefined new.target");
+            continue;
+        }
         for (unsigned parameter = entry.getNumArguments(); parameter-- > 3;) {
             if (!llvm::any_of(callers, [&](ctjs::CallDirectOp call) {
                     return call->getOperand(parameter).getDefiningOp<ctjs::CreateClosureOp>() !=
@@ -99,12 +111,15 @@ void closureLifter::specializeCallbacks(liftReport & out) {
                     llvm::isa<ctjs::MakeArgumentsOp, ctjs::GatherRestOp>(operation);
             });
             mlir::BlockArgument argument = entry.getArgument(parameter);
-            llvm::SmallVector<ctjs::CallOp> calls;
+            llvm::SmallVector<closureCall> calls;
             bool callOnly = !argument.use_empty();
             for (mlir::OpOperand & use : argument.getUses()) {
-                auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-                if (!call || use.getOperandNumber() != 0 || call.getArgs().size() > arity ||
-                    (call.getArgs().size() < arity && callbackReadsArguments)) {
+                const auto call = callSiteOf(use, callback);
+                auto direct = llvm::dyn_cast_if_present<ctjs::CallDirectOp>(call.op);
+                if (!call || call.args.size() > arity ||
+                    (call.args.size() < arity && callbackReadsArguments) ||
+                    (direct &&
+                     (call.args.size() != arity || !isUndefinedConstant(direct.getNewTarget())))) {
                     callOnly = false;
                     continue;
                 }
@@ -135,7 +150,16 @@ void closureLifter::specializeCallbacks(liftReport & out) {
                 moved->setOperand(1, undefined);
                 callee = moved->getResult(0);
             }
-            for (ctjs::CallOp call : calls) {
+            for (closureCall site : calls) {
+                if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(site.op)) {
+                    // Resolution already retained the exact symbol and all
+                    // evaluated operands. Only the erased callback parameter
+                    // needs a replacement value; its receiver, new.target,
+                    // arguments and call attributes keep their original IR.
+                    if (removable) { direct->setOperand(2, callee); }
+                    continue;
+                }
+                auto call = llvm::cast<ctjs::CallOp>(site.op);
                 mlir::OpBuilder at(call);
                 const auto valueType = ctjs::ValueType::get(context);
                 auto undefined = ctjs::ConstantOp::create(at, call.getLoc(), valueType,
