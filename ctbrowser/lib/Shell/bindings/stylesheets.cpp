@@ -595,6 +595,60 @@ void append_compound(std::string & out, const style::compound & part, const atom
     return out;
 }
 
+// --- splitting one rule into a prelude and a block -------------------------
+//
+// QUOTE-AWARE AND NOTHING ELSE, which is the whole trick: `[title="{"]` is a
+// selector with a brace in it, and a scanner that did not know about strings
+// would cut the rule in half there. That is the same defect the CSS front end
+// was written to fix (a `;` inside a string ending a declaration), answered the
+// same way one level up.
+
+[[nodiscard]] std::size_t brace_at(std::string_view text) {
+    char quote = '\0';
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const char c = text[i];
+        if (quote != '\0') {
+            if (c == '\\') {
+                ++i;
+            } else if (c == quote) {
+                quote = '\0';
+            }
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            quote = c;
+        } else if (c == '{') {
+            return i;
+        }
+    }
+    return std::string_view::npos;
+}
+
+[[nodiscard]] std::size_t block_end(std::string_view text, std::size_t open) {
+    char quote = '\0';
+    std::size_t depth = 0;
+    for (std::size_t i = open; i < text.size(); ++i) {
+        const char c = text[i];
+        if (quote != '\0') {
+            if (c == '\\') {
+                ++i;
+            } else if (c == quote) {
+                quote = '\0';
+            }
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            quote = c;
+        } else if (c == '{') {
+            ++depth;
+        } else if (c == '}') {
+            --depth;
+            if (depth == 0) { return i; }
+        }
+    }
+    return std::string_view::npos;
+}
+
 // --- the JS side, in general -----------------------------------------------
 
 [[nodiscard]] script::object_object * as_object(value v) {
@@ -936,20 +990,43 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
         return at;
     }
 
-    const style::css::stylesheet parsed = style::css::parse_stylesheet(trimmed, *atoms_);
-    if (parsed.rules.size() != 1) {
-        // Zero means the text is not a rule - or is a rule with an EMPTY block,
-        // which this front end drops on the ground that it can never contribute
-        // to the cascade. More than one means the caller passed a sheet where
-        // CSSOM asks for a rule.
+    // A QUALIFIED RULE, SPLIT AT THE BRACE rather than run through the sheet
+    // parser, and the reason is the EMPTY BLOCK. `consume_qualified_rule` keeps
+    // a rule only when it has both a selector and a declaration, so `div { }`
+    // came back as no rule at all and `insertRule` answered SyntaxError for text
+    // that is perfectly good CSS. That is not an edge case in this suite: it is
+    // what `addRule()` with no arguments produces (`undefined { }`, asserted in
+    // `css/cssom/CSSStyleSheet.html`) and it is what every `@media all { * {} }`
+    // fixture in `CSSGroupingRule-*.html` is made of.
+    //
+    // The two halves go through the two entry points that exist for exactly
+    // them - `parse_selector_text`, which `querySelector` uses, and
+    // `parse_declaration_list`, which a `style` attribute uses - so nothing is
+    // parsed here by a rule of its own.
+    const std::size_t open = brace_at(trimmed);
+    const std::size_t close = open == std::string_view::npos ? open : block_end(trimmed, open);
+    if (open == std::string_view::npos || close == std::string_view::npos ||
+        !trim(trimmed.substr(close + 1), html_whitespace).empty()) {
+        // No block at all, an unterminated one, or a second rule after the
+        // first - CSSOM asks for exactly one rule and all three are the same
+        // answer.
         css_rule_store_.pop_back();
         error = "SyntaxError";
         return no_index;
     }
-    const style::css::raw_rule & r = parsed.rules.front();
+    bool bad = false;
+    const std::string_view prelude = trim(trimmed.substr(0, open), html_whitespace);
+    const style::css::stylesheet selectors = style::css::parse_selector_text(prelude, *atoms_, bad);
+    if (bad || selectors.selectors.empty()) {
+        css_rule_store_.pop_back();
+        error = "SyntaxError";
+        return no_index;
+    }
     made.type = style_rule;
-    made.selector = serialize_selector_list(parsed.selectors_of(r), *atoms_);
-    for (const style::css::raw_declaration & d : parsed.declarations_of(r)) {
+    made.selector = serialize_selector_list(selectors.selectors, *atoms_);
+    const style::css::stylesheet parsed =
+        style::css::parse_declaration_list(trimmed.substr(open + 1, close - open - 1), *atoms_);
+    for (const style::css::raw_declaration & d : parsed.declarations) {
         const std::string property{atoms_->text(d.property)};
         const style::css::value_check checked =
             check_declaration(property, parsed.text_of(d), false);
@@ -1307,6 +1384,16 @@ value dom_bindings::make_rule_object(context & cx, std::size_t rule) {
             interface = "CSSFontFaceRule.prototype";
         } else if (record.type == import_rule) {
             interface = "CSSImportRule.prototype";
+        } else if (record.type == supports_rule) {
+            interface = "CSSSupportsRule.prototype";
+        } else if (record.type == page_rule) {
+            interface = "CSSPageRule.prototype";
+        } else if (record.type == keyframes_rule) {
+            interface = "CSSKeyframesRule.prototype";
+        } else if (record.type == namespace_rule) {
+            interface = "CSSNamespaceRule.prototype";
+        } else if (record.type == counter_style_rule) {
+            interface = "CSSCounterStyleRule.prototype";
         }
         if (const value * proto = internals->find(interface)) { obj->prototype = *proto; }
     }
@@ -1807,6 +1894,69 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         self->define(rules_key, list, script::attr_none);
         return list;
     });
+    // insertRule/deleteRule ON THE GROUP, which is the same pair of methods
+    // CSSStyleSheet has and NOT the same list: a rule inserted here becomes a
+    // child of the group and never a sibling of it. `@media print {}` followed
+    // by `rule.insertRule(...)` is how `css/cssom/serialize-media-rule.html`
+    // builds every one of its fixtures.
+    method(grouping_proto, "insertRule", [this](context & c, std::span<value> args) {
+        css_rule_record * rule = receiver_rule(c);
+        if (rule == nullptr) { return value::undefined(); }
+        if (args.empty()) {
+            c.throw_error("TypeError", "insertRule requires a rule");
+            return value::undefined();
+        }
+        const std::string text = c.to_string(args[0]);
+        const double asked = args.size() > 1 ? context::to_number(args[1]) : 0;
+        // THE INDEX IS CHECKED BEFORE THE TEXT IS PARSED, which is the order
+        // CSSOM 6.4.3 gives and which `CSSGroupingRule-insertRule.html` asserts
+        // by passing a deliberate syntax error at an out-of-range index and
+        // demanding the IndexSizeError.
+        if (!(asked >= 0) || asked > static_cast<double>(rule->children.size())) {
+            throw_dom_exception(c, "IndexSizeError", "the index is past the end of the rule");
+            return value::undefined();
+        }
+        const std::size_t self = slot_index(as_object(c.current_this()), rule_key);
+        std::string error;
+        const std::size_t made = parse_one_rule(rule->sheet, text, error);
+        if (made == no_index) {
+            throw_dom_exception(c, error.empty() ? std::string{"SyntaxError"} : error,
+                                "the text is not a single CSS rule");
+            return value::undefined();
+        }
+        // "If new rule cannot be inserted at index because the rule is not
+        // allowed there, throw a HierarchyRequestError." `@import` and
+        // `@namespace` are top-level rules and a grouping rule is not the top
+        // level. The record is dropped rather than orphaned - it was appended a
+        // moment ago and nothing else has seen it.
+        const std::uint32_t kind = css_rule_store_[made]->type;
+        if (kind == import_rule || kind == namespace_rule) {
+            if (made + 1 == css_rule_store_.size()) { css_rule_store_.pop_back(); }
+            throw_dom_exception(c, "HierarchyRequestError",
+                                "that rule is not allowed inside a grouping rule");
+            return value::undefined();
+        }
+        css_rule_store_[made]->parent = self;
+        rule->children.insert(rule->children.begin() + static_cast<std::ptrdiff_t>(asked), made);
+        style_sheets_changed();
+        return value::number(asked);
+    });
+    method(grouping_proto, "deleteRule", [this](context & c, std::span<value> args) {
+        css_rule_record * rule = receiver_rule(c);
+        if (rule == nullptr) { return value::undefined(); }
+        if (args.empty()) {
+            c.throw_error("TypeError", "deleteRule requires an index");
+            return value::undefined();
+        }
+        const double asked = context::to_number(args[0]);
+        if (!(asked >= 0) || asked >= static_cast<double>(rule->children.size())) {
+            throw_dom_exception(c, "IndexSizeError", "there is no rule at that index");
+            return value::undefined();
+        }
+        rule->children.erase(rule->children.begin() + static_cast<std::ptrdiff_t>(asked));
+        style_sheets_changed();
+        return value::undefined();
+    });
     script::object_object * condition_proto =
         interface("CSSConditionRule", "CSSGroupingRule", nullptr);
     getter(condition_proto, "conditionText", [this](context & c, std::span<value>) {
@@ -1837,7 +1987,19 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     (void)interface("CSSSupportsRule", "CSSConditionRule", nullptr);
     script::object_object * font_face_proto = interface("CSSFontFaceRule", "CSSRule", nullptr);
     (void)font_face_proto;
+    // THE REST OF THE HIERARCHY, present so that a page can NAME them. Their
+    // block is discarded by the front end, so each answers `cssText` with the
+    // author's bytes and has no members of its own - but `rule instanceof
+    // CSSKeyframesRule` and `typeof CSSPageRule` are what half the suite asks
+    // first, and an interface object is not a claim to have implemented the
+    // rule's contents. `@page` is a grouping rule in CSSOM's current draft and
+    // was a plain CSSRule in the 2011 one; the draft is what Chrome exposes.
     (void)interface("CSSImportRule", "CSSRule", nullptr);
+    (void)interface("CSSPageRule", "CSSGroupingRule", nullptr);
+    (void)interface("CSSKeyframesRule", "CSSRule", nullptr);
+    (void)interface("CSSKeyframeRule", "CSSRule", nullptr);
+    (void)interface("CSSNamespaceRule", "CSSRule", nullptr);
+    (void)interface("CSSCounterStyleRule", "CSSRule", nullptr);
 
     // --- CSSStyleDeclaration
     //

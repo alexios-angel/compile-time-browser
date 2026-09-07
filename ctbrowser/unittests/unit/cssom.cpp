@@ -25,8 +25,10 @@
 //     "undefined", which is the honest way for a missing wire to report.
 //   * a rule with an EMPTY declaration block is dropped by the CSS front end
 //     (`consume_qualified_rule` keeps a rule only when it has both a selector
-//     and a declaration), so `div {}` is not in `cssRules`. Asserted below so
-//     the deviation is recorded rather than believed.
+//     and a declaration), so `div {}` in a `<style>` is not in `cssRules`.
+//     `insertRule` splits the text at the brace itself and so keeps one;
+//     `parse_sheet_rules` has only the front end's answer to work from, and the
+//     deviation is asserted below rather than believed.
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -180,11 +182,18 @@ void test_insert_and_delete() {
         caught = '';
         try { sheet.insertRule(); } catch (e) { caught = e.name; }
         console.log('none=' + caught);
-        // A rule with an EMPTY block is dropped by the front end, which is a
-        // deviation this test records rather than hides.
+        // AN EMPTY BLOCK IS A RULE. The CSS front end drops one - it keeps a
+        // rule only when it has both a selector and a declaration - so
+        // `insertRule` splits the text at the brace itself and parses the two
+        // halves separately. `addRule()` with no arguments cannot produce
+        // anything else, and `css/cssom/CSSStyleSheet.html` asserts its answer.
+        console.log('empty=' + sheet.insertRule('div { }', 0) + ',' +
+                    sheet.cssRules[0].cssText);
+        console.log('added=' + sheet.addRule() + ',' +
+                    sheet.cssRules[sheet.cssRules.length - 1].cssText);
         caught = '';
-        try { sheet.insertRule('div { }'); } catch (e) { caught = e.name; }
-        console.log('empty=' + caught);
+        try { sheet.insertRule('a {} b {}'); } catch (e) { caught = e.name; }
+        console.log('two=' + caught);
     </script></body></html>)");
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "at="), std::string{"at=1"});
@@ -196,7 +205,61 @@ void test_insert_and_delete() {
     CHECK_EQ(logged(page, "gone="), std::string{"gone=IndexSizeError"});
     CHECK_EQ(logged(page, "bad="), std::string{"bad=SyntaxError"});
     CHECK_EQ(logged(page, "none="), std::string{"none=TypeError"});
-    CHECK_EQ(logged(page, "empty="), std::string{"empty=SyntaxError"});
+    CHECK_EQ(logged(page, "empty="), std::string{"empty=0,div { }"});
+    CHECK_EQ(logged(page, "added="), std::string{"added=-1,undefined { }"});
+    // One rule means ONE rule: text with a second one after the first is a
+    // syntax error rather than a silent truncation.
+    CHECK_EQ(logged(page, "two="), std::string{"two=SyntaxError"});
+}
+
+// insertRule/deleteRule ON A GROUP. The same pair of methods CSSStyleSheet has
+// and a different list - `css/cssom/serialize-media-rule.html` builds every one
+// of its fixtures this way, and `CSSGroupingRule-insertRule.html` asserts all
+// four of the ways it can refuse.
+void test_a_grouping_rule_inserts_and_deletes() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style id=s></style></head><body><script>
+        const sheet = document.getElementById('s').sheet;
+        sheet.insertRule('@media print {}', 0);
+        const group = sheet.cssRules[0];
+        console.log('at=' + group.insertRule('#foo { z-index: 23; float: left; }', 0));
+        console.log('at2=' + group.insertRule('#bar { float: none; z-index: 45; }', 0));
+        console.log('text=' + group.cssText);
+        console.log('kids=' + group.cssRules.length + ',' + (group.cssRules === group.cssRules));
+        console.log('parent=' + (group.cssRules[0].parentRule.cssText === group.cssText));
+        console.log('is=' + (group instanceof CSSMediaRule) + ',' +
+                    (group instanceof CSSConditionRule) + ',' +
+                    (group instanceof CSSGroupingRule) + ',' + (group instanceof CSSRule));
+        let caught = '';
+        // The INDEX is checked before the text is parsed, so a bad index and a
+        // bad rule together report the index.
+        try { group.insertRule('???', 9); } catch (e) { caught = e.name; }
+        console.log('range=' + caught + ',' + group.cssRules.length);
+        caught = '';
+        try { group.insertRule('???', 0); } catch (e) { caught = e.name; }
+        console.log('bad=' + caught);
+        caught = '';
+        try { group.insertRule('@import url("foo.css");', 0); } catch (e) { caught = e.name; }
+        console.log('import=' + caught);
+        group.deleteRule(0);
+        console.log('gone=' + group.cssRules.length + ',' + group.cssText);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "at="), std::string{"at=0"});
+    CHECK_EQ(logged(page, "at2="), std::string{"at2=0"});
+    CHECK_EQ(logged(page, "text="),
+             std::string{"text=@media print {\n  #bar { float: none; z-index: 45; }\n"
+                         "  #foo { z-index: 23; float: left; }\n}"});
+    CHECK_EQ(logged(page, "kids="), std::string{"kids=2,true"});
+    CHECK_EQ(logged(page, "parent="), std::string{"parent=true"});
+    CHECK_EQ(logged(page, "is="), std::string{"is=true,true,true,true"});
+    CHECK_EQ(logged(page, "range="), std::string{"range=IndexSizeError,2"});
+    CHECK_EQ(logged(page, "bad="), std::string{"bad=SyntaxError"});
+    // `@import` and `@namespace` are TOP-LEVEL rules, so a grouping rule refuses
+    // them with a HierarchyRequestError rather than a SyntaxError.
+    CHECK_EQ(logged(page, "import="), std::string{"import=HierarchyRequestError"});
+    CHECK_EQ(logged(page, "gone="),
+             std::string{"gone=1,@media print {\n  #foo { z-index: 23; float: left; }\n}"});
 }
 
 // THE MEDIA QUERY LIST, SERIALISED FROM THE AUTHOR'S TEXT. Every string here is
@@ -403,6 +466,7 @@ int main() {
     test_the_list_and_the_rules();
     test_a_style_rule();
     test_insert_and_delete();
+    test_a_grouping_rule_inserts_and_deletes();
     test_media_rules_and_their_lists();
     test_the_media_list_of_a_sheet();
     test_a_constructed_sheet();
