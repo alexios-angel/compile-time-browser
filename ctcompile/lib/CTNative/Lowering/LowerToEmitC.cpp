@@ -97,7 +97,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             bool handlers = false;
             fn.walk([&](ctjs::PushHandlerOp) { handlers = true; });
             if (!handlers) { return; }
-            auto recovery = recoverNumericExceptionRegion(fn, exceptionMaxSteps);
+            auto recovery = recoverPrimitiveExceptionRegion(fn, exceptionMaxSteps);
             if (recovery.recovered) {
                 fn->removeAttr("ctjs.not_structured");
                 exceptionOriginals.emplace_back(fn, std::move(recovery.original));

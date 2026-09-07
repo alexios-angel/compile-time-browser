@@ -103,7 +103,8 @@ void lowering::declareGlobals() {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstddef"), b.getUnitAttr());
         ec::VerbatimOp::create(
             b, module.getLoc(),
-            b.getStringAttr("namespace ctnative { struct js_exception { js_num value; }; }"));
+            b.getStringAttr(
+                "namespace ctnative { template <class T> struct js_exception { T value; }; }"));
     }
     if (needsString || needsNullable || needsMap || needsVector || !globals.empty()) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("string"), b.getUnitAttr());

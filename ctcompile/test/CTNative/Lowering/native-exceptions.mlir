@@ -127,6 +127,84 @@ function stringPayload() {
 }
 var string18 = stringPayload();
 
+//--- boolean_value.js
+function booleanValue(flag) {
+    try {
+        if (flag) { throw true; }
+        throw false;
+    } catch (value) {
+        if (typeof value !== "boolean" || value === 1 || value === 0) { return -1; }
+        return value ? 17 : 19;
+    }
+}
+var true17 = booleanValue(true);
+var false19 = booleanValue(false);
+
+//--- string_value.js
+function stringValue(flag) {
+    var mark = "entry: ";
+    try {
+        mark = "throw: ";
+        if (flag) {
+            // A separate assignment preserves the importer's complete
+            // register vector before the throw-only block.
+            var payload = "owning payload that exceeds small string storage and survives the C++ handler " + "tail\u0000end";
+            throw payload;
+        }
+        return "normal";
+    } catch (value) {
+        var saved = value;
+        value = "replaced catch binding";
+        return mark + saved;
+    }
+}
+function inspectString(flag) {
+    var saved = stringValue(flag);
+    var churn = stringValue(!flag);
+    var expected = "throw: owning payload that exceeds small string storage and survives the C++ handler tail\u0000end";
+    // Score both exact comparisons without introducing an unrelated
+    // multi-return CFG in the observer. A broken saved/churn value yields 0.
+    var caught = (saved === expected) * (churn === "normal");
+    var normal = (saved === "normal") * (churn === expected);
+    return flag * caught * 42 + (!flag) * normal * 20;
+}
+var caught42 = inspectString(true);
+var normal20 = inspectString(false);
+
+//--- string_sites.js
+function stringSites(mode) {
+    var mark = "entry";
+    try {
+        mark = "first";
+        if (mode === 1) { throw ""; }
+        mark = "second";
+        if (mode === 2) { throw "payload\u0000\uD83D\uDE00\uD800"; }
+        return 20;
+    } catch (value) {
+        if (typeof value !== "string") { return -1; }
+        if (!value) { return mark === "first" ? 42 : -1; }
+        return value === "payload\u0000\uD83D\uDE00\uD800" && mark === "second" ? 107 : -1;
+    }
+}
+var first42 = stringSites(1);
+var second107 = stringSites(2);
+var normal20 = stringSites(0);
+
+//--- numeric_bits.js
+function numericBits(flag) {
+    try {
+        var value = -0;
+        if (flag) { throw value; }
+        value = 0 / 0;
+        throw value;
+    } catch (value) {
+        if (value !== value) { return 43; }
+        return 1 / value === -1 / 0 ? 42 : -1;
+    }
+}
+var negativeZero42 = numericBits(true);
+var nan43 = numericBits(false);
+
 //--- null_payload.js
 function nullPayload() {
     try { throw null; } catch (ignored) { return 19; }
@@ -164,6 +242,54 @@ function mixedPayload(flag) {
 }
 var first42 = mixedPayload(true);
 var second42 = mixedPayload(false);
+
+//--- mixed_string_payload.js
+function mixedStringPayload(flag) {
+    try {
+        if (flag) { throw "32"; }
+        throw 32;
+    } catch (ignored) {
+        return 42;
+    }
+}
+var first42 = mixedStringPayload(true);
+var second42 = mixedStringPayload(false);
+
+//--- mixed_boolean_string_payload.js
+function mixedBooleanStringPayload(flag) {
+    try {
+        if (flag) { throw "true"; }
+        throw true;
+    } catch (ignored) {
+        return 42;
+    }
+}
+var first42 = mixedBooleanStringPayload(true);
+var second42 = mixedBooleanStringPayload(false);
+
+//--- computed_throw.js
+function computedThrow() {
+    // The importer leaves the addition inside the throw block, without a
+    // following complete register vector. Keep this structural refusal.
+    try { throw "a" + "b"; } catch (value) { return value === "ab" ? 42 : -1; }
+}
+var computed42 = computedThrow();
+
+//--- mixed_concatenation.js
+function mixedConcatenation(flag) {
+    try {
+        // A completed computation can update the scratch register before
+        // its assignment check. Recovery still needs operation admission;
+        // primitive support does not authorize string/number coercion.
+        var payload = "value:" + 42;
+        if (flag) { throw payload; }
+        return 20;
+    } catch (value) {
+        return value === "value:42" ? 42 : -1;
+    }
+}
+var caught42 = mixedConcatenation(true);
+var normal20 = mixedConcatenation(false);
 
 //--- bare_finally.js
 function bareFinally(flag) {

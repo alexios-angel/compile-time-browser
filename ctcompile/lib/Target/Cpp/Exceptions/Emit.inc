@@ -12,11 +12,13 @@ static LogicalResult printOperation(CppEmitter & emitter, ctcompile::ctnative::C
                 return failure();
         }
     }
-    os.unindent() << "} catch (ctnative::js_exception const & " << exception << ") {\n";
+    os.unindent() << "} catch (ctnative::js_exception<";
+    const BlockArgument caught = op.getCatchBody().front().getArgument(0);
+    if (failed(emitter.emitType(op.getLoc(), caught.getType()))) return failure();
+    os << "> const & " << exception << ") {\n";
     os.indent();
     {
         CppEmitter::ExceptionScope scope(emitter);
-        const BlockArgument caught = op.getCatchBody().front().getArgument(0);
         // Copy the JS payload out of the C++ exception object. Source writes
         // target explicit mutable slots, never this immutable SSA binding.
         if (failed(emitter.emitVariableDeclaration(op.getLoc(), caught.getType(),

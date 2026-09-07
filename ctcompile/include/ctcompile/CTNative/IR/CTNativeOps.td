@@ -15,10 +15,12 @@ include "ctcompile/CTNative/IR/CTNativeInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
 def CTNative_CppTryOp : CTNative_Op<"cpp_try", [SingleBlock, RecursiveMemoryEffects]> {
-  let summary = "Catch an owning numeric JavaScript exception in native C++";
+  let summary = "Catch a homogeneous owning primitive JavaScript exception in native C++";
   let description = [{
-    Executes body and catches only ctnative::js_exception. The catch region's
-    sole f64 argument is a by-value copy of the thrown JavaScript number.
+    Executes body and catches only ctnative::js_exception<T>. The catch region's
+    sole f64, i1 or owning std::string argument copies the thrown primitive.
+    The payload type is homogeneous: no numeric/boolean coercion or borrowed
+    string carrier is permitted. Each protected native throw must match it.
     Foreign C++ exceptions are not caught. Both regions are single blocks;
     both must terminate with cpp_try_end, with no yielded values.
     Mutable state crossing the boundary is explicit in the enclosing EmitC IR.
@@ -29,13 +31,13 @@ def CTNative_CppTryOp : CTNative_Op<"cpp_try", [SingleBlock, RecursiveMemoryEffe
 }
 
 def CTNative_CppThrowOp : CTNative_Op<"cpp_throw"> {
-  let summary = "Throw an owning numeric JavaScript exception";
+  let summary = "Throw an owning number, boolean or string JavaScript exception";
   let description = [{
     Emits a side-effecting C++ throw statement. It immediately precedes the
     enclosing region's terminator, including emitc.yield in an EmitC if arm.
     That terminator remains structurally present but is not reached at runtime.
   }];
-  let arguments = (ins F64:$value);
+  let arguments = (ins AnyType:$value);
   let assemblyFormat = "$value attr-dict `:` type($value)";
   let hasVerifier = 1;
 }

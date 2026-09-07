@@ -23,6 +23,7 @@ add_mlir_library(CTNativeDialect
     CTNativeInterfacesIncGen
 
   LINK_LIBS PUBLIC
+    MLIREmitCDialect
     MLIRIR
     MLIRSideEffectInterfaces
 )

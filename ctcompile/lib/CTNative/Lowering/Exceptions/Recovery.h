@@ -15,9 +15,9 @@ struct ExceptionRecoveryResult {
 
 // Reconstruct one preserved importer handler. Failure leaves the function
 // untouched. Success is structural only: native admission must separately prove
-// the numeric payload, supported state/results and absence of implicit throws.
+// the primitive payload, supported state/results and absence of implicit throws.
 // The returned original retains the old body and attributes for that rollback.
-ExceptionRecoveryResult recoverNumericExceptionRegion(ctjs::FuncOp function,
-                                                      unsigned maxSteps = 100000);
+ExceptionRecoveryResult recoverPrimitiveExceptionRegion(ctjs::FuncOp function,
+                                                        unsigned maxSteps = 100000);
 
 } // namespace ctcompile::ctnative::lowering_detail

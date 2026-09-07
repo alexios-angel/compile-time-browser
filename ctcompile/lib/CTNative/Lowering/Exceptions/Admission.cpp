@@ -8,17 +8,17 @@ bool admission::exceptionRegion(ctjs::TryOp attempt) {
     // can disappear. A successful normal-result type alone is not that proof.
     const auto primitive = [&](mlir::Value value) {
         const auto type = typeOf(value);
-        return llvm::isa_and_nonnull<NumType, BoolType>(type) ||
+        return llvm::isa_and_nonnull<NumType, BoolType, StrType>(type) ||
                (llvm::isa_and_nonnull<OptType>(type) &&
                 llvm::isa<BottomType>(llvm::cast<OptType>(type).getElementType()));
     };
     auto & caught = attempt.getCatchBody().front();
-    if (!llvm::isa_and_nonnull<NumType>(typeOf(caught.getArgument(0)))) {
-        return refuse("native try/catch requires a proved numeric thrown value");
+    if (!llvm::isa_and_nonnull<NumType, BoolType, StrType>(typeOf(caught.getArgument(0)))) {
+        return refuse("native try/catch requires a homogeneous number, boolean or string payload");
     }
     for (auto argument : caught.getArguments().drop_front()) {
-        if (!llvm::isa_and_nonnull<NumType, BoolType>(typeOf(argument))) {
-            return refuse("native try/catch requires numeric or boolean catch state");
+        if (!llvm::isa_and_nonnull<NumType, BoolType, StrType>(typeOf(argument))) {
+            return refuse("native try/catch requires number, boolean or owning string catch state");
         }
     }
     bool safe = true;

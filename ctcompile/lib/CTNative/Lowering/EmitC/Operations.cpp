@@ -116,7 +116,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                 if (index == 1) {
                     expected = parent.getResult().getType();
                 } else if (index == 2) {
-                    expected = mlir::Float64Type::get(context);
+                    expected = parent.getCatchBody().front().getArgument(0).getType();
                 } else if (index > 2) {
                     expected = llvm::cast<ec::LValueType>(
                                    exceptionSlots[parent].state[index - 3].getType())

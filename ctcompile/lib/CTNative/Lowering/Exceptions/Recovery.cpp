@@ -172,11 +172,16 @@ struct recovery {
                 continue;
             }
             if (auto check = llvm::dyn_cast<ctjs::CheckOp>(term)) {
+                // Completed computations can change registers before a later
+                // status check, so its handler values need not equal block
+                // entry arguments. Keep the normal edge's values verbatim.
+                // Discarding its handler edge still requires admission to
+                // prove every protected operation nonthrowing; explicit
+                // throws still need an unchanged throw-site block above.
                 if (!active || check.getHandler() != push.getHandler() ||
-                    check.getHandlerOperands().size() != width ||
-                    !llvm::equal(check.getHandlerOperands(), block->getArguments())) {
+                    check.getHandlerOperands().size() != width) {
                     return reject(
-                        "native exception check lacks its current pre-operation register vector");
+                        "native exception check lacks a complete register vector for its handler");
                 }
                 result.edges[block].push_back(check.getCont());
             } else if (llvm::isa<mlir::cf::BranchOp, mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(
@@ -572,7 +577,7 @@ struct recovery {
 
 } // namespace
 
-ExceptionRecoveryResult recoverNumericExceptionRegion(ctjs::FuncOp function, unsigned maxSteps) {
+ExceptionRecoveryResult recoverPrimitiveExceptionRegion(ctjs::FuncOp function, unsigned maxSteps) {
     // Bound the source scan and reserve another scan's cost for the initial
     // clone before allocating it. The caller selects handler-containing
     // functions; no rewrite is visible until every stage succeeds.

@@ -47,7 +47,7 @@
 // DEDUCED-NEXT: CTCOMPILE_PIN(payload, "native-exceptions.js:2:1", js_num const);
 // COMMON-NEXT: throw ctnative::js_exception{payload};
 // COMMON-NEXT: }{{$}}
-// COMMON-NEXT: } catch (ctnative::js_exception const & [[EXCEPTION:[A-Za-z_][A-Za-z_0-9]*]]) {
+// COMMON-NEXT: } catch (ctnative::js_exception<js_num> const & [[EXCEPTION:[A-Za-z_][A-Za-z_0-9]*]]) {
 // COMMON-NEXT: js_num const [[CAUGHT:[A-Za-z_][A-Za-z_0-9]*]] = [[EXCEPTION]].value;
 // EXPLICIT-NEXT: js_num const recovered = [[CAUGHT]] + 2.0;
 // DEDUCED-NEXT: auto const recovered = [[CAUGHT]] + 2.0;
@@ -71,7 +71,7 @@
 // HOISTED-NEXT: payload = [[INPUT]] + 1.0;
 // HOISTED-NEXT: throw ctnative::js_exception{payload};
 // HOISTED-NEXT: }{{$}}
-// HOISTED-NEXT: } catch (ctnative::js_exception const & [[EXCEPTION:[A-Za-z_][A-Za-z_0-9]*]]) {
+// HOISTED-NEXT: } catch (ctnative::js_exception<js_num> const & [[EXCEPTION:[A-Za-z_][A-Za-z_0-9]*]]) {
 // HOISTED-NEXT: js_num const [[CAUGHT:[A-Za-z_][A-Za-z_0-9]*]] = [[EXCEPTION]].value;
 // HOISTED-NEXT: recovered = [[CAUGHT]] + 2.0;
 // HOISTED-NEXT: storage = recovered;
@@ -81,11 +81,11 @@
 
 // EMPTY-REGION: error: 'ctnative.cpp_try' op requires one block in each try and catch region
 // EMPTY-BLOCK: error: {{.*(empty block|non-empty block|terminator).*}}
-// CATCH: error: 'ctnative.cpp_try' op requires exactly one f64 catch argument
+// CATCH: error: 'ctnative.cpp_try' op requires exactly one f64, i1 or owning std::string catch argument
 // TRY-END: error: 'ctnative.cpp_try' op requires ctnative.cpp_try_end as each try and catch terminator
 // PARENT: error: 'ctnative.cpp_try_end' op
 // PARENT-SAME: 'ctnative.cpp_try'
-// THROW-TYPE: error: 'ctnative.cpp_throw' op operand #0 must be 64-bit float
+// THROW-TYPE: error: 'ctnative.cpp_throw' op requires an f64, i1 or owning std::string payload
 // THROW-FALLTHROUGH: error: 'ctnative.cpp_throw' op must be immediately followed by the enclosing region terminator
 
 //--- valid.mlir
@@ -99,7 +99,7 @@
 module attributes {ctnative.readable_names, ctnative.const_bindings, ctnative.numeric_alias} {
   emitc.include <"cmath">
   emitc.include <"stdexcept">
-  emitc.verbatim "using js_num = double;\0Anamespace ctnative { struct js_exception { js_num value; }; }\0A#define ctn_exception_1 invalid_exception_name +"
+  emitc.verbatim "using js_num = double;\0Anamespace ctnative { template <class T> struct js_exception { T value; }; }\0A#define ctn_exception_1 invalid_exception_name +"
   emitc.verbatim "void raise_foreign() { throw std::runtime_error(\22foreign\22); }"
   emitc.verbatim "void mutate_number(js_num & value) { value += 2.0; }"
   emitc.func @throw_number(%number: f64 loc(#namespace)) {
@@ -178,7 +178,7 @@ module attributes {ctnative.readable_names, ctnative.const_bindings, ctnative.nu
     %answer = emitc.load %storage : !emitc.lvalue<f64>
     emitc.return %answer : f64
   }
-  emitc.verbatim "int main() {\0A  if (caught_value(39.0) != 42.0) return 1;\0A  if (rethrow_value(7.0) != 8.0) return 2;\0A  bool caught = false;\0A  try { throw_number(-0.0); } catch (ctnative::js_exception const & e) { caught = std::signbit(e.value); }\0A  if (!caught) return 3;\0A  if (mutated_catch(40.0) != 42.0) return 5;\0A  try { foreign_boundary(); } catch (std::runtime_error const &) { return 0; }\0A  return 4;\0A}"
+  emitc.verbatim "int main() {\0A  if (caught_value(39.0) != 42.0) return 1;\0A  if (rethrow_value(7.0) != 8.0) return 2;\0A  bool caught = false;\0A  try { throw_number(-0.0); } catch (ctnative::js_exception<js_num> const & e) { caught = std::signbit(e.value); }\0A  if (!caught) return 3;\0A  if (mutated_catch(40.0) != 42.0) return 5;\0A  try { foreign_boundary(); } catch (std::runtime_error const &) { return 0; }\0A  return 4;\0A}"
 }
 
 //--- empty-region.mlir

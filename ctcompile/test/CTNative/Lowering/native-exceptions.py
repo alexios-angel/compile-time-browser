@@ -21,17 +21,29 @@ PROGRAMS = {
     "object_payload": (2, {"object32": 32}),
     "boolean_payload": (2, {"boolean17": 17}),
     "string_payload": (2, {"string18": 18}),
+    "boolean_value": (2, {"true17": 17, "false19": 19}),
+    "string_value": (3, {"caught42": 42, "normal20": 20}),
+    "string_sites": (2, {"first42": 42, "second107": 107, "normal20": 20}),
+    "numeric_bits": (2, {"negativeZero42": 42, "nan43": 43}),
     "null_payload": (2, {"null19": 19}),
     "undefined_payload": (2, {"undefined20": 20}),
     "implicit_property": (2, {"explicit42": 42, "implicit42": 42}),
     "mixed_payload": (2, {"first42": 42, "second42": 42}),
+    "mixed_string_payload": (2, {"first42": 42, "second42": 42}),
+    "mixed_boolean_string_payload": (2, {"first42": 42, "second42": 42}),
+    "computed_throw": (2, {"computed42": 42}),
+    "mixed_concatenation": (2, {"caught42": 42, "normal20": 20}),
     "bare_finally": (2, {"normal120": 120, "returned10": 10}),
     "catch_finally": (2, {"finally121": 121}),
     "nested_catch": (2, {"nested7": 7}),
     "throwing_callee": (3, {"called42": 42}),
 }
 POSITIVES = ("guarded", "two_sites", "continuation", "normal_return",
-             "unconditional", "boolean_state", "finally_override")
+             "unconditional", "boolean_state", "finally_override", "boolean_payload",
+             "string_payload", "boolean_value", "string_value", "string_sites", "numeric_bits")
+TWO_THROW_SITES = ("two_sites", "finally_override", "boolean_value", "string_sites", "numeric_bits")
+STRING_LIFETIMES = ("string_value", "string_sites")
+DEFAULT_OPTIMIZATIONS = ("guarded", "string_value")
 IMPORT_REFUSALS = ("catch_finally", "nested_catch")
 IMPORT_REASON = "more than one protected region in a function"
 # Existing interpreter behavior for null property access differs from Node:
@@ -248,6 +260,16 @@ def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False
                         raise
                 else:
                     raise RuntimeError("executed wrong-state binary escaped result checking")
+        if name in STRING_LIFETIMES:
+            sanitized = (args.work / f"{name}.{mode}.sanitized").resolve()
+            environment = dict(os.environ,
+                               ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+                               UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1")
+            run([compilers[1], *flags, "-O1", "-g", "-fno-omit-frame-pointer",
+                 "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
+                 str(source), "-o", str(sanitized)])
+            compare(run([str(sanitized)], environment=environment).stdout,
+                    expected_text(expected), f"{name}/{mode}/ASan-UBSan")
 
 
 def main():
@@ -301,7 +323,7 @@ def main():
         if name in POSITIVES:
             # The overriding finally also leaves an unreachable synthetic
             # rethrow in raw bytecode; recovery must prove that tail dead.
-            throw_sites = 2 if name in ("two_sites", "finally_override") else 1
+            throw_sites = 2 if name in TWO_THROW_SITES else 1
             if (operation_count(prepared.read_text(), "push_handler") != 1 or
                     operation_count(prepared.read_text(), "throw") != throw_sites):
                 raise RuntimeError(f"{name}: source exception paths disappeared before recovery")
@@ -309,9 +331,11 @@ def main():
             standalone(args, output, name, expected, compilers, nm)
             if name == "guarded":
                 budget_controls(args, prepared)
-                defaults = lower(args, prepared, "guarded-default", default_options=True)
-                native_functions(defaults, denominator, "guarded-default")
-                standalone(args, defaults, "guarded-default", expected, compilers, nm)
+            if name in DEFAULT_OPTIMIZATIONS:
+                default_name = name + "-default"
+                defaults = lower(args, prepared, default_name, default_options=True)
+                native_functions(defaults, denominator, default_name)
+                standalone(args, defaults, default_name, expected, compilers, nm)
         else:
             refused(prepared, output, imported, name)
         report.append({"name": name, "source_functions": denominator, "imported": imported,
@@ -331,10 +355,12 @@ def main():
     native_functions(output, 2, "wrong-state")
     standalone(args, output, "wrong-state", wrong_expected, compilers, nm, wrong_state=True)
     (args.work / "native.json").write_text(json.dumps(report, indent=2) + "\n")
-    print("native exceptions: seven 2/2 native programs plus guarded defaults, "
+    print(f"native exceptions: {len(POSITIVES)} complete native programs plus numeric/string defaults, "
           "throw-site state/two throws/catch continuation/normal return/unconditional "
-          "throw/boolean state/finally override; Node and interpreter agree with "
-          "GCC/Clang explicit/deduced, no VM; eleven refusals, zero/tight budget "
+          "throw/boolean and owning string payloads/state/finally override/NaN/negative zero; "
+          "Node and interpreter agree with GCC/Clang explicit/deduced, no VM; "
+          f"owning string ASan/UBSan/lifetime checks; {len(PROGRAMS) - len(POSITIVES)} "
+          "refusals, zero/tight budget "
           "refusals and executed wrong-state control; null-property refusal pins "
           "the existing interpreter/Node divergence")
 
