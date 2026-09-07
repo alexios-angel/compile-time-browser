@@ -1057,7 +1057,6 @@ void dom_bindings::install_document(context & cx) {
         // and shares its caller's `<body>`.
         doc->set("implementation", value::object(implementation));
     }
-    doc->set("body", wrap(cx, find_by_tag("body")));
     // `document.head` IS AN ACCESSOR, and both halves of that are load-bearing.
     //
     // IT RECOMPUTES. The head is "the FIRST `head` child of the document
@@ -1110,7 +1109,6 @@ void dom_bindings::install_document(context & cx) {
                                  return found ? wrap(c, found) : value::null();
                              })),
                          value::undefined());
-    doc->set("documentElement", wrap(cx, find_by_tag("html")));
     // THE Node AND ParentNode SURFACE, all twenty-two members of it. Its own
     // function because the decision it rests on - that there is no Document
     // node in this tree and one has to be modelled - is a page of reasoning
@@ -1255,6 +1253,63 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
                 ? value::undefined()
                 : value::object(cx.allocate<script::native_object>(name, std::move(write))));
     };
+
+    // `document.documentElement` and `document.body`, BOTH RE-READ.
+    //
+    // They were written once at install, on the grounds that the node never
+    // changes - and the node does not, but the WRAPPER's contents do.
+    // `refresh_element` pushes `ownerDocument` onto a wrapper every time
+    // `wrap()` is called, and the document object those two were wrapped
+    // against did not exist yet at install time, so `document.body
+    // .ownerDocument === document` was false for the life of the page. Calling
+    // `wrap` on each read refreshes it, and it is also the only way `body` can
+    // follow a page that replaces it.
+    //
+    // THE BODY IS NOT `find_by_tag("body")`. HTML says it is the first child of
+    // the DOCUMENT ELEMENT that is a `body` or a `frameset`, which is why
+    // `Document.body.html` builds a `<body>` inside a `<div>` and expects
+    // `document.body` not to be it.
+    accessor(
+        "documentElement",
+        [this](context & c, std::span<value>) { return wrap(c, first_html_element("html")); },
+        nullptr);
+    accessor(
+        "body", [this](context & c, std::span<value>) { return wrap(c, body_element()); },
+        [this](context & c, std::span<value> a) {
+            const node_id fresh = handle_of(arg(a, 0));
+            std::string local;
+            if (fresh) {
+                const auto txn = doc_->read();
+                const std::string_view qualified = atoms_->text(txn.tag(fresh).value_or(atom{}));
+                const std::size_t colon = qualified.find(':');
+                local = colon == std::string_view::npos ? std::string{qualified}
+                                                        : std::string{qualified.substr(colon + 1)};
+            }
+            // "IF THE NEW VALUE IS NOT A body OR frameset ELEMENT, THROW A
+            // HierarchyRequestError" - and null is not one either, which is what
+            // `document.body = null` is for.
+            if (local != "body" && local != "frameset") {
+                throw_dom_exception(c, "HierarchyRequestError",
+                                    "document.body must be a body or frameset element");
+                return value::undefined();
+            }
+            const node_id existing = body_element();
+            if (existing == fresh) { return value::undefined(); }
+            const node_id root = first_html_element("html");
+            if (!root) { return value::undefined(); }
+            // Insert before the old body and then remove it, rather than the
+            // other way round: removing first leaves the document with no body
+            // for the length of one statement, and `mutated()` is not the only
+            // thing that reads the tree between them.
+            if (existing) {
+                (void)doc_->insert_before(root, fresh, existing);
+                (void)doc_->remove_child(existing);
+            } else {
+                (void)doc_->append_child(root, fresh);
+            }
+            mutated();
+            return value::undefined();
+        });
 
     // `document.title`, HTML 4.2.2, both halves.
     //
@@ -2424,6 +2479,23 @@ std::vector<node_id> dom_bindings::all_html_elements(std::string_view local) {
     return found;
 }
 
+// "The body element", HTML 4.2.3: the FIRST CHILD of the document element that
+// is a `body` or a `frameset`. Not the first `<body>` in the document - a
+// `<body>` the parser has put inside a `<div>` is not the document's body, and
+// `Document.body.html` asserts that by building one.
+node_id dom_bindings::body_element() {
+    const auto txn = doc_->read();
+    const node_id root = txn.root();
+    for (const node_id child : txn.children(root)) {
+        if (txn.element_ns(child) != node_ns::html) { continue; }
+        const auto tagged = txn.tag(child);
+        if (!tagged.has_value()) { continue; }
+        const std::string_view local = local_name_of(atoms_->text(*tagged));
+        if (local == "body" || local == "frameset") { return child; }
+    }
+    return node_id{};
+}
+
 // "The title element", HTML 4.2.2 - and the SVG branch is not a curiosity. A
 // document whose root is `<svg>` takes its title from that root's own first
 // SVG `<title>` CHILD, not from any HTML title anywhere; every other document
@@ -2609,6 +2681,13 @@ value dom_bindings::make_live_collection(context & cx,
                                          std::function<std::vector<node_id>()> members) {
     auto * target = static_cast<script::object_object *>(cx.make_object().as_heap());
     auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+    // `children instanceof HTMLCollection` IS A SUBTEST, and it is the only
+    // failing one in `ParentNode-children.html` and `Document-getElementsBy
+    // ClassName.html` alike - both files check liveness by appending and
+    // reading `length`, which already worked, and then ask what the thing IS.
+    // The interface objects exist (install_dom_interfaces); nothing had linked
+    // a collection to one.
+    target->prototype = interface_prototype("HTMLCollection");
     // Shared rather than copied into each trap: `members` walks the document, and
     // three copies of the same walk is three chances for them to disagree.
     const auto live = std::make_shared<std::function<std::vector<node_id>()>>(std::move(members));

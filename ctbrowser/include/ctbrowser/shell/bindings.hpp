@@ -1141,6 +1141,9 @@ private:
     // `<title>` CHILD, and in every other document it is the first HTML title
     // element anywhere in tree order. Empty when there is none.
     [[nodiscard]] node_id title_element();
+    // "The body element": the first child of the DOCUMENT ELEMENT that is a
+    // `body` or a `frameset`. Not the first `<body>` anywhere.
+    [[nodiscard]] node_id body_element();
     // "Strip and collapse ASCII whitespace", Infra - leading and trailing
     // removed, every interior run replaced by ONE space. It is applied by
     // `document.title`'s GETTER and not by its setter, which is why

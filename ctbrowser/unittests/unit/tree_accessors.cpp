@@ -215,6 +215,34 @@ void test_several_of_one_name_is_a_collection() {
        "2");
 }
 
+// --- documentElement and body ----------------------------------------------
+
+void test_the_body_is_the_document_elements_child() {
+    is("document.body.tagName", "BODY");
+    is("document.documentElement.tagName", "HTML");
+    // NOT the first <body> anywhere: HTML says the first CHILD of the document
+    // element that is a body or a frameset, and Document.body.html builds one
+    // inside a <div> to prove the difference.
+    is("(function () {"
+       " var d = document.createElement('div');"
+       " var b = document.createElement('body');"
+       " d.appendChild(b);"
+       " document.body.appendChild(d);"
+       " return document.body.tagName + ',' + (document.body === b); })()",
+       "BODY,false");
+    // Assigning anything that is not a body or a frameset is a
+    // HierarchyRequestError, and null is not one of them.
+    is("(function () { document.body = document.createElement('div'); })()",
+       "threw:HierarchyRequestError");
+    is("(function () { document.body = null; })()", "threw:HierarchyRequestError");
+    is("(function () {"
+       " var b = document.createElement('body');"
+       " b.setAttribute('id', 'fresh');"
+       " document.body = b;"
+       " return document.body.id + ',' + (document.body === b); })()",
+       "fresh,true");
+}
+
 void test_the_document_is_still_itself_through_the_proxy() {
     // The page's `document` is a Proxy now. Everything that hands one back has
     // to hand back THAT value, or a page's identity comparison fails against
@@ -238,6 +266,7 @@ int main() {
     test_the_id_route_needs_a_name_and_the_name_route_does_not();
     test_a_name_never_shadows_a_real_property();
     test_several_of_one_name_is_a_collection();
+    test_the_body_is_the_document_elements_child();
     test_the_document_is_still_itself_through_the_proxy();
     REPORT("tree_accessors");
 }
