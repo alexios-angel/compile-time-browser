@@ -52,6 +52,19 @@ SPARSE_PATHS=(
   # It is a SKIP_DIR_PARTS directory in run-wpt.py, so nothing here is ever
   # collected as a test: it is imported, never run.
   /css/support/        # parsing-, computed-, numeric-testcommon.js and friends
+  # THE TWO HELPERS AT THE TOP OF dom/, and only those two. `dom/events/` and
+  # `dom/nodes/` are checked out but their imports are not all inside them:
+  # `dom/events/Event-constants.html` loads `/dom/constants.js` and reported
+  # HARNESS_ERROR - "testConstants is undefined" - for a file that has nothing
+  # to do with the engine. Same shape as the css/support/ finding on
+  # 2026-09-03, one directory up.
+  #
+  # NAMED FILES rather than /dom/*.js, because `idlharness.any.js` and
+  # `idlharness.window.js` sit beside them and are TESTS: a glob would add two
+  # files to the corpus, which moves a number for a reason that is not the
+  # engine.
+  /dom/constants.js    # the interface constant tables dom/events/ imports
+  /dom/common.js       # and the node-list fixtures dom/nodes/ imports
 )
 
 verify_only=0
@@ -80,7 +93,7 @@ if [ "$verify_only" = 1 ]; then
   # right harness that still loses 94 css-values files to a missing helper -
   # which is precisely the failure --verify exists to catch and could not.
   for must in resources/testharness.js resources/testharnessreport.js common dom/nodes \
-              css/support/parsing-testcommon.js; do
+              css/support/parsing-testcommon.js dom/constants.js; do
     [ -e "$WPT_DIR/$must" ] || {
       echo "$WPT_DIR/$must missing - the sparse checkout is incomplete" >&2
       exit 1
