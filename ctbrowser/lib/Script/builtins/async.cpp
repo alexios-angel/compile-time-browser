@@ -14,15 +14,22 @@ void install_json(context & cx) {
     using detail::new_table;
     object_object * json = new_table(cx);
     method(cx, json, "stringify", 3, [](context & c, std::span<value> a) {
-        // AT THE TOP LEVEL an unserialisable value yields UNDEFINED, not the
-        // string "null" - 25.5.2 step 12. Inside an array the same value
-        // becomes null, which is why write_json cannot decide this and the
-        // caller must. A page testing `if (json === undefined)` was told the
-        // string "null" instead.
-        const value subject = arg_at(a, 0);
-        if (subject.is_undefined() || subject.is_callable()) { return value::undefined(); }
+        detail::json_writer state{c};
+        detail::read_stringify_options(state, arg_at(a, 1), arg_at(a, 2));
+        // THE VALUE IS SERIALISED AS A MEMBER OF A WRAPPER, 25.5.2 step 10, and
+        // that is not ceremony: SerializeJSONProperty reads its value out of a
+        // holder with a key, so the replacer gets `("", value)` and an object
+        // to be `this` on its first call exactly as it does on every later one.
+        // Without the wrapper the top level is a special case that no replacer
+        // and no `toJSON` sees.
+        const value wrapper = c.make_object();
+        static_cast<object_object *>(wrapper.as_heap())->set("", arg_at(a, 0));
         std::string out;
-        detail::write_json(c, subject, out);
+        // AT THE TOP LEVEL an unserialisable value yields UNDEFINED, not the
+        // string "null" - step 12. Inside an array the same value becomes null,
+        // which is why the serialiser reports "omit" and the caller decides. A
+        // page testing `if (json === undefined)` was told the string "null".
+        if (!state.serialize(wrapper, "", arg_at(a, 0), out)) { return value::undefined(); }
         return c.string(out);
     });
     method(cx, json, "parse", 2, [](context & c, std::span<value> a) {
@@ -30,9 +37,24 @@ void install_json(context & cx) {
         // into it, and passing the temporary directly leaves the view dangling
         // for the whole parse.
         const std::string source = str_at(c, a, 0);
-        detail::json_reader reader{c, source, 0, true};
-        const value out = reader.parse();
-        return reader.ok ? out : value::undefined();
+        detail::json_reader reader{c, source};
+        const value out = reader.parse_text();
+        // 25.5.1 step 3: a document that does not fit the JSON grammar is a
+        // SyntaxError. It used to be `undefined`, which is a value a page can
+        // and does mistake for a successfully parsed `null`-ish document.
+        if (!reader.ok) {
+            c.throw_error("SyntaxError",
+                          "Unexpected token in JSON at position " + std::to_string(reader.at));
+            return value::undefined();
+        }
+        const value reviver = arg_at(a, 1);
+        if (!reviver.is_callable()) { return out; }
+        // Step 7: the reviver walks a WRAPPER whose one property is "", for the
+        // same reason stringify's does - the root has to be a (holder, key)
+        // pair so the reviver can replace it.
+        const value wrapper = c.make_object();
+        static_cast<object_object *>(wrapper.as_heap())->set("", out);
+        return detail::internalize_json(c, wrapper, "", out, reviver, 0);
     });
     cx.define_global("JSON", value::object(json));
 }

@@ -174,3 +174,11 @@ ctbrowser_test(js/error_types)
 # reason the two above have one, and it also covers the seven Array.prototype
 # methods that did not exist at all.
 ctbrowser_test(js/array_generics)
+# --- JSON, the whole of 25.5 ------------------------------------------------
+# `stringify` had no replacer, no `space`, no `toJSON` and no stack - so a
+# self-referential object recursed until the C++ stack ran out where the
+# specification has a TypeError - and `parse` accepted source no other reader
+# will and answered `undefined` instead of throwing where it could not. Its own
+# file for the same reason the four above have one: it asks what a value
+# SERIALISES to and what text is REFUSED, not what an expression computes.
+ctbrowser_test(js/json_basics)
