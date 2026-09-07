@@ -25,8 +25,10 @@
 //     "undefined", which is the honest way for a missing wire to report.
 //   * a rule with an EMPTY declaration block is dropped by the CSS front end
 //     (`consume_qualified_rule` keeps a rule only when it has both a selector
-//     and a declaration), so `div {}` is not in `cssRules`. Asserted below so
-//     the deviation is recorded rather than believed.
+//     and a declaration), so `div {}` in a `<style>` is not in `cssRules`.
+//     `insertRule` splits the text at the brace itself and so keeps one;
+//     `parse_sheet_rules` has only the front end's answer to work from, and the
+//     deviation is asserted below rather than believed.
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -39,6 +41,7 @@
 
 #include "check.hpp"
 
+#include <memory>
 #include <string>
 #include <string_view>
 
@@ -180,11 +183,18 @@ void test_insert_and_delete() {
         caught = '';
         try { sheet.insertRule(); } catch (e) { caught = e.name; }
         console.log('none=' + caught);
-        // A rule with an EMPTY block is dropped by the front end, which is a
-        // deviation this test records rather than hides.
+        // AN EMPTY BLOCK IS A RULE. The CSS front end drops one - it keeps a
+        // rule only when it has both a selector and a declaration - so
+        // `insertRule` splits the text at the brace itself and parses the two
+        // halves separately. `addRule()` with no arguments cannot produce
+        // anything else, and `css/cssom/CSSStyleSheet.html` asserts its answer.
+        console.log('empty=' + sheet.insertRule('div { }', 0) + ',' +
+                    sheet.cssRules[0].cssText);
+        console.log('added=' + sheet.addRule() + ',' +
+                    sheet.cssRules[sheet.cssRules.length - 1].cssText);
         caught = '';
-        try { sheet.insertRule('div { }'); } catch (e) { caught = e.name; }
-        console.log('empty=' + caught);
+        try { sheet.insertRule('a {} b {}'); } catch (e) { caught = e.name; }
+        console.log('two=' + caught);
     </script></body></html>)");
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "at="), std::string{"at=1"});
@@ -196,7 +206,185 @@ void test_insert_and_delete() {
     CHECK_EQ(logged(page, "gone="), std::string{"gone=IndexSizeError"});
     CHECK_EQ(logged(page, "bad="), std::string{"bad=SyntaxError"});
     CHECK_EQ(logged(page, "none="), std::string{"none=TypeError"});
-    CHECK_EQ(logged(page, "empty="), std::string{"empty=SyntaxError"});
+    CHECK_EQ(logged(page, "empty="), std::string{"empty=0,div { }"});
+    CHECK_EQ(logged(page, "added="), std::string{"added=-1,undefined { }"});
+    // One rule means ONE rule: text with a second one after the first is a
+    // syntax error rather than a silent truncation.
+    CHECK_EQ(logged(page, "two="), std::string{"two=SyntaxError"});
+}
+
+// A SELECTOR IS PARSED, NOT PROBED. `css/cssom/CSSStyleRule-set-selectorText.html`
+// spends nineteen of its subtests on selectors that are not selectors, and the
+// rule for all of them is one line of CSSOM 6.4.2: if the parse fails, do
+// nothing. What that test also demands is the OTHER half - a selector this
+// engine cannot MATCH is not a failure, and it must come back spelled the way
+// the author wrote it rather than as the `*` an empty compound serialises to.
+void test_selector_text_is_parsed_and_escaped() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style id=s>.style0 { color: red }</style></head><body><script>
+        const sheet = document.styleSheets[0];
+        const rule = sheet.cssRules[0];
+        const invalid = ['', ' ', '!!', '123', '-', '$', ':', '.', '#', '[]', '(', '{}'];
+        let kept = 0;
+        for (const bad of invalid) {
+            rule.selectorText = bad;
+            if (rule.selectorText === '.style0') { kept++; }
+        }
+        console.log('invalid=' + kept + '/' + invalid.length);
+        rule.selectorText = '  span   div  ';
+        console.log('spaces=' + rule.selectorText);
+        rule.selectorText = 'div:not(:active)';
+        console.log('not=' + rule.selectorText);
+        rule.selectorText = ':nth-child( 1n + 5 )';
+        console.log('nth=' + rule.selectorText);
+        // A pseudo-element compiles to a compound that matches nothing, and
+        // there is nothing left in it to serialise.
+        rule.selectorText = '::before';
+        console.log('pseudo=' + rule.selectorText);
+        sheet.insertRule('[\\30zonk] { color: red }', 0);
+        console.log('esc=' + sheet.cssRules[0].selectorText);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "invalid="), std::string{"invalid=12/12"});
+    CHECK_EQ(logged(page, "spaces="), std::string{"spaces=span div"});
+    CHECK_EQ(logged(page, "not="), std::string{"not=div:not(:active)"});
+    CHECK_EQ(logged(page, "nth="), std::string{"nth=:nth-child(n+5)"});
+    CHECK_EQ(logged(page, "pseudo="), std::string{"pseudo=::before"});
+    // The tokenizer DECODES an escape, so the name that reaches the compiled
+    // selector is `0zonk` - and an identifier may not begin with a digit, so
+    // serialising it back without the escape produces a selector that is not
+    // one. CSSOM §2.1 escapes the digit numerically, trailing space and all.
+    CHECK_EQ(logged(page, "esc="), std::string{"esc=[\\30 zonk]"});
+}
+
+// insertRule/deleteRule ON A GROUP. The same pair of methods CSSStyleSheet has
+// and a different list - `css/cssom/serialize-media-rule.html` builds every one
+// of its fixtures this way, and `CSSGroupingRule-insertRule.html` asserts all
+// four of the ways it can refuse.
+void test_a_grouping_rule_inserts_and_deletes() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style id=s></style></head><body><script>
+        const sheet = document.getElementById('s').sheet;
+        sheet.insertRule('@media print {}', 0);
+        const group = sheet.cssRules[0];
+        console.log('at=' + group.insertRule('#foo { z-index: 23; float: left; }', 0));
+        console.log('at2=' + group.insertRule('#bar { float: none; z-index: 45; }', 0));
+        console.log('text=' + group.cssText);
+        console.log('kids=' + group.cssRules.length + ',' + (group.cssRules === group.cssRules));
+        console.log('parent=' + (group.cssRules[0].parentRule.cssText === group.cssText));
+        console.log('is=' + (group instanceof CSSMediaRule) + ',' +
+                    (group instanceof CSSConditionRule) + ',' +
+                    (group instanceof CSSGroupingRule) + ',' + (group instanceof CSSRule));
+        let caught = '';
+        // The INDEX is checked before the text is parsed, so a bad index and a
+        // bad rule together report the index.
+        try { group.insertRule('???', 9); } catch (e) { caught = e.name; }
+        console.log('range=' + caught + ',' + group.cssRules.length);
+        caught = '';
+        try { group.insertRule('???', 0); } catch (e) { caught = e.name; }
+        console.log('bad=' + caught);
+        caught = '';
+        try { group.insertRule('@import url("foo.css");', 0); } catch (e) { caught = e.name; }
+        console.log('import=' + caught);
+        group.deleteRule(0);
+        console.log('gone=' + group.cssRules.length + ',' + group.cssText);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "at="), std::string{"at=0"});
+    CHECK_EQ(logged(page, "at2="), std::string{"at2=0"});
+    CHECK_EQ(logged(page, "text="),
+             std::string{"text=@media print {\n  #bar { float: none; z-index: 45; }\n"
+                         "  #foo { z-index: 23; float: left; }\n}"});
+    CHECK_EQ(logged(page, "kids="), std::string{"kids=2,true"});
+    CHECK_EQ(logged(page, "parent="), std::string{"parent=true"});
+    CHECK_EQ(logged(page, "is="), std::string{"is=true,true,true,true"});
+    CHECK_EQ(logged(page, "range="), std::string{"range=IndexSizeError,2"});
+    CHECK_EQ(logged(page, "bad="), std::string{"bad=SyntaxError"});
+    // `@import` and `@namespace` are TOP-LEVEL rules, so a grouping rule refuses
+    // them with a HierarchyRequestError rather than a SyntaxError.
+    CHECK_EQ(logged(page, "import="), std::string{"import=HierarchyRequestError"});
+    CHECK_EQ(logged(page, "gone="),
+             std::string{"gone=1,@media print {\n  #foo { z-index: 23; float: left; }\n}"});
+}
+
+// THE MEDIA QUERY LIST, SERIALISED FROM THE AUTHOR'S TEXT. Every string here is
+// one `css/cssom/serialize-media-rule.html` compares byte for byte, and the two
+// that look like typos are not: `@media  {` really does carry two spaces when
+// the query list is empty, and a grouping rule really is the one multi-line
+// serialisation in the CSSOM.
+void test_media_rules_and_their_lists() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style id=s></style></head><body><script>
+        const sheet = document.getElementById('s').sheet;
+        sheet.insertRule('@media aLL and (Color) { #a { color: red } }', 0);
+        sheet.insertRule('@media {}', 1);
+        sheet.insertRule('@media not all and (color) {}', 2);
+        sheet.insertRule('@media screen and (max-width: 23px) and (max-width: 45px) {}', 3);
+        console.log('n=' + sheet.cssRules.length);
+        console.log('c0=' + sheet.cssRules[0].conditionText);
+        console.log('t0=' + sheet.cssRules[0].cssText);
+        console.log('t1=' + sheet.cssRules[1].cssText);
+        console.log('t2=' + sheet.cssRules[2].cssText);
+        console.log('t3=' + sheet.cssRules[3].cssText);
+        const media = sheet.cssRules[0].media;
+        console.log('m=' + media.length + ',' + media[0] + ',' + media[3] + ',' +
+                    media.item(1) + ',' + (media === sheet.cssRules[0].media));
+        media.appendMedium('PRINT');
+        media.appendMedium('print');
+        console.log('app=' + media.mediaText + ',' + media.length);
+        media.deleteMedium('print');
+        console.log('del=' + media.mediaText + ',' + media.toString());
+        let caught = '';
+        try { media.deleteMedium('speech'); } catch (e) { caught = e.name; }
+        console.log('missing=' + caught);
+        media.mediaText = null;
+        console.log('nulled=[' + media.mediaText + '],' + media.length);
+        console.log('emptied=' + sheet.cssRules[0].cssText);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "n="), std::string{"n=4"});
+    // `all and <features>` drops the `all`; a NEGATED one keeps it, because
+    // dropping it there would invert the query.
+    CHECK_EQ(logged(page, "c0="), std::string{"c0=(color)"});
+    CHECK_EQ(logged(page, "t0="), std::string{"t0=@media (color) {\n  #a { color: red; }\n}"});
+    CHECK_EQ(logged(page, "t1="), std::string{"t1=@media  {\n}"});
+    CHECK_EQ(logged(page, "t2="), std::string{"t2=@media not all and (color) {\n}"});
+    // A feature written twice is KEPT twice: de-duplicating is an open CSSWG
+    // issue and the suite asserts the author's list survives.
+    CHECK_EQ(logged(page, "t3="),
+             std::string{"t3=@media screen and (max-width: 23px) and (max-width: 45px) {\n}"});
+    CHECK_EQ(logged(page, "m="), std::string{"m=1,(color),undefined,null,true"});
+    CHECK_EQ(logged(page, "app="), std::string{"app=(color), print,2"});
+    CHECK_EQ(logged(page, "del="), std::string{"del=(color),(color)"});
+    CHECK_EQ(logged(page, "missing="), std::string{"missing=NotFoundError"});
+    CHECK_EQ(logged(page, "nulled="), std::string{"nulled=[],0"});
+    CHECK_EQ(logged(page, "emptied="), std::string{"emptied=@media  {\n  #a { color: red; }\n}"});
+}
+
+// A SHEET HAS A MediaList TOO, and it is the same interface over the same kind
+// of list - `css/cssom/medialist-interfaces-001.html` drives the `<style>`'s
+// `media` attribute through exactly these four steps.
+void test_the_media_list_of_a_sheet() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style id=s media=all>.a { color: red }</style></head>
+    <body><script>
+        const sheet = document.getElementById('s').sheet;
+        const list = sheet.media;
+        console.log('m0=' + list.mediaText + ',' + list.length);
+        list.appendMedium('screen');
+        console.log('m1=' + list.mediaText);
+        list.deleteMedium('all');
+        console.log('m2=' + list.mediaText);
+        sheet.media = 'print, Screen and (Min-Width: 10px)';
+        console.log('m3=' + sheet.media.mediaText + ',' + (sheet.media === list));
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "m0="), std::string{"m0=all,1"});
+    CHECK_EQ(logged(page, "m1="), std::string{"m1=all, screen"});
+    CHECK_EQ(logged(page, "m2="), std::string{"m2=screen"});
+    // A feature NAME folds and a media type folds; a feature's VALUE does not,
+    // being a string, a url() or a number with a unit rather than an identifier.
+    CHECK_EQ(logged(page, "m3="), std::string{"m3=print, screen and (min-width: 10px),true"});
 }
 
 void test_a_constructed_sheet() {
@@ -286,6 +474,69 @@ void test_the_text_the_cascade_would_get() {
     CHECK_EQ(off.bindings().author_style_text(), std::string{});
 }
 
+// AN ADOPTED SHEET REACHES THE AUTHOR CSS, and in the order it was adopted in.
+//
+// It was in the object model and in nothing else: `document.styleSheets`
+// correctly does not include a constructed sheet, so a sheet a page adopted
+// appeared in no serialisation of the document's styles at all. CSSOM puts the
+// adopted sheets LAST in the final list, which is what makes
+// `adoptedStyleSheets = [red, green]` green and `[green, red]` red -
+// `adoptedstylesheets-cascade-order.html` asserts that pair and then asserts it
+// again for a rotation that adds and removes nothing.
+//
+// THE TEXT AND NOT A PIXEL, for the same reason the case above asserts text:
+// `set_author_styles_hook` is still unfilled, so `browser::refresh_author_styles`
+// re-collects the `<style>` elements' own bytes and an adopted sheet is not one
+// of them. What this pins is the contract between the two rungs.
+void test_an_adopted_sheet_reaches_the_author_css() {
+    const auto adopt = [](const char * order) {
+        auto page = std::make_unique<browser>(browser_options{400, 200});
+        page->load_html(std::string{R"(<html><head><style>#t { color: rgb(1, 2, 3) }</style>
+        </head><body><p id=t>x</p><script>
+            const red = new CSSStyleSheet();
+            red.replaceSync('#t { color: rgb(255, 0, 0) }');
+            const green = new CSSStyleSheet();
+            green.replaceSync('#t { color: rgb(0, 128, 0) }');
+            document.adoptedStyleSheets = [)"} +
+                        order + R"(];
+        </script></body></html>)");
+        return page;
+    };
+    const std::unique_ptr<browser> first = adopt("red, green");
+    CHECK(first->script_error().empty());
+    CHECK_EQ(first->bindings().author_style_text(),
+             std::string{"#t { color: rgb(1, 2, 3); }\n#t { color: rgb(255, 0, 0); }\n"
+                         "#t { color: rgb(0, 128, 0); }\n"});
+    const std::unique_ptr<browser> second = adopt("green, red");
+    CHECK(second->script_error().empty());
+    CHECK_EQ(second->bindings().author_style_text(),
+             std::string{"#t { color: rgb(1, 2, 3); }\n#t { color: rgb(0, 128, 0); }\n"
+                         "#t { color: rgb(255, 0, 0); }\n"});
+    const std::unique_ptr<browser> none = adopt("");
+    CHECK(none->script_error().empty());
+    CHECK_EQ(none->bindings().author_style_text(), std::string{"#t { color: rgb(1, 2, 3); }\n"});
+}
+
+// `replace` and `replaceSync` REFUSE DIFFERENTLY: one throws and one rejects.
+void test_replace_refuses_a_regular_sheet() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>#t { color: rgb(1, 2, 3) }</style></head>
+    <body><p id=t>x</p><script>
+        let caught = '';
+        try { document.styleSheets[0].replaceSync('#t { color: red }'); }
+        catch (e) { caught = e.name; }
+        console.log('sync=' + caught);
+        document.styleSheets[0].replace('#t { color: red }').then(
+            function () { console.log('async=resolved'); },
+            function (e) { console.log('async=' + e.name); });
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "sync="), std::string{"sync=NotAllowedError"});
+    // A throw out of `replace` fails the suite's test with an uncaught exception
+    // rather than the rejection it is waiting for.
+    CHECK_EQ(logged(page, "async="), std::string{"async=NotAllowedError"});
+}
+
 // A `<style>` A SCRIPT APPENDS ACTUALLY APPLIES. `browser::load_author_styles`
 // latched, so until `refresh_author_styles` this did nothing at all - injecting
 // a stylesheet and then reading `getComputedStyle` is how a great many tests
@@ -323,9 +574,15 @@ int main() {
     test_the_list_and_the_rules();
     test_a_style_rule();
     test_insert_and_delete();
+    test_selector_text_is_parsed_and_escaped();
+    test_a_grouping_rule_inserts_and_deletes();
+    test_media_rules_and_their_lists();
+    test_the_media_list_of_a_sheet();
     test_a_constructed_sheet();
     test_the_sheet_of_an_element();
     test_the_text_the_cascade_would_get();
+    test_an_adopted_sheet_reaches_the_author_css();
+    test_replace_refuses_a_regular_sheet();
     test_an_injected_style_element_restyles();
     REPORT("cssom");
 }

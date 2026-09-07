@@ -21,62 +21,9 @@
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/style/css/properties.hpp>
 
-#include <cstdint>
 #include <string>
-#include <string_view>
 
 namespace ctbrowser::shell {
-namespace {
-
-// CSSOM §2.1, "serialize an identifier". `CSS.escape` is how a page builds a
-// selector out of an id or a class it did not choose - `querySelector('#' +
-// CSS.escape(id))` - and it is exact rather than approximate work: escaping too
-// little produces a selector that means something else, escaping too much
-// produces one that matches nothing.
-[[nodiscard]] std::string escape_identifier(std::string_view text) {
-    std::string out;
-    const auto hex_escape = [&out](unsigned char c) {
-        static constexpr char digits[] = "0123456789abcdef";
-        out += '\\';
-        if (c >= 16) { out += digits[c >> 4]; }
-        out += digits[c & 0xF];
-        out += ' ';
-    };
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        const auto c = static_cast<unsigned char>(text[i]);
-        // NULL is not escaped, it is REPLACED - §2.1 step 3, the same
-        // U+FFFD substitution the CSS tokenizer does to its input.
-        if (c == 0) {
-            out += "\xEF\xBF\xBD";
-            continue;
-        }
-        if (c <= 0x1F || c == 0x7F) {
-            hex_escape(c);
-            continue;
-        }
-        // A LEADING DIGIT, or a digit after a leading `-`, would make the
-        // identifier a number: both are escaped numerically rather than with a
-        // backslash, because `\1` is not a valid identifier start either.
-        if (c >= '0' && c <= '9' && (i == 0 || (i == 1 && text[0] == '-'))) {
-            hex_escape(c);
-            continue;
-        }
-        if (c == '-' && text.size() == 1) {
-            out += "\\-";
-            continue;
-        }
-        if (c >= 0x80 || c == '-' || c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
-            (c >= 'A' && c <= 'Z')) {
-            out += static_cast<char>(c);
-            continue;
-        }
-        out += '\\';
-        out += static_cast<char>(c);
-    }
-    return out;
-}
-
-} // namespace
 
 void dom_bindings::install_css_interface(context & cx) {
     auto * css = static_cast<script::object_object *>(cx.make_object().as_heap());
@@ -101,7 +48,13 @@ void dom_bindings::install_css_interface(context & cx) {
     });
     method("escape", [](context & c, std::span<value> args) {
         if (args.empty()) { return c.string(std::string{"undefined"}); }
-        return c.string(escape_identifier(c.to_string(args[0])));
+        // CSSOM §2.1's "serialize an identifier", which is exactly what a
+        // selector's type, id, class and attribute names are serialised with
+        // too - so it lives on dom_bindings and bindings/stylesheets.cpp owns
+        // it. Two copies of an escape are two answers to "what is a valid
+        // identifier", and a page building `'#' + CSS.escape(id)` and this
+        // engine printing that same rule back must agree.
+        return c.string(dom_bindings::serialize_css_identifier(c.to_string(args[0])));
     });
 
     css_interface_ = value::object(css);

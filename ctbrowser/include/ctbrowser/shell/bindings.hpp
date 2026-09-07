@@ -644,6 +644,11 @@ public:
         // alternative is serialising an empty block that is not what the sheet
         // says. Empty for everything the CSSOM can reconstruct.
         std::string verbatim;
+        // `@media`'s query list, ALREADY SERIALISED, one entry per query - which
+        // is what a MediaList is a view of. It is not `prelude` because a
+        // MediaList is MUTABLE (`appendMedium`, `deleteMedium`, `mediaText`) and
+        // a comma-separated string would have to be re-split on every one.
+        std::vector<std::string> media_queries;
         std::vector<css_declaration> declarations;
         std::vector<std::size_t> children; // into css_rule_store_
         std::size_t parent = static_cast<std::size_t>(-1);
@@ -653,10 +658,14 @@ public:
         node_id owner; // the <style>/<link>; unset for a constructed sheet
         std::string href;
         std::string title;
-        std::string media;
+        std::string media;  // the `media` ATTRIBUTE as last seen on the owner
         std::string source; // what was last parsed, so a <style> edit re-parses
         bool disabled = false;
         bool constructed = false;
+        // The same list as a rule's, and the reason it is not re-derived from
+        // `media` on every read: a script that has called `appendMedium` must
+        // not have it undone by the next walk of the DOM.
+        std::vector<std::string> media_queries;
         std::vector<std::size_t> rules; // into css_rule_store_
     };
 
@@ -684,6 +693,14 @@ public:
     // the CSSOM has since done to it.
     [[nodiscard]] std::string author_style_text();
 
+    // CSSOM §2.1, "serialize an identifier". `CSS.escape` IS this algorithm and
+    // so is every name in a serialised selector - a type, an id, a class and an
+    // attribute's name all go through it - so it is one function rather than
+    // two: escaping too little produces a selector that means something else and
+    // escaping too much produces one that matches nothing, and having the two
+    // callers disagree about which is which is the bug this shape prevents.
+    [[nodiscard]] static std::string serialize_css_identifier(std::string_view text);
+
 private:
     // The document's sheets, re-derived from the DOM. Cheap and idempotent: an
     // owner node that already has a record keeps it, which is what makes
@@ -710,6 +727,14 @@ private:
     void style_sheets_changed();
     [[nodiscard]] css_sheet_record * receiver_sheet(context & cx);
     [[nodiscard]] css_rule_record * receiver_rule(context & cx);
+    // The media query list `this` is a view of - a sheet's or a media rule's.
+    // One function for both because a MediaList carries whichever private slot
+    // names its owner and CSSOM gives the two the same interface.
+    [[nodiscard]] std::vector<std::string> * receiver_media(context & cx);
+    // A MediaList over one of those lists, cached on `owner` under a private
+    // slot so that `sheet.media === sheet.media` - which is [SameObject].
+    [[nodiscard]] value media_list_object(context & cx, script::object_object & owner);
+    void refresh_media_list(context & cx, value list);
     [[nodiscard]] std::string rule_css_text(const css_rule_record & rule) const;
 
     // unique_ptr rather than a bare vector because a record is addressed by
