@@ -746,11 +746,21 @@ void dom_bindings::refresh_attribute_map(context & cx, script::object_object & m
         for (std::size_t i = 0; i < held.size(); ++i) {
             const std::string qualified{atoms_->text(held[i].name)};
             if (qualified == "length" || is_index(qualified)) { continue; }
-            if (const value * existing = map.find(qualified);
-                existing != nullptr && existing->is_callable()) {
-                continue;
-            }
-            map.set(qualified, attribute_object(cx, id, held[i]));
+            // THE SAME Attr OBJECT THE INDEX HOLDS, not a second one. Sharing
+            // is both cheaper - a wrapper per attribute per read rather than
+            // two - and RIGHT: `el.attributes[0] === el.attributes.x` is true
+            // in a browser, an Attr being one node under two ways of reaching
+            // it. It is read back out of the map rather than kept in a C++
+            // local because the map is what roots it.
+            //
+            // ALREADY TAKEN means leave it alone, which covers both the methods
+            // and the case DOM's named getter is actually about: two attributes
+            // may share a qualified name in different namespaces, and the FIRST
+            // is the one the name answers with.
+            if (map.find(qualified) != nullptr) { continue; }
+            const value * indexed = map.find(std::to_string(i));
+            if (indexed == nullptr) { continue; }
+            map.set(qualified, *indexed);
         }
     }
     if (!map.prototype.is_object()) {

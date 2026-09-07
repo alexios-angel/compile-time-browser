@@ -133,13 +133,18 @@ void test_the_attribute_map_answers_to_a_name() {
     // legacy platform object with a named property getter and the indexed half
     // was the only half here, so an attribute could be reached by position and
     // not by name.
+    //
+    // THE SAME Attr, not a second one: an Attr is one node under two ways of
+    // reaching it, so `el.attributes[0] === el.attributes.x` - which is also
+    // one wrapper per attribute per read rather than two.
     is(R"JS((function () {
         var e = document.createElement('div');
         e.setAttribute('x', 'first');
-        return e.attributes.length + ',' + e.attributes.x.value + ',' +
-               (e.attributes.x.ownerElement === e);
+        var map = e.attributes;
+        return map.length + ',' + map.x.value + ',' + (map.x.ownerElement === e) + ',' +
+               (map[0] === map.x);
     })())JS",
-       "1,first,true");
+       "1,first,true,true");
     // A namespace makes no difference to the name it answers to: the QUALIFIED
     // name is the key either way.
     is(R"JS((function () {
