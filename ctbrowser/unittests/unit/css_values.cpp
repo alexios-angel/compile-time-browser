@@ -130,9 +130,11 @@ void test_what_a_math_function_may_not_be() {
     // AN UNTERMINATED FUNCTION IS CLOSED BY EOF, CSS Syntax 3 §5.4.9, so these
     // are VALUES and refusing them deleted the declaration. It is not a corner
     // case: `css/css-values/minmax-length-computed` writes the second one four
-    // times over and expects 40px.
+    // times over and expects 40px. The paren EOF added is the author's by the
+    // time anything here sees it, so it belongs in the serialisation -
+    // `calc-complex-unresolved-serialize` asks for it on all six of its values.
     ok("width", "calc(1px", "calc(1px)");
-    ok("width", "calc(min(1em, 21px) * 2", "calc(min(1em, 21px) * 2");
+    ok("width", "calc(min(1em, 21px) * 2", "calc(min(1em, 21px) * 2)");
 
     // THE ARITY IS PART OF THE GRAMMAR. `round-mod-rem-invalid` and
     // `calc-invalid-parsing` are one assertion per line and this is what they
@@ -318,6 +320,7 @@ void test_a_math_function_is_simplified_wherever_it_sits() {
     // a calc; `calc-complex-unresolved-serialize` writes the other case six
     // times and wants the outer function back on every one of them.
     ok("orphans", "calc(pow(2, sign(1em - 18px)))", "calc(pow(2, sign(1em - 18px)))");
+    ok("orphans", "calc(pow(2, sibling-index())", "calc(pow(2, sibling-index()))");
     ok("margin-top", "calc(clamp(1px, 1em, 1vh))", "calc(clamp(1px, 1em, 1vh))");
 
     // ...AND EVERYTHING ELSE KEEPS THE AUTHOR'S BYTES. A function with no answer
@@ -438,7 +441,6 @@ void test_a_sum_that_cannot_fold_still_has_an_order() {
     // containing block, and both keep the author's bytes.
     ok("width", "min(1em, 1px)", "min(1em, 1px)");
     ok("width", "clamp(1rem, 2vw, 3rem)", "clamp(1rem, 2vw, 3rem)");
-    ok("width", "calc(min(1em, 21px) * 2", "calc(min(1em, 21px) * 2");
     ok("width", "min(1em)", "calc(1em)"); // ...one argument is not a comparison
 }
 

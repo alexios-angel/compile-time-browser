@@ -1435,6 +1435,25 @@ struct function_span {
     return span_of(body, 0, calc).end == body.size();
 }
 
+// HOW MANY `)` EOF OWES THIS TEXT. CSS Syntax 3 §5.4.9 closes every open block
+// at the end of the input, so `calc(pow(2, sibling-index())` IS
+// `calc(pow(2, sibling-index()))` - and a specified value is serialised from
+// what the tokenizer made of the bytes, not from the bytes.
+// `calc-complex-unresolved-serialize` writes six values with a paren missing and
+// asks for all six back with it there.
+[[nodiscard]] std::size_t unclosed_depth(std::string_view text) noexcept {
+    std::size_t depth = 0;
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (const std::size_t quoted = end_of_string_at(text, i); quoted != i) {
+            i = quoted - 1;
+            continue;
+        }
+        if (text[i] == '(') { ++depth; }
+        if (text[i] == ')' && depth > 0) { --depth; }
+    }
+    return depth;
+}
+
 // Is `text` exactly one math function and nothing else, and which one?
 [[nodiscard]] std::string_view lone_math_function(std::string_view text) {
     const std::string_view name = math_name_at(text, 0);
@@ -1598,7 +1617,12 @@ std::string simplify_math(std::string_view value) {
         // `min(1em, 1px)` (no font size to order them by) and for a function
         // this file cannot evaluate at all. Re-serialising a value whose grammar
         // is unknown is how `random-item(auto ,serif)` came back respaced.
+        //
+        // THE BYTES EOF ADDED COUNT AS THE AUTHOR'S. A function left open at the
+        // end of the value was closed by CSS Syntax 3 §5.4.9 before anything
+        // here saw it, so the paren belongs in the serialisation.
         out.append(whole);
+        out.append(unclosed_depth(whole), ')');
     }
     return out;
 }
