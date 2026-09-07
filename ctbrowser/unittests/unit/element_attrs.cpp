@@ -449,6 +449,54 @@ void test_dataset_maps_data_attributes_both_ways() {
         return (typeof svg.dataset) + ',' + (typeof math.dataset) + ',' + (typeof other.dataset);
     })())JS",
        "object,object,undefined");
+    // ENUMERABLE, and only over the names that qualify. `dataset-enumeration`
+    // sets three attributes AFTER the element is made and counts the keys, so
+    // the list cannot be built once when the element is wrapped.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.setAttribute('data-foo', 'v');
+        e.setAttribute('data-bar', 'v');
+        e.setAttribute('dataFoo', 'v');
+        var count = 0;
+        for (var key in e.dataset) { count++; }
+        e.removeAttribute('data-bar');
+        var after = Object.keys(e.dataset).join(',');
+        return count + ',' + after;
+    })())JS",
+       "2,foo");
+    // IT IS A DOMStringMap, which is a question about the object behind the
+    // proxy - and Object.prototype still shines through it, which is the pair
+    // `dataset-prototype.html` asks about together.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        return (e.dataset instanceof DOMStringMap) + ',' +
+               (svg.dataset instanceof DOMStringMap) + ',' +
+               (typeof e.dataset.hasOwnProperty);
+    })())JS",
+       "true,true,function");
+    // A WRITE LANDS IN NO NAMESPACE. An element already carrying the same
+    // qualified name in two namespaces of its own gains a THIRD attribute
+    // rather than having one of those rewritten - `custom-attrs.html`, whole.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.setAttributeNS('foo', 'data-my-custom-attr', 'first');
+        e.setAttributeNS('bar', 'data-my-custom-attr', 'second');
+        e.dataset.myCustomAttr = 'third';
+        return e.attributes.length + ',' + e.getAttributeNS('foo', 'data-my-custom-attr') + ',' +
+               e.getAttributeNS(null, 'data-my-custom-attr');
+    })())JS",
+       "3,first,third");
+    // A MAP THE PAGE KEPT is still the document's, not a copy of it: the keys
+    // it enumerates are as of the last read, and reading a value always asks.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.setAttribute('data-foo', 'x');
+        var map = e.dataset;
+        e.removeAttribute('data-foo');
+        return (map.foo === undefined) + ',' + ('foo' in map);
+    })())JS",
+       "true,false");
 }
 
 // --- ARIA, which is the reflection table's one nullable type ----------------

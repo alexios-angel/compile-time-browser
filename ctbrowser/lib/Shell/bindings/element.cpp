@@ -1650,19 +1650,23 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // said here rather than left to be discovered: this VM implements the
     // `get`, `set` and `has` traps and no others, so
     //
-    //   * `for (const k in el.dataset)` enumerates NOTHING - `op::own_keys`
-    //     yields an empty array for a proxy;
     //   * `delete el.dataset.foo` is a silent no-op - `op::delete_prop` skips
-    //     anything that is not exactly a plain object;
-    //   * `el.dataset instanceof DOMStringMap` is false - `instance_of` walks
-    //     an object_object's prototype and a proxy has none of its own.
+    //     anything that is not exactly a plain object, and
+    //     `dataset-delete.html` is what measures it.
     //
-    // All three are deviations in `lib/Script` and that is where they are
-    // fixable. The alternative shape - a plain object refilled on every read,
-    // as `attributes` above is - trades those three for a `set` that never
-    // reaches the document at all, which is the worse half of the trade: a
-    // write that silently does nothing is a wrong answer, and an enumeration
-    // that finds nothing is a missing one.
+    // That is a deviation in `lib/Script` and that is where it is fixable. The
+    // alternative shape - a plain object refilled on every read, as
+    // `attributes` above is - trades it for a `set` that never reaches the
+    // document at all, which is the worse half of the trade: a write that
+    // silently does nothing is a wrong answer.
+    //
+    // THE OTHER TWO ARE FIXED HERE, both without a new trap. Enumeration walks
+    // the proxy's TARGET, so the target is refilled with the element's data-*
+    // names each time `dataset` is read - which is why it is an accessor rather
+    // than a property. And `instanceof` follows a proxy to its target and walks
+    // THAT object's prototype, so hanging DOMStringMap.prototype off the target
+    // answers `el.dataset instanceof DOMStringMap` without the VM knowing what
+    // a proxy's prototype would be.
     //
     // NOT ON EVERY ELEMENT. `dataset` belongs to HTMLElement, SVGElement and
     // MathMLElement, and `document.createElementNS("test", "test").dataset` is
@@ -1678,13 +1682,13 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
 }
 
 void dom_bindings::install_dataset(context & cx, script::object_object & obj, node_id id) {
-    // THE STORE'S PROTOTYPE IS DELIBERATELY LEFT ALONE. Every miss falls
-    // through to `lookup_property` on it, and a plain object reaches the
-    // builtin Object.prototype tables that way - which is what
+    // THE STORE IS THE PROXY'S TARGET, and it is what `for (k in el.dataset)`
+    // and `Object.keys` walk - so it holds the element's data-* names, refilled
+    // on every read of `dataset` below. `DOMStringMap.prototype` goes in front
+    // of it, which costs nothing: a prototype chain that ends in undefined
+    // falls through to the builtin Object.prototype tables anyway, so
     // `dataset-prototype.html`'s "Properties on Object.prototype should shine
-    // through" is asking. Hanging `DOMStringMap.prototype` (whose own
-    // prototype link is null) in front of it would cut that off and buy
-    // nothing, `instanceof` on a proxy being false either way.
+    // through" still holds.
     auto * store = static_cast<script::object_object *>(cx.make_object().as_heap());
     auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
     const auto trap = [&](std::string name, script::native_fn fn) {
@@ -1707,16 +1711,27 @@ void dom_bindings::install_dataset(context & cx, script::object_object & obj, no
         }
         return std::nullopt;
     };
-    trap("get", [value_of](context & c, std::span<value> args) {
+    // A MISS FALLS THROUGH TO THE TARGET, which is how `dataset.toString` finds
+    // Object.prototype's - but NOT past a name the refill left on the target.
+    // The store holds the element's data-* names so that enumeration can walk
+    // them, and a page that kept `var ds = el.dataset` across a
+    // `removeAttribute` must still read undefined out of it: the DOCUMENT is
+    // the map, and the target is a list of its keys as of the last read.
+    const auto refilled_key = [store](const std::string & key) {
+        return store->find(key) != nullptr;
+    };
+    trap("get", [value_of, refilled_key](context & c, std::span<value> args) {
         if (args.size() < 2) { return value::undefined(); }
         const std::string key = c.to_string(args[1]);
         if (const std::optional<std::string> found = value_of(key)) { return c.string(*found); }
+        if (refilled_key(key)) { return value::undefined(); }
         return c.lookup_property(args[0], key);
     });
-    trap("has", [value_of](context & c, std::span<value> args) {
+    trap("has", [value_of, refilled_key](context & c, std::span<value> args) {
         if (args.size() < 2) { return value::boolean(false); }
         const std::string key = c.to_string(args[1]);
         if (value_of(key)) { return value::boolean(true); }
+        if (refilled_key(key)) { return value::boolean(false); }
         return value::boolean(!c.lookup_property(args[0], key).is_undefined());
     });
     trap("set", [this, id](context & c, std::span<value> args) {
@@ -1740,12 +1755,54 @@ void dom_bindings::install_dataset(context & cx, script::object_object & obj, no
         // ALREADY LOWERCASE by construction, so this interns as written rather
         // than folding: the only characters the mangle can emit above 'z' are
         // the ones it copied, and folding them would be folding the author's.
-        (void)doc_->set_attribute(id, atoms_->intern(name), c.to_string(args[2]));
+        //
+        // IN NO NAMESPACE, EXPLICITLY. The qualified `set_attribute` changes the
+        // FIRST attribute with that name whatever namespace it is in, so an
+        // element already carrying `data-my-custom-attr` in two namespaces of
+        // its own had one of THOSE rewritten instead of gaining a third
+        // attribute - which is `custom-attrs.html`, whole and entire. A
+        // data-* attribute is a null-namespace attribute by definition: it is
+        // the same rule `value_of` above reads by.
+        (void)doc_->set_attribute_ns(id, atoms_->intern(""), atoms_->intern(name),
+                                     c.to_string(args[2]));
         mutated();
         return value::boolean(true);
     });
-    obj.set("dataset", value::object(cx.allocate<script::proxy_object>(value::object(store),
-                                                                       value::object(handler))));
+    const value proxy = value::object(
+        cx.allocate<script::proxy_object>(value::object(store), value::object(handler)));
+    // AN ACCESSOR, so the target can be refilled before the page sees it.
+    // `d.setAttribute('data-foo', 'v')` does not go through this object at all,
+    // so a store filled once at install would enumerate whatever the element
+    // carried when it was first wrapped - and the corpus sets the attributes
+    // AFTER reading nothing out of `dataset`. The values are refilled with the
+    // keys because `Object.keys` and JSON.stringify read them off the target;
+    // a read of one property still goes through the `get` trap, which asks the
+    // document, so nothing here can go stale between two statements.
+    auto * reader = cx.allocate<script::native_object>(
+        "dataset", [this, id, store, proxy](context & c, std::span<value>) {
+            if (!store->prototype.is_object()) {
+                const value map = interface_prototype("DOMStringMap");
+                if (map.is_object()) { store->prototype = map; }
+            }
+            std::vector<std::string> stale;
+            stale.reserve(store->props.size());
+            for (const auto & [key, held] : store->props) { stale.push_back(key); }
+            for (const std::string & key : stale) { (void)store->erase(key); }
+            const auto txn = doc_->read();
+            std::string name;
+            for (const attribute & held : txn.attributes(id)) {
+                if (held.ns) { continue; }
+                if (dataset_name_of(atoms_->text(held.name), name)) {
+                    store->set(name, c.string(held.value));
+                }
+            }
+            return proxy;
+        });
+    // THE PROXY IS REACHABLE ONLY FROM THAT LAMBDA, and a lambda's captures are
+    // not a GC edge - `retained` is. Without this the map is collected out from
+    // under an element nothing else refers to.
+    reader->retained.push_back(proxy);
+    obj.define_accessor("dataset", value::object(reader), value::undefined());
 }
 
 rect dom_bindings::box_of(node_id id) const {
@@ -3487,6 +3544,11 @@ constexpr dom_interface interface_table[] = {
     // `shadow_hosts_`, not about a name. See prototype_for_node.
     {"ShadowRoot", "DocumentFragment", ""},
     {"Attr", "Node", ""},
+    // NOT A NODE AND NOT IN ANY CHAIN: `DOMStringMap` exists so that
+    // `el.dataset instanceof DOMStringMap` can be true and so that the name is
+    // a global a page can feature-detect. `dataset.html` asks it of an HTML, an
+    // SVG and a MathML element.
+    {"DOMStringMap", "", ""},
     {"Window", "EventTarget", ""},
     // The collections. They are not nodes and inherit from nothing, and they
     // are here because `document.links instanceof HTMLCollection` and
