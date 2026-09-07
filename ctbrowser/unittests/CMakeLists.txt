@@ -71,6 +71,11 @@ ctbrowser_test(unit/tree_accessors)
 # is a MODEL - a second Document is a second dom_bindings over its own tree -
 # and two of its cases assert that something deliberately does NOT work.
 ctbrowser_test(unit/second_document)
+# The XML front end. Its own file because what it pins down is a SECOND parser
+# - nothing implied, every tag self-closing, case preserved, CDATA as character
+# data and well-formedness fatal - and every case in it is a place where the
+# HTML tree builder gives a different, and for an .xhtml file wrong, answer.
+ctbrowser_test(unit/xml_parse)
 ctbrowser_test(unit/layout_basics)
 # The flex formatting context. Its own file rather than more of layout_basics:
 # S9.7's freeze loop has more cases than the other three contexts together.

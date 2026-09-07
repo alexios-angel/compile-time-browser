@@ -240,6 +240,19 @@ public:
     [[nodiscard]] bool quirks() const noexcept { return quirks_.load(std::memory_order_acquire); }
     void set_quirks(bool on) noexcept { quirks_.store(on, std::memory_order_release); }
 
+    // WHICH LANGUAGE THIS DOCUMENT WAS WRITTEN IN, which is not the same
+    // question as which vocabulary an element belongs to. `node_ns` says an
+    // element is XHTML; this says the BYTES were XML, and the two differ in
+    // every place the HTML parser is permissive and XML is not.
+    //
+    // What reads it: `nodeName` uppercases an HTML element's tag only in an
+    // HTML document, `document.contentType` is `application/xhtml+xml` rather
+    // than `text/html`, `compatMode` is always `CSS1Compat` because an XML
+    // document has no quirks mode to be in, and `createCDATASection` is only
+    // allowed here. See dom/xml.hpp for the parser that sets it.
+    [[nodiscard]] bool xml() const noexcept { return xml_.load(std::memory_order_acquire); }
+    void set_xml(bool on) noexcept { xml_.store(on, std::memory_order_release); }
+
 private:
     friend class read_txn;
 
@@ -249,6 +262,9 @@ private:
     // one thread and a binding reads it on another, and a torn bool is a data
     // race whatever the hardware does about it in practice.
     std::atomic<bool> quirks_{true};
+    // FALSE by default: every document this engine has ever built came from the
+    // HTML tree builder, and `parse_xml` is the only thing that sets it.
+    std::atomic<bool> xml_{false};
 
     [[nodiscard]] node * find(node_id id) const noexcept { return nodes_.get(id); }
     [[nodiscard]] std::mutex & stripe_of(node_id id) const noexcept {
