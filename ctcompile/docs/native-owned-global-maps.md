@@ -71,16 +71,29 @@ identity and work limits preserve the source boundary. Budget tests find the
 first complete admission cutoff for ordinary and sixteen-call specimens,
 checking source operations and signatures on each failed attempt.
 
-The complete lit suite passes **161/161 cases** through the focused CTest gate
-in **49.27 seconds**. Final whole-monorepo validation is recorded in
-[HANDOFF.md](HANDOFF.md).
+The ordinary specimen completes at **1009 steps** and the sixteen-call specimen
+at **8209**; each gate checks **33 cutoffs**, including the sixteen immediately
+below completion. Neither specimen exposes a budget interval where the original
+proof succeeds but the prepared clone's proof exhausts. These runs therefore
+check failed-attempt preservation, without adding a naturally reached clone
+rollback case; the existing scalar/table gates retain their rollback controls.
+The ownership unit separately checks every incomplete budget for its five
+fixtures, completing at **861**, **885**, **1009**, **848** and **581 steps**
+(direct source, indirect source, exact imported source, lifted and specialized).
+
+The full devbox gate passes **471/471 CTests** in **566.41 seconds**, including
+**161/161 lit cases** in **50.33 seconds**. A subsequent rebuilt ownership unit
+and related host/root/type tests pass **4/4** in **0.34 seconds**, covering all
+five source/prepared fixtures. See [HANDOFF.md](HANDOFF.md) for logs and the
+source timestamp race found while checking this unit's evidence.
 
 ## Next boundary
 
 The getter proof permits only the captured Map's `size` read. A body that first
-executes `state.set("x", 1)` still refuses. Extend the complete live callable
-proof to supported standard Map operations and their effects before broadening
-publication to Bootstrap's multi-method Data table and its arguments/results.
+executes `state.set("x", 1)` measures **0/4 native**, while Node and the interpreter
+both produce `trace=1`. Extend the complete live callable proof to supported
+standard Map operations and their effects before broadening publication to
+Bootstrap's multi-method Data table and its arguments/results.
 The existing native Map/type machinery can be reused after those source proofs
 succeed; a completed startup summary supplies no authority for later calls.
 

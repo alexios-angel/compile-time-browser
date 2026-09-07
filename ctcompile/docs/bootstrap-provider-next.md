@@ -81,9 +81,11 @@ and incomplete proofs remain refusals.
 ## Next: supported Map operations in published methods
 
 The new callable proof only accepts a captured Map's `size` read. A getter that
-first executes `state.set("x", 1)` still refuses. Extend this complete live
-proof to supported standard Map operations and their effects, then widen the
-fixed published table to Data's multiple methods and their arguments/results.
+first executes `state.set("x", 1)` measures **0/4 native**; Node and the interpreter
+both produce `trace=1`. This refusal specimen is retained in the captured Map
+gate. Extend the complete live proof to supported standard Map operations and
+their effects, then widen the fixed published table to Data's multiple methods
+and their arguments/results.
 Reuse existing native Map/type machinery after source identity and ownership
 are established. Exact Bootstrap Data remains **0/7** per mode; complete native
 initialization, realm owners and future-call contracts remain unfinished.
@@ -98,8 +100,8 @@ thrown payload and pre-call state; bounded type flow covers that payload.
 Source recovery still needs to construct those regions, and throwing callees
 need a checked normal-return transfer because upstream call inference remains
 conservative on throw exits. Admission and target emission must then consume the
-regions. Throwing callees,
-general finally, reentry and object payloads require further work.
+regions. Throwing callees, general finally, reentry and object payloads require
+further work.
 Normal-return provider facts cannot authorize an exceptional continuation.
 
 Retain the eleven scenarios in

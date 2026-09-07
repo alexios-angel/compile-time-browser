@@ -167,9 +167,11 @@ refusal. Callable lookup follows the method property to its actual stored
 source closure, the immutable capture binding and its standard empty Map.
 The actual indirect wrapper factory call is proved before preparation; no
 source call is silently resolved to make the original proof succeed. The
-current getter body is restricted to `size`. Map mutations and broader provider
-effects remain outside this tier. A prefix's retained factory/call rows cannot
-substitute for the live checks. See [the measured gate](native-owned-global-maps.md).
+current getter body is restricted to `size`. Adding `state.set("x", 1)` before
+that read produces `trace=1` in Node and the interpreter but measures **0/4
+native**. Map mutations and broader provider effects remain outside this tier.
+A prefix's retained factory/call rows cannot substitute for the live checks.
+See [the measured gate](native-owned-global-maps.md).
 
 Resolve each field read to its actual preceding stored closure and numeric
 source identity, preserving receiver, evaluated arguments and source order.

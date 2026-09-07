@@ -6,7 +6,124 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Current native exported-getter checkpoint, 2026-09-07
+## Current native captured-Map checkpoint, 2026-09-07
+
+Five work commits are saved locally on `ctcompile-v1`: **`357ba41`** (captured
+Map source ownership), **`5f54358`** (direct storage-target diagnostics),
+**`3c9d402`** (the actual imported indirect factory callback), **`fcfc55b`**
+(explicit invocation completions and payload type flow), and **`3c04ccc`**
+(native owning Map publication). No push was performed. The abandoned loop's
+18 dirty compiler files were recovered, reviewed and split by concern; no
+browser edits were taken into these commits.
+
+The [captured Map publication specimen](native-owned-global-maps.md) advances
+**0/4 -> 4/4 native** with an explicit fingerprinted host manifest and standard
+Map identity. Its default and no-intrinsic modes remain **0/4**. The four source
+functions, runtime Map allocation, wrapper/factory calls, publication and size
+read remain. The real importer leaves `factory()` indirect inside its wrapper;
+the complete source proof now follows that actual callback before any native
+preparation. Exact public/framed imported IR is a unit fixture alongside the
+direct and prepared variants.
+
+Preparation validates the original fingerprint and reconstructs native facts
+on a disposable clone. Existing callback specialization, capture lifting and
+cell unboxing connect the immutable environment to shared Map/table/root owners
+and an owning callable. Complete live proofs are required after each changed
+graph and again at final admission. Standard Map preparation may pass only
+ordinary-root reads authorized by that live owner proof. Global publication
+remains `StoredGlobal`; general global loads stay external.
+
+Six **4/4** programs match Node, the interpreter and standalone explicit/deduced
+GCC 13/Clang 18 binaries with no VM symbols. Both forms pass ASan/UBSan,
+use-after-scope, stack-use-after-return and leak checks. The lifetime harness
+retains root, table and callable separately after entry, releases globals,
+churns allocations and invokes the saved callable after root/table release.
+Weak witnesses observe the actual captured Map: reentry creates a distinct Map,
+and each expires when its last callable owner is released. Twenty-two source
+refusals plus missing/stale/forged contracts, reruns and work limits pass.
+
+Native admission first completes at **1009 steps** for the ordinary specimen
+and **8209** for sixteen getter calls. Each gate checks **33 cutoffs**, including
+the sixteen immediately below completion, preserving source operations and
+signatures after failure. Neither fixture naturally reaches an interval where
+the original proof succeeds but the clone proof exhausts; do not claim a new
+Map-specific speculative rollback execution. Existing scalar/table rollback
+controls remain. The ownership unit independently checks every incomplete
+budget for all five fixtures: **861**, **885**, **1009**, **848** and **581 steps**
+for direct source, indirect source, exact imported source, lifted and specialized
+forms respectively.
+
+Escape diagnostics now classify the direct storage target of each first
+`Stored` witness as local-confined, local-escaping, local-mixed,
+external-or-mixed, primitive or unresolved. This is evidence for the contents
+backlog, not a points-to proof: a confined packing array can expose its children
+to a spread callee, and later stores can retain elsewhere. Every existing
+escape verdict stays unchanged. The unit passes **173/173 rows**, and fixture
+and Bootstrap oracle gates pass with zero violations. The fixture's **12**
+first-witness sites split into **2** local-confined, **6** local-escaping,
+**2** external-or-mixed and **2** unresolved. Bootstrap's **170** split into
+**93** local-escaping, **13** external-or-mixed and **64** unresolved, with no
+local-confined target. p5 has **1304** sites (**25** local-confined); Phaser has
+**1861** (**12** local-confined). These diagnostic counts do not license any
+new confinement claim.
+
+The parallel exception increment adds `ctjs.invoke`, `invoke_exit` and
+`invoke_yield`. The normal continuation alone receives the call result; the
+unwind continuation receives an implicit payload and explicit pre-call state.
+The verifier rejects intervening work, result use outside normal dispatch and
+state defined inside the invocation body. A fresh payload query follows live
+explicit throws and direct callees, bounded to **4096 operations / 32 helpers**;
+unknown effects remain boxed. Thirteen inference rows, two round-trip forms
+(including zero results/state) and eleven malformed-IR controls pass. Source
+throwing calls are still unsupported; the existing native exception suite
+remains **52/52 functions and 39 observations**.
+
+The full serialized devbox build and gate pass **471/471 CTests** in
+**566.41 seconds**: all **366 compiler tests** and **105 browser tests**, including
+**161/161 lit cases** in **50.33 seconds**. At the implementation gate,
+all **575 C++ files** pass `tools/format.sh --check`; whitespace checks pass.
+Native coverage with optimization disabled remains Bootstrap **19/574**, p5
+**39/4754** and Phaser **45/7725**, with no pruned functions.
+
+The final formatter run still passes every compiler file and flags only Claude's
+new live edit in `ctbrowser/lib/Script/builtins/internal.hpp`. It is journaled
+and left untouched; the log is `/tmp/ctcompile-map-recovery-final-format.log`.
+
+The evidence audit found a source timestamp race in `OwnedGlobalMethods.cpp`:
+the exact imported fixture arrived via rsync after its object was built, but
+retained an earlier mtime, so Ninja skipped the new unit body. Refreshing only
+that source timestamp and rebuilding runs all five fixtures successfully;
+related ownership/host/type CTests pass **4/4** in **0.34 seconds**. The other
+changed compiler `.cpp` objects postdate their remote source arrival. No code
+change was needed. When editing during a remote build, inspect or refresh the
+modified source timestamp before trusting the next incremental build.
+
+Logs are `/tmp/ctcompile-map-recovery-full-gate.log`,
+`/tmp/ctcompile-map-recovery-exact-unit.log` and
+`/tmp/ctcompile-map-recovery-format4.log`; measured budget, corpus and storage
+evidence is `/tmp/ctcompile-map-recovery-evidence.json`. Compiler changes are
+committed; Claude's new browser work remains independent in the shared tree.
+
+**Exact next native boundary:** the published getter currently permits only
+`state.size`. The retained refusal specimen first executes
+`state.set("x", 1)` and then returns `state.size`: **Node/interpreter `trace=1`,
+native 0/4**.
+Extend the complete callable/environment proof to supported standard Map
+operations and their effects before widening to Bootstrap Data's multiple
+methods and arguments/results. Existing native Map/type machinery is already
+available; completed startup summaries cannot authorize later calls. Exact Data
+remains **0/7** per CommonJS/browser/realm-fallback mode. Typed exports, mutable
+publication slots, general realm owners, reentry and full initialization remain
+unfinished.
+
+**Parallel next boundaries:** recover source throwing calls into the new
+invocation regions, add a checked normal-return transfer, and connect admission
+and emission to the existing target exception contract. Upstream ordinary call
+inference stays conservative when a callee has throw exits, independently of
+the new payload proof. Do not relax the explicit-throw guard. Escape precision
+still requires complete contents/points-to evidence before weakening `Stored`.
+
+## Preceding native exported-getter checkpoint, 2026-09-07
 
 Three work commits landed locally on `ctcompile-v1`: **`8455458`** (nested-region
 escape retention), **`fecb9af`** (exception payloads through defined EmitC
