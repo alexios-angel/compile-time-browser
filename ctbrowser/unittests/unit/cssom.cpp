@@ -799,6 +799,72 @@ void test_every_rule_a_sheet_carries() {
     CHECK_EQ(logged(page, "is="), std::string{"is=true,true,true"});
 }
 
+// THE PIECES OF A PRELUDE, AND THE `.style` OF EVERY RULE THAT HAS ONE.
+//
+// `.style` lived on CSSStyleRule alone, and CSSOM gives one to five rules.
+// `css/cssom/property-accessors.html` reaches straight for
+// `document.styleSheets[0].cssRules[0].style` where rule zero is a `@font-face`
+// and all nine of its subtests died on `getPropertyValue is undefined`, before
+// they had asked anything about a property.
+//
+// `@import` and `@namespace` have no block, so their prelude IS the rule and
+// the interface reports its pieces one at a time. Neither can be answered from
+// the author's bytes: `url(a.css)` and `"a.css"` are the same URL and CSSOM
+// serialises both as `url("a.css")`.
+void test_the_at_rules_that_are_all_prelude() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>
+        @namespace svg "http://servo";
+        @namespace "http://servo1";
+        @import url(a.css);
+        @import "b.css" supports((display: flex) or (display: block)) screen;
+        @font-face { font-family: Foo; }
+        @page :Left { margin-top: 1px }
+    </style></head><body><script>
+        const rules = document.styleSheets[0].cssRules;
+        console.log('ns=' + rules[0].prefix + '|' + rules[0].namespaceURI + '|' +
+                    rules[0].cssText);
+        console.log('default=' + rules[1].prefix + '|' + rules[1].cssText);
+        console.log('import=' + rules[2].href + '|' + rules[2].cssText + '|' +
+                    rules[2].supportsText + '|' + rules[2].styleSheet);
+        console.log('supports=' + rules[3].supportsText + '|' + rules[3].media.mediaText +
+                    '|' + rules[3].cssText);
+        console.log('face=' + rules[4].style.getPropertyValue('font-family') + '|' +
+                    rules[4].style.length);
+        console.log('page=' + rules[5].selectorText + '|' + rules[5].style.marginTop);
+        rules[5].selectorText = 'named:First';
+        console.log('renamed=' + rules[5].selectorText);
+        // `named :first` is not two selectors, it is a parse failure - a
+        // `<page-selector>` has no whitespace in it anywhere - and CSSOM says a
+        // refused selector leaves the rule alone.
+        rules[5].selectorText = 'named :first';
+        console.log('refused=' + rules[5].selectorText);
+        rules[5].selectorText = ':notapagepseudo';
+        console.log('bogus=' + rules[5].selectorText);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "ns="), std::string{"ns=svg|http://servo|"
+                                              "@namespace svg url(\"http://servo\");"});
+    // A DEFAULT namespace has no prefix, and CSSOM reports that as the empty
+    // string rather than as null.
+    CHECK_EQ(logged(page, "default="), std::string{"default=|@namespace url(\"http://servo1\");"});
+    // `styleSheet` is null because nothing here fetches an `@import`, which a
+    // page must be able to find out rather than be handed an empty sheet that
+    // claims the import succeeded.
+    CHECK_EQ(logged(page, "import="),
+             std::string{"import=a.css|@import url(\"a.css\");|null|null"});
+    CHECK_EQ(logged(page, "supports="),
+             std::string{"supports=(display: flex) or (display: block)|screen|"
+                         "@import url(\"b.css\") supports((display: flex) or (display: block)) "
+                         "screen;"});
+    CHECK_EQ(logged(page, "face="), std::string{"face=Foo|1"});
+    // A pseudo-page is lowercased and a page NAME keeps the author's case.
+    CHECK_EQ(logged(page, "page="), std::string{"page=:left|1px"});
+    CHECK_EQ(logged(page, "renamed="), std::string{"renamed=named:first"});
+    CHECK_EQ(logged(page, "refused="), std::string{"refused=named:first"});
+    CHECK_EQ(logged(page, "bogus="), std::string{"bogus=named:first"});
+}
+
 } // namespace
 
 int main() {
@@ -820,5 +886,6 @@ int main() {
     test_the_computed_font_family_keeps_its_case();
     test_the_inline_style_follows_the_attribute();
     test_every_rule_a_sheet_carries();
+    test_the_at_rules_that_are_all_prelude();
     REPORT("cssom");
 }
