@@ -43,12 +43,90 @@ wrong", which is what they always were.
 exactly (8 / 148 / 15 / 0 / 21 / 29), which is the check that the instrument
 itself did not move underneath the comparison.
 
-## 2. Where the two suites stand — 2026-09-07, evening
+## 2. Where the two suites stand — 2026-09-07, night
+
+Measured on the devbox against WPT `3f6b09ae`, four workers, a 4 GB `ulimit -v`
+per driver, `CTBROWSER_GL_DRIVER=deterministic`, engine at commit `f7e0912` on
+`ctbrowser-wpt`.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `css/cssom` | **54** | 116 | 6 | 0 | 16 | 29 | 221 |
+| `css/css-values` | **69** | 181 | 3 | 0 | 18 | 237 | 508 |
+
+Subtests: `css/cssom` **1,052 PASS** / 593 FAIL / 1 NOTRUN / 8 TIMEOUT;
+`css/css-values` **2,515 PASS** / 4,429 FAIL / 15 TIMEOUT.
+
+Zero crashes in either suite, as in every run since the first.
+
+| | 2026-09-03 | 09-07 day | 09-07 eve `a790941` | 09-07 eve `636f1b3` | 09-07 night `f7e0912` |
+|---|---:|---:|---:|---:|---:|
+| `css/cssom` files | 8 | 21 | 39 | 54 | **54** |
+| `css/cssom` subtests | 113 | 220 | 346 | 1,050 | **1,052** |
+| `css/css-values` files | 16 | 16 | 29 | 48 | **69** |
+| `css/css-values` subtests | 549 | 695 | 2,038 | 2,332 | **2,515** |
+
+`css/css-values` gained 21 files with no change aimed at it in this run: they
+are the previous session's four subagent merges arriving, and §2b below is what
+each of them was.
+
+### THE TWO BLOCKS IN FRONT OF BOTH SUITES, and neither is a CSS bug
+
+Both were found by reading the failure log rather than by writing CSS, both are
+one line, and between them they hold more subtests than everything measured
+above.
+
+**1. `el.style` is a WRITABLE data property.** CSSOM declares it
+`[PutForwards=cssText] readonly attribute CSSStyleDeclaration style`, so
+`el.style = ""` must forward to `el.style.cssText = ""`. In this engine
+`lib/Shell/bindings/element.cpp` installs it with `obj.set(...)`, so that
+assignment REPLACES the declaration object with the string. Every later
+`el.style[prop] = v` writes to a primitive and vanishes, and `getComputedStyle`
+reports the initial value forever.
+
+`css/support/numeric-testcommon.js` — `test_math_used`, `test_math_computed`,
+`test_math_specified` — opens every case with exactly that assignment.
+**Nineteen `css/css-values` files fail 100% because of it, 1,339 failing
+subtests:** `round-mod-rem-computed` (243), `signs-abs-computed` (233),
+`round-function` (191), `signed-zero` (162), `minmax-length-computed` (80),
+`hypot-pow-sqrt-computed` (53), `calc-mix-computed` (53),
+`acos-asin-atan-atan2-computed` (52), `minmax-length-percent-computed` (50),
+`typed_arithmetic` (39), `progress-computed` (36), `minmax-angle-computed` (32),
+`sin-cos-tan-computed` (32), `minmax-time-computed` (24), `exp-log-compute`
+(21), `minmax-number-computed` (14), `minmax-percentage-computed` (14),
+`minmax-integer-computed` (10), and `sin-cos-tan-serialize`. The control is
+clean: `computed-testcommon.js` never writes `el.style = …` and its 15 files are
+an ordinary mix of pass and fail.
+
+`lib/Shell/bindings/stylesheets.cpp` already installs `rule.style` as an
+accessor with a forwarding setter and is the template. **How many of the 1,339
+then PASS is not measured** — behind the block is the math serialization, which
+is a separate question.
+
+**2. `set_author_styles_hook` is never installed.** `browser.cpp`'s
+`refresh_author_styles` rebuilds the cascade from the DOM's text rather than
+from `dom_bindings::author_style_text()`, because CSSOM's selector
+serialization is lossy — and so no `insertRule`, no `selectorText =`, no
+`replaceSync` and no `adoptedStyleSheets` reordering ever reaches the cascade.
+That is what "expected `rgb(255, 0, 0)`, got `rgb(0, 0, 0)`" means in
+`adoptedstylesheets-cascade-order` (10 subtests),
+`CSSStyleSheet-constructable-invalidation`, `-replace-cssRules`, `-cssRules`,
+`-duplicate`, `adoptedstylesheets-modify-array-and-sheet` (3),
+`selectorText-modification-restyle-002`, and 19 of
+`CSSStyleRule-set-selectorText`'s 43 — roughly 40 subtests over eight files,
+gated on one wire.
+
+What makes the serialization lossy is in `lib/Style/css/selector.cpp`:
+`representable()` falls back to the author's bytes when a compound sets
+`never_matches`, but a pseudo-class the compiler silently DROPS sets nothing, so
+it serializes as `*`. Fixing that in the compiler unblocks the wire.
+
+## 2a. Where the two suites stood — 2026-09-07, evening
 
 Measured on the devbox against WPT `3f6b09ae`, four workers, engine at commit
 `636f1b3` on `ctbrowser-wpt`. §6 is the 2026-09-07 daytime re-measurement and
-the §2 heading below it is the 2026-09-03 baseline; all three are kept because
-the comparison is the instrument.
+§2b is the 2026-09-03 baseline; all four are kept because the comparison is the
+instrument.
 
 | suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
 |---|---:|---:|---:|---:|---:|---:|---:|

@@ -14,7 +14,45 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
-## The baseline — 2026-09-07, evening
+## The baseline — 2026-09-07, night
+
+**369 of the 1,090 tests that ran, which is 33.9%**, and still not one crash.
+Measured on the devbox against WPT `3f6b09ae`, four workers, a 4 GB `ulimit -v`
+per driver, `CTBROWSER_GL_DRIVER=deterministic`, engine at commit `f7e0912` on
+`ctbrowser-wpt`.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 114 | 148 | 32 | 0 | 15 | 53 | 362 |
+| `dom/events` | 56 | 24 | 8 | 0 | 3 | 85 | 176 |
+| `html/dom` | 76 | 130 | 10 | 0 | 11 | 138 | 365 |
+| `css/cssom` | 54 | 116 | 6 | 0 | 16 | 29 | 221 |
+| `css/css-values` | 69 | 181 | 3 | 0 | 18 | 237 | 508 |
+| **total** | **369** | **599** | **59** | **0** | **63** | **542** | **1,632** |
+
+Subtests: **13,553 PASS, 10,868 FAIL, 726 NOTRUN, 111 TIMEOUT.**
+
+`f7e0912` is the tip of the branch after the previous session's four subagent
+merges landed — the XML front end, the live collections, the CSS value grammar,
+the CSSOM object model, the reflection work, `attachShadow`, `document.fonts`
+and the ECMAScript early errors. Those merges are the +34 files over the
+`636f1b3` row below; the table under it is what each of them was for.
+
+### And what the same commit says about the SUITE
+
+**The engine's own CTest gate was RED at `f7e0912`, 112 of 119**, and it had
+been red since those merges landed: `page_scripts`, `selectors`,
+`widgets_basics`, `shadow_dom`, `vm_basics` and `promise_combinators` failed and
+`early_errors` **hung** — killed at 1,500 s. Every one of them predates this
+measurement.
+
+That is worth writing down beside a number that went up, because the two facts
+are the same fact: four branches were merged without the suite being run over
+them, so the WPT score moved and six unit tests and one hang moved with it. The
+instrument is not the gate. `tools/remote-build.sh` is the gate, and a WPT
+measurement taken without it is a measurement of an engine nobody has checked.
+
+## The previous baseline — 2026-09-07, evening
 
 **335 of the 1,090 tests that ran, which is 30.7%**, and still not one crash.
 Measured on the devbox against WPT `3f6b09ae`, four workers,
