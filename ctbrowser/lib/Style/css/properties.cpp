@@ -195,6 +195,15 @@ constexpr property_syntax table[] = {
      "auto", false, true},
     {"block-size", k::length_percentage, "auto min-content max-content fit-content stretch", "auto",
      false, true},
+    // `interpolate-size` says whether an animation may interpolate BETWEEN a
+    // keyword size and a length. Nothing animates here, so the property does
+    // nothing - but it is a real property with a real two-keyword grammar, and
+    // as an UNKNOWN one `el.style` stored `interpolate-size: 100%` and
+    // `getComputedStyle` did not publish it at all. Both are observable and both
+    // are wrong: `calc-size/interpolate-size-parsing.html` refuses three values
+    // and `-computed.html` asks whether the property exists.
+    {"interpolate-size", k::keyword_only, "numeric-only allow-keywords", "numeric-only", true,
+     false},
 
     {"margin", k::freeform, "", "0px", false, false, true},
     {"margin-top", k::length_percentage, "auto", "0px", false, false},
@@ -464,10 +473,79 @@ struct scan {
 //
 // It looks INSIDE other functions, because `calc(inherit(--x) + 1px)` is one of
 // the values that must survive and `left: inherit(!!)` is not.
+// `random-item( <declaration-value>, [ <declaration-value>? ]# )`, CSS Values 5
+// §funcdef-random-item, and the ten remaining assertions of
+// `css/css-values/random-item-invalid` are exactly this grammar.
+//
+// THREE RULES, and each one is a group of those assertions:
+//
+//  * The KEY is required and so is the comma after it. `random-item()`,
+//    `random-item( )`, `random-item(auto)` and `random-item(, serif, sans-serif)`
+//    are the four ways of getting that wrong. The ITEMS may each be empty -
+//    `[ <declaration-value>? ]#` - so `random-item(auto,)` is fine.
+//
+//  * NO UNMATCHED BRACKET ANYWHERE INSIDE, which is what `<declaration-value>`
+//    means and which a depth counter cannot answer: `random-item(auto, {serif)`
+//    closes a `{` with a `)`, and counting brackets rather than MATCHING them
+//    reads that as balanced. So this keeps a stack of what each opener expects.
+//    EOF is not an error - CSS Syntax 3 §5.4.9 closes every open block - which is
+//    why `random-item(auto, serif` is still a value.
+//
+//  * A `{}` BLOCK IS A WHOLE ITEM. Braces are how an item that contains a comma
+//    is written, so `{Times, serif}` is one item and `{Times, serif} extra` is
+//    not an item at all.
+[[nodiscard]] bool random_item_arguments_ok(const token_stream & ts, std::size_t open) {
+    std::vector<token_type> expect{token_type::close_paren};
+    std::size_t arguments = 1; // the key, plus one per top-level comma
+    std::size_t in_item = 0;   // significant tokens in the CURRENT argument
+    std::size_t blocks = 0;    // ...and how many of them were `{}` blocks
+    bool key_empty = true;
+    bool item_mixed = false;
+    for (std::size_t j = open + 1; j < ts.tokens.size(); ++j) {
+        const css_token & t = ts.tokens[j];
+        if (t.type == token_type::eof) { break; }
+        if (t.type == token_type::whitespace) { continue; }
+        const bool top = expect.size() == 1;
+        if (t.type == token_type::close_paren || t.type == token_type::close_square ||
+            t.type == token_type::close_curly) {
+            if (t.type != expect.back()) { return false; } // an UNMATCHED bracket
+            expect.pop_back();
+            if (expect.empty()) { break; } // the function's own `)`
+            if (expect.size() == 1 && t.type == token_type::close_curly) { ++blocks; }
+            continue;
+        }
+        if (top && t.type == token_type::comma) {
+            if (arguments == 1) { key_empty = in_item == 0; }
+            item_mixed = item_mixed || (blocks != 0 && in_item != blocks);
+            ++arguments;
+            in_item = 0;
+            blocks = 0;
+            continue;
+        }
+        if (top && t.type == token_type::semicolon) { return false; }
+        if (top && t.type == token_type::delim && ts.text_of(t) == "!") { return false; }
+        if (top) { ++in_item; }
+        if (t.type == token_type::function || t.type == token_type::open_paren) {
+            expect.push_back(token_type::close_paren);
+        } else if (t.type == token_type::open_square) {
+            expect.push_back(token_type::close_square);
+        } else if (t.type == token_type::open_curly) {
+            expect.push_back(token_type::close_curly);
+        }
+    }
+    if (arguments == 1) { key_empty = in_item == 0; }
+    item_mixed = item_mixed || (blocks != 0 && in_item != blocks);
+    return arguments >= 2 && !key_empty && !item_mixed;
+}
+
 [[nodiscard]] bool substitution_grammar_ok(const token_stream & ts) {
     for (std::size_t i = 0; i < ts.tokens.size(); ++i) {
         if (ts.tokens[i].type != token_type::function) { continue; }
         const std::string_view fn = function_name(ts, ts.tokens[i]);
+        if (ascii_iequals(fn, "random-item")) {
+            if (!random_item_arguments_ok(ts, i)) { return false; }
+            continue;
+        }
         const bool is_ident = ascii_iequals(fn, "ident");
         if (!is_ident && !ascii_iequals(fn, "inherit")) { continue; }
         // Everything about the argument list that either grammar asks: how many

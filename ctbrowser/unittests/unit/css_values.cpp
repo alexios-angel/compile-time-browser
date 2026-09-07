@@ -676,6 +676,61 @@ void test_an_integer_property_rounds_its_math() {
     bad("z-index", "1.5");
 }
 
+// `random-item( <declaration-value>, [ <declaration-value>? ]# )`, CSS Values 5.
+// The function is an arbitrary substitution one, so only its ARGUMENT LIST is
+// decided at parse time - but it is decided, and `random-item-invalid` is
+// fourteen assertions of exactly that.
+void test_the_random_item_argument_list() {
+    // The key is required, and so is the comma after it.
+    bad("font-family", "random-item()");
+    bad("font-family", "random-item( )");
+    bad("font-family", "random-item(auto)");
+    bad("font-family", "random-item(, serif, sans-serif)");
+    // `<declaration-value>` forbids a top-level `;` or `!`.
+    bad("font-family", "random-item(auto, !)");
+    bad("font-family", "random-item(auto, ;)");
+    // AN UNMATCHED BRACKET, which is why this MATCHES brackets rather than
+    // counting them: `{serif)` closes a brace with a paren, and a depth counter
+    // reads that as balanced.
+    bad("font-family", "random-item(auto, })");
+    bad("font-family", "random-item(auto, ])");
+    bad("font-family", "random-item(auto, {serif)");
+    bad("font-family", "random-item(auto, serif})");
+    bad("font-family", "random-item(auto, {Times, serif)");
+    bad("font-family", "random-item({auto, serif, sans-serif)");
+    // A `{}` block is how an ITEM containing a comma is written, so it is the
+    // whole item or it is not an item at all.
+    bad("font-family", "random-item(auto, {Times, serif} extra)");
+    bad("font-family", "random-item(auto, extra {Times, serif})");
+
+    // ...and every one of these must still SURVIVE, spacing and all.
+    ok("font-family", "random-item(auto ,serif)", "random-item(auto ,serif)");
+    ok("width", "random-item(auto, 1px, 2px, 3px)", "random-item(auto, 1px, 2px, 3px)");
+    ok("font-family", "random-item(auto,)", "random-item(auto,)"); // an item may be EMPTY
+    ok("font-family", "random-item(fixed 0, rgb(4, 5, 6), blue)",
+       "random-item(fixed 0, rgb(4, 5, 6), blue)");
+    ok("font-family", "random-item(auto, {Times, serif}, sans-serif)",
+       "random-item(auto, {Times, serif}, sans-serif)");
+    // EOF CLOSES EVERY OPEN BLOCK, CSS Syntax 3 §5.4.9, so an unterminated one
+    // is a value and not a parse error.
+    ok("font-family", "random-item(auto, serif", "random-item(auto, serif");
+}
+
+// `interpolate-size` is a real property with a real two-keyword grammar. As an
+// UNKNOWN one `el.style` stored `interpolate-size: 100%` and `getComputedStyle`
+// did not publish the property at all - which is the two assertions of
+// `calc-size/interpolate-size-computed.html` and three of `-parsing.html`.
+void test_interpolate_size_is_a_property() {
+    ok("interpolate-size", "numeric-only", "numeric-only");
+    ok("interpolate-size", "allow-keywords", "allow-keywords");
+    bad("interpolate-size", "auto");
+    bad("interpolate-size", "none");
+    bad("interpolate-size", "100%");
+    CHECK(find_property("interpolate-size") != nullptr);
+    CHECK(supports_declaration("interpolate-size", "numeric-only"));
+    CHECK(!supports_declaration("interpolate-size", "auto"));
+}
+
 } // namespace
 
 int main() {
@@ -697,5 +752,7 @@ int main() {
     test_the_property_table_itself();
     test_css_supports();
     test_an_integer_property_rounds_its_math();
+    test_the_random_item_argument_list();
+    test_interpolate_size_is_a_property();
     REPORT("css_values");
 }
