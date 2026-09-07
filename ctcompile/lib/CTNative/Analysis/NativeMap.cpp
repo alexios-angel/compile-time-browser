@@ -301,7 +301,8 @@ std::string collect(plan & out, flowGraph & graph,
 
 std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flowGraph & graph,
                           llvm::DenseMap<mlir::Value, unsigned> & families,
-                          const llvm::DenseSet<mlir::Operation *> & snapshotCopies) {
+                          const llvm::DenseSet<mlir::Operation *> & snapshotCopies,
+                          const OwnedGlobalRoots * globals) {
     llvm::SmallVector<llvm::SmallVector<unsigned>, 4> children(plans.size());
     for (auto [index, candidate] : llvm::enumerate(plans)) {
         for (ctjs::CallOp call : candidate.calls) {
@@ -328,15 +329,32 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
 
     llvm::SmallVector<ctjs::CallOp> calls;
     llvm::SmallVector<ctjs::CallOp> reads;
-    for (auto [index, candidate] : llvm::enumerate(plans)) {
-        llvm::append_range(calls, candidate.calls);
-        if (children[index].empty()) { continue; }
-        for (ctjs::CallOp read : candidate.calls) {
-            auto method = read.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-            if (keyOf(method.getKey()) == "get") { reads.push_back(read); }
+    llvm::SmallVector<ctjs::CallOp> optionalReads;
+    llvm::DenseSet<mlir::Operation *> publishedCalls;
+    if (globals && globals->proved()) {
+        for (const auto & root : globals->roots()) {
+            if (!root.methodTable || !root.methodTable->capturedMap) { continue; }
+            for (ctjs::CallOp call : root.methodTable->capturedMap->calls) {
+                publishedCalls.insert(call);
+            }
         }
     }
-    return map_detail::provePresence(module, calls, reads, snapshotCopies,
+    for (auto [index, candidate] : llvm::enumerate(plans)) {
+        llvm::append_range(calls, candidate.calls);
+        for (ctjs::CallOp read : candidate.calls) {
+            auto method = read.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (keyOf(method.getKey()) != "get") { continue; }
+            if (!children[index].empty()) {
+                reads.push_back(read);
+            } else if (publishedCalls.contains(read)) {
+                // Ownership supplies only the closed call census. Presence
+                // is rederived below for this instance/key on every path;
+                // an unproved primitive read keeps its nullable result.
+                optionalReads.push_back(read);
+            }
+        }
+    }
+    return map_detail::provePresence(module, calls, reads, optionalReads, snapshotCopies,
                                      [&](mlir::Value value) { return graph.find(value); });
 }
 
@@ -433,7 +451,9 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
     });
     // Presence may preserve membership across a snapshot copy only after its
     // live builtin, iterator-use and whole-module identity proofs succeed.
-    if (reason.empty()) { reason = provePayloads(module, plans, graph, families, copies.calls); }
+    if (reason.empty()) {
+        reason = provePayloads(module, plans, graph, families, copies.calls, globals);
+    }
     auto * context = module.getContext();
     if (!reason.empty()) {
         for (ctjs::LoadGlobalOp load : constructors) {

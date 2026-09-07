@@ -252,9 +252,10 @@ struct presenceAnalysis {
 
 std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> calls,
                           llvm::ArrayRef<ctjs::CallOp> reads,
+                          llvm::ArrayRef<ctjs::CallOp> optionalReads,
                           const llvm::DenseSet<mlir::Operation *> & snapshotCopies,
                           llvm::function_ref<mlir::Value(mlir::Value)> familyOf) {
-    if (reads.empty()) { return {}; }
+    if (reads.empty() && optionalReads.empty()) { return {}; }
     presenceAnalysis analysis(familyOf, snapshotCopies);
     for (ctjs::CallOp call : calls) { analysis.actions[call] = actionOf(call); }
     analysis.buildSummaries(module);
@@ -270,6 +271,11 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
     }
     for (ctjs::CallOp read : reads) {
         read->setAttr(kNativeMapPresent, mlir::UnitAttr::get(read.getContext()));
+    }
+    for (ctjs::CallOp read : optionalReads) {
+        if (analysis.proved.contains(read)) {
+            read->setAttr(kNativeMapPresent, mlir::UnitAttr::get(read.getContext()));
+        }
     }
     return {};
 }

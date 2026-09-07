@@ -530,67 +530,87 @@ void checkSharedMap(mlir::MLIRContext & context) {
                                "    %priorGetter = ctjs.get_property %owned[%key]\n"
                                "    %prior = ctjs.call %priorGetter(%owned)\n"
                                "    %putResult = ctjs.call %putter(%owned, %prior)");
-    for (const bool lifted : {false, true}) {
-        auto program = lifted ? prepare(fromResult) : fromResult;
-        if (lifted) {
-            program = replaced(
-                program, "%prior = ctjs.call %priorGetter(%owned)",
-                "%priorEnv = ctjs.load_upvalue %priorGetter[0]\n"
-                "    %prior = ctjs.call_direct @get$3(%owned, %u, %priorGetter, %priorEnv)");
-        }
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        check(static_cast<bool>(module), "source/prepared result-argument fixtures parse");
-        if (!module) { continue; }
-        const auto contract = requested(*module);
-        OwnedGlobalRoots query(*module, contract);
-        check(query.proved(), "an independently proved result supplies the consuming formal tag");
-        if (!query.proved()) { continue; }
-        const auto & calls = query.roots().front().methodTable->calls;
-        check(calls.size() == 3 && calls[1].arguments.size() == 1 &&
-                  calls[1].arguments.front().actual == calls[0].call->getResult(0) &&
-                  calls[1].arguments.front().primitiveTag ==
-                      mlir::TypeID::get<ctjs::NumberAttr>() &&
-                  calls[0].call->isBeforeInBlock(calls[1].call) &&
-                  calls[1].call->isBeforeInBlock(calls[2].call),
-              "initial getter, setter and final getter retain their original SSA order");
-        const unsigned completion = query.steps();
-        check(completion < 10000, "result dependency proof remains bounded");
-        if (completion < 10000) {
-            for (unsigned budget = 0; budget < completion; ++budget) {
-                OwnedGlobalRoots limited(*module, contract, budget);
-                check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                          empty(*module, limited),
-                      "every incomplete result budget withholds the whole family");
+    for (const bool seeded : {false, true}) {
+        for (const bool lifted : {false, true}) {
+            auto sourceResult = fromResult;
+            if (seeded) {
+                sourceResult =
+                    replaced(sourceResult, "    ctjs.return %size",
+                             "    %seedKey = ctjs.constant #ctjs.number<0>\n"
+                             "    %seedValue = ctjs.constant #ctjs.number<4607182418800017408>\n"
+                             "    %seedSetKey = ctjs.constant #ctjs.string<\"set\">\n"
+                             "    %seedSet = ctjs.get_property %state[%seedSetKey]\n"
+                             "    %seeded = ctjs.call %seedSet(%state, %seedKey, %seedValue)\n"
+                             "    %seedGetKey = ctjs.constant #ctjs.string<\"get\">\n"
+                             "    %seedGet = ctjs.get_property %state[%seedGetKey]\n"
+                             "    %loaded = ctjs.call %seedGet(%state, %seedKey)\n"
+                             "    ctjs.return %loaded");
             }
-            check(OwnedGlobalRoots(*module, contract, completion).proved(),
-                  "the exact result dependency completion budget reproduces all calls");
+            auto program = lifted ? prepare(sourceResult) : sourceResult;
+            if (lifted) {
+                program = replaced(
+                    program, "%prior = ctjs.call %priorGetter(%owned)",
+                    "%priorEnv = ctjs.load_upvalue %priorGetter[0]\n"
+                    "    %prior = ctjs.call_direct @get$3(%owned, %u, %priorGetter, %priorEnv)");
+            }
+            auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+            check(static_cast<bool>(module), "source/prepared result-argument fixtures parse");
+            if (!module) { continue; }
+            const auto contract = requested(*module);
+            OwnedGlobalRoots query(*module, contract);
+            check(query.proved(),
+                  "an independently proved result supplies the consuming formal tag");
+            if (!query.proved()) { continue; }
+            const auto & calls = query.roots().front().methodTable->calls;
+            check(calls.size() == 3 && calls[1].arguments.size() == 1 &&
+                      calls[1].arguments.front().actual == calls[0].call->getResult(0) &&
+                      calls[1].arguments.front().primitiveTag ==
+                          mlir::TypeID::get<ctjs::NumberAttr>() &&
+                      calls[0].call->isBeforeInBlock(calls[1].call) &&
+                      calls[1].call->isBeforeInBlock(calls[2].call),
+                  "initial getter, setter and final getter retain their original SSA order");
+            const unsigned completion = query.steps();
+            check(completion < 10000, "result dependency proof remains bounded");
+            if (completion < 10000) {
+                for (unsigned budget = 0; budget < completion; ++budget) {
+                    OwnedGlobalRoots limited(*module, contract, budget);
+                    check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                              empty(*module, limited),
+                          "every incomplete result budget withholds the whole family");
+                }
+                check(OwnedGlobalRoots(*module, contract, completion).proved(),
+                      "the exact result dependency completion budget reproduces all calls");
+            }
+            auto getter = module->lookupSymbol<ctjs::FuncOp>("get$3");
+            auto returned = llvm::cast<ctjs::ReturnOp>(getter.getBody().front().getTerminator());
+            const auto saved = returned.getValue();
+            mlir::OpBuilder builder(&context);
+            builder.setInsertionPoint(returned);
+            auto boolean = ctjs::ConstantOp::create(builder, returned.getLoc(),
+                                                    ctjs::BooleanAttr::get(&context, true));
+            returned->setOperand(0, boolean.getResult());
+            OwnedGlobalRoots stale(*module, contract);
+            check(!stale.proved() && stale.reason().contains("fingerprint") &&
+                      empty(*module, stale),
+                  "a producing return mutation invalidates the supplied fingerprint");
+            OwnedGlobalRoots changed(*module, requested(*module));
+            check(
+                changed.proved() &&
+                    changed.roots().front().methodTable->calls[1].arguments.front().primitiveTag ==
+                        mlir::TypeID::get<ctjs::BooleanAttr>(),
+                "a fresh proof rederives the producer's changed tag for the consuming formal");
+            returned->setOperand(0, getter.getBody().front().getArgument(0));
+            OwnedGlobalRoots external(*module, requested(*module));
+            check(!external.proved() && empty(*module, external),
+                  "a formerly proved producer cannot authorize an external returned value");
+            returned->setOperand(0, saved);
+            boolean.erase();
+            check(OwnedGlobalRoots(*module, contract).proved(),
+                  "restoring the producing body restores its independent result proof");
+            std::printf("%s Map %s proof and all %u incomplete budgets checked\n",
+                        seeded ? "seeded result" : "result", lifted ? "prepared" : "source",
+                        completion);
         }
-        auto getter = module->lookupSymbol<ctjs::FuncOp>("get$3");
-        auto returned = llvm::cast<ctjs::ReturnOp>(getter.getBody().front().getTerminator());
-        const auto saved = returned.getValue();
-        mlir::OpBuilder builder(&context);
-        builder.setInsertionPoint(returned);
-        auto boolean = ctjs::ConstantOp::create(builder, returned.getLoc(),
-                                                ctjs::BooleanAttr::get(&context, true));
-        returned->setOperand(0, boolean.getResult());
-        OwnedGlobalRoots stale(*module, contract);
-        check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
-              "a producing return mutation invalidates the supplied fingerprint");
-        OwnedGlobalRoots changed(*module, requested(*module));
-        check(changed.proved() &&
-                  changed.roots().front().methodTable->calls[1].arguments.front().primitiveTag ==
-                      mlir::TypeID::get<ctjs::BooleanAttr>(),
-              "a fresh proof rederives the producer's changed tag for the consuming formal");
-        returned->setOperand(0, getter.getBody().front().getArgument(0));
-        OwnedGlobalRoots external(*module, requested(*module));
-        check(!external.proved() && empty(*module, external),
-              "a formerly proved producer cannot authorize an external returned value");
-        returned->setOperand(0, saved);
-        boolean.erase();
-        check(OwnedGlobalRoots(*module, contract).proved(),
-              "restoring the producing body restores its independent result proof");
-        std::printf("result Map %s proof and all %u incomplete budgets checked\n",
-                    lifted ? "prepared" : "source", completion);
     }
     refuse(replaced(fromResult, "    ctjs.return %size", "    ctjs.return %state"),
            "a Map identity result cannot become a primitive argument");

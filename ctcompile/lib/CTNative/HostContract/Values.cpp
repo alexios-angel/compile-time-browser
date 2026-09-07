@@ -6,6 +6,8 @@
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/ScopeExit.h"
 
+#include <utility>
+
 namespace ctcompile::ctnative::host_detail {
 namespace {
 mlir::Value explicitArgument(mlir::Operation * operation, unsigned index) {
@@ -15,6 +17,16 @@ mlir::Value explicitArgument(mlir::Operation * operation, unsigned index) {
     if (!direct && !call) { return {}; }
     auto args = direct ? direct.getArgs() : call.getArgs();
     return index - 3 < args.size() ? args[index - 3] : mlir::Value{};
+}
+
+bool samePrimitiveKey(mlir::Value left, mlir::Value right) {
+    if (left == right) { return true; }
+    auto lhs = left.getDefiningOp<ctjs::ConstantOp>();
+    auto rhs = right.getDefiningOp<ctjs::ConstantOp>();
+    // Exact encodings are sufficient for SameValueZero equality. Declining
+    // different encodings of zero or NaN loses precision, never soundness.
+    return lhs && rhs && lhs.getValue() == rhs.getValue() &&
+           llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr>(lhs.getValue());
 }
 } // namespace
 
@@ -644,6 +656,12 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
     const auto firstUpvalue = result.upvalues.size();
     llvm::DenseSet<mlir::Value> maps, primitives;
     llvm::DenseMap<mlir::Value, mlir::TypeID> tags;
+    // All checked capture loads/fluent returns denote this one runtime Map.
+    // Each invocation starts with unknown contents. Retain only its last
+    // set: a later write may alias that key even with a different SSA name.
+    // This local contents fact is independent of the family's return worklist
+    // and publishes a tag only after the entire body/use proof completes.
+    std::optional<std::pair<mlir::Value, mlir::TypeID>> lastEntry;
     llvm::DenseSet<mlir::Operation *> reads, calls, upvalues;
     if (prepared) { maps.insert(body.getArgument(3)); }
     const unsigned offset = prepared ? 4u : 3u;
@@ -702,10 +720,18 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
             calls.insert(invoke);
             if (key == "set") {
                 maps.insert(invoke.getResult());
+                lastEntry.reset();
+                if (auto valueTag = tags.find(invoke.getArgs()[1]); valueTag != tags.end()) {
+                    lastEntry.emplace(invoke.getArgs()[0], valueTag->second);
+                }
             } else {
                 primitives.insert(invoke.getResult());
                 if (key == "has" || key == "delete") {
                     tags.try_emplace(invoke.getResult(), mlir::TypeID::get<ctjs::BooleanAttr>());
+                    if (key == "delete") { lastEntry.reset(); }
+                } else if (key == "get" && lastEntry &&
+                           samePrimitiveKey(lastEntry->first, invoke.getArgs()[0])) {
+                    tags.try_emplace(invoke.getResult(), lastEntry->second);
                 }
             }
         } else if (auto ret = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
@@ -756,8 +782,9 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
             return false;
         }
     }
-    // Map.get remains primitive but potentially nullable/mixed. Its complete
-    // carrier needs a separate contents/presence proof, never a guessed tag.
+    // Unproved Map.get results remain potentially nullable/mixed. Even a
+    // local definite tag still needs the independent native Map schema and
+    // presence analyses before a consuming formal can acquire a C++ carrier.
     if (auto tag = tags.find(returned.getValue()); tag != tags.end()) { returnTag = tag->second; }
     return true;
 }

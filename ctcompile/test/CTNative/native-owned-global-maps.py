@@ -24,6 +24,9 @@ SHARED = SHARED.replace("var trace = host.slot.get();",
 PARAMETER = SHARED.replace("set() { state.set('x', 1)", "set(key) { state.set(key, 1)")
 PARAMETER = PARAMETER.replace("host.slot.set();", "host.slot.set('x');")
 CALL_RESULT = PARAMETER.replace("host.slot.set('x');", "host.slot.set(host.slot.get());")
+SEEDED_RESULT = CALL_RESULT.replace("get() { return state.size; }",
+    "get() { state.set(0, 1); return state.get(0); }")
+STRING_RESULT = "result-key-" * 12
 
 
 def parameter_sources():
@@ -84,6 +87,47 @@ def result_sources():
     }
 
 
+def seeded_result_sources():
+    observed_size = CALL_RESULT.replace("get() { return state.size; },",
+        "size() { return state.size; }, get() { state.set(0, 1); return state.get(0); },")
+    observed_size = observed_size.replace("var trace = host.slot.get();",
+                                          "var trace = host.slot.size();")
+    return {
+        "result_seeded_map_get": (SEEDED_RESULT, "host", 1),
+        "result_seeded_repeated": (SEEDED_RESULT.replace("host.slot.set(host.slot.get());",
+            "host.slot.set(host.slot.get()); host.slot.set(host.slot.get());"), "host", 1),
+        "result_seeded_overwrite": (SEEDED_RESULT.replace("state.set(0, 1);",
+            "state.set(0, 1); state.set(0, 2);"), "host", 2),
+        "result_seeded_growing": (SEEDED_RESULT.replace(
+            "state.set(0, 1); return state.get(0);",
+            "const key = state.size; state.set(key, key); return state.get(key);"), "host", 1),
+        # Distinct current actuals prevent the formal from being proved as a
+        # single literal. Each invocation must match its own set/get SSA key.
+        "result_seeded_formal": (observed_size.replace(
+            "get() { state.set(0, 1); return state.get(0); }",
+            "get(key) { state.set(key, 1); return state.get(key); }")
+            .replace("host.slot.set(host.slot.get());",
+                     "host.slot.set(host.slot.get(7)); host.slot.set(host.slot.get(8));"),
+            "host", 3),
+    }
+
+
+def seeded_carrier_refusals():
+    observed_size = SEEDED_RESULT.replace("get() {",
+        "size() { return state.size; }, get() {").replace("var trace = host.slot.get();",
+                                                         "var trace = host.slot.size();")
+    return {
+        "result_seeded_string": (observed_size.replace("state.set(0, 1); return state.get(0);",
+            f"state.set('seed', '{STRING_RESULT}'); return state.get('seed');")
+            .replace("state.set(key, 1)", "state.set(key, 'stored')"), 2),
+        "result_seeded_bool": (observed_size.replace("state.set(0, 1); return state.get(0);",
+            "state.set(false, true); return state.get(false);")
+            .replace("state.set(key, 1)", "state.set(key, true)"), 2),
+        "result_seeded_mixed_contents": (observed_size.replace("state.set(0, 1);",
+            "state.set(0, true); state.set(0, 1);"), 2),
+    }
+
+
 RESULT_SIGNATURES = {
     "parameter_call_result": ("js_num", "js_num", 5),
     "result_reverse_members": ("js_num", "js_num", 5),
@@ -94,6 +138,11 @@ RESULT_SIGNATURES = {
     "result_delete": ("bool", "bool", 6),
     "result_string": ("std::string", "std::string", 6),
     "result_formal": ("js_num", "js_num", 6),
+    "result_seeded_map_get": ("js_num", "js_num", 5),
+    "result_seeded_repeated": ("js_num", "js_num", 5),
+    "result_seeded_overwrite": ("js_num", "js_num", 5),
+    "result_seeded_growing": ("js_num", "js_num", 5),
+    "result_seeded_formal": ("js_num", "js_num", 6),
 }
 
 
@@ -132,9 +181,16 @@ def check_result_calls(cpp, name, mode):
         "result_delete": ["get", "set", "get", "set", "get", "set", "size"],
         "result_string": ["get", "set", "size"],
         "result_formal": ["get", "set", "size"],
+        "result_seeded_map_get": ["get", "set", "get"],
+        "result_seeded_repeated": ["get", "set", "get", "set", "get"],
+        "result_seeded_overwrite": ["get", "set", "get"],
+        "result_seeded_growing": ["get", "set", "get"],
+        "result_seeded_formal": ["get", "set", "get", "set", "size"],
     }[name]
     if sequence != expected or "ctnative::map_set(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: lost runtime getter/mutation/final observation calls")
+    if name in seeded_result_sources() and not re.search(r"ctnative::map_get(?:_\w+)?\(", cpp):
+        raise RuntimeError(f"{name}/{mode}: replaced the live seeded Map lookup with a summary")
 
 
 def source_calls(text):
@@ -230,7 +286,7 @@ int main() {
     # The growing-key method changes its Map on EVERY invocation. The saved
     # environment has had one extra call, so sharing the reentry allocation or
     # replacing later calls with a startup summary cannot satisfy this witness.
-    growing = name == "growing"
+    growing = name in {"growing", "result_seeded_growing"}
     changed = changed.replace("SAVED_FIRST", "2" if growing else str(value))
     changed = changed.replace("SAVED_NEXT", "index + 3" if growing else str(value))
     changed = changed.replace("FRESH_NEXT", "index + 2" if growing else str(value))
@@ -359,7 +415,7 @@ def standalone(args, output, name, value, compilers, nm):
                 raise RuntimeError(f"{name}/{mode}: missing typed setter arguments\n{cpp}")
         if name in RESULT_SIGNATURES:
             result, params, _ = RESULT_SIGNATURES[name]
-            getter_params = "js_num" if name == "result_formal" else ""
+            getter_params = "js_num" if name in {"result_formal", "result_seeded_formal"} else ""
             if (f"std::function<{result}({getter_params})>" not in cpp
                     or f"std::function<js_num({params})>" not in cpp):
                 raise RuntimeError(f"{name}/{mode}: missing typed producer/consumer signatures\n{cpp}")
@@ -373,7 +429,7 @@ def standalone(args, output, name, value, compilers, nm):
                 raise RuntimeError(f"{name}/{mode}: linked a VM symbol")
             if host.run([str(binary)]).stdout != f"trace={value}\n":
                 raise RuntimeError(f"{name}/{mode}: standalone result mismatch")
-        if name in {"ordinary", "mutate_map", "growing"}:
+        if name in {"ordinary", "mutate_map", "growing", "result_seeded_growing"}:
             lifetime(args, cpp, name, mode, value, compilers[1])
         if name in {"shared_growing", "shared_parameter"}:
             shared_lifetime(args, cpp, name, mode, compilers[1])
@@ -435,8 +491,6 @@ def result_refusals():
     return {
         "result_unknown_map_get": CALL_RESULT.replace("get() { return state.size; }",
             "get() { return state.get(0); }"),
-        "result_seeded_map_get": CALL_RESULT.replace("get() { return state.size; }",
-            "get() { state.set(0, 1); return state.get(0); }"),
         "result_unknown_effect": CALL_RESULT.replace("get() { return state.size; }",
             "get() { inspect(state); return state.size; }"),
         "result_unknown_call": CALL_RESULT.replace("get() { return state.size; }",
@@ -453,9 +507,38 @@ def result_refusals():
     }
 
 
+def seeded_result_refusals():
+    return {
+        "seeded_missing_key": SEEDED_RESULT.replace("return state.get(0);", "return state.get(1);"),
+        "seeded_cleared": SEEDED_RESULT.replace("return state.get(0);",
+            "state.clear(); return state.get(0);"),
+        "seeded_deleted": SEEDED_RESULT.replace("return state.get(0);",
+            "state.delete(0); return state.get(0);"),
+        "seeded_other_delete": SEEDED_RESULT.replace("return state.get(0);",
+            "state.delete(9); return state.get(0);"),
+        "seeded_earlier_key": SEEDED_RESULT.replace("return state.get(0);",
+            "state.set(1, 2); return state.get(0);"),
+        "seeded_unknown_payload": SEEDED_RESULT.replace("state.set(0, 1);",
+            "state.set(0, state.get(9));"),
+        "seeded_distinct_formals": SEEDED_RESULT.replace(
+            "get() { state.set(0, 1); return state.get(0); }",
+            "get(key, other) { state.set(key, 1); return state.get(other); }")
+            .replace("host.slot.get()", "host.slot.get(7, 8)"),
+    }
+
+
 def check_call_preservation(original, output, name):
     if source_calls(original) != source_calls(output):
         raise RuntimeError(f"{name}: failed ownership changed live source call operands")
+
+
+def forge_map_presence(text):
+    marked, count = re.subn(r"(^\s*%[-\w.$]+ = ctjs\.call [^\n{]+)(\{)?",
+        lambda match: match[1].rstrip() + " {ctnative.map_present = true"
+                      + (", " if match[2] else "}"), methods.forge_reports(text), flags=re.M)
+    if count == 0:
+        raise RuntimeError("forged-presence control lost every live Map call")
+    return marked
 
 
 def check_budgets(args, ir, config, name, functions=4):
@@ -547,6 +630,9 @@ def main():
         "delete_result": (SOURCE.replace("return state.size;",
             "state.set(false, 0); state.set(true, 1); state.set(state.delete(true), 2); "
             "return state.size;"), "host", 2),
+        "seeded_local_key": (SOURCE.replace("return state.size;",
+            "state.set(1, 2); state.set(1, 3); state.set(state.get(1), 4); "
+            "state.delete(3); return state.size;"), "host", 1),
         "shared": (SHARED, "host", 1),
         "shared_growing": (SHARED.replace("state.set('x', 1)", "state.set(state.size, 1)"),
                            "host", 1),
@@ -559,6 +645,7 @@ def main():
                          + "\ntrace = host.slot.size();", "host", 1),
         **parameter_sources(),
         **result_sources(),
+        **seeded_result_sources(),
     }
     saved = {}
     for name, (source, binding, value) in positives.items():
@@ -626,6 +713,8 @@ def main():
     rollback += check_budgets(args, parameter_ir, parameter_config, "shared_parameter", functions=5)
     result_ir, result_config, result_output = saved["parameter_call_result"]
     rollback += check_budgets(args, result_ir, result_config, "parameter_call_result", functions=5)
+    seeded_ir, seeded_config, seeded_output = saved["result_seeded_map_get"]
+    rollback += check_budgets(args, seeded_ir, seeded_config, "result_seeded_map_get", functions=5)
 
     for name, source in refusal_sources().items():
         _, rejected, _ = boundary.prepare(args, name, source)
@@ -637,14 +726,8 @@ def main():
     for name, body in {
         "nullable_result": "state.set('x', 1); return state.get('missing');",
         "boolean_result": "state.set('x', 1); return state.has('x');",
-        "nullable_key": ("state.set(1, 2); state.set(1, 3); state.set(state.get(1), 4); "
-                         "state.delete(3); return state.size;"),
     }.items():
         js, rejected, _ = boundary.prepare(args, name, SOURCE.replace("return state.size;", body))
-        if name == "nullable_key" and (
-                host.run([node, "-e", boundary.NODE, str(js)]).stdout != "trace=1\n"
-                or host.run([str(reference), str(js)]).stdout != "trace=1\n"):
-            raise RuntimeError("nullable_key: Node/interpreter observation mismatch")
         fresh = contract(args, rejected, name)
         result = owned.lower(args, rejected, name, fresh, cleanup=False)
         text = methods.census(result, 4, name)
@@ -671,7 +754,7 @@ def main():
         check_call_preservation(rejected.read_text(), failed.read_text(), name)
         if name == "parameter_heterogeneous":
             forged = args.work / "parameter-forged.mlir"
-            forged.write_text(methods.forge_reports(rejected.read_text()))
+            forged.write_text(forge_map_presence(rejected.read_text()))
             forged_config = contract(args, forged, "parameter-forged")
             failed = methods.refused(args, forged, "parameter-forged", forged_config, admitted=0)
             check_call_preservation(forged.read_text(), failed.read_text(), "parameter-forged")
@@ -686,10 +769,47 @@ def main():
             # A fresh fingerprint authenticates the unsupported source, not
             # a forged conclusion about its Map contents or method result.
             forged = args.work / "result-forged.mlir"
-            forged.write_text(methods.forge_reports(rejected.read_text()))
+            forged.write_text(forge_map_presence(rejected.read_text()))
             forged_config = contract(args, forged, "result-forged")
             failed = methods.refused(args, forged, "result-forged", forged_config, admitted=0)
             check_call_preservation(forged.read_text(), failed.read_text(), "result-forged")
+    for name, source in seeded_result_refusals().items():
+        _, rejected, count = boundary.prepare(args, name, source)
+        if count != 5:
+            raise RuntimeError(f"{name}: changed seeded-refusal source denominator")
+        fresh = contract(args, rejected, name)
+        failed = methods.refused(args, rejected, name, fresh, admitted=0)
+        check_call_preservation(rejected.read_text(), failed.read_text(), name)
+        if name == "seeded_deleted":
+            forged = args.work / "seeded-forged.mlir"
+            forged.write_text(methods.forge_reports(rejected.read_text()))
+            forged_config = contract(args, forged, "seeded-forged")
+            failed = methods.refused(args, forged, "seeded-forged", forged_config, admitted=0)
+            check_call_preservation(forged.read_text(), failed.read_text(), "seeded-forged")
+    # A definite local get tag is separate from an implemented native Map
+    # payload carrier. Keep the observation numeric and retain every prepared
+    # call so bool/string/mixed contents cannot acquire numeric authority.
+    for name, (source, value) in seeded_carrier_refusals().items():
+        js, rejected, count = boundary.prepare(args, name, source)
+        if count != 6:
+            raise RuntimeError(f"{name}: changed seeded carrier source denominator")
+        if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != f"trace={value}\n"
+                or host.run([str(reference), str(js)]).stdout != f"trace={value}\n"):
+            raise RuntimeError(f"{name}: Node/interpreter observation mismatch")
+        fresh = contract(args, rejected, name)
+        output = owned.lower(args, rejected, name, fresh, cleanup=False)
+        text = methods.census(output, count, name, admitted=0)
+        if "ctnative.host_owner_proved = true" not in text:
+            raise RuntimeError(f"{name}: did not independently prove the seeded result owner")
+        calls = re.findall(
+            r"^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) "
+            r"\{ctnative\.stored_call = 1 : i32\}", text, re.M)
+        if (len(source_calls(text)) != len(source_calls(rejected.read_text()))
+                or [target for _, target, _ in calls] != ["fn$4", "fn$5", "fn$3"]
+                or [len(arguments.split(", ")) for _, _, arguments in calls] != [4, 5, 4]
+                or calls[1][2].split(", ")[-1] != calls[0][0]
+                or f'ctjs.store_global "trace", {calls[2][0]}' not in text):
+            raise RuntimeError(f"{name}: carrier refusal lost the prepared live result edge")
     # An implicit undefined return has an exact primitive tag, but that alone
     # does not supply an implemented native Map key. The separate size method
     # keeps the observation numeric so that it cannot cause this refusal.
@@ -756,14 +876,33 @@ def main():
     text = methods.census(rerun, 5, "result-rerun", admitted=5)
     if "ctnative.host_owner_proved = false" not in text or "fingerprint mismatch" not in text:
         raise RuntimeError("result-rerun: prepared result signature reused source authority")
+    boundary.native(args, seeded_ir, "seeded-no-manifest", 5)
+    methods.refused(args, seeded_ir, "seeded-no-intrinsic",
+                    owned.contract(args, seeded_ir, "seeded-no-intrinsic"), admitted=0)
+    stale_seeded = args.work / "seeded-stale.mlir"
+    text, count = re.subn(r'#ctjs\.number<0>', '#ctjs.number<4611686018427387904>',
+                         seeded_ir.read_text())
+    if count == 0:
+        raise RuntimeError("seeded-stale: lost the live seed and lookup key")
+    stale_seeded.write_text(text)
+    failed = methods.refused(args, stale_seeded, "seeded-stale", seeded_config,
+                             reason="fingerprint mismatch", admitted=0)
+    check_call_preservation(text, failed.read_text(), "seeded-stale")
+    rerun = owned.lower(args, seeded_output, "seeded-rerun", seeded_config, cleanup=False)
+    text = methods.census(rerun, 5, "seeded-rerun", admitted=5)
+    if "ctnative.host_owner_proved = false" not in text or "fingerprint mismatch" not in text:
+        raise RuntimeError("seeded-rerun: prepared presence reused the original source authority")
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
           "Node/interpreter/GCC/Clang explicit+deduced and Map/table/callable lifetime pass; "
           f"{len(refusal_sources())} source refusals and contract/rerun/budget controls pass; "
-          f"three carrier refusals and {len(shared_refusals)} shared-method refusals; "
+          f"two carrier refusals and {len(shared_refusals)} shared-method refusals; "
           f"{len(parameter_refusals())} argument refusals preserve current call operands; "
           "typed parameterized setters 5/5 with changing source and saved-callable keys; "
           f"{len(result_sources())} live result programs preserve call order and operands; "
           f"{len(result_refusals())} result-proof refusals and missing-return carrier refusal; "
+          f"{len(seeded_result_sources())} seeded result programs and growing lifetime pass; "
+          f"{len(seeded_result_refusals())} seeded proof and "
+          f"{len(seeded_carrier_refusals())} seeded carrier refusals; "
           f"{len(rollback)} speculative rollback cutoffs")
 
 
