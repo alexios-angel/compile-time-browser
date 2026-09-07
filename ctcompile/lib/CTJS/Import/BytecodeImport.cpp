@@ -287,6 +287,18 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             }
         }
 
+        // A generator with no yield still has a different invocation: calling
+        // it allocates an iterator and executes none of this body. Its source
+        // flag is not encoded by an instruction, so an otherwise ordinary
+        // literal return cannot become an eagerly callable ctjs.func. Retain
+        // the existing skipped-function/global-store accounting until the
+        // suspension ABI can represent this invocation kind.
+        if (!state.gave_up && proto.is_generator) {
+            state.give_up(0, proto.code.empty() ? op::ret_undef : proto.code.front().code,
+                          "a generator invocation creates a deferred iterator instead of "
+                          "executing the body, even without a suspension point - Phase 14");
+        }
+
         for (std::size_t at = 0; at < proto.code.size() && !state.gave_up; ++at) {
             if (leader[at] && (at > 0 || targets_zero)) { enter_block(at); }
             // A PAD BLOCK CLOSES THE REGION IT LANDS FROM. The bytecode's
