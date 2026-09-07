@@ -627,6 +627,55 @@ void test_css_supports() {
     CHECK(check_declaration("content", "attr(data-foo)").uses_unknown_function);
 }
 
+// AN `<integer>` PROPERTY ROUNDS ITS MATH, and CSS Values 4 §10.10 says which
+// way. `z-index: calc(3 / 2)` is valid CSS whose computed value is 2, and this
+// engine reported `1.5` - a number no `<integer>` property has ever taken.
+//
+// The direction is the whole of the difference: a value exactly halfway goes
+// toward POSITIVE INFINITY, so `calc(-3 / 2)` is -1 and not -2. `std::round`
+// would have got every negative half wrong, and
+// `css/css-values/calc-z-index-fractions-001.html` is six subtests of nothing
+// else. `calc-integer.html` is the other three.
+void test_an_integer_property_rounds_its_math() {
+    using ctbrowser::style::css::fold_math;
+    using ctbrowser::style::css::length_context;
+    using ctbrowser::style::css::math_context;
+    using ctbrowser::style::css::math_context_of;
+
+    const length_context ctx;
+    const auto whole = [&](std::string_view value) {
+        return fold_math(value, ctx, math_context::integer).text;
+    };
+    CHECK(math_context_of("z-index") == math_context::integer);
+    CHECK(math_context_of("order") == math_context::integer);
+
+    CHECK_EQ(whole("calc(2)"), std::string{"2"});
+    CHECK_EQ(whole("calc(4 / 2)"), std::string{"2"});
+    CHECK_EQ(whole("calc(1 / 2)"), std::string{"1"}); // a half rounds UP
+    CHECK_EQ(whole("calc(0.5)"), std::string{"1"});
+    CHECK_EQ(whole("calc(1 / 3)"), std::string{"0"}); // ...and a third rounds down
+    CHECK_EQ(whole("calc(6 / 2.0)"), std::string{"3"});
+    // The six of calc-z-index-fractions-001, and the four negatives are the
+    // ones that say "toward positive infinity" rather than "away from zero".
+    CHECK_EQ(whole("calc(2.5 / 2)"), std::string{"1"});
+    CHECK_EQ(whole("calc(3 / 2)"), std::string{"2"});
+    CHECK_EQ(whole("calc(3.5 / 2)"), std::string{"2"});
+    CHECK_EQ(whole("calc(-2.5 / 2)"), std::string{"-1"});
+    CHECK_EQ(whole("calc(-3 / 2)"), std::string{"-1"});
+    CHECK_EQ(whole("calc(-3.5 / 2)"), std::string{"-2"});
+    // ONLY THE FINISHED CONVERSION ROUNDS. A nested calc is an intermediate and
+    // rounding it would make this 0.
+    CHECK_EQ(whole("calc(calc(1 / 3) * 3)"), std::string{"1"});
+    // Nothing else moves: the context is per-property, so the same expression in
+    // `opacity` keeps its fraction.
+    CHECK_EQ(fold_math("calc(1 / 2)", ctx, math_context::any).text, std::string{"0.5"});
+    // A specified value is NOT rounded - CSS Values 4 §10.12 keeps the function
+    // as written, and `el.style.zIndex` reads back the simplified form.
+    ok("z-index", "calc(3 / 2)", "calc(1.5)");
+    ok("z-index", "2", "2");
+    bad("z-index", "1.5");
+}
+
 } // namespace
 
 int main() {
@@ -647,5 +696,6 @@ int main() {
     test_the_two_spellings_of_one_property();
     test_the_property_table_itself();
     test_css_supports();
+    test_an_integer_property_rounds_its_math();
     REPORT("css_values");
 }

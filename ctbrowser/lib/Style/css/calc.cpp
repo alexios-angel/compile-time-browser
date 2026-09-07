@@ -1195,6 +1195,13 @@ math_context math_context_of(std::string_view property) noexcept {
     for (const std::string_view one : lengths) {
         if (ascii_iequals(one, property)) { return math_context::length; }
     }
+    // THE PROPERTIES WHOSE WHOLE VALUE IS AN `<integer>`, which is the same list
+    // `properties.cpp` marks `k::integer` - kept here rather than asked of that
+    // table because this file must not depend on it, and two names are cheaper to
+    // repeat than a dependency is to add. Adding a third belongs in both.
+    if (ascii_iequals(property, "z-index") || ascii_iequals(property, "order")) {
+        return math_context::integer;
+    }
     return math_context::any;
 }
 
@@ -1738,7 +1745,21 @@ folded_value fold_math(std::string_view value, const length_context & ctx, math_
         const bool wrong_kind = answer.outcome == math_outcome::resolved &&
                                 answer.value.is_number && accepts == math_context::length;
         if (answer.outcome == math_outcome::resolved && !wrong_kind) {
-            out.append(serialize_calc(answer.value));
+            calc_result computed = answer.value;
+            // AN `<integer>` PROPERTY ROUNDS ITS ANSWER, and CSS Values 4 §10.10
+            // says which way: to the nearest integer, with a value exactly halfway
+            // going toward POSITIVE INFINITY. That is `floor(x + 0.5)` and not
+            // `std::round`, which rounds a half away from zero - the two disagree
+            // on every negative half, so `z-index: calc(-3 / 2)` is -1 and not -2.
+            //
+            // Rounding HERE and not in the evaluator is what makes
+            // `calc(calc(1 / 3) * 3)` come out as 1: only the finished conversion
+            // rounds, never an intermediate.
+            if (accepts == math_context::integer && computed.is_number &&
+                std::isfinite(computed.px)) {
+                computed.px = std::floor(computed.px + 0.5);
+            }
+            out.append(serialize_calc(computed));
             at = span.end;
             continue;
         }
