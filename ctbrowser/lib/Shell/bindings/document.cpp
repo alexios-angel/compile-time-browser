@@ -679,21 +679,18 @@ void dom_bindings::install_document(context & cx) {
         });
         return value::undefined();
     });
+    // LIVE, and an HTMLCollection. It used to build an array-shaped plain
+    // object - indices plus a length - on the grounds that that is what
+    // `for (i = 0; i < n; i++)` reads, and it is; what it is NOT is live, and
+    // it is not `instanceof HTMLCollection` either, and it accepted
+    // `list[0] = 42`. Three subtests in three files ask each of those in turn.
     method("getElementsByTagName", [this](context & c, std::span<value> args) {
-        const std::vector<node_id> found = all_by_tag(arg_string(c, args, 0));
-        auto * list = static_cast<script::object_object *>(c.make_object().as_heap());
-        // An ARRAY-SHAPED object: the VM has no Array, so a live collection is
-        // indices plus a length, which is what `for (i = 0; i < n; i++)` - the
-        // way every page walks one - actually reads.
-        for (std::size_t i = 0; i < found.size(); ++i) {
-            list->set(std::to_string(i), wrap(c, found[i]));
-        }
-        list->set("length", value::number(static_cast<double>(found.size())));
-        return value::object(list);
+        const std::string wanted = arg_string(c, args, 0);
+        return make_live_collection(c, [this, wanted] { return all_by_tag(wanted); });
     });
-    // LIVE, unlike getElementsByTagName above, and the difference is not
-    // decoration: five of the suite's own tests take the collection, mutate the
-    // document and read the collection again. See make_live_collection.
+    // Live for the same reason, and the difference is not decoration: five of
+    // the suite's own tests take the collection, mutate the document and read
+    // the collection again. See make_live_collection.
     method("getElementsByClassName", [this](context & c, std::span<value> args) {
         const std::vector<std::string> tokens = ordered_set(arg_string(c, args, 0));
         return make_live_collection(c, [this, tokens] { return all_by_class(node_id{}, tokens); });

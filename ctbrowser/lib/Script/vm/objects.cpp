@@ -453,10 +453,22 @@ bool context::instance_of(value target, value ctor) {
         }
     }
     if (!wanted.is_object()) { return false; }
+    // A PROXY IS ASKED THROUGH TO ITS TARGET. 7.3.21 OrdinaryHasInstance calls
+    // `[[GetPrototypeOf]]`, and a proxy's forwards to the object behind it - so
+    // `x instanceof C` for a proxy is a question about that object's chain and
+    // not about the proxy, which has no prototype field at all. `window` is a
+    // proxy and so is every live DOM collection, and `document.images
+    // instanceof HTMLCollection` was false for exactly this reason while the
+    // target carried the right prototype the whole time. Bounded, because a
+    // proxy of a proxy is legal and a cycle must not be.
+    value subject = target;
+    for (int hops = 0; hops < 8 && subject.is_kind(heap_kind::proxy); ++hops) {
+        subject = static_cast<proxy_object *>(subject.as_heap())->target;
+    }
     // The EXPLICIT chain first - a page's own classes, and every builtin whose
     // instances carry a prototype (Error, Map, Blob).
-    value link = target.is_object() ? static_cast<object_object *>(target.as_heap())->prototype
-                                    : value::undefined();
+    value link = subject.is_object() ? static_cast<object_object *>(subject.as_heap())->prototype
+                                     : value::undefined();
     for (int depth = 0; depth < 64 && link.is_object(); ++depth) {
         if (link.as_heap() == wanted.as_heap()) { return true; }
         link = static_cast<object_object *>(link.as_heap())->prototype;
@@ -471,8 +483,8 @@ bool context::instance_of(value target, value ctor) {
     // instanceof asks about a prototype chain and a primitive does not have
     // one. Applying the fallback to everything made both of those true, which
     // is the mirror image of the bug being fixed.
-    if (target.is_object_like()) {
-        for (object_object * table : implicit_prototypes(target)) {
+    if (subject.is_object_like()) {
+        for (object_object * table : implicit_prototypes(subject)) {
             if (table != nullptr && table == wanted.as_heap()) { return true; }
         }
     }

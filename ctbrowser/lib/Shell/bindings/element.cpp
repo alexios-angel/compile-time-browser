@@ -1292,14 +1292,18 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         for (const node_id child : txn.children(id)) { items->items.push_back(wrap(c, child)); }
         return list;
     });
+    // AN HTMLCollection, LIVE - not an Array. `children` is the one of these
+    // navigations the DOM gives an interface to, and `ParentNode-children.html`
+    // checks liveness by appending and then asks what the thing IS.
     navigate("children", [this, id](context & c, std::span<value>) {
-        value list = c.make_array();
-        auto * items = static_cast<script::array_object *>(list.as_heap());
-        const auto txn = doc_->read();
-        for (const node_id child : txn.children(id)) {
-            if (txn.tag(child).has_value()) { items->items.push_back(wrap(c, child)); }
-        }
-        return list;
+        return make_live_collection(c, [this, id] {
+            const auto txn = doc_->read();
+            std::vector<node_id> found;
+            for (const node_id child : txn.children(id)) {
+                if (txn.tag(child).has_value()) { found.push_back(child); }
+            }
+            return found;
+        });
     });
 
     // `width` and `height` are numbers, and on a <canvas> they are the size of
