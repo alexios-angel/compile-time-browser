@@ -1,1 +1,6 @@
 # RUN: python3 %S/native-owned-global-maps.py --translate ctjs-translate --opt ctjs-opt --work %t
+
+# A published setter takes independently proved primitive actuals while the
+# sibling getter retains its zero-argument signature. Saved typed C++ callables
+# receive new keys after startup and retain the same Map after owner release.
+# Missing, extra, mixed and unproved actuals must preserve every source call.

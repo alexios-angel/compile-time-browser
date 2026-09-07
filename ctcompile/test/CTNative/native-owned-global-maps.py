@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute checked published methods sharing a captured Map without the VM."""
+"""Execute checked published Map methods and typed arguments without the VM."""
 
 import argparse
 import importlib.util
@@ -21,6 +21,30 @@ SHARED = SOURCE.replace("get() { return state.size; }",
     "get() { return state.size; }, set() { state.set('x', 1); return state.size; }")
 SHARED = SHARED.replace("var trace = host.slot.get();",
     "host.slot.set(); var trace = host.slot.get();")
+PARAMETER = SHARED.replace("set() { state.set('x', 1)", "set(key) { state.set(key, 1)")
+PARAMETER = PARAMETER.replace("host.slot.set();", "host.slot.set('x');")
+
+
+def parameter_sources():
+    return {
+        "shared_parameter": (PARAMETER, "host", 1),
+        "shared_parameter_repeated": (PARAMETER.replace("host.slot.set('x');",
+            "host.slot.set('x'); host.slot.set('y'); host.slot.set('x');"), "host", 2),
+        "shared_parameter_number": (PARAMETER.replace("host.slot.set('x');",
+            "host.slot.set(1); host.slot.set(2); host.slot.set(1);"), "host", 2),
+        "shared_parameter_bool": (PARAMETER.replace("host.slot.set('x');",
+            "host.slot.set(true); host.slot.set(false); host.slot.set(true);"), "host", 2),
+        "shared_parameter_alias": (PARAMETER.replace("set(key) { state.set(key, 1)",
+            "set(key) { const alias = key; state.set(alias, 1)"), "host", 1),
+        "shared_two_parameters": (PARAMETER.replace("set(key) { state.set(key, 1)",
+            "set(key, value) { state.set(key, value)").replace("host.slot.set('x');",
+            "host.slot.set('x', 1); host.slot.set('y', 2); host.slot.set('x', 3);"), "host", 2),
+    }
+
+
+def source_calls(text):
+    return [call.strip() for call in re.findall(
+        r"^\s*(?:%[-\w.$]+ = )?ctjs\.(call(?:_direct)? [^\n{]+)", text, re.M)]
 
 
 def contract(args, ir, name, binding="host"):
@@ -132,7 +156,7 @@ def shared_lifetime(args, cpp, name, mode, compiler):
     changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
     if count != 1:
         raise RuntimeError("shared lifetime harness needs exactly one entry")
-    changed = ("#include <memory>\n#include <vector>\n"
+    changed = ("#include <memory>\n#include <type_traits>\n#include <vector>\n"
                "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed)
     changed, count = re.subn(r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
         lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
@@ -146,6 +170,7 @@ int main() {
     auto table = owner->slot;
     auto setter = table->m_set;
     auto getter = table->m_get;
+    CHECK_SIGNATURE
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset();
@@ -159,11 +184,13 @@ int main() {
     }
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
         ctn_test_maps[0].lock() == ctn_test_maps[1].lock()) { return 92; }
-    if (setter() != 2 || getter() != 2 || g_host->slot->m_get() != 1) { return 93; }
+    BEFORE_FIRST
+    if (SAVED_FIRST != 2 || getter() != 2 || g_host->slot->m_get() != 1) { return 93; }
+    AFTER_FIRST
     for (int index = 0; index < 1024; ++index) {
-        if (setter() != index + 3 || getter() != index + 3 ||
+        if (SAVED_NEXT != index + 3 || getter() != index + 3 ||
             g_host->slot->m_get() != index + 1 ||
-            g_host->slot->m_set() != index + 2) { return 94; }
+            FRESH_NEXT != index + 2) { return 94; }
     }
     setter = {};
     if (ctn_test_maps[0].expired() || getter() != 1026) { return 95; }
@@ -183,6 +210,30 @@ int main() {
     return 0;
 }
 '''
+    if name == "shared_parameter":
+        # This is a typed C++ caller, not permission for arbitrary JS exports.
+        # New keys after startup must flow through the real formal. The Map
+        # also owns string bytes after the caller mutates its original buffer.
+        changed = changed.replace("CHECK_SIGNATURE", """
+    static_assert(std::is_same_v<decltype(setter), std::function<js_num(std::string)>>);
+    static_assert(!std::is_invocable_v<decltype(setter)>);
+    static_assert(!std::is_invocable_v<decltype(setter), int>);
+    static_assert(!std::is_invocable_v<decltype(setter), std::string, int>);
+""")
+        changed = changed.replace("BEFORE_FIRST", "std::string saved_key(96, 's');")
+        changed = changed.replace("SAVED_FIRST", "setter(saved_key)")
+        changed = changed.replace("AFTER_FIRST", """
+    saved_key.assign(96, 't');
+    if (setter(std::string(96, 's')) != 2 || getter() != 2) { return 100; }
+""")
+        changed = changed.replace("SAVED_NEXT", 'setter("saved-" + std::to_string(index))')
+        changed = changed.replace("FRESH_NEXT", 'g_host->slot->m_set("fresh-" + std::to_string(index))')
+    else:
+        for marker in ("CHECK_SIGNATURE", "BEFORE_FIRST", "AFTER_FIRST"):
+            changed = changed.replace(marker, "")
+        changed = changed.replace("SAVED_FIRST", "setter()")
+        changed = changed.replace("SAVED_NEXT", "setter()")
+        changed = changed.replace("FRESH_NEXT", "g_host->slot->m_set()")
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
@@ -206,6 +257,11 @@ def standalone(args, output, name, value, compilers, nm):
                 or "std::function<js_num()>" not in cpp or "ctnative::map_size(" not in cpp
                 or not re.search(r"std::shared_ptr<ctnative::method_\w+>\s+slot\s*;", cpp)):
             raise RuntimeError(f"{name}/{mode}: missing standalone Map/table/callable owners\n{cpp}")
+        if name in parameter_sources():
+            params = {"shared_parameter_number": "js_num", "shared_parameter_bool": "bool",
+                      "shared_two_parameters": "std::string, js_num"}.get(name, "std::string")
+            if f"std::function<js_num({params})>" not in cpp:
+                raise RuntimeError(f"{name}/{mode}: missing typed setter arguments\n{cpp}")
         source = args.work / f"{name}.{mode}.cpp"
         source.write_text(cpp)
         for index, compiler in enumerate(compilers):
@@ -217,7 +273,7 @@ def standalone(args, output, name, value, compilers, nm):
                 raise RuntimeError(f"{name}/{mode}: standalone result mismatch")
         if name in {"ordinary", "mutate_map", "growing"}:
             lifetime(args, cpp, name, mode, value, compilers[1])
-        if name == "shared_growing":
+        if name in {"shared_growing", "shared_parameter"}:
             shared_lifetime(args, cpp, name, mode, compilers[1])
 
 
@@ -256,6 +312,30 @@ def refusal_sources():
     }
 
 
+def parameter_refusals():
+    return {
+        "parameter_missing": PARAMETER + "\nhost.slot.set();",
+        "parameter_extra": PARAMETER + "\nhost.slot.set('y', 1);",
+        "parameter_heterogeneous": PARAMETER + "\nhost.slot.set(1);",
+        "parameter_object": PARAMETER.replace("host.slot.set('x');", "host.slot.set({});"),
+        "parameter_callback": PARAMETER.replace("host.slot.set('x');",
+            "host.slot.set(function() { return 'x'; });"),
+        "parameter_unproved": PARAMETER.replace("host.slot.set('x');", "host.slot.set(host.key);"),
+        "parameter_call_result": PARAMETER.replace("host.slot.set('x');",
+            "host.slot.set(host.slot.get());"),
+        "parameter_getter_extra": PARAMETER.replace("host.slot.get();", "host.slot.get('x');"),
+        "parameter_second_missing": parameter_sources()["shared_two_parameters"][0]
+                                    + "\nhost.slot.set('z');",
+        "parameter_second_heterogeneous": parameter_sources()["shared_two_parameters"][0]
+                                          + "\nhost.slot.set('z', true);",
+    }
+
+
+def check_call_preservation(original, output, name):
+    if source_calls(original) != source_calls(output):
+        raise RuntimeError(f"{name}: failed ownership changed live source call operands")
+
+
 def check_budgets(args, ir, config, name, functions=4):
     original = ir.read_text()
     signatures = re.findall(r"^\s*ctjs\.func (.*?) -> !ctjs.value attributes \{.*?"
@@ -279,6 +359,7 @@ def check_budgets(args, ir, config, name, functions=4):
             if re.findall(r"^\s*ctjs\.func (.*?) -> !ctjs.value attributes \{.*?"
                           r"upvalue_count = (\d+) : i32", text, re.M) != signatures:
                 raise RuntimeError(f"{name}/{budget}: leaked speculative capture/signature rewrites")
+            check_call_preservation(original, text, f"{name}/{budget}")
             for op, count in counts.items():
                 if len(re.findall(rf"\bctjs\.{op}\b", text)) != count:
                     raise RuntimeError(f"{name}/{budget}: leaked speculative {op} rewrites")
@@ -354,6 +435,7 @@ def main():
         "shared_three": (SHARED.replace("get() { return state.size; },",
                          "size() { return state.size; }, get() { return state.size; },")
                          + "\ntrace = host.slot.size();", "host", 1),
+        **parameter_sources(),
     }
     saved = {}
     for name, (source, binding, value) in positives.items():
@@ -416,6 +498,8 @@ def main():
     rollback += check_budgets(args, growing_ir, growing_config, "growing")
     shared_ir, shared_config, _ = saved["shared_growing"]
     rollback += check_budgets(args, shared_ir, shared_config, "shared_growing", functions=5)
+    parameter_ir, parameter_config, parameter_output = saved["shared_parameter"]
+    rollback += check_budgets(args, parameter_ir, parameter_config, "shared_parameter", functions=5)
 
     for name, source in refusal_sources().items():
         _, rejected, _ = boundary.prepare(args, name, source)
@@ -449,28 +533,46 @@ def main():
         "shared_return_map": SHARED.replace("get() { return state.size; }", "get() { return state; }"),
         "shared_rewrite": SHARED + "\nhost.slot.set = function() { return 1; };",
         "shared_detached": SHARED + "\nvar saved = host.slot.set;",
-        "shared_parameter": SHARED.replace("set() { state.set('x', 1)", "set(key) { state.set(key, 1)")
-                            .replace("host.slot.set();", "host.slot.set('x');"),
     }
     for name, source in shared_refusals.items():
-        js, rejected, count = boundary.prepare(args, name, source)
+        _, rejected, _ = boundary.prepare(args, name, source)
         fresh = contract(args, rejected, name)
-        if name == "shared_parameter":
-            if count != 5 or (
-                    host.run([node, "-e", boundary.NODE, str(js)]).stdout != "trace=1\n"
-                    or host.run([str(reference), str(js)]).stdout != "trace=1\n"):
-                raise RuntimeError("shared_parameter: next source boundary changed")
-            methods.refused(args, rejected, name, fresh, admitted=0)
-        else:
-            methods.refused(args, rejected, name, fresh)
+        methods.refused(args, rejected, name, fresh)
+    for name, source in parameter_refusals().items():
+        _, rejected, count = boundary.prepare(args, name, source)
+        fresh = contract(args, rejected, name)
+        failed = methods.refused(args, rejected, name, fresh, admitted=0 if count == 5 else None)
+        check_call_preservation(rejected.read_text(), failed.read_text(), name)
+        if name == "parameter_heterogeneous":
+            forged = args.work / "parameter-forged.mlir"
+            forged.write_text(methods.forge_reports(rejected.read_text()))
+            forged_config = contract(args, forged, "parameter-forged")
+            failed = methods.refused(args, forged, "parameter-forged", forged_config, admitted=0)
+            check_call_preservation(forged.read_text(), failed.read_text(), "parameter-forged")
     boundary.native(args, shared_ir, "shared-no-manifest", 5)
     methods.refused(args, shared_ir, "shared-no-intrinsic",
                     owned.contract(args, shared_ir, "shared-no-intrinsic"), admitted=0)
+    boundary.native(args, parameter_ir, "parameter-no-manifest", 5)
+    methods.refused(args, parameter_ir, "parameter-no-intrinsic",
+                    owned.contract(args, parameter_ir, "parameter-no-intrinsic"), admitted=0)
+    stale_parameter = args.work / "parameter-stale.mlir"
+    text, count = re.subn(r'#ctjs\.string<"x">', '#ctjs.string<"y">', parameter_ir.read_text())
+    if count != 1:
+        raise RuntimeError("parameter-stale: lost the live string actual")
+    stale_parameter.write_text(text)
+    failed = methods.refused(args, stale_parameter, "parameter-stale", parameter_config,
+                             reason="fingerprint mismatch", admitted=0)
+    check_call_preservation(text, failed.read_text(), "parameter-stale")
+    rerun = owned.lower(args, parameter_output, "parameter-rerun", parameter_config, cleanup=False)
+    text = methods.census(rerun, 5, "parameter-rerun", admitted=5)
+    if "ctnative.host_owner_proved = false" not in text or "fingerprint mismatch" not in text:
+        raise RuntimeError("parameter-rerun: prepared argument signature reused source authority")
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
           "Node/interpreter/GCC/Clang explicit+deduced and Map/table/callable lifetime pass; "
           f"{len(refusal_sources())} source refusals and contract/rerun/budget controls pass; "
           f"three carrier refusals and {len(shared_refusals)} shared-method refusals; "
-          "parameterized setter remains 0/5 with Node/interpreter trace=1; "
+          f"{len(parameter_refusals())} argument refusals preserve current call operands; "
+          "typed parameterized setters 5/5 with changing source and saved-callable keys; "
           f"{len(rollback)} speculative rollback cutoffs")
 
 
