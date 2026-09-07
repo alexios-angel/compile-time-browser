@@ -489,6 +489,30 @@ private:
     // engine parse a 270-row table's declaration to get at `document`.
     [[nodiscard]] value reflected_get(context & cx, const void * row);
     [[nodiscard]] value reflected_set(context & cx, const void * row, std::span<value> args);
+
+    // --- attributes as nodes: Attr, and the NamedNodeMap over them ---------
+    //
+    // A qualified name as THIS element would have stored it: lowercased for an
+    // HTML element and left exactly as written for anything else. It is the
+    // only difference between `getAttribute` and `getAttributeNS`, and it is
+    // why `svg.setAttribute("viewBox", ...)` must not fold.
+    [[nodiscard]] atom attribute_key(const read_txn & txn, node_id id,
+                                     std::string_view qualified) const;
+    // ONE Attr, LIVE: `value`, `nodeValue` and `textContent` read and write the
+    // element's attribute rather than a string captured when it was made.
+    [[nodiscard]] value attribute_object(context & cx, node_id owner, const attribute & held);
+    // `element.attributes`, refilled in place so the map keeps its identity.
+    void refresh_attribute_map(context & cx, script::object_object & map, node_id id);
+    // `element.dataset` - a DOMStringMap over the `data-*` attributes. Its own
+    // function rather than more of install_element_views because it is
+    // CONDITIONAL: only an HTML, SVG or MathML element has one.
+    void install_dataset(context & cx, script::object_object & obj, node_id id);
+    // DOM 4.9 "validate and extract", shared by setAttributeNS and
+    // setNamedItemNS. False HAVING ALREADY THROWN - InvalidCharacterError for a
+    // name that is not a QName, NamespaceError for the four prefix rules.
+    [[nodiscard]] bool validate_and_extract(context & cx, std::string_view where,
+                                            const std::string & ns, const std::string & qualified);
+
     // Parallel to the static interface table in element.cpp: one prototype per
     // row, in the same order, so a tag resolves to a prototype by index.
     std::vector<value> interface_prototypes_;
