@@ -1062,12 +1062,17 @@ constexpr std::string_view math_names[] = {"clamp(", "atan2(", "hypot(", "round(
            c == '_';
 }
 
-[[nodiscard]] std::string_view math_name_at(std::string_view value, std::size_t at) noexcept {
+[[nodiscard]] std::string_view name_at(std::string_view value, std::size_t at,
+                                       std::span<const std::string_view> names) noexcept {
     if (at != 0 && is_name_char(value[at - 1])) { return {}; }
-    for (const std::string_view name : math_names) {
+    for (const std::string_view name : names) {
         if (ascii_iequals(value.substr(at, name.size()), name)) { return name; }
     }
     return {};
+}
+
+[[nodiscard]] std::string_view math_name_at(std::string_view value, std::size_t at) noexcept {
+    return name_at(value, at, math_names);
 }
 
 // ONE PAST THE END OF THE STRING THAT STARTS AT `at`, or `at` itself when no
@@ -1223,6 +1228,100 @@ struct function_span {
     return span_of(body, 0, calc).end == body.size();
 }
 
+// Is `text` exactly one math function and nothing else, and which one?
+[[nodiscard]] std::string_view lone_math_function(std::string_view text) {
+    const std::string_view name = math_name_at(text, 0);
+    if (name.empty() || span_of(text, 0, name).end != text.size()) { return {}; }
+    return name;
+}
+
+// THE FUNCTIONS WHOSE EVERY ARGUMENT IS AN <angle>, and the one place this file
+// can type a math function by WHERE IT SITS rather than by what is in it.
+//
+// A math function's type has to fit its surroundings and nothing here models the
+// grammar of `transform` or `filter`, so all three of `rotate(min(0px))` -
+// turning by a length - `rotate(tan(45deg))` - turning by a number - and
+// `rotate(atan2(90px, 100%))` - turning by a ratio whose percentage has nothing
+// to resolve against - were stored as written. They are sixteen assertions and,
+// between them, the LAST failure in each of `minmax-angle-invalid`,
+// `sin-cos-tan-invalid` and `acos-asin-atan-atan2-invalid`.
+//
+// <zero> IS WHY ONLY A MATH FUNCTION IS JUDGED. CSS Transforms 1 spells it
+// `rotate( [ <angle> | <zero> ] )`, so `rotate(0)` is a rotation by nothing and
+// `rotate(min(0))` is a syntax error, and the difference is exactly whether a
+// function was written.
+//
+// `rotate3d()` is deliberately absent: three of its four arguments are numbers
+// and only the last is an angle, so it is a different rule and not this one.
+constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(", "rotatez(",
+                                                "skew(",   "skewx(",   "skewy(",   "hue-rotate("};
+
+// Every comma-separated argument of `body`, at bracket depth zero and with
+// quoted runs skipped.
+[[nodiscard]] std::vector<std::string_view> top_level_arguments(std::string_view body) {
+    std::vector<std::string_view> args;
+    std::size_t start = 0;
+    int depth = 0;
+    for (std::size_t i = 0; i < body.size(); ++i) {
+        if (const std::size_t quoted = end_of_string_at(body, i); quoted != i) {
+            i = quoted - 1;
+            continue;
+        }
+        if (body[i] == '(') { ++depth; }
+        if (body[i] == ')') { --depth; }
+        if (depth == 0 && body[i] == ',') {
+            args.push_back(body.substr(start, i - start));
+            start = i + 1;
+        }
+    }
+    args.push_back(body.substr(start));
+    return args;
+}
+
+[[nodiscard]] bool has_percentage(std::string_view text) {
+    const token_stream ts = tokenize(text);
+    for (const css_token & t : ts.tokens) {
+        if (t.type == token_type::percentage) { return true; }
+    }
+    return false;
+}
+
+[[nodiscard]] bool angle_arguments_ok(std::string_view value) {
+    const length_context ctx;
+    std::size_t at = 0;
+    while (at < value.size()) {
+        if (const std::size_t quoted = end_of_string_at(value, at); quoted != at) {
+            at = quoted;
+            continue;
+        }
+        const std::string_view name = name_at(value, at, angle_functions);
+        if (name.empty()) {
+            ++at;
+            continue;
+        }
+        const function_span span = span_of(value, at, name);
+        const std::size_t from = at + name.size();
+        const std::string_view body = value.substr(from, span.end - from - (span.closed ? 1 : 0));
+        for (const std::string_view arg : top_level_arguments(body)) {
+            const std::string_view one = trim(arg, html_whitespace);
+            if (lone_math_function(one).empty()) { continue; }
+            // A percentage would have to be a percentage of an angle, and there
+            // is no such thing. This is the same rule the evaluator applies to a
+            // percentage in an expression that ANSWERS with an angle; here the
+            // expression need not have an answer at all - `atan2(90px, 100%)`
+            // has none - and the position alone settles it.
+            if (has_percentage(one)) { return false; }
+            const math_answer answer = evaluate_math(one, ctx);
+            if (answer.outcome == math_outcome::resolved &&
+                answer.value.type != numeric_type::angle) {
+                return false;
+            }
+        }
+        at = span.end;
+    }
+    return true;
+}
+
 } // namespace
 
 std::string simplify_math(std::string_view value) {
@@ -1284,6 +1383,9 @@ std::string simplify_math(std::string_view value) {
 }
 
 bool math_syntax_ok(std::string_view value) {
+    // ...AND OF THE RIGHT KIND FOR WHERE IT SITS, which for the angle-only
+    // functions is a question about position rather than about contents.
+    if (!angle_arguments_ok(value)) { return false; }
     // The bases do not matter to a syntax question - `1em` is well formed at any
     // font size - so this asks with the defaults rather than making every caller
     // invent a context it has no use for.

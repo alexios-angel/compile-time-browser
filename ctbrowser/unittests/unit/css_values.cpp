@@ -365,6 +365,33 @@ void test_a_percentage_needs_a_context() {
     ok("width", "calc(50% + 1px)", "calc(50% + 1px)");
 }
 
+// A MATH FUNCTION IS TYPED BY WHERE IT SITS, and `rotate()` is the one position
+// this file can say so from without a grammar for `transform` or `filter`.
+// `minmax-angle-invalid`, `sin-cos-tan-invalid` and `acos-asin-atan-atan2-invalid`
+// end on these sixteen assertions between them, one shape each: a rotation by a
+// length, by a number, and by a ratio with a percentage in it.
+void test_the_angle_functions_take_an_angle() {
+    bad("transform", "rotate(min(0px))");
+    bad("transform", "rotate(min(0))");
+    bad("transform", "rotate(max(0fr))");
+    bad("transform", "rotate(tan(45deg ))"); // tan() answers with a <number>
+    bad("transform", "rotate(atan2(90px, 100%))");
+    bad("transform", "skew(min(1px), 45deg)");
+    bad("filter", "hue-rotate(min(1px))");
+
+    // <zero> IS WHY ONLY A MATH FUNCTION IS JUDGED. `rotate( [ <angle> | <zero> ] )`
+    // is CSS Transforms 1's own spelling, so a literal `0` is a rotation.
+    ok("transform", "rotate(0)", "rotate(0)");
+    ok("transform", "rotate(45deg)", "rotate(45deg)");
+    ok("transform", "rotate(calc(45deg + 45deg))", "rotate(calc(90deg))");
+    ok("transform", "rotate(atan2(1, 1))", "rotate(calc(45deg))");
+    ok("filter", "hue-rotate(90deg)", "hue-rotate(90deg)");
+    // ...and a function with no answer here is not a function with a wrong type.
+    ok("transform", "rotate(calc(1deg + 1cqw))", "rotate(calc(1deg + 1cqw))");
+    // Nothing outside the angle-only functions is touched by the rule.
+    ok("transform", "translate(min(10px, 5%))", "translate(min(10px, 5%))");
+}
+
 void test_important_and_the_empty_value() {
     // `!important` is a DECLARATION's business, never a value's. CSSOM's
     // setProperty takes the priority as its own argument, and the IDL setter
@@ -504,6 +531,7 @@ int main() {
     test_a_math_function_is_simplified_wherever_it_sits();
     test_the_percentage_half_of_simplification();
     test_a_percentage_needs_a_context();
+    test_the_angle_functions_take_an_angle();
     test_important_and_the_empty_value();
     test_a_custom_property_takes_anything_that_tokenises();
     test_the_two_spellings_of_one_property();
