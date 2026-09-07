@@ -399,7 +399,38 @@ int main() {
     accepted("class B {} class C extends B { m() { return super.toString; } }");
 
     // ================================================================
-    // 15. WHAT IS STILL ACCEPTED, ON PURPOSE
+    // 15. A DESTRUCTURING ASSIGNMENT IS A PATTERN, NOT A LITERAL - 13.15.5
+    // ================================================================
+    // An ArrayLiteral or ObjectLiteral on the left of `=` is REINTERPRETED as a
+    // pattern, and the reinterpretation is not total: every element has to be
+    // something a value can be assigned to, or another pattern.
+    refused("[[(x, y)]] = [[]];");
+    refused("[1] = [];");
+    refused("[a?.b] = [];");
+    refused("({ x: { get x() {} } } = { x: {} });");
+    // A rest element is last and has no default, in a pattern as in a
+    // parameter list.
+    refused("[...x = 1] = [];");
+    refused("var rest, b; ({ ...rest, b } = {});");
+
+    accepted("var a, b; ({ x: a, y: b } = { x: 1, y: 2 });");
+    accepted("var a, r; ({ a, ...r } = { a: 1, b: 2 });");
+    accepted("var a, o = { p: 0 }; [o.p, a] = [1, 2];");
+    accepted("var a, b; [a = 1, b = 2] = [];");
+    accepted("var a; [, a] = [1, 2];");
+    accepted("var o = {}; ({ a: o.x = 1 } = {});");
+    // A SPREAD IN A LITERAL IS NOT A REST ELEMENT and none of this applies to
+    // it - `[...a, 1]` and `{ ...b, c: 1 }` are ordinary constructions.
+    accepted("var a = [1], b = { p: 1 }; var c = [...a, 2]; var d = { ...b, q: 2 };");
+
+    // A QUOTED `__proto__` NAMES THE SAME THING a plain one does, and a
+    // COMPUTED one does not - the difference survives only in the source, since
+    // the parser gives both the same shape.
+    refused("({ __proto__: 1, '__proto__': 2 });");
+    accepted("var o = { ['__proto__']: 1, __proto__: null };");
+
+    // ================================================================
+    // 16. WHAT IS STILL ACCEPTED, ON PURPOSE
     // ================================================================
     // Each of these is an early error in STRICT mode and legal sloppy
     // JavaScript, and this engine has no strict mode. They are here so that

@@ -975,15 +975,53 @@ private:
     // `__proto__` properties, because each of them would set the prototype.
     // A shorthand, a method, an accessor and a computed key are all excluded -
     // none of them is the prototype-setting form.
+    // IS THIS PROPERTY'S NAME `__proto__`? Written plainly, or QUOTED: the rule
+    // is about the PropName, and `'__proto__': null` names the same thing that
+    // `__proto__: null` does. Only a COMPUTED key is exempt, because its name is
+    // not known until it is evaluated.
+    //
+    // The parser routes a quoted key down the same slot a computed one uses -
+    // `d` bit 0 set, `a` holding the literal - so the two are told apart by
+    // what is in `a`. A key with an escape in it is left alone rather than
+    // cooked here: missing one is a miss, and cooking it wrongly would be a
+    // refusal of source nobody wrote.
+    [[nodiscard]] bool names_proto(const vp::node & prop) const {
+        if ((prop.d & 1) == 0) { return prop.text == "__proto__"; }
+        const vp::node & key = at(prop.a);
+        if (key.kind != nk::str || key.text.size() < 2) { return false; }
+        if (bracketed(prop.a)) { return false; }
+        const std::string_view inner = key.text.substr(1, key.text.size() - 2);
+        return inner == "__proto__";
+    }
+
+    // IS THIS KEY IN BRACKETS? The parser gives a QUOTED key and a COMPUTED one
+    // the same shape - `d` bit 0 set and `a` holding the expression - and for a
+    // computed key that happens to be a string literal the two are identical in
+    // the tree. `{ '__proto__': null }` sets the prototype and
+    // `{ ['__proto__']: null }` defines an ordinary property, so the difference
+    // decides whether the duplicate rule applies at all, and the only place it
+    // survives is the source.
+    [[nodiscard]] bool bracketed(std::int32_t key) const {
+        const std::size_t where = offset_of(key);
+        if (where == early_error::nowhere) { return false; }
+        for (std::size_t i = where; i-- > 0;) {
+            const char c = source_[i];
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f') {
+                continue;
+            }
+            return c == '[';
+        }
+        return false;
+    }
+
     void check_proto_duplicates(std::int32_t idx) {
         std::size_t seen = 0;
         std::int32_t second = -1;
         for (const std::int32_t p : kids(at(idx))) {
             const vp::node & prop = at(p);
             if (prop.kind != nk::prop) { continue; }
-            const bool computed = (prop.d & 1) != 0;
             const bool plain_data = prop.c != 1 && prop.c != 2 && prop.c != 3;
-            if (computed || !plain_data || prop.text != "__proto__") { continue; }
+            if (!plain_data || !names_proto(prop)) { continue; }
             ++seen;
             if (seen == 2) { second = p; }
         }
@@ -1119,6 +1157,39 @@ private:
     // pattern, or a real pattern node. Nothing inside one is an assignment, so
     // the assignment-target rules do not apply to its elements - but the
     // DEFAULTS inside it are ordinary expressions and are walked.
+    // ONE ELEMENT OF A DESTRUCTURING ASSIGNMENT, checked as the target it has
+    // to be.
+    //
+    // 13.15.5 reinterprets an ArrayLiteral or an ObjectLiteral on the left of
+    // `=` as a pattern, and the reinterpretation is not total: every element
+    // has to be something a value can be assigned to, or another pattern.
+    // `[[(x, y)]] = [[]]` parses as two array literals and is not one.
+    //
+    // Only for the LITERAL forms. `array_pattern` and `object_pattern` are what
+    // the parser builds in a DECLARATION, where it has already restricted each
+    // position to a name or a nested pattern - there is nothing left to check
+    // and asking would only find the parser's own shapes.
+    void check_pattern_target(std::int32_t idx) {
+        if (idx < 0) { return; } // an elision: `[, a] = xs` skips a position
+        switch (at(idx).kind) {
+        case nk::ident:
+        case nk::member:
+        case nk::index:
+        case nk::array:
+        case nk::object:
+        case nk::array_pattern:
+        case nk::object_pattern: return;
+        // A default: `[a = 1] = []`. Only `=` - `[a += 1] = []` is not one.
+        case nk::assign:
+            if (at(idx).text != "=") { break; }
+            check_pattern_target(at(idx).a);
+            return;
+        case nk::assign_pattern: return;
+        default: break;
+        }
+        report("this is not something a value can be assigned to in a destructuring pattern", idx);
+    }
+
     void walk_pattern(std::int32_t idx) {
         if (idx < 0) { return; }
         const vp::node & n = at(idx);
@@ -1126,22 +1197,58 @@ private:
         case nk::array:
         case nk::array_pattern: {
             const std::span<const std::int32_t> elements = kids(n);
+            const bool literal = n.kind == nk::array;
             for (std::size_t i = 0; i < elements.size(); ++i) {
-                // 13.15.5.1 / 8.2.2: a rest element must be the last one.
-                if (at(elements[i]).kind == nk::rest_element && i + 1 < elements.size()) {
+                const vp::node & element = at(elements[i]);
+                const bool rest = element.kind == nk::rest_element || element.kind == nk::spread;
+                // 13.15.5.1 / 8.2.2: a rest element must be the last one, and
+                // it may not carry a default - `[...x = 1] = []` is not a
+                // pattern with a defaulted rest, it is an error.
+                if (rest && i + 1 < elements.size()) {
                     report("a rest element must be the last one in the pattern", elements[i]);
                 }
-                if (at(elements[i]).kind == nk::spread && i + 1 < elements.size()) {
-                    report("a rest element must be the last one in the pattern", elements[i]);
+                if (rest && at(element.a).kind == nk::assign) {
+                    report("a rest element may not have a default", elements[i]);
                 }
+                if (literal) { check_pattern_target(rest ? element.a : elements[i]); }
                 walk_pattern(elements[i]);
             }
             return;
         }
         case nk::object:
-        case nk::object_pattern:
-            for (const std::int32_t entry : kids(n)) { walk_pattern(entry); }
+        case nk::object_pattern: {
+            const std::span<const std::int32_t> entries = kids(n);
+            const bool literal = n.kind == nk::object;
+            for (std::size_t i = 0; i < entries.size(); ++i) {
+                const vp::node & entry = at(entries[i]);
+                if (entry.kind == nk::spread || entry.kind == nk::rest_element) {
+                    if (i + 1 < entries.size()) {
+                        report("a rest element must be the last one in the pattern", entries[i]);
+                    }
+                    if (at(entry.a).kind == nk::assign) {
+                        report("a rest element may not have a default", entries[i]);
+                    }
+                    if (literal) { check_pattern_target(entry.a); }
+                } else if (literal && entry.kind == nk::prop) {
+                    // A METHOD OR AN ACCESSOR IS NOT AN AssignmentProperty.
+                    // `({ x: { get x() {} } } = o)` reads as an object literal
+                    // right up to the `=`, and only then is it a pattern -
+                    // which a getter cannot be part of.
+                    // c == 1 IS A METHOD AND c == 3 AN ACCESSOR; c == 2 is a
+                    // SHORTHAND, which is the commonest pattern element there
+                    // is. The three numbers do not mean the same thing on a
+                    // class member, where 2 is the accessor - checking the
+                    // wrong one here reported `({ x } = o)`.
+                    if (entry.c == 1 || entry.c == 3) {
+                        report("a method cannot appear in a destructuring pattern", entries[i]);
+                    } else if (entry.b >= 0) {
+                        check_pattern_target(entry.b);
+                    }
+                }
+                walk_pattern(entries[i]);
+            }
             return;
+        }
         case nk::prop:
             if ((n.d & 1) != 0) { walk_expression(n.a); }
             walk_pattern(n.b);
