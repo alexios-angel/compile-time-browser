@@ -108,7 +108,12 @@ void test_the_things_that_must_survive() {
     ok("width", "var(--w)", "var(--w)");            // substitution defers the answer
     ok("width", "calc(100% - 10px)", "calc(100% - 10px)");
     ok("width", "clamp(1rem, 2vw, 3rem)", "clamp(1rem, 2vw, 3rem)");
-    ok("width", "min(10px,5%)", "min(10px, 5%)"); // a comma always gets its space
+    // THE AUTHOR'S BYTES for anything the grammar does not model, spacing and
+    // all. `test_valid_value` asserts the round-trip exactly, and normalising a
+    // value whose grammar is unknown turned two passing `css-values` files into
+    // failing ones on 2026-09-07.
+    ok("width", "min(10px,5%)", "min(10px,5%)");
+    ok("font-family", "random-item(auto ,serif)", "random-item(auto ,serif)");
     ok("font-family", "\"Helvetica Neue\", sans-serif", "\"Helvetica Neue\", sans-serif");
     // An UNKNOWN property is stored, not refused: CSSOM lets a page set one.
     ok("-webkit-line-clamp", "3", "3");
@@ -147,6 +152,20 @@ void test_important_and_the_empty_value() {
     // The value is still validated with the priority removed, not before it.
     CHECK(!check_declaration("width", "100 !important", true).valid);
     CHECK(supports_condition("(width: 10px !important)"));
+    // A FUNCTION THIS ENGINE CANNOT EVALUATE IS NOT SUPPORT, even though
+    // `el.style` still stores the value. Five `css/css-values` files guard
+    // their assertions on `CSS.supports` and went from passing vacuously to
+    // running and failing when this said yes to everything.
+    CHECK(!supports_declaration("content", "attr(data-foo)"));
+    CHECK(!supports_declaration("font-family", "random-item(auto, serif)"));
+    CHECK(!supports_declaration("background-color", "var(--x type(*))"));
+    CHECK(supports_declaration("width", "var(--w)"));
+    CHECK(supports_declaration("width", "calc(1px + 2px)"));
+    CHECK(supports_declaration("background-color", "rgb(1, 2, 3)"));
+    // ...and the value is still STORED, which is the difference between the two
+    // questions this file answers.
+    CHECK(check_declaration("content", "attr(data-foo)").valid);
+    CHECK(check_declaration("content", "attr(data-foo)").uses_unknown_function);
     // An empty value is reported invalid because both callers want the same
     // thing from it - store nothing - and `el.style.width = ""` is how a page
     // removes a declaration.
@@ -220,6 +239,20 @@ void test_css_supports() {
     CHECK(!supports_condition(""));
     // `!important` is part of a <declaration> and does not change the answer.
     CHECK(supports_condition("(width: 10px !important)"));
+    // A FUNCTION THIS ENGINE CANNOT EVALUATE IS NOT SUPPORT, even though
+    // `el.style` still stores the value. Five `css/css-values` files guard
+    // their assertions on `CSS.supports` and went from passing vacuously to
+    // running and failing when this said yes to everything.
+    CHECK(!supports_declaration("content", "attr(data-foo)"));
+    CHECK(!supports_declaration("font-family", "random-item(auto, serif)"));
+    CHECK(!supports_declaration("background-color", "var(--x type(*))"));
+    CHECK(supports_declaration("width", "var(--w)"));
+    CHECK(supports_declaration("width", "calc(1px + 2px)"));
+    CHECK(supports_declaration("background-color", "rgb(1, 2, 3)"));
+    // ...and the value is still STORED, which is the difference between the two
+    // questions this file answers.
+    CHECK(check_declaration("content", "attr(data-foo)").valid);
+    CHECK(check_declaration("content", "attr(data-foo)").uses_unknown_function);
 }
 
 } // namespace

@@ -241,9 +241,12 @@ int main() {
     js_expect("(function(){var a=[1];Object.defineProperty(a,'0',{value:5,writable:false});"
               "a[0]=9;return a[0];})()",
               "9");
-    // A native's `length` is not recorded anywhere - a native_fn takes a span -
-    // so the property is ABSENT rather than wrong.
-    js_expect("Object.getOwnPropertyDescriptor(Object.keys,'length')", "undefined");
+    // A native's `length` USED TO BE absent - a native_fn takes a span and
+    // records no arity - and it is now installed at each call site from the
+    // specification's clause for that method. `Object.keys.length` is 1.
+    js_expect("Object.keys.length", "1");
+    js_expect("Object.getOwnPropertyDescriptor(Object.keys,'length').writable", "false");
+    js_expect("Object.getOwnPropertyDescriptor(Object.keys,'length').configurable", "true");
 
     // Native constructors retain accessor descriptors rather than silently
     // leaving the previous data property in place (Bootstrap's Array.from).

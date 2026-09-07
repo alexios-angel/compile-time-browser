@@ -59,7 +59,57 @@ constexpr std::array<std::string_view, 22> math_functions{
 // A value containing one of these is valid by construction: what it means is
 // not known until substitution, so the declaration survives parsing with its
 // tokens intact. CSS Variables 1 §3.
+// A value holding one of these is valid by construction: what it means is not
+// known until substitution, so the declaration survives parsing with its tokens
+// intact. CSS Variables 1 §3.
+//
+// `attr()` IS IN THIS LIST AND NOT IN `performed_substitutions` below, and the
+// split is the point: it is a substitution in the specification, so a
+// declaration using one is not a syntax error and must survive - and this engine
+// does not PERFORM it, so `CSS.supports` has to say no.
 constexpr std::array<std::string_view, 3> substitution_functions{"var", "env", "attr"};
+constexpr std::array<std::string_view, 2> performed_substitutions{"var", "env"};
+
+// THE VALUE FUNCTIONS THIS ENGINE IMPLEMENTS, beside the math ones and the two
+// substitutions. `CSS.supports` is "would this declaration be dropped", and a
+// value calling a function nothing here can evaluate WOULD be - so answering
+// true for `attr()`, `random-item()` or `type(*)` is a lie, and a measured one:
+// five `css/css-values` files guard their assertions on `CSS.supports` and went
+// from passing vacuously to running and failing when this function first
+// existed and said yes to everything (2026-09-07).
+//
+// AN ALLOW-LIST rather than a list of what is missing, because the missing set
+// is the whole of CSS Values 5 and grows every month while this one grows only
+// when the engine does. It costs a false NEGATIVE - a page asking about a
+// function the engine handles but this list has not caught up with - which makes
+// a test skip rather than lie.
+constexpr std::array<std::string_view, 27> value_functions{"rgb",
+                                                           "rgba",
+                                                           "hsl",
+                                                           "hsla",
+                                                           "hwb",
+                                                           "color",
+                                                           "url",
+                                                           "src",
+                                                           "linear-gradient",
+                                                           "radial-gradient",
+                                                           "conic-gradient",
+                                                           "translate",
+                                                           "translatex",
+                                                           "translatey",
+                                                           "translate3d",
+                                                           "rotate",
+                                                           "scale",
+                                                           "scalex",
+                                                           "scaley",
+                                                           "skew",
+                                                           "matrix",
+                                                           "matrix3d",
+                                                           "perspective",
+                                                           "cubic-bezier",
+                                                           "steps",
+                                                           "counter",
+                                                           "format"};
 
 [[nodiscard]] bool in_list(std::span<const std::string_view> list, std::string_view name) {
     return std::any_of(list.begin(), list.end(),
@@ -334,39 +384,17 @@ constexpr property_syntax table[] = {
     return out.empty() ? "0" : out;
 }
 
-// The token stream put back together with ONE space where whitespace was, a
-// space after every comma and none before one. That is not a full CSSOM
-// serialisation - it does not rebuild functions or reorder anything - but it is
-// idempotent, which is what `test_valid_value`'s round-trip half checks: set
-// the value that came back and get the same string again.
-[[nodiscard]] std::string serialize_tokens(const token_stream & ts) {
-    std::string out;
-    bool pending_space = false;
-    for (const css_token & t : ts.tokens) {
-        if (t.type == token_type::eof) { break; }
-        if (t.type == token_type::whitespace) {
-            pending_space = !out.empty();
-            continue;
-        }
-        if (t.type == token_type::close_paren || t.type == token_type::close_square ||
-            t.type == token_type::comma) {
-            pending_space = false;
-        }
-        if (pending_space) { out += ' '; }
-        pending_space = false;
-        out += ts.text_of(t);
-        if (t.type == token_type::comma) { pending_space = true; }
-    }
-    return out;
-}
-
 // --- the value grammar ---------------------------------------------------
 
 struct scan {
     std::vector<std::size_t> significant; // indices of the non-whitespace tokens
     bool malformed = false;               // a bad string/url, or unbalanced brackets
     bool important = false;               // a `!` delim; `!important` is not a value
-    bool substituted = false;             // holds a var()/env()/attr()
+    bool substituted = false;             // holds a var()/env()
+    // A function whose NAME this engine does not implement. Only `CSS.supports`
+    // reads it: `el.style` still stores such a value, because CSSOM says a page
+    // may set a property this engine has never heard of and read it back.
+    bool unknown_function = false;
 };
 
 [[nodiscard]] scan scan_tokens(const token_stream & ts) {
@@ -381,7 +409,12 @@ struct scan {
         }
         if (t.type == token_type::delim && ts.text_of(t) == "!") { out.important = true; }
         if (t.type == token_type::function) {
-            if (in_list(substitution_functions, function_name(ts, t))) { out.substituted = true; }
+            const std::string_view fn = function_name(ts, t);
+            if (in_list(substitution_functions, fn)) { out.substituted = true; }
+            if (!in_list(performed_substitutions, fn) && !in_list(math_functions, fn) &&
+                !in_list(value_functions, fn)) {
+                out.unknown_function = true;
+            }
             ++depth;
         } else if (t.type == token_type::open_paren || t.type == token_type::open_square ||
                    t.type == token_type::open_curly) {
@@ -508,9 +541,17 @@ value_check check_declaration(std::string_view property, std::string_view value,
     const scan found = scan_tokens(ts);
     if (found.malformed || found.important || found.significant.empty()) { return {}; }
 
-    const auto yes = [important](std::string serialized) {
-        return value_check{true, std::move(serialized), important};
+    const auto yes = [important, &found](std::string serialized) {
+        return value_check{true, std::move(serialized), important, found.unknown_function};
     };
+    // THE AUTHOR'S BYTES, for every value this file does not model. A
+    // re-serialised token stream is not the same string - `random-item(auto
+    // ,serif)` comes back as `random-item(auto, serif)` - and `test_valid_value`
+    // asserts the round-trip exactly, so normalising a value whose grammar is
+    // unknown converts a passing test into a failing one for no gain. Two
+    // `css/css-values` files measured that on 2026-09-07. Canonicalisation is
+    // for the values the table DOES model, where it is the whole point.
+    const std::string verbatim{text};
 
     // A CSS-WIDE KEYWORD is valid for every property, including one this table
     // has never heard of, and serialises lowercased.
@@ -529,13 +570,13 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // AN UNKNOWN PROPERTY IS STORED, NOT REFUSED. CSSOM says a page may set one
     // and read it back; refusing here would be a behaviour change for every
     // property this table has not reached yet, and the corpora write several.
-    if (p == nullptr) { return yes(serialize_tokens(ts)); }
+    if (p == nullptr) { return yes(verbatim); }
 
     // A value holding var()/env()/attr() is valid by construction - what it
     // means is not known until substitution.
-    if (found.substituted) { return yes(serialize_tokens(ts)); }
+    if (found.substituted) { return yes(verbatim); }
 
-    if (p->kind == k::freeform) { return yes(serialize_tokens(ts)); }
+    if (p->kind == k::freeform) { return yes(verbatim); }
 
     if (found.significant.size() == 1) {
         const css_token & only = ts.tokens[found.significant.front()];
@@ -550,9 +591,7 @@ value_check check_declaration(std::string_view property, std::string_view value,
 
     // A math function over the whole value, kept as written: `calc.cpp` owns
     // the evaluation and has a third answer besides folded and invalid.
-    if (p->kind != k::keyword_only && whole_value_is_math(ts, found)) {
-        return yes(serialize_tokens(ts));
-    }
+    if (p->kind != k::keyword_only && whole_value_is_math(ts, found)) { return yes(verbatim); }
     return {};
 }
 
@@ -563,7 +602,15 @@ bool supports_declaration(std::string_view property, std::string_view value) {
     // §5 of CSS Conditional 3 is "would the declaration be dropped".
     if (property.starts_with("--")) { return !trim(value, html_whitespace).empty(); }
     if (find_property(property) == nullptr) { return false; }
-    return check_declaration(property, value).valid;
+    // `allow_important` is true because `@supports (color: red !important)` is a
+    // <declaration> and the priority does not change the answer.
+    const value_check checked = check_declaration(property, value, true);
+    // ...AND A FUNCTION THIS ENGINE CANNOT EVALUATE IS NOT SUPPORT. `el.style`
+    // still stores such a value - CSSOM says a page may - but a declaration
+    // calling `attr()` or `random-item()` here really would be dropped by the
+    // time anything rendered, and saying otherwise makes a test run and fail
+    // where it should have skipped.
+    return checked.valid && !checked.uses_unknown_function;
 }
 
 namespace {
@@ -611,9 +658,7 @@ namespace {
     // this leaf is one of the two places it is allowed.
     const std::string_view value = trim(body.substr(colon + 1), html_whitespace);
     const std::string_view name = trim(body.substr(0, colon), html_whitespace);
-    if (name.starts_with("--")) { return !value.empty(); }
-    if (find_property(name) == nullptr) { return false; }
-    return check_declaration(name, value, true).valid;
+    return supports_declaration(name, value);
 }
 
 bool condition(std::string_view text, int depth) {

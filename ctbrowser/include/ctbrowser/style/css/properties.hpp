@@ -105,6 +105,13 @@ struct value_check {
     // it its own argument (`setProperty(p, v, "important")`) and its own reader
     // (`getPropertyPriority`).
     bool important = false;
+    // Whether the value calls a function this engine does not implement -
+    // `attr()`, `random-item()`, `type()`. It does NOT make the value invalid:
+    // CSSOM says a page may set a property or a value the engine has never heard
+    // of and read it back. It is what `CSS.supports` answers no to, because §5
+    // of CSS Conditional 3 asks whether the declaration would be DROPPED, and
+    // one calling a function nothing can evaluate would be.
+    bool uses_unknown_function = false;
 };
 
 // `allow_important` is false for the two paths CSSOM says must refuse one - the
