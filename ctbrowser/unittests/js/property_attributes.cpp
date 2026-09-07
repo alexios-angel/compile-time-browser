@@ -393,5 +393,336 @@ int main() {
     js_expect("Number.isFinite.length", "1");
     js_expect("Object.getOwnPropertyDescriptor(Number,'isFinite').enumerable", "false");
 
+    // ================================================================
+    // 9. `Object.create`'s SECOND ARGUMENT - 20.1.2.2 step 3
+    // ================================================================
+    //
+    // It was accepted and IGNORED: `Object.create({}, {x: {value: 1}})` made an
+    // empty object and said nothing. test262 devotes 304 of its 320 files in
+    // built-ins/Object/create to that argument. It is ObjectDefineProperties
+    // (7.3.7), the same operation `Object.defineProperties` is, so the
+    // defaults below are defineProperty's all-false ones and not a literal's.
+    js_expect("Object.create({}, {p: {value: 1}}).p", "1");
+    js_expect(R"((function () {
+        var d = Object.getOwnPropertyDescriptor(Object.create({}, {p: {value: 1}}), 'p');
+        return d.writable + ',' + d.enumerable + ',' + d.configurable;
+    })())",
+              "false,false,false");
+    js_expect("Object.keys(Object.create({}, {a: {value: 1, enumerable: true},"
+              " b: {value: 2}})).join(',')",
+              "a");
+    js_expect("Object.create({}, {p: {get: function () { return 7; }}}).p", "7");
+    js_expect("Object.create({m: 5}).m", "5");
+    // 7.3.7 reads each descriptor through [[Get]], so an INHERITED field
+    // counts - ~250 of test262's defineProperties files are that shape.
+    js_expect(R"((function () {
+        function Descriptor() {}
+        Descriptor.prototype.value = 5;
+        return Object.create({}, {p: new Descriptor()}).p;
+    })())",
+              "5");
+    // TWO PASSES: every descriptor is read and validated before ANY is
+    // applied, so a malformed second one leaves the first undefined.
+    js_expect(R"((function () {
+        var made = {};
+        try { Object.defineProperties(made, {a: {value: 1}, b: {get: 1}}); } catch (error) {}
+        return Object.hasOwn(made, 'a');
+    })())",
+              "false");
+    // Step 1: the prototype must be an Object or null, and `undefined` is
+    // neither - `Object.create()` is a TypeError, not an empty object.
+    js_expect("(function(){try{Object.create(1);}catch(e){return e.constructor.name;}"
+              "return 'none';})()",
+              "TypeError");
+    js_expect("(function(){try{Object.create();}catch(e){return e.constructor.name;}"
+              "return 'none';})()",
+              "TypeError");
+
+    // ================================================================
+    // 10. ToPropertyDescriptor's OWN refusals - 6.2.6.6 steps 6, 8, 10
+    // ================================================================
+    //
+    // A different question from ValidateAndApplyPropertyDescriptor, which asks
+    // whether a well-formed descriptor may be applied. Without these,
+    // `{get: 1}` installed a getter that could not be called and
+    // `{get: g, value: 1}` installed one of the two silently.
+    js_expect("(function(){try{Object.defineProperty({},'x',{get:1});}"
+              "catch(e){return e.constructor.name;}return 'none';})()",
+              "TypeError");
+    js_expect("(function(){try{Object.defineProperty({},'x',{set:'s'});}"
+              "catch(e){return e.constructor.name;}return 'none';})()",
+              "TypeError");
+    js_expect("(function(){try{Object.defineProperty({},'x',{get:function(){},value:1});}"
+              "catch(e){return e.constructor.name;}return 'none';})()",
+              "TypeError");
+    js_expect("(function(){try{Object.defineProperty({},'x',{set:function(){},writable:true});}"
+              "catch(e){return e.constructor.name;}return 'none';})()",
+              "TypeError");
+    js_expect("(function(){try{Reflect.defineProperty({},'x',{get:1});}"
+              "catch(e){return e.constructor.name;}return 'none';})()",
+              "TypeError");
+    // ...and an explicit `undefined` get is LEGAL, and still an accessor: the
+    // field is PRESENT, which is the distinction the whole clause is written
+    // in terms of.
+    js_expect(R"((function () {
+        var made = {};
+        Object.defineProperty(made, 'x', {get: undefined});
+        var d = Object.getOwnPropertyDescriptor(made, 'x');
+        return ('get' in d) + ',' + ('value' in d);
+    })())",
+              "true,false");
+    // A FUNCTION AND AN ARRAY ARE OBJECTS, so either may be the descriptor -
+    // 24 of test262's defineProperty files use one. `is_object()` is true only
+    // of a plain table here, so both used to be refused as "not an object".
+    js_expect(R"((function () {
+        var descriptor = function () {};
+        descriptor.value = 9;
+        var made = {};
+        Object.defineProperty(made, 'x', descriptor);
+        return made.x;
+    })())",
+              "9");
+    // ToPropertyKey runs ONCE. It ran a second time to build the error
+    // message, so a key object's `toString` was called twice for one define.
+    js_expect(R"((function () {
+        var calls = 0;
+        var key = {toString: function () { calls += 1; return 'x'; }};
+        Object.defineProperty({}, key, {value: 1});
+        return calls;
+    })())",
+              "1");
+
+    // ================================================================
+    // 11. ToObject: the statics are GENERIC, and null is the only refusal
+    // ================================================================
+    //
+    // All of these opened with `is_object()` and answered a default for
+    // everything else - so `Object.keys([1,2])` was `[]`, `Object.values('ab')`
+    // was `[]`, `Object.assign(fn, src)` did nothing, and `Object.keys(null)`
+    // was `[]` rather than the TypeError step 1 requires.
+    js_expect("Object.keys([7,8]).join(',')", "0,1");
+    js_expect("Object.values([7,8]).join(',')", "7,8");
+    js_expect("Object.entries([7]).length", "1");
+    js_expect("Object.keys('ab').join(',')", "0,1");
+    js_expect("Object.values('ab').join(',')", "a,b");
+    js_expect("Object.keys(3).length", "0");
+    js_expect("(function(){function f(){}f.a=1;return Object.keys(f).join(',');})()", "a");
+    js_expect("(function(){var t=function(){};Object.assign(t,{a:1});return t.a;})()", "1");
+    js_expect("Object.keys(Object.assign({}, 'ab')).join(',')", "0,1");
+    // A nullish SOURCE is skipped rather than an error (20.1.2.1 step 4.a),
+    // which is what makes `Object.assign({}, maybe)` idiomatic.
+    js_expect("(function(){var t={};Object.assign(t,null,undefined,{a:1});return t.a;})()", "1");
+    for (const char * refusal :
+         {"Object.keys(null)", "Object.values(null)", "Object.entries(null)",
+          "Object.assign(null,{})", "Object.getOwnPropertyNames(null)",
+          "Object.getPrototypeOf(null)", "Object.getOwnPropertyDescriptor(null,'x')",
+          "Object.getOwnPropertyDescriptors(undefined)", "Object.hasOwn(null,'x')",
+          "Object.fromEntries(null)"}) {
+        js_expect(std::string{"(function(){try{"} + refusal +
+                      ";}catch(e){return e.constructor.name;}return 'none';})()",
+                  "TypeError");
+    }
+    // 20.1.2.7: an entry that is not an object is a TypeError, not a skipped
+    // element, and each entry is read through [[Get]] of "0" and "1".
+    js_expect("Object.fromEntries([['a',1],['b',2]]).b", "2");
+    js_expect("(function(){try{Object.fromEntries([1]);}catch(e){return e.constructor.name;}"
+              "return 'none';})()",
+              "TypeError");
+
+    // ================================================================
+    // 12. [[GetPrototypeOf]] - what a plain object's prototype IS
+    // ================================================================
+    //
+    // `Object.getPrototypeOf({})` was `null`, because object_object::prototype
+    // is null for anything that did not come from `class` or `Object.create`.
+    // That contradicted the engine's own behaviour: lookup_property ends EVERY
+    // chain walk at the Object.prototype table, which is why
+    // `({}).hasOwnProperty` resolves at all. THE COST, said out loud: an object
+    // from `Object.create(null)` also inherits Object.prototype here, and now
+    // reports it - which is the truthful answer about the object that was
+    // actually built.
+    js_expect("Object.getPrototypeOf({}) === Object.prototype", "true");
+    js_expect("Object.getPrototypeOf(Object.prototype)", "null");
+    js_expect("Object.getPrototypeOf([]) === Array.prototype", "true");
+    js_expect("Object.getPrototypeOf(Array.prototype) === Object.prototype", "true");
+    js_expect("Object.getPrototypeOf(function () {}) === Function.prototype", "true");
+    js_expect("Object.getPrototypeOf('x') === String.prototype", "true");
+    js_expect("Object.getPrototypeOf(1) === Number.prototype", "true");
+    js_expect("Object.getPrototypeOf(TypeError) === Error", "true");
+    js_expect("(function(){var p={};return Object.getPrototypeOf(Object.create(p)) === p;})()",
+              "true");
+    // 20.1.2.22 step 2: a prototype must be an Object or null.
+    js_expect("(function(){try{Object.setPrototypeOf({},1);}catch(e){return e.constructor.name;}"
+              "return 'none';})()",
+              "TypeError");
+    js_expect("(function(){var o={};return Object.setPrototypeOf(o,null) === o;})()", "true");
+    // ...and isPrototypeOf walks the SAME chain, so the implicit tables count.
+    js_expect("Object.prototype.isPrototypeOf({})", "true");
+    js_expect("Array.prototype.isPrototypeOf([])", "true");
+    js_expect("({}).isPrototypeOf(1)", "false");
+    js_expect("(function(){var p={};return p.isPrototypeOf(Object.create(p));})()", "true");
+
+    // ================================================================
+    // 13. Object.prototype: the tag table, toLocaleString, and ToObject
+    // ================================================================
+    js_expect("Object.prototype.toString.call(undefined)", "[object Undefined]");
+    js_expect("Object.prototype.toString.call(null)", "[object Null]");
+    js_expect("Object.prototype.toString.call([])", "[object Array]");
+    js_expect("Object.prototype.toString.call(function () {})", "[object Function]");
+    // [[ErrorData]] and [[RegExpMatcher]] are slots this engine does not have,
+    // so both are answered from the prototype chain instead.
+    js_expect("Object.prototype.toString.call(new TypeError())", "[object Error]");
+    js_expect("Object.prototype.toString.call(/x/)", "[object RegExp]");
+    // 20.1.3.6 step 15: a STRING @@toStringTag replaces the built-in tag, and
+    // anything else is ignored rather than stringified.
+    js_expect("(function(){var o={};o[Symbol.toStringTag]='X';"
+              "return Object.prototype.toString.call(o);})()",
+              "[object X]");
+    js_expect("(function(){var o={};o[Symbol.toStringTag]=5;"
+              "return Object.prototype.toString.call(o);})()",
+              "[object Object]");
+    // 20.1.3.5 is Invoke(O, "toString"), not a second copy of the table.
+    js_expect("({a:1}).toLocaleString()", "[object Object]");
+    js_expect("(function(){var o={toString:function(){return 'T';}};"
+              "return o.toLocaleString();})()",
+              "T");
+    // ToPropertyKey of the ARGUMENT, so an absent one asks about "undefined"
+    // rather than about "". It was `str_at`, which answers "".
+    js_expect("(function(){var o={undefined:1};return o.hasOwnProperty();})()", "true");
+    js_expect("({}).hasOwnProperty()", "false");
+    for (const char * refusal :
+         {"Object.prototype.valueOf.call(null)", "Object.prototype.hasOwnProperty.call(null,'x')",
+          "Object.prototype.propertyIsEnumerable.call(undefined,'x')",
+          "Object.prototype.isPrototypeOf.call(null,{})",
+          "Object.prototype.toLocaleString.call(null)"}) {
+        js_expect(std::string{"(function(){try{"} + refusal +
+                      ";}catch(e){return e.constructor.name;}return 'none';})()",
+                  "TypeError");
+    }
+
+    // ================================================================
+    // 14. B.2.2, the four __*etter__ methods - 54 test262 files, all absent
+    // ================================================================
+    //
+    // Annex B and normative for a browser: the pre-ES5 way to define and read
+    // an accessor, still in shipped code. Their descriptor default is
+    // { enumerable: true, configurable: true }, which is NOT
+    // defineProperty's all-false one.
+    js_expect("(function(){var o={};o.__defineGetter__('x',function(){return 4;});"
+              "return o.x;})()",
+              "4");
+    js_expect(R"((function () {
+        var made = {};
+        made.__defineGetter__('x', function () { return 4; });
+        var d = Object.getOwnPropertyDescriptor(made, 'x');
+        return d.enumerable + ',' + d.configurable;
+    })())",
+              "true,true");
+    js_expect("(function(){var o={};o.__defineSetter__('x',function(v){this.got=v;});"
+              "o.x=3;return o.got;})()",
+              "3");
+    js_expect("(function(){var o={};var g=function(){return 1;};o.__defineGetter__('x',g);"
+              "return o.__lookupGetter__('x') === g;})()",
+              "true");
+    // The whole chain, own property first - a DATA property SHADOWS an
+    // inherited accessor, so the answer is undefined rather than the one
+    // further up (B.2.2.4 step 4.b).
+    js_expect(R"((function () {
+        var root = {};
+        root.__defineGetter__('x', function () { return 1; });
+        return typeof Object.create(root).__lookupGetter__('x');
+    })())",
+              "function");
+    js_expect(R"((function () {
+        var root = {};
+        root.__defineGetter__('x', function () { return 1; });
+        return Object.create(root, {x: {value: 2}}).__lookupGetter__('x');
+    })())",
+              "undefined");
+    js_expect("({}).__lookupSetter__('x')", "undefined");
+    js_expect("(function(){try{({}).__defineGetter__('x',1);}catch(e){return e.constructor.name;}"
+              "return 'none';})()",
+              "TypeError");
+
+    // ================================================================
+    // 15. Function.prototype: IsCallable is step 1 of all three
+    // ================================================================
+    //
+    // `call`, `apply` and `bind` each answered `undefined` for a receiver that
+    // was not callable, so a probe written as `try { f.bind(o) } catch (e)`
+    // saw nothing at all.
+    for (const char * refusal :
+         {"Function.prototype.call.call({})", "Function.prototype.apply.call({}, null, [])",
+          "Function.prototype.bind.call({})"}) {
+        js_expect(std::string{"(function(){try{"} + refusal +
+                      ";}catch(e){return e.constructor.name;}return 'none';})()",
+                  "TypeError");
+    }
+    // CreateListFromArrayLike, 7.3.18: `apply` read `items` off a real Array
+    // and passed NO arguments for anything else, so `f.apply(o, arguments)`
+    // called `f()`. A nullish argArray is an empty list; a non-object one is a
+    // TypeError.
+    js_expect(
+        "(function(){function f(a,b){return a+b;}return f.apply(null,{length:2,0:1,1:2});})()",
+        "3");
+    js_expect("(function(){function f(a){return typeof a;}return f.apply(null);})()", "undefined");
+    js_expect("(function(){function f(a){return typeof a;}return f.apply(null,null);})()",
+              "undefined");
+    js_expect("(function(){function f(){}try{f.apply(null,3);}catch(e){"
+              "return e.constructor.name;}return 'none';})()",
+              "TypeError");
+    // 20.2.3.2 step 7: a bound function's `length` comes from the target's OWN
+    // `length` and only when that is a Number. It was read through the
+    // prototype chain and coerced.
+    js_expect("(function(){function f(a,b,c){}return f.bind(null,1).length;})()", "2");
+    js_expect("(function(){function f(a){}return f.bind(null,1,2,3).length;})()", "0");
+    // 20.2.3.6 %Function.prototype[@@hasInstance]%, which did not exist. Its
+    // own descriptor is { false, false, false }, unlike every other method on
+    // that table, and its name is 10.2.9's bracketed form.
+    js_expect("typeof Function.prototype[Symbol.hasInstance]", "function");
+    js_expect("Function.prototype[Symbol.hasInstance].length", "1");
+    js_expect("Function.prototype[Symbol.hasInstance].name", "[Symbol.hasInstance]");
+    js_expect(R"((function () {
+        var d = Object.getOwnPropertyDescriptor(Function.prototype, Symbol.hasInstance);
+        return d.writable + ',' + d.enumerable + ',' + d.configurable;
+    })())",
+              "false,false,false");
+    js_expect("(function(){function C(){}"
+              "return Function.prototype[Symbol.hasInstance].call(C, new C());})()",
+              "true");
+    // 10.2.5 CREATION ORDER for a closure's synthesised properties, which read
+    // prototype, name, length.
+    js_expect("Object.getOwnPropertyNames(function f(a) {}).join(',')", "length,name,prototype");
+
+    // ================================================================
+    // 16. `Object.getOwnPropertySymbols`, and Reflect's two wrong answers
+    // ================================================================
+    //
+    // getOwnPropertySymbols did not exist, so the guarded
+    // `if (Object.getOwnPropertySymbols)` every spread helper opens with took
+    // the other branch. THE SYMBOL IT RETURNS IS NOT `===` TO THE ORIGINAL -
+    // a property table keeps only the key string - so what is asserted here is
+    // what the returned symbol can DO, which is everything but compare.
+    js_expect("(function(){var s=Symbol('k');var o={};o[s]=1;"
+              "return Object.getOwnPropertySymbols(o).length;})()",
+              "1");
+    js_expect("(function(){var s=Symbol('k');var o={};o[s]=1;"
+              "return typeof Object.getOwnPropertySymbols(o)[0];})()",
+              "symbol");
+    js_expect("(function(){var s=Symbol('k');var o={};o[s]=1;"
+              "return o[Object.getOwnPropertySymbols(o)[0]];})()",
+              "1");
+    // ...and a symbol key is invisible to the string half, which is the one
+    // place OwnPropertyKeys and getOwnPropertyNames differ.
+    js_expect("(function(){var s=Symbol('k');var o={a:1};o[s]=1;"
+              "return Object.getOwnPropertyNames(o).join(',');})()",
+              "a");
+    js_expect("(function(){var s=Symbol('k');var o={a:1};o[s]=1;"
+              "return Object.keys(o).join(',');})()",
+              "a");
+    // HasProperty, not "reads as something other than undefined".
+    js_expect("Reflect.has({x: undefined}, 'x')", "true");
+    js_expect("Reflect.ownKeys([1]).join(',')", "0,length");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }
