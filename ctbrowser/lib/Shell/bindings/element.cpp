@@ -4473,10 +4473,17 @@ constexpr std::string_view shadow_host_names = "article aside blockquote body di
 // They disagree only about where each is able to look.
 class subtree_matcher {
 public:
-    subtree_matcher(const read_txn & txn, atom_table & atoms)
-        : txn_(txn), atoms_(atoms), id_(atoms.intern("id")), class_(atoms.intern("class")),
-          disabled_(atoms.intern("disabled")), checked_(atoms.intern("checked")),
-          href_(atoms.intern("href")) {}
+    // THE ENGINE COMES IN because two pseudo-classes cannot be answered from the
+    // element alone. `:lang()` and `:dir()` are questions about the nearest
+    // ANCESTOR carrying an attribute, plus the document's Content-Language
+    // pragma and a first-strong-character scan - all of which `style::engine`
+    // already implements and memoises. Reimplementing them here is how the two
+    // matchers would start disagreeing about what a selector means, which is
+    // the one thing this class exists not to do.
+    subtree_matcher(const read_txn & txn, atom_table & atoms, const style::engine & styles)
+        : txn_(txn), atoms_(atoms), styles_(styles), id_(atoms.intern("id")),
+          class_(atoms.intern("class")), disabled_(atoms.intern("disabled")),
+          checked_(atoms.intern("checked")), href_(atoms.intern("href")) {}
 
     [[nodiscard]] bool matches(node_id node, const style::compiled_selector & sel) const {
         return !sel.parts.empty() && walk(node, sel);
@@ -4718,6 +4725,20 @@ private:
             }
             return want.kind == style::pseudo_kind::not_ ? !any : any;
         }
+        // Delegated, so a shadow tree and the cascade answer these the same way.
+        // Both walk to a root: inside a shadow tree that walk leaves through the
+        // fragment and stops there, which is the honest answer - a shadow tree
+        // does not inherit its host's `lang` in this engine.
+        case style::pseudo_kind::lang: {
+            const std::string_view have = styles_.language_of(txn_, node);
+            for (const std::string & range : want.ranges) {
+                if (style::engine::language_matches(range, have)) { return true; }
+            }
+            return false;
+        }
+        case style::pseudo_kind::dir:
+            return want.ranges.size() == 1 &&
+                   want.ranges.front() == (styles_.direction_is_rtl(txn_, node) ? "rtl" : "ltr");
         }
         return false;
     }
@@ -4777,6 +4798,9 @@ private:
 
     const read_txn & txn_;
     atom_table & atoms_;
+    // See the constructor: `:lang()` and `:dir()` are ancestor walks the
+    // cascade's engine already does, memo and all.
+    const style::engine & styles_;
     atom id_;
     atom class_;
     atom disabled_;
@@ -4806,7 +4830,7 @@ std::vector<node_id> dom_bindings::select_in_subtree(std::string_view selector, 
     std::vector<node_id> found;
     if (parsed.selectors.empty() || !root) { return found; }
     const auto txn = doc_->read();
-    const subtree_matcher matcher{txn, *atoms_};
+    const subtree_matcher matcher{txn, *atoms_, selector_engine()};
     // DESCENDANTS ONLY and in tree order: the root itself is never one of its
     // own results, exactly as `element.querySelectorAll` has it.
     const auto walk = [&](auto && self, node_id at) -> bool {
