@@ -1,0 +1,299 @@
+// The CSSOM object model - `document.styleSheets` and everything under it.
+//
+// EVERY STRING COMPARED HERE IS A STRING `css/cssom` COMPARES. The suite's
+// `CSSRuleList.html`, `CSSStyleSheet.html` and `CSSStyleRule.html` assert
+// `cssText` and `selectorText` byte for byte, so the interesting question is
+// never "did a rule come back" but "did it come back spelled the way the
+// specification spells it". That is why this file is not more of
+// `css_values.cpp`: that one asks what a VALUE is worth, this one asks what the
+// object model SERIALISES to.
+//
+// The serialisation is CANONICAL rather than the author's bytes, and the two
+// cases that prove it are here: a rule written across two indented lines comes
+// back as one line, and a selector written `[type=checkbox]` comes back
+// `[type="checkbox"]`. Neither is reachable from the source text - a `raw_rule`
+// records no source span at all - and both are what a browser answers.
+//
+// THE THREE THINGS THIS CANNOT TEST, said here rather than discovered:
+//
+//   * the cascade does not observe insertRule. `set_author_styles_hook` is the
+//     slot for that and the browser does not fill it yet, so the last case
+//     below asserts the TEXT the hook would be handed rather than a pixel.
+//   * `styleElement.sheet` needs one call in `install_element_views`, and
+//     `document.styleSheets` needs one in `dom_bindings::install`. Both are in
+//     files the CSSOM rung does not own; without them these cases fail with
+//     "undefined", which is the honest way for a missing wire to report.
+//   * a rule with an EMPTY declaration block is dropped by the CSS front end
+//     (`consume_qualified_rule` keeps a rule only when it has both a selector
+//     and a declaration), so `div {}` is not in `cssRules`. Asserted below so
+//     the deviation is recorded rather than believed.
+
+#include <ctbrowser/core/core.hpp>
+#include <ctbrowser/dom/dom.hpp>
+#include <ctbrowser/layout/layout.hpp>
+#include <ctbrowser/paint/paint.hpp>
+#include <ctbrowser/raster/raster.hpp>
+#include <ctbrowser/script/script.hpp>
+#include <ctbrowser/shell/shell.hpp>
+#include <ctbrowser/style/style.hpp>
+
+#include "check.hpp"
+
+#include <string>
+#include <string_view>
+
+using ctbrowser::shell::browser;
+using ctbrowser::shell::browser_options;
+
+namespace {
+
+// A logged line by its prefix, so a case that adds a `console.log` in the
+// middle does not renumber every assertion after it.
+[[nodiscard]] std::string logged(browser & page, std::string_view prefix) {
+    for (const std::string & line : page.bindings().console_output()) {
+        if (line.starts_with(prefix)) { return line; }
+    }
+    return std::string{"<no line beginning "} + std::string{prefix} + ">";
+}
+
+void test_the_list_and_the_rules() {
+    browser page{browser_options{400, 200}};
+    // INDENTED, ACROSS TWO LINES, exactly as `css/cssom/CSSRuleList.html`
+    // writes it - so a serialisation made of the author's bytes gets this
+    // wrong and a canonical one gets it right.
+    page.load_html(R"(<html><head>
+    <style>
+        body { width: 50%; }
+        #foo { height: 100px; }
+    </style>
+    <style>
+        .a { color: red }
+    </style>
+    </head><body><script>
+        const sheets = document.styleSheets;
+        console.log('sheets=' + sheets.length);
+        console.log('counts=' + sheets[0].cssRules.length + ',' + sheets[1].cssRules.length);
+        console.log('past=' + sheets[2] + ',' + sheets.item(2));
+        console.log('text0=' + sheets[0].cssRules[0].cssText);
+        console.log('text1=' + sheets[0].cssRules.item(1).cssText);
+        console.log('rulepast=' + sheets[0].cssRules[2] + ',' + sheets[0].cssRules.item(2));
+        console.log('type=' + sheets[0].type + ',' + sheets[0].href + ',' + sheets[0].title);
+        // [SameObject], three ways: the list, the rule list and its alias.
+        sheets.marked = 7;
+        console.log('same=' + (document.styleSheets === sheets) + ',' +
+                    (document.styleSheets.marked === 7) + ',' +
+                    (sheets[0].cssRules === sheets[0].rules));
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "sheets="), std::string{"sheets=2"});
+    CHECK_EQ(logged(page, "counts="), std::string{"counts=2,1"});
+    // An indexed getter past the end is `undefined`; `item()` is `null`. Two
+    // different answers to the same question, and `CSSRuleList.html` asserts
+    // both.
+    CHECK_EQ(logged(page, "past="), std::string{"past=undefined,null"});
+    CHECK_EQ(logged(page, "text0="), std::string{"text0=body { width: 50%; }"});
+    CHECK_EQ(logged(page, "text1="), std::string{"text1=#foo { height: 100px; }"});
+    CHECK_EQ(logged(page, "rulepast="), std::string{"rulepast=undefined,null"});
+    // A `<style>` has no href and no title, and both report `null` rather than
+    // an empty string.
+    CHECK_EQ(logged(page, "type="), std::string{"type=text/css,null,null"});
+    CHECK_EQ(logged(page, "same="), std::string{"same=true,true,true"});
+}
+
+void test_a_style_rule() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style id=s>
+        input[type=checkbox]:checked ~ label { color: red; margin: 10px }
+    </style></head><body><script>
+        const rule = document.styleSheets[0].cssRules[0];
+        console.log('type=' + rule.type + ',' + rule.STYLE_RULE + ',' + rule.MEDIA_RULE);
+        // The author wrote `[type=checkbox]`; CSSOM serialises an attribute
+        // value as a string whatever it was written as.
+        console.log('sel=' + rule.selectorText);
+        console.log('css=' + rule.cssText);
+        console.log('parent=' + rule.parentRule + ',' +
+                    (rule.parentStyleSheet === document.styleSheets[0]));
+        console.log('style=' + rule.style.color + ',' + rule.style.margin + ',' +
+                    rule.style.length + ',' + rule.style[0] + ',' + rule.style.item(1));
+        console.log('same=' + (rule.style === rule.style));
+        console.log('is=' + (rule instanceof CSSRule) + ',' + (rule instanceof CSSStyleRule) +
+                    ',' + (rule.style instanceof CSSStyleDeclaration));
+        rule.style.color = 'blue';
+        rule.style.setProperty('padding', '2px');
+        console.log('after=' + rule.cssText);
+        console.log('priority=' + rule.style.getPropertyPriority('color'));
+        // [PutForwards=cssText]: assigning to `style` assigns to its cssText
+        // and the object itself never changes.
+        const held = rule.style;
+        rule.style = 'margin: 42px';
+        console.log('forwarded=' + rule.style.margin + ',' + (rule.style === held) + ',' +
+                    rule.cssText);
+        rule.selectorText = 'a > b';
+        console.log('resel=' + rule.selectorText);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "type="), std::string{"type=1,1,4"});
+    CHECK_EQ(logged(page, "sel="), std::string{"sel=input[type=\"checkbox\"]:checked ~ label"});
+    CHECK_EQ(logged(page, "css="), std::string{"css=input[type=\"checkbox\"]:checked ~ label "
+                                               "{ color: red; margin: 10px; }"});
+    CHECK_EQ(logged(page, "parent="), std::string{"parent=null,true"});
+    // An INDEX names a property, not a value - CSSOM 6.7.1.
+    CHECK_EQ(logged(page, "style="), std::string{"style=red,10px,2,color,margin"});
+    CHECK_EQ(logged(page, "same="), std::string{"same=true"});
+    CHECK_EQ(logged(page, "is="), std::string{"is=true,true,true"});
+    CHECK_EQ(logged(page, "after="), std::string{"after=input[type=\"checkbox\"]:checked ~ label "
+                                                 "{ color: blue; margin: 10px; padding: 2px; }"});
+    CHECK_EQ(logged(page, "priority="), std::string{"priority="});
+    CHECK_EQ(logged(page, "forwarded="),
+             std::string{"forwarded=42px,true,input[type=\"checkbox\"]:checked ~ label "
+                         "{ margin: 42px; }"});
+    CHECK_EQ(logged(page, "resel="), std::string{"resel=a > b"});
+}
+
+void test_insert_and_delete() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>
+        body { width: 50%; }
+        #foo { height: 100px; }
+    </style></head><body><script>
+        const sheet = document.styleSheets[0];
+        sheet.cssRules[0].marked = 1;
+        sheet.cssRules[1].marked = 2;
+        console.log('at=' + sheet.insertRule('#bar { margin: 10px; }', 1));
+        console.log('texts=' + sheet.cssRules[0].cssText + '|' + sheet.cssRules[1].cssText +
+                    '|' + sheet.cssRules[2].cssText);
+        // [SameObject] across an insertion: the two rules the page marked must
+        // be the same objects afterwards, at their new indices.
+        console.log('kept=' + sheet.cssRules[0].marked + ',' + sheet.cssRules[2].marked);
+        sheet.deleteRule(1);
+        console.log('back=' + sheet.cssRules.length + ',' + sheet.cssRules[0].marked + ',' +
+                    sheet.cssRules[1].marked);
+        let caught = '';
+        try { sheet.insertRule('#x { color: red }', 99); } catch (e) { caught = e.name; }
+        console.log('big=' + caught);
+        caught = '';
+        try { sheet.deleteRule(99); } catch (e) { caught = e.name; }
+        console.log('gone=' + caught);
+        caught = '';
+        try { sheet.insertRule('not a rule at all'); } catch (e) { caught = e.name; }
+        console.log('bad=' + caught);
+        caught = '';
+        try { sheet.insertRule(); } catch (e) { caught = e.name; }
+        console.log('none=' + caught);
+        // A rule with an EMPTY block is dropped by the front end, which is a
+        // deviation this test records rather than hides.
+        caught = '';
+        try { sheet.insertRule('div { }'); } catch (e) { caught = e.name; }
+        console.log('empty=' + caught);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "at="), std::string{"at=1"});
+    CHECK_EQ(logged(page, "texts="), std::string{"texts=body { width: 50%; }|#bar "
+                                                 "{ margin: 10px; }|#foo { height: 100px; }"});
+    CHECK_EQ(logged(page, "kept="), std::string{"kept=1,2"});
+    CHECK_EQ(logged(page, "back="), std::string{"back=2,1,2"});
+    CHECK_EQ(logged(page, "big="), std::string{"big=IndexSizeError"});
+    CHECK_EQ(logged(page, "gone="), std::string{"gone=IndexSizeError"});
+    CHECK_EQ(logged(page, "bad="), std::string{"bad=SyntaxError"});
+    CHECK_EQ(logged(page, "none="), std::string{"none=TypeError"});
+    CHECK_EQ(logged(page, "empty="), std::string{"empty=SyntaxError"});
+}
+
+void test_a_constructed_sheet() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>.z { color: red }</style></head><body><script>
+        const sheet = new CSSStyleSheet({disabled: true, media: 'screen, print'});
+        console.log('made=' + (sheet instanceof CSSStyleSheet) + ',' + sheet.title + ',' +
+                    sheet.ownerNode + ',' + sheet.ownerRule + ',' + sheet.disabled + ',' +
+                    sheet.cssRules.length);
+        console.log('media=' + sheet.media.length + ',' + sheet.media.item(0) + ',' +
+                    sheet.media.item(1));
+        // The constructor ignores `title` on purpose - a constructed sheet has
+        // none however it was made.
+        console.log('titled=' + new CSSStyleSheet({title: 'x'}).title);
+        sheet.replaceSync('.a { color: red } .b { color: blue }');
+        console.log('replaced=' + sheet.cssRules.length + ',' + sheet.cssRules[0].cssText);
+        sheet.insertRule('.c { color: green }');
+        console.log('inserted=' + sheet.cssRules.length + ',' + sheet.cssRules[0].cssText);
+        console.log('adopted=' + document.adoptedStyleSheets.length);
+        document.adoptedStyleSheets = [sheet];
+        console.log('adoptedNow=' + document.adoptedStyleSheets.length + ',' +
+                    (document.adoptedStyleSheets[0] === sheet));
+        // replace() answers a promise for the sheet; replaceSync on a sheet
+        // that is NOT constructed is a NotAllowedError.
+        let caught = '';
+        try { document.styleSheets[0].replaceSync('.q { color: red }'); }
+        catch (e) { caught = e.name; }
+        console.log('regular=' + caught);
+        sheet.replace('.d { color: pink }').then(function (back) {
+            console.log('promised=' + (back === sheet) + ',' + back.cssRules.length);
+        });
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "made="), std::string{"made=true,null,null,null,true,0"});
+    CHECK_EQ(logged(page, "media="), std::string{"media=2,screen,print"});
+    CHECK_EQ(logged(page, "titled="), std::string{"titled=null"});
+    CHECK_EQ(logged(page, "replaced="), std::string{"replaced=2,.a { color: red; }"});
+    // insertRule with no index inserts at 0, which is what the four
+    // `dom/events` animation tests rely on.
+    CHECK_EQ(logged(page, "inserted="), std::string{"inserted=3,.c { color: green; }"});
+    CHECK_EQ(logged(page, "adopted="), std::string{"adopted=0"});
+    CHECK_EQ(logged(page, "adoptedNow="), std::string{"adoptedNow=1,true"});
+    // `replace`/`replaceSync` belong to a CONSTRUCTED sheet and to nothing else.
+    CHECK_EQ(logged(page, "regular="), std::string{"regular=NotAllowedError"});
+    CHECK_EQ(logged(page, "promised="), std::string{"promised=true,1"});
+}
+
+void test_the_sheet_of_an_element() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style id=s>.a { color: red }</style></head><body><script>
+        const el = document.getElementById('s');
+        console.log('sheet=' + (el.sheet === document.styleSheets[0]) + ',' +
+                    (el.sheet.ownerNode === el));
+        // A <style> the SCRIPT created and appended has a sheet too - which is
+        // what `dom/events`' four animation tests do before they touch it.
+        const made = document.createElement('style');
+        document.head.appendChild(made);
+        made.sheet.insertRule('.b { color: blue }');
+        console.log('made=' + made.sheet.cssRules.length + ',' + made.sheet.cssRules[0].cssText);
+        console.log('grew=' + document.styleSheets.length);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "sheet="), std::string{"sheet=true,true"});
+    CHECK_EQ(logged(page, "made="), std::string{"made=1,.b { color: blue; }"});
+    CHECK_EQ(logged(page, "grew="), std::string{"grew=2"});
+}
+
+// WHAT THE CASCADE WOULD BE HANDED. `insertRule` cannot reach the style engine
+// from the bindings - the browser loads the author sheet once per page - so the
+// thing to assert is the TEXT `set_author_styles_hook` publishes, which is the
+// whole of the contract between this rung and the one that wires it up.
+void test_the_text_the_cascade_would_get() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>body { width: 50%; }</style></head><body><script>
+        document.styleSheets[0].insertRule('#bar { margin: 10px; }', 1);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(page.bindings().author_style_text(),
+             std::string{"body { width: 50%; }\n#bar { margin: 10px; }\n"});
+    // A DISABLED sheet contributes nothing, which is the other half of what the
+    // hook has to get right.
+    browser off{browser_options{400, 200}};
+    off.load_html(R"(<html><head><style>body { width: 50%; }</style></head><body><script>
+        document.styleSheets[0].disabled = true;
+    </script></body></html>)");
+    CHECK(off.script_error().empty());
+    CHECK_EQ(off.bindings().author_style_text(), std::string{});
+}
+
+} // namespace
+
+int main() {
+    test_the_list_and_the_rules();
+    test_a_style_rule();
+    test_insert_and_delete();
+    test_a_constructed_sheet();
+    test_the_sheet_of_an_element();
+    test_the_text_the_cascade_would_get();
+    REPORT("cssom");
+}

@@ -47,6 +47,11 @@ ctbrowser_test(unit/style_basics)
 # The CSS tokenizer, against the cases the submodule it replaced got wrong.
 ctbrowser_test(unit/css_syntax)
 ctbrowser_test(unit/css_values)
+# The CSSOM object model - document.styleSheets and the objects under it. Its
+# own file rather than more of css_values: that one asks what a VALUE is worth,
+# this one asks what the object model SERIALISES to, and every case in it is a
+# string a `css/cssom` test compares byte for byte.
+ctbrowser_test(unit/cssom)
 # `querySelector` and the Selectors engine behind it. Its own file rather than
 # more of css_syntax: that one asks what the parser BUILDS, and this asks what a
 # script gets back when it matches with it - which used to be a second, weaker

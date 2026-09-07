@@ -407,6 +407,19 @@ private:
     // nothing but a diff reads this today.
     void install_computed_style(context & cx);
     [[nodiscard]] value computed_style_object(context & cx, node_id id);
+    // ONE ELEMENT'S WHOLE COMPUTED STYLE, as (CSS name, value) pairs: the
+    // supported longhands lexicographically, then the shorthands, then whatever
+    // the element declared that the property table has never heard of. Empty for
+    // an element that is not in the document.
+    //
+    // SEPARATE FROM THE OBJECT because the object is LIVE: CSSOM says
+    // getComputedStyle returns a live CSSStyleDeclaration, so every property on
+    // it is an accessor that calls this again rather than a string captured when
+    // the object was made. It holds raw pointers into the box and fragment trees
+    // for the length of the call and never past it - the next layout frees them,
+    // and that now happens inside a script turn.
+    [[nodiscard]] std::vector<std::pair<std::string, std::string>> computed_style_entries(
+        node_id id);
 
     // --- DOMException, and the CSS interface --------------------------------
     //
@@ -540,7 +553,128 @@ private:
     bool mutation_delivery_queued_ = false;
     // END mutation observers
 
-    // BEGIN style sheets
+    // BEGIN style sheets (bindings/stylesheets.cpp)
+public:
+    // THE CSSOM'S OWN COPY OF THE AUTHOR'S SHEETS, and why it is a copy.
+    //
+    // `style::engine::add_sheet` FLATTENS a stylesheet into (selector,
+    // declaration) rules and keeps no `css::stylesheet` at all, so the cascade
+    // cannot be asked what rules a sheet has. The front end
+    // (`style/css/parser.hpp`) is public and header-only, though, so the CSSOM
+    // parses the document's own `<style>` and `<link rel=stylesheet>` text a
+    // second time - with the SAME rules browser::load_author_styles uses, so
+    // the two cannot disagree about which sheets exist.
+    //
+    // The parse result is converted to OWNED strings immediately and the
+    // `css::stylesheet` is dropped. That is deliberate: a `stylesheet` owns a
+    // `pool` that every string_view in it points into, so holding one means
+    // holding a container that never moves and never reallocates - and holding
+    // it buys nothing here, because everything the CSSOM answers with is a
+    // SERIALISATION rather than a slice of the source. See the file for what
+    // "serialisation" means and why it is not the author's bytes.
+    struct css_declaration {
+        std::string name; // the CSS spelling; a custom property keeps its case
+        std::string value;
+        bool important = false;
+    };
+    // One rule. A grouping rule (`@media`) carries `children` and no
+    // declarations; a style rule carries declarations and no children.
+    struct css_rule_record {
+        std::uint32_t type = 1; // CSSRule.STYLE_RULE and friends
+        std::string selector;   // serialised selector list, style rules only
+        std::string prelude;    // an at-rule's condition text
+        std::string at_name;    // "media", "font-face", ...; empty for a style rule
+        // AN AT-RULE THIS FRONT END DISCARDS THE BLOCK OF - `@keyframes`,
+        // `@page`, `@supports` - kept as the author wrote it, because the
+        // alternative is serialising an empty block that is not what the sheet
+        // says. Empty for everything the CSSOM can reconstruct.
+        std::string verbatim;
+        std::vector<css_declaration> declarations;
+        std::vector<std::size_t> children; // into css_rule_store_
+        std::size_t parent = static_cast<std::size_t>(-1);
+        std::size_t sheet = static_cast<std::size_t>(-1);
+    };
+    struct css_sheet_record {
+        node_id owner; // the <style>/<link>; unset for a constructed sheet
+        std::string href;
+        std::string title;
+        std::string media;
+        std::string source; // what was last parsed, so a <style> edit re-parses
+        bool disabled = false;
+        bool constructed = false;
+        std::vector<std::size_t> rules; // into css_rule_store_
+    };
+
+    // `document.styleSheets`, `document.adoptedStyleSheets` and the interface
+    // objects. Called from `install`, AFTER install_document - it hangs the
+    // accessor off the document object.
+    void install_style_sheets(context & cx);
+    // `styleElement.sheet` / `linkElement.sheet` - the LinkStyle interface.
+    // Called from install_element_views, which is the only place an element
+    // wrapper is built.
+    void install_sheet_property(context & cx, script::object_object & obj, node_id id);
+
+    // WHAT THE CASCADE WOULD HAVE TO BE TOLD. insertRule/deleteRule/replaceSync
+    // change the object model; nothing reaches `style::engine` from here,
+    // because the browser loads the author sheet exactly once per page
+    // (`author_sheet_loaded_`) and re-running the cascade is its business, not
+    // the bindings'. So the bindings publish the new text and the browser
+    // decides: with no hook installed the object model is still correct and the
+    // RENDER simply does not move. See bindings/stylesheets.cpp.
+    void set_author_styles_hook(std::function<void(std::string)> hook) {
+        on_author_styles_ = std::move(hook);
+    }
+    // Every enabled document sheet, serialised, in document order - exactly
+    // what browser::load_author_styles would have concatenated, plus whatever
+    // the CSSOM has since done to it.
+    [[nodiscard]] std::string author_style_text();
+
+private:
+    // The document's sheets, re-derived from the DOM. Cheap and idempotent: an
+    // owner node that already has a record keeps it, which is what makes
+    // `document.styleSheets[0] === styleElement.sheet` and what keeps a page's
+    // expando on a sheet object alive across a read.
+    void sync_style_sheets(context & cx);
+    [[nodiscard]] script::object_object * cssom_internals(context & cx);
+    [[nodiscard]] value style_sheet_list(context & cx);
+    [[nodiscard]] value sheet_object_of(context & cx, node_id owner);
+    [[nodiscard]] value make_sheet_object(context & cx, std::size_t sheet);
+    [[nodiscard]] value make_rule_object(context & cx, std::size_t rule);
+    [[nodiscard]] value make_rule_list(context & cx, std::span<const std::size_t> rules);
+    void refresh_rule_list(context & cx, value list, std::span<const std::size_t> rules);
+    [[nodiscard]] value declaration_object(context & cx, std::size_t rule);
+    void refresh_declaration_object(context & cx, value declarations);
+    void install_stylesheet_prototypes(context & cx);
+    // Text -> records. Replaces whatever the sheet held.
+    void parse_sheet_rules(std::size_t sheet, std::string_view css);
+    // One rule, for insertRule. Returns the new rule's index, or npos with
+    // `error` naming the DOMException the caller must throw.
+    [[nodiscard]] std::size_t parse_one_rule(std::size_t sheet, std::string_view text,
+                                             std::string & error);
+    // The CSSOM changed something the cascade would care about.
+    void style_sheets_changed();
+    [[nodiscard]] css_sheet_record * receiver_sheet(context & cx);
+    [[nodiscard]] css_rule_record * receiver_rule(context & cx);
+    [[nodiscard]] std::string rule_css_text(const css_rule_record & rule) const;
+
+    // unique_ptr rather than a bare vector because a record is addressed by
+    // INDEX from script and by REFERENCE from C++, and inserting a rule while a
+    // reference to another one is live would otherwise dangle.
+    std::vector<std::unique_ptr<css_sheet_record>> css_sheets_;
+    std::vector<std::unique_ptr<css_rule_record>> css_rule_store_;
+    // Owner node -> sheet index, rebuilt by sync_style_sheets.
+    flat_map<std::uint64_t, std::size_t> css_sheet_by_owner_;
+    // ...and the same sheets in DOCUMENT ORDER, which is what the cascade needs
+    // and what `css_sheets_` is not: a record whose `<style>` has since been
+    // removed stays in the store (a rule object the page still holds must keep
+    // answering) and must not appear in the author CSS.
+    std::vector<std::size_t> css_document_sheets_;
+    // The StyleSheetList, the adopted array and the interface prototypes. Held
+    // on the DOCUMENT under a non-configurable private key as well as here, so
+    // the collector reaches them through `mark(document_)` and this member
+    // needs no line in register_roots - which is a file this rung does not own.
+    value cssom_internals_;
+    std::function<void(std::string)> on_author_styles_;
     // END style sheets
 
     // BEGIN selectors (bindings/document.cpp)

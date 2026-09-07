@@ -310,6 +310,9 @@ void dom_bindings::install(context & cx) {
     install_dom_exception(cx);
     install_css_interface(cx);
     install_mutation_observer(cx);
+    // AFTER install_css_interface, because the sheet objects throw through
+    // `dom_exception_prototype_` and hang their state off `document_`.
+    install_style_sheets(cx);
     install_timers(cx);
     install_resources(cx);
     install_navigation(cx);

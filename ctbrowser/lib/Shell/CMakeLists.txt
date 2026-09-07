@@ -31,6 +31,11 @@ target_sources(ctbrowser-shell
     # getComputedStyle: its own file because it is property dispatch over three
     # sources, and element.cpp is already 1,100 lines.
     bindings/computed_style.cpp
+    # the CSSOM object model: document.styleSheets and everything under it. Its
+    # own file because it is a SECOND parse of the author's sheets - the cascade
+    # keeps no stylesheet - and because CSSStyleSheet, CSSRuleList, CSSRule and
+    # CSSStyleDeclaration are four interfaces nothing else in bindings/ owns.
+    bindings/stylesheets.cpp
     bindings/window.cpp
     bindings/canvas.cpp
     bindings/resources.cpp
