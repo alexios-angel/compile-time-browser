@@ -46,9 +46,9 @@ itself did not move underneath the comparison.
 ## 2. The baseline, 2026-09-03 — and where it stands now
 
 §6 is the 2026-09-07 re-measurement. In short: `css/cssom` 8 -> **21** files and
-113 -> **220** passing subtests, `css/css-values` 16 -> **15** files and 549 ->
-**709** passing subtests. The suite that did not move up is the one whose cause
-is diagnosed there, seven files by name.
+113 -> **220** passing subtests; `css/css-values` stays at **16** files while its
+passing subtests go 549 -> **695**, and the six files it lost and the six it
+gained are named and diagnosed there.
 
 ### The 2026-09-03 baseline
 
@@ -230,7 +230,7 @@ IDL names as the second half of the same change.
 ## 6. The wall came down — 2026-09-07
 
 **`css/cssom` 12 -> 21 files and 113 -> 220 passing subtests; `css/css-values`
-16 -> 15 files and 549 -> 709 passing subtests.** §5's last section priced the
+16 -> 16 files and 549 -> 695 passing subtests.** §5's last section priced the
 camelCase spelling at nothing and said the flush had to come first. It was right,
 and the flush turned out to be TWO defects rather than one.
 
@@ -290,15 +290,23 @@ EXIST — which is what `CSS.supports(name)` and `name in getComputedStyle(e)` a
 kind can refuse anything. Every shorthand is freeform, because refusing
 `margin: 10px 20px` needs the expansion.
 
-### It cost seven files, and both causes were found by the instrument
+### It cost six files, and every one of them was passing by not testing
 
-`css/css-values` went 16 -> 15. Two files were the value grammar re-serialising a
-value whose syntax it does not model — `random-item(auto ,serif)` came back with
-the spacing changed and `test_valid_value` asserts the round-trip exactly — and
-five were `CSS.supports` saying yes to everything, so files that had been
-guarding their assertions on it stopped guarding and started failing. Both are
-fixed: the author's bytes are kept for anything the table does not model, and
-`CSS.supports` refuses a value calling a function this engine cannot evaluate.
+`css/css-values` gained six files and lost six, ending where it started at 16
+while its passing subtests went 549 -> 695. The six it lost are named one by one
+in `docs/wpt.md`; the shape of all six is the same, and it is the shape §1 of
+this file already described for `css/support/`. Four guard their assertions on
+`CSS.supports`, which did not exist; one relied on `el.style` storing any value
+it was given; one had `getComputedStyle` answering `undefined` and never reaching
+its comparison. Each now RUNS, and fails on the feature it is actually about —
+`attr()`, `random-item()`, the `lh` unit resolving to a line box's height.
+
+One defect of this work's own was in the first measurement and is fixed: the
+value grammar was re-serialising a value whose syntax it does not model, so
+`random-item(auto ,serif)` came back with the spacing changed and
+`test_valid_value` asserts the round-trip exactly. The author's bytes are kept
+now for anything the table does not model, and `CSS.supports` refuses a value
+calling a function this engine cannot evaluate.
 
 ### The Bootstrap baseline moved and was read
 

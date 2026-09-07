@@ -16,21 +16,21 @@ them moves.
 
 ## The baseline — 2026-09-07
 
-**1,632 tests, 265.1 s, four workers, and still not one crash.** Measured on the
+**1,632 tests, 232.1 s, four workers, and still not one crash.** Measured on the
 devbox against WPT `3f6b09ae`, engine at this branch.
 
 | suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `dom/nodes` | 65 | 179 | 33 | 0 | 32 | 53 | 362 |
-| `dom/events` | 51 | 18 | 12 | 0 | 10 | 85 | 176 |
+| `dom/nodes` | 65 | 181 | 31 | 0 | 32 | 53 | 362 |
+| `dom/events` | 52 | 21 | 8 | 0 | 10 | 85 | 176 |
 | `html/dom` | 43 | 150 | 17 | 0 | 17 | 138 | 365 |
-| `css/cssom` | 21 | 137 | 10 | 0 | 24 | 29 | 221 |
-| `css/css-values` | 15 | 215 | 2 | 0 | 39 | 237 | 508 |
-| **total** | **195** | **699** | **74** | **0** | **122** | **542** | **1,632** |
+| `css/cssom` | 21 | 140 | 7 | 0 | 24 | 29 | 221 |
+| `css/css-values` | 16 | 215 | 1 | 0 | 39 | 237 | 508 |
+| **total** | **197** | **707** | **64** | **0** | **122** | **542** | **1,632** |
 
-Subtests: **3,633 PASS, 18,450 FAIL, 743 NOTRUN, 102 TIMEOUT.**
+Subtests: **3,622 PASS, 18,478 FAIL, 736 NOTRUN, 101 TIMEOUT.**
 
-**195 of 1,090 tests that ran, which is 17.9%.** Four days earlier it was 119 —
+**197 of 1,090 tests that ran, which is 18.1%.** Four days earlier it was 119 —
 10.9% — and the two measurements in between are worth keeping because they say
 which half of the movement was aimed at:
 
@@ -39,7 +39,11 @@ which half of the movement was aimed at:
 | 2026-09-02 | 52 | 4.8% | the first measurement |
 | 2026-09-03 | 119 | 10.9% | six DOM changes, each measured |
 | 2026-09-07 (before) | 138 | 12.7% | **nothing aimed at WPT**: the GC, array and error-prototype work since |
-| 2026-09-07 (after) | 195 | 17.9% | the session below |
+| 2026-09-07 (after) | 197 | 18.1% | the session below |
+
+Test by test against the 2026-09-07 "before" run: **65 files gained, 6 lost**.
+HARNESS_ERROR fell 162 -> 122 and TIMEOUT 81 -> 64, both of which mean tests that
+could not start now start.
 
 **Zero crashes** again, over a still larger executed surface.
 
@@ -52,21 +56,28 @@ the instrument said about it.
 | change | measured effect |
 |---|---|
 | **DOMException**, and `context::throw_value` so a native can throw one | `assert_throws_dom` checks `code`, `name` AND `e.constructor === DOMException`; an Error passes none. 246 `dom/nodes` subtests reported exactly that |
-| **`getComputedStyle` answers** — a script mutation marks `dirty::styles` rather than `dirty::paint`, the read flushes the pending restyle, and the object publishes 125 longhands under both spellings with their initial values | `css/cssom` 12 → 21, and it is the precondition for most of `css/css-values` |
+| **`getComputedStyle` answers** — a script mutation marks `dirty::styles` rather than `dirty::paint`, the read flushes the pending restyle, and the object publishes 125 longhands under both spellings with their initial values | `css/cssom` 12 -> 21, and it is the precondition for most of `css/css-values` |
 | **the value grammar** — 143 properties with a syntax, `el.style` validating and canonicalising, `CSS.supports`, `CSS.escape` | `test_invalid_value` can be answered at all for the first time |
-| **the element-only tree** — `firstElementChild` and its six siblings, `moveBefore`, `matches`/`closest`, and pre-insertion validity throwing the DOMException the specification names | `dom/nodes` 46 → 65 |
-| **eleven event interfaces**, a listener that may be an object with `handleEvent`, `this` bound to the current target, `passive` enforced, and a throwing listener reported to the page | `dom/events` 37 → 51, subtests 180 → 318 |
-| **the document's own throws**, three separate name rules verified against every row of the corpus's own tables, `defaultView`, `document.write`, `compatMode` from the doctype | `html/dom` 27 → 43 |
+| **the element-only tree** — `firstElementChild` and its six siblings, `moveBefore`, `matches`/`closest`, and pre-insertion validity throwing the DOMException the specification names | `dom/nodes` 46 -> 65 |
+| **eleven event interfaces**, a listener that may be an object with `handleEvent`, `this` bound to the current target, `passive` enforced, and a throwing listener reported to the page | `dom/events` 37 -> 52, subtests 180 -> 320 |
+| **a handler property on the window fires at all** — `fire_handler_property` tested `is_object()` and the window is a PROXY, so `window.onerror`, `window.onload` and `window.onclick` had never once run | found by a unit test written for the throwing-listener work, not by the corpus |
+| **the document's own throws**, three separate name rules verified against every row of the corpus's own tables, `defaultView`, `document.write`, `compatMode` from the doctype | `html/dom` 27 -> 43 |
 
-### And seven that went PASS → FAIL, each diagnosed
+### And six that went PASS -> FAIL, every one of them diagnosed
 
-The gate fails in both directions and so does this table. All seven are in
-`css/css-values`, which is the one suite that did not move up (16 → 15).
+The gate fails in both directions and so does this table. All six are in
+`css/css-values`, and **all six were passing by not testing anything**:
 
-| count | what | verdict |
-|---:|---|---|
-| 2 | `random-item-valid`, `random-item-serialize` — `el.style` was re-serialising a value whose grammar it does not model, so `random-item(auto ,serif)` came back with the spacing changed and `test_valid_value`'s round-trip failed | **mine, and fixed**: the author's bytes are kept for anything the table does not model |
-| 5 | `attr-all-types`, `attr-argument-grammar`, `random-alias-property`, `calc-time-values`, `lh-rlh-on-root-001` — each guards its assertions on `CSS.supports`, which did not exist and now said yes to everything | **fixed the same way it was found**: `CSS.supports` refuses a value calling a function this engine cannot evaluate. They were passing by not testing anything, which is not something to preserve, but a `CSS.supports` that cannot say no is not worth having |
+| what | why it passed before | why it fails now |
+|---|---|---|
+| `attr-all-types`, `attr-argument-grammar`, `random-alias-property`, `calc-time-values` | each guards its assertions on `CSS.supports`, which did not exist | it does now, and `attr()` / `random()` / `type()` are not implemented. `CSS.supports` was fixed the same day to refuse a value calling a function this engine cannot evaluate — these four now RUN and fail on the feature itself |
+| `random-item-serialize` | `el.style` stored any value it was given, so a `random-item()` on a modelled property round-tripped | the value grammar refuses it, which is what a browser without `random-item()` does. `assert_not_equals(readValue, "")` is the test noticing |
+| `lh-rlh-on-root-001` | `getComputedStyle` answered `undefined` and two of its four subtests never got far enough to compare | it answers now, and answers 16 where 20 belongs: `lh` must be the line box's height and this engine resolves it to the font size |
+
+Two of the seven in the first measurement were a real defect of this session's own
+— `el.style` re-serialising a value whose grammar it does not model, so
+`random-item(auto ,serif)` came back with the spacing changed — and that one is
+fixed; `random-item-valid.html` passes again.
 
 ### The previous baseline, 2026-09-03
 
