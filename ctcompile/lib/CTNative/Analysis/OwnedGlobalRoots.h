@@ -8,7 +8,7 @@
 
 namespace ctcompile::ctnative {
 
-// An uncaptured callable table retained by the ordinary root. These are live
+// A callable table retained by the ordinary root. These are live
 // source edges, not a native carrier or permission for future external calls.
 struct OwnedGlobalMethodTable {
     ctjs::CallDirectOp factoryCall;
@@ -18,6 +18,9 @@ struct OwnedGlobalMethodTable {
     ctjs::CreateClosureOp closure;
     ctjs::FuncOp method;
     llvm::SmallVector<HostCallableEdge> calls;
+    ctjs::FuncOp wrapper;
+    ctjs::CallDirectOp wrapperCall;
+    std::optional<HostCapturedMap> capturedMap;
 };
 
 // One allocation, its owning global binding, and a fixed initialized field.

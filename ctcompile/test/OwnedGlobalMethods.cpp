@@ -48,6 +48,53 @@ module {
 }
 )MLIR";
 
+constexpr const char * capturedFixture = R"MLIR(
+module {
+  ctjs.func @script$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %u = ctjs.constant #ctjs.undefined
+    %host = ctjs.create_object
+    ctjs.store_global "host", %host
+    %wrapper = ctjs.create_closure %callee[1] this %u
+    %factory = ctjs.create_closure %callee[2] this %u
+    %invoked = ctjs.call_direct @publish$1(%u, %u, %wrapper, %factory)
+    %alias = ctjs.load_global "host"
+    %slot = ctjs.constant #ctjs.string<"slot">
+    %owned = ctjs.get_property %alias[%slot]
+    %key = ctjs.constant #ctjs.string<"get">
+    %getter = ctjs.get_property %owned[%key]
+    %answer = ctjs.call %getter(%owned)
+    ctjs.store_global "trace", %answer
+    ctjs.return %u
+  }
+  ctjs.func private @publish$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %factory: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %u = ctjs.constant #ctjs.undefined
+    %host = ctjs.load_global "host"
+    %table = ctjs.call_direct @make$2(%u, %u, %factory)
+    %slot = ctjs.constant #ctjs.string<"slot">
+    ctjs.set_property %host[%slot], %table
+    ctjs.return %u
+  }
+  ctjs.func private @make$2(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %u = ctjs.constant #ctjs.undefined
+    %cell = ctjs.create_cell %u
+    %constructor = ctjs.load_global "Map"
+    %state = ctjs.construct %constructor(%constructor)
+    ctjs.cell_set %cell, %state
+    %table = ctjs.create_object
+    %getter = ctjs.create_closure %callee[3] this %u captures %cell
+    %key = ctjs.constant #ctjs.string<"get">
+    ctjs.set_property %table[%key], %getter
+    ctjs.return %table
+  }
+  ctjs.func private @get$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 1 : i32} {
+    %state = ctjs.load_upvalue %callee[0]
+    %key = ctjs.constant #ctjs.string<"size">
+    %size = ctjs.get_property %state[%key]
+    ctjs.return %size
+  }
+}
+)MLIR";
+
 int failures = 0;
 void check(bool value, const char * message) {
     if (value) { return; }
@@ -86,11 +133,172 @@ bool complete(const OwnedGlobalRoots & query, unsigned calls = 1) {
            factoryCall.getResult() == field.getValue() && !query.lookup(table.table) &&
            !query.lookup(table.calls.front().call);
 }
+
+std::string replaced(std::string source, llvm::StringRef from, llvm::StringRef to) {
+    const auto offset = source.find(from.str());
+    if (offset == std::string::npos) { return {}; }
+    source.replace(offset, from.size(), to.str());
+    return source;
+}
+
+void checkCapturedMap(mlir::MLIRContext & context) {
+    const auto requested = [](mlir::ModuleOp module) {
+        auto contract = contractFor(module);
+        contract.initialIntrinsics = {"Map"};
+        return contract;
+    };
+    const auto proved = [](const OwnedGlobalRoots & query, bool prepared) {
+        if (!query.proved() || query.roots().size() != 1) { return false; }
+        const auto & root = query.roots().front();
+        if (!root.methodTable || root.loads.size() != 2 || root.reads.size() != 1) { return false; }
+        const auto & table = *root.methodTable;
+        if (!table.wrapper || !table.wrapperCall || !table.capturedMap || table.calls.size() != 1 ||
+            !table.calls.front().capturedMap) {
+            return false;
+        }
+        const auto & capture = *table.capturedMap;
+        return capture.intrinsic && capture.allocation && capture.size &&
+               capture.allocation == table.calls.front().capturedMap->allocation &&
+               (prepared ? (!capture.cell && !capture.initialization && !capture.upvalue &&
+                            capture.argument)
+                         : (capture.cell && capture.initialization && capture.upvalue &&
+                            !capture.argument));
+    };
+    auto prepared = replaced(capturedFixture, "    %cell = ctjs.create_cell %u\n", "");
+    prepared = replaced(prepared, "    ctjs.cell_set %cell, %state\n", "");
+    prepared = replaced(prepared, "captures %cell", "captures %state");
+    prepared = replaced(prepared, "    %state = ctjs.load_upvalue %callee[0]\n", "");
+    prepared =
+        replaced(prepared, "@get$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value)",
+                 "@get$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, "
+                 "%state: !ctjs.value)");
+    prepared = replaced(prepared, "upvalue_count = 1 : i32", "upvalue_count = 0 : i32");
+    prepared = replaced(prepared, "%answer = ctjs.call %getter(%owned)",
+                        "%environment = ctjs.load_upvalue %getter[0]\n"
+                        "    %answer = ctjs.call_direct @get$3(%owned, %u, %getter, %environment)");
+    auto specialized =
+        replaced(prepared, "    %factory = ctjs.create_closure %callee[2] this %u\n", "");
+    specialized = replaced(specialized, "@publish$1(%u, %u, %wrapper, %factory)",
+                           "@publish$1(%u, %u, %wrapper)");
+    specialized =
+        replaced(specialized,
+                 "@publish$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, "
+                 "%factory: !ctjs.value)",
+                 "@publish$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value)");
+    specialized = replaced(specialized, "    %host = ctjs.load_global \"host\"",
+                           "    %factory = ctjs.create_closure %callee[2] this %u\n"
+                           "    %host = ctjs.load_global \"host\"");
+    for (const auto & [source, lifted] :
+         {std::pair{std::string(capturedFixture), false}, std::pair{prepared, true},
+          std::pair{specialized, true}}) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
+        check(static_cast<bool>(module), "captured Map source and prepared fixtures parse");
+        if (!module) { continue; }
+        const auto contract = requested(*module);
+        HostContractAnalysis host(*module, contract);
+        OwnedGlobalRoots query(*module, contract);
+        if (!host.proved()) {
+            std::fprintf(stderr, "capture host: %s\n", host.reason().str().c_str());
+        }
+        if (!query.proved()) {
+            std::fprintf(stderr, "capture owner: %s\n", query.reason().str().c_str());
+        }
+        check(proved(query, lifted),
+              "live capture proof preserves wrapper publication and the sole Map identity");
+        if (!query.proved()) { continue; }
+        const unsigned completion = query.steps();
+        check(completion > host.steps() && completion < 10000,
+              "capture ownership charges bounded work after its host proof");
+        if (completion >= 10000) { continue; }
+        for (unsigned budget = 0; budget < completion; ++budget) {
+            OwnedGlobalRoots limited(*module, contract, budget);
+            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                      empty(*module, limited),
+                  "every incomplete capture budget withholds all owning source edges");
+        }
+        check(proved(OwnedGlobalRoots(*module, contract, completion), lifted),
+              "exact capture completion budget publishes its source graph");
+        check(!OwnedGlobalRoots(*module, contractFor(*module)).proved(),
+              "a Map capture requires the explicit standard intrinsic identity");
+        auto method = module->lookupSymbol<ctjs::FuncOp>("get$3");
+        auto returned = llvm::cast<ctjs::ReturnOp>(method.getBody().front().getTerminator());
+        returned->setOperand(0, method.getBody().front().getArgument(0));
+        OwnedGlobalRoots stale(*module, contract);
+        check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
+              "changed capture source cannot silently refresh its original fingerprint");
+        OwnedGlobalRoots changed(*module, requested(*module));
+        check(!changed.proved() && empty(*module, changed),
+              "a fresh fingerprint cannot authorize a receiver-observing captured method");
+        std::printf("captured Map %s proof and all %u incomplete budgets checked\n",
+                    lifted ? "prepared" : "source", completion);
+    }
+    const auto refuse = [&](llvm::StringRef source, llvm::StringRef from, llvm::StringRef to,
+                            const char * message) {
+        auto module =
+            mlir::parseSourceString<mlir::ModuleOp>(replaced(source.str(), from, to), &context);
+        check(static_cast<bool>(module), "captured Map refusal variant parses");
+        if (!module) { return; }
+        OwnedGlobalRoots result(*module, requested(*module));
+        check(!result.proved() && !result.exhausted() && empty(*module, result), message);
+    };
+    refuse(capturedFixture, "ctjs.cell_set %cell, %state",
+           "ctjs.cell_set %cell, %state\n    ctjs.cell_set %cell, %u",
+           "multiple writes revoke immutable captured environment ownership");
+    refuse(capturedFixture, "ctjs.cell_set %cell, %state", "ctjs.cell_set %cell, %cell",
+           "a cyclic capture cannot inherit the Map allocation identity");
+    refuse(capturedFixture, "ctjs.cell_set %cell, %state",
+           "ctjs.cell_set %cell, %state\n    ctjs.store_global \"escape\", %state",
+           "separate Map publication is outside the captured owner graph");
+    refuse(capturedFixture, "ctjs.cell_set %cell, %state",
+           "ctjs.cell_set %cell, %state\n    ctjs.store_global \"escape\", %cell",
+           "a published capture cell cannot inherit a private environment proof");
+    refuse(capturedFixture, "%state = ctjs.construct %constructor(%constructor)",
+           "%state = ctjs.construct %constructor(%constructor, %u)",
+           "Map iterables retain their iteration and exception boundary");
+    refuse(capturedFixture, "%constructor = ctjs.load_global \"Map\"",
+           "ctjs.store_global \"Map\", %u\n    %constructor = ctjs.load_global \"Map\"",
+           "source replacement revokes the standard Map identity");
+    refuse(capturedFixture, "ctjs.return %size", "ctjs.throw %size",
+           "throwing captured methods need an explicit exceptional boundary");
+    refuse(capturedFixture, "ctjs.return %size",
+           "%again = ctjs.call %callee(%this)\n    ctjs.return %size",
+           "method reentry cannot be treated as an inert size getter");
+    refuse(capturedFixture, "#ctjs.string<\"size\">", "#ctjs.string<\"get\">",
+           "other Map methods do not inherit the checked size read");
+    refuse(capturedFixture, "%table = ctjs.call_direct @make$2(%u, %u, %factory)",
+           "%table = ctjs.call %factory(%u)",
+           "unresolved factory invocations still require independent source call resolution");
+    refuse(capturedFixture, "%table = ctjs.call_direct @make$2(%u, %u, %factory)",
+           "%table = ctjs.call_direct @make$2(%u, %u, %factory)\n"
+           "    %another = ctjs.call_direct @make$2(%u, %u, %factory)",
+           "repeated factory invocations cannot merge fresh Map identities");
+    refuse(capturedFixture, "%invoked = ctjs.call_direct @publish$1(%u, %u, %wrapper, %factory)",
+           "%invoked = ctjs.call_direct @publish$1(%u, %u, %wrapper, %factory)\n"
+           "    %again = ctjs.call_direct @publish$1(%u, %u, %wrapper, %factory)",
+           "repeated wrapper invocations cannot merge descendant Map identities");
+    refuse(capturedFixture, "%table = ctjs.call_direct @make$2(%u, %u, %factory)",
+           "%table = ctjs.call_direct @make$2(%u, %u, %factory)\n"
+           "    ctjs.store_global \"escapedFactory\", %factory",
+           "transported factory parameters cannot acquire an exported alias");
+    refuse(capturedFixture, "%factory = ctjs.create_closure %callee[2] this %u",
+           "%factory = ctjs.create_closure %u[2] this %u",
+           "transported factories retain their creating activation's source identity");
+    refuse(capturedFixture, "ctjs.set_property %host[%slot], %table",
+           "ctjs.set_property %host[%slot], %table\n    ctjs.store_global \"table\", %table",
+           "additional table publication remains outside the fixed owning field");
+    refuse(prepared, "ctjs.load_upvalue %getter[0]", "ctjs.load_upvalue %getter[1]",
+           "prepared capture operands need the actual stored environment slot");
+    refuse(prepared, "@get$3(%owned, %u, %getter, %environment)", "@get$3(%owned, %u, %getter, %u)",
+           "a forged prepared capture argument cannot replace the owning Map");
+    refuse(prepared, "captures %state", "captures %u",
+           "native environment markers cannot supply a missing Map producer");
+}
 } // namespace
 
 int main() {
     mlir::MLIRContext context;
     context.getOrLoadDialect<ctjs::CTJSDialect>();
+    checkCapturedMap(context);
     auto module = mlir::parseSourceString<mlir::ModuleOp>(fixture, &context);
     check(static_cast<bool>(module), "owned global method fixture parses");
     if (!module) { return 1; }

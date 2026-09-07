@@ -24,6 +24,8 @@ struct analyzer {
     llvm::DenseMap<unsigned, ctjs::FuncOp> functions;
     llvm::DenseSet<mlir::Value> evaluating;
     std::vector<HostCallableEdge> checkedCalls;
+    llvm::DenseMap<mlir::Operation *, HostCallableEdge> capturedCalls;
+    llvm::DenseSet<mlir::Operation *> capturedOperations;
 
     analyzer(mlir::ModuleOp module, const HostContract & contract, unsigned steps);
     bool step();
@@ -31,6 +33,8 @@ struct analyzer {
     ctjs::FuncOp callable(mlir::Value value, unsigned depth = 0);
     ctjs::SetPropertyOp currentWrite(ctjs::GetPropertyOp read, unsigned depth = 0);
     std::optional<HostCallableEdge> propertyCall(mlir::Operation * call);
+    std::optional<HostCapturedMap> capturedMap(ctjs::CreateClosureOp closure, ctjs::FuncOp function,
+                                               mlir::Operation * call, ctjs::GetPropertyOp read);
     ctjs::CreateObjectOp object(mlir::Value value, unsigned depth = 0);
     mlir::Attribute primitive(mlir::Value value, unsigned depth = 0);
     std::optional<bool> truth(mlir::Value value, unsigned depth = 0);
@@ -38,6 +42,7 @@ struct analyzer {
     bool before(mlir::Operation * first, mlir::Operation * second);
     mlir::Operation * anchor(mlir::Operation * operation);
     bool exactCall(ctjs::CallDirectOp call);
+    bool transportedCallable(ctjs::FuncOp function);
     bool singleInvocation(ctjs::FuncOp function);
     std::string environmentProblem();
     HostSlotReport slot(const HostRootRequest & root, llvm::StringRef key);

@@ -17,8 +17,29 @@ std::string analyzer::environmentProblem() {
     for (const std::string & name : contract.undefinedBindings) {
         if (!globals[name].empty()) { reject("a fixed undefined host binding has a source write"); }
     }
+    if (llvm::is_contained(contract.initialIntrinsics, "Map")) {
+        // The constructor and cell precede their invocation in source order.
+        // Discover complete capture edges first, then admit only those exact
+        // operations during the environment census below.
+        module.walk([&](mlir::Operation * operation) {
+            if (!step()) { return; }
+            if (!llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(operation)) { return; }
+            auto edge = propertyCall(operation);
+            if (!edge || !edge->capturedMap) { return; }
+            capturedCalls.try_emplace(operation, *edge);
+            auto capture = *edge->capturedMap;
+            for (mlir::Operation * allowed :
+                 {capture.intrinsic.getOperation(), capture.allocation.getOperation(),
+                  capture.cell.getOperation(), capture.initialization.getOperation(),
+                  capture.upvalue.getOperation(), capture.size.getOperation(),
+                  capture.argument.getOperation()}) {
+                if (allowed) { capturedOperations.insert(allowed); }
+            }
+        });
+    }
     module.walk([&](mlir::Operation * operation) {
         if (!step() || !active(operation)) { return; }
+        if (capturedOperations.contains(operation)) { return; }
         if (auto function = llvm::dyn_cast<ctjs::FuncOp>(operation)) {
             if (function.getBody().empty()) { reject("external function provider is unsupported"); }
             return;
@@ -56,10 +77,12 @@ std::string analyzer::environmentProblem() {
                                                    llvm::cast<ctjs::CallDirectOp>(operation)
                                                        .getCalleeValue()
                                                        .getDefiningOp<ctjs::GetPropertyOp>())) {
-            if (auto edge = propertyCall(operation)) {
+            if (auto captured = capturedCalls.find(operation); captured != capturedCalls.end()) {
+                checkedCalls.push_back(captured->second);
+            } else if (auto edge = propertyCall(operation)) {
                 checkedCalls.push_back(*edge);
             } else {
-                reject("property call lacks a current uncaptured source getter proof");
+                reject("property call lacks a current source getter proof");
             }
             return;
         }

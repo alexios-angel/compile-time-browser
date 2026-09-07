@@ -83,7 +83,50 @@ bool analyzer::exactCall(ctjs::CallDirectOp call) {
     return function && !function.getBody().empty() &&
            function.getBody().front().getNumArguments() == call->getNumOperands() &&
            callable(call.getCalleeValue()) == function &&
-           closedCallableProblem(function, module).empty();
+           (closedCallableProblem(function, module).empty() || transportedCallable(function));
+}
+
+bool analyzer::transportedCallable(ctjs::FuncOp function) {
+    // A callback parameter is transport only when every use reaches the same
+    // source callee through one exact, straight-line wrapper invocation. This
+    // does not turn arbitrary private visibility into a closed call graph.
+    if (!llvm::is_contained(contract.initialIntrinsics, "Map") || function == entry ||
+        function.getUpvalueCount() != 0 || !llvm::hasSingleElement(function.getBody()) ||
+        callers[function].size() != 1) {
+        return false;
+    }
+    llvm::SmallVector<mlir::Value> pending;
+    unsigned creations = 0;
+    module.walk([&](ctjs::CreateClosureOp made) {
+        if (!step()) { return; }
+        if (callable(made.getResult()) == function) {
+            pending.push_back(made.getResult());
+            ++creations;
+        }
+    });
+    if (creations != 1) { return false; }
+    llvm::DenseSet<mlir::Value> visited;
+    while (!pending.empty()) {
+        const auto value = pending.pop_back_val();
+        if (!step() || !visited.insert(value).second) { return false; }
+        for (mlir::OpOperand & use : value.getUses()) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+            if (!call) { return false; }
+            if (use.getOperandNumber() == 2 && call == callers[function].front()) { continue; }
+            auto wrapper = target(call);
+            if (use.getOperandNumber() < 3 || !wrapper || wrapper == function || wrapper == entry ||
+                wrapper.getUpvalueCount() != 0 || !llvm::hasSingleElement(wrapper.getBody()) ||
+                callers[wrapper].size() != 1 || callers[wrapper].front() != call ||
+                call->getNumOperands() != wrapper.getBody().front().getNumArguments() ||
+                callable(call.getCalleeValue()) != wrapper || !anchor(call)) {
+                return false;
+            }
+            pending.push_back(wrapper.getBody().front().getArgument(use.getOperandNumber()));
+        }
+    }
+    return !exhausted;
 }
 
 ctjs::SetPropertyOp analyzer::currentWrite(ctjs::GetPropertyOp read, unsigned depth) {
@@ -116,8 +159,7 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
     mlir::Value callee, receiver;
     auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
     if (direct) {
-        if (!direct.getArgs().empty() ||
-            !llvm::isa_and_nonnull<ctjs::UndefinedAttr>(primitive(direct.getNewTarget()))) {
+        if (!llvm::isa_and_nonnull<ctjs::UndefinedAttr>(primitive(direct.getNewTarget()))) {
             return {};
         }
         callee = direct.getCalleeValue();
@@ -135,9 +177,7 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
     auto closure =
         write ? write.getValue().getDefiningOp<ctjs::CreateClosureOp>() : ctjs::CreateClosureOp{};
     auto function = closure ? callable(closure.getResult()) : ctjs::FuncOp{};
-    if (!function || function.getUpvalueCount() != 0 || !closure.getUpvalues().empty() ||
-        !llvm::hasSingleElement(function.getBody()) ||
-        function.getBody().front().getNumArguments() != 3 ||
+    if (!function || !llvm::hasSingleElement(function.getBody()) ||
         (direct && target(direct) != function)) {
         return {};
     }
@@ -145,30 +185,41 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
     if (!enclosingThis || !llvm::isa<ctjs::UndefinedAttr>(enclosingThis.getValue())) { return {}; }
     const auto owner = object(read.getObject());
     if (!owner || object(receiver) != owner) { return {}; }
-    // The first exported callable slice is an inert, literal-return getter.
-    // Do not infer a receiver convention, argument-window behavior or captured
-    // environment from a symbol or from a successful startup invocation.
-    for (mlir::BlockArgument argument : function.getBody().front().getArguments()) {
-        for (mlir::Operation * user : argument.getUsers()) {
-            if (!step() || !llvm::isa<ctjs::RootOp>(user)) { return {}; }
-        }
+    std::optional<HostCapturedMap> capture;
+    if (!closure.getUpvalues().empty()) {
+        capture = capturedMap(closure, function, operation, read);
+        if (!capture) { return {}; }
+    } else if (function.getUpvalueCount() != 0 ||
+               function.getBody().front().getNumArguments() != 3 ||
+               (direct && !direct.getArgs().empty())) {
+        return {};
     }
-    bool returned = false;
-    for (mlir::Operation & body : function.getBody().front()) {
-        if (!step()) { return {}; }
-        if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(body)) {
-            auto constant = result.getValue().getDefiningOp<ctjs::ConstantOp>();
-            if (!constant || !llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
-                                        ctjs::NullAttr, ctjs::UndefinedAttr>(constant.getValue())) {
+    // The capture proof checks every argument use and the complete size body.
+    // Otherwise retain the effect-free literal getter boundary.
+    if (!capture) {
+        for (mlir::BlockArgument argument : function.getBody().front().getArguments()) {
+            for (mlir::Operation * user : argument.getUsers()) {
+                if (!step() || !llvm::isa<ctjs::RootOp>(user)) { return {}; }
+            }
+        }
+        bool returned = false;
+        for (mlir::Operation & body : function.getBody().front()) {
+            if (!step()) { return {}; }
+            if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(body)) {
+                auto constant = result.getValue().getDefiningOp<ctjs::ConstantOp>();
+                if (!constant ||
+                    !llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
+                               ctjs::NullAttr, ctjs::UndefinedAttr>(constant.getValue())) {
+                    return {};
+                }
+                returned = true;
+            } else if (!llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp,
+                                  ctjs::RootOp>(body)) {
                 return {};
             }
-            returned = true;
-        } else if (!llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp,
-                              ctjs::RootOp>(body)) {
-            return {};
         }
+        if (!returned) { return {}; }
     }
-    if (!returned) { return {}; }
     for (mlir::OpOperand & use : closure.getResult().getUses()) {
         if (!step()) { return {}; }
         if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
@@ -181,12 +232,202 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
         if (!step()) { return {}; }
         if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
             (llvm::isa<ctjs::CallOp>(use.getOwner()) && use.getOperandNumber() == 0) ||
-            (llvm::isa<ctjs::CallDirectOp>(use.getOwner()) && use.getOperandNumber() == 2)) {
+            (llvm::isa<ctjs::CallDirectOp>(use.getOwner()) && use.getOperandNumber() == 2) ||
+            (capture && use.getOwner() == capture->argument.getOperation() &&
+             use.getOperandNumber() == 0)) {
             continue;
         }
         return {};
     }
-    return HostCallableEdge{operation, read, write, closure, function};
+    return HostCallableEdge{operation, read, write, closure, function, capture};
+}
+
+std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closure,
+                                                     ctjs::FuncOp function, mlir::Operation * call,
+                                                     ctjs::GetPropertyOp read) {
+    if (!step() || closure.getUpvalues().size() != 1 ||
+        !llvm::is_contained(contract.initialIntrinsics, "Map")) {
+        return {};
+    }
+    if (auto indices = closure.getEnclosingIndicesAttr();
+        indices && (indices.size() != 1 || indices[0] >= 0)) {
+        return {};
+    }
+    auto factory = closure->getParentOfType<ctjs::FuncOp>();
+    if (!factory || !llvm::hasSingleElement(factory.getBody()) || !singleInvocation(factory)) {
+        return {};
+    }
+    unsigned creations = 0;
+    module.walk([&](ctjs::CreateClosureOp made) {
+        if (step() && callable(made.getResult()) == function) { ++creations; }
+    });
+    if (creations != 1 || exhausted) { return {}; }
+
+    HostCapturedMap result;
+    auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(call);
+    auto capture = closure.getUpvalues().front();
+    result.cell = capture.getDefiningOp<ctjs::CreateCellOp>();
+    const bool prepared = !result.cell;
+    auto & body = function.getBody().front();
+    if (prepared) {
+        if (function.getUpvalueCount() != 0 || body.getNumArguments() != 4 || !direct ||
+            direct.getArgs().size() != 1) {
+            return {};
+        }
+        result.argument = direct.getArgs().front().getDefiningOp<ctjs::LoadUpvalueOp>();
+        if (!result.argument || result.argument.getIndex() != 0 ||
+            result.argument.getClosure() != read.getResult() || !before(read, result.argument) ||
+            !before(result.argument, call)) {
+            return {};
+        }
+        for (mlir::OpOperand & use : result.argument.getResult().getUses()) {
+            if (!step() || (use.getOwner() != call && !llvm::isa<ctjs::RootOp>(use.getOwner())) ||
+                (use.getOwner() == call && use.getOperandNumber() != 3)) {
+                return {};
+            }
+        }
+    } else if (function.getUpvalueCount() != 1 || body.getNumArguments() != 3 ||
+               (direct && !direct.getArgs().empty())) {
+        return {};
+    }
+
+    // A normalized capture may leave the original dead cell bookkeeping in
+    // its factory. Recover that cell from the allocation uses and check it as
+    // strictly as the source binding; markers never authorize extra writes.
+    mlir::Value resource = capture;
+    if (result.cell) {
+        for (mlir::OpOperand & use : result.cell.getResult().getUses()) {
+            if (!step()) { return {}; }
+            if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(use.getOwner())) {
+                if (use.getOperandNumber() != 0 || result.initialization) { return {}; }
+                result.initialization = write;
+            }
+        }
+        resource =
+            result.initialization ? result.initialization.getValue() : result.cell.getInitial();
+    }
+    result.allocation = resource.getDefiningOp<ctjs::ConstructOp>();
+    if (!result.allocation || !result.allocation.getArgs().empty() ||
+        result.allocation.getNewTarget() != result.allocation.getCallee() ||
+        result.allocation->getBlock() != closure->getBlock() ||
+        !result.allocation->isBeforeInBlock(closure)) {
+        return {};
+    }
+    result.intrinsic = result.allocation.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+    if (!result.intrinsic || result.intrinsic.getName() != "Map" || !globals["Map"].empty() ||
+        !before(result.intrinsic, result.allocation)) {
+        return {};
+    }
+    if (prepared) {
+        for (mlir::OpOperand & use : resource.getUses()) {
+            if (!step()) { return {}; }
+            ctjs::CreateCellOp cell;
+            if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(use.getOwner())) {
+                cell = write.getCell().getDefiningOp<ctjs::CreateCellOp>();
+                if (!cell || result.initialization) { return {}; }
+                result.initialization = write;
+            } else {
+                cell = llvm::dyn_cast<ctjs::CreateCellOp>(use.getOwner());
+            }
+            if (cell) {
+                if (result.cell && result.cell != cell) { return {}; }
+                result.cell = cell;
+            }
+        }
+    }
+    if (result.cell) {
+        if (result.cell->getBlock() != closure->getBlock() ||
+            !result.cell->isBeforeInBlock(closure)) {
+            return {};
+        }
+        if (result.initialization) {
+            auto initial = result.cell.getInitial().getDefiningOp<ctjs::ConstantOp>();
+            if (!initial || !llvm::isa<ctjs::UndefinedAttr>(initial.getValue()) ||
+                result.initialization.getValue() != resource ||
+                result.initialization->getBlock() != closure->getBlock() ||
+                !result.cell->isBeforeInBlock(result.initialization) ||
+                !result.allocation->isBeforeInBlock(result.initialization) ||
+                !result.initialization->isBeforeInBlock(closure)) {
+                return {};
+            }
+        } else if (result.cell.getInitial() != resource) {
+            return {};
+        }
+        for (mlir::OpOperand & use : result.cell.getResult().getUses()) {
+            if (!step()) { return {}; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+                (use.getOwner() == result.initialization.getOperation() &&
+                 use.getOperandNumber() == 0) ||
+                (!prepared && use.getOwner() == closure && use.getOperandNumber() == 2)) {
+                continue;
+            }
+            return {};
+        }
+    }
+    for (mlir::OpOperand & use : resource.getUses()) {
+        if (!step()) { return {}; }
+        if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+            (use.getOwner() == result.cell.getOperation() && use.getOperandNumber() == 0) ||
+            (use.getOwner() == result.initialization.getOperation() &&
+             use.getOperandNumber() == 1) ||
+            (prepared && use.getOwner() == closure && use.getOperandNumber() == 2)) {
+            continue;
+        }
+        return {};
+    }
+
+    ctjs::ReturnOp returned;
+    for (mlir::Operation & operation : body) {
+        if (!step()) { return {}; }
+        if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
+            if (prepared || result.upvalue || load.getIndex() != 0 ||
+                load.getClosure() != body.getArgument(2)) {
+                return {};
+            }
+            result.upvalue = load;
+        } else if (auto size = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
+            if (result.size || keyOf(size.getKey()) != "size" ||
+                size.getObject() !=
+                    (prepared ? body.getArgument(3)
+                              : (result.upvalue ? result.upvalue.getResult() : mlir::Value{}))) {
+                return {};
+            }
+            result.size = size;
+        } else if (auto ret = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
+            if (returned || !result.size || ret.getValue() != result.size.getResult()) {
+                return {};
+            }
+            returned = ret;
+        } else if (!llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp,
+                              ctjs::RootOp>(operation)) {
+            return {};
+        }
+    }
+    if (!returned || !result.size || (!prepared && !result.upvalue)) { return {}; }
+    for (mlir::BlockArgument argument : body.getArguments()) {
+        for (mlir::OpOperand & use : argument.getUses()) {
+            if (!step()) { return {}; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+                (!prepared && argument.getArgNumber() == 2 &&
+                 use.getOwner() == result.upvalue.getOperation()) ||
+                (prepared && argument.getArgNumber() == 3 &&
+                 use.getOwner() == result.size.getOperation() && use.getOperandNumber() == 0)) {
+                continue;
+            }
+            return {};
+        }
+    }
+    if (result.upvalue) {
+        for (mlir::OpOperand & use : result.upvalue.getResult().getUses()) {
+            if (!step()) { return {}; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+                (use.getOwner() == result.size.getOperation() && use.getOperandNumber() == 0)) {
+                continue;
+            }
+            return {};
+        }
+    }
+    return result;
 }
 
 bool analyzer::singleInvocation(ctjs::FuncOp function) {

@@ -200,6 +200,70 @@ void checkCallables(mlir::MLIRContext & context) {
     std::printf("host callable proof: %u charged steps and incomplete budgets checked\n", steps);
 }
 
+void checkCapturedCallables(mlir::MLIRContext & context) {
+    auto source = replaced(callableFixture, "%getter = ctjs.create_closure %callee[2] this %u",
+                           "%cell = ctjs.create_cell %u\n"
+                           "    %constructor = ctjs.load_global \"Map\"\n"
+                           "    %state = ctjs.construct %constructor(%constructor)\n"
+                           "    ctjs.cell_set %cell, %state\n"
+                           "    %getter = ctjs.create_closure %callee[2] this %u captures %cell");
+    source = replaced(source,
+                      "attributes {upvalue_count = 0 : i32} {\n"
+                      "    %answer = ctjs.constant #ctjs.number<4631107791820423168>",
+                      "attributes {upvalue_count = 1 : i32} {\n"
+                      "    %state = ctjs.load_upvalue %callee[0]\n"
+                      "    %key = ctjs.constant #ctjs.string<\"size\">\n"
+                      "    %answer = ctjs.get_property %state[%key]");
+    const auto query = [&](const std::string & program, bool expected) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "captured host getter fixture parses");
+        if (!module) { return; }
+        auto contract = contractFor(*module);
+        contract.initialIntrinsics = {"Map"};
+        HostContractAnalysis result(*module, contract);
+        check(result.proved() == expected && !result.exhausted(),
+              "captured getter host proof follows the complete current source environment");
+        check(hostContractFingerprint(*module) == contract.moduleSha256,
+              "captured getter evidence does not rewrite source operations");
+        if (expected && result.proved()) {
+            check(result.callables().size() == 1 && result.callables().front().capturedMap,
+                  "host callable edge includes the exact captured Map source graph");
+            if (result.callables().size() != 1 || !result.callables().front().capturedMap) {
+                return;
+            }
+            auto capture = *result.callables().front().capturedMap;
+            check(capture.intrinsic && capture.allocation && capture.cell &&
+                      capture.initialization && capture.upvalue && capture.size &&
+                      !capture.argument &&
+                      capture.initialization.getValue() == capture.allocation.getResult() &&
+                      capture.size.getObject() == capture.upvalue.getResult(),
+                  "source capture retains allocation, immutable binding and size-read identity");
+        } else if (!expected) {
+            check(result.callables().empty(), "failed environment publishes no captured calls");
+            module->walk([&](mlir::Operation * operation) {
+                check(!result.callable(operation), "failed capture exposes no usable call lookup");
+                if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
+                    check(!result.property(read), "failed capture exposes no usable slot lookup");
+                }
+            });
+        }
+    };
+    query(source, true);
+    query(replaced(source, "ctjs.call %getter(%owned)",
+                   "ctjs.call_direct @get$2(%owned, %u, %getter)"),
+          true);
+    query(replaced(source, "ctjs.call %getter(%owned)", "ctjs.call %getter(%host)"), false);
+    query(replaced(source, "ctjs.load_upvalue %callee[0]", "ctjs.load_upvalue %callee[1]"), false);
+    query(replaced(source, "ctjs.create_closure %callee[2]", "ctjs.create_closure %u[2]"), false);
+    query(replaced(source, "ctjs.cell_set %cell, %state",
+                   "ctjs.cell_set %cell, %state\n    ctjs.cell_set %cell, %u"),
+          false);
+    query(replaced(source, "ctjs.store_global \"trace\", %answer",
+                   "ctjs.store_global \"trace\", %answer\n"
+                   "    %external = ctjs.load_global \"external\""),
+          false);
+}
+
 } // namespace
 
 int main() {
@@ -269,6 +333,7 @@ int main() {
     check(!missing.proved() && missing.reason().contains("observation"),
           "a missing declared output root refuses the contract");
     checkCallables(context);
+    checkCapturedCallables(context);
     if (failures == 0) { std::puts("host contract live proof queries passed"); }
     return failures == 0 ? 0 : 1;
 }

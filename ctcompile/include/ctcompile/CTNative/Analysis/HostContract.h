@@ -5,6 +5,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/Error.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -48,15 +49,30 @@ struct HostSlotEdge {
     ctjs::GetPropertyOp read;
 };
 
+// One immutable environment slot owns this exact empty standard Map. Optional
+// cell operations describe the original local binding; after capture lifting,
+// the closure stores the allocation and the call reads its environment value.
+// Every handle is rederived from the current module, never from native markers.
+struct HostCapturedMap {
+    ctjs::LoadGlobalOp intrinsic;
+    ctjs::ConstructOp allocation;
+    ctjs::CreateCellOp cell;
+    ctjs::CellSetOp initialization;
+    ctjs::LoadUpvalueOp upvalue;
+    ctjs::GetPropertyOp size;
+    ctjs::LoadUpvalueOp argument;
+};
+
 // Evidence for this actual call, not a promise about future exported callers
 // or private visibility. The current own-data initializer stores this exact
-// uncaptured source closure. The original receiver and arguments remain live.
+// source closure. The original receiver and arguments remain live.
 struct HostCallableEdge {
     mlir::Operation * call = nullptr;
     ctjs::GetPropertyOp read;
     ctjs::SetPropertyOp write;
     ctjs::CreateClosureOp closure;
     ctjs::FuncOp function;
+    std::optional<HostCapturedMap> capturedMap;
 };
 
 struct HostSlotReport {
