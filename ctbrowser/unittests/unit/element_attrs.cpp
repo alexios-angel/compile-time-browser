@@ -378,6 +378,79 @@ void test_an_element_searches_its_own_subtree_by_namespace() {
        "1,1,0,0");
 }
 
+// --- element.dataset, and the mangling that is two functions ----------------
+
+void test_dataset_maps_data_attributes_both_ways() {
+    // ATTRIBUTE -> KEY. A `-` followed by an ASCII lowercase letter uppercases
+    // it; a `-` in front of anything else - including the end of the name - is
+    // carried across.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.setAttribute('data-foo', '1');
+        e.setAttribute('data-foo-bar', '2');
+        e.setAttribute('data--', '3');
+        e.setAttribute('data--foo', '4');
+        e.setAttribute('data---foo', '5');
+        e.setAttribute('data-', '6');
+        e.setAttribute('data-to-string', '7');
+        return [e.dataset.foo, e.dataset.fooBar, e.dataset['-'], e.dataset.Foo,
+                e.dataset['-Foo'], e.dataset[''], e.dataset.toString].join(',');
+    })())JS",
+       "1,2,3,4,5,6,7");
+    // THE TWO DIRECTIONS ARE NOT INVERSES, which is the whole reason there are
+    // two functions: `data--foo` reads back as `Foo`, so `-foo` names nothing.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.setAttribute('data--foo', 'value');
+        return (e.dataset['-foo'] === undefined) + ',' + ('-foo' in e.dataset) + ',' +
+               ('Foo' in e.dataset);
+    })())JS",
+       "true,false,true");
+    // A name that is not `data-`-prefixed is not in the map at all.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.setAttribute('dataFoo', 'value');
+        return (e.dataset.foo === undefined) + ',' + ('Foo' in e.dataset);
+    })())JS",
+       "true,false");
+    // KEY -> ATTRIBUTE, through to the document.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.dataset.fooBar = 'v1';
+        e.dataset.Foo = 'v2';
+        e.dataset[''] = 'v3';
+        return e.getAttribute('data-foo-bar') + ',' + e.getAttribute('data--foo') + ',' +
+               e.getAttribute('data-') + ',' + e.getAttributeNames().join(' ');
+    })())JS",
+       "v1,v2,v3,data-foo-bar data--foo data-");
+    // ...and the two DIFFERENT throws a write can earn.
+    is("(function () { document.createElement('div').dataset['-foo'] = 'x'; })()",
+       "threw:SyntaxError");
+    is("(function () { document.createElement('div').dataset['foo bar'] = 'x'; })()",
+       "threw:InvalidCharacterError");
+    // LIVE in both directions: the map reads the document rather than a
+    // snapshot taken when the element was wrapped.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        var before = ('foo' in e.dataset);
+        e.setAttribute('data-foo', 'x');
+        var during = e.dataset.foo;
+        e.removeAttribute('data-foo');
+        return before + ',' + during + ',' + ('foo' in e.dataset) + ',' +
+               (e.dataset.foo === undefined);
+    })())JS",
+       "false,x,false,true");
+    // ON AN HTML, SVG OR MathML ELEMENT AND NOTHING ELSE - the last of which is
+    // the only reason the property is conditional at all.
+    is(R"JS((function () {
+        var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        var math = document.createElementNS('http://www.w3.org/1998/Math/MathML', 'math');
+        var other = document.createElementNS('test', 'test');
+        return (typeof svg.dataset) + ',' + (typeof math.dataset) + ',' + (typeof other.dataset);
+    })())JS",
+       "object,object,undefined");
+}
+
 // --- ARIA, which is the reflection table's one nullable type ----------------
 
 void test_aria_reflects_as_a_nullable_string() {
@@ -438,6 +511,7 @@ int main() {
     test_the_map_is_iterable_and_named();
     test_a_parsed_attribute_keeps_the_namespace_it_was_given();
     test_an_element_searches_its_own_subtree_by_namespace();
+    test_dataset_maps_data_attributes_both_ways();
     test_aria_reflects_as_a_nullable_string();
     REPORT("element_attrs");
 }

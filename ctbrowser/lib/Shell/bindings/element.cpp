@@ -439,11 +439,72 @@ struct split_name {
     return split_name{name.substr(0, colon), name.substr(colon + 1), true};
 }
 
-// The two namespaces "validate and extract" names by URI. Spelled out rather
-// than derived, because one wrong character makes a NamespaceError fire on the
-// valid case and not on the invalid one, and nothing about the failure says so.
+// The namespaces this file names by URI. Spelled out rather than derived,
+// because one wrong character makes a NamespaceError fire on the valid case and
+// not on the invalid one, and nothing about the failure says so.
 constexpr std::string_view xml_namespace = "http://www.w3.org/XML/1998/namespace";
 constexpr std::string_view xmlns_namespace = "http://www.w3.org/2000/xmlns/";
+constexpr std::string_view html_namespace = "http://www.w3.org/1999/xhtml";
+constexpr std::string_view svg_namespace = "http://www.w3.org/2000/svg";
+constexpr std::string_view mathml_namespace = "http://www.w3.org/1998/Math/MathML";
+
+// `data-foo-bar` -> `fooBar`. HTML's dataset mangling in the direction that
+// decides which properties EXIST: the supported property names of a
+// DOMStringMap are computed from the attributes, never from the key a page
+// asks about, which is why `el.dataset['-foo']` is undefined on an element
+// carrying `data--foo` - that attribute's name is `Foo`.
+//
+// A `-` followed by an ASCII LOWERCASE letter becomes that letter uppercased;
+// everything else is carried across untouched, including a `-` at the end and a
+// `-` in front of anything that is not a lowercase letter. False for a name
+// that is not a dataset attribute at all: one without the prefix, or one
+// carrying an ASCII uppercase letter - which no attribute of an HTML element
+// can have and one of an SVG element can.
+[[nodiscard]] bool dataset_name_of(std::string_view attribute_name, std::string & out) {
+    if (!attribute_name.starts_with("data-")) { return false; }
+    const std::string_view rest = attribute_name.substr(5);
+    out.clear();
+    for (std::size_t i = 0; i < rest.size(); ++i) {
+        if (rest[i] >= 'A' && rest[i] <= 'Z') { return false; }
+        if (rest[i] == '-' && i + 1 < rest.size() && rest[i + 1] >= 'a' && rest[i + 1] <= 'z') {
+            out.push_back(static_cast<char>(rest[i + 1] - 'a' + 'A'));
+            ++i;
+            continue;
+        }
+        out.push_back(rest[i]);
+    }
+    return true;
+}
+
+// Why a write can be refused. Two DIFFERENT exceptions, and the corpus checks
+// both by name: a key naming an attribute that could never map back to it is a
+// SyntaxError, and one whose attribute name could not be written into a start
+// tag is an InvalidCharacterError.
+enum class dataset_fault : std::uint8_t {
+    none,
+    syntax,
+    character
+};
+
+// ...and `fooBar` -> `data-foo-bar`, which is the other direction and NOT the
+// inverse. That is the whole reason both exist: `data--foo` reads back as
+// `Foo`, so `-foo` names nothing on the way in, and letting it name
+// `data--foo` on the way out would make one attribute answer to two keys.
+[[nodiscard]] dataset_fault dataset_attribute_of(std::string_view idl, std::string & out) {
+    out = "data-";
+    for (std::size_t i = 0; i < idl.size(); ++i) {
+        if (idl[i] == '-' && i + 1 < idl.size() && idl[i + 1] >= 'a' && idl[i + 1] <= 'z') {
+            return dataset_fault::syntax;
+        }
+        if (idl[i] >= 'A' && idl[i] <= 'Z') {
+            out.push_back('-');
+            out.push_back(static_cast<char>(idl[i] - 'A' + 'a'));
+            continue;
+        }
+        out.push_back(idl[i]);
+    }
+    return valid_attribute_name(out) ? dataset_fault::none : dataset_fault::character;
+}
 
 // A NULLABLE DOMString argument. `null` and `undefined` are both the null
 // namespace, and so is the empty string - `attributes.html`'s "null and the
@@ -1393,6 +1454,114 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                               })),
                           value::undefined());
     obj.set("classList", value::object(list));
+
+    // --- element.dataset
+    //
+    // A live DOMStringMap over this element's `data-*` attributes, and it did
+    // not exist at all: `el.dataset.foo` was a TypeError on the first line of
+    // every page that uses the ordinary way of hanging state off an element.
+    //
+    // A PROXY, because the set of properties IS the set of attributes and a
+    // page may write a key this element has never carried. What that costs is
+    // said here rather than left to be discovered: this VM implements the
+    // `get`, `set` and `has` traps and no others, so
+    //
+    //   * `for (const k in el.dataset)` enumerates NOTHING - `op::own_keys`
+    //     yields an empty array for a proxy;
+    //   * `delete el.dataset.foo` is a silent no-op - `op::delete_prop` skips
+    //     anything that is not exactly a plain object;
+    //   * `el.dataset instanceof DOMStringMap` is false - `instance_of` walks
+    //     an object_object's prototype and a proxy has none of its own.
+    //
+    // All three are deviations in `lib/Script` and that is where they are
+    // fixable. The alternative shape - a plain object refilled on every read,
+    // as `attributes` above is - trades those three for a `set` that never
+    // reaches the document at all, which is the worse half of the trade: a
+    // write that silently does nothing is a wrong answer, and an enumeration
+    // that finds nothing is a missing one.
+    //
+    // NOT ON EVERY ELEMENT. `dataset` belongs to HTMLElement, SVGElement and
+    // MathMLElement, and `document.createElementNS("test", "test").dataset` is
+    // `undefined` - which `dataset.html` asserts by name, and which is the only
+    // reason this is conditional rather than unconditional.
+    {
+        const auto txn = doc_->read();
+        const std::string ns = namespace_of(id);
+        const bool wanted = txn.kind(id).value_or(node_kind::text) == node_kind::element &&
+                            (ns == html_namespace || ns == svg_namespace || ns == mathml_namespace);
+        if (wanted) { install_dataset(cx, obj, id); }
+    }
+}
+
+void dom_bindings::install_dataset(context & cx, script::object_object & obj, node_id id) {
+    // THE STORE'S PROTOTYPE IS DELIBERATELY LEFT ALONE. Every miss falls
+    // through to `lookup_property` on it, and a plain object reaches the
+    // builtin Object.prototype tables that way - which is what
+    // `dataset-prototype.html`'s "Properties on Object.prototype should shine
+    // through" is asking. Hanging `DOMStringMap.prototype` (whose own
+    // prototype link is null) in front of it would cut that off and buy
+    // nothing, `instanceof` on a proxy being false either way.
+    auto * store = static_cast<script::object_object *>(cx.make_object().as_heap());
+    auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
+    const auto trap = [&](std::string name, script::native_fn fn) {
+        handler->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+    };
+    // ONE ATTRIBUTE, FOUND THE WAY THE SPECIFICATION FINDS IT: by computing
+    // every supported property name from the attribute list and comparing, not
+    // by mangling the key and looking that up. The two disagree exactly where
+    // `dataset-delete.html` and `dataset-get.html` say they must.
+    const auto value_of = [this, id](std::string_view key) -> std::optional<std::string> {
+        const auto txn = doc_->read();
+        std::string name;
+        for (const attribute & held : txn.attributes(id)) {
+            // NULL NAMESPACE ONLY: `xlink:data-x` is not a dataset attribute
+            // however its local name reads.
+            if (held.ns) { continue; }
+            if (dataset_name_of(atoms_->text(held.name), name) && name == key) {
+                return held.value;
+            }
+        }
+        return std::nullopt;
+    };
+    trap("get", [value_of](context & c, std::span<value> args) {
+        if (args.size() < 2) { return value::undefined(); }
+        const std::string key = c.to_string(args[1]);
+        if (const std::optional<std::string> found = value_of(key)) { return c.string(*found); }
+        return c.lookup_property(args[0], key);
+    });
+    trap("has", [value_of](context & c, std::span<value> args) {
+        if (args.size() < 2) { return value::boolean(false); }
+        const std::string key = c.to_string(args[1]);
+        if (value_of(key)) { return value::boolean(true); }
+        return value::boolean(!c.lookup_property(args[0], key).is_undefined());
+    });
+    trap("set", [this, id](context & c, std::span<value> args) {
+        if (args.size() < 3) { return value::boolean(false); }
+        const std::string key = c.to_string(args[1]);
+        std::string name;
+        switch (dataset_attribute_of(key, name)) {
+        case dataset_fault::syntax:
+            // "If name contains a U+002D followed by an ASCII lower alpha,
+            // throw a SyntaxError" - because that key is not one this map could
+            // ever hand back, `data--foo` reading as `Foo` and not as `-foo`.
+            throw_dom_exception(c, "SyntaxError",
+                                "dataset: '" + key + "' is not a name a data- attribute can have");
+            return value::boolean(false);
+        case dataset_fault::character:
+            throw_dom_exception(c, "InvalidCharacterError",
+                                "dataset: '" + name + "' is not a valid attribute name");
+            return value::boolean(false);
+        case dataset_fault::none: break;
+        }
+        // ALREADY LOWERCASE by construction, so this interns as written rather
+        // than folding: the only characters the mangle can emit above 'z' are
+        // the ones it copied, and folding them would be folding the author's.
+        (void)doc_->set_attribute(id, atoms_->intern(name), c.to_string(args[2]));
+        mutated();
+        return value::boolean(true);
+    });
+    obj.set("dataset", value::object(cx.allocate<script::proxy_object>(value::object(store),
+                                                                       value::object(handler))));
 }
 
 rect dom_bindings::box_of(node_id id) const {

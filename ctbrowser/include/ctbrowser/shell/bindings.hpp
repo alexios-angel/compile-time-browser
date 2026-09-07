@@ -498,6 +498,10 @@ private:
     [[nodiscard]] value attribute_object(context & cx, node_id owner, const attribute & held);
     // `element.attributes`, refilled in place so the map keeps its identity.
     void refresh_attribute_map(context & cx, script::object_object & map, node_id id);
+    // `element.dataset` - a DOMStringMap over the `data-*` attributes. Its own
+    // function rather than more of install_element_views because it is
+    // CONDITIONAL: only an HTML, SVG or MathML element has one.
+    void install_dataset(context & cx, script::object_object & obj, node_id id);
     // DOM 4.9 "validate and extract", shared by setAttributeNS and
     // setNamedItemNS. False HAVING ALREADY THROWN - InvalidCharacterError for a
     // name that is not a QName, NamespaceError for the four prefix rules.
