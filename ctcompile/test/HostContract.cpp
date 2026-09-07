@@ -214,7 +214,8 @@ void checkCapturedCallables(mlir::MLIRContext & context) {
                       "    %state = ctjs.load_upvalue %callee[0]\n"
                       "    %key = ctjs.constant #ctjs.string<\"size\">\n"
                       "    %answer = ctjs.get_property %state[%key]");
-    const auto query = [&](const std::string & program, bool expected) {
+    const auto query = [&](const std::string & program, bool expected, unsigned reads = 1,
+                           unsigned calls = 0, unsigned upvalues = 1) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
         check(static_cast<bool>(module), "captured host getter fixture parses");
         if (!module) { return; }
@@ -233,11 +234,12 @@ void checkCapturedCallables(mlir::MLIRContext & context) {
             }
             auto capture = *result.callables().front().capturedMap;
             check(capture.intrinsic && capture.allocation && capture.cell &&
-                      capture.initialization && capture.upvalue && capture.size &&
+                      capture.initialization && capture.upvalues.size() == upvalues &&
+                      capture.reads.size() == reads && capture.calls.size() == calls &&
                       !capture.argument &&
                       capture.initialization.getValue() == capture.allocation.getResult() &&
-                      capture.size.getObject() == capture.upvalue.getResult(),
-                  "source capture retains allocation, immutable binding and size-read identity");
+                      capture.reads.front().getObject() == capture.upvalues.front().getResult(),
+                  "source capture retains the immutable binding and every live Map effect");
         } else if (!expected) {
             check(result.callables().empty(), "failed environment publishes no captured calls");
             module->walk([&](mlir::Operation * operation) {
@@ -262,6 +264,112 @@ void checkCapturedCallables(mlir::MLIRContext & context) {
                    "ctjs.store_global \"trace\", %answer\n"
                    "    %external = ctjs.load_global \"external\""),
           false);
+
+    constexpr llvm::StringLiteral set = R"MLIR(
+    %entryKey = ctjs.constant #ctjs.string<"x">
+    %value = ctjs.constant #ctjs.number<4607182418800017408>
+    %setKey = ctjs.constant #ctjs.string<"set">
+    %setter = ctjs.get_property %state[%setKey]
+    %written = ctjs.call %setter(%state, %entryKey, %value)
+)MLIR";
+    const auto mutated = replaced(source, "    %key = ctjs.constant #ctjs.string<\"size\">",
+                                  set.str() + "    %key = ctjs.constant #ctjs.string<\"size\">");
+    query(mutated, true, 2, 1);
+    for (const char * primitive :
+         {"#ctjs.string<\"payload\">", "#ctjs.boolean<true>", "#ctjs.null", "#ctjs.undefined"}) {
+        query(replaced(mutated, "#ctjs.number<4607182418800017408>", primitive), true, 2, 1);
+    }
+    const auto aliases = replaced(mutated, "%answer = ctjs.get_property %state[%key]",
+                                  "%again = ctjs.load_upvalue %callee[0]\n"
+                                  "    %answer = ctjs.get_property %again[%key]");
+    query(aliases, true, 2, 1, 2);
+    query(replaced(mutated, "%answer = ctjs.get_property %state[%key]",
+                   "%answer = ctjs.get_property %written[%key]"),
+          true, 2, 1);
+    for (const char * method : {"get", "has", "delete"}) {
+        const auto effects =
+            replaced(mutated, "    %key = ctjs.constant #ctjs.string<\"size\">",
+                     std::string("    %probeKey = ctjs.constant #ctjs.string<\"") + method +
+                         "\">\n"
+                         "    %probeMethod = ctjs.get_property %state[%probeKey]\n"
+                         "    %probe = ctjs.call %probeMethod(%state, %entryKey)\n"
+                         "    %key = ctjs.constant #ctjs.string<\"size\">");
+        query(effects, true, 3, 2);
+        // Host ownership proves primitive contents, not a native get result
+        // carrier or a constant answer after previous invocations.
+        query(replaced(effects, "ctjs.return %answer", "ctjs.return %probe"), true, 3, 2);
+        query(replaced(effects, "    %key = ctjs.constant #ctjs.string<\"size\">",
+                       "    %saved = ctjs.call %setter(%state, %probe, %probe)\n"
+                       "    %key = ctjs.constant #ctjs.string<\"size\">"),
+              true, 3, 3);
+    }
+    const auto growing =
+        replaced(mutated, "%written = ctjs.call %setter(%state, %entryKey, %value)",
+                 "%sizeKey = ctjs.constant #ctjs.string<\"size\">\n"
+                 "    %before = ctjs.get_property %state[%sizeKey]\n"
+                 "    %written = ctjs.call %setter(%state, %before, %value)");
+    query(growing, true, 3, 1);
+    query(replaced(mutated, "ctjs.call %setter(%state, %entryKey, %value)",
+                   "ctjs.call %setter(%state, %entryKey)"),
+          false);
+    query(replaced(mutated, "ctjs.call %setter(%state, %entryKey, %value)",
+                   "ctjs.call %setter(%this, %entryKey, %value)"),
+          false);
+    query(replaced(mutated, "ctjs.call %setter(%state, %entryKey, %value)",
+                   "ctjs.call %setter(%state, %state, %value)"),
+          false);
+    query(replaced(mutated, "ctjs.call %setter(%state, %entryKey, %value)",
+                   "ctjs.call %setter(%state, %entryKey, %state)"),
+          false);
+    query(replaced(mutated, "ctjs.call %setter(%state, %entryKey, %value)",
+                   "ctjs.call %setter(%state, %entryKey, %setter)"),
+          false);
+    query(replaced(mutated, "ctjs.return %answer", "ctjs.return %written"), false);
+    query(replaced(mutated, "ctjs.return %answer", "ctjs.return %setter"), false);
+    query(replaced(mutated, "ctjs.return %answer",
+                   "ctjs.store_global \"escape\", %written\n    ctjs.return %answer"),
+          false);
+    query(replaced(mutated, "ctjs.return %answer",
+                   "ctjs.set_property %state[%setKey], %setter\n    ctjs.return %answer"),
+          false);
+
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(mutated, &context);
+    check(static_cast<bool>(module), "live Map effect mutation fixture parses");
+    if (!module) { return; }
+    auto contract = contractFor(*module);
+    contract.initialIntrinsics = {"Map"};
+    HostContractAnalysis original(*module, contract);
+    check(original.proved() && original.callables().size() == 1,
+          "live effect mutation starts with a complete captured source proof");
+    if (!original.proved() || original.callables().size() != 1) { return; }
+    auto call = original.callables().front().call;
+    auto capture = *original.callables().front().capturedMap;
+    const unsigned completion = original.steps();
+    for (unsigned budget = 0; budget < completion; ++budget) {
+        HostContractAnalysis limited(*module, contract, budget);
+        check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                  limited.callables().empty() && !limited.callable(call),
+              "every incomplete effect census withholds all captured callable edges");
+    }
+    mlir::Builder builder(&context);
+    auto setCall = capture.calls.front();
+    setCall->setAttr("ctnative.map_action", builder.getStringAttr("get"));
+    setCall->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+    // Map annotations participate in the fingerprint, unlike host reports.
+    // A fresh contract still cannot let them replace the live source census.
+    contract.moduleSha256 = hostContractFingerprint(*module);
+    HostContractAnalysis rerun(*module, contract);
+    check(rerun.proved() && rerun.callable(call) &&
+              rerun.callable(call)->capturedMap->calls.front() == setCall,
+          "native effect annotations cannot replace the current source operation census");
+    setCall->setOperand(3, capture.upvalues.front().getResult());
+    HostContractAnalysis stale(*module, contract);
+    check(!stale.proved() && stale.reason().contains("fingerprint") && stale.callables().empty(),
+          "changing a Map write cannot reuse an earlier host fingerprint");
+    contract.moduleSha256 = hostContractFingerprint(*module);
+    HostContractAnalysis cyclic(*module, contract);
+    check(!cyclic.proved() && cyclic.callables().empty() && !cyclic.callable(call),
+          "a fresh fingerprint and forged effect markers cannot authorize a Map cycle");
 }
 
 } // namespace

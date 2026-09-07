@@ -118,9 +118,13 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         if (edge.function != method || edge.closure != closure ||
             edge.write != methodInitialization ||
             edge.capturedMap.has_value() != capture.has_value() ||
-            (capture && (edge.capturedMap->allocation != capture->allocation ||
+            (capture && (edge.capturedMap->intrinsic != capture->intrinsic ||
+                         edge.capturedMap->allocation != capture->allocation ||
                          edge.capturedMap->cell != capture->cell ||
-                         edge.capturedMap->size != capture->size)) ||
+                         edge.capturedMap->initialization != capture->initialization ||
+                         edge.capturedMap->upvalues != capture->upvalues ||
+                         edge.capturedMap->reads != capture->reads ||
+                         edge.capturedMap->calls != capture->calls)) ||
             edge.call->getParentOfType<ctjs::FuncOp>() != entry) {
             reject("owned global method table has another callable or invocation context");
             return;
@@ -157,7 +161,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         }
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
             if (!llvm::is_contained(slot.reads, read) && !methodReads.contains(read) &&
-                (!capture || read != capture->size)) {
+                (!capture || !llvm::is_contained(capture->reads, read))) {
                 reject("owned global method field read lacks a complete live callable edge");
             }
         }
@@ -170,7 +174,9 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             wrapperCall = call;
         }
         if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(operation) && operation != factoryCall &&
-            operation != wrapperCall.getOperation() && !methodCalls.contains(operation)) {
+            operation != wrapperCall.getOperation() && !methodCalls.contains(operation) &&
+            (!capture ||
+             !llvm::is_contained(capture->calls, llvm::dyn_cast<ctjs::CallOp>(operation)))) {
             reject("owned global method table has another call or factory invocation");
         }
         if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(operation);

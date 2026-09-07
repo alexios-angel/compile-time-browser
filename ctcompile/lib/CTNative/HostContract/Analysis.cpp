@@ -31,9 +31,17 @@ std::string analyzer::environmentProblem() {
             for (mlir::Operation * allowed :
                  {capture.intrinsic.getOperation(), capture.allocation.getOperation(),
                   capture.cell.getOperation(), capture.initialization.getOperation(),
-                  capture.upvalue.getOperation(), capture.size.getOperation(),
                   capture.argument.getOperation()}) {
                 if (allowed) { capturedOperations.insert(allowed); }
+            }
+            for (ctjs::LoadUpvalueOp load : capture.upvalues) {
+                if (step()) { capturedOperations.insert(load); }
+            }
+            for (ctjs::GetPropertyOp read : capture.reads) {
+                if (step()) { capturedOperations.insert(read); }
+            }
+            for (ctjs::CallOp call : capture.calls) {
+                if (step()) { capturedOperations.insert(call); }
             }
         });
     }

@@ -49,17 +49,20 @@ struct HostSlotEdge {
     ctjs::GetPropertyOp read;
 };
 
-// One immutable environment slot owns this exact empty standard Map. Optional
-// cell operations describe the original local binding; after capture lifting,
-// the closure stores the allocation and the call reads its environment value.
+// One immutable environment slot owns this exact standard Map, constructed
+// empty. The complete live body census permits only primitive contents and
+// standard size/set/get/has/delete effects. These effects remain runtime; no
+// startup value or result type is promised. Optional cell operations describe
+// the original binding; after lifting, the call reads its environment value.
 // Every handle is rederived from the current module, never from native markers.
 struct HostCapturedMap {
     ctjs::LoadGlobalOp intrinsic;
     ctjs::ConstructOp allocation;
     ctjs::CreateCellOp cell;
     ctjs::CellSetOp initialization;
-    ctjs::LoadUpvalueOp upvalue;
-    ctjs::GetPropertyOp size;
+    std::vector<ctjs::LoadUpvalueOp> upvalues;
+    std::vector<ctjs::GetPropertyOp> reads;
+    std::vector<ctjs::CallOp> calls;
     ctjs::LoadUpvalueOp argument;
 };
 

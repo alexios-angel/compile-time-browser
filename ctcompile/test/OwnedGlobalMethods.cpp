@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace {
 namespace ctjs = ctcompile::ctjs;
@@ -221,11 +222,13 @@ void checkCapturedMap(mlir::MLIRContext & context) {
             return false;
         }
         const auto & capture = *table.capturedMap;
-        return capture.intrinsic && capture.allocation && capture.size &&
+        return capture.intrinsic && capture.allocation && !capture.reads.empty() &&
                capture.allocation == table.calls.front().capturedMap->allocation &&
-               (prepared ? (!capture.cell && !capture.initialization && !capture.upvalue &&
+               capture.reads == table.calls.front().capturedMap->reads &&
+               capture.calls == table.calls.front().capturedMap->calls &&
+               (prepared ? (!capture.cell && !capture.initialization && capture.upvalues.empty() &&
                             capture.argument)
-                         : (capture.cell && capture.initialization && capture.upvalue &&
+                         : (capture.cell && capture.initialization && !capture.upvalues.empty() &&
                             !capture.argument));
     };
     auto prepared = replaced(capturedFixture, "    %cell = ctjs.create_cell %u\n", "");
@@ -254,10 +257,75 @@ void checkCapturedMap(mlir::MLIRContext & context) {
                            "    %host = ctjs.load_global \"host\"");
     const auto indirect = replaced(capturedFixture, "ctjs.call_direct @make$2(%u, %u, %factory)",
                                    "ctjs.call %factory(%u)");
+    constexpr llvm::StringLiteral set = R"MLIR(
+    %entryKey = ctjs.constant #ctjs.string<"x">
+    %value = ctjs.constant #ctjs.number<4607182418800017408>
+    %setKey = ctjs.constant #ctjs.string<"set">
+    %setter = ctjs.get_property %state[%setKey]
+    %written = ctjs.call %setter(%state, %entryKey, %value)
+)MLIR";
+    const auto withSet = [&](llvm::StringRef source) {
+        return replaced(source.str(), "    %key = ctjs.constant #ctjs.string<\"size\">",
+                        set.str() + "    %key = ctjs.constant #ctjs.string<\"size\">");
+    };
+    const auto mutated = withSet(indirect);
+    const auto liftedMutation = withSet(prepared);
+    auto importedMutation = replaced(importedCapturedFixture,
+                                     "    %2 = ctjs.constant #ctjs.string<\"size\">\n"
+                                     "    %3 = ctjs.get_property %1[%2]",
+                                     "    %2 = ctjs.constant #ctjs.string<\"set\">\n"
+                                     "    %3 = ctjs.get_property %1[%2]\n"
+                                     "    %4 = ctjs.constant #ctjs.string<\"x\">\n"
+                                     "    %5 = ctjs.constant #ctjs.number<4607182418800017408>\n"
+                                     "    %6 = ctjs.call %3(%1, %4, %5)\n"
+                                     "    %7 = ctjs.load_upvalue %arg2[0]\n"
+                                     "    %8 = ctjs.constant #ctjs.string<\"size\">\n"
+                                     "    %9 = ctjs.get_property %7[%8]");
+    importedMutation = replaced(importedMutation, "ctjs.return %3", "ctjs.return %9");
+    constexpr llvm::StringLiteral actions = R"MLIR(
+    %getKey = ctjs.constant #ctjs.string<"get">
+    %getMethod = ctjs.get_property %state[%getKey]
+    %lookup = ctjs.call %getMethod(%state, %entryKey)
+    %hasKey = ctjs.constant #ctjs.string<"has">
+    %hasMethod = ctjs.get_property %state[%hasKey]
+    %found = ctjs.call %hasMethod(%state, %entryKey)
+    %deleteKey = ctjs.constant #ctjs.string<"delete">
+    %deleteMethod = ctjs.get_property %state[%deleteKey]
+    %removed = ctjs.call %deleteMethod(%state, %entryKey)
+)MLIR";
+    struct specimen {
+        std::string source;
+        bool lifted;
+        unsigned reads;
+        unsigned calls;
+    };
+    std::vector<specimen> specimens{{capturedFixture, false, 1, 0},
+                                    {indirect, false, 1, 0},
+                                    {importedCapturedFixture, false, 1, 0},
+                                    {prepared, true, 1, 0},
+                                    {specialized, true, 1, 0},
+                                    {withSet(capturedFixture), false, 2, 1},
+                                    {mutated, false, 2, 1},
+                                    {importedMutation, false, 2, 1},
+                                    {liftedMutation, true, 2, 1},
+                                    {withSet(specialized), true, 2, 1}};
     for (const auto & [source, lifted] :
-         {std::pair{std::string(capturedFixture), false}, std::pair{indirect, false},
-          std::pair{std::string(importedCapturedFixture), false}, std::pair{prepared, true},
-          std::pair{specialized, true}}) {
+         {std::pair{mutated, false}, std::pair{liftedMutation, true}}) {
+        specimens.push_back(
+            {replaced(source, "    %key = ctjs.constant #ctjs.string<\"size\">",
+                      actions.str() + "    %key = ctjs.constant #ctjs.string<\"size\">"),
+             lifted, 5, 4});
+        specimens.push_back(
+            {replaced(source, "%written = ctjs.call %setter(%state, %entryKey, %value)",
+                      "%sizeKey = ctjs.constant #ctjs.string<\"size\">\n"
+                      "    %before = ctjs.get_property %state[%sizeKey]\n"
+                      "    %written = ctjs.call %setter(%state, %before, %value)"),
+             lifted, 3, 1});
+        specimens.push_back({replaced(source, "%size = ctjs.get_property %state[%key]",
+                                      "%size = ctjs.get_property %written[%key]"),
+                             lifted, 2, 1});
+    }
+    for (const auto & [source, lifted, reads, calls] : specimens) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
         check(static_cast<bool>(module), "captured Map source and prepared fixtures parse");
         if (!module) { continue; }
@@ -275,6 +343,9 @@ void checkCapturedMap(mlir::MLIRContext & context) {
         check(proved(query, lifted),
               "live capture proof preserves wrapper publication and the sole Map identity");
         if (!query.proved()) { continue; }
+        const auto & effects = *query.roots().front().methodTable->capturedMap;
+        check(effects.reads.size() == reads && effects.calls.size() == calls,
+              "captured source ownership records every live standard Map read and call");
         const unsigned completion = query.steps();
         check(completion > host.steps() && completion < 10000,
               "capture ownership charges bounded work after its host proof");
@@ -298,8 +369,9 @@ void checkCapturedMap(mlir::MLIRContext & context) {
         OwnedGlobalRoots changed(*module, requested(*module));
         check(!changed.proved() && empty(*module, changed),
               "a fresh fingerprint cannot authorize a receiver-observing captured method");
-        std::printf("captured Map %s proof and all %u incomplete budgets checked\n",
-                    lifted ? "prepared" : "source", completion);
+        std::printf("captured Map %s proof (%u reads, %u calls) and all %u incomplete budgets "
+                    "checked\n",
+                    lifted ? "prepared" : "source", reads, calls, completion);
     }
     const auto refuse = [&](llvm::StringRef source, llvm::StringRef from, llvm::StringRef to,
                             const char * message) {
@@ -371,6 +443,46 @@ void checkCapturedMap(mlir::MLIRContext & context) {
            "a forged prepared capture argument cannot replace the owning Map");
     refuse(prepared, "captures %state", "captures %u",
            "native environment markers cannot supply a missing Map producer");
+    for (const auto & source : {mutated, liftedMutation}) {
+        refuse(source, "ctjs.call %setter(%state, %entryKey, %value)",
+               "ctjs.call %setter(%state, %entryKey)",
+               "source and prepared Map effects require the exact builtin arity");
+        refuse(source, "ctjs.call %setter(%state, %entryKey, %value)",
+               "ctjs.call %setter(%this, %entryKey, %value)",
+               "source and prepared Map calls retain the exact method receiver");
+        refuse(source, "ctjs.call %setter(%state, %entryKey, %value)",
+               "ctjs.call %setter(%state, %entryKey, %state)",
+               "Map cycles cannot inherit the primitive captured contents proof");
+        refuse(source, "ctjs.call %setter(%state, %entryKey, %value)",
+               "ctjs.call %setter(%state, %state, %value)",
+               "a Map key cannot retain an owning alias through primitive contents");
+        refuse(source, "ctjs.call %setter(%state, %entryKey, %value)",
+               "ctjs.call %setter(%state, %entryKey, %setter)",
+               "a detached method cannot enter the primitive captured contents");
+        refuse(source, "ctjs.return %size", "ctjs.return %written",
+               "a Map-valued return needs another owning publication proof");
+        refuse(source, "ctjs.return %size", "ctjs.return %setter",
+               "detached builtin method values remain outside primitive returns");
+        refuse(source, "ctjs.return %size",
+               "ctjs.store_global \"escapedMap\", %written\n    ctjs.return %size",
+               "a fluent Map alias cannot acquire another global owner");
+        refuse(source, "ctjs.return %size",
+               "%opaque = ctjs.call %callee(%this)\n    ctjs.return %size",
+               "proved Map mutation cannot authorize later opaque or reentrant effects");
+        refuse(source, "ctjs.call %setter(%state, %entryKey, %value)",
+               "ctjs.call %setter(%state, %entryKey) {ctnative.map_action = \"set\", "
+               "ctnative.host_proved = true}",
+               "forged native effect markers cannot repair an incomplete source call");
+        refuse(source, "#ctjs.string<\"set\">", "#ctjs.string<\"clear\">",
+               "other standard methods require their own captured effect boundary");
+        refuse(source, "ctjs.create_closure %callee[3]", "ctjs.create_closure %u[3]",
+               "effectful source and prepared methods retain their source program identity");
+        refuse(source, "ctjs.create_closure %callee[2]", "ctjs.create_closure %u[2]",
+               "effectful wrapper factories retain their source program identity");
+        refuse(source, "ctjs.return %size",
+               "ctjs.set_property %state[%setKey], %setter\n    ctjs.return %size",
+               "a captured Map method replacement invalidates later builtin effects");
+    }
 }
 } // namespace
 

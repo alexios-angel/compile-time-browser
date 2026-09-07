@@ -249,7 +249,7 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
                (direct && !direct.getArgs().empty())) {
         return {};
     }
-    // The capture proof checks every argument use and the complete size body.
+    // The capture proof checks every argument use and the complete Map body.
     // Otherwise retain the effect-free literal getter boundary.
     if (!capture) {
         for (mlir::BlockArgument argument : function.getBody().front().getArguments()) {
@@ -431,52 +431,95 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         return {};
     }
 
+    // This is an effects and ownership proof, not an evaluation of the first
+    // invocation. The immutable slot always denotes this Map; its contents
+    // may change at every call. A complete body census closes all writes over
+    // primitives, making get results primitive without promising a value or
+    // native carrier. Type inference must still prove the latter separately.
+    llvm::DenseSet<mlir::Value> maps, primitives;
+    llvm::DenseSet<mlir::Operation *> reads, calls, upvalues;
+    if (prepared) { maps.insert(body.getArgument(3)); }
     ctjs::ReturnOp returned;
     for (mlir::Operation & operation : body) {
         if (!step()) { return {}; }
-        if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
-            if (prepared || result.upvalue || load.getIndex() != 0 ||
-                load.getClosure() != body.getArgument(2)) {
+        if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(operation)) {
+            if (!llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr, ctjs::NullAttr,
+                           ctjs::UndefinedAttr>(constant.getValue())) {
                 return {};
             }
-            result.upvalue = load;
-        } else if (auto size = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
-            if (result.size || keyOf(size.getKey()) != "size" ||
-                size.getObject() !=
-                    (prepared ? body.getArgument(3)
-                              : (result.upvalue ? result.upvalue.getResult() : mlir::Value{}))) {
+            primitives.insert(constant.getResult());
+        } else if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
+            if (prepared || load.getIndex() != 0 || load.getClosure() != body.getArgument(2)) {
                 return {};
             }
-            result.size = size;
+            result.upvalues.push_back(load);
+            upvalues.insert(load);
+            maps.insert(load.getResult());
+        } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
+            const auto key = keyOf(read.getKey());
+            if (!maps.contains(read.getObject()) ||
+                (key != "size" && key != "set" && key != "get" && key != "has" &&
+                 key != "delete")) {
+                return {};
+            }
+            result.reads.push_back(read);
+            reads.insert(read);
+            if (key == "size") { primitives.insert(read.getResult()); }
+        } else if (auto invoke = llvm::dyn_cast<ctjs::CallOp>(operation)) {
+            auto read = invoke.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (!read || !reads.contains(read) || read.getObject() != invoke.getReceiver()) {
+                return {};
+            }
+            const auto key = keyOf(read.getKey());
+            if (key == "size" || invoke.getArgs().size() != (key == "set" ? 2u : 1u)) { return {}; }
+            for (mlir::Value argument : invoke.getArgs()) {
+                if (!step() || !primitives.contains(argument)) { return {}; }
+            }
+            result.calls.push_back(invoke);
+            calls.insert(invoke);
+            if (key == "set") {
+                maps.insert(invoke.getResult());
+            } else {
+                primitives.insert(invoke.getResult());
+            }
         } else if (auto ret = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
-            if (returned || !result.size || ret.getValue() != result.size.getResult()) {
-                return {};
-            }
+            if (returned || !primitives.contains(ret.getValue())) { return {}; }
             returned = ret;
-        } else if (!llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp,
-                              ctjs::RootOp>(operation)) {
+        } else if (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(operation)) {
             return {};
         }
     }
-    if (!returned || !result.size || (!prepared && !result.upvalue)) { return {}; }
+    if (!returned || result.reads.empty() || (!prepared && result.upvalues.empty())) { return {}; }
     for (mlir::BlockArgument argument : body.getArguments()) {
+        if (prepared && argument.getArgNumber() == 3) { continue; }
         for (mlir::OpOperand & use : argument.getUses()) {
             if (!step()) { return {}; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
-                (!prepared && argument.getArgNumber() == 2 &&
-                 use.getOwner() == result.upvalue.getOperation()) ||
-                (prepared && argument.getArgNumber() == 3 &&
-                 use.getOwner() == result.size.getOperation() && use.getOperandNumber() == 0)) {
+                (!prepared && argument.getArgNumber() == 2 && upvalues.contains(use.getOwner()) &&
+                 use.getOperandNumber() == 0)) {
                 continue;
             }
             return {};
         }
     }
-    if (result.upvalue) {
-        for (mlir::OpOperand & use : result.upvalue.getResult().getUses()) {
+    for (mlir::Value alias : maps) {
+        for (mlir::OpOperand & use : alias.getUses()) {
             if (!step()) { return {}; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
-                (use.getOwner() == result.size.getOperation() && use.getOperandNumber() == 0)) {
+                (reads.contains(use.getOwner()) && use.getOperandNumber() == 0) ||
+                (calls.contains(use.getOwner()) && use.getOperandNumber() == 1)) {
+                continue;
+            }
+            return {};
+        }
+    }
+    for (ctjs::GetPropertyOp read : result.reads) {
+        if (!step()) { return {}; }
+        if (keyOf(read.getKey()) == "size") { continue; }
+        for (mlir::OpOperand & use : read.getResult().getUses()) {
+            if (!step()) { return {}; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+                (calls.contains(use.getOwner()) && use.getOperandNumber() == 0)) {
                 continue;
             }
             return {};
