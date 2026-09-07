@@ -52,18 +52,21 @@ constexpr const char * inner_xml = "<?xml version=\"1.0\"?><root viewBox=\"0 0 1
     browser page{browser_options{400, 300}};
     page.assets().add("inner.html", bytes_of(inner_html));
     page.assets().add("inner.xml", bytes_of(inner_xml));
+    // A `setTimeout` INSIDE the window's load handler, and the nesting is the
+    // point. One tick does, in order: reconcile the frames, dispatch the page's
+    // own `load`, drain the frame load events, then run the timers. So a check
+    // written directly in the load handler runs BEFORE the frame's own `load`
+    // has been announced, and anything a frame listener sets is not there yet.
+    // The timer is the first moment both have happened.
     const std::string html =
         "<!DOCTYPE html><html><head><title>the page</title></head><body>" + body +
         "<script>window.addEventListener('load', function () {"
+        " setTimeout(function () {"
         " try { console.log(String(" +
         expression +
-        ")); } catch (e) { console.log('threw:' + e.name); } });</script></body></html>";
+        ")); } catch (e) { console.log('threw:' + e.name); } }, 0); });</script></body></html>";
     page.load_html(html);
-    // THREE TICKS, not one: the first reconciles the frames in the markup and
-    // dispatches the page's own load, the second drains the frame load events
-    // that reconcile queued, and the third gives a frame created by script on
-    // the second one somewhere to land.
-    for (int i = 0; i < 3; ++i) { (void)page.tick(16.0); }
+    for (int i = 0; i < 4; ++i) { (void)page.tick(16.0); }
     const std::vector<std::string> & logged = page.bindings().console_output();
     if (logged.empty()) { return "<nothing logged: " + page.script_error() + ">"; }
     return logged.back();

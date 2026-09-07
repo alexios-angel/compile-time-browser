@@ -227,7 +227,11 @@ void test_a_detached_element_matches_against_itself() {
     is("document.createElement('div').matches('span')", "false");
     is("(function () { var e = document.createElement('div'); e.className = 'x';"
        " return e.matches('.x') + ',' + e.matches('div.x') + ',' + e.matches('#nope'); })()",
-       "true,false,false");
+       // `div.x` is the SAME COMPOUND as `.x` with a tag on it, and the element
+       // is a div carrying that class - so it matches. The expectation used to
+       // say false, which was written to the behaviour of a `matches` that ran
+       // a document query and could never find a detached element at all.
+       "true,true,false");
     // A parentless subject is an only child, which is what the structural
     // pseudo-classes have to say about a node that is in no tree at all.
     is("document.createElement('p').matches(':only-child')", "true");

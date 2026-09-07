@@ -783,10 +783,14 @@ void test_every_rule_a_sheet_carries() {
     // CSSRule.NAMESPACE_RULE, IMPORT_RULE, PAGE_RULE, STYLE_RULE, MEDIA_RULE
     // and KEYFRAMES_RULE - in the order the author wrote them.
     CHECK_EQ(logged(page, "types="), std::string{"types=10,3,6,1,4,7"});
-    // AN AT-RULE WITH NO BLOCK KEEPS THE AUTHOR'S BYTES, because there is
-    // nothing to reconstruct from and an invented prelude would be a claim
-    // about a rule nobody parsed.
-    CHECK_EQ(logged(page, "ns="), std::string{"ns=@namespace svg \"http://www.w3.org/2000/svg\";"});
+    // AN @namespace's URI IS SERIALIZED AS A URL, whichever of the two forms
+    // the author wrote it in - CSSOM says "serialize a URL", and
+    // `css/cssom/CSSNamespaceRule.html` asserts `@namespace svg
+    // url("http://servo");` for a `url()` prelude and the identical shape for a
+    // quoted one. This asserted the author's bytes back, which is what an
+    // at-rule with no block does for everything EXCEPT its URL.
+    CHECK_EQ(logged(page, "ns="),
+             std::string{"ns=@namespace svg url(\"http://www.w3.org/2000/svg\");"});
     CHECK_EQ(logged(page, "import="), std::string{"import=@import url(\"main.css\");"});
     // `@page`'s block IS declarations, so it serialises like any other block,
     // and its prelude is the page selector.

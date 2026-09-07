@@ -611,10 +611,16 @@ bool dom_bindings::pre_insert_valid(context & cx, node_id parent, node_id child,
 // one namespace the tokenizer goes out of its way to preserve the case of.
 // `attributes.html`'s "Only lowercase attributes are returned on HTML
 // elements" is the other half of the same rule.
+//
+// AND THE SECOND HALF OF THE CONDITION IS REAL NOW. "and its node document is an
+// HTML DOCUMENT" was not checked, because until the XML front end landed there
+// was no other kind - an `.xhtml` file and a frame whose `src` is one both have
+// `document::xml()` set, and in one of those `getAttribute("viewBox")` must find
+// the attribute the parser stored with its capitals intact.
 atom dom_bindings::attribute_key(const read_txn & txn, node_id id,
                                  std::string_view qualified) const {
-    return txn.element_ns(id) == node_ns::html ? atoms_->intern_lower(qualified)
-                                               : atoms_->intern(qualified);
+    const bool folds = txn.element_ns(id) == node_ns::html && !doc_->xml();
+    return folds ? atoms_->intern_lower(qualified) : atoms_->intern(qualified);
 }
 
 // ONE Attr, AND IT IS LIVE IN BOTH DIRECTIONS. `attr.value` reads the element's

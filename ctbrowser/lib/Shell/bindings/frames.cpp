@@ -208,7 +208,12 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
 
     const bool is_xml = type == "application/xhtml+xml" || type == "text/xml" ||
                         type == "application/xml" || type == "image/svg+xml";
-    if (!ok) {
+    // about:blank IS A DOCUMENT WITH A BODY, and it has to be: `frame
+    // .contentDocument.body` is how a page writes into a scratch frame, and
+    // parsing the empty string leaves a tree with no body at all to write to.
+    if (src.empty()) {
+        (void)parse_html(fresh, "<html><head></head><body></body></html>");
+    } else if (!ok) {
         // A `src` that resolved to nothing still leaves a Document behind - a
         // browser shows its error page in one - and `error` rather than `load`
         // is what the element hears about it.
@@ -253,9 +258,14 @@ void dom_bindings::load_frame(context & cx, node_id id, const std::string & src)
     // `parent` and `top` are the PAGE's window, which is true: this frame's
     // parent browsing context is the top-level one and there is no nesting
     // below it.
-    if (window_.is_object()) {
-        frame_window->set("parent", window_);
-        frame_window->set("top", window_);
+    //
+    // THROUGH `cx.global`, NOT `window_`. The window a page can name is a PROXY
+    // over `window_` - that is how the object and the globals stay one storage -
+    // so handing back the raw object makes `frame.contentWindow.parent ===
+    // window` false, which is exactly the identity a page tests.
+    if (const value page_window = cx.global("window"); page_window.is_object()) {
+        frame_window->set("parent", page_window);
+        frame_window->set("top", page_window);
     }
     frame_object->set("contentWindow", value::object(frame_window));
 
