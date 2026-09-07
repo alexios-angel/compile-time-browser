@@ -126,6 +126,57 @@ void test_a_removed_attribute_keeps_its_value() {
        "x,false");
 }
 
+// --- a NamedNodeMap is reached by name as well as by index ------------------
+
+void test_the_attribute_map_answers_to_a_name() {
+    // `element.attributes.x` IS THE ATTRIBUTE CALLED x. A NamedNodeMap is a
+    // legacy platform object with a named property getter and the indexed half
+    // was the only half here, so an attribute could be reached by position and
+    // not by name.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.setAttribute('x', 'first');
+        return e.attributes.length + ',' + e.attributes.x.value + ',' +
+               (e.attributes.x.ownerElement === e);
+    })())JS",
+       "1,first,true");
+    // A namespace makes no difference to the name it answers to: the QUALIFIED
+    // name is the key either way.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.setAttributeNS('foo', 'x', 'first');
+        return e.attributes.length + ',' + e.attributes.x.value;
+    })())JS",
+       "1,first");
+    // NEVER OVER A METHOD OR OVER `length`. An attribute a page can name
+    // `setNamedItem` or `length` must not break the map it is written into -
+    // which is three subtests of `attributes-namednodemap.html` and the reason
+    // the named half is a guarded write rather than a loop.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.setAttributeNS('foo', 'setNamedItem', 'first');
+        e.setAttributeNS('foo', 'item', 'second');
+        e.setAttribute('length', 'third');
+        return e.attributes.length + ',' + typeof e.attributes.setNamedItem + ',' +
+               typeof e.attributes.item + ',' + typeof e.attributes.toString;
+    })())JS",
+       "3,function,function,function");
+    // A REMOVED ATTRIBUTE STOPS ANSWERING, which is the half an add-only loop
+    // would get wrong: the map is refilled in place and keeps its identity, so
+    // a name left behind would outlive the attribute it named. Read through
+    // `e.attributes` each time, because THAT is the accessor which refills it.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.setAttribute('x', 'first');
+        var map = e.attributes;
+        var before = map.x.value;
+        e.removeAttribute('x');
+        return before + ',' + e.attributes.x + ',' + e.attributes.length + ',' +
+               (e.attributes === map);
+    })())JS",
+       "first,undefined,0,true");
+}
+
 // --- the five methods that are one operation --------------------------------
 
 void test_the_data_is_measured_in_code_units() {
@@ -420,6 +471,7 @@ void test_two_nodes_are_equal_by_structure_and_same_by_identity() {
 
 int main() {
     test_a_removed_attribute_keeps_its_value();
+    test_the_attribute_map_answers_to_a_name();
     test_the_data_is_measured_in_code_units();
     test_an_offset_throws_where_a_count_clamps();
     test_the_five_methods_edit_one_string();

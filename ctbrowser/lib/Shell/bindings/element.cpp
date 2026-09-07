@@ -713,6 +713,46 @@ void dom_bindings::refresh_attribute_map(context & cx, script::object_object & m
         (void)map.erase(std::to_string(i));
     }
     map.set("length", value::number(static_cast<double>(held.size())));
+    // THE NAMED PROPERTIES. `element.attributes.x` is the attribute called `x`
+    // - a NamedNodeMap is a legacy platform object with a named property getter
+    // and `attributes-namednodemap.html` is five subtests of exactly this. The
+    // indexed half was here from the start and this half was not, so a page
+    // could reach an attribute by position and not by name.
+    //
+    // NEVER OVER A METHOD OR OVER `length`, which is the rest of that file:
+    // `setAttributeNS("foo", "setNamedItem", v)` must leave
+    // `attributes.setNamedItem` a function and `setAttributeNS("foo", "length",
+    // v)` must leave `attributes.length` the count. A named property that
+    // shadowed either would be an attribute a page can write breaking the map
+    // it was written into.
+    {
+        // "Is this key an array index" is object_object's own question - the
+        // one that decides property ORDER - so it is asked with its function
+        // rather than with a second spelling that could disagree.
+        const auto is_index = [](std::string_view key) {
+            std::uint32_t at = 0;
+            return script::object_object::array_index_key(key, at);
+        };
+        std::vector<std::string> stale;
+        for (const auto & [key, current] : map.props) {
+            if (key == "length" || is_index(key)) { continue; }
+            // A METHOD STAYS. Everything else on this object is a named
+            // property this function put there on an earlier refresh, and it
+            // goes: an attribute that has been removed must stop answering.
+            if (current.is_callable()) { continue; }
+            stale.push_back(key);
+        }
+        for (const std::string & key : stale) { (void)map.erase(key); }
+        for (std::size_t i = 0; i < held.size(); ++i) {
+            const std::string qualified{atoms_->text(held[i].name)};
+            if (qualified == "length" || is_index(qualified)) { continue; }
+            if (const value * existing = map.find(qualified);
+                existing != nullptr && existing->is_callable()) {
+                continue;
+            }
+            map.set(qualified, attribute_object(cx, id, held[i]));
+        }
+    }
     if (!map.prototype.is_object()) {
         // LATE, because the interfaces are built lazily: the first two element
         // wrappers exist before `EventTarget` does. See ensure_dom_interfaces.
