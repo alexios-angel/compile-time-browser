@@ -3791,6 +3791,36 @@ void dom_bindings::install_dom_interfaces(context & cx) {
     // the five functions - see install_character_data.
     install_character_data(cx);
 
+    // `isEqualNode` and `isSameNode`, ON Node.prototype - so an element, a text
+    // node, a comment and a fragment all have them, which is the point. The
+    // Document has its OWN pair as own properties (bindings/document.cpp) and
+    // those shadow these; with one document per page they can only agree.
+    if (const value node_interface = interface_prototype("Node"); node_interface.is_object()) {
+        auto * proto = static_cast<script::object_object *>(node_interface.as_heap());
+        const auto method = [&](const std::string & name, script::native_fn fn) {
+            proto->set(name,
+                       value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+            proto->set_attrs(name, script::attr_builtin);
+        };
+        method("isEqualNode", [this](context & c, std::span<value> args) {
+            const node_id self = receiver(c);
+            // A NULL ARGUMENT IS NOT AN ERROR AND IS NOT EQUAL. The IDL is
+            // `Node?`, so `isEqualNode(null)` is a question with the answer
+            // false rather than a TypeError.
+            const node_id other = handle_of(arg(args, 0));
+            if (!self || !other) { return value::boolean(false); }
+            const auto txn = doc_->read();
+            return value::boolean(nodes_are_equal(txn, self, other));
+        });
+        method("isSameNode", [this](context & c, std::span<value> args) {
+            // IDENTITY, and nothing else: this is `===` with a name, and it is
+            // a separate method because `isEqualNode` is not.
+            const node_id self = receiver(c);
+            const node_id other = handle_of(arg(args, 0));
+            return value::boolean(self && other && self == other);
+        });
+    }
+
     // The document and the window are EventTargets with interfaces of their own,
     // and `passive-by-default.html` reads `eventTarget.constructor.name` for
     // both of them before it can even name its subtests.
@@ -3810,6 +3840,60 @@ void dom_bindings::install_dom_interfaces(context & cx) {
         }
     }
     interfaces_linked_ = event_target_prototype_.is_object();
+}
+
+// `isEqualNode`: THE DOM'S STRUCTURAL COMPARISON, DOM 4.4 "equals".
+//
+// Not identity - that is `isSameNode` - and not a serialisation comparison
+// either, which is what a first attempt reaches for and which gets three things
+// wrong that this file's own corpus tests by name:
+//
+//   * ATTRIBUTES ARE AN UNORDERED SET, compared by (namespace, local name,
+//     value). Two elements carrying the same attributes in different ORDER are
+//     equal, and `innerHTML` would have said no.
+//   * A PREFIX TAKES NO PART in comparing an attribute. `setAttributeNS(ns,
+//     "prefix:local", v)` and `setAttributeNS(ns, "prefix2:local", v)` are the
+//     same attribute and the elements holding them ARE equal - which is the one
+//     subtest that a (qualified name, value) comparison fails.
+//   * ...but it DOES take part in comparing an ELEMENT, whose qualified name is
+//     compared whole. `prefix:localName` and `prefix2:localName` are different
+//     elements. The two rules are opposite on purpose and the file asserts both.
+//
+// Then the children, PAIRWISE AND IN ORDER, which is the recursion.
+bool dom_bindings::nodes_are_equal(const read_txn & txn, node_id left, node_id right) const {
+    if (!left || !right) { return false; }
+    if (left == right) { return true; }
+    const node_kind kind = txn.kind(left).value_or(node_kind::element);
+    if (kind != txn.kind(right).value_or(node_kind::element)) { return false; }
+    switch (kind) {
+    case node_kind::element: {
+        if (txn.tag(left).value_or(atom{}) != txn.tag(right).value_or(atom{})) { return false; }
+        if (namespace_of(left) != namespace_of(right)) { return false; }
+        const std::span<const attribute> held = txn.attributes(left);
+        if (held.size() != txn.attributes(right).size()) { return false; }
+        for (const attribute & one : held) {
+            const attribute * match = txn.find_attribute_ns(right, atoms_->text(one.ns),
+                                                            attribute_local_name(*atoms_, one));
+            if (match == nullptr || match->value != one.value) { return false; }
+        }
+        break;
+    }
+    case node_kind::text:
+    case node_kind::comment:
+        if (txn.text(left) != txn.text(right)) { return false; }
+        break;
+    // A Document and a DocumentFragment have nothing of their own to compare;
+    // they are their children, which is what the walk below does.
+    case node_kind::document:
+    case node_kind::document_fragment: break;
+    }
+    const std::span<const node_id> mine = txn.children(left);
+    const std::span<const node_id> theirs = txn.children(right);
+    if (mine.size() != theirs.size()) { return false; }
+    for (std::size_t i = 0; i < mine.size(); ++i) {
+        if (!nodes_are_equal(txn, mine[i], theirs[i])) { return false; }
+    }
+    return true;
 }
 
 // `new Text("x")`, `new Comment("x")`, `new DocumentFragment()`.

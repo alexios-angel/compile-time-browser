@@ -342,6 +342,80 @@ void test_text_comment_and_fragment_are_constructible() {
        "TypeError");
 }
 
+// --- equal is not the same as same ------------------------------------------
+
+void test_two_nodes_are_equal_by_structure_and_same_by_identity() {
+    // `isSameNode` IS IDENTITY, so two nodes built the same way are not it -
+    // which is the only thing separating it from `isEqualNode` and is why they
+    // are two methods.
+    is(R"JS((function () {
+        var a = document.createTextNode('data');
+        var b = document.createTextNode('data');
+        return a.isSameNode(a) + ',' + a.isSameNode(b) + ',' + a.isSameNode(null) + ',' +
+               a.isEqualNode(b);
+    })())JS",
+       "true,false,false,true");
+    // AN ELEMENT IS COMPARED ON ITS QUALIFIED NAME AND ITS NAMESPACE, and the
+    // PREFIX is part of the name: `prefix:localName` and `prefix2:localName`
+    // are different elements.
+    is(R"JS((function () {
+        var one = document.createElementNS('namespace', 'prefix:localName');
+        var same = document.createElementNS('namespace', 'prefix:localName');
+        var other_ns = document.createElementNS('namespace2', 'prefix:localName');
+        var other_prefix = document.createElementNS('namespace', 'prefix2:localName');
+        var other_local = document.createElementNS('namespace', 'prefix:localName2');
+        var extra = document.createElementNS('namespace', 'prefix:localName');
+        extra.setAttribute('foo', 'bar');
+        return [one.isEqualNode(one), one.isEqualNode(same), one.isEqualNode(other_ns),
+                one.isEqualNode(other_prefix), one.isEqualNode(other_local),
+                one.isEqualNode(extra)].join(',');
+    })())JS",
+       "true,true,false,false,false,false");
+    // ...AND AN ATTRIBUTE IS NOT. The two rules are opposite on purpose: an
+    // attribute is compared on (namespace, local name, value) and its prefix
+    // takes no part, so `prefix:localName` and `prefix2:localName` on two
+    // elements leave them EQUAL. That single `true` in the middle is the whole
+    // difference between this and comparing serialised markup.
+    is(R"JS((function () {
+        function el(ns, name, value) {
+            var made = document.createElement('element');
+            made.setAttributeNS(ns, name, value);
+            return made;
+        }
+        var one = el('namespace', 'prefix:localName', 'value');
+        return [one.isEqualNode(el('namespace', 'prefix:localName', 'value')),
+                one.isEqualNode(el('namespace2', 'prefix:localName', 'value')),
+                one.isEqualNode(el('namespace', 'prefix2:localName', 'value')),
+                one.isEqualNode(el('namespace', 'prefix:localName2', 'value')),
+                one.isEqualNode(el('namespace', 'prefix:localName', 'value2'))].join(',');
+    })())JS",
+       "true,false,true,false,false");
+    // THE CHILDREN, PAIRWISE AND IN ORDER - "node equality testing should test
+    // descendant equality too", which is the recursion and the reason a
+    // comparison of the two nodes alone would pass most of this file.
+    is(R"JS((function () {
+        var a = document.createElement('foo');
+        var b = document.createElement('foo');
+        var empty = a.isEqualNode(b);
+        a.appendChild(document.createComment('data'));
+        var one_sided = a.isEqualNode(b);
+        b.appendChild(document.createComment('data'));
+        var matched = a.isEqualNode(b);
+        b.firstChild.data = 'other';
+        return empty + ',' + one_sided + ',' + matched + ',' + a.isEqualNode(b);
+    })())JS",
+       "true,false,true,false");
+    // A fragment has nothing of its own to compare and IS its children.
+    is(R"JS((function () {
+        var a = new DocumentFragment();
+        var b = new DocumentFragment();
+        var empty = a.isEqualNode(b);
+        a.appendChild(document.createTextNode('x'));
+        return empty + ',' + a.isEqualNode(b) + ',' + a.isSameNode(b);
+    })())JS",
+       "true,false,false");
+}
+
 } // namespace
 
 int main() {
@@ -352,5 +426,6 @@ int main() {
     test_split_text_keeps_the_head_and_hands_back_the_tail();
     test_whole_text_stops_at_the_first_element();
     test_text_comment_and_fragment_are_constructible();
+    test_two_nodes_are_equal_by_structure_and_same_by_identity();
     REPORT("character_data");
 }
