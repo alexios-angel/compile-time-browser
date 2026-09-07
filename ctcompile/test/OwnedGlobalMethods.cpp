@@ -95,6 +95,70 @@ module {
 }
 )MLIR";
 
+// The actual imported publication specimen, retaining public functions, frame
+// bookkeeping and the indirect wrapper callback. Only symbol names are unified
+// with the small fixture above so both use the same assertions.
+constexpr const char * importedCapturedFixture = R"MLIR(
+module {
+  ctjs.func @script$0(%arg0: !ctjs.value, %arg1: !ctjs.value, %arg2: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %0 = ctjs.frame_enter 3
+    %1 = ctjs.create_object
+    ctjs.store_global "host", %1
+    %2 = ctjs.constant #ctjs.undefined
+    %3 = ctjs.create_closure %arg2[1] this %2
+    %4 = ctjs.constant #ctjs.undefined
+    %5 = ctjs.create_closure %arg2[2] this %4
+    %6 = ctjs.constant #ctjs.undefined
+    %7 = ctjs.constant #ctjs.undefined
+    %8 = ctjs.call_direct @publish$1(%6, %7, %3, %5)
+    %9 = ctjs.load_global "host"
+    %10 = ctjs.constant #ctjs.string<"slot">
+    %11 = ctjs.get_property %9[%10]
+    %12 = ctjs.constant #ctjs.string<"get">
+    %13 = ctjs.get_property %11[%12]
+    %14 = ctjs.call %13(%11)
+    ctjs.store_global "trace", %14
+    %15 = ctjs.constant #ctjs.undefined
+    ctjs.frame_exit %0
+    ctjs.return %15
+  }
+  ctjs.func @publish$1(%arg0: !ctjs.value, %arg1: !ctjs.value, %arg2: !ctjs.value, %arg3: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %0 = ctjs.frame_enter 4
+    %1 = ctjs.load_global "host"
+    %2 = ctjs.constant #ctjs.undefined
+    %3 = ctjs.call %arg3(%2)
+    %4 = ctjs.constant #ctjs.string<"slot">
+    ctjs.set_property %1[%4], %3
+    %5 = ctjs.constant #ctjs.undefined
+    ctjs.frame_exit %0
+    ctjs.return %5
+  }
+  ctjs.func @make$2(%arg0: !ctjs.value, %arg1: !ctjs.value, %arg2: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %0 = ctjs.frame_enter 3
+    %1 = ctjs.constant #ctjs.undefined
+    %2 = ctjs.create_cell %1
+    %3 = ctjs.load_global "Map"
+    %4 = ctjs.construct %3(%3)
+    ctjs.cell_set %2, %4
+    %5 = ctjs.create_object
+    %6 = ctjs.constant #ctjs.undefined
+    %7 = ctjs.create_closure %arg2[3] this %6 captures %2
+    %8 = ctjs.constant #ctjs.string<"get">
+    ctjs.set_property %5[%8], %7
+    ctjs.frame_exit %0
+    ctjs.return %5
+  }
+  ctjs.func @get$3(%arg0: !ctjs.value, %arg1: !ctjs.value, %arg2: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 1 : i32} {
+    %0 = ctjs.frame_enter 1
+    %1 = ctjs.load_upvalue %arg2[0]
+    %2 = ctjs.constant #ctjs.string<"size">
+    %3 = ctjs.get_property %1[%2]
+    ctjs.frame_exit %0
+    ctjs.return %3
+  }
+}
+)MLIR";
+
 int failures = 0;
 void check(bool value, const char * message) {
     if (value) { return; }
@@ -130,7 +194,7 @@ bool complete(const OwnedGlobalRoots & query, unsigned calls = 1) {
     return table.calls.size() == calls && table.calls.front().function == table.method &&
            table.calls.front().closure == table.closure &&
            table.calls.front().write == table.methodInitialization &&
-           factoryCall.getResult() == field.getValue() && !query.lookup(table.table) &&
+           factoryCall->getResult(0) == field.getValue() && !query.lookup(table.table) &&
            !query.lookup(table.calls.front().call);
 }
 
@@ -188,8 +252,11 @@ void checkCapturedMap(mlir::MLIRContext & context) {
     specialized = replaced(specialized, "    %host = ctjs.load_global \"host\"",
                            "    %factory = ctjs.create_closure %callee[2] this %u\n"
                            "    %host = ctjs.load_global \"host\"");
+    const auto indirect = replaced(capturedFixture, "ctjs.call_direct @make$2(%u, %u, %factory)",
+                                   "ctjs.call %factory(%u)");
     for (const auto & [source, lifted] :
-         {std::pair{std::string(capturedFixture), false}, std::pair{prepared, true},
+         {std::pair{std::string(capturedFixture), false}, std::pair{indirect, false},
+          std::pair{std::string(importedCapturedFixture), false}, std::pair{prepared, true},
           std::pair{specialized, true}}) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
         check(static_cast<bool>(module), "captured Map source and prepared fixtures parse");
@@ -197,6 +264,8 @@ void checkCapturedMap(mlir::MLIRContext & context) {
         const auto contract = requested(*module);
         HostContractAnalysis host(*module, contract);
         OwnedGlobalRoots query(*module, contract);
+        check(hostContractFingerprint(*module) == contract.moduleSha256,
+              "raw factory resolution preserves all fingerprinted source operations");
         if (!host.proved()) {
             std::fprintf(stderr, "capture host: %s\n", host.reason().str().c_str());
         }
@@ -265,9 +334,19 @@ void checkCapturedMap(mlir::MLIRContext & context) {
            "method reentry cannot be treated as an inert size getter");
     refuse(capturedFixture, "#ctjs.string<\"size\">", "#ctjs.string<\"get\">",
            "other Map methods do not inherit the checked size read");
-    refuse(capturedFixture, "%table = ctjs.call_direct @make$2(%u, %u, %factory)",
-           "%table = ctjs.call %factory(%u)",
-           "unresolved factory invocations still require independent source call resolution");
+    refuse(indirect, "ctjs.call %factory(%u)", "ctjs.call %factory(%u, %u)",
+           "an indirect factory argument window is outside the captured Map proof");
+    refuse(indirect, "ctjs.call %factory(%u)", "ctjs.call %factory(%host)",
+           "an indirect factory retains its source receiver convention");
+    refuse(indirect, "ctjs.call %factory(%u)",
+           "ctjs.call %factory(%u)\n    %again = ctjs.call %factory(%u)",
+           "multiple indirect factory invocations cannot merge Map identities");
+    refuse(indirect, "ctjs.cell_set %cell, %state",
+           "ctjs.cell_set %cell, %state\n    ctjs.cell_set %cell, %u",
+           "indirect callback resolution cannot authorize mutable capture state");
+    refuse(indirect, "%factory = ctjs.create_closure %callee[2] this %u",
+           "%factory = ctjs.create_closure %u[2] this %u",
+           "indirect callbacks retain their supplied source program identity");
     refuse(capturedFixture, "%table = ctjs.call_direct @make$2(%u, %u, %factory)",
            "%table = ctjs.call_direct @make$2(%u, %u, %factory)\n"
            "    %another = ctjs.call_direct @make$2(%u, %u, %factory)",
@@ -368,7 +447,7 @@ int main() {
 
     builder.setInsertionPointAfter(root.fieldInitialization);
     auto detached = ctjs::StoreGlobalOp::create(builder, root.owner.getLoc(), "detached",
-                                                table.factoryCall.getResult());
+                                                table.factoryCall->getResult(0));
     refused("detached table publication is not a closed fixed-field export");
     detached.erase();
     restored();
@@ -382,7 +461,7 @@ int main() {
     restored();
 
     builder.setInsertionPointAfter(table.factoryCall);
-    auto * secondCall = builder.clone(*table.factoryCall.getOperation());
+    auto * secondCall = builder.clone(*table.factoryCall);
     refused("two factory invocations cannot share a source allocation identity");
     secondCall->erase();
     restored();

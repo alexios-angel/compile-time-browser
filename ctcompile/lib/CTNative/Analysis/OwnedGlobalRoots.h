@@ -11,7 +11,7 @@ namespace ctcompile::ctnative {
 // A callable table retained by the ordinary root. These are live
 // source edges, not a native carrier or permission for future external calls.
 struct OwnedGlobalMethodTable {
-    ctjs::CallDirectOp factoryCall;
+    mlir::Operation * factoryCall = nullptr;
     ctjs::FuncOp factory;
     ctjs::CreateObjectOp table;
     ctjs::SetPropertyOp methodInitialization;

@@ -55,7 +55,7 @@ OwnedGlobalRoots::OwnedGlobalRoots(mlir::ModuleOp module, const HostContract & c
     }
 
     auto field = slot.writes.front();
-    if (field.getValue().getDefiningOp<ctjs::CallDirectOp>()) {
+    if (llvm::isa_and_nonnull<ctjs::CallDirectOp, ctjs::CallOp>(field.getValue().getDefiningOp())) {
         analyzeMethodTable(module, contract, host, maxSteps);
         return;
     }

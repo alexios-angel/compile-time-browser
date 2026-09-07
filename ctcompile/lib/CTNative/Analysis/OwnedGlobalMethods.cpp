@@ -31,17 +31,23 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     const auto & slot = host.slots().front();
     auto owner = slot.owner;
     auto field = slot.writes.front();
-    auto factoryCall = field.getValue().getDefiningOp<ctjs::CallDirectOp>();
-    auto factory = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
-        factoryCall, factoryCall.getCalleeAttr());
+    auto * factoryCall = field.getValue().getDefiningOp();
+    auto directFactory = llvm::dyn_cast<ctjs::CallDirectOp>(factoryCall);
     auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
     const auto capture = host.callables().empty() ? std::optional<HostCapturedMap>{}
                                                   : host.callables().front().capturedMap;
+    // An indirect factory has already passed the complete live host proof:
+    // its unique wrapper callback produces this exact captured allocation.
+    auto factory = directFactory ? mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
+                                       directFactory, directFactory.getCalleeAttr())
+                                 : (capture ? capture->allocation->getParentOfType<ctjs::FuncOp>()
+                                            : ctjs::FuncOp{});
     auto publicationScope = field->getParentOfType<ctjs::FuncOp>();
     auto wrapper = publicationScope != entry ? publicationScope : ctjs::FuncOp{};
     if (!spend()) { return; }
     if (!factory || factory == entry || factory.getBody().empty() ||
-        factory.getUpvalueCount() != 0 || factoryCall->getNumOperands() != 3 ||
+        factory.getUpvalueCount() != 0 ||
+        factoryCall->getNumOperands() != (directFactory ? 3u : 2u) ||
         factory.getBody().front().getNumArguments() != 3 ||
         owner->getParentOfType<ctjs::FuncOp>() != entry || (!capture && wrapper) ||
         (capture && !wrapper) || factoryCall->getParentOfType<ctjs::FuncOp>() != publicationScope ||
@@ -163,9 +169,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             }
             wrapperCall = call;
         }
-        if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(operation) &&
-            operation != factoryCall.getOperation() && operation != wrapperCall.getOperation() &&
-            !methodCalls.contains(operation)) {
+        if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(operation) && operation != factoryCall &&
+            operation != wrapperCall.getOperation() && !methodCalls.contains(operation)) {
             reject("owned global method table has another call or factory invocation");
         }
         if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(operation);
@@ -213,7 +218,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         reject("owned global method publication does not name the checked root field");
         return;
     }
-    llvm::DenseSet<mlir::Value> tables{table.getResult(), factoryCall.getResult()};
+    llvm::DenseSet<mlir::Value> tables{table.getResult(), factoryCall->getResult(0)};
     for (ctjs::GetPropertyOp read : slot.reads) {
         if (!spend()) { return; }
         const auto * edge = host.property(read);

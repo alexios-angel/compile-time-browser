@@ -7,6 +7,16 @@
 #include "llvm/ADT/ScopeExit.h"
 
 namespace ctcompile::ctnative::host_detail {
+namespace {
+mlir::Value explicitArgument(mlir::Operation * operation, unsigned index) {
+    if (index < 3) { return {}; }
+    auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
+    auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
+    if (!direct && !call) { return {}; }
+    auto args = direct ? direct.getArgs() : call.getArgs();
+    return index - 3 < args.size() ? args[index - 3] : mlir::Value{};
+}
+} // namespace
 
 analyzer::analyzer(mlir::ModuleOp input, const HostContract & request, unsigned steps)
     : module(input), contract(request), remaining(steps), dominance(input) {
@@ -27,6 +37,36 @@ analyzer::analyzer(mlir::ModuleOp input, const HostContract & request, unsigned 
         if (!step()) { return; }
         if (auto function = target(call)) { callers[function].push_back(call); }
     });
+    if (llvm::is_contained(contract.initialIntrinsics, "Map")) {
+        // The importer leaves factory() indirect inside its wrapper. Record
+        // only the zero-argument callback supplied by the entry's sole direct
+        // wrapper call. No source operation or operand is rewritten here.
+        module.walk([&](ctjs::CallOp call) {
+            if (!step() || !call.getArgs().empty()) { return; }
+            auto argument = llvm::dyn_cast<mlir::BlockArgument>(call.getCallee());
+            if (!argument || argument.getArgNumber() != 3) { return; }
+            auto wrapper = llvm::dyn_cast<ctjs::FuncOp>(argument.getOwner()->getParentOp());
+            if (!wrapper || wrapper == entry || wrapper.getUpvalueCount() != 0 ||
+                !llvm::hasSingleElement(wrapper.getBody()) ||
+                argument.getOwner() != &wrapper.getBody().front() ||
+                argument.getOwner()->getNumArguments() != 4 || callers[wrapper].size() != 1) {
+                return;
+            }
+            auto * invocation = callers[wrapper].front();
+            if (!llvm::isa<ctjs::CallDirectOp>(invocation) ||
+                invocation->getParentOfType<ctjs::FuncOp>() != entry) {
+                return;
+            }
+            auto function = callable(argument);
+            if (!function || function == entry || function == wrapper ||
+                function.getUpvalueCount() != 0 || !llvm::hasSingleElement(function.getBody()) ||
+                function.getBody().front().getNumArguments() != 3) {
+                return;
+            }
+            indirectFactories[call] = function;
+            callers[function].push_back(call);
+        });
+    }
 }
 
 bool analyzer::step() {
@@ -38,8 +78,11 @@ bool analyzer::step() {
     return true;
 }
 
-ctjs::FuncOp analyzer::target(ctjs::CallDirectOp call) const {
-    return mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
+ctjs::FuncOp analyzer::target(mlir::Operation * operation) const {
+    if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) {
+        return mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
+    }
+    return indirectFactories.lookup(operation);
 }
 
 ctjs::FuncOp analyzer::callable(mlir::Value value, unsigned depth) {
@@ -67,9 +110,8 @@ ctjs::FuncOp analyzer::callable(mlir::Value value, unsigned depth) {
             return {};
         }
         ctjs::FuncOp found;
-        for (ctjs::CallDirectOp call : callers[function]) {
-            if (argument.getArgNumber() >= call->getNumOperands()) { return {}; }
-            auto candidate = callable(call->getOperand(argument.getArgNumber()), depth + 1);
+        for (mlir::Operation * call : callers[function]) {
+            auto candidate = callable(explicitArgument(call, argument.getArgNumber()), depth + 1);
             if (!candidate || (found && found != candidate)) { return {}; }
             found = candidate;
         }
@@ -78,11 +120,19 @@ ctjs::FuncOp analyzer::callable(mlir::Value value, unsigned depth) {
     return {};
 }
 
-bool analyzer::exactCall(ctjs::CallDirectOp call) {
-    auto function = target(call);
-    return function && !function.getBody().empty() &&
-           function.getBody().front().getNumArguments() == call->getNumOperands() &&
-           callable(call.getCalleeValue()) == function &&
+bool analyzer::exactCall(mlir::Operation * operation) {
+    auto function = target(operation);
+    if (!function || function.getBody().empty()) { return false; }
+    auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
+    auto call = llvm::dyn_cast<ctjs::CallOp>(operation);
+    if (!direct && (!call || !indirectFactories.contains(call) || !call.getArgs().empty() ||
+                    !llvm::isa_and_nonnull<ctjs::UndefinedAttr>(primitive(call.getReceiver())))) {
+        return false;
+    }
+    auto callee = direct ? direct.getCalleeValue() : call.getCallee();
+    const auto arguments = direct ? direct->getNumOperands() : call->getNumOperands() + 1;
+    return function.getBody().front().getNumArguments() == arguments &&
+           callable(callee) == function &&
            (closedCallableProblem(function, module).empty() || transportedCallable(function));
 }
 
@@ -112,6 +162,11 @@ bool analyzer::transportedCallable(ctjs::FuncOp function) {
         for (mlir::OpOperand & use : value.getUses()) {
             if (!step()) { return false; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                call && use.getOperandNumber() == 0 && call == callers[function].front() &&
+                indirectFactories.lookup(call) == function) {
+                continue;
+            }
             auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
             if (!call) { return false; }
             if (use.getOperandNumber() == 2 && call == callers[function].front()) { continue; }
@@ -469,17 +524,16 @@ ctjs::CreateObjectOp analyzer::object(mlir::Value value, unsigned depth) {
             return {};
         }
         ctjs::CreateObjectOp found;
-        for (ctjs::CallDirectOp call : callers[function]) {
-            if (!exactCall(call) || argument.getArgNumber() >= call->getNumOperands()) {
-                return {};
-            }
-            auto candidate = object(call->getOperand(argument.getArgNumber()), depth + 1);
+        for (mlir::Operation * call : callers[function]) {
+            if (!exactCall(call)) { return {}; }
+            auto candidate = object(explicitArgument(call, argument.getArgNumber()), depth + 1);
             if (!candidate || (found && found != candidate)) { return {}; }
             found = candidate;
         }
         return found;
     }
-    if (auto call = value.getDefiningOp<ctjs::CallDirectOp>()) {
+    if (auto * call = value.getDefiningOp();
+        llvm::isa_and_nonnull<ctjs::CallDirectOp, ctjs::CallOp>(call)) {
         if (!exactCall(call)) { return {}; }
         ctjs::CreateObjectOp found;
         for (ctjs::ReturnOp returned : returns[target(call)]) {

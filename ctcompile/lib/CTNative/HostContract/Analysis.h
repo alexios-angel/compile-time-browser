@@ -19,7 +19,8 @@ struct analyzer {
     ctjs::FuncOp entry;
     mlir::DominanceInfo dominance;
     llvm::StringMap<llvm::SmallVector<ctjs::StoreGlobalOp>> globals;
-    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> callers;
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> callers;
+    llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> indirectFactories;
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::ReturnOp>> returns;
     llvm::DenseMap<unsigned, ctjs::FuncOp> functions;
     llvm::DenseSet<mlir::Value> evaluating;
@@ -29,7 +30,7 @@ struct analyzer {
 
     analyzer(mlir::ModuleOp module, const HostContract & contract, unsigned steps);
     bool step();
-    ctjs::FuncOp target(ctjs::CallDirectOp call) const;
+    ctjs::FuncOp target(mlir::Operation * call) const;
     ctjs::FuncOp callable(mlir::Value value, unsigned depth = 0);
     ctjs::SetPropertyOp currentWrite(ctjs::GetPropertyOp read, unsigned depth = 0);
     std::optional<HostCallableEdge> propertyCall(mlir::Operation * call);
@@ -41,7 +42,7 @@ struct analyzer {
     bool active(mlir::Operation * operation);
     bool before(mlir::Operation * first, mlir::Operation * second);
     mlir::Operation * anchor(mlir::Operation * operation);
-    bool exactCall(ctjs::CallDirectOp call);
+    bool exactCall(mlir::Operation * call);
     bool transportedCallable(ctjs::FuncOp function);
     bool singleInvocation(ctjs::FuncOp function);
     std::string environmentProblem();

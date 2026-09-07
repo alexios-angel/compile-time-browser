@@ -73,6 +73,17 @@ std::string analyzer::environmentProblem() {
             }
             return;
         }
+        if (indirectFactories.contains(operation)) {
+            const auto factory = target(operation);
+            const bool captured = llvm::any_of(capturedCalls, [&](const auto & item) {
+                return step() &&
+                       item.second.closure->template getParentOfType<ctjs::FuncOp>() == factory;
+            });
+            if (!captured || !exactCall(operation)) {
+                reject("indirect factory lacks a complete current captured Map proof");
+            }
+            return;
+        }
         if (llvm::isa<ctjs::CallOp>(operation) || (llvm::isa<ctjs::CallDirectOp>(operation) &&
                                                    llvm::cast<ctjs::CallDirectOp>(operation)
                                                        .getCalleeValue()
