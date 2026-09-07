@@ -1591,6 +1591,25 @@ bool math_syntax_ok(std::string_view value) {
     return true;
 }
 
+bool math_uses_percentage(std::string_view value) {
+    std::size_t at = 0;
+    while (at < value.size()) {
+        if (const std::size_t quoted = end_of_string_at(value, at); quoted != at) {
+            at = quoted;
+            continue;
+        }
+        const std::string_view name = math_name_at(value, at);
+        if (name.empty()) {
+            ++at;
+            continue;
+        }
+        const function_span span = span_of(value, at, name);
+        if (has_percentage(value.substr(at, span.end - at))) { return true; }
+        at = span.end;
+    }
+    return false;
+}
+
 folded_value fold_math(std::string_view value, const length_context & ctx, math_context accepts) {
     std::string out;
     bool ok = true;

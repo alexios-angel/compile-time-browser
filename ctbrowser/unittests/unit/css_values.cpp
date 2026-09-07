@@ -422,6 +422,36 @@ void test_a_sum_that_cannot_fold_still_has_an_order() {
     ok("width", "min(1em)", "calc(1em)"); // ...one argument is not a comparison
 }
 
+// ...AND THE OTHER HALF OF §10.11'S CALCULATION CONTEXT IS THE PROPERTY'S.
+// `text-indent: min(1px, 0%)` resolves against a containing block and
+// `border-left-width: min(1px, 0%)` has nothing to resolve against, so the two
+// look alike and only one of them is a value. These are the last failures of
+// `minmax-length-invalid` and `signs-abs-invalid`.
+void test_a_percentage_needs_a_property_that_takes_one() {
+    bad("border-left-width", "min(1px, 0%)");
+    bad("border-left-width", "max(1px, 0%)");
+    bad("font-weight", "sign(10%)");
+    bad("letter-spacing", "calc(10%)");
+    ok("text-indent", "min(1px, 0%)", "min(1px, 0%)");
+    ok("width", "calc(50% - 10px)", "calc(50% - 10px)");
+    // A FREEFORM PROPERTY ANSWERS YES and has to: the grammar is not modelled,
+    // so a guess would lose two values that are perfectly ordinary.
+    ok("transform", "translate(50%)", "translate(50%)");
+    ok("background-position", "calc(50% - 1px)", "calc(50% - 1px)");
+    // ...and a percentage OUTSIDE a math function is not this rule's business.
+    ok("color", "hsl(calc(1deg) 82% 43%)", "hsl(calc(1deg) 82% 43%)");
+
+    // `line-height` and `tab-size` are why the two <number>-and-<length> kinds
+    // are two: `line-height: 50%` is half the font size and `tab-size: 50%` is
+    // nothing at all. CSS Text 4 writes `<number [0,inf]> | <length [0,inf]>`.
+    ok("line-height", "50%", "50%");
+    ok("line-height", "calc(50% + 1px)", "calc(50% + 1px)");
+    bad("tab-size", "50%");
+    bad("tab-size", "abs(10%)");
+    ok("tab-size", "4", "4");
+    ok("tab-size", "10px", "10px");
+}
+
 void test_important_and_the_empty_value() {
     // `!important` is a DECLARATION's business, never a value's. CSSOM's
     // setProperty takes the priority as its own argument, and the IDL setter
@@ -563,6 +593,7 @@ int main() {
     test_a_percentage_needs_a_context();
     test_the_angle_functions_take_an_angle();
     test_a_sum_that_cannot_fold_still_has_an_order();
+    test_a_percentage_needs_a_property_that_takes_one();
     test_important_and_the_empty_value();
     test_a_custom_property_takes_anything_that_tokenises();
     test_the_two_spellings_of_one_property();

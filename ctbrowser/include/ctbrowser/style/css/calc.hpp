@@ -268,6 +268,18 @@ struct folded_value {
 // second one may delete a declaration.
 [[nodiscard]] bool math_syntax_ok(std::string_view value);
 
+// IS THERE A PERCENTAGE INSIDE A MATH FUNCTION HERE? Not a percentage anywhere -
+// `hsl(calc(1deg) 82% 43%)` writes two that are channels and not lengths - but
+// one that a calculation would have to resolve.
+//
+// The question belongs to the CALLER, because the answer does: §10.11's
+// calculation context is the property's, so `text-indent: min(1px, 0%)`
+// resolves against a containing block and `border-left-width: min(1px, 0%)` has
+// nothing to resolve against and is a syntax error. This file knows where the
+// math functions are and the property table knows which properties take a
+// percentage; neither can answer alone.
+[[nodiscard]] bool math_uses_percentage(std::string_view value);
+
 // ONE already-folded length in text form to pixels: `12px`, `1.5rem`, `2em`, or a
 // bare number. `nullopt` for a percentage, a keyword, a calc that did not fold, or
 // anything else without a single answer - which is what lets a caller tell "this

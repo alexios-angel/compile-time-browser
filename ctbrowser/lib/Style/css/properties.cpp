@@ -278,7 +278,7 @@ constexpr property_syntax table[] = {
     {"font-weight", k::number, "normal bold bolder lighter", "400", true, true},
     {"font-variant", k::freeform, "", "normal", true, false},
     {"font-stretch", k::freeform, "", "100%", true, false},
-    {"line-height", k::number_length, "normal", "normal", true, true},
+    {"line-height", k::number_length_percentage, "normal", "normal", true, true},
     {"letter-spacing", k::length, "normal", "normal", true, false},
     {"word-spacing", k::length, "normal", "normal", true, false},
     {"text-align", k::keyword_only, "start end left right center justify match-parent", "start",
@@ -468,6 +468,33 @@ struct scan {
     return depth > 0;
 }
 
+// DOES A PERCENTAGE MEAN ANYTHING FOR THIS PROPERTY? It is the property that
+// supplies §10.11's calculation context, so this is the one question a math
+// function cannot answer for itself: `text-indent: min(1px, 0%)` resolves
+// against a containing block and `border-left-width: min(1px, 0%)` has nothing
+// to resolve against and is a syntax error, however alike the two look.
+//
+// A `freeform` property answers YES, and has to: the grammar is not modelled, so
+// `transform: translate(50%)` and `background-position: calc(50% - 1px)` would
+// both be lost to a guess.
+[[nodiscard]] constexpr bool takes_percentage_of(value_kind kind) noexcept {
+    switch (kind) {
+    case k::length_percentage:
+    case k::percentage:
+    case k::number_percentage:
+    case k::number_length_percentage:
+    case k::freeform:
+    case k::keyword_only: return true;
+    case k::length:
+    case k::number:
+    case k::integer:
+    case k::number_length:
+    case k::angle:
+    case k::time: return false;
+    }
+    return true;
+}
+
 // DOES THIS MATH FUNCTION'S ANSWER FIT THE PROPERTY? CSS Values 4 §10.2: a math
 // function is valid where its RESOLVED TYPE is, so `width: calc(2 * 3)` is a
 // syntax error for the same reason `width: 3` is, and `rotate: calc(1s)` for the
@@ -489,7 +516,8 @@ struct scan {
     // is invalid where `text-indent: calc(10%)` is not.
     case k::length: return length && !v.has_percent;
     case k::length_percentage: return length;
-    case k::number_length: return length || v.is_number;
+    case k::number_length: return (length && !v.has_percent) || v.is_number;
+    case k::number_length_percentage: return length || v.is_number;
     case k::number:
     case k::integer: return v.is_number;
     case k::number_percentage: return v.is_number || bare_percentage;
@@ -506,12 +534,12 @@ struct scan {
 // never "malformed" - the caller decides what an unmatched value means.
 [[nodiscard]] bool match_typed(const token_stream & ts, const css_token & t,
                                const property_syntax & p, std::string & out) {
-    const bool takes_length =
-        p.kind == k::length || p.kind == k::length_percentage || p.kind == k::number_length;
-    const bool takes_percentage = p.kind == k::length_percentage || p.kind == k::percentage ||
-                                  p.kind == k::number_percentage || p.kind == k::number_length;
+    const bool takes_length = p.kind == k::length || p.kind == k::length_percentage ||
+                              p.kind == k::number_length || p.kind == k::number_length_percentage;
+    const bool takes_percentage = takes_percentage_of(p.kind);
     const bool takes_number = p.kind == k::number || p.kind == k::integer ||
-                              p.kind == k::number_percentage || p.kind == k::number_length;
+                              p.kind == k::number_percentage || p.kind == k::number_length ||
+                              p.kind == k::number_length_percentage;
     if (p.nonnegative && t.number < 0) { return false; }
 
     switch (t.type) {
@@ -648,6 +676,16 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // by CSS Values 4 §10.12 wherever it stands - the table knowing the name is
     // not one of the conditions.
     if (p == nullptr) { return yes(simplified); }
+
+    // A PERCENTAGE INSIDE A MATH FUNCTION IS STILL A PERCENTAGE, and this is the
+    // half of §10.11's calculation context that only the table can supply.
+    // `calc.cpp` refuses one whose own answer has no percentages to resolve - an
+    // angle, a time; this refuses one whose PROPERTY has none, which is
+    // `border-left-width: min(1px, 0%)`, `font-weight: sign(10%)` and
+    // `tab-size: abs(10%)`, the last failures of `minmax-length-invalid` and
+    // `signs-abs-invalid`. It is asked before `freeform` because a freeform
+    // property answers yes to it and the two orders are the same answer.
+    if (!takes_percentage_of(p->kind) && math_uses_percentage(text)) { return {}; }
 
     if (p->kind == k::freeform) { return yes(simplified); }
 
