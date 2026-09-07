@@ -449,6 +449,54 @@ void test_dataset_maps_data_attributes_both_ways() {
         return (typeof svg.dataset) + ',' + (typeof math.dataset) + ',' + (typeof other.dataset);
     })())JS",
        "object,object,undefined");
+    // ENUMERABLE, and only over the names that qualify. `dataset-enumeration`
+    // sets three attributes AFTER the element is made and counts the keys, so
+    // the list cannot be built once when the element is wrapped.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.setAttribute('data-foo', 'v');
+        e.setAttribute('data-bar', 'v');
+        e.setAttribute('dataFoo', 'v');
+        var count = 0;
+        for (var key in e.dataset) { count++; }
+        e.removeAttribute('data-bar');
+        var after = Object.keys(e.dataset).join(',');
+        return count + ',' + after;
+    })())JS",
+       "2,foo");
+    // IT IS A DOMStringMap, which is a question about the object behind the
+    // proxy - and Object.prototype still shines through it, which is the pair
+    // `dataset-prototype.html` asks about together.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        return (e.dataset instanceof DOMStringMap) + ',' +
+               (svg.dataset instanceof DOMStringMap) + ',' +
+               (typeof e.dataset.hasOwnProperty);
+    })())JS",
+       "true,true,function");
+    // A WRITE LANDS IN NO NAMESPACE. An element already carrying the same
+    // qualified name in two namespaces of its own gains a THIRD attribute
+    // rather than having one of those rewritten - `custom-attrs.html`, whole.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.setAttributeNS('foo', 'data-my-custom-attr', 'first');
+        e.setAttributeNS('bar', 'data-my-custom-attr', 'second');
+        e.dataset.myCustomAttr = 'third';
+        return e.attributes.length + ',' + e.getAttributeNS('foo', 'data-my-custom-attr') + ',' +
+               e.getAttributeNS(null, 'data-my-custom-attr');
+    })())JS",
+       "3,first,third");
+    // A MAP THE PAGE KEPT is still the document's, not a copy of it: the keys
+    // it enumerates are as of the last read, and reading a value always asks.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.setAttribute('data-foo', 'x');
+        var map = e.dataset;
+        e.removeAttribute('data-foo');
+        return (map.foo === undefined) + ',' + ('foo' in map);
+    })())JS",
+       "true,false");
 }
 
 // --- ARIA, which is the reflection table's one nullable type ----------------
@@ -500,6 +548,194 @@ void test_aria_reflects_as_a_nullable_string() {
        "[null],[]");
 }
 
+// --- the enumerated types, which are two rules and not twenty attributes -----
+
+void test_an_enumerated_attribute_is_limited_to_its_keywords() {
+    // HTML 2.6.5, and the four answers a row of the table can give: the missing
+    // value default when the attribute is absent, the keyword when the value is
+    // an ASCII case-insensitive match for one, and the INVALID value default
+    // for everything else. `<input type=TEXT>` and `<input type=text>` are the
+    // same state, and `reflection.js` spells every keyword in upper case, in
+    // lower case and with a letter sliced off the front to say so.
+    is(R"JS((function () {
+        var e = document.createElement('input');
+        var absent = e.type;
+        e.setAttribute('type', 'CHECKBOX');
+        var upper = e.type;
+        e.setAttribute('type', 'xcheckbox');
+        var invalid = e.type;
+        return absent + ',' + upper + ',' + invalid;
+    })())JS",
+       "text,checkbox,text");
+    // AN ATTRIBUTE THAT IS PRESENT BUT EMPTY MATCHES NO KEYWORD, so it takes
+    // the invalid value default like any other unrecognised value. This read as
+    // "" for a long time, which is right only for the rows - `dir`, `scope`,
+    // `referrerPolicy` - whose invalid value default happens to be "".
+    is(R"JS((function () {
+        var input = document.createElement('input');
+        input.setAttribute('type', '');
+        var track = document.createElement('track');
+        track.setAttribute('kind', '');
+        var div = document.createElement('div');
+        div.setAttribute('dir', '');
+        return input.type + ',' + track.kind + ',[' + div.dir + ']';
+    })())JS",
+       "text,metadata,[]");
+    // ASCII-ONLY, on purpose: U+212A KELVIN SIGN case-folds to `k` under
+    // Unicode and must NOT match one here, or `<marquee behavior=slide>` would
+    // depend on the locale. `core/algorithms.hpp` says the same thing about
+    // every fold in the engine.
+    is(R"JS((function () {
+        var e = document.createElement('link');
+        e.setAttribute('as', 'trac\u212A');
+        var kelvin = e.as;
+        e.setAttribute('as', 'TRACK');
+        return '[' + kelvin + '],' + e.as;
+    })())JS",
+       "[],track");
+    // THE SETTER WRITES WHAT IT IS GIVEN. An enumerated attribute does not
+    // canonicalise on the way in - `getAttribute` reports the capitals the page
+    // wrote, and only the IDL getter folds them.
+    is(R"JS((function () {
+        var e = document.createElement('form');
+        e.method = 'POST';
+        return e.getAttribute('method') + ',' + e.method;
+    })())JS",
+       "POST,post");
+}
+
+void test_a_nullable_enumerated_attribute_defaults_to_null() {
+    // `crossOrigin` is 2.6.5 with a null MISSING value default and a keyword
+    // INVALID one, which is why it is a type of its own: `typeof` changes with
+    // the presence of the attribute, and neither the plain enumerated rule nor
+    // the nullable DOMString one can say that.
+    is(R"JS((function () {
+        var e = document.createElement('img');
+        var absent = e.crossOrigin;
+        e.setAttribute('crossorigin', 'USE-CREDENTIALS');
+        var upper = e.crossOrigin;
+        e.setAttribute('crossorigin', '');
+        var empty = e.crossOrigin;
+        e.setAttribute('crossorigin', 'nonsense');
+        return (absent === null) + ',' + (typeof absent) + ',' + upper + ',' + empty + ',' +
+               e.crossOrigin;
+    })())JS",
+       "true,object,use-credentials,anonymous,anonymous");
+    // Setting null or undefined REMOVES it, as it does for the nullable string
+    // above; anything else is written through unchanged.
+    is(R"JS((function () {
+        var e = document.createElement('link');
+        e.crossOrigin = 'Anonymous';
+        var written = e.getAttribute('crossorigin') + ',' + e.crossOrigin;
+        e.crossOrigin = null;
+        var cleared = e.hasAttribute('crossorigin') + ',' + e.crossOrigin;
+        e.crossOrigin = 'anonymous';
+        e.crossOrigin = undefined;
+        return written + ',' + cleared + ',' + e.hasAttribute('crossorigin');
+    })())JS",
+       "Anonymous,anonymous,false,null,false");
+    // ON THE FOUR INTERFACES THAT HAVE IT AND NOWHERE ELSE: a <div> has no
+    // `crossorigin` content attribute, so the property is not there to read.
+    is(R"JS((function () {
+        return (typeof document.createElement('video').crossOrigin) + ',' +
+               (typeof document.createElement('script').crossOrigin) + ',' +
+               (typeof document.createElement('div').crossOrigin);
+    })())JS",
+       "object,object,undefined");
+}
+
+// --- and `width` is three different types, depending on who is asked ---------
+
+void test_width_and_height_reflect_the_type_their_interface_names() {
+    // `<td>`, `<marquee>` and `<iframe>` reflect width and height as DOMStrings
+    // - "50", not 50 - and `<input>` and `<video>` as unsigned longs. The
+    // corpus spells the difference out per element in `elements-tabular.js`,
+    // `elements-obsolete.js` and `elements-forms.js`, and it is not a
+    // presentation detail: `td.width + 1` is "501" and `input.width + 1` is 51.
+    is(R"JS((function () {
+        var td = document.createElement('td');
+        var marquee = document.createElement('marquee');
+        var input = document.createElement('input');
+        td.setAttribute('width', '50');
+        marquee.setAttribute('height', '6');
+        input.setAttribute('width', '50');
+        return (typeof td.width) + ',' + td.width + ',' + (typeof marquee.height) + ',' +
+               marquee.height + ',' + (typeof input.width) + ',' + input.width;
+    })())JS",
+       "string,50,string,6,number,50");
+    // THE SAME ANSWER FOR A PARSED ELEMENT. The wrapper installs its own
+    // numeric `width`/`height` pair on any element carrying either attribute,
+    // and an own property shadows the prototype - so before the table was asked
+    // first, a <td> written in the markup answered 50 and one built by script
+    // answered "50".
+    is(R"JS((function () {
+        document.body.innerHTML = '<table><tr><td width="50"></td></tr></table>' +
+                                  '<div id="plain" width="50"></div>';
+        var td = document.getElementsByTagName('td')[0];
+        var div = document.getElementById('plain');
+        return (typeof td.width) + ',' + td.width + ',' + (typeof div.width) + ',' + div.width;
+    })())JS",
+       "string,50,number,50");
+    // A number is parsed by HTML's integer rules rather than by a digit loop,
+    // so a leading sign and trailing rubbish are the attribute's problem and
+    // an unparseable one is the missing value default.
+    is(R"JS((function () {
+        var e = document.createElement('input');
+        e.setAttribute('height', ' 12abc');
+        var loose = e.height;
+        e.setAttribute('height', 'x');
+        return loose + ',' + e.height + ',' + (e.width = 7) + ',' + e.getAttribute('width');
+    })())JS",
+       "12,0,7,7");
+}
+
+// --- what a page may NOT overwrite -----------------------------------------
+
+void test_a_same_object_attribute_survives_being_assigned_to() {
+    // `[SameObject] readonly attribute DOMTokenList classList`, and it was a
+    // writable data property: `e.classList = 'foo'` REPLACED the token list
+    // with the string, so every `add`, `contains` and `item` after it was a
+    // method on a primitive. `Element-classlist.html` is 1,420 subtests and its
+    // FIRST case is that assignment - so the whole file ran against a string.
+    // A write to a readonly property is discarded in sloppy mode, silently,
+    // which is what the corpus expects.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.classList = 'foo';
+        e.classList.add('bar');
+        return (typeof e.classList) + ',' + e.className + ',' + e.classList.contains('bar');
+    })())JS",
+       "object,bar,true");
+    // `style` is readonly TOO, and its write has a meaning:
+    // [PutForwards=cssText] sends `el.style = "color: red"` to
+    // `el.style.cssText`. Losing the declaration object is what made
+    // `testEl.style = ""` - the first line of every css/css-values case -
+    // replace the proxy with a string and every later property write vanish.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.style.color = 'red';
+        e.style = 'margin-top: 4px';
+        var forwarded = e.getAttribute('style');
+        e.style = '';
+        e.style.color = 'blue';
+        return (typeof e.style) + ',[' + forwarded + '],' + e.style.color;
+    })())JS",
+       "object,[margin-top: 4px],blue");
+    // The same rule for the rest of them: a page that assigns to one of these
+    // must not be able to put a string where the next reader looks.
+    is(R"JS((function () {
+        var e = document.createElement('div');
+        e.dataset = 'x';
+        e.attributes = 'x';
+        e.children = 'x';
+        e.childNodes = 'x';
+        e.parentNode = 'x';
+        return (typeof e.dataset) + ',' + (typeof e.attributes) + ',' + (typeof e.children) +
+               ',' + (typeof e.childNodes) + ',' + e.parentNode;
+    })())JS",
+       "object,object,object,object,null");
+}
+
 } // namespace
 
 int main() {
@@ -513,5 +749,9 @@ int main() {
     test_an_element_searches_its_own_subtree_by_namespace();
     test_dataset_maps_data_attributes_both_ways();
     test_aria_reflects_as_a_nullable_string();
+    test_an_enumerated_attribute_is_limited_to_its_keywords();
+    test_a_nullable_enumerated_attribute_defaults_to_null();
+    test_width_and_height_reflect_the_type_their_interface_names();
+    test_a_same_object_attribute_survives_being_assigned_to();
     REPORT("element_attrs");
 }

@@ -525,6 +525,14 @@ enum class dataset_fault : std::uint8_t {
     return given.is_nullish() ? std::string{} : cx.to_string(given);
 }
 
+// DOES THE REFLECTION TABLE ALREADY ANSWER `width` FOR THIS TAG? Declared here
+// and defined with the table itself, which is the only place that knows. The
+// wrapper installs an OWN `width`/`height` accessor pair on an element carrying
+// either attribute, and an own property shadows a prototype one - so a row for
+// `<td width>` would be dead on a parsed <td> and live on a created one, which
+// is two answers to one question. See the note where it is called.
+[[nodiscard]] bool interface_reflects_size(std::string_view tag);
+
 } // namespace
 
 // DOM 4.2.3, "ensure pre-insertion validity". Every one of these checks stands
@@ -1162,7 +1170,33 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         }
         return c.string("");
     });
-    obj.set("style", style_view);
+    // `style` IS READONLY, AND A WRITE TO IT FORWARDS.
+    //
+    // CSSOM declares it `[PutForwards=cssText] readonly attribute
+    // CSSStyleDeclaration style`, and it was a plain writable data property -
+    // so `el.style = "color: red"` REPLACED the declaration object with the
+    // string, and every `el.style.color = v` after it wrote a property onto a
+    // primitive and vanished. `css/support/numeric-testcommon.js` opens every
+    // one of its cases with `testEl.style = ""`, so nineteen files in
+    // `css/css-values` failed every subtest they had for this one line.
+    //
+    // The same shape bindings/stylesheets.cpp gives `rule.style`, and for the
+    // same two reasons: the object is [SameObject], and the assignment has a
+    // defined meaning that is not "replace me".
+    {
+        auto * reader = cx.allocate<script::native_object>(
+            "style", [style_view](context &, std::span<value>) { return style_view; });
+        // The declaration proxy is reachable only from that lambda, and a
+        // capture is not a GC edge - see the note on the dataset map.
+        reader->retained.push_back(style_view);
+        auto * writer = cx.allocate<script::native_object>(
+            "style", [style_view](context & c, std::span<value> a) {
+                c.store_property(style_view, "cssText", a.empty() ? c.string("") : a[0]);
+                return value::undefined();
+            });
+        writer->retained.push_back(style_view);
+        obj.define_accessor("style", value::object(reader), value::object(writer));
+    }
 
     // --- the reflected attributes
     //
@@ -1535,9 +1569,20 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             // nothing-was-chosen.
             const value files = cx.make_array();
             static_cast<script::array_object *>(files.as_heap())->items.clear();
-            obj.set("files", files);
-        } else if (txn.has_attribute(id, atoms_->intern("width")) ||
-                   txn.has_attribute(id, atoms_->intern("height"))) {
+            // Readonly, as every [SameObject] attribute here is: a page that
+            // assigns to `input.files` must not be able to put a string where
+            // the next `for (const f of input.files)` looks.
+            obj.define("files", files, script::attr_enumerable | script::attr_configurable);
+        } else if ((txn.has_attribute(id, atoms_->intern("width")) ||
+                    txn.has_attribute(id, atoms_->intern("height"))) &&
+                   !interface_reflects_size(tag)) {
+            // AND NOT WHERE THE TABLE HAS A ROW. `<td width=50>`, `<marquee
+            // width=50>` and `<iframe width=50>` reflect a DOMString - "50",
+            // not 50 - and `<input width=50>` an unsigned long with HTML's
+            // integer rules rather than the digit loop above. This branch is
+            // what is left: an element whose interface says nothing about
+            // width, `<div width=50>` and `<svg width=50>` among them, where a
+            // number is better than nothing at all.
             reflect_size("width", 0);
             reflect_size("height", 0);
         }
@@ -1621,7 +1666,14 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                                   return value::number(static_cast<double>(tokens_now().size()));
                               })),
                           value::undefined());
-    obj.set("classList", value::object(list));
+    // READONLY, and this one had a price. `classList` is `[SameObject] readonly
+    // attribute DOMTokenList` and it was a writable data property, so
+    // `Element-classlist.html` - 1,420 subtests - assigned a STRING to it in
+    // its first case and every case after it called `add`, `contains` and
+    // `item` on that string. A write to a readonly property is silently
+    // discarded in sloppy mode, which is what the corpus expects to happen.
+    obj.define("classList", value::object(list),
+               script::attr_enumerable | script::attr_configurable);
 
     // --- element.dataset
     //
@@ -1634,19 +1686,23 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // said here rather than left to be discovered: this VM implements the
     // `get`, `set` and `has` traps and no others, so
     //
-    //   * `for (const k in el.dataset)` enumerates NOTHING - `op::own_keys`
-    //     yields an empty array for a proxy;
     //   * `delete el.dataset.foo` is a silent no-op - `op::delete_prop` skips
-    //     anything that is not exactly a plain object;
-    //   * `el.dataset instanceof DOMStringMap` is false - `instance_of` walks
-    //     an object_object's prototype and a proxy has none of its own.
+    //     anything that is not exactly a plain object, and
+    //     `dataset-delete.html` is what measures it.
     //
-    // All three are deviations in `lib/Script` and that is where they are
-    // fixable. The alternative shape - a plain object refilled on every read,
-    // as `attributes` above is - trades those three for a `set` that never
-    // reaches the document at all, which is the worse half of the trade: a
-    // write that silently does nothing is a wrong answer, and an enumeration
-    // that finds nothing is a missing one.
+    // That is a deviation in `lib/Script` and that is where it is fixable. The
+    // alternative shape - a plain object refilled on every read, as
+    // `attributes` above is - trades it for a `set` that never reaches the
+    // document at all, which is the worse half of the trade: a write that
+    // silently does nothing is a wrong answer.
+    //
+    // THE OTHER TWO ARE FIXED HERE, both without a new trap. Enumeration walks
+    // the proxy's TARGET, so the target is refilled with the element's data-*
+    // names each time `dataset` is read - which is why it is an accessor rather
+    // than a property. And `instanceof` follows a proxy to its target and walks
+    // THAT object's prototype, so hanging DOMStringMap.prototype off the target
+    // answers `el.dataset instanceof DOMStringMap` without the VM knowing what
+    // a proxy's prototype would be.
     //
     // NOT ON EVERY ELEMENT. `dataset` belongs to HTMLElement, SVGElement and
     // MathMLElement, and `document.createElementNS("test", "test").dataset` is
@@ -1662,13 +1718,13 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
 }
 
 void dom_bindings::install_dataset(context & cx, script::object_object & obj, node_id id) {
-    // THE STORE'S PROTOTYPE IS DELIBERATELY LEFT ALONE. Every miss falls
-    // through to `lookup_property` on it, and a plain object reaches the
-    // builtin Object.prototype tables that way - which is what
+    // THE STORE IS THE PROXY'S TARGET, and it is what `for (k in el.dataset)`
+    // and `Object.keys` walk - so it holds the element's data-* names, refilled
+    // on every read of `dataset` below. `DOMStringMap.prototype` goes in front
+    // of it, which costs nothing: a prototype chain that ends in undefined
+    // falls through to the builtin Object.prototype tables anyway, so
     // `dataset-prototype.html`'s "Properties on Object.prototype should shine
-    // through" is asking. Hanging `DOMStringMap.prototype` (whose own
-    // prototype link is null) in front of it would cut that off and buy
-    // nothing, `instanceof` on a proxy being false either way.
+    // through" still holds.
     auto * store = static_cast<script::object_object *>(cx.make_object().as_heap());
     auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
     const auto trap = [&](std::string name, script::native_fn fn) {
@@ -1691,16 +1747,27 @@ void dom_bindings::install_dataset(context & cx, script::object_object & obj, no
         }
         return std::nullopt;
     };
-    trap("get", [value_of](context & c, std::span<value> args) {
+    // A MISS FALLS THROUGH TO THE TARGET, which is how `dataset.toString` finds
+    // Object.prototype's - but NOT past a name the refill left on the target.
+    // The store holds the element's data-* names so that enumeration can walk
+    // them, and a page that kept `var ds = el.dataset` across a
+    // `removeAttribute` must still read undefined out of it: the DOCUMENT is
+    // the map, and the target is a list of its keys as of the last read.
+    const auto refilled_key = [store](const std::string & key) {
+        return store->find(key) != nullptr;
+    };
+    trap("get", [value_of, refilled_key](context & c, std::span<value> args) {
         if (args.size() < 2) { return value::undefined(); }
         const std::string key = c.to_string(args[1]);
         if (const std::optional<std::string> found = value_of(key)) { return c.string(*found); }
+        if (refilled_key(key)) { return value::undefined(); }
         return c.lookup_property(args[0], key);
     });
-    trap("has", [value_of](context & c, std::span<value> args) {
+    trap("has", [value_of, refilled_key](context & c, std::span<value> args) {
         if (args.size() < 2) { return value::boolean(false); }
         const std::string key = c.to_string(args[1]);
         if (value_of(key)) { return value::boolean(true); }
+        if (refilled_key(key)) { return value::boolean(false); }
         return value::boolean(!c.lookup_property(args[0], key).is_undefined());
     });
     trap("set", [this, id](context & c, std::span<value> args) {
@@ -1724,12 +1791,54 @@ void dom_bindings::install_dataset(context & cx, script::object_object & obj, no
         // ALREADY LOWERCASE by construction, so this interns as written rather
         // than folding: the only characters the mangle can emit above 'z' are
         // the ones it copied, and folding them would be folding the author's.
-        (void)doc_->set_attribute(id, atoms_->intern(name), c.to_string(args[2]));
+        //
+        // IN NO NAMESPACE, EXPLICITLY. The qualified `set_attribute` changes the
+        // FIRST attribute with that name whatever namespace it is in, so an
+        // element already carrying `data-my-custom-attr` in two namespaces of
+        // its own had one of THOSE rewritten instead of gaining a third
+        // attribute - which is `custom-attrs.html`, whole and entire. A
+        // data-* attribute is a null-namespace attribute by definition: it is
+        // the same rule `value_of` above reads by.
+        (void)doc_->set_attribute_ns(id, atoms_->intern(""), atoms_->intern(name),
+                                     c.to_string(args[2]));
         mutated();
         return value::boolean(true);
     });
-    obj.set("dataset", value::object(cx.allocate<script::proxy_object>(value::object(store),
-                                                                       value::object(handler))));
+    const value proxy = value::object(
+        cx.allocate<script::proxy_object>(value::object(store), value::object(handler)));
+    // AN ACCESSOR, so the target can be refilled before the page sees it.
+    // `d.setAttribute('data-foo', 'v')` does not go through this object at all,
+    // so a store filled once at install would enumerate whatever the element
+    // carried when it was first wrapped - and the corpus sets the attributes
+    // AFTER reading nothing out of `dataset`. The values are refilled with the
+    // keys because `Object.keys` and JSON.stringify read them off the target;
+    // a read of one property still goes through the `get` trap, which asks the
+    // document, so nothing here can go stale between two statements.
+    auto * reader = cx.allocate<script::native_object>(
+        "dataset", [this, id, store, proxy](context & c, std::span<value>) {
+            if (!store->prototype.is_object()) {
+                const value map = interface_prototype("DOMStringMap");
+                if (map.is_object()) { store->prototype = map; }
+            }
+            std::vector<std::string> stale;
+            stale.reserve(store->props.size());
+            for (const auto & [key, held] : store->props) { stale.push_back(key); }
+            for (const std::string & key : stale) { (void)store->erase(key); }
+            const auto txn = doc_->read();
+            std::string name;
+            for (const attribute & held : txn.attributes(id)) {
+                if (held.ns) { continue; }
+                if (dataset_name_of(atoms_->text(held.name), name)) {
+                    store->set(name, c.string(held.value));
+                }
+            }
+            return proxy;
+        });
+    // THE PROXY IS REACHABLE ONLY FROM THAT LAMBDA, and a lambda's captures are
+    // not a GC edge - `retained` is. Without this the map is collected out from
+    // under an element nothing else refers to.
+    reader->retained.push_back(proxy);
+    obj.define_accessor("dataset", value::object(reader), value::undefined());
 }
 
 rect dom_bindings::box_of(node_id id) const {
@@ -2518,30 +2627,60 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         mutated();
         return arg(args, 0);
     });
-    // `matches` and `closest`, DEFINED IN TERMS OF THE SAME MATCHER
-    // `querySelectorAll` uses, so neither can be right about a selector the
-    // other is wrong about. That matcher is now `style::engine::select` - the
-    // one the cascade runs - rather than the hand-rolled compound matcher
-    // `query()` used to be, which gave up on any selector containing a space.
+    // `matches` and `closest`, THROUGH `element_matches` AND NOT THROUGH A
+    // DOCUMENT QUERY.
     //
-    // BOTH ARE STILL O(document) PER CALL, because they ask `query()` for every
-    // match in the tree and then look for this element in the answer. That is
-    // the shape to fix next: matching ONE element needs the traversal cursor
-    // for its ancestor chain and nothing else.
-    method("matches", [this](context & c, std::span<value> args) {
+    // Both used to ask `query()` for every match in the tree and then look for
+    // this element in the answer, which is O(document) per call and - worse -
+    // is a different QUESTION. A detached element is in no document, so it was
+    // never in that list: `document.createElement('div').matches('div')` was
+    // false, and so was every `matches` a page ran on an element it had just
+    // built. `style::engine::element_matches` builds the ancestor chain of one
+    // element and runs the matcher over that, which is the same matcher
+    // `select` runs - so the three still cannot disagree about what a selector
+    // MEANS - and it was fixed for exactly the detached case in e00268b while
+    // nothing called it.
+    //
+    // The selector is PARSED PER CALL, as it is in `query`: a compiled_selector
+    // owns everything it holds, and a selector string is a handful of tokens.
+    const auto compiled = [this](context & c, std::span<value> args, bool & bad) {
+        return style::css::parse_selector_text(arg_string(c, args, 0), *atoms_, bad);
+    };
+    method("matches", [this, compiled](context & c, std::span<value> args) {
         const node_id self = receiver(c);
-        if (!self) { return value::boolean(false); }
-        const std::vector<node_id> found = query(arg_string(c, args, 0), node_id{});
-        return value::boolean(std::find(found.begin(), found.end(), self) != found.end());
+        bool bad = false;
+        const style::css::stylesheet parsed = compiled(c, args, bad);
+        // "If s is not a valid selector, throw a SyntaxError" - DOM 4.9, and
+        // the same refusal shadowRoot.querySelector already makes. A selector
+        // that is valid CSS this engine cannot answer - `:has(.x)` - is not
+        // this, and matches nothing.
+        if (bad) {
+            throw_dom_exception(c, "SyntaxError",
+                                "matches: '" + arg_string(c, args, 0) +
+                                    "' is not a valid selector");
+            return value::boolean(false);
+        }
+        if (!self || parsed.selectors.empty()) { return value::boolean(false); }
+        const auto txn = doc_->read();
+        return value::boolean(selector_engine().element_matches(txn, self, parsed.selectors));
     });
-    method("closest", [this](context & c, std::span<value> args) {
+    method("closest", [this, compiled](context & c, std::span<value> args) {
         const node_id self = receiver(c);
-        if (!self) { return value::null(); }
-        const std::vector<node_id> found = query(arg_string(c, args, 0), node_id{});
+        bool bad = false;
+        const style::css::stylesheet parsed = compiled(c, args, bad);
+        if (bad) {
+            throw_dom_exception(c, "SyntaxError",
+                                "closest: '" + arg_string(c, args, 0) +
+                                    "' is not a valid selector");
+            return value::null();
+        }
+        if (!self || parsed.selectors.empty()) { return value::null(); }
         const auto txn = doc_->read();
         // INCLUSIVE, and upward: the element itself is the first candidate.
         for (node_id at = self; at; at = txn.parent(at)) {
-            if (std::find(found.begin(), found.end(), at) != found.end()) { return wrap(c, at); }
+            if (selector_engine().element_matches(txn, at, parsed.selectors)) {
+                return wrap(c, at);
+            }
         }
         return value::null();
     });
@@ -2819,9 +2958,16 @@ enum class reflect_type : std::uint8_t {
     // A NULLABLE DOMString: `null` when the attribute is absent rather than "",
     // and setting `null` or `undefined` REMOVES it rather than writing the four
     // or nine characters. It is the shape every `aria-*` property and `role`
-    // have, and it is the one thing `dom_string` above cannot say - which is
-    // why `crossOrigin` is recorded as deliberately absent from the table.
-    nullable_dom_string
+    // have, and it is the one thing `dom_string` above cannot say.
+    nullable_dom_string,
+    // 2.6.5 AND NULLABLE AT ONCE, which is `crossOrigin` and nothing else here:
+    // limited to known keywords, but the MISSING value default is `null` rather
+    // than a keyword, so `typeof img.crossOrigin` is "object" on an element
+    // that has no `crossorigin` attribute and a string on one that has. An
+    // INVALID value is still a keyword - `crossorigin=x` is "anonymous" - so
+    // the two defaults genuinely differ in type and neither `enumerated` nor
+    // `nullable_dom_string` can spell it.
+    nullable_enumerated
 };
 
 // ONE REFLECTED IDL ATTRIBUTE. The four columns the plan asked for - interface,
@@ -2848,9 +2994,11 @@ struct reflected_attribute {
     // space - the longest is `application/x-www-form-urlencoded` - so one
     // string_view holds the whole set and the table stays one line per row.
     //
-    // The empty-string keyword that `referrerPolicy` and `input.formMethod`
-    // have is NOT listed: a keyword of "" is indistinguishable from the missing
-    // value default, both answer "" here, so it costs nothing to leave out.
+    // The empty-string keyword `referrerPolicy` has is NOT listed, and does not
+    // need to be: its invalid value default is "" as well, so a value matching
+    // no keyword answers "" whether or not "" is one of them. That is only true
+    // where the two coincide - `input.formMethod` has "" for its MISSING value
+    // default and "get" for its invalid one, and `formmethod=""` is "get".
     std::string_view keywords;
     std::string_view missing; // the missing value default
     std::string_view invalid; // the invalid value default
@@ -2958,12 +3106,35 @@ constexpr reflected_attribute enum_attr(std::string_view iface, std::string_view
             missing,
             invalid};
 }
+// The nullable spelling of the same rule. There is no `missing` column because
+// the missing value default IS null - that is what makes the type - and the
+// invalid value default is always a keyword.
+constexpr reflected_attribute nullable_enum_attr(std::string_view iface, std::string_view idl,
+                                                 std::string_view keywords,
+                                                 std::string_view invalid,
+                                                 std::string_view content = {}) {
+    return {iface,
+            idl,
+            content.empty() ? idl : content,
+            reflect_type::nullable_enumerated,
+            0,
+            0,
+            0,
+            keywords,
+            {},
+            invalid};
+}
 
 // The keyword sets that appear on more than one interface, named once so the
 // table cannot spell one of them differently from the other.
 constexpr std::string_view referrer_keywords =
     "no-referrer no-referrer-when-downgrade same-origin origin strict-origin "
     "origin-when-cross-origin strict-origin-when-cross-origin unsafe-url";
+// CORS, which four interfaces share and which is the one non-tentative user of
+// the nullable enumerated type: absent is `null`, `anonymous` and
+// `use-credentials` are the keywords, and anything else - including the empty
+// string, which is what `<img crossorigin>` parses to - is `anonymous`.
+constexpr std::string_view cors_keywords = "anonymous use-credentials";
 constexpr std::string_view enctype_keywords =
     "application/x-www-form-urlencoded multipart/form-data text/plain";
 constexpr std::string_view default_enctype = "application/x-www-form-urlencoded";
@@ -2983,11 +3154,8 @@ constexpr std::string_view default_enctype = "application/x-www-form-urlencoded"
 //   * `relList`, `sandbox`, `output.htmlFor`, `link.sizes` - the token lists.
 //     `classList` exists as its own object; the rest need a real DOMTokenList,
 //     which is an object type rather than a table row.
-//   * `crossOrigin` and `document.dir`: the first is a NULLABLE enumerated
-//     attribute, whose default is `null` rather than "" and whose `typeof` is
-//     therefore "object", which this accessor shape cannot express without a
-//     fourth default; the second is on the document object rather than on an
-//     element interface.
+//   * `document.dir`, which is on the document object rather than on an element
+//     interface.
 //   * `meter`'s six doubles and `progress.max`: `limited double` is a type
 //     nothing else uses and the elements have no behaviour behind it here.
 constexpr reflected_attribute reflection_table[] = {
@@ -3124,7 +3292,9 @@ constexpr reflected_attribute reflection_table[] = {
 
     // --- metadata
     text_attr("HTMLBaseElement", "target"),
+    url_attr("HTMLBaseElement", "href"),
     url_attr("HTMLLinkElement", "href"),
+    nullable_enum_attr("HTMLLinkElement", "crossOrigin", cors_keywords, "anonymous", "crossorigin"),
     text_attr("HTMLLinkElement", "rel"),
     text_attr("HTMLLinkElement", "media"),
     text_attr("HTMLLinkElement", "integrity"),
@@ -3148,6 +3318,8 @@ constexpr reflected_attribute reflection_table[] = {
 
     // --- scripting, edits, interactive
     url_attr("HTMLScriptElement", "src"),
+    nullable_enum_attr("HTMLScriptElement", "crossOrigin", cors_keywords, "anonymous",
+                       "crossorigin"),
     text_attr("HTMLScriptElement", "type"),
     text_attr("HTMLScriptElement", "charset"),
     text_attr("HTMLScriptElement", "integrity"),
@@ -3163,6 +3335,8 @@ constexpr reflected_attribute reflection_table[] = {
 
     // --- embedded content
     text_attr("HTMLImageElement", "alt"),
+    nullable_enum_attr("HTMLImageElement", "crossOrigin", cors_keywords, "anonymous",
+                       "crossorigin"),
     text_attr("HTMLImageElement", "srcset"),
     text_attr("HTMLImageElement", "useMap", "usemap"),
     text_attr("HTMLImageElement", "name"),
@@ -3183,6 +3357,8 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLIFrameElement", "frameBorder", "frameborder"),
     text_attr("HTMLIFrameElement", "marginHeight", "marginheight"),
     text_attr("HTMLIFrameElement", "marginWidth", "marginwidth"),
+    text_attr("HTMLIFrameElement", "width"),
+    text_attr("HTMLIFrameElement", "height"),
     url_attr("HTMLIFrameElement", "longDesc", "longdesc"),
     bool_attr("HTMLIFrameElement", "allowFullscreen", "allowfullscreen"),
     enum_attr("HTMLIFrameElement", "referrerPolicy", referrer_keywords, "", "", "referrerpolicy"),
@@ -3190,6 +3366,8 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLEmbedElement", "type"),
     text_attr("HTMLEmbedElement", "align"),
     text_attr("HTMLEmbedElement", "name"),
+    text_attr("HTMLEmbedElement", "width"),
+    text_attr("HTMLEmbedElement", "height"),
     text_attr("HTMLObjectElement", "type"),
     text_attr("HTMLObjectElement", "name"),
     text_attr("HTMLObjectElement", "useMap", "usemap"),
@@ -3203,11 +3381,15 @@ constexpr reflected_attribute reflection_table[] = {
     ulong_attr("HTMLObjectElement", "hspace"),
     ulong_attr("HTMLObjectElement", "vspace"),
     url_attr("HTMLObjectElement", "codeBase", "codebase"),
+    text_attr("HTMLObjectElement", "width"),
+    text_attr("HTMLObjectElement", "height"),
     text_attr("HTMLParamElement", "name"),
     text_attr("HTMLParamElement", "value"),
     text_attr("HTMLParamElement", "type"),
     text_attr("HTMLParamElement", "valueType", "valuetype"),
     url_attr("HTMLMediaElement", "src"),
+    nullable_enum_attr("HTMLMediaElement", "crossOrigin", cors_keywords, "anonymous",
+                       "crossorigin"),
     bool_attr("HTMLMediaElement", "autoplay"),
     bool_attr("HTMLMediaElement", "loop"),
     bool_attr("HTMLMediaElement", "controls"),
@@ -3216,6 +3398,8 @@ constexpr reflected_attribute reflection_table[] = {
     enum_attr("HTMLMediaElement", "loading", "lazy eager", "eager", "eager"),
     url_attr("HTMLVideoElement", "poster"),
     bool_attr("HTMLVideoElement", "playsInline", "playsinline"),
+    ulong_attr("HTMLVideoElement", "width"),
+    ulong_attr("HTMLVideoElement", "height"),
     url_attr("HTMLSourceElement", "src"),
     text_attr("HTMLSourceElement", "type"),
     text_attr("HTMLSourceElement", "srcset"),
@@ -3250,12 +3434,14 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLTableElement", "bgColor", "bgcolor"),
     text_attr("HTMLTableElement", "cellPadding", "cellpadding"),
     text_attr("HTMLTableElement", "cellSpacing", "cellspacing"),
+    text_attr("HTMLTableElement", "width"),
     text_attr("HTMLTableCaptionElement", "align"),
     text_attr("HTMLTableColElement", "align"),
     text_attr("HTMLTableColElement", "ch", "char"),
     text_attr("HTMLTableColElement", "chOff", "charoff"),
     text_attr("HTMLTableColElement", "vAlign", "valign"),
     clamped_attr("HTMLTableColElement", "span", 1, 1, 1000),
+    text_attr("HTMLTableColElement", "width"),
     text_attr("HTMLTableSectionElement", "align"),
     text_attr("HTMLTableSectionElement", "ch", "char"),
     text_attr("HTMLTableSectionElement", "chOff", "charoff"),
@@ -3274,6 +3460,8 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLTableCellElement", "vAlign", "valign"),
     text_attr("HTMLTableCellElement", "bgColor", "bgcolor"),
     bool_attr("HTMLTableCellElement", "noWrap", "nowrap"),
+    text_attr("HTMLTableCellElement", "width"),
+    text_attr("HTMLTableCellElement", "height"),
     clamped_attr("HTMLTableCellElement", "colSpan", 1, 1, 1000, "colspan"),
     clamped_attr("HTMLTableCellElement", "rowSpan", 1, 0, 65534, "rowspan"),
     enum_attr("HTMLTableCellElement", "scope", "row col rowgroup colgroup", "", ""),
@@ -3305,6 +3493,9 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLInputElement", "step"),
     text_attr("HTMLInputElement", "align"),
     text_attr("HTMLInputElement", "useMap", "usemap"),
+    text_attr("HTMLInputElement", "autocomplete"),
+    ulong_attr("HTMLInputElement", "width"),
+    ulong_attr("HTMLInputElement", "height"),
     text_attr("HTMLInputElement", "defaultValue", "value"),
     bool_attr("HTMLInputElement", "defaultChecked", "checked"),
     bool_attr("HTMLInputElement", "disabled"),
@@ -3376,6 +3567,8 @@ constexpr reflected_attribute reflection_table[] = {
     ulong_attr("HTMLMarqueeElement", "scrollAmount", 6, "scrollamount"),
     ulong_attr("HTMLMarqueeElement", "scrollDelay", 85, "scrolldelay"),
     bool_attr("HTMLMarqueeElement", "trueSpeed", "truespeed"),
+    text_attr("HTMLMarqueeElement", "width"),
+    text_attr("HTMLMarqueeElement", "height"),
     enum_attr("HTMLMarqueeElement", "behavior", "scroll slide alternate", "scroll", "scroll"),
     enum_attr("HTMLMarqueeElement", "direction", "up right down left", "left", "left"),
 };
@@ -3417,6 +3610,11 @@ constexpr dom_interface interface_table[] = {
     // `shadow_hosts_`, not about a name. See prototype_for_node.
     {"ShadowRoot", "DocumentFragment", ""},
     {"Attr", "Node", ""},
+    // NOT A NODE AND NOT IN ANY CHAIN: `DOMStringMap` exists so that
+    // `el.dataset instanceof DOMStringMap` can be true and so that the name is
+    // a global a page can feature-detect. `dataset.html` asks it of an HTML, an
+    // SVG and a MathML element.
+    {"DOMStringMap", "", ""},
     {"Window", "EventTarget", ""},
     // The collections. They are not nodes and inherit from nothing, and they
     // are here because `document.links instanceof HTMLCollection` and
@@ -3551,6 +3749,21 @@ constexpr dom_interface interface_table[] = {
                                                                    : "HTMLElement");
 }
 
+// ...and the question the wrapper asks before it installs its own pair. The
+// INHERITED rows count: `width` is on HTMLMediaElement, so a <video> has one
+// even though no row names HTMLVideoElement. Walked rather than cached because
+// it is asked only of an element that carries a width or height attribute.
+[[nodiscard]] bool interface_reflects_size(std::string_view tag) {
+    constexpr std::size_t count = std::size(interface_table);
+    for (std::size_t at = interface_for_tag(tag); at < count;
+         at = interface_index(interface_table[at].parent)) {
+        for (const reflected_attribute & row : reflection_table) {
+            if (row.idl == "width" && interface_index(row.interface) == at) { return true; }
+        }
+    }
+    return false;
+}
+
 // THE RULES FOR PARSING INTEGERS, HTML 2.4.4.1, which the numeric reflection
 // types are all defined in terms of. Answers false when there is no integer
 // there at all, which is what makes the attribute's default apply.
@@ -3660,6 +3873,35 @@ constexpr long long max_int32 = 2147483647;
     return at;
 }
 
+// THE RENDERED TEXT FRAGMENT, which is what the `innerText` and `outerText`
+// SETTERS both build. The assigned string is cut at every U+000A, U+000D or
+// CRLF pair: each run of other code points is a Text node and each break is a
+// `br` element, so `el.innerText = "a\nb"` leaves three children where
+// `textContent` would have left one.
+//
+// NOTHING IS PARSED AND NOTHING IS ESCAPED, which is the reason this builds
+// nodes rather than markup for set_inner_html to re-read: `abc<def` is seven
+// characters of TEXT, and a U+0000 in the middle survives - the HTML tokenizer
+// would have made an element of the first and U+FFFD of the second, and
+// innertext-setter-tests.js asserts both by name.
+template <typename OnText, typename OnBreak>
+void each_rendered_text_part(std::string_view text, OnText && on_text, OnBreak && on_break) {
+    std::size_t at = 0;
+    while (at < text.size()) {
+        const std::size_t start = at;
+        while (at < text.size() && text[at] != '\n' && text[at] != '\r') { ++at; }
+        if (at > start) { on_text(text.substr(start, at - start)); }
+        while (at < text.size() && (text[at] == '\n' || text[at] == '\r')) {
+            // ONE break for CRLF and two for CR CR: the pair is a single line
+            // ending, which is the only place the two characters are not
+            // independent.
+            if (text[at] == '\r' && at + 1 < text.size() && text[at + 1] == '\n') { ++at; }
+            ++at;
+            on_break();
+        }
+    }
+}
+
 } // namespace
 
 // One reflected attribute's getter: read the content attribute, apply the rule
@@ -3700,13 +3942,24 @@ value dom_bindings::reflected_get(context & cx, const void * row_ptr) {
         const std::string resolved = resolve(location_href_, raw);
         return cx.string(resolved.empty() ? std::string{raw} : resolved);
     }
-    case reflect_type::enumerated: {
-        if (!present) { return cx.string(std::string{row.missing}); }
+    case reflect_type::enumerated:
+    case reflect_type::nullable_enumerated: {
+        const bool nullable = row.type == reflect_type::nullable_enumerated;
+        if (!present) { return nullable ? value::null() : cx.string(std::string{row.missing}); }
+        // ASCII-INSENSITIVE AND NOTHING WIDER, which is the whole of the
+        // corpus's interest in this line: `TRUE` is the keyword `true` and
+        // U+212A KELVIN SIGN is not the letter `k`. Every keyword in the table
+        // is lower case already, so the folded value IS the canonical spelling.
         const std::string folded = ascii_lower_copy(raw);
         if (lists_token(row.keywords, folded)) { return cx.string(folded); }
-        // "" is a keyword of several of these and is spelled as the absence of
-        // one here - see the note on reflected_attribute::keywords.
-        if (folded.empty()) { return cx.string(""); }
+        // AN EMPTY VALUE IS AN INVALID ONE. It reads as if it were a state of
+        // its own - `<input type="">` - and it is not: the rule is "if the
+        // value matches none of the keywords, the invalid value default", and
+        // an attribute that is present but empty matches none. Answering ""
+        // here made `<input type="">` report "" where "text" belongs, and
+        // `<track kind="">` "" where "metadata" does. The rows whose invalid
+        // value default is "" - `dir`, `referrerPolicy`, `scope` - are
+        // unaffected, which is why this looked right for so long.
         return cx.string(std::string{row.invalid});
     }
     default: break;
@@ -3764,10 +4017,15 @@ value dom_bindings::reflected_set(context & cx, const void * row_ptr, std::span<
         }
         return value::undefined();
     case reflect_type::nullable_dom_string:
+    case reflect_type::nullable_enumerated:
         // "If the given value is null, remove the content attribute" - so
         // `el.ariaLabel = null` is a removal and not the four characters
         // "null", which is what the ToString below would have written.
         // `undefined` is the same state, which `testNullable` checks by name.
+        //
+        // A nullable ENUMERATED attribute writes what it is given, exactly as
+        // the non-nullable one does: `img.crossOrigin = "ANONYMOUS"` stores
+        // those nine capitals and the GETTER is what folds them.
         if (args.empty() || args[0].is_nullish()) {
             (void)doc_->remove_attribute(id, name);
             mutated();
@@ -3983,6 +4241,150 @@ void dom_bindings::install_dom_interfaces(context & cx) {
                                    property, [this, held_row](context & c, std::span<value> a) {
                                        return reflected_set(c, held_row, a);
                                    })));
+    }
+
+    // --- innerText AND outerText, THE SETTER HALF -----------------------------
+    //
+    // `el.innerText = "a\nb"` is NOT `textContent = "a\nb"`: the newline becomes
+    // a <br> element and the text on either side of it becomes a Text node.
+    // That rule - "the rendered text fragment" - is the whole of both setters
+    // and it reads no layout at all, which is why the two halves of this
+    // property can be separated. innertext-setter.html is 126 subtests of it.
+    //
+    // THE GETTERS ARE NOT HERE, and reading either still answers `undefined`.
+    // `innerText` is the RENDERED text: the specification's first step is "if
+    // this is not being rendered, return this's descendant text content" and
+    // every step after it reads the box tree - `display`, `white-space`, a
+    // ::before, a table cell's tab. This engine lays out on a FRAME rather than
+    // on demand, so the boxes a getter would walk here are the ones from before
+    // the script's own mutations: `container.innerHTML = x; e.innerText` would
+    // answer about the page as it was. Answering out of textContent instead
+    // would be a different property wearing this one's name. What the getter
+    // needs first is a layout flush a binding can ask for, and that is
+    // browser.cpp's to give.
+    if (const value html_interface = interface_prototype("HTMLElement");
+        html_interface.is_object()) {
+        auto * proto = static_cast<script::object_object *>(html_interface.as_heap());
+        // ON HTMLElement AND NOT ON Element, which is a rule with a test behind
+        // it: `svg.innerText = "abc"` must leave the <svg> empty, and
+        // innertext-setter-tests.js checks a MathML element as well.
+        //
+        // [LegacyNullToEmptyString], so `null` clears the element and
+        // `undefined` writes those nine letters - the same asymmetry
+        // `CharacterData.data` has.
+        const auto assigned = [](context & c, std::span<value> args) {
+            return arg(args, 0).is_null() ? std::string{} : arg_string(c, args, 0);
+        };
+        // The fragment, as a list of nodes in document order. Built before
+        // anything is removed: these calls only MAKE nodes, and a fragment that
+        // failed to build should not have emptied the element on its way out.
+        const auto rendered_nodes = [this](std::string_view text) {
+            std::vector<node_id> made;
+            each_rendered_text_part(
+                text,
+                [&](std::string_view run) {
+                    if (const node_id node = doc_->create_text(run)) { made.push_back(node); }
+                },
+                [&] {
+                    if (const node_id node = doc_->create_element(atoms_->intern_lower("br"))) {
+                        made.push_back(node);
+                    }
+                });
+            return made;
+        };
+        // "Merge with the next text node": a Text node followed by a Text node
+        // becomes one, and NOTHING ELSE is normalised. outerText leaves
+        // `A|B|Replaced|D|E` as `A|BReplacedD|E` on purpose, which the corpus
+        // spells out in a subtest called "does not completely normalize".
+        const auto merge_forward = [this](node_id node) {
+            if (!node) { return; }
+            std::string joined;
+            node_id next;
+            {
+                const auto txn = doc_->read();
+                if (txn.kind(node) != node_kind::text) { return; }
+                const node_id parent = txn.parent(node);
+                if (!parent) { return; }
+                const std::span<const node_id> kids = txn.children(parent);
+                for (std::size_t i = 0; i + 1 < kids.size(); ++i) {
+                    if (kids[i] == node) {
+                        next = kids[i + 1];
+                        break;
+                    }
+                }
+                if (!next || txn.kind(next) != node_kind::text) { return; }
+                joined = std::string{txn.text(node)} + std::string{txn.text(next)};
+            }
+            (void)doc_->set_text(node, joined);
+            (void)doc_->remove_child(next);
+        };
+        const auto set_inner_text = [this, assigned, rendered_nodes](context & c,
+                                                                     std::span<value> args) {
+            const node_id id = receiver(c);
+            if (!id) { return value::undefined(); }
+            const std::vector<node_id> made = rendered_nodes(assigned(c, args));
+            // "Replace all with fragment within this."
+            std::vector<node_id> existing;
+            {
+                const auto txn = doc_->read();
+                for (const node_id child : txn.children(id)) { existing.push_back(child); }
+            }
+            for (const node_id child : existing) { (void)doc_->remove_child(child); }
+            for (const node_id child : made) { (void)doc_->append_child(id, child); }
+            mutated();
+            return value::undefined();
+        };
+        const auto set_outer_text = [this, assigned, rendered_nodes,
+                                     merge_forward](context & c, std::span<value> args) {
+            const node_id id = receiver(c);
+            if (!id) { return value::undefined(); }
+            node_id parent;
+            node_id next;
+            node_id previous;
+            {
+                const auto txn = doc_->read();
+                parent = txn.parent(id);
+                if (parent) {
+                    const std::span<const node_id> kids = txn.children(parent);
+                    for (std::size_t i = 0; i < kids.size(); ++i) {
+                        if (kids[i] != id) { continue; }
+                        if (i + 1 < kids.size()) { next = kids[i + 1]; }
+                        if (i > 0) { previous = kids[i - 1]; }
+                        break;
+                    }
+                }
+            }
+            // "If this's parent is null, then throw a
+            // NoModificationAllowedError" - the one way either setter can fail,
+            // and the only reason outerText needs a body of its own at all.
+            if (!parent) {
+                throw_dom_exception(c, "NoModificationAllowedError",
+                                    "outerText: the element has no parent to replace it in");
+                return value::undefined();
+            }
+            std::vector<node_id> made = rendered_nodes(assigned(c, args));
+            // "If fragment has no children, append a new Text node whose data
+            // is the empty string": `el.outerText = ""` REPLACES the element
+            // with an empty text node rather than removing it, which is what
+            // lets the merge below join the text on either side of it.
+            if (made.empty()) {
+                if (const node_id empty = doc_->create_text("")) { made.push_back(empty); }
+            }
+            for (const node_id node : made) { (void)doc_->insert_before(parent, node, id); }
+            (void)doc_->remove_child(id);
+            // The two merges the specification names, in its order: the node
+            // now in front of `next` first, then `previous`.
+            if (!made.empty() && next) { merge_forward(made.back()); }
+            merge_forward(previous);
+            mutated();
+            return value::undefined();
+        };
+        proto->define_accessor(
+            "innerText", value::undefined(),
+            value::object(cx.allocate<script::native_object>("innerText", set_inner_text)));
+        proto->define_accessor(
+            "outerText", value::undefined(),
+            value::object(cx.allocate<script::native_object>("outerText", set_outer_text)));
     }
 
     // THE OPERATIONS THAT ARE NOT REFLECTED ATTRIBUTES, and so far that is the
