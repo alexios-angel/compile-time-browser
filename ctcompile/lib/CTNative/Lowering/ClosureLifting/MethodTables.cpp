@@ -11,7 +11,7 @@ bool fieldKey(llvm::StringRef key) {
 }
 } // namespace
 
-void closureLifter::returnedMethodTableCensus() {
+void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) {
     // A later local lift can expose more flow. Re-derive the table proof;
     // a previous round's successful prefix must not survive a later refusal.
     module.walk([](mlir::Operation * op) {
@@ -25,6 +25,20 @@ void closureLifter::returnedMethodTableCensus() {
     flow.build(module);
     OwnedMethodTableSlots slots(module);
     flow.connectOwnedMethodTableSlots(slots);
+    llvm::DenseSet<mlir::Operation *> globalCalls;
+    if (globals) {
+        flow.connectOwnedGlobalMethodTables(*globals);
+        for (const OwnedGlobalRoot & owner : globals->roots()) {
+            if (!owner.methodTable) { continue; }
+            for (const HostCallableEdge & call : owner.methodTable->calls) {
+                globalCalls.insert(call.call);
+            }
+        }
+    }
+    const auto globalSlot = [&](mlir::Operation * operation) {
+        const auto * owner = globals ? globals->lookup(operation) : nullptr;
+        return owner && owner->methodTable.has_value();
+    };
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> families;
     for (mlir::Value value : flow.nodes) { families[flow.find(value)].push_back(value); }
     llvm::DenseMap<mlir::Operation *, unsigned> creations;
@@ -73,7 +87,7 @@ void closureLifter::returnedMethodTableCensus() {
                     reject("result requires a closed function with visible returns");
                 }
             } else if (auto read = value.getDefiningOp<ctjs::GetPropertyOp>();
-                       read && slots.lookup(read)) {
+                       read && (slots.lookup(read) || globalSlot(read))) {
                 // The field is a fixed own-data slot on a confined local
                 // owner. Its complete incoming table family is checked here;
                 // the slot query by itself does not prove a table carrier.
@@ -84,7 +98,7 @@ void closureLifter::returnedMethodTableCensus() {
                 auto * user = use.getOwner();
                 if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
                     const auto key = constantKeyOf(set.getKey());
-                    if (use.getOperandNumber() == 2 && slots.lookup(set)) {
+                    if (use.getOperandNumber() == 2 && (slots.lookup(set) || globalSlot(set))) {
                         boundaries.push_back(user);
                         continue;
                     }
@@ -114,6 +128,9 @@ void closureLifter::returnedMethodTableCensus() {
                 }
                 if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
                     auto fn = closedValueFlow::target(call);
+                    if (use.getOperandNumber() == 0 && globalCalls.contains(call)) {
+                        continue; // the live host edge checks this exact receiver
+                    }
                     if (use.getOperandNumber() >= 3 && closedValueFlow::closed(fn) &&
                         call->getNumOperands() == fn.getBody().front().getNumArguments()) {
                         boundaries.push_back(user);
@@ -170,7 +187,8 @@ void closureLifter::returnedMethodTableCensus() {
                     continue;
                 }
                 if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
-                    call && use.getOperandNumber() == 2 && call->hasAttr(kNativeStoredCall) &&
+                    call && use.getOperandNumber() == 2 &&
+                    (call->hasAttr(kNativeStoredCall) || globalCalls.contains(call)) &&
                     closedValueFlow::target(call) == targetOf(made)) {
                     plans[made].calls.push_back(call);
                     continue;
@@ -216,6 +234,47 @@ void closureLifter::returnedMethodTableCensus() {
                           mlir::StringAttr::get(context, targetOf(made).getSymName()));
         }
     }
+}
+
+void closureLifter::discardNativeSourceFacts() {
+    // Called on a speculative clone after the original manifest passed.
+    // Reconstruct all native source-operation facts before the census. Old
+    // local-lifting markers such as ctnative.method would otherwise erase a
+    // real field initialization or observation store in the generic emitter.
+    // Module reports and presentation locations are not operation authority.
+    module.walk([](mlir::Operation * op) {
+        if (llvm::isa<mlir::ModuleOp>(op)) { return; }
+        llvm::SmallVector<mlir::StringAttr> discard;
+        for (mlir::NamedAttribute attribute : op->getAttrs()) {
+            if (attribute.getName().getValue().starts_with("ctnative.")) {
+                discard.push_back(attribute.getName());
+            }
+        }
+        for (mlir::StringAttr name : discard) { op->removeAttr(name); }
+    });
+}
+
+std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
+    const OwnedGlobalRoots & globals) {
+    if (!globals.proved() || globals.roots().size() != 1 || !globals.roots().front().methodTable) {
+        return std::nullopt;
+    }
+    discardNativeSourceFacts();
+    census();
+    returnedMethodTableCensus(&globals);
+    const auto & table = *globals.roots().front().methodTable;
+    auto made = table.closure;
+    const auto plan = returnedClosures.find(made);
+    if (plan == returnedClosures.end() || !plan->second.reason.empty() ||
+        whyNotReturnedClosure(made)) {
+        return std::nullopt;
+    }
+    // The checked tier has no captures or explicit parameters, so signatures
+    // and source allocations stay intact. Preserve the original receiver for
+    // the complete post-rewrite host proof; emission drops its unused value.
+    liftReport out;
+    liftReturnedClosure(made, table.method, 0, 0, out, true);
+    return out;
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

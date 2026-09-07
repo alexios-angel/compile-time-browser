@@ -1,9 +1,9 @@
-# Owning source graph for an exported getter
+# Native ownership for an exported getter
 
-The exported constant-getter specimen now has a complete live host proof and
-an owning source graph. Native admission remains **1/3 functions**, including
-when `host-manifest` is supplied. Its table field still needs a native carrier
-and a complete admitted call component.
+The exported constant-getter specimen now admits **3/3 functions** with explicit
+`--ctnative-lower-to-emitc="host-manifest=driver.json"`. Its ordinary global root,
+table field and stored callable use owning native C++ carriers. Without the
+manifest it remains **1/3 native**.
 
 ```js
 var host = {};
@@ -13,8 +13,7 @@ var trace = host.slot.get();
 ```
 
 Prepare with `--ctjs-resolve-globals --ctjs-lift-to-scf` before creating the
-fingerprinted manifest. Neither query changes source operations, visibility,
-call arguments or the manifest. Host callable evidence is described in
+fingerprinted manifest. The driver file remains unchanged. Host callable evidence is described in
 [the current getter proof](native-host-callables.md).
 
 `OwnedGlobalRoots` now returns an optional `OwnedGlobalMethodTable` alongside
@@ -47,20 +46,47 @@ base fixture completes at **361 charged steps**; all **361 incomplete budgets**
 withhold every owner edge. The scalar fixture now measures **164 steps** after
 the host property-query accounting change (previously 162).
 
-The source export regression compares `trace=42` with Node and the interpreter.
-Explicit-manifest lowering reports the live owner proof but retains the
-numeric-field and closure-value native refusals. Allocation, publication,
-property and call operation counts remain unchanged. Reusing the original
-manifest after partial native lowering fails its fingerprint check. This gate
-does not claim a standalone native table or a new lifetime sanitizer result.
+`ClosedValueFlow` now connects the checked field initializer to its reads only
+for the returned-table census. Preparation first validates the original manifest
+and owner graph, then works on a speculative clone. It reconstructs native
+source-operation facts and prepares only the uncaptured getter, preserving the
+actual receiver when making its call direct. A complete live query must prove
+the transformed graph before the clone is used. Final type admission rebuilds
+that query again and checks the whole retained-callable component. General
+closure lifting and default optimizations remain skipped on this manifest path.
 
-The next consumer is `ClosedValueFlow` and the returned-method-table census:
-explicitly connect this fixed field to its source table and current callable,
-then admit and emit the existing owning table carrier in global storage. The
-host-manifest path currently skips closure lifting to preserve the input
-fingerprint. Any new preparation must validate that input first and reconstruct
-valid proof for its transformed IR; it cannot refresh a stale manifest silently.
-Final admission must recheck the entire callable component and field type.
-The **3/3** standalone GCC/Clang and post-entry lifetime gate remains proposed.
-Captured Map publication (**0/4**) and exact Bootstrap Data (**0/7** per mode)
-remain subsequent boundaries.
+Clearing old native facts also protects existing scalar owners. A forged
+`ctnative.method` on a real field initialization or observation store must not
+erase that operation or omit its field type. Fresh-fingerprint execution
+controls cover both owners; input reports never supply authority. Reusing the
+original manifest after native lowering still fails its fingerprint check.
+
+The owner is a `std::shared_ptr` to its concrete field class. Its field holds
+the existing shared method-table carrier, whose getter is an owning
+`std::function<js_num()>`. Source allocation, publication and getter execution
+remain runtime. Driver-selected observations stay separate from owner storage.
+
+The standalone gate covers **eight complete 3/3 programs**, including direct
+and indirect calls, repeated calls, fractional results, initialization before
+binding publication, an ordinary `window` binding and stale native markers.
+Node, the interpreter and explicit/deduced GCC/Clang output agree. Linked
+binaries contain no VM symbols. Both generated forms pass ASan/UBSan,
+use-after-scope, stack-use-after-return and leak checks. The harness retains
+owner, table and callable independently after entry returns, resets the global,
+churns allocations and invokes entry again. It checks distinct live identities,
+weak expiry after each final release, and a copied callable after table release.
+
+Twenty-four source refusals, four unsupported observation-result types and
+stale/forged/rerun controls retain the boundary. The imported source specimen
+needs **499 steps** for its original ownership proof and **510** after
+preparation. Budgets **499 through 509** discard the speculative rewrite,
+preserving source allocations, field operations and calls at **1/3 native**;
+510 admits all three. These source counts differ from the smaller 361-step
+handwritten query unit above. The scalar execution gate now covers eight
+complete **1/1** programs, including both stale-marker controls.
+
+The next boundary is a captured Map table: prove its live environment and Map
+ownership through the global field and future calls, then consume those facts
+in native table/capture admission. The existing publication specimen remains
+**0/4** and exact Bootstrap Data remains **0/7** per mode. A typed external
+export ABI, mutable slots and general realm ownership remain further work.

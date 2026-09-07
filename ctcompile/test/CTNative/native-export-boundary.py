@@ -161,24 +161,18 @@ def main():
             or len(report["slots"]) != 1 or report["slots"][0]["proved_edges"] != 1):
         raise RuntimeError(f"plain_table: missing the complete current getter proof: {report}")
 
-    # The stricter owning-global query now connects the table and callable, but
-    # the native carrier still requires a numeric field. Preserve every source
-    # allocation/publication/call while that admission boundary remains.
+    # The checked source graph now reaches the owning method-table carrier and
+    # the complete native call component. The standalone/lifetime gate lives
+    # in native-owned-global-methods.py; no-manifest admission above stays 1/3.
     config = args.work / "plain-table-proof.json"
-    checked, checked_reasons = native(args, ir, "plain-table-owned-proof", 3, claimed=1,
+    checked, checked_reasons = native(args, ir, "plain-table-owned-proof", 3, claimed=3,
                                       options=f"host-manifest={config}")
     checked_text = checked.read_text()
-    numeric_field = "owned global root needs a proved owner and one definite numeric field"
     if ("ctnative.host_owner_proved = true" not in checked_text
-            or numeric_field not in checked_reasons
-            or not any("a closure used as a value" in reason for reason in checked_reasons)):
-        raise RuntimeError(f"plain_table: ownership proof bypassed final field/call admission: {checked_reasons}")
-    for op in ("create_object", "create_closure", "store_global", "load_global",
-               "set_property", "get_property", "call_direct", "call"):
-        pattern = rf"^\s*(?:%[^=\n]+\s*=\s*)?ctjs\.{op}\b"
-        if len(re.findall(pattern, ir.read_text(), re.M)) != len(re.findall(pattern, checked_text, re.M)):
-            raise RuntimeError(f"plain_table: incomplete native admission changed ctjs.{op}")
-    repeated, _ = native(args, checked, "plain-table-owned-proof-rerun", 3, claimed=1,
+            or checked_reasons or "owned_global_set" not in checked_text
+            or "invoke_callable" not in checked_text):
+        raise RuntimeError("plain_table: missing owning storage or callable execution")
+    repeated, _ = native(args, checked, "plain-table-owned-proof-rerun", 3, claimed=3,
                           options=f"host-manifest={config}")
     if ("ctnative.host_owner_proved = false" not in repeated.read_text()
             or "host contract module fingerprint mismatch" not in repeated.read_text()):
@@ -229,8 +223,8 @@ def main():
     _, rerun_reasons = native(args, first, "published-forged-rerun", count)
     if forged_reasons != reasons or rerun_reasons != reasons:
         raise RuntimeError("published: forged report supplied native authority")
-    print("native export boundary: complete scalar slot proof remains 0/1 native; "
-          "plain table 1/3; complete published startup prefix remains 0/4; confined control 4/4; "
+    print("native export boundary: scalar/table without manifest remain 0/1 and 1/3 native; "
+          "checked table 3/3; complete published startup prefix remains 0/4; confined control 4/4; "
           "four Node/interpreter observations and forged/rerun controls pass")
 
 

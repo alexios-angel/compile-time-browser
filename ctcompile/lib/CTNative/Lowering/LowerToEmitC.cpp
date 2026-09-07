@@ -80,9 +80,8 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // lifting: reachability still sees CTJS's complete reference forms,
         // and an unreachable private body never reaches type admission.
         // The pass manager owns analysis invalidation and instrumentation.
-        // The first host owner consumes precisely the fingerprinted input.
-        // Keep that single-entry scalar program intact until final admission;
-        // never rewrite it and silently rebind a driver manifest to new IR.
+        // Host preparation validates the fingerprinted input separately below;
+        // general optimization cannot silently rebind a driver manifest.
         if (!hostContract && optimize && (precompute || pruneUnreachable)) {
             mlir::OpPassManager defaults(mlir::ModuleOp::getOperationName());
             if (precompute) {
@@ -107,8 +106,41 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // TypeInference carry each capture's proved type into the leading
         // parameter it became. Doing it after the solve would need a second
         // one.
+        liftReport lifted;
+        if (hostContract) {
+            const OwnedGlobalRoots original(module, *hostContract, hostMaxSteps);
+            if (original.proved() && original.roots().size() == 1) {
+                // Prepare only the checked uncaptured table, speculatively.
+                // A stale input never reaches this rewrite. Its internally
+                // derived contract is usable only if the complete live owner
+                // and callable queries succeed again on the transformed IR.
+                mlir::OwningOpRef<mlir::ModuleOp> prepared(
+                    llvm::cast<mlir::ModuleOp>(module->clone()));
+                const OwnedGlobalRoots source(*prepared, *hostContract, hostMaxSteps);
+                closureLifter preparation{*prepared};
+                std::optional<liftReport> result;
+                if (original.roots().front().methodTable) {
+                    result = preparation.prepareOwnedGlobalMethodTables(source);
+                } else {
+                    // Scalar owners need no closure rewrite, but old native
+                    // facts must not erase their live stores either.
+                    preparation.discardNativeSourceFacts();
+                    result = liftReport{};
+                }
+                if (result) {
+                    HostContract transformed = *hostContract;
+                    transformed.moduleSha256 = hostContractFingerprint(*prepared);
+                    const OwnedGlobalRoots checked(*prepared, transformed, hostMaxSteps);
+                    if (checked.proved()) {
+                        module.getBodyRegion().takeBody(prepared->getBodyRegion());
+                        hostContract = std::move(transformed);
+                        lifted = *result;
+                    }
+                }
+            }
+        }
         closureLifter lifter{module, census};
-        const liftReport lifted = hostContract ? liftReport{} : lifter.run();
+        if (!hostContract) { lifted = lifter.run(); }
         // Recovery is speculative until type/effect admission and the entire
         // closed call component pass. Refused functions keep their original
         // status edges for boxed lowering; a diagnostic is never a proof.

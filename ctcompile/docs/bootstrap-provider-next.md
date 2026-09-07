@@ -46,24 +46,33 @@ explicit/deduced forms, including owning lifetime sanitizers. Missing/conditiona
 initialization, replacement, mutation, stale contracts and incomplete budgets
 withhold the owner plan. Without the option, the baseline remains **0/1**.
 
-## Next: consume owning method fields and current callees
+## Completed: owning method fields and current callees
 
 The live host and [owning source graph](native-owned-global-methods.md) queries
-now connect one fixed field's uncaptured method table to its current closure.
-Consume these edges in closed value flow, returned-table preparation, owning
-field emission and final call-component admission. The explicit-manifest path
-still skips closure lifting; preparation must validate the original fingerprint
-and reconstruct proof without accepting a stale manifest.
-The smaller specimen remains **1/3 native** with and without the manifest; the
-Map-backed four-function publication specimen is **0/4**, although its startup
-prefix already completes. Their **3/3** and **4/4** native gates remain
-proposed. See [the export design](native-export-boundary.md) for concrete consumer sites,
-lifetime checks and future-call obligations.
+now feed closed value flow, returned-table preparation, owning global fields
+and final call-component admission. The constant-getter specimen advances
+**1/3 -> 3/3 native** with an explicit manifest; the default stays **1/3**.
+Preparation validates the original fingerprint before rewriting a clone and
+requires a complete new proof before using that clone. It reconstructs native
+facts, preserving real stores despite stale annotations. Standalone GCC/Clang
+and post-entry owner/table/callable lifetime checks pass.
+
+## Next: captured Map environments across publication
+
+The Map-backed four-function publication specimen remains **0/4**, although its
+startup prefix completes. Its **4/4** native gate is proposed. Extend the live
+callable/source-owner proof to its immutable captured Map environment, preserving
+allocation identity and shared ownership. Then connect that proof to existing
+Map/capture types and table admission. Do not treat completed provider summaries
+as permission for future callers, mutable slots or a typed export ABI. See
+[the export design](native-export-boundary.md) for those obligations.
 
 Exceptions do not make a callback or allocation inert. Native try/catch covers
 one acyclic handler with homogeneous number, boolean or owning string throws
 and proved nonthrowing primitive helpers in its try and catch. Checked callee
-resolution now follows preserved status/register vectors. Throwing callees,
+resolution now follows preserved status/register vectors. Target verification
+also follows homogeneous primitive payloads through defined EmitC helpers;
+source throwing-call recovery still needs its exceptional edge. Throwing callees,
 general finally, reentry and object payloads require further work.
 Normal-return provider facts cannot authorize an exceptional continuation.
 

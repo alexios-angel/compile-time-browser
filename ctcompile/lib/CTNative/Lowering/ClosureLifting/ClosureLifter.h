@@ -641,10 +641,12 @@ struct closureLifter {
     };
     llvm::DenseMap<mlir::Operation *, returnedClosure> returnedClosures;
     void returnedClosureCensus();
-    void returnedMethodTableCensus();
+    void returnedMethodTableCensus(const OwnedGlobalRoots * globals = nullptr);
+    void discardNativeSourceFacts();
+    std::optional<liftReport> prepareOwnedGlobalMethodTables(const OwnedGlobalRoots & globals);
     std::optional<std::string> whyNotReturnedClosure(ctjs::CreateClosureOp c);
     void liftReturnedClosure(ctjs::CreateClosureOp c, ctjs::FuncOp target, unsigned captures,
-                             unsigned parameters, liftReport & out);
+                             unsigned parameters, liftReport & out, bool preserveReceiver = false);
 
     static bool isNotObjectLike(mlir::Value v);
 

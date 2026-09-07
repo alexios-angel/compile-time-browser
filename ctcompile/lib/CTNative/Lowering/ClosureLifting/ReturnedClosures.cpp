@@ -118,7 +118,8 @@ std::optional<std::string> closureLifter::whyNotReturnedClosure(ctjs::CreateClos
 }
 
 void closureLifter::liftReturnedClosure(ctjs::CreateClosureOp c, ctjs::FuncOp target,
-                                        unsigned captures, unsigned parameters, liftReport & out) {
+                                        unsigned captures, unsigned parameters, liftReport & out,
+                                        bool preserveReceiver) {
     llvm::SmallVector<mlir::Value> values;
     for (unsigned i = 0; i < captures; ++i) { values.push_back(liftedCapture(c, i)); }
     c.getUpvaluesMutable().assign(values);
@@ -150,7 +151,10 @@ void closureLifter::liftReturnedClosure(ctjs::CreateClosureOp c, ctjs::FuncOp ta
         while (args.size() < captures + parameters) { args.push_back(undefined); }
         auto call = ctjs::CallDirectOp::create(
             at, site->getLoc(), valueType, mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()),
-            undefined, undefined, closure, args, nullptr, nullptr);
+            preserveReceiver
+                ? (direct ? direct.getReceiver() : llvm::cast<ctjs::CallOp>(site).getReceiver())
+                : undefined,
+            undefined, closure, args, nullptr, nullptr);
         if (stored) {
             call->setAttr(kNativeStoredCall, at.getI32IntegerAttr(static_cast<int32_t>(captures)));
         }

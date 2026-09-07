@@ -127,6 +127,8 @@ def main():
         raise RuntimeError("need both compilers and a working VM-symbol positive control")
     positives = {
         "ordinary": ("var host = {}; host.slot = 42; var trace = host.slot;", "host", 42),
+        "legacy_store_marker": ("var host = {}; host.slot = 42; var trace = host.slot;", "host", 42),
+        "legacy_field_marker": ("var host = {}; host.slot = 42; var trace = host.slot;", "host", 42),
         "initialized": ("var host = {slot: 42}; var trace = host.slot;", "host", 42),
         "fraction": ("var host = {slot: 0.125}; var trace = host.slot;", "host", 0.125),
         "two_loads": ("var host = {}; host.slot = 42; var trace = host.slot; trace = host.slot;", "host", 42),
@@ -144,6 +146,14 @@ def main():
         reference_expected = "ignored=1\n" + expected if name == "unobserved_numeric" else expected
         if host.run([str(reference), str(js)]).stdout != reference_expected:
             raise RuntimeError(f"{name}: interpreter source oracle mismatch")
+        if name.startswith("legacy_"):
+            pattern = (r'ctjs\.store_global "trace", %[-\w.$]+' if name == "legacy_store_marker"
+                       else r'ctjs\.set_property %[-\w.$]+\[%[-\w.$]+\], %[-\w.$]+')
+            text, changed = re.subn(pattern, lambda match: match[0] + " {ctnative.method}",
+                                   ir.read_text(), count=1)
+            if changed != 1:
+                raise RuntimeError(f"{name}: did not mark its exact source operation")
+            ir.write_text(text)
         config = contract(args, ir, name, binding)
         output = lower(args, ir, name, config)
         text = output.read_text()

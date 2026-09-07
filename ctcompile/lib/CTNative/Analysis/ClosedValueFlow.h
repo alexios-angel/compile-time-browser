@@ -1,5 +1,6 @@
 #pragma once
 
+#include "OwnedGlobalRoots.h"
 #include "OwnedMethodTableSlots.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "mlir/IR/SymbolTable.h"
@@ -48,6 +49,17 @@ struct closedValueFlow {
         for (const OwnedMethodTableSlot & slot : slots.slots()) {
             auto initialization = slot.initialization;
             for (ctjs::GetPropertyOp read : slot.reads) {
+                join(initialization.getValue(), read.getResult());
+            }
+        }
+    }
+    // Only a complete live global-owner query can connect an exported
+    // field. This does not turn arbitrary global loads into local aliases.
+    void connectOwnedGlobalMethodTables(const OwnedGlobalRoots & roots) {
+        for (const OwnedGlobalRoot & root : roots.roots()) {
+            if (!root.methodTable) { continue; }
+            auto initialization = root.fieldInitialization;
+            for (ctjs::GetPropertyOp read : root.reads) {
                 join(initialization.getValue(), read.getResult());
             }
         }

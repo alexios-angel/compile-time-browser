@@ -20,9 +20,16 @@ bool admission::ownedGlobalOperation(mlir::Operation * operation) {
     }
     auto made = root->owner;
     auto write = root->fieldInitialization;
+    const auto field = typeOf(write.getValue());
+    auto table = llvm::dyn_cast_or_null<MethodTableType>(field);
+    const bool ownedTable =
+        root->methodTable && table && table.getSite() == methodTableName(root->methodTable->table);
     if (!ownedGlobalValue(made.getResult()) ||
-        carrierOf(typeOf(write.getValue())) != carrier::number) {
-        return refuse("owned global root needs a proved owner and one definite numeric field");
+        !(root->methodTable ? ownedTable : carrierOf(field) == carrier::number)) {
+        return refuse(
+            root->methodTable
+                ? "owned global method field needs its proved owning table schema"
+                : "owned global root needs a proved owner and one definite numeric field");
     }
     for (ctjs::LoadGlobalOp load : root->loads) {
         if (!ownedGlobalValue(load.getResult())) {
