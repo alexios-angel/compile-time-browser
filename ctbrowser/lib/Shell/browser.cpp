@@ -852,8 +852,21 @@ void browser::run_scripts() {
     field_selecting_ = node_id{};
     pressed_ = node_id{};
     selecting_ = false;
+    // A SCRIPT MUTATION INVALIDATES THE CASCADE, and this said `paint` - so a
+    // page that set an attribute, added a class or appended an element got its
+    // display list re-recorded from the styles resolved at load. It was not
+    // visible on the corpora because nothing there changes a style from script
+    // and then looks: p5 and Phaser draw into a canvas, which invalidates
+    // through canvases_.total_revision() instead.
+    //
+    // getComputedStyle is what made it visible. `dirty_` is the record of what a
+    // frame has to re-run, and the flush below reads it to decide what to run
+    // NOW - so a level that undersells the damage does not merely defer the
+    // repaint, it makes the flush a no-op and the read answers from before the
+    // write. `styles` is the honest level: the only callers are script mutating
+    // the document, and every one of them can change which rules match.
     bindings_ = std::make_unique<dom_bindings>(
-        *doc_, atoms_, canvases_, forms_, [this] { mark(dirty::paint); },
+        *doc_, atoms_, canvases_, forms_, [this] { mark(dirty::styles); },
         [this](node_id id) { (void)focus(id); });
     // The back end a caller chose before the page loaded - see
     // browser::prefer_angle_webgl. Applied here because this is the first
@@ -870,6 +883,45 @@ void browser::run_scripts() {
     });
     bindings_->observe_location(location_href_, location_hash_);
     bindings_->install(*script_);
+    // getComputedStyle ANSWERS ABOUT THE PAGE AS THE SCRIPT JUST LEFT IT.
+    //
+    // The object dom_bindings builds is made out of `resolved_`, `boxes_` and
+    // `fragments_`, and all three are handed over by run_layout - which has not
+    // run when a page's own <script> executes, because load_one_page marks the
+    // document dirty and runs the scripts BEFORE the first frame. So every
+    // getComputedStyle at load time read three null pointers, and every one
+    // after a write to `el.style` read the cascade from before that write.
+    // docs/css-conformance.md §5 measured what that costs: a throwaway patch
+    // that published the camelCase spellings moved not one WPT subtest, because
+    // the property was not on the object under any spelling.
+    //
+    // WRAPPED HERE RATHER THAN FLUSHED INSIDE THE BINDING. The pipeline is the
+    // browser's and the bindings deliberately do not know that layout exists -
+    // "a native that changes the document calls on_mutation, and the browser
+    // decides what that invalidates", at the top of shell/bindings.hpp. This is
+    // the same shadowing install_embedder_natives does two lines down, so an
+    // embedder that defines its own `getComputedStyle` still wins.
+    //
+    // ONLY WHAT IS ACTUALLY STALE RUNS: a second call with nothing written in
+    // between does no work at all, which is what keeps a page that reads one
+    // property per element off a hundred relayouts. The level is left at `paint`
+    // afterwards because the display list still has to be re-recorded before
+    // anything is drawn - the flush answers a question, it does not make a frame.
+    if (const script::value inner = script_->global("getComputedStyle"); inner.is_callable()) {
+        auto * flushing = script_->allocate<script::native_object>(
+            "getComputedStyle", [this, inner](script::context & c, std::span<script::value> args) {
+                if (dirty_ >= dirty::styles) { resolve_styles(); }
+                if (dirty_ >= dirty::layout) { run_layout(); }
+                if (dirty_ > dirty::paint) { dirty_ = dirty::paint; }
+                return c.call(inner, args);
+            });
+        // `inner` LIVES IN A C++ CAPTURE, which the precise collector cannot
+        // see, and the global that held it has just been overwritten - so this
+        // is the only reference left to it. See script::native_object::retained,
+        // which exists for exactly this and says why a property would be worse.
+        flushing->retained.push_back(inner);
+        script_->define_global("getComputedStyle", script::value::object(flushing));
+    }
     install_embedder_natives();
     script_error_.clear();
 
