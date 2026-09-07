@@ -582,6 +582,27 @@ bool engine::compound_matches(const read_txn & txn, const ancestor_filter & ance
             if (want.kind == pseudo_kind::not_ ? any : !any) { return false; }
             break;
         }
+        // Both are answered from an ANCESTOR's attribute rather than from this
+        // element's facts, so both walk - see language_of and direction_is_rtl,
+        // which is where the whole of the rule lives.
+        case pseudo_kind::lang: {
+            const std::string_view have = language_of(txn, node);
+            bool any = false;
+            for (const std::string & range : want.ranges) {
+                if (language_matches(range, have)) {
+                    any = true;
+                    break;
+                }
+            }
+            if (!any) { return false; }
+            break;
+        }
+        case pseudo_kind::dir: {
+            if (want.ranges.size() != 1) { return false; }
+            const bool rtl = direction_is_rtl(txn, node);
+            if (want.ranges.front() != (rtl ? "rtl" : "ltr")) { return false; }
+            break;
+        }
         }
     }
     return true;
