@@ -78,16 +78,29 @@ while checking standard Map identity. Mutable captures, replaced Map bindings,
 separate publication, additional factory invocations, reentry, throws, cycles
 and incomplete proofs remain refusals.
 
-## Next: supported Map operations in published methods
+## Completed proof: Map effects in one published method
 
-The new callable proof only accepts a captured Map's `size` read. A getter that
-first executes `state.set("x", 1)` measures **0/4 native**; Node and the interpreter
-both produce `trace=1`. This refusal specimen is retained in the captured Map
-gate. Extend the complete live proof to supported standard Map operations and
-their effects, then widen the fixed published table to Data's multiple methods
-and their arguments/results.
-Reuse existing native Map/type machinery after source identity and ownership
-are established. Exact Bootstrap Data remains **0/7** per mode; complete native
+The complete live callable proof now permits `size`, `set`, `get`, `has` and
+`delete` over primitive contents. It checks every actual method receiver,
+argument, capture read and Map alias, including `set`'s return. All effects
+execute at runtime; a prior invocation cannot supply a later result. Native
+Map type/carrier checks remain independent of this ownership proof.
+The mutating publication specimen advances **0/4 -> 4/4 native**, with
+Node/interpreter `trace=1`. Fourteen complete native programs and post-entry
+mutation/lifetime checks pass; see [the measured gate](native-owned-global-maps.md).
+
+## Next: one captured Map shared by multiple published methods
+
+Widen the fixed published table from one method to two zero-argument methods
+sharing its mutable Map, before tackling Data's method arguments and results.
+The live cell/use proof currently permits capture by only the selected closure;
+the owner query also requires one method and its exact four-function chain.
+Both need complete evidence for all methods, current calls and shared ownership.
+Existing returned-table and Map carriers can be reused after those proofs.
+The retained two-method specimen measures **0/5 native**, while Node and the
+interpreter both produce `trace=1` after its setter and getter execute.
+Nullable `Map.get` results used as keys remain a separate presence/carrier
+boundary. Exact Bootstrap Data remains **0/7** per mode; complete native
 initialization, realm owners and future-call contracts remain unfinished.
 
 Exceptions do not make a callback or allocation inert. Native try/catch covers
@@ -96,10 +109,10 @@ and proved nonthrowing primitive helpers in its try and catch. Checked callee
 resolution now follows preserved status/register vectors. Target verification
 also follows homogeneous primitive payloads through defined EmitC helpers.
 Explicit `ctjs.invoke` regions now separate the normal result from an implicit
-thrown payload and pre-call state; bounded type flow covers that payload.
-Source recovery still needs to construct those regions, and throwing callees
-need a checked normal-return transfer because upstream call inference remains
-conservative on throw exits. Admission and target emission must then consume the
+thrown payload and pre-call state; bounded type flow now covers both payloads
+and the invoked helper's normal returns. Ordinary call inference remains
+conservative on throw exits. Source recovery still needs to construct those
+regions, and admission and target emission must then consume the
 regions. Throwing callees, general finally, reentry and object payloads require
 further work.
 Normal-return provider facts cannot authorize an exceptional continuation.

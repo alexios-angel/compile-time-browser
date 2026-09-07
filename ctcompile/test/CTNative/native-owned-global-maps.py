@@ -17,7 +17,6 @@ methods = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(methods)
 owned, boundary, host = methods.owned, methods.boundary, methods.host
 SOURCE = Path(__file__).with_name("native-export-boundary.js").read_text()
-EXPECTED = "trace=0\n"
 
 
 def contract(args, ir, name, binding="host"):
@@ -51,7 +50,7 @@ def resolve_getter(args, ir):
     return output
 
 
-def lifetime(args, cpp, mode, compiler):
+def lifetime(args, cpp, name, mode, value, compiler):
     changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
     if count != 1:
         raise RuntimeError("lifetime harness needs exactly one entry")
@@ -86,13 +85,13 @@ int main() {
         return 92;
     }
     first.reset();
-    if (!owner_lifetime.expired() || table_lifetime.expired() || table->m_get() != 0) {
+    if (!owner_lifetime.expired() || table_lifetime.expired() || table->m_get() != SAVED_FIRST) {
         return 93;
     }
     table.reset();
     if (!table_lifetime.expired() || ctn_test_maps[0].expired()) { return 94; }
     for (int index = 0; index < 1024; ++index) {
-        if (callable() != 0 || g_host->slot->m_get() != 0) { return 95; }
+        if (callable() != SAVED_NEXT || g_host->slot->m_get() != FRESH_NEXT) { return 95; }
     }
     callable = {};
     if (!ctn_test_maps[0].expired() || ctn_test_maps[1].expired()) { return 96; }
@@ -105,20 +104,27 @@ int main() {
     return 0;
 }
 '''
-    source = args.work / f"ordinary.{mode}.lifetime.cpp"
+    # The growing-key method changes its Map on EVERY invocation. The saved
+    # environment has had one extra call, so sharing the reentry allocation or
+    # replacing later calls with a startup summary cannot satisfy this witness.
+    growing = name == "growing"
+    changed = changed.replace("SAVED_FIRST", "2" if growing else str(value))
+    changed = changed.replace("SAVED_NEXT", "index + 3" if growing else str(value))
+    changed = changed.replace("FRESH_NEXT", "index + 2" if growing else str(value))
+    source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
-    binary = (args.work / f"ordinary.{mode}.sanitized").resolve()
+    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
     host.run([compiler, *owned.FLAGS, "-O1", "-g", "-fno-omit-frame-pointer",
               "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
               str(source), "-o", str(binary)])
     result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
         env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
                  UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
-    if result.returncode or result.stdout != EXPECTED * 2:
-        raise RuntimeError(f"{mode}: captured Map lifetime failure\n{result.stdout}{result.stderr}")
+    if result.returncode or result.stdout != f"trace={value}\n" * 2:
+        raise RuntimeError(f"{name}/{mode}: captured Map lifetime failure\n{result.stdout}{result.stderr}")
 
 
-def standalone(args, output, name, compilers, nm):
+def standalone(args, output, name, value, compilers, nm):
     deduced = args.work / f"{name}.deduced.mlir"
     host.run([args.opt, str(output), "--ctnative-print-deduced", "-o", str(deduced)])
     for mode, ir in (("explicit", output), ("deduced", deduced)):
@@ -134,17 +140,25 @@ def standalone(args, output, name, compilers, nm):
             host.run([compiler, *owned.FLAGS, str(source), "-o", str(binary)])
             if owned.VM.search(host.run([nm, "-C", str(binary)]).stdout):
                 raise RuntimeError(f"{name}/{mode}: linked a VM symbol")
-            if host.run([str(binary)]).stdout != EXPECTED:
+            if host.run([str(binary)]).stdout != f"trace={value}\n":
                 raise RuntimeError(f"{name}/{mode}: standalone result mismatch")
-        if name == "ordinary":
-            lifetime(args, cpp, mode, compilers[1])
+        if name in {"ordinary", "mutate_map", "growing"}:
+            lifetime(args, cpp, name, mode, value, compilers[1])
 
 
 def refusal_sources():
     return {
         "mutable_capture": SOURCE.replace("return {", "state = new Map(); return {"),
-        "mutate_map": SOURCE.replace("return state.size;", "state.set('x', 1); return state.size;"),
-        "read_method": SOURCE.replace("return state.size;", "return state.get('x');"),
+        "cyclic_payload": SOURCE.replace("return state.size;", "state.set('x', state); return state.size;"),
+        "object_payload": SOURCE.replace("return state.size;", "state.set('x', {}); return state.size;"),
+        "map_key": SOURCE.replace("return state.size;", "state.set(state, 1); return state.size;"),
+        "detached_method": SOURCE.replace("return state.size;", "var set = state.set; set('x', 1); return state.size;"),
+        "set_wrong_arity": SOURCE.replace("return state.size;", "state.set('x'); return state.size;"),
+        "get_wrong_arity": SOURCE.replace("return state.size;", "state.get('x', 1); return state.size;"),
+        "method_escape": SOURCE.replace("return state.size;", "return state.set;"),
+        "map_return": SOURCE.replace("return state.size;", "return state.set('x', 1);"),
+        "method_replaced": SOURCE.replace("return state.size;", "state.set = 1; return state.size;"),
+        "snapshot": SOURCE.replace("return state.size;", "state.keys(); return state.size;"),
         "published_map": SOURCE.replace("return {", "host.map = state; return {"),
         "map_alias": SOURCE.replace("return {", "var saved = state; return {"),
         "replaced_map": "Map = function() {};\n" + SOURCE,
@@ -231,16 +245,33 @@ def main():
     if not all(compilers) or not nm or not owned.VM.search(
             host.run([nm, "-C", str(reference)]).stdout):
         raise RuntimeError("need both host compilers and a working VM-symbol control")
+    mutated = SOURCE.replace("return state.size;", "state.set('x', 1); return state.size;")
+    growing = SOURCE.replace("return state.size;", "state.set(state.size, 1); return state.size;")
     positives = {
-        "ordinary": (SOURCE, "host"),
-        "already_resolved": (SOURCE, "host"),
-        "legacy_store_marker": (SOURCE, "host"),
-        "legacy_field_marker": (SOURCE, "host"),
-        "repeated": (SOURCE + "\ntrace = host.slot.get();", "host"),
-        "ordinary_window": (SOURCE.replace("host", "window"), "window"),
+        "ordinary": (SOURCE, "host", 0),
+        "already_resolved": (SOURCE, "host", 0),
+        "legacy_store_marker": (SOURCE, "host", 0),
+        "legacy_field_marker": (SOURCE, "host", 0),
+        "repeated": (SOURCE + "\ntrace = host.slot.get();", "host", 0),
+        "ordinary_window": (SOURCE.replace("host", "window"), "window", 0),
+        "mutate_map": (mutated, "host", 1),
+        "growing": (growing, "host", 1),
+        "growing_repeated": (growing + "\ntrace = host.slot.get();" * 2, "host", 3),
+        "primitive_actions": (SOURCE.replace("return state.size;",
+            "state.set('x', 1); state.has('x'); state.get('x'); "
+            "state.delete('missing'); return state.size;"), "host", 1),
+        "replace_delete": (SOURCE.replace("return state.size;",
+            "state.set('x', 1); state.set('x', 2); state.delete('x'); return state.size;"), "host", 0),
+        "fluent": (SOURCE.replace("return state.size;",
+            "state.set('x', 1).set('y', 2); return state.size;"), "host", 2),
+        "has_result": (SOURCE.replace("return state.size;",
+            "state.set(false, 1); state.set(state.has(false), 2); return state.size;"), "host", 2),
+        "delete_result": (SOURCE.replace("return state.size;",
+            "state.set(false, 0); state.set(true, 1); state.set(state.delete(true), 2); "
+            "return state.size;"), "host", 2),
     }
     saved = {}
-    for name, (source, binding) in positives.items():
+    for name, (source, binding, value) in positives.items():
         js, ir, count = boundary.prepare(args, name, source)
         if count != 4:
             raise RuntimeError(f"{name}: lost the four-function source chain")
@@ -248,8 +279,9 @@ def main():
             ir = resolve_getter(args, ir)
         if name.startswith("legacy_"):
             ir = methods.legacy_marker(args, ir, name)
-        if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != EXPECTED
-                or host.run([str(reference), str(js)]).stdout != EXPECTED):
+        expected = f"trace={value}\n"
+        if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != expected
+                or host.run([str(reference), str(js)]).stdout != expected):
             raise RuntimeError(f"{name}: Node/interpreter source observation mismatch")
         config = contract(args, ir, name, binding)
         original, manifest = ir.read_text(), config.read_text()
@@ -259,7 +291,7 @@ def main():
             raise RuntimeError(f"{name}: lost live owning proof")
         if ir.read_text() != original or config.read_text() != manifest:
             raise RuntimeError(f"{name}: changed supplied source or manifest")
-        standalone(args, output, name, compilers, nm)
+        standalone(args, output, name, value, compilers, nm)
         saved[name] = ir, config, output
 
     ir, config, output = saved["ordinary"]
@@ -294,14 +326,51 @@ def main():
         raise RuntimeError("repeated budget witness changed source function count")
     fresh = contract(args, repeated, "budget-repeated")
     rollback += check_budgets(args, repeated, fresh, "repeated")
+    growing_ir, growing_config, _ = saved["growing"]
+    rollback += check_budgets(args, growing_ir, growing_config, "growing")
 
     for name, source in refusal_sources().items():
         _, rejected, _ = boundary.prepare(args, name, source)
         fresh = contract(args, rejected, name)
         methods.refused(args, rejected, name, fresh)
+    # Primitive ownership does not promise an implemented Map carrier or make
+    # a nullable/boolean result a numeric export. These bodies have complete
+    # live ownership but still need independent type and carrier proofs.
+    for name, body in {
+        "nullable_result": "state.set('x', 1); return state.get('missing');",
+        "boolean_result": "state.set('x', 1); return state.has('x');",
+        "nullable_key": ("state.set(1, 2); state.set(1, 3); state.set(state.get(1), 4); "
+                         "state.delete(3); return state.size;"),
+    }.items():
+        js, rejected, _ = boundary.prepare(args, name, SOURCE.replace("return state.size;", body))
+        if name == "nullable_key" and (
+                host.run([node, "-e", boundary.NODE, str(js)]).stdout != "trace=1\n"
+                or host.run([str(reference), str(js)]).stdout != "trace=1\n"):
+            raise RuntimeError("nullable_key: Node/interpreter observation mismatch")
+        fresh = contract(args, rejected, name)
+        result = owned.lower(args, rejected, name, fresh, cleanup=False)
+        text = methods.census(result, 4, name)
+        if ("ctnative.host_owner_proved = true" not in text
+                or re.search(r"\bemitc\.func @main\(", text)
+                or not boundary.REFUSAL.search(text)):
+            raise RuntimeError(f"{name}: ownership supplied an unsupported native carrier\n{text}")
+
+    # The next publication boundary needs a complete multi-method capture
+    # graph. Keep both runtime methods and their shared mutable Map visible.
+    multiple = SOURCE.replace("get() { return state.size; }",
+        "get() { return state.size; }, set() { state.set('x', 1); return state.size; }")
+    multiple = multiple.replace("var trace = host.slot.get();",
+        "host.slot.set(); var trace = host.slot.get();")
+    js, rejected, count = boundary.prepare(args, "multiple_methods", multiple)
+    if count != 5 or (host.run([node, "-e", boundary.NODE, str(js)]).stdout != "trace=1\n"
+            or host.run([str(reference), str(js)]).stdout != "trace=1\n"):
+        raise RuntimeError("multiple_methods: lost the source chain or shared Map result")
+    fresh = contract(args, rejected, "multiple_methods")
+    methods.refused(args, rejected, "multiple_methods", fresh, admitted=0)
     print(f"native captured Map ownership: {len(positives)} programs at 4/4; "
           "Node/interpreter/GCC/Clang explicit+deduced and Map/table/callable lifetime pass; "
           f"{len(refusal_sources())} source refusals and contract/rerun/budget controls pass; "
+          "three carrier refusals; next multi-method boundary 0/5 with Node/interpreter trace=1; "
           f"{len(rollback)} speculative rollback cutoffs")
 
 

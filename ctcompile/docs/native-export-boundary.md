@@ -13,6 +13,9 @@ cannot become private from a prefix observation.
 
 The [captured Map getter](native-owned-global-maps.md) now admits **4/4** with
 the explicit manifest and standard Map identity; its default remains **0/4**.
+Its live callable proof also permits standard `set`, `get`, `has` and `delete`
+over primitive contents. These remain runtime effects; owning the Map does
+not establish the result type or a supported native carrier.
 
 ## Measured boundary
 
@@ -167,9 +170,15 @@ refusal. Callable lookup follows the method property to its actual stored
 source closure, the immutable capture binding and its standard empty Map.
 The actual indirect wrapper factory call is proved before preparation; no
 source call is silently resolved to make the original proof succeed. The
-current getter body is restricted to `size`. Adding `state.set("x", 1)` before
-that read produces `trace=1` in Node and the interpreter but measures **0/4
-native**. Map mutations and broader provider effects remain outside this tier.
+current getter body admits `size`, `set`, `get`, `has` and `delete`, with exact
+method receivers and a complete primitive-content/use census. Repeated
+capture loads and `set`'s returned Map preserve the same owner. Returning or
+publishing the Map, detached methods, object contents, mutable captures and
+unknown effects still refuse. Native type and carrier checks remain separate;
+in particular a nullable `get` result does not prove a supported Map key.
+Sharing the captured Map across multiple published methods is the next source
+graph boundary. The current owner still requires one fixed method, four source
+functions and no public arguments.
 A prefix's retained factory/call rows cannot substitute for the live checks.
 See [the measured gate](native-owned-global-maps.md).
 

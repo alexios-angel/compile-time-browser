@@ -4,7 +4,9 @@ The four-function [publication specimen](../test/CTNative/native-export-boundary
 now admits **4/4 native** with a fingerprinted `host-manifest` that selects
 `host.slot`, the numeric `trace` observation and `initial_intrinsics: ["Map"]`.
 Without the manifest, or without its explicit standard Map identity, admission
-remains **0/4**. Full native Bootstrap Data is still unfinished.
+remains **0/4**. The method may now mutate its Map with standard `set`, `get`,
+`has` and `delete` operations over primitive contents. Full native Bootstrap
+Data is still unfinished.
 
 ```js
 var host = {};
@@ -12,16 +14,23 @@ var host = {};
     host.slot = factory();
 })(function() {
     const state = new Map();
-    return {get() { return state.size; }};
+    return {get() { state.set("x", 1); return state.size; }};
 });
 var trace = host.slot.get();
 ```
 
 The compiler proves one ordinary root, one wrapper invocation, one factory,
-one immutable capture binding and one empty standard Map allocation. The
-returned table has one fixed getter, and every current getter call uses its
-actual table receiver. Publication and all four source functions remain;
-allocation, calls, Map reads and the observation execute at runtime.
+one immutable capture binding and one standard Map allocation, initially empty.
+The returned table has one fixed method, and every current call uses its actual
+table receiver. A complete body census retains every Map read and call, permits
+only primitive keys/contents and checks exact method receivers and arities.
+Repeated capture loads and fluent `set` returns alias the same Map. Publication
+and all four source functions remain; allocation, mutations, calls and the
+observation execute at runtime. No previous invocation supplies a later result.
+
+This is an ownership/effects proof. Native admission must still prove supported
+key, value and result carriers; the gate uses numeric values and numeric, string
+or boolean keys. A primitive result alone is insufficient.
 
 The imported wrapper calls `factory()` indirectly. The host query follows
 argument 3 of the entry's sole direct wrapper invocation to the exact supplied
@@ -47,55 +56,68 @@ value. Native output links neither the interpreter nor the collector. Escape
 analysis still reports global publication as `StoredGlobal`; general global
 loads remain external. The new owner does not require a weaker escape verdict.
 
-## Measured gate
+## Measured gate, 2026-09-07
 
-`CTNative/native-owned-global-maps.test` covers six programs: ordinary,
-already-resolved getter, stale store/field markers with fresh fingerprints,
-repeated calls and an ordinary root named `window`. Each retains four source
-functions and admits **4/4**. Node, the interpreter and explicit/deduced GCC 13
-and Clang 18 binaries agree on `trace=0`; linked-symbol checks reject VM use.
+`CTNative/native-owned-global-maps.test` covers **14 programs at 4/4 native**:
+the six previous publication variants plus mutation, growing keys, repeated
+growth, primitive operations, overwrite/deletion, fluent calls, and boolean
+`has`/`delete` results used by later mutations. All fourteen match Node, the
+interpreter and standalone explicit/deduced GCC 13 and Clang 18 binaries.
+Linked-symbol checks reject VM use. The new mutation specimen advances
+**0/4 -> 4/4**, preserving `trace=1`.
 
-Both C++ forms pass ASan/UBSan, use-after-scope, stack-use-after-return and leak
-checks. The harness retains owner, table and callable independently, releases
-the global, churns allocations and invokes the callable after owner and table
-release. Weak witnesses observe the actual Map allocation without retaining it.
-Reentry makes a distinct Map; each Map expires when its last callable owner is
-released. A leaked Map or a getter that merely returns constant zero cannot
-satisfy these lifetime assertions.
+The ordinary, mutating and growing methods pass ASan/UBSan, use-after-scope,
+stack-use-after-return and leak checks in both C++ forms. The harness retains
+owner, table and callable independently, releases the global, churns allocations
+and invokes the callable after owner/table release. Weak witnesses observe the
+actual Map allocation without retaining it. Reentry makes a distinct Map; each
+Map expires when its last callable owner is released. The growing method uses
+`state.set(state.size, 1)` on every call: saved and fresh environments retain
+independent changing sizes through **1024 further invocations each**. A constant
+result or a startup summary cannot satisfy this witness.
 
-Twenty-two source refusals cover mutated captures, Map operations outside the
-size-only body, separate publication, replaced intrinsics/prototypes, constructor
-arguments, additional allocation/invocation, detached values, receiver/argument
-use, effects and throws. Stale/forged contracts, reruns, missing intrinsic
-identity and work limits preserve the source boundary. Budget tests find the
-first complete admission cutoff for ordinary and sixteen-call specimens,
-checking source operations and signatures on each failed attempt.
+Thirty source refusals cover mutable captures, non-primitive contents, cycles,
+wrong method receivers/arities, detached/escaping methods, Map publication,
+replaced intrinsics/prototypes, constructor arguments, additional allocation or
+factory invocation, observable receivers/arguments, effects and throws.
+Stale/forged contracts, reruns, missing intrinsic identity and incomplete work
+retain the source operations and signatures. Three further controls establish
+that complete ownership still cannot supply a numeric export for nullable or
+boolean results, or a supported nullable Map key.
 
-The ordinary specimen completes at **1009 steps** and the sixteen-call specimen
-at **8209**; each gate checks **33 cutoffs**, including the sixteen immediately
-below completion. Neither specimen exposes a budget interval where the original
-proof succeeds but the prepared clone's proof exhausts. These runs therefore
-check failed-attempt preservation, without adding a naturally reached clone
-rollback case; the existing scalar/table gates retain their rollback controls.
-The ownership unit separately checks every incomplete budget for its five
-fixtures, completing at **861**, **885**, **1009**, **848** and **581 steps**
-(direct source, indirect source, exact imported source, lifted and specialized).
+| Budget specimen | First complete admission | Cutoffs checked |
+|---|---:|---:|
+| Ordinary getter | 1012 | 31 |
+| Sixteen getter calls | 8257 | 31 |
+| Growing Map method | 1113 | 32 |
 
-The full devbox gate passes **471/471 CTests** in **566.41 seconds**, including
-**161/161 lit cases** in **50.33 seconds**. A subsequent rebuilt ownership unit
-and related host/root/type tests pass **4/4** in **0.34 seconds**, covering all
-five source/prepared fixtures. See [HANDOFF.md](HANDOFF.md) for logs and the
-source timestamp race found while checking this unit's evidence.
+Each checks the sixteen budgets immediately below completion. None naturally
+reaches a cutoff where the original proof succeeds and the prepared clone's
+proof exhausts. These are failed-attempt preservation checks, not a new
+Map-specific speculative rollback measurement. Existing scalar/table rollback
+controls remain.
+
+The focused devbox build and six ownership/host/type/escape CTests pass in
+**1.37 seconds**. The standalone gate passes all fourteen programs, three
+lifetime variants, thirty source refusals and three carrier refusals. Logs are
+`/tmp/ctcompile-map-effects-recovery-focused3.log`. See [HANDOFF.md](HANDOFF.md)
+for the full-session gate and corpus measurements.
 
 ## Next boundary
 
-The getter proof permits only the captured Map's `size` read. A body that first
-executes `state.set("x", 1)` measures **0/4 native**, while Node and the interpreter
-both produce `trace=1`. Extend the complete live callable proof to supported
-standard Map operations and their effects before broadening publication to
-Bootstrap's multi-method Data table and its arguments/results.
-The existing native Map/type machinery can be reused after those source proofs
-succeed; a completed startup summary supplies no authority for later calls.
+A table with both `set()` and `get()` methods sharing the captured Map measures
+**0/5 native**. Node and the interpreter both produce `trace=1` after the setter
+and getter run. This five-function specimen is retained in the gate. The live
+capture census currently permits the cell to feed only the selected closure;
+the owning source graph also requires one method and four functions. Extend
+both proofs to all methods and their shared owner before broadening to
+Bootstrap Data's method arguments/results.
+
+Separately, `state.get(1)` used as a later key still infers a nullable numeric
+key, even after a local `set(1, 3)`. Its numeric observation is `trace=1` in both
+references, but native admission remains **0/4** with complete ownership and a
+named unsupported-carrier refusal. It needs presence/type evidence, not a
+weaker ownership check.
 
 Future external callers, a typed export ABI, mutable publication slots,
 general realm owners, reentry and throwing provider effects remain separate
