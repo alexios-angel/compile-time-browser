@@ -69,7 +69,15 @@ constexpr std::array<std::string_view, 23> math_functions{
 // split is the point: it is a substitution in the specification, so a
 // declaration using one is not a syntax error and must survive - and this engine
 // does not PERFORM it, so `CSS.supports` has to say no.
-constexpr std::array<std::string_view, 3> substitution_functions{"var", "env", "attr"};
+//
+// `random-item()`, `inherit()` and `ident()` are three more of them, and naming
+// them is what makes `width: random-item(auto, 1px, 2px, 3px)` and
+// `left: inherit(--x)` declarations rather than lengths the grammar could not
+// read. CSS Values 5 calls all of these ARBITRARY SUBSTITUTION FUNCTIONS: their
+// specified value is their arguments and what those arguments mean is decided
+// later. `substitution_grammar_ok` below is the part that IS decided now.
+constexpr std::array<std::string_view, 6> substitution_functions{"var",         "env",     "attr",
+                                                                 "random-item", "inherit", "ident"};
 constexpr std::array<std::string_view, 2> performed_substitutions{"var", "env"};
 
 // THE VALUE FUNCTIONS THIS ENGINE IMPLEMENTS, beside the math ones and the two
@@ -436,6 +444,72 @@ struct scan {
     return out;
 }
 
+// AN ARBITRARY SUBSTITUTION FUNCTION HAS A GRAMMAR AT PARSE TIME even though
+// what it MEANS has none until substitution, and two of them are tested here to
+// the letter (CSS Values 5 §arbitrary-substitution):
+//
+//   ident( <declaration-value> )       one argument, and not an empty one
+//   inherit( <custom-property-name> [, <declaration-value>]? )
+//
+// `ident()`, `ident( )`, `ident({})` and `ident(a, b)` are four assertions of
+// `ident-function-parsing`; `inherit(, foo)` and `inherit(!!, foo)` are two of
+// `inherit-function-parsing`. The other twenty-one assertions of those two files
+// are values that must SURVIVE - `ident(rgb(1, 2, 3))` and `ident( myident)` and
+// `inherit(--x,)` among them - so this is the grammar and nothing more, and in
+// particular the argument is never re-serialised: the corpus asserts that
+// `ident( myident)` keeps its space.
+//
+// It looks INSIDE other functions, because `calc(inherit(--x) + 1px)` is one of
+// the values that must survive and `left: inherit(!!)` is not.
+[[nodiscard]] bool substitution_grammar_ok(const token_stream & ts) {
+    for (std::size_t i = 0; i < ts.tokens.size(); ++i) {
+        if (ts.tokens[i].type != token_type::function) { continue; }
+        const std::string_view fn = function_name(ts, ts.tokens[i]);
+        const bool is_ident = ascii_iequals(fn, "ident");
+        if (!is_ident && !ascii_iequals(fn, "inherit")) { continue; }
+        // Everything about the argument list that either grammar asks: how many
+        // top-level commas there are, what the first argument's significant
+        // tokens are, and whether a `{}` block sits at the top of it.
+        int depth = 1;
+        std::size_t commas = 0;
+        std::vector<std::size_t> first;
+        bool curly = false;
+        for (std::size_t j = i + 1; j < ts.tokens.size() && depth > 0; ++j) {
+            const css_token & t = ts.tokens[j];
+            if (t.type == token_type::eof) { break; }
+            if (t.type == token_type::close_paren || t.type == token_type::close_square ||
+                t.type == token_type::close_curly) {
+                if (--depth == 0) { break; }
+                continue;
+            }
+            if (t.type == token_type::whitespace) { continue; }
+            if (depth == 1 && t.type == token_type::comma) {
+                ++commas;
+                continue;
+            }
+            if (depth == 1 && commas == 0) { first.push_back(j); }
+            if (depth == 1 && t.type == token_type::open_curly) { curly = true; }
+            if (t.type == token_type::function || t.type == token_type::open_paren ||
+                t.type == token_type::open_square || t.type == token_type::open_curly) {
+                ++depth;
+            }
+        }
+        if (first.empty()) { return false; }
+        if (is_ident && (commas != 0 || curly)) { return false; }
+        if (!is_ident) {
+            // A CUSTOM PROPERTY NAME and nothing else: `inherit(!!, foo)` names
+            // no property, and `inherit(--x, foo)` has its fallback after the
+            // comma rather than beside the name.
+            if (commas > 1 || first.size() != 1) { return false; }
+            const css_token & name = ts.tokens[first.front()];
+            if (name.type != token_type::ident || !ts.text_of(name).starts_with("--")) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 // Whether the WHOLE value is one math function applied to everything - which is
 // the only shape this file accepts one in. `calc(1px) calc(2px)` is two values
 // and belongs to a property that takes two.
@@ -642,7 +716,9 @@ value_check check_declaration(std::string_view property, std::string_view value,
     if (property.starts_with("--")) { return yes(std::string{text}); }
 
     // A value holding var()/env()/attr() is valid by construction - what it
-    // means is not known until substitution.
+    // means is not known until substitution. Its ARGUMENT LIST is known now,
+    // though, and two of the functions have one worth checking.
+    if (!substitution_grammar_ok(ts)) { return {}; }
     if (found.substituted) { return yes(verbatim); }
 
     // A MALFORMED MATH FUNCTION KILLS THE DECLARATION WHEREVER IT SITS, and

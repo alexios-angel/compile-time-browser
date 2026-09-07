@@ -117,6 +117,25 @@ void test_the_things_that_must_survive() {
     ok("width", "min(10px,5%)", "min(10px, 5%)");
     ok("font-family", "random-item(auto ,serif)", "random-item(auto ,serif)");
     ok("font-family", "\"Helvetica Neue\", sans-serif", "\"Helvetica Neue\", sans-serif");
+    // AN ARBITRARY SUBSTITUTION FUNCTION IS A VALUE FOR ANY PROPERTY, CSS
+    // Values 5: what its arguments mean is decided after parsing, so a length
+    // grammar has no business refusing one.
+    ok("width", "random-item(auto, 1px, 2px, 3px)", "random-item(auto, 1px, 2px, 3px)");
+    ok("left", "inherit(--x)", "inherit(--x)");
+    ok("left", "inherit(--x,)", "inherit(--x,)");
+    ok("view-transition-name", "ident( myident)", "ident( myident)"); // and NOT respaced
+    ok("view-transition-name", "ident(rgb(1, 2, 3))", "ident(rgb(1, 2, 3))");
+    // ...but its ARGUMENT LIST is known now, and two of them have one worth
+    // checking. `ident( <declaration-value> )` takes one argument and not an
+    // empty one; `inherit()` takes a custom property name and an optional
+    // fallback after a comma.
+    bad("view-transition-name", "ident()");
+    bad("view-transition-name", "ident( )");
+    bad("view-transition-name", "ident({})");
+    bad("view-transition-name", "ident(a, b)");
+    bad("left", "inherit(, foo)");
+    bad("left", "inherit(!!, foo)");
+
     // An UNKNOWN property is stored, not refused: CSSOM lets a page set one.
     ok("-webkit-line-clamp", "3", "3");
     ok("scroll-snap-type", "x mandatory", "x mandatory");
