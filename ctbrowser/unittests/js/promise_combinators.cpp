@@ -63,8 +63,14 @@ int main() {
     // ================================================================
     // `new Promise(executor)` turned inside out: the same promise and the same
     // two functions, handed back as an object rather than to a callback.
-    js_expect("var d = Promise.withResolvers(); typeof d.promise + ',' + typeof d.resolve + ',' + "
-              "typeof d.reject",
+    // AN EXPRESSION, IN AN IIFE. `js_expect` compiles `return (<what you gave
+    // it>);`, so a `var` and a second statement handed to it are not a program
+    // at all - this line was written as two statements and reported THREW,
+    // which `js_run` says for a source that does not COMPILE just as it says it
+    // for one that throws. `Promise.withResolvers` was never the defect: the
+    // six `expect_after_turn` cases below drive it end to end and pass.
+    js_expect("(function(){var d = Promise.withResolvers();"
+              "return typeof d.promise + ',' + typeof d.resolve + ',' + typeof d.reject;})()",
               "object,function,function");
     expect_after_turn("var result = ''; var d = Promise.withResolvers();"
                       "d.promise.then(v => { result = v; }); d.resolve('ok');",
