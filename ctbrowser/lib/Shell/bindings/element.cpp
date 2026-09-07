@@ -613,6 +613,21 @@ atom dom_bindings::attribute_key(const read_txn & txn, node_id id,
 // spellings, because on an Attr that is what they are. They are exactly what
 // `dom/nodes/attributes.js`'s `attr_is` reads, and it reads all nine of these
 // properties on every case of three files.
+//
+// AN EMPTY `owner` MEANS DETACHED, and that is the whole of the second half of
+// this function. An Attr that has been REMOVED still exists - `removeNamedItem`
+// and `removeAttributeNode` both HAND IT BACK, which is how a page moves an
+// attribute from one element to another - and DOM 4.9.2 leaves its value, name
+// and namespace exactly as they were at the moment of removal while setting its
+// ownerElement to null. Reading through to the element it used to name answers
+// "" for every one of them, because the element no longer has the attribute:
+//
+//     var gone = e.attributes.removeNamedItem('a');
+//     gone.value                                  // "1" in a browser, "" here
+//
+// So a detached Attr carries its OWN value as three ordinary data properties -
+// which also gives `gone.value = "x"` the right meaning, a write to a node that
+// is not in any element rather than a write to an element that has moved on.
 value dom_bindings::attribute_object(context & cx, node_id owner, const attribute & held) {
     const std::string qualified{atoms_->text(held.name)};
     const std::string ns{atoms_->text(held.ns)};
@@ -624,6 +639,10 @@ value dom_bindings::attribute_object(context & cx, node_id owner, const attribut
     auto * attr = static_cast<script::object_object *>(cx.make_object().as_heap());
     for (const char * spelling : {"value", "nodeValue", "textContent"}) {
         const std::string property{spelling};
+        if (!owner) {
+            attr->set(property, cx.string(held.value));
+            continue;
+        }
         attr->define_accessor(
             property,
             value::object(cx.allocate<script::native_object>(
@@ -832,10 +851,11 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                                 "removeNamedItem: no attribute called '" + qualified + "'");
             return value::null();
         }
-        const value answer = attribute_object(c, id, *held);
+        // DETACHED, and made AFTER the removal so it cannot be read live: the
+        // Attr this hands back keeps the value it had, and no element.
         (void)doc_->remove_attribute(id, held->name);
         mutated();
-        return answer;
+        return attribute_object(c, node_id{}, *held);
     });
     map_method("removeNamedItemNS", [this, id, found_by_pair](context & c, std::span<value> a) {
         const std::string ns = namespace_argument(c, a, 0);
@@ -846,10 +866,9 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
                                 "removeNamedItemNS: no attribute called '" + local + "'");
             return value::null();
         }
-        const value answer = attribute_object(c, id, *held);
         (void)doc_->remove_attribute_ns(id, ns, local);
         mutated();
-        return answer;
+        return attribute_object(c, node_id{}, *held);
     });
     {
         // THE MAP IS ROOTED THROUGH THE GETTER. A C++ lambda's captures are
@@ -1769,7 +1788,13 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         const value ns_property = c.lookup_property(given, "namespaceURI");
         const std::string ns = ns_property.is_nullish() ? std::string{} : c.to_string(ns_property);
         const std::string local = c.to_string(c.lookup_property(given, "localName"));
-        if (!doc_->read().has_attribute_ns(id, ns, local)) {
+        std::optional<attribute> held;
+        {
+            const auto txn = doc_->read();
+            const attribute * found = txn.find_attribute_ns(id, ns, local);
+            if (found != nullptr) { held = *found; }
+        }
+        if (!held) {
             throw_dom_exception(c, "NotFoundError",
                                 "removeAttributeNode: '" + local +
                                     "' is not an attribute of this "
@@ -1778,6 +1803,17 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         }
         (void)doc_->remove_attribute_ns(id, ns, local);
         mutated();
+        // THE ARGUMENT IS THE ANSWER, and it is the ARGUMENT that has to be
+        // detached: this is the one removal that hands back an object the page
+        // already holds rather than one made here, so the live accessors on it
+        // are still reading through to an element that no longer has the
+        // attribute. Frozen in place, for the reason attribute_object gives.
+        auto * detaching = static_cast<script::object_object *>(given.as_heap());
+        for (const char * spelling : {"value", "nodeValue", "textContent"}) {
+            (void)detaching->erase_accessor(spelling);
+            detaching->set(spelling, c.string(held->value));
+        }
+        detaching->set("ownerElement", value::null());
         return given;
     });
     // `toggleAttribute(name, force)` - the boolean-attribute spelling, and it
