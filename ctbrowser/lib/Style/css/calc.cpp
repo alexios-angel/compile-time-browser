@@ -1195,6 +1195,13 @@ math_context math_context_of(std::string_view property) noexcept {
     for (const std::string_view one : lengths) {
         if (ascii_iequals(one, property)) { return math_context::length; }
     }
+    // THE PROPERTIES WHOSE WHOLE VALUE IS AN `<integer>`, which is the same list
+    // `properties.cpp` marks `k::integer` - kept here rather than asked of that
+    // table because this file must not depend on it, and two names are cheaper to
+    // repeat than a dependency is to add. Adding a third belongs in both.
+    if (ascii_iequals(property, "z-index") || ascii_iequals(property, "order")) {
+        return math_context::integer;
+    }
     return math_context::any;
 }
 
@@ -1614,9 +1621,26 @@ std::string simplify_math(std::string_view value) {
         // returns a lone child rather than wrapping it, so
         // `calc(calc(0px + clamp(...)))` loses exactly one layer.
         // `clamp-length-serialize` asserts that four times.
-        if (ascii_iequals(name, "calc(") && is_lone_calc(trim(body, html_whitespace))) {
-            out.append(simplify_math(trim(body, html_whitespace)));
-            continue;
+        //
+        // ...AND SO IS A calc() AROUND A LONE COMPARISON, for a sharper reason.
+        // `min()`, `max()` and `clamp()` are NODES OF THE CALCULATION TREE (CSS
+        // Values 4 §10.9), not opaque leaves: simplifying `calc(clamp(1px, 1em,
+        // 1vh))` leaves a tree whose root IS the Clamp node, and §10.13
+        // serialises a Clamp root as `clamp(...)` with no calc() anywhere.
+        //
+        // That is exactly why the rule stops at the three of them. `pow()` is
+        // not a node type - it is a leaf this file could not evaluate - and a
+        // leaf inside a calc() keeps its calc(), which is what
+        // `calc-complex-unresolved-serialize` asks for on all six of its values.
+        // The two files disagree only if the distinction is "any math function".
+        if (ascii_iequals(name, "calc(")) {
+            const std::string_view trimmed = trim(body, html_whitespace);
+            const std::string_view lone = lone_math_function(trimmed);
+            if (is_lone_calc(trimmed) || ascii_iequals(lone, "min(") ||
+                ascii_iequals(lone, "max(") || ascii_iequals(lone, "clamp(")) {
+                out.append(simplify_math(trimmed));
+                continue;
+            }
         }
         const math_answer answer = evaluate_math(body, ctx);
         if (answer.outcome == math_outcome::resolved && context_free(whole)) {
@@ -1738,7 +1762,21 @@ folded_value fold_math(std::string_view value, const length_context & ctx, math_
         const bool wrong_kind = answer.outcome == math_outcome::resolved &&
                                 answer.value.is_number && accepts == math_context::length;
         if (answer.outcome == math_outcome::resolved && !wrong_kind) {
-            out.append(serialize_calc(answer.value));
+            calc_result computed = answer.value;
+            // AN `<integer>` PROPERTY ROUNDS ITS ANSWER, and CSS Values 4 §10.10
+            // says which way: to the nearest integer, with a value exactly halfway
+            // going toward POSITIVE INFINITY. That is `floor(x + 0.5)` and not
+            // `std::round`, which rounds a half away from zero - the two disagree
+            // on every negative half, so `z-index: calc(-3 / 2)` is -1 and not -2.
+            //
+            // Rounding HERE and not in the evaluator is what makes
+            // `calc(calc(1 / 3) * 3)` come out as 1: only the finished conversion
+            // rounds, never an intermediate.
+            if (accepts == math_context::integer && computed.is_number &&
+                std::isfinite(computed.px)) {
+                computed.px = std::floor(computed.px + 0.5);
+            }
+            out.append(serialize_calc(computed));
             at = span.end;
             continue;
         }

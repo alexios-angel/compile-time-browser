@@ -152,7 +152,13 @@ enum class math_context : std::uint8_t {
     any,
     // The whole value is a length, a percentage, or a list of them: a bare
     // number cannot appear in it and one that does is a syntax error.
-    length
+    length,
+    // The whole value is an `<integer>`. A math function may still answer with a
+    // fraction - `z-index: calc(3 / 2)` is perfectly valid CSS - and CSS Values 4
+    // §10.10 says the COMPUTED value rounds it, so this is the context that says
+    // to. It is a context rather than a post-pass because rounding has to happen
+    // once, at the end of the conversion: `calc(calc(1 / 3) * 3)` is 1, not 0.
+    integer
 };
 
 // Which of the two a property is. Deliberately a SHORT list of properties whose

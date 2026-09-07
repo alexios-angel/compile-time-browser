@@ -1780,7 +1780,10 @@ void test_math_answers_with_a_number() {
     CHECK(math_context_of("MARGIN-TOP") == math_context::length); // ASCII case-insensitive
     CHECK(math_context_of("font-size") == math_context::length);
     CHECK(math_context_of("opacity") == math_context::any);
-    CHECK(math_context_of("z-index") == math_context::any);
+    // `z-index` and `order` are `<integer>`, which is a THIRD context: a number
+    // is a value for them, but a fractional one rounds - see css_values.cpp.
+    CHECK(math_context_of("z-index") == math_context::integer);
+    CHECK(math_context_of("order") == math_context::integer);
     // `line-height: 1.5` is a NUMBER and is the commonest spelling of it, so the
     // property that looks most like a length is not one.
     CHECK(math_context_of("line-height") == math_context::any);

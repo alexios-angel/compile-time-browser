@@ -42,7 +42,29 @@ constexpr const char * page_html = R"(<html><body>
   <li id=li3 class=item>third</li>
 </ul>
 <p id=p3>outside</p>
-<script>
+</body></html>)";
+
+// A second document, because `:lang()` and `:dir()` are the only selectors here
+// that ask about an ANCESTOR's attribute rather than about the subject. Shaped so
+// that every rule of HTML §3.2.6 has an element that turns on it: an inherited
+// language, an overriding one, an `lang=""` that means "unknown" rather than
+// "keep looking", an `xml:lang` that must NOT count in an HTML document, and a
+// `Content-Language` pragma that the root's own `lang` beats.
+constexpr const char * lang_html = R"(<html lang="en-GB"><head>
+<meta http-equiv="Content-Language" content="ko">
+</head><body>
+<div id=a>a</div>
+<div id=b lang="de">b<div id=c>c</div><div id=d lang="">d</div></div>
+<div id=e lang="de-CH-1901">e</div>
+<div id=f xml:lang="ko">f</div>
+<div id=g dir=rtl><span id=h>h</span></div>
+<div id=i dir=auto>&#1488;</div>
+<div id=j dir=auto>hello</div>
+</body></html>)";
+
+// The two helpers every page below needs, appended to whichever document a case
+// runs against so that no case has to carry them.
+constexpr const char * helpers = R"(<script>
 function ids(selector) {
   try {
     return [].map.call(document.querySelectorAll(selector), function (e) { return e.id; })
@@ -59,16 +81,17 @@ function one(selector) {
     return 'threw:' + e.name;
   }
 }
-</script>
-</body></html>)";
+</script>)";
 
-// Run one expression against that page and answer what it logged. A fresh page
+// Run one expression against a page and answer what it logged. A fresh page
 // per case: a selector that mutates nothing cannot affect the next one, but a
 // page that failed to load would otherwise report every case as the same silence.
-[[nodiscard]] std::string answer(const std::string & expression) {
+[[nodiscard]] std::string answer_in(const std::string & document_html,
+                                    const std::string & expression) {
     browser page{browser_options{400, 300}};
-    std::string html{page_html};
-    const std::string tail = "<script>console.log(String(" + expression + "));</script>";
+    std::string html{document_html};
+    const std::string tail =
+        std::string{helpers} + "<script>console.log(String(" + expression + "));</script>";
     html.insert(html.find("</body>"), tail);
     page.load_html(html);
     const std::vector<std::string> & logged = page.bindings().console_output();
@@ -76,10 +99,15 @@ function one(selector) {
     return logged.back();
 }
 
-void is(const std::string & expression, const std::string & expected) {
-    const std::string got = answer(expression);
+void is_in(const std::string & document_html, const std::string & expression,
+           const std::string & expected) {
+    const std::string got = answer_in(document_html, expression);
     CHECK_EQ(got, expected);
     if (got != expected) { std::printf("    %s\n", expression.c_str()); }
+}
+
+void is(const std::string & expression, const std::string & expected) {
+    is_in(page_html, expression, expected);
 }
 
 // --- what the old matcher could already do --------------------------------
@@ -173,6 +201,13 @@ void test_syntax_errors_and_the_selectors_that_are_merely_unsupported() {
     is("one('p::before')", "null");
     is("one('svg|rect')", "null");
     is("one('p:focus-visible')", "null");
+    // A `:lang()` this engine parses but whose argument is malformed is
+    // unmatchable rather than a syntax error, on the same reading
+    // `:nth-child(of S)` is refused under.
+    is("one('p:lang()')", "null");
+    is("one('p:lang(en,)')", "null");
+    // ...and this document declares no language at all, so `:lang(en)` has
+    // nothing to match - see test_lang_and_dir for the document that does.
     is("one(':lang(en)')", "null");
     // And an alternative that cannot be matched must not take its siblings with
     // it: `#p1, :has(a)` still finds #p1, exactly as a stylesheet would.
@@ -209,6 +244,62 @@ void test_a_detached_element_matches_against_itself() {
        "true,true,true");
 }
 
+// --- `:lang()` and `:dir()` -------------------------------------------------
+//
+// Both used to be unmatchable, which the ten
+// `html/dom/elements/global-attributes/the-lang-attribute-*.html` tests detect
+// by putting `:lang(xx)` on an element they then expect to be `display: none`.
+void test_lang_and_dir() {
+    // An INHERITED language. #a declares none, so the root's `en-GB` is its.
+    is_in(lang_html, "ids('div:lang(en-GB)')", "a,f,g,i,j");
+    // ...and RFC 4647 extended filtering, not string equality: the range `en`
+    // matches the language `en-GB`, which is the whole reason `:lang()` is not
+    // spelled `[lang^=en]`.
+    is_in(lang_html, "ids('div:lang(en)')", "a,f,g,i,j");
+    is_in(lang_html, "ids('div:lang(de)')", "b,c,e");
+    is_in(lang_html, "ids('div:lang(de-CH)')", "e");
+    // A wildcard subtag is skipped over, and a range of `*` is any language at
+    // all - which #d, whose `lang=""` means "unknown", is not.
+    is_in(lang_html, "ids('div:lang(*-CH)')", "e");
+    is_in(lang_html, "ids('div:lang(*)')", "a,b,c,e,f,g,i,j");
+    // `lang=""` STOPS the search rather than being skipped past: #d is inside a
+    // `lang="de"` and is still not German.
+    is_in(lang_html, "one('#d:lang(de)')", "null");
+    // `xml:lang` DOES NOT COUNT in an HTML document - the parser's foreign
+    // attribute adjustment does not run on an HTML element, so #f holds an
+    // attribute literally named `xml:lang` and inherits `en-GB` regardless.
+    // `the-lang-attribute-002.html` is exactly this, and asserts the MISS.
+    is_in(lang_html, "one('#f:lang(ko)')", "null");
+    // The `Content-Language` pragma is the DOCUMENT DEFAULT, so the root's own
+    // `lang` beats it. Above it loses; here, with no `lang` anywhere, it wins.
+    is_in(lang_html, "ids('div:lang(ko)')", "");
+    is_in("<html><head><meta http-equiv='Content-Language' content='ko'></head>"
+          "<body><div id=a>a</div></body></html>",
+          "ids('div:lang(ko)')", "a");
+    // A pragma naming more than one language sets no default at all.
+    is_in("<html><head><meta http-equiv='Content-Language' content='ko, en'></head>"
+          "<body><div id=a>a</div></body></html>",
+          "ids('div:lang(ko)')", "");
+    // ...and an empty `lang` on the root beats the pragma, which is what
+    // `the-lang-attribute-010.html` asserts.
+    is_in("<html lang=''><head><meta http-equiv='Content-Language' content='ko'></head>"
+          "<body><div id=a>a</div></body></html>",
+          "ids('div:lang(ko)')", "");
+
+    // `:dir()`. An explicit `dir` is inherited by descendants...
+    is_in(lang_html, "one('#h:dir(rtl)')", "h");
+    is_in(lang_html, "one('#h:dir(ltr)')", "null");
+    // ...the default with no `dir` anywhere is left-to-right...
+    is_in(lang_html, "one('#a:dir(ltr)')", "a");
+    // ...and `dir=auto` reads the first STRONG character of the subtree, so a
+    // Hebrew aleph makes #i right-to-left and `hello` leaves #j left-to-right.
+    is_in(lang_html, "one('#i:dir(rtl)')", "i");
+    is_in(lang_html, "one('#j:dir(ltr)')", "j");
+    // A direction this engine does not know is valid and simply never matches -
+    // Selectors 4 §7.1 says so rather than making it a syntax error.
+    is_in(lang_html, "one('#a:dir(sideways)')", "null");
+}
+
 } // namespace
 
 int main() {
@@ -218,5 +309,6 @@ int main() {
     test_scoped_queries_and_matches();
     test_a_detached_element_matches_against_itself();
     test_syntax_errors_and_the_selectors_that_are_merely_unsupported();
+    test_lang_and_dir();
     REPORT("selectors");
 }

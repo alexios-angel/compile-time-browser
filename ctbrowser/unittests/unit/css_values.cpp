@@ -337,13 +337,28 @@ void test_a_math_function_is_simplified_wherever_it_sits() {
     // which is what §10.12's simplification does with a lone child.
     ok("margin-top", "calc(calc(0px + clamp(1px, 1em, 1vh)))", "calc(0px + clamp(1px, 1em, 1vh))");
     ok("width", "calc(calc(calc(10px)))", "calc(10px)");
-    // ...AND A calc() AROUND ANY OTHER MATH FUNCTION IS NOT. That generalisation
-    // was read out of `clamp-length-serialize`, which only ever writes a calc in
-    // a calc; `calc-complex-unresolved-serialize` writes the other case six
-    // times and wants the outer function back on every one of them.
+    // ...AND SO IS A calc() AROUND A LONE COMPARISON. `min()`, `max()` and
+    // `clamp()` are NODES of the calculation tree (§10.9), so simplifying
+    // `calc(clamp(a, b, c))` leaves a tree whose root IS the Clamp node - and
+    // §10.13 serialises a Clamp root as `clamp(...)`, with no calc() anywhere.
+    // `clamp-length-serialize` runs every one of its values twice, bare and
+    // wrapped in one more calc(), and asserts the two serialise the same.
+    ok("margin-top", "calc(clamp(1px, 1em, 1vh))", "clamp(1px, 1em, 1vh)");
+    ok("margin-top", "calc(clamp(-18px, 3vw, -3vw))", "clamp(-18px, 3vw, -3vw)");
+    ok("margin-top", "calc(min(10px, 5%))", "min(10px, 5%)");
+    ok("margin-top", "calc(clamp(30px, 100px, 20px))", "calc(30px)");
+    // ...AND A calc() AROUND ANY OTHER MATH FUNCTION IS NOT, which is where the
+    // rule stops. `pow()` is not a node type - it is a leaf this file could not
+    // evaluate - and a leaf inside a calc() keeps its calc():
+    // `calc-complex-unresolved-serialize` wants the outer function back on all
+    // six of its values, and the two files disagree only if the distinction is
+    // "any math function".
     ok("orphans", "calc(pow(2, sign(1em - 18px)))", "calc(pow(2, sign(1em - 18px)))");
     ok("orphans", "calc(pow(2, sibling-index())", "calc(pow(2, sibling-index()))");
-    ok("margin-top", "calc(clamp(1px, 1em, 1vh))", "calc(clamp(1px, 1em, 1vh))");
+    // A comparison that is not ALONE inside the calc keeps it too: the root is
+    // then a sum, not a Clamp.
+    ok("margin-top", "calc(0px + clamp(1px, 1em, 1vh))", "calc(0px + clamp(1px, 1em, 1vh))");
+    ok("width", "calc(min(1em, 21px) * 2", "calc(min(1em, 21px) * 2)");
 
     // ...AND EVERYTHING ELSE KEEPS THE AUTHOR'S BYTES. A function with no answer
     // until layout, one whose units have no basis yet, and one this file cannot
@@ -627,6 +642,155 @@ void test_css_supports() {
     CHECK(check_declaration("content", "attr(data-foo)").uses_unknown_function);
 }
 
+// AN `<integer>` PROPERTY ROUNDS ITS MATH, and CSS Values 4 §10.10 says which
+// way. `z-index: calc(3 / 2)` is valid CSS whose computed value is 2, and this
+// engine reported `1.5` - a number no `<integer>` property has ever taken.
+//
+// The direction is the whole of the difference: a value exactly halfway goes
+// toward POSITIVE INFINITY, so `calc(-3 / 2)` is -1 and not -2. `std::round`
+// would have got every negative half wrong, and
+// `css/css-values/calc-z-index-fractions-001.html` is six subtests of nothing
+// else. `calc-integer.html` is the other three.
+void test_an_integer_property_rounds_its_math() {
+    using ctbrowser::style::css::fold_math;
+    using ctbrowser::style::css::length_context;
+    using ctbrowser::style::css::math_context;
+    using ctbrowser::style::css::math_context_of;
+
+    const length_context ctx;
+    const auto whole = [&](std::string_view value) {
+        return fold_math(value, ctx, math_context::integer).text;
+    };
+    CHECK(math_context_of("z-index") == math_context::integer);
+    CHECK(math_context_of("order") == math_context::integer);
+
+    CHECK_EQ(whole("calc(2)"), std::string{"2"});
+    CHECK_EQ(whole("calc(4 / 2)"), std::string{"2"});
+    CHECK_EQ(whole("calc(1 / 2)"), std::string{"1"}); // a half rounds UP
+    CHECK_EQ(whole("calc(0.5)"), std::string{"1"});
+    CHECK_EQ(whole("calc(1 / 3)"), std::string{"0"}); // ...and a third rounds down
+    CHECK_EQ(whole("calc(6 / 2.0)"), std::string{"3"});
+    // The six of calc-z-index-fractions-001, and the four negatives are the
+    // ones that say "toward positive infinity" rather than "away from zero".
+    CHECK_EQ(whole("calc(2.5 / 2)"), std::string{"1"});
+    CHECK_EQ(whole("calc(3 / 2)"), std::string{"2"});
+    CHECK_EQ(whole("calc(3.5 / 2)"), std::string{"2"});
+    CHECK_EQ(whole("calc(-2.5 / 2)"), std::string{"-1"});
+    CHECK_EQ(whole("calc(-3 / 2)"), std::string{"-1"});
+    CHECK_EQ(whole("calc(-3.5 / 2)"), std::string{"-2"});
+    // ONLY THE FINISHED CONVERSION ROUNDS. A nested calc is an intermediate and
+    // rounding it would make this 0.
+    CHECK_EQ(whole("calc(calc(1 / 3) * 3)"), std::string{"1"});
+    // Nothing else moves: the context is per-property, so the same expression in
+    // `opacity` keeps its fraction.
+    CHECK_EQ(fold_math("calc(1 / 2)", ctx, math_context::any).text, std::string{"0.5"});
+    // A specified value is NOT rounded - CSS Values 4 §10.12 keeps the function
+    // as written, and `el.style.zIndex` reads back the simplified form.
+    ok("z-index", "calc(3 / 2)", "calc(1.5)");
+    ok("z-index", "2", "2");
+    bad("z-index", "1.5");
+}
+
+// `random-item( <declaration-value>, [ <declaration-value>? ]# )`, CSS Values 5.
+// The function is an arbitrary substitution one, so only its ARGUMENT LIST is
+// decided at parse time - but it is decided, and `random-item-invalid` is
+// fourteen assertions of exactly that.
+void test_the_random_item_argument_list() {
+    // The key is required, and so is the comma after it.
+    bad("font-family", "random-item()");
+    bad("font-family", "random-item( )");
+    bad("font-family", "random-item(auto)");
+    bad("font-family", "random-item(, serif, sans-serif)");
+    // `<declaration-value>` forbids a top-level `;` or `!`.
+    bad("font-family", "random-item(auto, !)");
+    bad("font-family", "random-item(auto, ;)");
+    // AN UNMATCHED BRACKET, which is why this MATCHES brackets rather than
+    // counting them: `{serif)` closes a brace with a paren, and a depth counter
+    // reads that as balanced.
+    bad("font-family", "random-item(auto, })");
+    bad("font-family", "random-item(auto, ])");
+    bad("font-family", "random-item(auto, {serif)");
+    bad("font-family", "random-item(auto, serif})");
+    bad("font-family", "random-item(auto, {Times, serif)");
+    bad("font-family", "random-item({auto, serif, sans-serif)");
+    // A `{}` block is how an ITEM containing a comma is written, so it is the
+    // whole item or it is not an item at all.
+    bad("font-family", "random-item(auto, {Times, serif} extra)");
+    bad("font-family", "random-item(auto, extra {Times, serif})");
+
+    // ...and every one of these must still SURVIVE, spacing and all.
+    ok("font-family", "random-item(auto ,serif)", "random-item(auto ,serif)");
+    ok("width", "random-item(auto, 1px, 2px, 3px)", "random-item(auto, 1px, 2px, 3px)");
+    ok("font-family", "random-item(auto,)", "random-item(auto,)"); // an item may be EMPTY
+    ok("font-family", "random-item(fixed 0, rgb(4, 5, 6), blue)",
+       "random-item(fixed 0, rgb(4, 5, 6), blue)");
+    ok("font-family", "random-item(auto, {Times, serif}, sans-serif)",
+       "random-item(auto, {Times, serif}, sans-serif)");
+    // EOF CLOSES EVERY OPEN BLOCK, CSS Syntax 3 §5.4.9, so an unterminated one
+    // is a value and not a parse error.
+    ok("font-family", "random-item(auto, serif", "random-item(auto, serif");
+}
+
+// `interpolate-size` is a real property with a real two-keyword grammar. As an
+// UNKNOWN one `el.style` stored `interpolate-size: 100%` and `getComputedStyle`
+// did not publish the property at all - which is the two assertions of
+// `calc-size/interpolate-size-computed.html` and three of `-parsing.html`.
+void test_interpolate_size_is_a_property() {
+    ok("interpolate-size", "numeric-only", "numeric-only");
+    ok("interpolate-size", "allow-keywords", "allow-keywords");
+    bad("interpolate-size", "auto");
+    bad("interpolate-size", "none");
+    bad("interpolate-size", "100%");
+    CHECK(find_property("interpolate-size") != nullptr);
+    CHECK(supports_declaration("interpolate-size", "numeric-only"));
+    CHECK(!supports_declaration("interpolate-size", "auto"));
+}
+
+// `<position>`, CSS Values 5 - the one multi-component value this table models,
+// and the only one whose canonical form REORDERS what the author wrote.
+void test_the_position_grammar() {
+    // ONE COMPONENT names one axis and the other is `center`, which is why a
+    // per-token matcher cannot produce this: `top` is `center top` and `10%` is
+    // `10% center`.
+    ok("object-position", "10%", "10% center");
+    ok("object-position", "left", "left center");
+    ok("object-position", "top", "center top");
+    ok("object-position", "center", "center center");
+    ok("object-position", "x-start", "x-start center"); // level 5's logical keywords
+    ok("object-position", "y-start", "center y-start");
+    // TWO COMPONENTS are horizontal then vertical, and the `&&` branch lets two
+    // KEYWORDS arrive the other way round - but only keywords, so `bottom right`
+    // is a position and `10px right` is not.
+    ok("object-position", "30px center", "30px center");
+    ok("object-position", "40px top", "40px top");
+    ok("object-position", "bottom right", "right bottom");
+    ok("object-position", "center left", "left center");
+    ok("object-position", "top center", "center top");
+    ok("object-position", "10px y-start", "10px y-start");
+    bad("object-position", "left right"); // two horizontals
+    bad("object-position", "bottom 10%"); // a vertical keyword in the first slot
+    // FOUR COMPONENTS are two `<side> <offset>` pairs, one per axis, in either
+    // order - and `center` takes no offset, so it cannot appear in this form.
+    ok("object-position", "right 30% top 60px", "right 30% top 60px");
+    ok("object-position", "bottom 10% right 20%", "right 20% bottom 10%");
+    ok("object-position", "y-end 20% left 10px", "left 10px y-end 20%");
+    bad("object-position", "bottom 10% top 20%"); // both pairs vertical
+    // THE THREE-VALUE FORM IS GONE in level 5. `left 4px top` is still a valid
+    // `background-position` and is no longer a `<position>`, which is eight of
+    // `position/position-invalid.tentative`'s twenty-one assertions.
+    bad("object-position", "left 4px top");
+    bad("object-position", "center left 1px");
+    bad("object-position", "right 3% center");
+    bad("object-position", "bottom right 8%");
+    bad("object-position", "1px 2px 3px");
+    bad("object-position", "auto");
+    bad("object-position", "garbage left top");
+    bad("object-position", "left 10px top 10px garbage");
+    // ...and a math function anywhere in it keeps the author's bytes rather than
+    // being refused: this reader does not evaluate the components.
+    ok("object-position", "calc(50% - 1px) center", "calc(50% - 1px) center");
+}
+
 } // namespace
 
 int main() {
@@ -647,5 +811,9 @@ int main() {
     test_the_two_spellings_of_one_property();
     test_the_property_table_itself();
     test_css_supports();
+    test_an_integer_property_rounds_its_math();
+    test_the_random_item_argument_list();
+    test_interpolate_size_is_a_property();
+    test_the_position_grammar();
     REPORT("css_values");
 }

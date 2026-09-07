@@ -57,6 +57,12 @@ enum class value_kind : std::uint8_t {
     number_length_percentage,
     angle,
     time,
+    // `<position>`, CSS Values 5 §position. The only kind here whose value is
+    // more than one component, and the only one whose canonical form REORDERS
+    // what the author wrote: `bottom right` serialises as `right bottom`,
+    // because a position is a horizontal half and a vertical half in that order
+    // however they were spelled.
+    position,
 };
 
 // One longhand. `keywords` is a space-separated set, matched ASCII

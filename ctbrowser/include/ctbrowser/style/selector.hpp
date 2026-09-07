@@ -128,6 +128,12 @@ enum class pseudo_kind : std::uint8_t {
     not_,
     is_,
     where_,
+    // `:lang()` and `:dir()`. Neither is a question about the element's own name,
+    // attributes or position: both are answered from the nearest ANCESTOR carrying
+    // the relevant attribute, so they take their argument as text and the matcher
+    // does the walk.
+    lang,
+    dir,
 };
 
 struct pseudo_ref {
@@ -140,6 +146,11 @@ struct pseudo_ref {
     // `:not(:is(.a))` is legal - and std::vector is the container that may name an
     // incomplete type.
     std::vector<compiled_selector> args;
+    // The argument of `:lang()` - a comma-separated list of language RANGES, kept
+    // as written because a range is not an identifier: `*-Latn` is a legal one and
+    // interning it would put a wildcard in the atom table. `:dir()` stores its one
+    // keyword here too, ASCII-lowercased.
+    std::vector<std::string> ranges;
 };
 
 // One compound selector: `div#id.a.b[x=y]:hover` - a tag, an id, some classes,
