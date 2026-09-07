@@ -313,9 +313,39 @@ bool engine::element_matches(const read_txn & txn, node_id node,
         if (levels_.size() <= depth) { levels_.resize(depth + 1); }
         if (path_.size() <= depth) { path_.resize(depth + 1); }
         if (totals_.size() <= depth) { totals_.resize(depth + 1); }
-        // The parent whose children occupy this level. Depth 0 is entered from the
-        // document node, which is what gives <html> a sibling count at all.
-        const node_id parent = depth == 0 ? txn.root() : chain[depth - 1];
+        // The parent whose children occupy this level. Depth 0 is entered from
+        // `chain[0]`'s OWN parent, which for a document element is the document
+        // node - and that is what gives <html> a sibling count at all.
+        //
+        // IT USED TO BE `txn.root()` UNCONDITIONALLY, and for a DETACHED element
+        // that is a different tree: `document.createElement("div")` is not among
+        // the root's children, so the loop below ran to the end, `path_[0]` came
+        // out as the LAST element child of <html>, and
+        // `document.createElement("div").matches("div")` was answered about
+        // <body>. A silent wrong answer, and the reason `attachShadow`'s subtree
+        // matcher could not reuse this.
+        const node_id parent = depth == 0 ? txn.parent(chain[0]) : chain[depth - 1];
+        if (!parent) {
+            // A PARENTLESS SUBJECT IS AN ONLY CHILD. There is no level to walk,
+            // so it is built by hand: one element, index 1 of 1, which is what
+            // `:only-child` and `:first-child` correctly answer for a node that
+            // is in no tree at all.
+            if (depth != 0) { return false; } // chain[depth-1] is always a real element
+            levels_[depth].clear();
+            totals_[depth] = level_totals{};
+            element_facts facts = facts_of(txn, chain[0]);
+            facts.sibling_index = 1;
+            facts.sibling_count = 1;
+            facts.type_index = 1;
+            facts.type_count = 1;
+            levels_[depth].push_back(visited_element{chain[0], std::move(facts)});
+            path_[depth] = 0;
+            if (depth + 1 < chain.size()) {
+                const element_facts & mine = levels_[depth][path_[depth]].facts;
+                ancestors.push(mine.tag, mine.id, mine.classes);
+            }
+            continue;
+        }
         enter_level(txn, parent, depth);
         // EVERY EARLIER SIBLING, because `.a + .b` and `.a ~ .b` look backwards
         // and there is no previous-sibling link to walk. Later ones are never

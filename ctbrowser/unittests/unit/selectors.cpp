@@ -179,6 +179,36 @@ void test_syntax_errors_and_the_selectors_that_are_merely_unsupported() {
     is("one('#p1, li:has(a)')", "p1");
 }
 
+// A DETACHED ELEMENT IS MATCHED AGAINST ITSELF, and it was not.
+//
+// `engine::element_matches` entered depth 0 from `txn.root()` unconditionally.
+// A `document.createElement("div")` is not among the root's children, so the
+// sibling walk ran to the end and the subject came out as the LAST element
+// child of `<html>` - `document.createElement("div").matches("div")` was
+// answered about `<body>`. A silent wrong answer, and the one a
+// `querySelector` inside a shadow tree runs into first.
+void test_a_detached_element_matches_against_itself() {
+    is("document.createElement('div').matches('div')", "true");
+    is("document.createElement('div').matches('span')", "false");
+    is("(function () { var e = document.createElement('div'); e.className = 'x';"
+       " return e.matches('.x') + ',' + e.matches('div.x') + ',' + e.matches('#nope'); })()",
+       "true,false,false");
+    // A parentless subject is an only child, which is what the structural
+    // pseudo-classes have to say about a node that is in no tree at all.
+    is("document.createElement('p').matches(':only-child')", "true");
+    is("document.createElement('p').matches(':first-child')", "true");
+    // A DESCENDANT COMBINATOR CANNOT MATCH one: there is no ancestor.
+    is("document.createElement('p').matches('body p')", "false");
+    // And a detached SUBTREE still matches within itself.
+    is("(function () {"
+       " var box = document.createElement('div');"
+       " box.innerHTML = '<span class=inner>x</span>';"
+       " var inner = box.firstChild;"
+       " return inner.matches('span') + ',' + inner.matches('div > span') + ',' +"
+       "        (box.querySelector('.inner') === inner); })()",
+       "true,true,true");
+}
+
 } // namespace
 
 int main() {
@@ -186,6 +216,7 @@ int main() {
     test_the_four_combinators();
     test_the_rest_of_the_grammar();
     test_scoped_queries_and_matches();
+    test_a_detached_element_matches_against_itself();
     test_syntax_errors_and_the_selectors_that_are_merely_unsupported();
     REPORT("selectors");
 }
