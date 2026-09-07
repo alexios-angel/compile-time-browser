@@ -92,7 +92,13 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
     // tagName is the qualified name, and only HTML uppercases it.
     {
         std::string tag_name{atoms_->text(txn.tag(id).value_or(atom{}))};
-        if (txn.element_ns(id) == node_ns::html) {
+        // AND ONLY IN AN HTML DOCUMENT. `tagName` uppercases an HTML element,
+        // and an XHTML one parsed from an `.xhtml` file is in the HTML
+        // namespace too - but `Node-nodeName-xhtml.xhtml` asserts `i` and not
+        // `I`, because the rule is about the DOCUMENT's language rather than
+        // the element's vocabulary. The two agreed as long as the only way to
+        // build a document was the HTML tree builder; see dom/xml.hpp.
+        if (txn.element_ns(id) == node_ns::html && !doc_->xml()) {
             for (char & c : tag_name) {
                 if (c >= 'a' && c <= 'z') { c = static_cast<char>(c - 'a' + 'A'); }
             }

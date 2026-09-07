@@ -586,15 +586,27 @@ void dom_bindings::install_document(context & cx) {
     });
     method("createDocumentFragment",
            [this](context & c, std::span<value>) { return wrap(c, doc_->create_fragment()); });
-    // `createCDATASection` ALWAYS THROWS HERE, and that is the whole method.
+    // `createCDATASection` HAS TWO BRANCHES AND BOTH ARE REFUSALS, for two
+    // different reasons, and saying which is which is the point.
     //
-    // A CDATA section is XML syntax. The DOM says an HTML document must report
-    // a NotSupportedError for it, so this is not a gap being papered over - a
-    // method that threw the right exception and one that was absent are
-    // different answers, and only one of them is the specified one. There is no
-    // XML document in this engine for the other branch to exist for.
+    // In an HTML document the DOM requires a NotSupportedError: a CDATA section
+    // is XML syntax and an HTML document cannot hold one. That is a specified
+    // answer, not a gap.
+    //
+    // In an XML document it is a gap, and it is named: `node_kind` has no
+    // `cdata_section`, so there is nothing to return. The parser turns a CDATA
+    // section in the source into a TEXT node - which is what makes a `<script>`
+    // written the XML way run - and a text node is not what this method must
+    // hand back, because `nodeType` would be 3 where 4 belongs. Throwing
+    // NotSupportedError there is wrong about the DOM; returning a Text would be
+    // wrong about the caller. The first is the smaller lie and it is the one
+    // `Document-createCDATASection-xhtml.xhtml` will keep failing on until
+    // there is a node kind for it.
     method("createCDATASection", [this](context & c, std::span<value>) {
-        throw_dom_exception(c, "NotSupportedError", "createCDATASection: this is an HTML document");
+        throw_dom_exception(c, "NotSupportedError",
+                            doc_->xml()
+                                ? "createCDATASection: this engine has no CDATASection node kind"
+                                : "createCDATASection: this is an HTML document");
         return value::undefined();
     });
     // `createProcessingInstruction(target, data)`.
@@ -928,7 +940,13 @@ void dom_bindings::install_document(context & cx) {
     for (const char * name : {"characterSet", "charset", "inputEncoding"}) {
         doc->set(name, cx.string("UTF-8"));
     }
-    doc->set("contentType", cx.string("text/html"));
+    // AND THE ONE THAT IS NO LONGER A CONSTANT. A document parsed as XML - see
+    // dom/xml.hpp - is `application/xhtml+xml`, and `createDocument` makes one
+    // too. It is also never in quirks mode: XML has no doctype sniffing to be
+    // in one over, which is what `document-compatmode-06.xhtml` asserts.
+    doc->set("contentType", cx.string(!content_type_.empty() ? content_type_
+                                      : doc_->xml()          ? std::string{"application/xhtml+xml"}
+                                                             : std::string{"text/html"}));
     doc->set("compatMode", cx.string(doc_->quirks() ? "BackCompat" : "CSS1Compat"));
     doc->set("nodeType", value::number(9));
     doc->set("nodeName", cx.string("#document"));
@@ -1279,6 +1297,11 @@ value dom_bindings::make_html_document(context & cx, const std::string * title) 
 value dom_bindings::make_xml_document(context & cx, std::string_view ns,
                                       std::string_view qualified_name) {
     document & fresh = *owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
+    // IT IS AN XML DOCUMENT, and saying so is what makes `nodeName` keep its
+    // case and `compatMode` answer CSS1Compat. `createDocument` never parses
+    // anything, so nothing else would have set the flag.
+    fresh.set_xml(true);
+    fresh.set_quirks(false);
     auto & made = *secondary_documents_.emplace_back(
         std::make_unique<dom_bindings>(fresh, *atoms_, *canvases_, *forms_, std::function<void()>{},
                                        std::function<void(node_id)>{}));
@@ -1286,6 +1309,13 @@ value dom_bindings::make_xml_document(context & cx, std::string_view ns,
     made.cx_ = &cx;
     ensure_dom_interfaces(cx); // see make_html_document
     made.adopt_interfaces_of(*this);
+    // DOM 4.5.1's own table, and it is the NAMESPACE that decides rather than
+    // anything about the tree: `createDocument(null, "x")` is application/xml
+    // whatever `x` is called. `Document-contentType/contentType/
+    // createDocument.html` walks all three rows.
+    made.content_type_ = ns == "http://www.w3.org/1999/xhtml" ? "application/xhtml+xml"
+                         : ns == "http://www.w3.org/2000/svg" ? "image/svg+xml"
+                                                              : "application/xml";
     if (!qualified_name.empty()) {
         const node_ns kind = ns == "http://www.w3.org/1999/xhtml" ? node_ns::html
                              : ns == "http://www.w3.org/2000/svg" ? node_ns::svg

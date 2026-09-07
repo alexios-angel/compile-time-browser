@@ -76,6 +76,10 @@ ctbrowser_test(unit/second_document)
 # data and well-formedness fatal - and every case in it is a place where the
 # HTML tree builder gives a different, and for an .xhtml file wrong, answer.
 ctbrowser_test(unit/xml_parse)
+# The same front end from the bindings' side: a page loaded as XML, its
+# contentType and compatMode, a <script> in a marked section that RUNS, and a
+# tag whose case survives to `tagName`.
+ctbrowser_test(unit/xml_document)
 ctbrowser_test(unit/layout_basics)
 # The flex formatting context. Its own file rather than more of layout_basics:
 # S9.7's freeze loop has more cases than the other three contexts together.

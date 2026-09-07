@@ -1342,6 +1342,14 @@ private:
     // no `document.implementation` - a document from createHTMLDocument has a
     // null browsing context, so all three are what the DOM already says.
     bool secondary_ = false;
+    // --- XML document workstream ---
+    // `document.contentType`, WHEN IT IS NOT DERIVABLE. A parsed document
+    // answers from `document::xml()` and needs nothing here; `createDocument`
+    // does not, because DOM 4.5.1 makes the string depend on the NAMESPACE it
+    // was given - "application/xml", "application/xhtml+xml" or
+    // "image/svg+xml" - and the namespace is an argument that is gone by the
+    // time the property is installed. Empty means "derive it".
+    std::string content_type_;
     // The first fault a timer or animation frame raised, and how many there
     // were. A page whose draw loop throws every frame has ONE bug, not a
     // thousand, and the first message is the one that names it.
