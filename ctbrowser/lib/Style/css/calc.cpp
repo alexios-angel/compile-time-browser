@@ -69,8 +69,16 @@ struct term {
     const term & dim = a.is_number() ? b : a;
     const double scale = a.is_number() ? a.value : b.value;
     term out = dim;
-    out.value = dim.value * scale;
-    out.percent = dim.percent * scale;
+    // AN ABSENT COMPONENT IS NOT A ZERO ONE. `10%` carries its magnitude in
+    // `percent` and a zero `value`, and that zero means "there is no length in
+    // this term" rather than "the length is nought". IEEE makes `0 * infinity` a
+    // NaN, so scaling a bare percentage by an infinity invented a NaN LENGTH
+    // beside the right answer and `calc(1% * infinity)` printed as `calc(NaN *
+    // 1px)` where it is `calc(infinity * 1%)`. `calc(0px * infinity)` IS a NaN
+    // and still is: there the zero is a length the author wrote.
+    const bool percentage_only = dim.has_percent && dim.value == 0.0;
+    out.value = percentage_only ? 0.0 : dim.value * scale;
+    out.percent = dim.has_percent ? dim.percent * scale : 0.0;
     return out;
 }
 
@@ -84,8 +92,11 @@ struct term {
     // nothing here to special-case.
     if (!b.is_number()) { return std::nullopt; }
     term out = a;
-    out.value = a.value / b.value;
-    out.percent = a.percent / b.value;
+    // The same absent-component rule multiply() carries, and for the same
+    // reason: `calc(1% / 0)` is `calc(infinity * 1%)` and not a NaN length.
+    const bool percentage_only = a.has_percent && a.value == 0.0;
+    out.value = percentage_only ? 0.0 : a.value / b.value;
+    out.percent = a.has_percent ? a.percent / b.value : 0.0;
     return out;
 }
 
@@ -448,6 +459,17 @@ private:
                 return false;
             }
         }
+        // ...AND A PERCENTAGE CANNOT BE COMPARED WITH ANYTHING, including another
+        // percentage. `min(1%, 2%)` looks decidable and is not: a percentage
+        // resolves against a basis that MAY BE NEGATIVE, and then 2% is the
+        // smaller. `minmax-percentage-serialize` is explicit about it - it asks
+        // for `calc(min(1%, 2%) + max(3%, 4%) + 10%)` back with both functions
+        // still in it. One argument is not a comparison and is unaffected, which
+        // is what keeps `min(1%)` simplifying to `calc(1%)`.
+        if (args.size() > 1 && args.front().has_percent) {
+            unresolved_ = true;
+            return false;
+        }
         return true;
     }
 
@@ -530,6 +552,12 @@ private:
         ++at_; // the function token, `(` included
         const std::optional<std::vector<term>> args = arguments(1, ~std::size_t{0});
         if (!args) { return std::nullopt; }
+        // ONE ARGUMENT IS NOT A COMPARISON. `min(X)` is X whatever X is, so the
+        // uniformity check below - which exists to say when two arguments cannot
+        // be ORDERED - has nothing to ask. Running it anyway made `min(1% + 1px)`
+        // undecidable, where `minmax-length-percent-serialize` wants
+        // `calc(1% + 1px)`.
+        if (args->size() == 1) { return args->front(); }
         if (!uniform(*args)) { return std::nullopt; }
         double best = scalar_of(args->front());
         for (const term & one : *args) {
@@ -1122,13 +1150,19 @@ struct function_span {
 // CSS Values 4 §10.11 is exact about what may NOT be simplified: `calc(10px +
 // 1em)` keeps both terms because the em has no length yet. This file's evaluator
 // has one mode, which resolves an `em` against whatever context it is handed, so
-// the test is deliberately narrow - every dimension converts by a constant, and
-// there is no percentage anywhere. Anything else is reported as the author wrote
-// it, which is where it was before and cannot be a regression.
+// the test is deliberately narrow - every dimension in the text converts by a
+// constant. Anything else is reported as the author wrote it, which is where it
+// was before and cannot be a regression.
+//
+// A PERCENTAGE IS NOT AN OBSTACLE, and excluding it was over-caution: the value
+// model carries a percentage term BESIDE the pixels rather than resolving it, so
+// `calc(50px + calc(40%))` simplifies to `calc(40% + 50px)` with nothing
+// guessed. What genuinely cannot be decided here is COMPARING two of them - the
+// basis may be negative, so `min(1%, 2%)` has no answer - and that is the
+// comparison functions' own business, not this one's.
 [[nodiscard]] bool context_free(std::string_view text) {
     const token_stream ts = tokenize(text);
     for (const css_token & t : ts.tokens) {
-        if (t.type == token_type::percentage) { return false; }
         if (t.type == token_type::dimension && !context_free_unit(ts.unit_of(t))) { return false; }
     }
     return true;

@@ -306,6 +306,32 @@ void test_a_math_function_is_simplified_wherever_it_sits() {
     ok("font-family", "\"calc(1px + 1px)\"", "\"calc(1px + 1px)\""); // inside a string
 }
 
+// A PERCENTAGE SIMPLIFIES; COMPARING TWO OF THEM DOES NOT. The two halves are
+// separate rules and they used to be one over-cautious rule ("no percentage
+// anywhere, ever").
+void test_the_percentage_half_of_simplification() {
+    // The value model carries a percentage BESIDE the pixels rather than
+    // resolving it, so these need no basis and nothing is guessed.
+    ok("left", "calc(50px + calc(40%))", "calc(40% + 50px)");
+    ok("width", "calc(100% * 0.5)", "calc(50%)");
+    ok("text-indent", "min(1% + 1px)", "calc(1% + 1px)"); // one argument is not a comparison
+    // AN ABSENT COMPONENT IS NOT A ZERO ONE. `10%` has no length in it, and IEEE
+    // makes `0 * infinity` a NaN, so scaling one by an infinity used to invent a
+    // NaN length beside the right answer. A zero the AUTHOR wrote still does.
+    ok("width", "calc(1% * infinity)", "calc(infinity * 1%)");
+    ok("width", "calc(1% * NaN)", "calc(NaN * 1%)");
+    ok("width", "calc(1% / 0)", "calc(infinity * 1%)");
+    ok("width", "calc(0px * infinity)", "calc(NaN * 1px)");
+
+    // ...AND THE COMPARISON HALF. `min(1%, 2%)` looks decidable and is not: a
+    // percentage resolves against a basis that may be NEGATIVE, and then 2% is
+    // the smaller. `minmax-percentage-serialize` asks for both functions back.
+    ok("text-indent", "min(1%, 2%)", "min(1%, 2%)");
+    ok("text-indent", "max(3%, 4%)", "max(3%, 4%)");
+    ok("text-indent", "clamp(1%, 2%, 3%)", "clamp(1%, 2%, 3%)");
+    ok("text-indent", "min(10px, 5%)", "min(10px, 5%)"); // and the mixed case, as before
+}
+
 void test_important_and_the_empty_value() {
     // `!important` is a DECLARATION's business, never a value's. CSSOM's
     // setProperty takes the priority as its own argument, and the IDL setter
@@ -443,6 +469,7 @@ int main() {
     test_what_a_math_function_may_not_be();
     test_the_rest_of_the_math_functions();
     test_a_math_function_is_simplified_wherever_it_sits();
+    test_the_percentage_half_of_simplification();
     test_important_and_the_empty_value();
     test_a_custom_property_takes_anything_that_tokenises();
     test_the_two_spellings_of_one_property();
