@@ -1,0 +1,1 @@
+# RUN: python3 %S/native-export-boundary.py --translate ctjs-translate --opt ctjs-opt --work %t
