@@ -86,6 +86,11 @@ public:
         : doc_(&doc), atoms_(&atoms), canvases_(&canvases), forms_(&forms),
           on_mutation_(std::move(on_mutation)), on_focus_(std::move(on_focus)) {}
 
+    // OUT OF LINE, because `secondary_documents_` below is a vector of
+    // unique_ptr to THIS class and the deleter has to be instantiated where the
+    // class is complete.
+    ~dom_bindings();
+
     // Where loadImage() and fetch() look. Both are owned by the browser, which
     // hands them over before scripts run; without them the page still runs and
     // every load simply fails.
@@ -1144,6 +1149,41 @@ private:
     // "The body element": the first child of the DOCUMENT ELEMENT that is a
     // `body` or a `frameset`. Not the first `<body>` anywhere.
     [[nodiscard]] node_id body_element();
+
+    // --- A SECOND DOCUMENT (bindings/document.cpp) -------------------------
+    //
+    // `createHTMLDocument` and `createDocument` return one, and the note that
+    // used to sit where they are installed said what a second Document would
+    // cost: a document handle beside the node handle in every key, `doc_`
+    // becoming an argument rather than a member, across ~90 uses in six files.
+    //
+    // THIS IS THE OTHER ANSWER, and it costs none of that: a second Document is
+    // a SECOND dom_bindings over its own tree, in the same realm. Every key it
+    // uses - `wrappers_`, `namespaces_`, `mirrors_` - is already a member, so a
+    // second instance has a second set of them and the collision the note
+    // describes cannot arise. What it shares with the primary is what a second
+    // document genuinely shares: the atom table, the script context, and the
+    // INTERFACE OBJECTS, so that `otherDoc.createElement("div") instanceof
+    // HTMLDivElement` is true against the one `HTMLDivElement` a page can see.
+    //
+    // WHAT IT DOES NOT DO, said plainly: `importNode` and `adoptNode` still do
+    // not cross between two documents, and a node of one passed to the other is
+    // REFUSED rather than misread - see `handle_of`, which now checks that the
+    // wrapper it was given is one of ours. That is the honest failure; the one
+    // the old note was avoiding was `getElementById` on one document handing
+    // back the other's element.
+    [[nodiscard]] value make_html_document(context & cx, const std::string * title);
+    [[nodiscard]] value make_xml_document(context & cx, std::string_view ns,
+                                          std::string_view qualified_name);
+    // The realm has ONE external-roots callback - `set_external_roots` replaces
+    // rather than appends - so the primary's walks itself and then every
+    // secondary. A secondary never registers.
+    void mark_roots(const script::context::root_visitor & mark) const;
+    // Take the primary's interface prototypes rather than building a second set
+    // of globals: `install_dom_interfaces` DEFINES `HTMLDivElement` and its
+    // ninety neighbours, and running it twice would leave two of each and break
+    // every `instanceof` taken across the two documents.
+    void adopt_interfaces_of(const dom_bindings & primary);
     // "Strip and collapse ASCII whitespace", Infra - leading and trailing
     // removed, every interior run replaced by ONE space. It is applied by
     // `document.title`'s GETTER and not by its setter, which is why
@@ -1243,6 +1283,16 @@ private:
     value document_;
     value document_target_;
     value window_;
+    // A DOCUMENT THIS ONE MADE, and the bindings over it. Only ever non-empty
+    // on the primary; a secondary makes no further documents because
+    // `document.implementation` is not installed on one.
+    std::vector<std::unique_ptr<document>> owned_documents_;
+    std::vector<std::unique_ptr<dom_bindings>> secondary_documents_;
+    // Is this the bindings for a document a page MADE? It changes three things
+    // and nothing else: no `document` global, no `location`/`defaultView`, and
+    // no `document.implementation` - a document from createHTMLDocument has a
+    // null browsing context, so all three are what the DOM already says.
+    bool secondary_ = false;
     // The first fault a timer or animation frame raised, and how many there
     // were. A page whose draw loop throws every frame has ONE bug, not a
     // thousand, and the first message is the one that names it.

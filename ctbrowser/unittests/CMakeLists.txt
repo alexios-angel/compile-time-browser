@@ -67,6 +67,10 @@ ctbrowser_test(unit/document_node)
 # because every case in it is the same shape - write and read back in ONE
 # statement - and that shape is what the accessors exist for.
 ctbrowser_test(unit/tree_accessors)
+# createHTMLDocument and createDocument. Its own file because what it pins down
+# is a MODEL - a second Document is a second dom_bindings over its own tree -
+# and two of its cases assert that something deliberately does NOT work.
+ctbrowser_test(unit/second_document)
 ctbrowser_test(unit/layout_basics)
 # The flex formatting context. Its own file rather than more of layout_basics:
 # S9.7's freeze loop has more cases than the other three contexts together.

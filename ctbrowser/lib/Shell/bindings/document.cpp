@@ -271,68 +271,80 @@ void dom_bindings::observe_location(std::string href, std::string hash) {
     }
 }
 
+// THE REALM HAS ONE EXTERNAL-ROOTS CALLBACK. `set_external_roots` REPLACES
+// rather than appends, so a second dom_bindings registering its own would
+// silently unhook the primary's and the page's own document would be swept on
+// the next collection. The primary therefore walks itself and then every
+// document it has made; a secondary never registers.
 void dom_bindings::register_roots(context & cx) {
-    cx.set_external_roots([this](const context::root_visitor & mark) {
-        for (const listener & l : listeners_) {
-            mark(l.callback);
-            mark(l.abort_signal);
-            // A STANDALONE EventTarget can be reachable from nowhere else: a
-            // page may `new EventTarget()`, register on it and drop the
-            // variable, and the listener is then the only reference there is.
-            mark(l.host);
-        }
-        for (const timer & t : timers_) { mark(t.callback); }
-        // A QUEUED FETCH holds the only reference to the promise a page is
-        // waiting on, and to the signal that may cancel it. Neither is reachable
-        // from anywhere else between the call and the turn that settles it.
-        for (const pending_fetch & waiting : fetches_) {
-            mark(waiting.promise);
-            mark(waiting.signal);
-        }
-        // A QUEUED IMAGE LOAD holds the only reference to the wrapper whose
-        // onload will run and to decode()'s promise.
-        for (const pending_image & waiting : image_loads_) {
-            mark(waiting.target);
-            mark(waiting.promise);
-        }
-        // A QUEUED READ holds the only reference to the reader whose onload will
-        // run and to the blob it is reading.
-        for (const pending_read & waiting : reads_) {
-            mark(waiting.reader);
-            mark(waiting.blob);
-        }
-        for (const value & callback : animation_callbacks_) { mark(callback); }
-        for (const auto & [packed, obj] : wrappers_) {
-            if (obj != nullptr) { mark(value::object(obj)); }
-        }
-        // Blob.prototype is held here as well as on the global, and the global
-        // is what keeps it alive - but a page can delete a global, and a Blob
-        // whose prototype was collected stops being `instanceof Blob`.
-        // A WebGL context object is reachable only from here once the page has
-        // dropped its variable, and getContext must still hand back the same one.
-        for (const auto & [packed, obj] : webgl_objects_) {
-            if (obj != nullptr) { mark(value::object(obj)); }
-        }
-        mark(blob_prototype_);
-        // Event.prototype and CustomEvent.prototype, for the same reason
-        // Blob.prototype is here: they are held on a global a page can delete,
-        // and an event whose prototype was collected stops being an Event.
-        mark(event_prototype_);
-        mark(custom_event_prototype_);
-        mark(event_target_prototype_);
-        // DOMException.prototype, for the same reason: `assert_throws_dom`
-        // requires `e.constructor === DOMException`, and a prototype the
-        // collector could not see would break that on the first sweep.
-        mark(dom_exception_prototype_);
-        mark(css_interface_);
-        mark(location_);
-        mark(document_);
-        // The proxy traces its own target, so this is belt and braces - but the
-        // two are set in two statements and a collection between them would
-        // otherwise sweep the object the proxy is about to point at.
-        mark(document_target_);
-        mark(window_);
-    });
+    cx.set_external_roots([this](const context::root_visitor & mark) { mark_roots(mark); });
+}
+
+dom_bindings::~dom_bindings() = default;
+
+void dom_bindings::mark_roots(const context::root_visitor & mark) const {
+    for (const listener & l : listeners_) {
+        mark(l.callback);
+        mark(l.abort_signal);
+        // A STANDALONE EventTarget can be reachable from nowhere else: a
+        // page may `new EventTarget()`, register on it and drop the
+        // variable, and the listener is then the only reference there is.
+        mark(l.host);
+    }
+    for (const timer & t : timers_) { mark(t.callback); }
+    // A QUEUED FETCH holds the only reference to the promise a page is
+    // waiting on, and to the signal that may cancel it. Neither is reachable
+    // from anywhere else between the call and the turn that settles it.
+    for (const pending_fetch & waiting : fetches_) {
+        mark(waiting.promise);
+        mark(waiting.signal);
+    }
+    // A QUEUED IMAGE LOAD holds the only reference to the wrapper whose
+    // onload will run and to decode()'s promise.
+    for (const pending_image & waiting : image_loads_) {
+        mark(waiting.target);
+        mark(waiting.promise);
+    }
+    // A QUEUED READ holds the only reference to the reader whose onload will
+    // run and to the blob it is reading.
+    for (const pending_read & waiting : reads_) {
+        mark(waiting.reader);
+        mark(waiting.blob);
+    }
+    for (const value & callback : animation_callbacks_) { mark(callback); }
+    for (const auto & [packed, obj] : wrappers_) {
+        if (obj != nullptr) { mark(value::object(obj)); }
+    }
+    // Blob.prototype is held here as well as on the global, and the global
+    // is what keeps it alive - but a page can delete a global, and a Blob
+    // whose prototype was collected stops being `instanceof Blob`.
+    // A WebGL context object is reachable only from here once the page has
+    // dropped its variable, and getContext must still hand back the same one.
+    for (const auto & [packed, obj] : webgl_objects_) {
+        if (obj != nullptr) { mark(value::object(obj)); }
+    }
+    mark(blob_prototype_);
+    // Event.prototype and CustomEvent.prototype, for the same reason
+    // Blob.prototype is here: they are held on a global a page can delete,
+    // and an event whose prototype was collected stops being an Event.
+    mark(event_prototype_);
+    mark(custom_event_prototype_);
+    mark(event_target_prototype_);
+    // DOMException.prototype, for the same reason: `assert_throws_dom`
+    // requires `e.constructor === DOMException`, and a prototype the
+    // collector could not see would break that on the first sweep.
+    mark(dom_exception_prototype_);
+    mark(css_interface_);
+    mark(location_);
+    mark(document_);
+    // The proxy traces its own target, so this is belt and braces - but the
+    // two are set in two statements and a collection between them would
+    // otherwise sweep the object the proxy is about to point at.
+    mark(document_target_);
+    mark(window_);
+    // AND EVERY DOCUMENT THIS ONE MADE, recursively - a document made by a
+    // document made by the page is still reachable only from here.
+    for (const auto & made : secondary_documents_) { made->mark_roots(mark); }
 }
 
 void dom_bindings::install(context & cx) {
@@ -361,12 +373,29 @@ void dom_bindings::install(context & cx) {
     install_navigation(cx);
 }
 
+// THE HANDLE HAS TO BE ONE OF OURS, and that is what the second half of this
+// checks. `pack(node_id)` is a slot and a generation into ONE slab, so the
+// same number names a different node in a different document - and there are
+// two documents now. Reading a foreign wrapper's handle would hand back
+// whatever node happens to sit in that slot HERE, which is exactly the silent
+// wrong answer `createHTMLDocument` was refused over.
+//
+// The test is exact and costs one lookup: a wrapper is ours if and only if OUR
+// table maps its key to THAT object. Nothing is ever erased from `wrappers_`,
+// so a node that has been removed from the tree still answers - which is what
+// a page holding a detached element needs.
+//
+// It also refuses a handle a page FABRICATED. `{__node: 5}` used to name node
+// 5; it now names nothing, which is what it always meant.
 node_id dom_bindings::handle_of(value v) {
     if (!v.is_object()) { return node_id{}; }
     auto * obj = static_cast<script::object_object *>(v.as_heap());
     const value * slot = obj->find(std::string{handle_property});
-    return slot == nullptr ? node_id{}
-                           : unpack(static_cast<std::uint64_t>(context::to_number(*slot)));
+    if (slot == nullptr) { return node_id{}; }
+    const auto packed = static_cast<std::uint64_t>(context::to_number(*slot));
+    const auto held = wrappers_.find(packed);
+    if (held == wrappers_.end() || held->second != obj) { return node_id{}; }
+    return unpack(packed);
 }
 
 std::string dom_bindings::text_of(node_id id) const {
@@ -1032,29 +1061,39 @@ void dom_bindings::install_document(context & cx) {
             doctype->set("ownerDocument", document_);
             return value::object(doctype);
         });
-        // `createHTMLDocument` and `createDocument` are ABSENT, deliberately and
-        // by name. Both return a SECOND Document, and this engine has one: the
-        // bindings hold a single `document *`, and every element wrapper is
-        // keyed on a node id that only means anything against it. Returning
-        // something document-shaped that shares this document's nodes would be
-        // a worse answer than the missing method a page can detect.
+        // `createHTMLDocument` and `createDocument`, each returning a REAL
+        // second Document - see "A SECOND DOCUMENT" below for what that is and,
+        // more usefully, for what it still does not do.
         //
-        // WHAT THE SECOND DOCUMENT WOULD COST, since "it is hard" is not a
-        // measurement. `node_id` is a slot plus a generation into ONE slab, and
-        // `wrappers_`/`namespaces_`/`mirrors_`/`webgl_*` are all keyed on
-        // `pack(node_id)` - so two documents give two nodes the same key and
-        // `getElementById` on one hands back the other's wrapper. The change is
-        // not a `createDocument` binding, it is:
-        //   * a document HANDLE beside the node handle in every key, and in
-        //     `receiver()`, `handle_of()` and `wrap()`;
-        //   * `doc_` becoming "the document this call is about" rather than a
-        //     member - every one of the ~90 `doc_->` uses in these six files;
-        //   * `adoptNode`/`importNode`, which only mean anything once there are
-        //     two, plus the WrongDocumentError that the DOM raises when there
-        //     are and a page mixes them.
-        // It is a tree-model change with a bindings-shaped symptom, and doing
-        // the bindings half alone produces a Document that answers `nodeType`
-        // and shares its caller's `<body>`.
+        // NOT INSTALLED ON A SECONDARY. A document a page made has a null
+        // browsing context, and `document.implementation` on one is out of
+        // scope here for a simpler reason: nothing in the corpus asks for a
+        // third document made by the second, and a chain of them is a lifetime
+        // question nobody has needed answered.
+        implementation->set("createHTMLDocument",
+                            value::object(cx.allocate<script::native_object>(
+                                "createHTMLDocument", [this](context & c, std::span<value> args) {
+                                    // THE ARGUMENT'S ABSENCE IS OBSERVABLE: with no argument
+                                    // there is no `<title>` element at all, and with `undefined`
+                                    // there is one containing the string "undefined". HTML says
+                                    // so in as many words and createHTMLDocument.js tests both.
+                                    if (args.empty()) { return make_html_document(c, nullptr); }
+                                    const std::string title = c.to_string(args[0]);
+                                    return make_html_document(c, &title);
+                                })));
+        implementation->set("createDocument",
+                            value::object(cx.allocate<script::native_object>(
+                                "createDocument", [this](context & c, std::span<value> args) {
+                                    const value given = arg(args, 0);
+                                    const std::string ns = given.is_null() || given.is_undefined()
+                                                               ? std::string{}
+                                                               : c.to_string(given);
+                                    const value name = arg(args, 1);
+                                    const std::string qualified =
+                                        name.is_null() || name.is_undefined() ? std::string{}
+                                                                              : c.to_string(name);
+                                    return make_xml_document(c, ns, qualified);
+                                })));
         doc->set("implementation", value::object(implementation));
     }
     // `document.head` IS AN ACCESSOR, and both halves of that are load-bearing.
@@ -1117,7 +1156,21 @@ void dom_bindings::install_document(context & cx) {
     install_tree_accessors(cx, *doc);
     document_target_ = value::object(doc);
     document_ = make_document_proxy(cx, document_target_);
-    cx.define_global("document", document_);
+    // NOT A GLOBAL WHEN THIS IS A DOCUMENT A PAGE MADE. There is one `document`
+    // in a realm and it is the page's own; a document from createHTMLDocument
+    // is reached only through the value that call returned.
+    if (!secondary_) {
+        cx.define_global("document", document_);
+    } else {
+        // WHAT `install_navigation` WOULD HAVE SET, for a document that has no
+        // browsing context to get it from. `defaultView` is null by the
+        // specification's own words, and the three names for the address are
+        // "about:blank" because that is what a document created by script has.
+        doc->set("defaultView", value::null());
+        for (const char * name : {"URL", "documentURI", "baseURI"}) {
+            doc->set(name, cx.string("about:blank"));
+        }
+    }
     refresh_document();
 }
 
@@ -1133,6 +1186,114 @@ void dom_bindings::refresh_document() {
     // statement as the write with the value from before it, which is the shape
     // of nearly every test in html/dom's title group: set it, read it back.
     doc->set("activeElement", wrap(*cx_, focused_));
+}
+
+// ============================================================================
+// A SECOND DOCUMENT
+// ============================================================================
+//
+// `document.implementation.createHTMLDocument()` and `createDocument()`, and
+// the design decision behind them. The note that used to stand where they are
+// installed said what a second Document would cost - a document handle beside
+// the node handle in every key, `doc_` becoming an argument rather than a
+// member, across ~90 uses in six files - and refused on that basis. It was
+// right about the cost of THAT design.
+//
+// THIS IS A DIFFERENT ONE: a second Document is a second `dom_bindings` over
+// its own tree, in the same realm. Every key the note listed - `wrappers_`,
+// `namespaces_`, `mirrors_`, `webgl_objects_` - is already a member, so a
+// second instance simply has a second set of them and two nodes with the same
+// slot cannot collide. `doc_` stays a member because it is now true: it IS the
+// document these bindings are about.
+//
+// WHAT IS SHARED is what a second document genuinely shares with the first:
+//   * the ATOM TABLE, so a tag name interned in one means the same in the other;
+//   * the script CONTEXT, because both documents are in one realm;
+//   * the INTERFACE PROTOTYPES, so `made.createElement("div") instanceof
+//     HTMLDivElement` is true against the ONE HTMLDivElement a page can name.
+//     `install_dom_interfaces` DEFINES those ninety globals, so running it a
+//     second time would leave two of each and break every cross-document
+//     `instanceof` - `adopt_interfaces_of` takes the primary's instead.
+//
+// WHAT IS NOT DONE, said plainly rather than left to be discovered. `importNode`
+// and `adoptNode` still do not cross between two documents. A node of one
+// handed to the other is REFUSED - `handle_of` checks that the wrapper it was
+// given is in THIS instance's table - so the failure is a method that does
+// nothing rather than `getElementById` on one document silently returning the
+// other's element, which is the outcome the old note was avoiding.
+void dom_bindings::adopt_interfaces_of(const dom_bindings & primary) {
+    interface_prototypes_ = primary.interface_prototypes_;
+    event_target_prototype_ = primary.event_target_prototype_;
+    event_prototype_ = primary.event_prototype_;
+    custom_event_prototype_ = primary.custom_event_prototype_;
+    dom_exception_prototype_ = primary.dom_exception_prototype_;
+    // The flag `ensure_dom_interfaces` reads. Without it the first `wrap()` on
+    // this document would rebuild the whole table and redefine the globals.
+    interfaces_linked_ = true;
+}
+
+// `createHTMLDocument(title)`, HTML 8.6: a doctype, an `html`, a `head`, a
+// `title` ONLY IF the argument was given, and a `body`. Built by running the
+// engine's own parser over that markup rather than by six `create_element`
+// calls, so the tree a made document has is the tree a parsed one has - and
+// the title goes in through `set_text` afterwards, which is how an argument
+// containing `<` stays a text node rather than becoming markup.
+value dom_bindings::make_html_document(context & cx, const std::string * title) {
+    document & fresh = *owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
+    (void)parse_html(fresh, "<!DOCTYPE html><html><head></head><body></body></html>");
+    auto & made = *secondary_documents_.emplace_back(
+        std::make_unique<dom_bindings>(fresh, *atoms_, *canvases_, *forms_, std::function<void()>{},
+                                       std::function<void(node_id)>{}));
+    made.secondary_ = true;
+    made.cx_ = &cx;
+    made.adopt_interfaces_of(*this);
+    if (title != nullptr) {
+        const node_id head = made.first_html_element("head");
+        const node_id element = fresh.create_element(atoms_->intern_lower("title"));
+        if (head && element) {
+            (void)fresh.append_child(head, element);
+            made.set_text(element, *title);
+        }
+    }
+    made.install_document(cx);
+    return made.document_;
+}
+
+// `createDocument(namespace, qualifiedName, doctype)`, DOM 4.5.1 - an XML
+// document, so NO html/head/body and no quirks. The one element is the document
+// element when a qualified name was given, and an empty document otherwise;
+// `createDocument(null, "")` really does produce a Document with no children,
+// which `Document-contentType` and `append-on-Document.html` both use.
+//
+// THE DOCTYPE ARGUMENT IS ACCEPTED AND DROPPED. This tree has no DocumentType
+// node - `document.doctype` is null and `compatMode` is read off a flag - so
+// storing one would mean inventing a node kind for it. What that costs is one
+// subtest per file rather than the file.
+value dom_bindings::make_xml_document(context & cx, std::string_view ns,
+                                      std::string_view qualified_name) {
+    document & fresh = *owned_documents_.emplace_back(std::make_unique<document>(*atoms_));
+    auto & made = *secondary_documents_.emplace_back(
+        std::make_unique<dom_bindings>(fresh, *atoms_, *canvases_, *forms_, std::function<void()>{},
+                                       std::function<void(node_id)>{}));
+    made.secondary_ = true;
+    made.cx_ = &cx;
+    made.adopt_interfaces_of(*this);
+    if (!qualified_name.empty()) {
+        const node_ns kind = ns == "http://www.w3.org/1999/xhtml" ? node_ns::html
+                             : ns == "http://www.w3.org/2000/svg" ? node_ns::svg
+                                                                  : node_ns::other;
+        // INTERNED AS WRITTEN: an XML document is case-sensitive, so the
+        // qualified name is the tag and folding it would lose the case the
+        // page asked for.
+        const node_id root = fresh.create_element(atoms_->intern(qualified_name), kind);
+        auto builder = fresh.build();
+        builder.set_root(root);
+        if (kind == node_ns::other || ns.empty()) {
+            made.namespaces_.emplace(made.pack(root), std::string{ns});
+        }
+    }
+    made.install_document(cx);
+    return made.document_;
 }
 
 // ============================================================================
