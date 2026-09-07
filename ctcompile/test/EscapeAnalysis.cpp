@@ -39,6 +39,7 @@
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -67,6 +68,9 @@ struct row {
     // "escapes:<reason>" - or, when `alias` is set, the printed alias set of
     // its result.
     const char * expected;
+    // Optional diagnostic witness: the sinking operation name and operand.
+    const char * by = nullptr;
+    unsigned position = 0;
     // "<op> <role> <role> ..." - the role of EVERY operand of the first
     // operation of that name, in ODS argument order, each `neither`, `carry`
     // or `sink:<reason>`. A leading `~` says the operation must NOT implement
@@ -245,6 +249,14 @@ void check(mlir::MLIRContext & context, const row & r) {
         got = verdictString(verdicts, marked);
     }
     if (got != r.expected) { fail(r, std::string{"expected "} + r.expected + ", got " + got); }
+    if (r.by != nullptr) {
+        auto found = verdicts.sites.find(marked);
+        if (found == verdicts.sites.end() || found->second.by == nullptr ||
+            found->second.by->getName().getStringRef() != r.by ||
+            found->second.position != r.position) {
+            fail(r, "escape witness does not name the expected operation and operand");
+        }
+    }
 
     // THE COUNTERS, every one of them: a counter nobody asserts is a counter
     // that can silently stop counting.
@@ -297,6 +309,7 @@ int main() {
     mlir::MLIRContext context;
     context.getOrLoadDialect<ctjs::CTJSDialect>();
     context.getOrLoadDialect<mlir::cf::ControlFlowDialect>();
+    context.getOrLoadDialect<mlir::scf::SCFDialect>();
     context.getOrLoadDialect<CTNativeDialect>();
     // For the DEFAULT-RULE rows: an operation from no dialect at all has no
     // interface and is not a branch, which is exactly the case the rule is for.
@@ -980,6 +993,226 @@ int main() {
          .body = S + "  %t = ctjs.truthy %s\n  \"test.unknown\"(%t) : (i1) -> ()\n" + R,
          .expected = "confined",
          .roles = "~test.unknown neither"},
+
+        // Region operands do not enumerate implicit SSA captures. The query
+        // remains CFG-only, so every such capture is an unknown-op sink even
+        // if a nested operation would otherwise have a NEITHER operand role.
+        {.what = "a region's implicit capture cannot hide a global store",
+         .body =
+             S +
+             "  %t = ctjs.truthy %p\n"
+             "  scf.if %t {\n"
+             "    ctjs.store_global \"held\", %s\n"
+             "  }\n" +
+             R,
+         .expected = "escapes:unknown_op",
+         .by = "ctjs.store_global",
+         .roles = "~scf.if neither"},
+        {.what = "the region capture scan reaches nested regions",
+         .body =
+             S +
+             "  %t = ctjs.truthy %p\n"
+             "  scf.if %t {\n"
+             "    scf.if %t {\n"
+             "      ctjs.store_global \"held\", %s\n"
+             "    }\n"
+             "  }\n" +
+             R,
+         .expected = "escapes:unknown_op"},
+        {.what = "region capture of an iterable alias sinks the original array",
+         .body =
+             A +
+             "  %alias = ctjs.iterable of %s\n"
+             "  %t = ctjs.truthy %p\n"
+             "  scf.if %t {\n"
+             "    ctjs.store_global \"held\", %alias\n"
+             "  }\n" +
+             R,
+         .expected = "escapes:unknown_op"},
+        {.what = "a nested NEITHER use still requires a region proof",
+         .body =
+             S +
+             "  %t = ctjs.truthy %p\n"
+             "  scf.if %t {\n"
+             "    %truth = ctjs.truthy %s\n"
+             "  }\n" +
+             R,
+         .expected = "escapes:unknown_op"},
+        {.what = "dead nested branches do not grant region semantics",
+         .body =
+             S +
+             "  %no = arith.constant false\n"
+             "  scf.if %no {\n"
+             "    ctjs.store_global \"held\", %s\n"
+             "  }\n" +
+             R,
+         .expected = "escapes:unknown_op"},
+        {.what = "an unrelated region and its local values do not sink an outer site",
+         .body =
+             S +
+             "  %t = ctjs.truthy %p\n"
+             "  scf.if %t {\n"
+             "    %local = ctjs.create_object\n"
+             "    ctjs.store_global \"held\", %local\n"
+             "  }\n" +
+             R,
+         .expected = "confined"},
+        {.what = "a region in a dead CFG block cannot sink its outer capture",
+         .body =
+             S +
+             "  cf.br ^exit\n"
+             "^dead:\n"
+             "  %t = ctjs.truthy %p\n"
+             "  scf.if %t {\n"
+             "    ctjs.store_global \"held\", %s\n"
+             "  }\n"
+             "  cf.br ^exit\n"
+             "^exit:\n" +
+             R,
+         .expected = "confined"},
+        {.what = "an unregistered region sinks outer captures but not its local block arguments",
+         .body =
+             S +
+             "  \"test.region\"() ({\n"
+             "  ^entry(%local: !ctjs.value):\n"
+             "    \"test.use\"(%local) : (!ctjs.value) -> ()\n"
+             "    ctjs.store_global \"held\", %s\n"
+             "    \"test.end\"() : () -> ()\n"
+             "  }) : () -> ()\n" +
+             R,
+         .expected = "escapes:unknown_op",
+         .by = "ctjs.store_global"},
+        {.what = "an outer CFG alias captured by a region still sinks the original site",
+         .body =
+             S +
+             "  %t = ctjs.truthy %p\n"
+             "  cf.cond_br %t, ^join(%s : !ctjs.value), ^join(%p : !ctjs.value)\n"
+             "^join(%alias: !ctjs.value):\n"
+             "  scf.if %t {\n"
+             "    ctjs.store_global \"held\", %alias\n"
+             "  }\n" +
+             R,
+         .expected = "escapes:unknown_op"},
+        {.what = "an outer site's boolean result carries no object into a nested region",
+         .body =
+             S +
+             "  %t = ctjs.truthy %s\n"
+             "  scf.if %t {\n"
+             "    \"test.use\"(%t) : (i1) -> ()\n"
+             "  }\n" +
+             R,
+         .expected = "confined"},
+        {.what = "a region-local allocation has no verdict even when another region captures it",
+         .body = "  %t = ctjs.truthy %p\n"
+                 "  scf.if %t {\n"
+                 "    %local = ctjs.create_object {check}\n"
+                 "    scf.if %t {\n"
+                 "      ctjs.store_global \"held\", %local\n"
+                 "    }\n"
+                 "  }\n" +
+                 R,
+         .expected = "<no verdict>"},
+        {.what = "a region-local array yielded to the CFG has no confinement verdict",
+         .body = "  %result = scf.execute_region -> !ctjs.value {\n"
+                 "    %local = ctjs.create_array [] {check}\n"
+                 "    scf.yield %local : !ctjs.value\n"
+                 "  }\n"
+                 "  ctjs.store_global \"held\", %result\n" +
+                 R,
+         .expected = "<no verdict>"},
+        {.what = "a missing lattice for a region capture is counted without assuming confinement",
+         .body = S + "  %t = ctjs.truthy %p\n"
+                     "  scf.if %t {\n"
+                     "    ctjs.store_global \"held\", %s\n"
+                     "  }\n"
+                     "  ctjs.resume_throw\n",
+         .expected = "escapes:unvisited",
+         .unvisitedSites = 1,
+         .unvisitedOperands = 1,
+         .withAnalysis = false},
+        {.what = "a nested suspension retains outer frame sites without capturing their SSA values",
+         .body =
+             S +
+             "  %t = ctjs.truthy %p\n"
+             "  scf.if %t {\n"
+             "    %r = ctjs.suspend await %p\n"
+             "  }\n" +
+             R,
+         .expected = "escapes:suspended",
+         .by = "ctjs.suspend",
+         .wholeFunction = "suspended"},
+        {.what = "a dead nested suspension still requires a region control-flow proof",
+         .body =
+             S +
+             "  %no = arith.constant false\n"
+             "  scf.if %no {\n"
+             "    %r = ctjs.suspend yield %p\n"
+             "  }\n" +
+             R,
+         .expected = "escapes:suspended",
+         .wholeFunction = "suspended"},
+        {.what = "a suspension nested in a dead CFG block does not refuse the live frame",
+         .body = S + R +
+                 "^dead:\n"
+                 "  %t = ctjs.truthy %p\n"
+                 "  scf.if %t {\n"
+                 "    %r = ctjs.suspend await %p\n"
+                 "  }\n" +
+                 R,
+         .expected = "confined"},
+        {.what = "a nested arguments builder cannot bypass the raw-frame placement guard",
+         .body =
+             S +
+             "  %t = ctjs.truthy %p\n"
+             "  scf.if %t {\n"
+             "    %a = ctjs.make_arguments\n"
+             "  }\n" +
+             R,
+         .expected = "escapes:arguments_late",
+         .by = "ctjs.make_arguments",
+         .capturesAllArguments = true,
+         .wholeFunction = "arguments_late"},
+        {.what = "a nested rest builder before a site still lacks the required prologue proof",
+         .body = "  %t = ctjs.truthy %p\n"
+                 "  scf.if %t {\n"
+                 "    %a = ctjs.gather_rest from 0\n"
+                 "  }\n" +
+                 S + R,
+         .expected = "escapes:arguments_late",
+         .by = "ctjs.gather_rest",
+         .capturesAllArguments = true,
+         .wholeFunction = "arguments_late"},
+        {.what = "an arguments builder nested in a dead CFG block does not mark the live frame",
+         .body = S + R +
+                 "^dead:\n"
+                 "  %t = ctjs.truthy %p\n"
+                 "  scf.if %t {\n"
+                 "    %a = ctjs.make_arguments\n"
+                 "  }\n" +
+                 R,
+         .expected = "confined"},
+        {.what = "a later nested capture preserves the first escape reason",
+         .body =
+             S +
+             "  ctjs.store_global \"first\", %s\n"
+             "  %t = ctjs.truthy %p\n"
+             "  scf.if %t {\n"
+             "    %truth = ctjs.truthy %s\n"
+             "  }\n" +
+             R,
+         .expected = "escapes:stored_global",
+         .by = "ctjs.store_global"},
+        {.what = "a nested capture records its actual sinking operand for diagnostics",
+         .body =
+             S +
+             "  %t = ctjs.truthy %p\n"
+             "  scf.if %t {\n"
+             "    ctjs.set_property %p[%q], %s\n"
+             "  }\n" +
+             R,
+         .expected = "escapes:unknown_op",
+         .by = "ctjs.set_property",
+         .position = 2},
     };
 
     for (const row & r : rows) { check(context, r); }

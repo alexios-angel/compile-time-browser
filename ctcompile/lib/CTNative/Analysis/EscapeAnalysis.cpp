@@ -293,7 +293,7 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
     // block DeadCodeAnalysis proved dead never executes and is dropped; a
     // site in a live block with no lattice is a gap and is counted.
     llvm::SmallVector<mlir::Operation *, 2> argumentsBuilders;
-    bool suspends = false;
+    mlir::Operation * suspension = nullptr;
     llvm::SmallVector<mlir::Block *, 8> live;
     for (mlir::Block & block : function.getBody()) {
         ++out.blocks;
@@ -315,11 +315,18 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
                 }
                 out.sites.insert({&op, verdict});
             }
-            if (llvm::isa<ctjs::MakeArgumentsOp, ctjs::GatherRestOp>(op)) {
-                argumentsBuilders.push_back(&op);
-                out.capturesAllArguments = true;
-            }
-            if (llvm::isa<ctjs::SuspendOp>(op)) { suspends = true; }
+            // These operations retain raw frame registers, including values
+            // with no explicit SSA use. Nesting cannot hide their refusal,
+            // even though region-local allocation verdicts are out of scope.
+            op.walk([&](mlir::Operation * nested) {
+                if (llvm::isa<ctjs::MakeArgumentsOp, ctjs::GatherRestOp>(nested)) {
+                    argumentsBuilders.push_back(nested);
+                    out.capturesAllArguments = true;
+                }
+                if (suspension == nullptr && llvm::isa<ctjs::SuspendOp>(nested)) {
+                    suspension = nested;
+                }
+            });
         }
     }
 
@@ -340,19 +347,7 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
     // coroutine object on the heap (run_loop.cpp:866-867, 922-923), so every
     // site of the function outlives its frame. The importer refuses these
     // functions already; this line is for hand-written IR.
-    if (suspends) {
-        mlir::Operation * by = nullptr;
-        for (mlir::Block * block : live) {
-            for (mlir::Operation & op : *block) {
-                if (llvm::isa<ctjs::SuspendOp>(op)) {
-                    by = &op;
-                    break;
-                }
-            }
-            if (by != nullptr) { break; }
-        }
-        refuseWholeFunction(EscapeReason::Suspended, by);
-    }
+    if (suspension != nullptr) { refuseWholeFunction(EscapeReason::Suspended, suspension); }
 
     // R1's GUARD: the per-site `arguments` refusal is sound only because the
     // arguments array holds what the parameter registers held in the
@@ -409,6 +404,25 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
                 const RoleOf role = operandRole(&op, i);
                 if (role.role == OperandRole::Sink) { sink(op.getOperand(i), role.reason, &op, i); }
             }
+            // This query models the function's CFG, not nested region control
+            // flow. A region can still refer to an outer SSA value without
+            // listing it as an operand of its parent operation: scf.if with
+            // a nested store_global is one example. The default rule must
+            // cover those implicit captures too. Inspect every nested use,
+            // but only sink values defined outside this region owner; local
+            // region values have no required lattice in this CFG query.
+            // Even a nested branch proved dead is refused here: admitting
+            // region semantics is a separate proof, not an operand-table row.
+            op.walk([&](mlir::Operation * nested) {
+                if (nested == &op) { return; }
+                for (unsigned i = 0, n = nested->getNumOperands(); i < n; ++i) {
+                    mlir::Value value = nested->getOperand(i);
+                    if (!isValueTyped(value)) { continue; }
+                    mlir::Operation * owner = value.getParentRegion()->getParentOp();
+                    if (owner == &op || op.isProperAncestor(owner)) { continue; }
+                    sink(value, EscapeReason::UnknownOp, nested, i);
+                }
+            });
         }
     }
     return out;

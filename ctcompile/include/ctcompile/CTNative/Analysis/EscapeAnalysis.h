@@ -174,9 +174,9 @@ struct Verdict {
 };
 
 struct EscapeVerdicts {
-    /// Every tracked site in a LIVE block, in program order (a MapVector so
-    /// the claims file is deterministic). Sites in dead blocks are dropped and
-    /// counted - never executed, never observed, so dropping is exact.
+    /// Every tracked site in a LIVE top-level CFG block, in program order
+    /// (a MapVector so the claims file is deterministic). Sites in dead CFG
+    /// blocks are dropped and counted. Nested-region sites are out of scope.
     llvm::MapVector<mlir::Operation *, Verdict> sites;
     unsigned deadSites = 0;
     /// A site in a live block whose result lattice the solver never
@@ -199,6 +199,11 @@ struct EscapeVerdicts {
 /// The post-pass. Takes the solver by non-const reference only because
 /// DataFlowSolver::getProgramPointBefore(Block *) interns its anchor and is
 /// not const; nothing here changes a lattice.
+/// Models the function's top-level CFG. A live operation's nested regions
+/// sink their implicit captures as unknown_op; no region-control-flow proof
+/// is inferred. Allocations inside nested regions have no verdict and must
+/// never be treated as confined by a consumer. Frame-retaining operations
+/// inside those regions still trigger the whole-function refusals.
 [[nodiscard]] EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp function);
 
 } // namespace ctcompile::ctnative
