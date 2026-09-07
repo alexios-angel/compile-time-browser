@@ -14,6 +14,7 @@ int main() {
     const auto alias = first;
     if (first(1) != 42 || alias(1) != 42 || first(9) != 50 || direct_caller(40) != 42) { return 1; }
     if (unmarked_creation(40)(1) != 42) { return 1; }
+    if (anonymous_names(40, 1) != 84 || anonymous_names(2, 5) != 16) { return 11; }
     const auto changing = ctn_bind_mutable(5);
     const auto separate = ctn_bind_mutable(100);
     if (changing() != 6 || changing() != 6 || separate() != 101 || mutable_target(5) != 6) { return 2; }
@@ -85,6 +86,11 @@ def main():
         assert "increment(" in body(cpp, "inline_target"), cpp
         assert "inline_target(" in body(cpp, "direct_caller"), cpp
         assert "ctn_bind_inline(" in body(cpp, "unmarked_creation"), cpp
+        anonymous = body(cpp, "anonymous_names")
+        assert "capture_seed = ctn_lambda]" in anonymous, anonymous
+        assert "capture_seed = ctn_lambda_1]" in anonymous, anonymous
+        assert "std::invoke(ctn_lambda_2, ctn_lambda_1)" in anonymous, anonymous
+        assert "std::invoke(ctn_lambda_3, ctn_lambda)" in anonymous, anonymous
         assert "ctn_bind_mutable(" in body(cpp, "marked_mutable"), cpp
         for name in ["mutable", "unknown"]:
             forwarded = body(cpp, f"ctn_bind_{name}")
@@ -121,6 +127,7 @@ def main():
             assert "ctn_bind_classified(" not in marked, marked
             unmarked = body(cpp, prefix + "_unmarked")
             assert "ctn_bind_classified(" in unmarked, unmarked
+        assert "return ctn_lambda;" in body(cpp, "deferred_literal_marked"), cpp
         source = args.work / f"{label}.cpp"
         source.write_text(cpp + MAIN)
         for index, compiler in enumerate(compilers):

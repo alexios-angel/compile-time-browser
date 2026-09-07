@@ -30,7 +30,7 @@ using ctn_env_fn_2 = std::function<js_num(js_num)>;
 ctn_env_fn_2 makeStore_1(js_num const seed) {
     auto const state = ctnative::make_string_to_number_map();
     ctnative::map_set(state, std::string("value", 5), seed);
-    ctn_env_fn_2 const result =
+    ctn_env_fn_2 const ctn_lambda =
         [capture_state = state](js_num const argument_delta) -> js_num {
             std::string const key("value", 5);
             js_num const next = ctnative::to_number(ctnative::map_get(capture_state, key))
@@ -38,7 +38,7 @@ ctn_env_fn_2 makeStore_1(js_num const seed) {
             ctnative::map_set(capture_state, key, next);
             return ctnative::to_number(ctnative::map_get(capture_state, key)) + 0.0;
         };
-    return result;
+    return ctn_lambda;
 }
 ```
 
@@ -54,8 +54,10 @@ the same Map. Generated programs need neither the VM nor a collector.
 The source-derived `capture_` and `argument_` names distinguish captures and
 parameters from the source function's locals. Keywords, unsupported identifier
 bytes and collisions are handled within each lambda's scope. Creation statements
-retain the returned function's source location. Signatures outside the concrete
-callable carrier set keep the previous owning `std::tuple` representation and
+retain the returned function's source location. Anonymous closure locals use
+`ctn_lambda`, with numbered suffixes for multiple closures or occupied names.
+An available JavaScript binding name takes precedence. Signatures outside the
+concrete callable carrier set keep the previous owning `std::tuple` representation and
 direct lifted calls.
 
 The body remains EmitC IR until final C++ emission. It shares the ordinary
@@ -154,6 +156,13 @@ pairs retain their 17 observations under GCC, Clang and the interpreter. Sample 
 now places the lambda directly inside `makeCounter_1` and shrinks from 9,457 to
 9,148 bytes. The capture/lifetime suite passes ASan/UBSan, and boxed Bootstrap
 remains byte-identical.
+
+The subsequent anonymous-name update passes **451/451 CTests**, including
+**145/145 lit cases**, in **525.70 seconds**. Sample 5 now declares and returns
+`ctn_lambda` inside `makeCounter_1`; its 9,164-byte output preserves all three
+observations. The six sample pairs retain all 17 observations under GCC, Clang
+and the interpreter. Collision cases preserve source names and distinct closure
+bindings in ordinary and hoisted output.
 
 The 2026-09-05 devbox gate passes **299/299 CTests**, including **98/98 lit
 tests**. Standalone ASan/UBSan execution matches all 13 observations without

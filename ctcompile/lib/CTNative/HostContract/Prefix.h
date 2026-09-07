@@ -12,12 +12,15 @@ struct prefixValue {
         object,
         realm,
         resource,
+        resourceMethod,
         closure,
         absent
     } kind = Kind::unknown;
     mlir::Attribute literal;
     ctjs::CreateClosureOp made;
     unsigned object = 0;
+    // One-based factory invocation for returned closures; zero is unproved.
+    unsigned invocation = 0;
 
     static prefixValue constant(mlir::Attribute value) { return {Kind::primitive, value, {}, 0}; }
 };
@@ -27,6 +30,7 @@ struct prefixAnalysis {
     const HostContract & contract;
     unsigned remaining;
     bool followPublication;
+    bool followProviderReads;
     unsigned operationCount = 0;
     bool exhausted = false;
     bool reflective = false;
@@ -35,6 +39,8 @@ struct prefixAnalysis {
     std::vector<HostPrefixCall> calls;
     std::vector<HostPrefixFactory> factories;
     std::vector<HostPrefixPublication> publications;
+    std::vector<HostPrefixReadSummary> reads;
+    llvm::DenseSet<mlir::Operation *> discoveryOnly;
     llvm::DenseMap<unsigned, unsigned> factoryTables;
     llvm::DenseSet<mlir::Operation *> factoryClosures;
     llvm::DenseMap<unsigned, ctjs::FuncOp> functions;
@@ -59,7 +65,7 @@ struct prefixAnalysis {
     };
 
     prefixAnalysis(mlir::ModuleOp module, const HostContract & contract, unsigned maxSteps,
-                   bool followPublication);
+                   bool followPublication, bool followProviderReads);
     bool step();
     bool spend(unsigned count);
     prefixValue stop(mlir::Operation * operation, llvm::StringRef reason);
@@ -70,6 +76,8 @@ struct prefixAnalysis {
     bool identitySafeFunction(ctjs::FuncOp function, llvm::DenseSet<mlir::Operation *> & stack);
     bool identitySafeRegion(mlir::Region & region, llvm::DenseSet<mlir::Operation *> & stack);
     prefixValue factory(ctjs::CallOp call, ctjs::FuncOp function);
+    prefixValue providerRead(ctjs::CallOp call, ctjs::FuncOp function, prefixValue closure,
+                             environment & values);
     void publication(ctjs::SetPropertyOp write, prefixValue owner, prefixValue value);
     completion function(ctjs::FuncOp function, llvm::ArrayRef<prefixValue> arguments,
                         unsigned depth);

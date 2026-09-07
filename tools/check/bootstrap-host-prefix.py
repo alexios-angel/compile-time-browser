@@ -97,6 +97,7 @@ def main():
     parser.add_argument("--node", help="also check every declared observation in a fresh Node realm")
     parser.add_argument("--oracle-only", action="store_true", help="generate source and run Node without compiler tools")
     parser.add_argument("--follow-publication", action="store_true")
+    parser.add_argument("--follow-provider-reads", action="store_true")
     parser.add_argument("--replace", choices=("method", "table"), help="replace the published callable/table before observation")
     parser.add_argument("--mode", choices=("commonjs", "browser", "browser_this_fallback", "global_reentry", "self_reentry", "resource_instances"), required=True)
     parser.add_argument("--work", type=Path, required=True)
@@ -109,6 +110,9 @@ def main():
         parser.error("--replace requires a followed exact publication mode")
     if args.mode == "resource_instances" and not args.follow_publication:
         parser.error("resource_instances requires --follow-publication")
+    if args.follow_provider_reads and (not args.follow_publication or args.replace or
+                                        args.mode not in {"commonjs", "browser", "browser_this_fallback"}):
+        parser.error("--follow-provider-reads requires an unchanged exact publication mode")
     args.work.mkdir(parents=True, exist_ok=True)
     spec = importlib.util.spec_from_file_location("bootstrap_probe", Path(__file__).with_name("bootstrap-data-probe.py"))
     probe = importlib.util.module_from_spec(spec)
@@ -159,6 +163,7 @@ var traceDistinct = first !== host.slot ? 1 : 0;
     provenance.update({"mode": args.mode, "program_sha256": probe.sha256(program),
                        "source_functions": function_count, "declared_observations": sorted(expected),
                        "follow_publication": args.follow_publication, "replacement": args.replace,
+                       "follow_provider_reads": args.follow_provider_reads,
                        "native_execution_claimed": False})
     if args.node:
         provenance["node_oracle"] = node_oracle(args.node, args.work, js, expected, realm_properties)
@@ -213,7 +218,7 @@ var traceDistinct = first !== host.slot ? 1 : 0;
         contract["entry_receiver"] = {"kind": "classic-script-realm", "own_data_properties": realm_properties}
     manifest.write_text(json.dumps(contract, indent=2) + "\n")
     result = run([args.opt, str(prepared),
-                  f"--ctnative-specialize-host-prefix=manifest={manifest} output={report_file} report=true follow-publication={str(args.follow_publication).lower()}",
+                  f"--ctnative-specialize-host-prefix=manifest={manifest} output={report_file} report=true follow-publication={str(args.follow_publication).lower()} follow-provider-reads={str(args.follow_provider_reads).lower()}",
                   "-o", str(specialized)])
     (args.work / "prefix.log").write_text(result.stderr)
     report = json.loads(report_file.read_text())
@@ -222,6 +227,8 @@ var traceDistinct = first !== host.slot ? 1 : 0;
     expected_targets = [] if adversarial else ["fn$2", "fn$2", "fn$4"] if instances else ["fn$3"]
     if args.follow_publication and not instances and not adversarial:
         expected_targets.append("replacement$7" if args.replace else "fn$5")
+    if args.follow_provider_reads:
+        expected_targets.extend(["fn$6", "fn$4"])
     if not report["valid"] or report["selected_branches"] != expected_branches or report["targets"] != expected_targets:
         raise RuntimeError(f"exact wrapper proof did not advance as expected: {report}")
     after = specialized.read_text()
@@ -248,6 +255,24 @@ var traceDistinct = first !== host.slot ? 1 : 0;
         last = re.escape(expected_targets[-1])
         if not script or not re.search(r"ctjs.call_direct @" + last + r"\(", script[0]):
             raise RuntimeError("published target was not resolved in the script entry")
+    if args.follow_provider_reads:
+        if (report["summarized_provider_calls"], report["runtime_provider_reads"]) != (2, 2):
+            raise RuntimeError(f"initial empty-Map reads did not advance to the first mutation: {report}")
+        summaries = report["provider_reads"]
+        if ([entry["target"] for entry in summaries] != ["fn$5", "fn$6"] or
+            [entry["factory_index"] for entry in summaries] != [0, 0] or
+            [entry["result"] for entry in summaries] != ["#ctjs.null", "#ctjs.undefined"]):
+            raise RuntimeError("read summaries lost actual captures or null/undefined identity")
+        for name in ("_script_$0", "fn$4", "fn$5", "fn$6"):
+            pattern = r"ctjs\.func (?:private )?@" + re.escape(name) + r"\(.*?(?=\n  ctjs\.func |\n})"
+            original = re.search(pattern, before, re.S)[0]
+            current = re.search(pattern, after, re.S)[0]
+            if original.count("scf.if") != current.count("scf.if"):
+                raise RuntimeError(f"provider traversal rewrote {name} observation/method branches")
+            if name != "_script_$0" and original != current:
+                raise RuntimeError(f"provider traversal specialized reusable Data method {name}")
+    elif report["summarized_provider_calls"] or report["runtime_provider_reads"]:
+        raise RuntimeError("provider-read traversal became implicit")
 
     # Native accounting remains an independent four-bucket census. Keep the
     # imported denominator even if ordinary default pruning becomes applicable.

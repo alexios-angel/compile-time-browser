@@ -6,9 +6,9 @@
 namespace ctcompile::ctnative::host_detail {
 
 prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contract,
-                               unsigned maxSteps, bool followPublication)
+                               unsigned maxSteps, bool followPublication, bool followProviderReads)
     : module(module), contract(contract), remaining(maxSteps), followPublication(followPublication),
-      dominance(module) {
+      followProviderReads(followProviderReads), dominance(module) {
     refusal = initialBindingProblem(module, contract);
     module.walk([&](ctjs::StoreGlobalOp store) {
         if (step()) { initializers[store.getName()].push_back(store); }
@@ -194,7 +194,11 @@ prefixAnalysis::completion prefixAnalysis::region(mlir::Region & region, environ
                 stop(branch, "unknown branch condition");
                 return {};
             }
-            branches.push_back({branch, *selected});
+            // After a provider summary, source observer branches are used
+            // only to discover the next actual call. They remain runtime.
+            if (!discoveryOnly.contains(branch->getParentOfType<ctjs::FuncOp>())) {
+                branches.push_back({branch, *selected});
+            }
             auto yielded = this->region(branch->getRegion(*selected ? 0u : 1u), values, depth);
             if (yielded.kind != completion::Kind::yielded ||
                 yielded.values.size() != branch.getNumResults()) {
@@ -223,12 +227,17 @@ namespace ctcompile::ctnative {
 
 HostEntryPrefixAnalysis::HostEntryPrefixAnalysis(mlir::ModuleOp module,
                                                  const HostContract & contract, unsigned maxSteps,
-                                                 bool followPublication) {
+                                                 bool followPublication, bool followProviderReads) {
+    if (followProviderReads && !followPublication) {
+        refusal = "provider reads require follow-publication";
+        return;
+    }
     if (hostContractFingerprint(module) != contract.moduleSha256) {
         refusal = "host prefix module fingerprint mismatch";
         return;
     }
-    host_detail::prefixAnalysis analysis(module, contract, maxSteps, followPublication);
+    host_detail::prefixAnalysis analysis(module, contract, maxSteps, followPublication,
+                                         followProviderReads);
     auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
     if (!entry || entry.getBody().empty() || entry.getBody().front().getNumArguments() != 3 ||
         entry.getUpvalueCount() != 0 || !analysis.callers[entry].empty() ||
@@ -260,6 +269,7 @@ HostEntryPrefixAnalysis::HostEntryPrefixAnalysis(mlir::ModuleOp module,
                 analysis.calls.clear();
                 analysis.factories.clear();
                 analysis.publications.clear();
+                analysis.reads.clear();
                 analysis.boundary = "continuation may expose the active callable identity";
                 break;
             }
@@ -272,6 +282,7 @@ HostEntryPrefixAnalysis::HostEntryPrefixAnalysis(mlir::ModuleOp module,
         callProofs = std::move(analysis.calls);
         factoryProofs = std::move(analysis.factories);
         publicationProofs = std::move(analysis.publications);
+        readProofs = std::move(analysis.reads);
     }
 }
 

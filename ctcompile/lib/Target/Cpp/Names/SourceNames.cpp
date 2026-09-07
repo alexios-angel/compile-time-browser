@@ -44,12 +44,20 @@ void SourceNames::prepare(mlir::Operation * function,
         llvm::SmallVector<mlir::Value> values;
     };
     llvm::SmallVector<family> families;
+    llvm::SmallVector<mlir::Value> anonymousCallables;
     llvm::StringMap<unsigned> indices;
     llvm::StringSet<> bases;
     const auto collect = [&](mlir::Value value) {
-        if (names.contains(value)) { return; }
+        if (names.contains(value) || !materialized(value)) { return; }
         auto found = hints.find(value);
-        if (found == hints.end() || found->second.empty() || !materialized(value)) { return; }
+        if (found == hints.end() || found->second.empty()) {
+            auto creation = value.getDefiningOp<mlir::emitc::CallOpaqueOp>();
+            if (creation &&
+                creation->hasAttrOfType<mlir::FlatSymbolRefAttr>("ctnative.callable_create")) {
+                anonymousCallables.push_back(value);
+            }
+            return;
+        }
         std::string base = localIdentifier(found->second);
         auto [position, inserted] = indices.try_emplace(base, families.size());
         if (inserted) {
@@ -66,6 +74,12 @@ void SourceNames::prepare(mlir::Operation * function,
             }
         }
     });
+    // Preserve source bindings first. The generated closure name participates
+    // in the same collision/suffix policy but never propagates to its captures.
+    if (!anonymousCallables.empty()) {
+        bases.insert("ctn_lambda");
+        families.push_back({"ctn_lambda", std::move(anonymousCallables)});
+    }
     llvm::SmallVector<mlir::Value> returned;
     function->walk([&](mlir::emitc::ReturnOp ret) {
         if (ret.getOperand()) { returned.push_back(ret.getOperand()); }

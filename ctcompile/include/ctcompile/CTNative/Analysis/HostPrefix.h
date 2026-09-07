@@ -40,6 +40,23 @@ struct HostPrefixPublication {
     std::string property;
 };
 
+// A normal-return path over still-empty private Maps. Operations and method
+// bodies remain runtime. The factory call distinguishes repeated allocations
+// from the same source site; these facts do not close future call sites.
+struct HostPrefixProviderRead {
+    mlir::Operation * operation;
+    ctjs::ConstructOp resource;
+    std::string member;
+};
+
+struct HostPrefixReadSummary {
+    ctjs::CallOp operation;
+    ctjs::FuncOp target;
+    ctjs::CallOp factory;
+    mlir::Attribute result;
+    std::vector<HostPrefixProviderRead> reads;
+};
+
 // A narrower proof than HostContractAnalysis: only the executed prefix before
 // the first unknown effect is interpreted. Branch/call proofs belong to
 // functions with one closed invocation path. Later behavior remains unknown.
@@ -47,7 +64,8 @@ struct HostPrefixPublication {
 class HostEntryPrefixAnalysis {
 public:
     HostEntryPrefixAnalysis(mlir::ModuleOp module, const HostContract & contract,
-                            unsigned maxSteps = 100000, bool followPublication = false);
+                            unsigned maxSteps = 100000, bool followPublication = false,
+                            bool followProviderReads = false);
 
     [[nodiscard]] bool valid() const { return refusal.empty(); }
     [[nodiscard]] llvm::StringRef reason() const { return refusal; }
@@ -58,6 +76,7 @@ public:
     [[nodiscard]] llvm::ArrayRef<HostPrefixPublication> publications() const {
         return publicationProofs;
     }
+    [[nodiscard]] llvm::ArrayRef<HostPrefixReadSummary> providerReads() const { return readProofs; }
 
 private:
     std::string refusal;
@@ -66,6 +85,7 @@ private:
     std::vector<HostPrefixCall> callProofs;
     std::vector<HostPrefixFactory> factoryProofs;
     std::vector<HostPrefixPublication> publicationProofs;
+    std::vector<HostPrefixReadSummary> readProofs;
 };
 
 } // namespace ctcompile::ctnative

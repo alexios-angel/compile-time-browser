@@ -15,7 +15,9 @@ preserving live bindings and shared Map identity. Each lambda uses independent
 final-IR names, const/constexpr analysis and deduced-type pins. Nested emission
 restores the surrounding function's state. Other direct/address uses retain the
 lifted definition; writable captures and recursive or oversized expansions
-retain helpers. Sample 5 has no `ctn_bind_fn_2` or separate `ctn_lambda` helper.
+retain helpers. Sample 5 declares and returns a local `ctn_lambda` inside
+`makeCounter_1`, with no `ctn_bind_fn_2` helper. Anonymous closure names use
+numbered suffixes when needed; source binding names take precedence.
 Used parameters lose redundant generated void casts after final cleanup.
 
 [Maps](native-maps.md) use `std::map` and `.find()` when the admitted module has
@@ -37,8 +39,20 @@ stale manifests and exhausted work retain their conservative boundaries.
 The six publication differentials compare 104 observations across Node, the
 interpreter and the boxed script/wrapper, including compiled GC-stress runs.
 
-Final devbox gate: **448/448 CTests**, **144/144 lit cases**, **532.31 seconds**;
-all **537 C++ files** pass formatting. The callable adapter also passes its
+The additional opt-in `follow-provider-reads=true` requires publication
+following. It summarizes normal-return paths over still-empty private Maps,
+using the actual factory invocation and immutable capture identities. The exact
+three probes now resolve factory, `Data.get`, `Data.remove` and `Data.set` calls,
+then stop before the first mutation path. Two completed method summaries each
+contain one empty-Map `has` read; the methods return null and undefined through
+their original control flow. All method bodies,
+observer branches and runtime effects remain; native admission is still 0/7.
+The three new differentials pass 62 observations under Node, the interpreter
+and boxed script/wrapper execution, including GC stress. The focused suite
+checks 23 source cases plus stale/forged contracts and work limits.
+
+Final devbox gate: **451/451 CTests**, **145/145 lit cases**, **525.70 seconds**;
+all **538 C++ files** pass formatting. The callable adapter also passes its
 separate formatting check; `git diff --check` passes. Named owning closures pass ASan/UBSan,
 stack-use-after-return and leak checks. String-snapshot sanitizer checks passed
 at the preceding checkpoint.
@@ -179,9 +193,15 @@ original boxed callees and published declarations. See their linked implementati
 documents and the [source layout](source-layout.md).
 
 Full native Bootstrap remains unfinished. The selected wrapper, factory return,
-retained Map/cell captures and first published method target are now proved.
-Next connect these retention facts to native ownership/call analysis for exported
-callables, with supported provider/error effects and current mutable slot values.
+retained Map/cell captures and initial read-only method paths are now proved.
+The next bounded native admission design is
+[owning method-table fields on confined objects](native-owned-method-table-slots.md).
+Its six-function fixture currently returns 4211 in the interpreter and admits
+0/6 native functions; the planned gate is 6/6 with lifetime and independent-state
+checks. A live, complete store-to-load proof must connect existing table/capture
+ownership to one confined field. Prefix observations cannot make exports private.
+Global/realm storage still needs native ownership/call analysis for exported
+callables, supported provider/error effects and current mutable slot values.
 Initial provider identity alone does not authorize Map execution or console
 errors during PE. Explicit script
 receivers, boxed public parameters and open method-table shapes still refuse

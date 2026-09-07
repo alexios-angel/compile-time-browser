@@ -205,8 +205,9 @@ calls, reads, accessors or unsupported writes stop further discovery; no fact
 after that boundary is supplied.
 
 The extra method call rewrite is checked in the unreferenced script entry.
-It retains the actual callee value, receiver and arguments and stops at that
-method's effects. It does not specialize the method body or infer future call
+It retains the actual callee value, receiver and arguments and, without the
+separate provider-read option below, stops at that method's effects.
+It does not specialize the method body or infer future call
 sites. Helper bodies and selected branches retain the existing continuation
 and unique-invocation checks. The complete host query and native admission
 remain independent and withheld for exact Bootstrap Data.
@@ -223,6 +224,59 @@ ctjs-opt prepared.mlir \
   --ctnative-specialize-host-prefix='manifest=host.json output=prefix.json report=true follow-publication=true' \
   -o specialized.mlir
 ```
+
+## Following private empty-Map reads
+
+`follow-provider-reads=true` additionally requires `follow-publication=true`.
+It is a traversal prerequisite: a successful normal-return summary can carry
+the executed entry prefix to its next source call. It grants no native
+admission, complete provider-effect proof, or promise about later invocations.
+The existing `closed-source-v1` contract starts with unmodified intrinsic
+prototypes; the explicit initial Map identity and all source replacement,
+reflection and unknown-effect guards remain required. No manifest annotation
+supplies a method summary.
+
+The consumer starts only from the live called closure in the unreferenced
+script entry. A one-based invocation token travels with that closure through
+ordinary aliases and table writes. It identifies the actual factory call and
+its independently proved immutable captured cells. Two calls to the same
+factory source have separate tokens even though their allocation/cell source
+operations are identical. A method copied from the first table into the second
+retains the first factory's token.
+
+Every retained Map starts empty. The separate method-path interpreter accepts
+captured-resource loads, constants, supported primitive comparisons/conversions
+and selected structured branches. A property read must name standard `has`,
+`get` or `size` on that private Map. A `has`/`get` call must use the matching
+member value and actual Map receiver with one already evaluated key argument.
+Map keys are not coerced; the standard methods and size getter cannot invoke
+JavaScript. Empty `has` returns false, empty `get` returns undefined, and size
+returns zero. In particular, undefined is neither null nor an empty string.
+
+A selected write, unknown call, object/accessor read, allocation, throw or
+resource/method escape rejects that attempted summary. Reads observed before
+a rejected operation are discarded. A write in a proved unselected arm may
+remain in the reusable method, because only this actual normal-return path is
+being summarized. Accepted summaries neither mutate nor expose a retained Map,
+so its empty state remains valid until the next unsupported effect. Captured
+binding writes, changed providers and unproved captures cannot establish the
+starting state.
+
+Method branches and operations never enter the rewrite plan. After the first
+summary, entry observer branches are also used only for discovery and remain
+runtime. The consumer can name later entry calls using their actual live
+closure values, but retains their receivers, arguments and evaluation order.
+It does not infer frozen exports, closed future callers, or an effective
+ordinary-call receiver. Existing shared-body continuation guards are unchanged.
+Stale source, forged report attributes or exhausted work expose no usable
+read summaries or rewrite plan.
+
+Reports add `summarized_provider_calls`, `runtime_provider_reads`, and
+`provider_reads`. Each completed summary records its target, zero-based
+`factory_index`, exact primitive result and read members/resource indices.
+The live API also binds the actual source call, factory call and read operations.
+`full_host_contract_claimed` stays false. These facts describe the prefix before
+an effect boundary; they are not a C++ owner or type for a retained Map.
 
 ## Exact-source evidence
 
@@ -335,3 +389,39 @@ also covered.
 AMD's retained and delayed callable remains
 outside this first specialization path. Its invocation identity, full provider
 effects and owning publication-table flow need further proofs.
+
+Three further differential fixtures enable provider reads on the unchanged
+CommonJS, browser and realm-fallback programs. All three now resolve the
+factory, initial `Data.get`, initial `Data.remove` and first `Data.set` calls
+(`fn$3`, `fn$5`, `fn$6`, `fn$4`). The two completed summaries each contain one
+empty-Map `has` read: `get` returns null through its source fallback and
+`remove` returns undefined through its source early exit. Traversal stops in
+the first `set`, before its unsupported Map mutation path. The summary does
+not carry an empty-Map assumption into later mutated-state reads.
+
+UMD branch counts remain 2/5/6; source script observation branches and all
+three reusable Data method bodies remain unchanged. Each program still has
+one runtime factory Map, three capture edges, one publication, seven source
+functions, zero native admissions and seven native refusals. Their program
+and exact vendor-fragment hashes match the corresponding publication fixtures.
+The new differential CTests pass all 19/19/24 observations with compiled boxed
+script/wrapper entries, interpreter method bodies and GC stress. Node v26.8.1
+independently matches the same 62 observations; the realm negative control
+rejects the exact executed `traceRealmDistinct` change from 1 to 0.
+
+`host-provider-reads.test` checks empty `has`/`get`/`size`, primitive result
+identity, preserved method/observer branches, an unselected mutation arm,
+current method replacement, two factory instances and a copied closure's
+original capture identity. Its negative cases cover selected mutations,
+unknown effects and throws after a read, resource/method escape, a detached
+builtin receiver, argument property access, provider/prototype changes,
+intervening accessors, stale/forged facts and exhausted work. Missing provider
+or publication prerequisites cannot supply a read summary. The focused lit
+test passes all 23 source cases and its contract/work-limit controls.
+
+```sh
+python3 tools/check/bootstrap-host-prefix.py \
+  --bootstrap ctbrowser/vendor/bootstrap/bootstrap.bundle.js \
+  --mode browser --follow-publication --follow-provider-reads \
+  --node node --oracle-only --work /tmp/bootstrap-provider-reads-node
+```

@@ -8,7 +8,7 @@ namespace ctcompile::ctnative::host_detail {
 
 std::optional<bool> prefixTruth(prefixValue value) {
     if (value.kind == prefixValue::Kind::object || value.kind == prefixValue::Kind::realm ||
-        value.kind == prefixValue::Kind::closure) {
+        value.kind == prefixValue::Kind::resource || value.kind == prefixValue::Kind::closure) {
         return true;
     }
     if (value.kind != prefixValue::Kind::primitive) { return {}; }
@@ -40,7 +40,8 @@ prefixValue prefixUnary(ctjs::UnaryKind kind, prefixValue operand, mlir::MLIRCon
     if (operand.kind == prefixValue::Kind::closure) {
         name = "function";
     } else if (operand.kind == prefixValue::Kind::object ||
-               operand.kind == prefixValue::Kind::realm) {
+               operand.kind == prefixValue::Kind::realm ||
+               operand.kind == prefixValue::Kind::resource) {
         name = "object";
     } else if (operand.kind == prefixValue::Kind::absent ||
                llvm::isa_and_nonnull<ctjs::UndefinedAttr>(operand.literal)) {
@@ -60,8 +61,22 @@ prefixValue prefixUnary(ctjs::UnaryKind kind, prefixValue operand, mlir::MLIRCon
 
 prefixValue prefixCompare(ctjs::CompareKind kind, prefixValue left, prefixValue right,
                           mlir::MLIRContext * context) {
-    // This first consumer needs only the exact typeof-string guards. Unknown
-    // equality/coercion is a boundary, never a supplied "pure" effect claim.
+    // Strict primitive equality cannot call JS. In particular null and
+    // undefined must stay distinct when advancing source observation guards.
+    if (kind == ctjs::CompareKind::StrictEq && left.kind == prefixValue::Kind::primitive &&
+        right.kind == prefixValue::Kind::primitive) {
+        auto supported = [](mlir::Attribute value) {
+            return llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr,
+                             ctjs::NumberAttr, ctjs::StringAttr>(value);
+        };
+        if (!supported(left.literal) || !supported(right.literal)) { return {}; }
+        bool equal = left.literal == right.literal;
+        auto a = llvm::dyn_cast<ctjs::NumberAttr>(left.literal);
+        auto b = llvm::dyn_cast<ctjs::NumberAttr>(right.literal);
+        if (a && b) { equal = a.getDouble() == b.getDouble(); }
+        return prefixValue::constant(ctjs::BooleanAttr::get(context, equal));
+    }
+    // Loose equality stays limited to exact strings; no object conversion.
     if (kind != ctjs::CompareKind::Eq && kind != ctjs::CompareKind::StrictEq) { return {}; }
     const auto a = llvm::dyn_cast_if_present<ctjs::StringAttr>(left.literal);
     const auto b = llvm::dyn_cast_if_present<ctjs::StringAttr>(right.literal);
@@ -205,6 +220,10 @@ prefixValue prefixAnalysis::operation(mlir::Operation * operation, environment &
         calls.push_back({invoked, callee});
         if (followPublication) {
             const auto result = factory(invoked, callee);
+            if (result.kind != prefixValue::Kind::unknown) { return result; }
+        }
+        if (followProviderReads) {
+            const auto result = providerRead(invoked, callee, closure, values);
             if (result.kind != prefixValue::Kind::unknown) { return result; }
         }
         // Naming this invocation requires its actual closure value, not a

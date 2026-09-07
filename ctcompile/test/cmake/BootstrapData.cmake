@@ -20,11 +20,16 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
   endforeach()
   foreach(_mode commonjs browser browser_this_fallback global_reentry self_reentry
       commonjs_publication browser_publication browser_this_fallback_publication
+      commonjs_provider_reads browser_provider_reads browser_this_fallback_provider_reads
       browser_method_replacement browser_table_replacement resource_instances)
     set(_prefix_source_mode "${_mode}")
     set(_prefix_options)
     set(_prefix_script FALSE)
-    if(_mode MATCHES "_publication$")
+    if(_mode MATCHES "_provider_reads$")
+      string(REGEX REPLACE "_provider_reads$" "" _prefix_source_mode "${_mode}")
+      set(_prefix_options --follow-provider-reads)
+      set(_prefix_script TRUE)
+    elseif(_mode MATCHES "_publication$")
       string(REGEX REPLACE "_publication$" "" _prefix_source_mode "${_mode}")
       set(_prefix_script TRUE)
     elseif(_mode MATCHES "^browser_(method|table)_replacement$")

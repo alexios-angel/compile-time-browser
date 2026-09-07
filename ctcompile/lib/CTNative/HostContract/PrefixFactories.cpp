@@ -84,7 +84,11 @@ prefixValue prefixAnalysis::factory(ctjs::CallOp call, ctjs::FuncOp function) {
                 }
             }
             closures.insert(closure);
-            values[closure.getResult()] = {prefixValue::Kind::closure, {}, closure, 0};
+            values[closure.getResult()] = {prefixValue::Kind::closure,
+                                           {},
+                                           closure,
+                                           0,
+                                           static_cast<unsigned>(factories.size()) + 1};
         } else if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
             const auto owner = values.lookup(store.getObject());
             const auto value = values.lookup(store.getValue());

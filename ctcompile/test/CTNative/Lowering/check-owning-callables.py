@@ -61,7 +61,8 @@ def main():
                 r"ctnative::ctn_env_\w+ const ([A-Za-z_]\w*) = \[([^\]]*)\]\(([^\n]*)\) -> ([^\n]+) \{",
                 cpp)
             assert lambdas, cpp
-            assert "ctn_bind_" not in cpp and "ctn_lambda" not in cpp, cpp
+            assert "ctn_bind_" not in cpp, cpp
+            assert any(name == "ctn_lambda" for name, *_ in lambdas), cpp
             for name, captures, parameters, result in lambdas:
                 assert "&" not in captures and "mutable" not in parameters, captures
                 for capture in captures.split(", ") if captures else []:

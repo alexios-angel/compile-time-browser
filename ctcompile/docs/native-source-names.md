@@ -46,13 +46,17 @@ that name gets a suffix. Inline closure bodies reserve their capture and
 argument names before allocating local families. Each creation-site lambda has
 its own name pool and analysis state; emitting it leaves the enclosing function's
 names, const/constexpr facts and temporary numbering intact.
+Anonymous closure creations use `ctn_lambda`, or `ctn_lambda_N` when multiple
+closures or existing names require suffixes. Source binding names are allocated
+first; this fallback never propagates into captured values.
 
 Native lowering enables this policy with `ctnative.readable_names`. Unmarked
 modules retain upstream spelling. `native-pipeline.cmake` preserves source
 locations through its intermediate MLIR; manual pipelines must also retain them
 with `--mlir-print-debuginfo`. Removing locations or compiling without bytecode
-debug names leaves generic temporaries. Optimized-away aliases do not acquire
-new declarations just to display their original names.
+debug names leaves generic temporaries, except for marked closure creations.
+Optimized-away aliases do not acquire new declarations just to display their
+original names.
 
 Implementation lives in `lib/CTJS/Import/Bytecode/SourceNames.*` and
 `lib/Target/Cpp/Names/`. The importer regression checks scope reuse, aliases,

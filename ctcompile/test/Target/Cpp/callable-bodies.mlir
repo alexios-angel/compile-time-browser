@@ -14,6 +14,8 @@
 #second = loc(fused<{ctnative.source_name = "second"}>["callable-creation.js":4:1])
 #offset = loc(fused<{ctnative.source_name = "offset"}>["callable-creation.js":5:1])
 #after = loc(fused<{ctnative.source_name = "after"}>["callable-creation.js":6:1])
+#lambda = loc(fused<{ctnative.source_name = "ctn_lambda"}>["callable-creation.js":7:1])
+#lambda_version = loc(fused<{ctnative.source_name = "ctn_lambda_1"}>["callable-creation.js":7:2])
 module attributes {ctnative.readable_names, ctnative.const_bindings, ctnative.constexpr_bindings} {
   emitc.include "callable-body-fixture.h"
   emitc.declare_func @inline_target
@@ -39,6 +41,15 @@ module attributes {ctnative.readable_names, ctnative.const_bindings, ctnative.co
   emitc.func @unmarked_creation(%seed: i32) -> !emitc.opaque<"ctnative::ctn_env_inline"> {
     %closure = emitc.call_opaque "ctn_bind_inline"(%seed) {ctnative.const_operands = array<i32: 0>} : (i32) -> !emitc.opaque<"ctnative::ctn_env_inline">
     emitc.return %closure : !emitc.opaque<"ctnative::ctn_env_inline">
+  }
+  // Generated names must neither shadow source bindings nor each other.
+  emitc.func @anonymous_names(%seed: i32 loc(#lambda), %offset: i32 loc(#lambda_version)) -> i32 {
+    %first = emitc.call_opaque "ctn_bind_inline"(%seed) {ctnative.callable_create = @inline_target, ctnative.const_operands = array<i32: 0>} : (i32) -> !emitc.opaque<"ctnative::ctn_env_inline">
+    %second = emitc.call_opaque "ctn_bind_inline"(%offset) {ctnative.callable_create = @inline_target, ctnative.const_operands = array<i32: 0>} : (i32) -> !emitc.opaque<"ctnative::ctn_env_inline">
+    %a = emitc.call_opaque "std::invoke"(%first, %offset) {ctnative.const_operands = array<i32: 0, 1>} : (!emitc.opaque<"ctnative::ctn_env_inline">, i32) -> i32
+    %b = emitc.call_opaque "std::invoke"(%second, %seed) {ctnative.const_operands = array<i32: 0, 1>} : (!emitc.opaque<"ctnative::ctn_env_inline">, i32) -> i32
+    %sum = emitc.add %a, %b : (i32, i32) -> i32
+    emitc.return %sum : i32
   }
   emitc.func @mutable_target(%seed: i32) -> i32 attributes {
       ctnative.callable_body = {type = "ctnative::ctn_env_mutable", binder = "ctn_bind_mutable", name = "ctn_lambda", captures = ["capture_seed"], parameters = []}} {

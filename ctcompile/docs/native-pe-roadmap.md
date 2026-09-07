@@ -263,6 +263,11 @@ and table replacements resolve the replacement; two invocations retain distinct
 resources. The extended differential compiles both script entry and wrapper.
 Its six fixtures compare 104 observations against Node and the interpreter,
 including compiled runs under GC stress; the exact probes remain 0/7 native.
+With explicit `follow-provider-reads=true`, two normal-return summaries over
+the still-empty captured Map advance to `Data.remove` and the first `Data.set`.
+The three exact differentials add 62 matching observations and retain all method
+bodies, observer branches and runtime effects. Source writes or unknown effects
+stop traversal before an empty-Map assumption could reach mutated state.
 Unknown effects, reentry, mutable captures and unsupported providers remain
 boundaries. Initial Map/Array and realm identities do not establish purity,
 compile-time execution permission or a complete native ownership proof.
@@ -316,9 +321,17 @@ contracts and budget exhaustion retain the whole module.
 ## Next bounded work
 
 For Bootstrap, the [entry-prefix proof](native-host-prefix.md) now follows the
-factory's retained resource/cell captures and published method table to its first
-actual method call. Connect those normal-return retention facts to native
-ownership and call analysis for exported callables. Extend
+factory's retained resource/cell captures and published method table. Optional
+empty-Map read summaries advance exact Data discovery through `get` and `remove`
+to the first `set`, retaining all method bodies and observer branches. Native
+admission remains 0/7. The next native storage slice is designed in
+[owning method-table fields on confined objects](native-owned-method-table-slots.md):
+prove one fresh local object's fixed store-to-load edge, preserve the existing
+owning table carrier, and let ordinary capture/type admission establish the
+callables. Its proposed fixture currently admits 0/6; require 6/6 with standalone
+execution and lifetime checks. This does not close global/realm export uses.
+Then connect normal-return retention facts to native ownership and call analysis
+for exported callables. Extend
 [checked host slots](native-host-slots.md) with supported intrinsic/error effects,
 preserving current method/table replacements. Initial provider identity alone
 does not establish these effect and lifetime contracts. The broader
