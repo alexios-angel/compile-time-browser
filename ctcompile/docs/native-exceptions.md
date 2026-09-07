@@ -8,7 +8,10 @@ Protected and catch bodies can call closed nonthrowing primitive helpers,
 including transitive calls and owning string arguments/results. Recovery is transactional;
 type/effect admission must prove every other protected operation cannot throw a
 JavaScript value. Throwing callees, nested handlers and finally completions
-remain further work. This is separate from
+remain further source work. The target verifier now follows explicit throws
+through defined EmitC direct callees and checks their escaping payload against
+the active handler. This target prerequisite grants no source effect proof.
+This is separate from
 [private provider mutation summaries](native-provider-mutations.md).
 
 `console.error(...)` is an ordinary call, not a JavaScript `throw`. Its callback
@@ -288,6 +291,55 @@ Exception edges invalidate normal-return-only provider facts. A successfully
 summarized Map mutation describes the path after normal return; it says nothing
 about a catch continuation after allocation, mutation or callback failure.
 Keep that distinction even after C++ exceptions are available.
+
+## Direct-callee target prerequisite, 2026-09-07
+
+The typed target verifier previously checked only throws lexically inside a
+`cpp_try`. An `emitc.call` could reach a helper that threw a different primitive,
+silently bypassing the typed C++ catch. The verifier now resolves the actual
+EmitC symbol and follows each escaping explicit throw through the direct-call
+component. Helper-local handlers consume their own protected throws; a throw
+from a helper's catch belongs to the next enclosing handler or its caller.
+The nearest protected region determines which handler must match the payload.
+
+Each verification has a fresh bounded query: at most 4096 operation visits and
+32 active helper bodies. Completed bodies may be reused within that query.
+Missing or declaration-only targets, recursion, a mismatched escaping payload,
+and exhausted depth/work limits refuse. No type marker supplies the proof, and
+no result survives a verifier invocation or a change to another handler's type.
+Opaque C++ calls retain their existing separate foreign-boundary contract;
+this structural check is not a transitive source effect proof and does not
+authorize arbitrary JavaScript callbacks, runtime adapters or reentry.
+
+[The target regression](../test/Target/Cpp/native-call-exceptions.mlir) uses
+real direct and transitive numeric, boolean and owning string helpers. Explicit
+mutable catch slots receive the pre-call state; the emitted call result is
+assigned only after normal return. Its numeric observation is caught 42 from
+state 10 plus payload 32, versus normal 20, and a publication counter stays zero
+on the throwing path. An executed wrong-state variant restores try-entry state
+and must fail that same observation. String state and payloads include 32 KiB
+allocations, embedded NUL and surrogate bytes, survive later invocations and
+heap churn, and release a helper's RAII owner exactly once on both paths.
+Locally handled boolean throws, an owning string rethrow from that catch,
+negative zero and foreign `std::bad_alloc` propagation are separate controls.
+
+Explicit, deduced and hoisted target output passes GCC/Clang execution; the
+explicit and deduced forms also pass ASan/UBSan and leak checks. Five positive
+and thirteen refusal verifier controls cover live mutation, separate handlers,
+the 32/33-depth boundary, work exhaustion and unresolved/recursive callees.
+The executed wrong-state control fails the intended numeric observation.
+
+The source boundary is unchanged: the resolved throwing `fail()` call still
+refuses with `native try/catch needs an explicit throw in its active handler`.
+The next implementation must represent the call's exceptional edge and its
+pre-call register vector in CTJS region/type flow, propagate a homogeneous
+owning payload through the closed native component, and lower standalone
+primitive throws within that component. Recovery and ordinary operation
+admission must retain those edges until their matching type/effect proof is
+complete. The current `try_exit` only represents final completion; relaxing
+`throws == 0` or treating this target check as source permission is insufficient.
+Uncaught entry adapters, general finally/nested source handlers, mixed/object
+payloads and provider callbacks remain independent work.
 
 ## Checked protected helper boundary, 2026-09-07
 
