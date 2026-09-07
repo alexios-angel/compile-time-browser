@@ -1452,6 +1452,66 @@ private:
     std::vector<value> animation_callbacks_;
     std::vector<std::string> console_;
     std::uint32_t next_timer_id_ = 0;
+
+    // --- shadow DOM workstream ---
+    //
+    // A SHADOW ROOT IS A DocumentFragment AND TWO FACTS, and that is why this is
+    // a bindings change rather than a DOM one. `node_kind` already has a
+    // document_fragment - a parentless bag of nodes - which is exactly the shape
+    // DOM 4.8 gives a shadow root; what a fragment does not carry is its HOST
+    // and its MODE, and neither belongs on `node`, which is the most replicated
+    // object in the engine and pays for every field in every document.
+    //
+    // So they live here, in the two maps every other per-node fact in this class
+    // lives in - `wrappers_`, `namespaces_`, `mirrors_` - keyed on pack(node_id)
+    // the same way.
+    //
+    // WHAT A SHADOW TREE DELIBERATELY DOES NOT DO: it does not RENDER. The
+    // fragment is detached, so style, layout and paint never see it, and a
+    // `<div>` inside a shadow root has no box, no computed style and no pixels.
+    // That is a real gap and it is named here rather than left to be discovered:
+    // flattening the shadow tree into the box tree is the slot-assignment
+    // (flat-tree) problem, and every test this was built for asserts about the
+    // TREE, about events, or about getComputedStyle on a LIGHT-DOM element.
+    struct shadow_tree {
+        node_id host;
+        // `mode: "open"` - the only thing that decides whether `host.shadowRoot`
+        // answers with the root or with null. A closed root is not hidden from
+        // anything else here: `getRootNode()` on a node inside one still returns
+        // it, which is what the specification says and what a page relies on.
+        bool open = true;
+    };
+    // pack(host) -> the shadow root, and pack(root) -> the host and its mode.
+    // Two maps rather than one because both directions are asked for on the hot
+    // path: `element.shadowRoot` walks one way and `getRootNode({composed:true})`
+    // the other.
+    flat_map<std::uint64_t, node_id> shadow_roots_;
+    flat_map<std::uint64_t, shadow_tree> shadow_hosts_;
+
+    [[nodiscard]] node_id shadow_root_of(node_id host) const;
+    [[nodiscard]] const shadow_tree * shadow_tree_of(node_id root) const;
+    // `element.attachShadow(init)`, DOM 4.8. Answers the ShadowRoot, or
+    // undefined HAVING ALREADY THROWN - a TypeError for a missing or unknown
+    // `mode`, a NotSupportedError for a second attach or for an element that
+    // cannot host one.
+    [[nodiscard]] value attach_shadow(context & cx, node_id host, std::span<value> args);
+    // The members a ShadowRoot has that an ordinary DocumentFragment does not.
+    // Installed from wrap(), AFTER install_element_methods, so the two it
+    // replaces - querySelector and querySelectorAll, which have to search a
+    // DETACHED subtree - overwrite the general ones rather than race them.
+    void install_shadow_root_members(context & cx, script::object_object & obj, node_id root);
+    // "Shadow-including root", DOM 4.4: the top of the tree `from` is in, and
+    // with `composed` the walk continues through each shadow host rather than
+    // stopping at the ShadowRoot.
+    [[nodiscard]] node_id root_of_tree(const read_txn & txn, node_id from, bool composed) const;
+    // `querySelectorAll` INSIDE A DETACHED SUBTREE, which `query()` cannot
+    // answer: `style::engine::select` walks from `txn.root()` and a shadow root
+    // is not reachable from there, and `element_matches` anchors its cursor at
+    // depth 0 on the document node - so for a detached chain it measures the
+    // wrong element. See the definition in bindings/element.cpp for what this
+    // costs and for the one-line change to `style::engine` that would retire it.
+    [[nodiscard]] std::vector<node_id> select_in_subtree(std::string_view selector, node_id root,
+                                                         bool first_only, bool * invalid = nullptr);
 };
 
 } // namespace ctbrowser::shell
