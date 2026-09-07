@@ -337,13 +337,28 @@ void test_a_math_function_is_simplified_wherever_it_sits() {
     // which is what §10.12's simplification does with a lone child.
     ok("margin-top", "calc(calc(0px + clamp(1px, 1em, 1vh)))", "calc(0px + clamp(1px, 1em, 1vh))");
     ok("width", "calc(calc(calc(10px)))", "calc(10px)");
-    // ...AND A calc() AROUND ANY OTHER MATH FUNCTION IS NOT. That generalisation
-    // was read out of `clamp-length-serialize`, which only ever writes a calc in
-    // a calc; `calc-complex-unresolved-serialize` writes the other case six
-    // times and wants the outer function back on every one of them.
+    // ...AND SO IS A calc() AROUND A LONE COMPARISON. `min()`, `max()` and
+    // `clamp()` are NODES of the calculation tree (§10.9), so simplifying
+    // `calc(clamp(a, b, c))` leaves a tree whose root IS the Clamp node - and
+    // §10.13 serialises a Clamp root as `clamp(...)`, with no calc() anywhere.
+    // `clamp-length-serialize` runs every one of its values twice, bare and
+    // wrapped in one more calc(), and asserts the two serialise the same.
+    ok("margin-top", "calc(clamp(1px, 1em, 1vh))", "clamp(1px, 1em, 1vh)");
+    ok("margin-top", "calc(clamp(-18px, 3vw, -3vw))", "clamp(-18px, 3vw, -3vw)");
+    ok("margin-top", "calc(min(10px, 5%))", "min(10px, 5%)");
+    ok("margin-top", "calc(clamp(30px, 100px, 20px))", "calc(30px)");
+    // ...AND A calc() AROUND ANY OTHER MATH FUNCTION IS NOT, which is where the
+    // rule stops. `pow()` is not a node type - it is a leaf this file could not
+    // evaluate - and a leaf inside a calc() keeps its calc():
+    // `calc-complex-unresolved-serialize` wants the outer function back on all
+    // six of its values, and the two files disagree only if the distinction is
+    // "any math function".
     ok("orphans", "calc(pow(2, sign(1em - 18px)))", "calc(pow(2, sign(1em - 18px)))");
     ok("orphans", "calc(pow(2, sibling-index())", "calc(pow(2, sibling-index()))");
-    ok("margin-top", "calc(clamp(1px, 1em, 1vh))", "calc(clamp(1px, 1em, 1vh))");
+    // A comparison that is not ALONE inside the calc keeps it too: the root is
+    // then a sum, not a Clamp.
+    ok("margin-top", "calc(0px + clamp(1px, 1em, 1vh))", "calc(0px + clamp(1px, 1em, 1vh))");
+    ok("width", "calc(min(1em, 21px) * 2", "calc(min(1em, 21px) * 2)");
 
     // ...AND EVERYTHING ELSE KEEPS THE AUTHOR'S BYTES. A function with no answer
     // until layout, one whose units have no basis yet, and one this file cannot

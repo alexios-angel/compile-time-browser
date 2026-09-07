@@ -1621,9 +1621,26 @@ std::string simplify_math(std::string_view value) {
         // returns a lone child rather than wrapping it, so
         // `calc(calc(0px + clamp(...)))` loses exactly one layer.
         // `clamp-length-serialize` asserts that four times.
-        if (ascii_iequals(name, "calc(") && is_lone_calc(trim(body, html_whitespace))) {
-            out.append(simplify_math(trim(body, html_whitespace)));
-            continue;
+        //
+        // ...AND SO IS A calc() AROUND A LONE COMPARISON, for a sharper reason.
+        // `min()`, `max()` and `clamp()` are NODES OF THE CALCULATION TREE (CSS
+        // Values 4 §10.9), not opaque leaves: simplifying `calc(clamp(1px, 1em,
+        // 1vh))` leaves a tree whose root IS the Clamp node, and §10.13
+        // serialises a Clamp root as `clamp(...)` with no calc() anywhere.
+        //
+        // That is exactly why the rule stops at the three of them. `pow()` is
+        // not a node type - it is a leaf this file could not evaluate - and a
+        // leaf inside a calc() keeps its calc(), which is what
+        // `calc-complex-unresolved-serialize` asks for on all six of its values.
+        // The two files disagree only if the distinction is "any math function".
+        if (ascii_iequals(name, "calc(")) {
+            const std::string_view trimmed = trim(body, html_whitespace);
+            const std::string_view lone = lone_math_function(trimmed);
+            if (is_lone_calc(trimmed) || ascii_iequals(lone, "min(") ||
+                ascii_iequals(lone, "max(") || ascii_iequals(lone, "clamp(")) {
+                out.append(simplify_math(trimmed));
+                continue;
+            }
         }
         const math_answer answer = evaluate_math(body, ctx);
         if (answer.outcome == math_outcome::resolved && context_free(whole)) {
