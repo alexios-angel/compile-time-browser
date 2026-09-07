@@ -216,24 +216,14 @@ void dom_bindings::refresh_element(context & cx, script::object_object & obj, no
                                                     : static_cast<double>(box.width)));
     obj.set("clientHeight",
             value::number(is_root ? viewport_height_ : static_cast<double>(box.height)));
-    // `element.attributes` - a live-ish NamedNodeMap, as an array of {name,
-    // value} with the aliases a page reads. p5's XML module walks it for
-    // getAttributeCount, listAttributes and setName, so an absent one made every
-    // attribute of a parsed document invisible.
-    {
-        const value list = cx.make_array();
-        auto * items = static_cast<script::array_object *>(list.as_heap());
-        for (const attribute & held : txn.attributes(id)) {
-            auto * pair = static_cast<script::object_object *>(cx.make_object().as_heap());
-            const std::string text{atoms_->text(held.name)};
-            pair->set("name", cx.string(text));
-            pair->set("nodeName", cx.string(text)); // the older spelling p5 uses
-            pair->set("value", cx.string(held.value));
-            pair->set("nodeValue", cx.string(held.value));
-            items->items.push_back(value::object(pair));
-        }
-        obj.set("attributes", list);
-    }
+    // `element.attributes` IS NOT SET HERE ANY MORE. It used to be a fresh
+    // array of {name, value} pairs rebuilt on every sync, which is two wrong
+    // answers at once: it was a SNAPSHOT, so `el.setAttribute(...)` followed by
+    // `el.attributes[0].value` in the same statement read the old text, and its
+    // members were plain objects rather than Attr nodes - no localName, no
+    // prefix, no namespaceURI, no ownerElement, and nothing to write through.
+    // It is a live accessor over a real NamedNodeMap now; see
+    // install_element_views.
     obj.set("clientLeft", value::number(0));
     obj.set("clientTop", value::number(0));
     obj.set("scrollWidth", value::number(static_cast<double>(box.width)));
@@ -393,32 +383,74 @@ std::vector<std::string> class_tokens(std::string_view text) {
     return out;
 }
 
-// THE XML `Name` PRODUCTION, as much of it as ASCII can decide.
+// WHAT AN ATTRIBUTE MAY BE CALLED - and it is NOT the XML `Name` production,
+// which is what this used to approximate.
 //
-// `setAttribute` must throw an InvalidCharacterError for a name that is not one
-// (DOM 4.9.1), and it threw nothing at all: `el.setAttribute("", "x")` and
-// `el.setAttribute("a b", "x")` both interned a name no markup could ever
-// produce and no serialisation could round-trip.
+// `setAttribute` must throw an InvalidCharacterError for a name that is not a
+// valid one (DOM 4.9.1). This refused everything `Name` refuses, and
+// `dom/nodes/productions.js` is blunt about how wrong that is:
 //
-// ASCII-ONLY ON PURPOSE, and permissive above 0x7F rather than strict. The Name
-// production's start and continuation sets are a dozen Unicode ranges; deciding
-// them here would need a table `core/algorithms.hpp` deliberately does not carry
-// (it is ASCII-only so a render cannot depend on `LC_ALL`), and REFUSING every
-// non-ASCII name would break a perfectly valid accented one. Accepting them is
-// the error that costs a page nothing.
+//     var invalid_names = [""]
+//     var valid_names = ["x", "X", ":", "a:0", "invalid^Name", "\\", "'",
+//                        '"', "0", "0:a", ":a", "x:y:x", "~"]
+//
+// Thirteen names, twelve of which `Name` refuses and every one of which
+// `attributes.html` and `Document-createAttribute.html` require to SUCCEED.
+// Only the empty string throws. The rule the platform enforces is a
+// SERIALISATION one: a name has to survive being written into a start tag and
+// read back, and the HTML tokenizer's attribute name state ends a name on
+// whitespace, `/`, `=` and `>` and on nothing else. There is no
+// first-character rule at all - `"0"` and `":a"` are legal attribute names and
+// illegal ELEMENT names, which is exactly the pair productions.js draws.
+//
+// THE SECOND COPY OF THIS RULE is `is_valid_attribute_name` in
+// bindings/document.cpp, which createAttribute and createAttributeNS answer
+// to. That file's comment records that the two disagreed and that reconciling
+// them was this one's to do; they agree now. Two translation units' worth of a
+// four-line rule rather than one shared helper because `core/algorithms.hpp`
+// is for what three callers share and this has two, both of them bindings.
+//
+// BYTE-WISE ON PURPOSE, and exact rather than approximate: every character the
+// rule names is ASCII, and no byte of a multi-byte UTF-8 sequence is. So no
+// decoder, and no dependence on how the VM happens to store a string.
+constexpr std::string_view attribute_name_breaks = "\t\n\f\r /=>";
+
 [[nodiscard]] bool valid_attribute_name(std::string_view name) {
-    if (name.empty()) { return false; }
-    const auto ascii_start = [](char c) {
-        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == ':';
-    };
-    const auto ascii_rest = [&](char c) {
-        return ascii_start(c) || (c >= '0' && c <= '9') || c == '-' || c == '.';
-    };
-    for (std::size_t i = 0; i < name.size(); ++i) {
-        if (static_cast<unsigned char>(name[i]) >= 0x80) { continue; }
-        if (!(i == 0 ? ascii_start(name[i]) : ascii_rest(name[i]))) { return false; }
-    }
-    return true;
+    // U+0000 is the one character the tokenizer cannot carry - it becomes
+    // U+FFFD, so a name holding one does not read back as itself.
+    return !name.empty() && name.find_first_of(attribute_name_breaks) == std::string_view::npos &&
+           name.find('\0') == std::string_view::npos;
+}
+
+// The prefix and the local part of a qualified name, split at the FIRST colon.
+// `a:b:c` is prefix `a` and local `b:c`, which is the DOM's split and not the
+// XML QName production's - the two disagree and the DOM is what a page is
+// measured against. Deliberately the same answers as `split_qualified` in
+// bindings/document.cpp, and the same reason as above for there being two.
+struct split_name {
+    std::string_view prefix; // empty when there is no colon
+    std::string_view local;
+    bool has_colon = false;
+};
+
+[[nodiscard]] split_name split_attribute_name(std::string_view name) {
+    const std::size_t colon = name.find(':');
+    if (colon == std::string_view::npos) { return split_name{{}, name, false}; }
+    return split_name{name.substr(0, colon), name.substr(colon + 1), true};
+}
+
+// The two namespaces "validate and extract" names by URI. Spelled out rather
+// than derived, because one wrong character makes a NamespaceError fire on the
+// valid case and not on the invalid one, and nothing about the failure says so.
+constexpr std::string_view xml_namespace = "http://www.w3.org/XML/1998/namespace";
+constexpr std::string_view xmlns_namespace = "http://www.w3.org/2000/xmlns/";
+
+// A NULLABLE DOMString argument. `null` and `undefined` are both the null
+// namespace, and so is the empty string - `attributes.html`'s "null and the
+// empty string should result in a null namespace" is that sentence as a test.
+[[nodiscard]] std::string namespace_argument(context & cx, std::span<value> args, std::size_t i) {
+    const value given = arg(args, i);
+    return given.is_nullish() ? std::string{} : cx.to_string(given);
 }
 
 } // namespace
@@ -484,11 +516,295 @@ bool dom_bindings::pre_insert_valid(context & cx, node_id parent, node_id child,
     return true;
 }
 
+// --- ATTRIBUTES AS NODES: Attr, and the NamedNodeMap over them --------------
+
+// A QUALIFIED NAME, AS THIS ELEMENT WOULD HAVE STORED IT. "If the element is in
+// the HTML namespace and its node document is an HTML document, set
+// qualifiedName to qualifiedName in ASCII lowercase" - DOM 4.9, and it is the
+// whole difference between `getAttribute` and `getAttributeNS`, which is
+// case-SENSITIVE and has no such rule.
+//
+// IT USED TO BE UNCONDITIONAL, and that was wrong in a way an SVG page could
+// see: `svg.setAttribute("viewBox", ...)` interned `viewbox`, which is a name
+// the rasteriser and the style engine never look for - so the whole of
+// `<svg>`'s capitalised attribute surface was unreachable from script, in the
+// one namespace the tokenizer goes out of its way to preserve the case of.
+// `attributes.html`'s "Only lowercase attributes are returned on HTML
+// elements" is the other half of the same rule.
+atom dom_bindings::attribute_key(const read_txn & txn, node_id id,
+                                 std::string_view qualified) const {
+    return txn.element_ns(id) == node_ns::html ? atoms_->intern_lower(qualified)
+                                               : atoms_->intern(qualified);
+}
+
+// ONE Attr, AND IT IS LIVE IN BOTH DIRECTIONS. `attr.value` reads the element's
+// attribute at the moment it is asked and `attr.value = "x"` writes through to
+// it - which is `attributes.html`'s "Attribute values should not be parsed",
+// two lines of which write an Attr and then read `el.getAttribute`. Three data
+// properties would have been three strings captured when the object was made.
+//
+// IT IS KEYED ON (namespace, local name), never on a position: DOM 4.9 says
+// that pair is what an attribute IS, and it survives every mutation short of
+// removing this attribute. An index does not - a `removeAttribute` moves every
+// attribute after it down one.
+//
+// `value`, `nodeValue` and `textContent` are ONE string behind three
+// spellings, because on an Attr that is what they are. They are exactly what
+// `dom/nodes/attributes.js`'s `attr_is` reads, and it reads all nine of these
+// properties on every case of three files.
+value dom_bindings::attribute_object(context & cx, node_id owner, const attribute & held) {
+    const std::string qualified{atoms_->text(held.name)};
+    const std::string ns{atoms_->text(held.ns)};
+    const std::string local{attribute_local_name(*atoms_, held)};
+    const std::string prefix{attribute_prefix(*atoms_, held)};
+    const atom name = held.name;
+    const atom uri = held.ns;
+
+    auto * attr = static_cast<script::object_object *>(cx.make_object().as_heap());
+    for (const char * spelling : {"value", "nodeValue", "textContent"}) {
+        const std::string property{spelling};
+        attr->define_accessor(
+            property,
+            value::object(cx.allocate<script::native_object>(
+                property,
+                [this, owner, ns, local](context & c, std::span<value>) {
+                    const auto txn = doc_->read();
+                    const attribute * found = txn.find_attribute_ns(owner, ns, local);
+                    return c.string(found == nullptr ? std::string{} : found->value);
+                })),
+            value::object(cx.allocate<script::native_object>(
+                property, [this, owner, name, uri](context & c, std::span<value> a) {
+                    (void)doc_->set_attribute_ns(owner, uri, name, arg_string(c, a, 0));
+                    mutated();
+                    return value::undefined();
+                })));
+    }
+    attr->set("name", cx.string(qualified));
+    attr->set("nodeName", cx.string(qualified));
+    attr->set("localName", cx.string(local));
+    attr->set("prefix", prefix.empty() ? value::null() : cx.string(prefix));
+    attr->set("namespaceURI", ns.empty() ? value::null() : cx.string(ns));
+    attr->set("nodeType", value::number(2));
+    // TRUE for every Attr since DOM4 deleted the other answer, and `attr_is`
+    // asserts it on every case it runs.
+    attr->set("specified", value::boolean(true));
+    // THE WRAPPER THAT ALREADY EXISTS, which is how `attributes_are`'s
+    // `assert_equals(el.attributes[i].ownerElement, el)` can be an identity
+    // comparison at all. `wrap` is the fallback rather than the path: it
+    // REFRESHES the whole element, and going through it once per attribute
+    // would re-measure the box for an answer already in hand.
+    const value already = value_of_wrapper(owner);
+    attr->set("ownerElement", already.is_object() ? already : wrap(cx, owner));
+    if (const value proto = interface_prototype("Attr"); proto.is_object()) {
+        attr->prototype = proto;
+    }
+    return value::object(attr);
+}
+
+// `element.attributes`, REFILLED IN PLACE rather than rebuilt. The map keeps
+// its identity - a page may hold on to one, and `el.attributes ===
+// el.attributes` is true in a browser - so this rewrites its indexed
+// properties and its `length`.
+//
+// AN ARRAY-LIKE OBJECT RATHER THAN A PROXY, and that is a measured choice
+// rather than a shortcut. `for (const a of el.attributes)` is how p5's XML
+// module walks one and `[].concat(...el.attributes)` is Bootstrap's spelling;
+// both go through `context::iterable_values`, which materialises any object
+// carrying a numeric `length` and indexed properties and yields NOTHING AT ALL
+// for a proxy (vm/call.cpp, and bytecode_opcodes.def's note on `iterable`). A
+// proxy would have been live and uniterable, which is the worse half of each.
+void dom_bindings::refresh_attribute_map(context & cx, script::object_object & map, node_id id) {
+    // COPIED OUT BEFORE ANYTHING ELSE RUNS. `attribute_object` calls `wrap`,
+    // which opens a read_txn of its own, and a read nested inside another read
+    // is a shape nothing else in these bindings has.
+    std::vector<attribute> held;
+    {
+        const auto txn = doc_->read();
+        const std::span<const attribute> current = txn.attributes(id);
+        held.assign(current.begin(), current.end());
+    }
+    for (std::size_t i = 0; i < held.size(); ++i) {
+        map.set(std::to_string(i), attribute_object(cx, id, held[i]));
+    }
+    // THE INDICES THAT WENT AWAY. A removed attribute leaves its old index
+    // behind, and an index past `length` that still answers is how
+    // `assert_array_equals` reports a length it was never given.
+    for (std::size_t i = held.size(); map.find(std::to_string(i)) != nullptr; ++i) {
+        (void)map.erase(std::to_string(i));
+    }
+    map.set("length", value::number(static_cast<double>(held.size())));
+    if (!map.prototype.is_object()) {
+        // LATE, because the interfaces are built lazily: the first two element
+        // wrappers exist before `EventTarget` does. See ensure_dom_interfaces.
+        if (const value proto = interface_prototype("NamedNodeMap"); proto.is_object()) {
+            map.prototype = proto;
+        }
+    }
+}
+
+// "VALIDATE AND EXTRACT", DOM 4.9, shared by `setAttributeNS` and the two
+// `setNamedItemNS` spellings. Answers false HAVING ALREADY THROWN, which is the
+// shape `pre_insert_valid` above uses and for the same reason.
+//
+// THE ORDER OF THE TWO HALVES IS PART OF THE ANSWER. The SHAPE of the name is
+// decided before the namespace is looked at, so `setAttributeNS(XMLNS, "", v)`
+// is an InvalidCharacterError and not the NamespaceError its namespace would
+// otherwise earn. Both orderings throw; only one throws what the suite asserts.
+//
+// A prefix is checked for being non-empty and writable and NOTHING ELSE - it is
+// the LOCAL name that has to be a name, and the prefix is only ever a label in
+// front of it. Deliberately the same rule, in the same order, as
+// createAttributeNS in bindings/document.cpp.
+bool dom_bindings::validate_and_extract(context & cx, std::string_view where,
+                                        const std::string & ns, const std::string & qualified) {
+    const split_name split = split_attribute_name(qualified);
+    const bool prefix_writable =
+        !split.prefix.empty() &&
+        split.prefix.find_first_of(attribute_name_breaks) == std::string_view::npos;
+    if ((split.has_colon && !prefix_writable) || !valid_attribute_name(split.local)) {
+        throw_dom_exception(cx, "InvalidCharacterError",
+                            std::string{where} + ": '" + qualified +
+                                "' is not a qualified attribute name");
+        return false;
+    }
+    const auto fail = [&](const std::string & why) {
+        throw_dom_exception(cx, "NamespaceError", std::string{where} + ": " + why);
+        return false;
+    };
+    if (split.has_colon && ns.empty()) { return fail("a prefix needs a namespace"); }
+    if (split.prefix == "xml" && ns != xml_namespace) {
+        return fail("the xml prefix belongs to the XML namespace");
+    }
+    if ((qualified == "xmlns" || split.prefix == "xmlns") && ns != xmlns_namespace) {
+        return fail("xmlns belongs to the XMLNS namespace");
+    }
+    if (ns == xmlns_namespace && qualified != "xmlns" && split.prefix != "xmlns") {
+        return fail("the XMLNS namespace is only for xmlns");
+    }
+    return true;
+}
+
 void dom_bindings::install_element_views(context & cx, script::object_object & obj, node_id id) {
     // `<style>.sheet` and `<link>.sheet` - the LinkStyle mixin. Here rather than
     // in bindings/stylesheets.cpp for the same reason `style` is here: it is a
     // view onto ONE element and it has to be installed as its wrapper is made.
     install_sheet_property(cx, obj, id);
+
+    // --- element.attributes
+    //
+    // THE MAP IS BUILT ONCE and refilled by the accessor, so it keeps its
+    // identity across reads while its contents are read out of the document
+    // every time. See refresh_attribute_map for why it is an array-like object
+    // and not a proxy.
+    auto * map = static_cast<script::object_object *>(cx.make_object().as_heap());
+    const auto map_method = [&](std::string name, script::native_fn fn) {
+        map->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+    };
+    // ONE ATTRIBUTE, BY WHICHEVER OF THE TWO QUESTIONS WAS ASKED, copied out of
+    // the read before anything that could open another one runs.
+    const auto found_by_name = [this, id](std::string_view qualified) {
+        const auto txn = doc_->read();
+        const attribute * held = txn.find_attribute(id, attribute_key(txn, id, qualified));
+        return held == nullptr ? std::optional<attribute>{} : std::optional<attribute>{*held};
+    };
+    const auto found_by_pair = [this, id](std::string_view ns, std::string_view local) {
+        const auto txn = doc_->read();
+        const attribute * held = txn.find_attribute_ns(id, ns, local);
+        return held == nullptr ? std::optional<attribute>{} : std::optional<attribute>{*held};
+    };
+    map_method("item", [this, id](context & c, std::span<value> a) {
+        std::vector<attribute> held;
+        {
+            const auto txn = doc_->read();
+            const std::span<const attribute> current = txn.attributes(id);
+            held.assign(current.begin(), current.end());
+        }
+        const double at = arg_number(a, 0);
+        if (!(at >= 0) || at >= static_cast<double>(held.size())) { return value::null(); }
+        return attribute_object(c, id, held[static_cast<std::size_t>(at)]);
+    });
+    map_method("getNamedItem", [this, id, found_by_name](context & c, std::span<value> a) {
+        const std::optional<attribute> held = found_by_name(arg_string(c, a, 0));
+        return held ? attribute_object(c, id, *held) : value::null();
+    });
+    map_method("getNamedItemNS", [this, id, found_by_pair](context & c, std::span<value> a) {
+        const std::optional<attribute> held =
+            found_by_pair(namespace_argument(c, a, 0), arg_string(c, a, 1));
+        return held ? attribute_object(c, id, *held) : value::null();
+    });
+    // `setNamedItem` and `setNamedItemNS` ARE THE SAME OPERATION - DOM 4.9.2
+    // defines both as "set an attribute", which is keyed on the (namespace,
+    // local name) pair whichever spelling was used. What an Attr carries is
+    // read off the OBJECT rather than off a C++ type, so an Attr from
+    // `document.createAttribute` - which bindings/document.cpp makes and which
+    // is not one of these - works here too.
+    const auto set_named = [this, id, found_by_pair](context & c, std::span<value> a) {
+        const value given = arg(a, 0);
+        if (!given.is_object()) {
+            c.throw_error("TypeError", "setNamedItem: the argument is not an Attr");
+            return value::null();
+        }
+        const value ns_property = c.lookup_property(given, "namespaceURI");
+        const std::string ns = ns_property.is_nullish() ? std::string{} : c.to_string(ns_property);
+        const std::string qualified = c.to_string(c.lookup_property(given, "name"));
+        const value text = c.lookup_property(given, "value");
+        const split_name split = split_attribute_name(qualified);
+        const std::string_view local = ns.empty() ? std::string_view{qualified} : split.local;
+        // THE ONE IT REPLACES IS THE RETURN VALUE, and it has to be read before
+        // the write: "return oldAttr" is how a page takes an attribute off one
+        // element and puts it on another.
+        const std::optional<attribute> replaced = found_by_pair(ns, local);
+        (void)doc_->set_attribute_ns(id, atoms_->intern(ns), atoms_->intern(qualified),
+                                     text.is_undefined() ? std::string{} : c.to_string(text));
+        mutated();
+        return replaced ? attribute_object(c, id, *replaced) : value::null();
+    };
+    map_method("setNamedItem", set_named);
+    map_method("setNamedItemNS", set_named);
+    // ...and removing one THROWS when there is nothing to remove, which is the
+    // half that is easy to miss: "if attr is null, throw a NotFoundError".
+    map_method("removeNamedItem", [this, id, found_by_name](context & c, std::span<value> a) {
+        const std::string qualified = arg_string(c, a, 0);
+        const std::optional<attribute> held = found_by_name(qualified);
+        if (!held) {
+            throw_dom_exception(c, "NotFoundError",
+                                "removeNamedItem: no attribute called '" + qualified + "'");
+            return value::null();
+        }
+        const value answer = attribute_object(c, id, *held);
+        (void)doc_->remove_attribute(id, held->name);
+        mutated();
+        return answer;
+    });
+    map_method("removeNamedItemNS", [this, id, found_by_pair](context & c, std::span<value> a) {
+        const std::string ns = namespace_argument(c, a, 0);
+        const std::string local = arg_string(c, a, 1);
+        const std::optional<attribute> held = found_by_pair(ns, local);
+        if (!held) {
+            throw_dom_exception(c, "NotFoundError",
+                                "removeNamedItemNS: no attribute called '" + local + "'");
+            return value::null();
+        }
+        const value answer = attribute_object(c, id, *held);
+        (void)doc_->remove_attribute_ns(id, ns, local);
+        mutated();
+        return answer;
+    });
+    {
+        // THE MAP IS ROOTED THROUGH THE GETTER. A C++ lambda's captures are
+        // invisible to a precise collector, so the raw pointer this closes over
+        // would not keep the object alive - `retained` is the channel that
+        // does, and the getter itself is reachable from the wrapper's accessor
+        // table. See native_object::retained.
+        const value map_value = value::object(map);
+        auto * getter = cx.allocate<script::native_object>(
+            "attributes", [this, map, id](context & c, std::span<value>) {
+                refresh_attribute_map(c, *map, id);
+                return value::object(map);
+            });
+        getter->retained.push_back(map_value);
+        obj.define_accessor("attributes", value::object(getter), value::undefined());
+    }
 
     // --- element.style
     //
@@ -1157,9 +1473,143 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
             return value::undefined();
         }
         if (!id) { return value::undefined(); }
-        (void)doc_->set_attribute(id, atoms_->intern_lower(name), arg_string(c, args, 1));
+        const std::string text = arg_string(c, args, 1);
+        const auto txn = doc_->read();
+        // THE FIRST ATTRIBUTE WITH THIS QUALIFIED NAME, whatever its namespace,
+        // and only its VALUE changes - the DOM layer's set_attribute is what
+        // means "Setting the same attribute with another prefix should not
+        // change the prefix", which is a subtest by name.
+        (void)doc_->set_attribute(id, attribute_key(txn, id, name), text);
         mutated();
         return value::undefined();
+    });
+    // THE NAMESPACED HALF OF THE ATTRIBUTE API. Every one of these matches on
+    // the PAIR (namespace, local name), in which the prefix takes no part, and
+    // none of them folds case: an element may hold `x` in no namespace and `x`
+    // in two others at once, and each of the three lookups has a different
+    // right answer. `Element-removeAttribute.html`'s two subtests are that
+    // sentence, in both orders.
+    method("setAttributeNS", [this](context & c, std::span<value> args) {
+        const std::string ns = namespace_argument(c, args, 0);
+        // A DOMString rather than a nullable one, so `null` here really is the
+        // four characters "null" and an omitted argument is "undefined".
+        const std::string qualified =
+            args.size() > 1 ? c.to_string(args[1]) : std::string{"undefined"};
+        if (!validate_and_extract(c, "setAttributeNS", ns, qualified)) {
+            return value::undefined();
+        }
+        const node_id id = receiver(c);
+        if (!id) { return value::undefined(); }
+        // INTERNED AS WRITTEN. The qualified name IS the attribute's name and
+        // folding it would lose the case `setAttributeNS("", "ALIGN", ...)`
+        // deliberately keeps - see the note on attribute_key.
+        (void)doc_->set_attribute_ns(id, atoms_->intern(ns), atoms_->intern(qualified),
+                                     arg_string(c, args, 2));
+        mutated();
+        return value::undefined();
+    });
+    method("getAttributeNS", [this](context & c, std::span<value> args) {
+        const node_id id = receiver(c);
+        if (!id) { return value::null(); }
+        const std::string ns = namespace_argument(c, args, 0);
+        const auto txn = doc_->read();
+        const attribute * held = txn.find_attribute_ns(id, ns, arg_string(c, args, 1));
+        return held == nullptr ? value::null() : c.string(held->value);
+    });
+    method("hasAttributeNS", [this](context & c, std::span<value> args) {
+        const node_id id = receiver(c);
+        if (!id) { return value::boolean(false); }
+        const std::string ns = namespace_argument(c, args, 0);
+        return value::boolean(doc_->read().has_attribute_ns(id, ns, arg_string(c, args, 1)));
+    });
+    method("removeAttributeNS", [this](context & c, std::span<value> args) {
+        const node_id id = receiver(c);
+        if (!id) { return value::undefined(); }
+        const std::string ns = namespace_argument(c, args, 0);
+        // A LOCAL NAME, not a qualified one: `removeAttributeNS(XML, "a:bb")`
+        // removes NOTHING, which is the whole of Element-removeAttributeNS.html.
+        (void)doc_->remove_attribute_ns(id, ns, arg_string(c, args, 1));
+        mutated();
+        return value::undefined();
+    });
+    // `hasAttributes()` - "does this element have any at all", which is a
+    // different question from `attributes.length !== 0` only in that a page can
+    // ask it without materialising the map.
+    method("hasAttributes", [this](context & c, std::span<value>) {
+        (void)c;
+        const node_id id = receiver(c);
+        if (!id) { return value::boolean(false); }
+        return value::boolean(!doc_->read().attributes(id).empty());
+    });
+    // THE Attr SPELLINGS OF THE SAME FOUR LOOKUPS. `getAttributeNodeNS` is what
+    // `Attr-prefix.html` reaches for on every one of its six cases, because the
+    // prefix and the namespace are the two things only an Attr can report.
+    method("getAttributeNode", [this](context & c, std::span<value> args) {
+        const node_id id = receiver(c);
+        if (!id) { return value::null(); }
+        std::optional<attribute> held;
+        {
+            const auto txn = doc_->read();
+            const attribute * found =
+                txn.find_attribute(id, attribute_key(txn, id, arg_string(c, args, 0)));
+            if (found != nullptr) { held = *found; }
+        }
+        return held ? attribute_object(c, id, *held) : value::null();
+    });
+    method("getAttributeNodeNS", [this](context & c, std::span<value> args) {
+        const node_id id = receiver(c);
+        if (!id) { return value::null(); }
+        const std::string ns = namespace_argument(c, args, 0);
+        std::optional<attribute> held;
+        {
+            const auto txn = doc_->read();
+            const attribute * found = txn.find_attribute_ns(id, ns, arg_string(c, args, 1));
+            if (found != nullptr) { held = *found; }
+        }
+        return held ? attribute_object(c, id, *held) : value::null();
+    });
+    // `setAttributeNode` and `removeAttributeNode` are `setNamedItem` and
+    // `removeNamedItem` under other names - DOM 4.9 defines each pair in terms
+    // of the same "set an attribute" and "remove an attribute" - so they are
+    // FORWARDED rather than written twice. Two implementations of one operation
+    // is two chances for the returned old Attr to differ.
+    const auto through_map = [this](std::string on_map) {
+        return [this, on_map](context & c, std::span<value> args) {
+            const node_id id = receiver(c);
+            if (!id) { return value::null(); }
+            const value map = c.lookup_property(c.current_this(), "attributes");
+            const value fn = c.lookup_property(map, on_map);
+            if (!fn.is_callable()) { return value::null(); }
+            return c.call(fn, args, map);
+        };
+    };
+    method("setAttributeNode", through_map("setNamedItem"));
+    method("setAttributeNodeNS", through_map("setNamedItemNS"));
+    method("removeAttributeNode", [this](context & c, std::span<value> args) {
+        // NOT through the map: `removeAttributeNode` takes the Attr ITSELF and
+        // throws a NotFoundError when it is not this element's, where
+        // `removeNamedItem` takes a name.
+        const node_id id = receiver(c);
+        const value given = arg(args, 0);
+        if (!id || !given.is_object()) {
+            throw_dom_exception(c, "NotFoundError",
+                                "removeAttributeNode: the argument is not an attribute of this "
+                                "element");
+            return value::null();
+        }
+        const value ns_property = c.lookup_property(given, "namespaceURI");
+        const std::string ns = ns_property.is_nullish() ? std::string{} : c.to_string(ns_property);
+        const std::string local = c.to_string(c.lookup_property(given, "localName"));
+        if (!doc_->read().has_attribute_ns(id, ns, local)) {
+            throw_dom_exception(c, "NotFoundError",
+                                "removeAttributeNode: '" + local +
+                                    "' is not an attribute of this "
+                                    "element");
+            return value::null();
+        }
+        (void)doc_->remove_attribute_ns(id, ns, local);
+        mutated();
+        return given;
     });
     // `toggleAttribute(name, force)` - the boolean-attribute spelling, and it
     // ANSWERS whether the attribute is present afterwards, which is what a page
@@ -1174,7 +1624,7 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
             return value::boolean(false);
         }
         if (!id) { return value::boolean(false); }
-        const atom key = atoms_->intern_lower(name);
+        const atom key = attribute_key(doc_->read(), id, name);
         const bool present = doc_->read().has_attribute(id, key);
         // `force` is TRISTATE: absent means "flip", a present `false` means
         // "remove whether or not it is there". `args.size()` is the only thing
@@ -1211,9 +1661,10 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         // returning null for them made every boolean attribute unreadable
         // from script - the one shape of attribute that is only ever tested
         // for presence.
-        const atom name = atoms_->intern_lower(arg_string(c, args, 0));
-        if (!txn.has_attribute(id, name)) { return value::null(); }
-        return c.string(std::string{txn.attribute_value(id, name)});
+        const atom name = attribute_key(txn, id, arg_string(c, args, 0));
+        const attribute * held = txn.find_attribute(id, name);
+        if (held == nullptr) { return value::null(); }
+        return c.string(held->value);
     });
     // THE OTHER TWO HALVES OF THE ATTRIBUTE API. `setAttribute` and
     // `getAttribute` were here and these were not, so an attribute could be
@@ -1225,15 +1676,17 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
     method("removeAttribute", [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         if (!id) { return value::undefined(); }
-        (void)doc_->remove_attribute(id, atoms_->intern_lower(arg_string(c, args, 0)));
+        const auto txn = doc_->read();
+        (void)doc_->remove_attribute(id, attribute_key(txn, id, arg_string(c, args, 0)));
         mutated();
         return value::undefined();
     });
     method("hasAttribute", [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
         if (!id) { return value::boolean(false); }
+        const auto txn = doc_->read();
         return value::boolean(
-            doc_->read().has_attribute(id, atoms_->intern_lower(arg_string(c, args, 0))));
+            txn.has_attribute(id, attribute_key(txn, id, arg_string(c, args, 0))));
     });
     method("setText", [this](context & c, std::span<value> args) {
         set_text(id_or_nothing(c), arg_string(c, args, 0));
@@ -1413,6 +1866,38 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         // DESCENDANTS ONLY - the element itself is not one of its own results.
         walk(walk, from, false);
         return out;
+    });
+    // `element.getElementsByTagNameNS(namespace, localName)`, the same battery
+    // the document has answered all along. `Document-Element-getElementsBy...
+    // TagNameNS.js` runs its whole table against BOTH, so half of every case in
+    // it was a TypeError on a missing method rather than a comparison. "*"
+    // means any on either half, and - as with getElementsByTagName - the
+    // element is not one of its own results, which the file asserts by name.
+    method("getElementsByTagNameNS", [this](context & c, std::span<value> args) {
+        const node_id from = receiver(c);
+        const std::string ns = namespace_argument(c, args, 0);
+        const std::string local = arg_string(c, args, 1);
+        return make_live_collection(c, [this, from, ns, local] {
+            std::vector<node_id> found;
+            if (!from) { return found; }
+            const auto txn = doc_->read();
+            const auto walk = [&](auto && self, node_id at, bool include) -> void {
+                if (include && txn.tag(at).has_value()) {
+                    // THE LOCAL NAME, not the qualified one: a prefix takes no
+                    // part in this match any more than it does in getAttributeNS.
+                    const std::string_view name = atoms_->text(txn.tag(at).value_or(atom{}));
+                    const std::size_t colon = name.find(':');
+                    const std::string_view own =
+                        colon == std::string_view::npos ? name : name.substr(colon + 1);
+                    if ((local == "*" || own == local) && (ns == "*" || namespace_of(at) == ns)) {
+                        found.push_back(at);
+                    }
+                }
+                for (const node_id child : txn.children(at)) { self(self, child, true); }
+            };
+            walk(walk, from, false);
+            return found;
+        });
     });
     // `element.getElementsByClassName(names)`, scoped to this subtree and LIVE
     // for the same reason the document's is - see make_live_collection. The
