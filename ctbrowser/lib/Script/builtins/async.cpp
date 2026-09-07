@@ -160,6 +160,32 @@ void put_result(object_object * state, std::size_t index, value entry) {
     if (index < items.size()) { items[index] = entry; }
 }
 
+// 27.2.4.1.2: every fulfilment writes its value into its own slot and the last
+// one to arrive resolves the result with the whole array; ONE rejection settles
+// it outright, and the reactions still queued after it find the result already
+// settled - `settle` is settle-once, which is what makes that safe rather than
+// needing a flag of its own.
+[[nodiscard]] native_object * all_reaction(context & cx, value state, std::size_t index,
+                                           bool rejected) {
+    auto * made = cx.allocate<native_object>(
+        rejected ? "rejected" : "fulfilled",
+        [state, index, rejected](context & c, std::span<value> args) {
+            auto * held = static_cast<object_object *>(state.as_heap());
+            const value with = args.empty() ? value::undefined() : args[0];
+            if (rejected) {
+                detail::settle(c, slot_of(held, "out"), with, true);
+                return value::undefined();
+            }
+            put_result(held, index, with);
+            if (count_down(held) <= 0) {
+                detail::settle(c, slot_of(held, "out"), slot_of(held, "results"), false);
+            }
+            return value::undefined();
+        });
+    made->retained.push_back(state);
+    return made;
+}
+
 // 27.2.4.2.2: every reaction writes `{ status, value }` or
 // `{ status, reason }` into its own slot, and the last one to finish resolves.
 [[nodiscard]] native_object * allsettled_reaction(context & cx, value state, std::size_t index,
@@ -259,39 +285,47 @@ void install_promise(context & cx) {
     method(cx, promise_ctor, "reject", 1, [](context & c, std::span<value> a) {
         return detail::make_promise(c, a.empty() ? value::undefined() : a[0], true);
     });
-    // Settled promises make `all` a plain unwrap-each: the first rejection wins,
-    // otherwise the result is an array of the values in order.
+    // `Promise.all` - 27.2.4.1. The first rejection wins; otherwise the result
+    // is an array of the values in input order.
+    //
+    // IT WAITS, and it did not. This read `__value` off each entry as it walked
+    // the array, which answers immediately - and wrongly - for an input that has
+    // not settled: `Promise.all([d.promise]).then(f)` ran `f` with `[undefined]`
+    // in the same turn and then never ran it again when `d.resolve` arrived. It
+    // goes through `react` now, the same path `then` takes and the one the other
+    // three combinators were rewritten onto, so "already settled", "still
+    // pending" and "not a promise at all" all reach one implementation.
+    //
+    // WHAT THAT CHANGES FOR A PAGE, said plainly: a `Promise.all` over an input
+    // that never settles no longer resolves. p5.js opens with
+    // `Promise.all([waitForDocumentReady(), waitingForTranslator]).then(_globalInit)`
+    // (vendor/p5/p5.js:138934); the first of those resolves at once here because
+    // `document.readyState` is "complete", and the second is i18next's `init`,
+    // whose backend fetches a CDN URL. If that promise never settles headless
+    // then p5 never boots, where before it booted on a wrong answer - so the p5
+    // ratchet is the thing to watch on this change.
     method(cx, promise_ctor, "all", 1, [](context & c, std::span<value> a) {
-        const value out = c.make_array();
-        auto * items = static_cast<array_object *>(out.as_heap());
-        if (!a.empty() && a[0].is_array()) {
-            for (const value & entry : static_cast<array_object *>(a[0].as_heap())->items) {
-                if (!entry.is_object()) {
-                    items->items.push_back(entry);
-                    continue;
-                }
-                auto * promise = static_cast<object_object *>(entry.as_heap());
-                value * state = promise->find("__rejected");
-                value * held = promise->find("__value");
-                if (state != nullptr && context::truthy(*state)) {
-                    return detail::make_promise(c, held != nullptr ? *held : value::undefined(),
-                                                true);
-                }
-                items->items.push_back(held != nullptr ? *held : entry);
-            }
+        const std::vector<value> entries = entries_of(a);
+        const value out = pending_promise(c);
+        const value results = c.make_array();
+        static_cast<array_object *>(results.as_heap())
+            ->items.assign(entries.size(), value::undefined());
+        if (entries.empty()) {
+            detail::settle(c, out, results, false);
+            return out;
         }
-        return detail::make_promise(c, out, false);
+        const value state = value::object(combinator_state(c, out, results, entries.size()));
+        for (std::size_t i = 0; i < entries.size(); ++i) {
+            react(c, entries[i], all_reaction(c, state, i, false), all_reaction(c, state, i, true));
+        }
+        return out;
     });
     // `Promise.allSettled` - 27.2.4.2. It never rejects: every input's outcome
     // is reported, in input order, as `{ status: "fulfilled", value }` or
     // `{ status: "rejected", reason }`.
     //
-    // UNLIKE `all` ABOVE, this one waits. `all` reads `__value` off each entry
-    // as it walks them, which answers immediately - and wrongly - for an input
-    // that has not settled; these three go through `react`, which is the same
-    // path `then` takes. Bringing `all` onto it is the obvious next change and
-    // is NOT made here: p5.js opens with a `Promise.all` whose inputs may never
-    // settle headless, and that ratchet cannot be run from this worktree.
+    // LIKE `all` ABOVE, this one waits: all four go through `react`, which is
+    // the same path `then` takes. `all` was the last one that did not.
     method(cx, promise_ctor, "allSettled", 1, [](context & c, std::span<value> a) {
         const std::vector<value> entries = entries_of(a);
         const value out = pending_promise(c);

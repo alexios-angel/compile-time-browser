@@ -14,10 +14,12 @@
 // written to avoid: a handler that fires the instant it is attached.
 //
 // AND EVERY ONE OF THEM IS ALSO EXERCISED OVER A PROMISE THAT IS STILL PENDING
-// WHEN THE COMBINATOR IS CALLED. `Promise.all` beside them reads `__value` off
-// each entry as it walks the array, which answers immediately - and wrongly -
-// for an input that has not settled; these go through the same path `then`
-// takes, and the `d.resolve(...)` cases below are what proves it.
+// WHEN THE COMBINATOR IS CALLED. That is the whole point of `react`: all four
+// statics go through the path `then` takes, so "already settled", "still
+// pending" and "not a promise at all" reach one implementation. `Promise.all`
+// was the last one that did not - it read `__value` off each entry as it
+// walked the array, which answers immediately and wrongly for an input that
+// has not settled - and the `d.resolve(...)` cases below are what proves it.
 
 #include <ctbrowser/script/script.hpp>
 
@@ -162,11 +164,50 @@ int main() {
                       "never");
 
     // ================================================================
-    // AND THE ONES THAT WERE ALREADY THERE STILL ANSWER
+    // Promise.all - 27.2.4.1
     // ================================================================
+    // The values in INPUT ORDER, whatever order they arrived in.
     expect_after_turn("var result = ''; Promise.all([Promise.resolve(1), Promise.resolve(2)])"
                       ".then(v => { result = v.join(','); });",
                       "1,2");
+    // A non-promise input is its own value.
+    expect_after_turn("var result = ''; Promise.all([1, Promise.resolve(2), 3])"
+                      ".then(v => { result = v.join(','); });",
+                      "1,2,3");
+    // ONE rejection settles the whole thing, and the values beside it are lost.
+    expect_after_turn(
+        "var result = ''; Promise.all([Promise.resolve(1), Promise.reject('e')])"
+        ".then(v => { result = 'resolved ' + v; }, e => { result = 'rejected ' + e; });",
+        "rejected e");
+    // An empty list resolves at once, with an empty array.
+    expect_after_turn(
+        "var result = 'x'; Promise.all([]).then(r => { result = 'len=' + r.length; });", "len=0");
+    // ...AND IT WAITS. This is the case that was wrong: the input is pending
+    // when `all` is called, and the answer is the one that arrives later.
+    expect_after_turn("var result = ''; var d = Promise.withResolvers();"
+                      "Promise.all([d.promise, 2]).then(v => { result = v.join(','); });"
+                      "d.resolve('late');",
+                      "late,2");
+    expect_after_turn("var result = ''; var d = Promise.withResolvers();"
+                      "Promise.all([d.promise]).then(v => { result = 'resolved'; },"
+                      " e => { result = 'rejected ' + e; }); d.reject('no');",
+                      "rejected no");
+    // INPUT ORDER, not arrival order: the second entry settles first.
+    expect_after_turn("var result = ''; var a = Promise.withResolvers();"
+                      "var b = Promise.withResolvers();"
+                      "Promise.all([a.promise, b.promise]).then(v => { result = v.join(','); });"
+                      "b.resolve('B'); a.resolve('A');",
+                      "A,B");
+    // A PENDING INPUT THAT NEVER SETTLES NEVER RESOLVES THE WHOLE, which is
+    // what the specification says and what this used to get wrong by
+    // answering `[undefined]` in the same turn.
+    expect_after_turn("var result = 'never'; var d = Promise.withResolvers();"
+                      "Promise.all([d.promise]).then(v => { result = 'settled'; });",
+                      "never");
+
+    // ================================================================
+    // AND THE ONES THAT WERE ALREADY THERE STILL ANSWER
+    // ================================================================
     expect_after_turn("var result = ''; Promise.resolve('r').then(v => { result = v; });", "r");
     expect_after_turn("var result = ''; Promise.reject('j').catch(e => { result = e; });", "j");
 
