@@ -1,7 +1,41 @@
 // Admission/Objects.cpp - native lowering implementation.
+#include "../../Analysis/OwnedGlobalRoots.h"
 #include "Admission.h"
 
 namespace ctcompile::ctnative::lowering_detail {
+
+bool admission::ownedGlobalValue(mlir::Value value) const {
+    auto * operation = value.getDefiningOp();
+    const auto * root = ownedGlobals ? ownedGlobals->lookup(operation) : nullptr;
+    if (!root || !llvm::isa<ctjs::CreateObjectOp, ctjs::LoadGlobalOp>(operation)) { return false; }
+    auto type = llvm::dyn_cast_or_null<GlobalObjectType>(typeOf(value));
+    return type && type.getBinding() == root->binding;
+}
+
+bool admission::ownedGlobalOperation(mlir::Operation * operation) {
+    const auto * root = ownedGlobals->lookup(operation);
+    if (!isCIdentifier(root->binding) || !isCIdentifier(root->property) ||
+        isReservedInCpp(root->property)) {
+        return refuse("owned global binding and field need supported C++ identifiers");
+    }
+    auto made = root->owner;
+    auto write = root->fieldInitialization;
+    if (!ownedGlobalValue(made.getResult()) ||
+        carrierOf(typeOf(write.getValue())) != carrier::number) {
+        return refuse("owned global root needs a proved owner and one definite numeric field");
+    }
+    for (ctjs::LoadGlobalOp load : root->loads) {
+        if (!ownedGlobalValue(load.getResult())) {
+            return refuse("owned global load lacks its definite allocation identity");
+        }
+    }
+    for (ctjs::GetPropertyOp read : root->reads) {
+        if (typeOf(read.getResult()) != typeOf(write.getValue())) {
+            return refuse("owned global field read lacks its definite initialized type");
+        }
+    }
+    return true;
+}
 
 // PHASE 56: A CLOSED SHAPE IS A STRUCT BY VALUE. TypeInference::hasClosedShape
 // is the proof - every use is a get or set through a constant key, so the

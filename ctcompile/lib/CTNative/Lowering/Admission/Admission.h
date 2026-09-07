@@ -4,7 +4,8 @@
 
 namespace ctcompile::ctnative {
 class OwnedMethodTableSlots;
-}
+class OwnedGlobalRoots;
+} // namespace ctcompile::ctnative
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -16,6 +17,7 @@ struct admission {
     // a receiver could be a parameter.
     const receiverGroups * groups = nullptr;
     const OwnedMethodTableSlots * ownedTableSlots = nullptr;
+    const OwnedGlobalRoots * ownedGlobals = nullptr;
     // The carrier every `return` in the function agrees on; `none` until the
     // first return is seen. A function with no return at all returns NaN -
     // undefined's carrier - which lower() picks when this stays `none`.
@@ -31,6 +33,8 @@ struct admission {
     bool printable(mlir::Value v, llvm::StringRef where);
     bool identityField(mlir::Operation * op);
     bool ownedTableField(ctjs::SetPropertyOp store);
+    bool ownedGlobalOperation(mlir::Operation * op);
+    bool ownedGlobalValue(mlir::Value value) const;
 
     static bool isDeclarationClosure(mlir::Operation * o);
 

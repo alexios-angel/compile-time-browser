@@ -6,6 +6,7 @@
 #include "MethodTableHelpers.h"
 #include "NativeMapHelpers.h"
 #include "NullableHelpers.h"
+#include "OwnedGlobalHelpers.h"
 #include "RuntimeHelpers.h"
 
 namespace ctcompile::ctnative::lowering_detail {
@@ -58,6 +59,17 @@ void lowering::finish() {
                 ec::FieldOp::create(inside, module.getLoc(), f.fields[i], type, mlir::Attribute{});
             }
         }
+        // The owner carrier names a concrete class, so its storage follows
+        // the class definition and precedes every function using it.
+        llvm::SmallVector<llvm::StringRef> ownerNames(ownedGlobals.keys().begin(),
+                                                      ownedGlobals.keys().end());
+        llvm::sort(ownerNames);
+        for (llvm::StringRef name : ownerNames) {
+            auto global = ec::GlobalOp::create(b, module.getLoc(), ("g_" + name).str(),
+                                               ownedGlobals.lookup(name), mlir::Attribute{}, false,
+                                               true, false);
+            global->setAttr("ctnative.provenance", b.getStringAttr("owning global " + name.str()));
+        }
         for (ec::FuncOp f : lowered) {
             ec::DeclareFuncOp::create(b, f.getLoc(),
                                       mlir::FlatSymbolRefAttr::get(context, f.getSymName()));
@@ -98,6 +110,10 @@ void lowering::declareGlobals() {
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cmath"), b.getUnitAttr());
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstdio"), b.getUnitAttr());
     ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr("using js_num = double;"));
+    if (!ownedGlobals.empty()) {
+        ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("memory"), b.getUnitAttr());
+        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kOwnedGlobalHelpers));
+    }
     if (needsExceptions) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstdint"), b.getUnitAttr());
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("cstddef"), b.getUnitAttr());

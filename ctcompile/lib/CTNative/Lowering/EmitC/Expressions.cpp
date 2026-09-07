@@ -30,6 +30,10 @@ mlir::Value lowering::stringConstant(mlir::OpBuilder & builder, mlir::Location w
 
 mlir::Value lowering::lvalueOfGlobal(mlir::OpBuilder & b, mlir::Location where,
                                      llvm::StringRef name) {
+    if (auto owned = ownedGlobals.find(name); owned != ownedGlobals.end()) {
+        return ec::GetGlobalOp::create(b, where, ec::LValueType::get(owned->second),
+                                       mlir::FlatSymbolRefAttr::get(context, ("g_" + name).str()));
+    }
     globals.insert(name);
     needsNullable = true;
     return ec::GetGlobalOp::create(b, where,

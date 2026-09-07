@@ -120,7 +120,8 @@ bool admission::function(ctjs::FuncOp fn) {
             return;
         }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o);
-            load && feedsOnlyDirectCallees(load.getResult())) {
+            load &&
+            (feedsOnlyDirectCallees(load.getResult()) || ownedGlobalValue(load.getResult()))) {
             return;
         }
         // EVERY JAVASCRIPT VALUE THIS OPERATION DEFINES OR CARRIES has a

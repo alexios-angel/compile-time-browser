@@ -1,4 +1,5 @@
 // Admission/Operations.cpp - native lowering implementation.
+#include "../../Analysis/OwnedGlobalRoots.h"
 #include "../../Analysis/OwnedMethodTableSlots.h"
 #include "Admission.h"
 
@@ -21,6 +22,7 @@ bool admission::ownedTableField(ctjs::SetPropertyOp store) {
 
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
+    if (ownedGlobals && ownedGlobals->lookup(o)) { return ownedGlobalOperation(o); }
     if (llvm::isa<CreateObjectOp>(o) && o->hasAttr(kNativeObjectIdentity)) { return true; }
     if (!methodTableName(o).empty()) {
         if (llvm::isa<CreateObjectOp>(o)) { return true; }

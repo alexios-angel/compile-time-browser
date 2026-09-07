@@ -32,6 +32,7 @@
 // is the file in miniature.
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 #include "Inference/PropertyKey.h"
+#include "OwnedGlobalRoots.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
@@ -489,6 +490,25 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                                                   llvm::ArrayRef<const TypeLattice *> operands,
                                                   llvm::ArrayRef<TypeLattice *> results) {
     mlir::MLIRContext * c = op->getContext();
+
+    if (const auto * root = ownedRoots_ ? ownedRoots_->lookup(op) : nullptr) {
+        if (llvm::isa<ctjs::CreateObjectOp, ctjs::LoadGlobalOp>(op)) {
+            propagateIfChanged(
+                results[0], results[0]->join(TypeValue{GlobalObjectType::get(c, root->binding)}));
+            return mlir::success();
+        }
+        if (llvm::isa<ctjs::GetPropertyOp>(op)) {
+            // This exact write precedes every read in the complete live
+            // proof. Subscribe to its value; no absent or prototype arm is
+            // possible, even when the receiver came from a global load.
+            auto write = root->fieldInitialization;
+            const auto * stored = getLatticeElementFor(getProgramPointAfter(op), write.getValue());
+            if (!stored->getValue().isUninitialized()) {
+                propagateIfChanged(results[0], results[0]->join(stored->getValue()));
+            }
+            return mlir::success();
+        }
+    }
 
     if (llvm::isa<ctjs::CreateObjectOp>(op) && op->hasAttr(kNativeObjectIdentity)) {
         propagateIfChanged(results[0], results[0]->join(TypeValue{ObjectIdentityType::get(c)}));

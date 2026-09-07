@@ -12,6 +12,10 @@ void lowering::retype(ctjs::FuncOp fn) {
         needsObjectValue |= carrierOf(typeOf(v)) == carrier::objectValue;
         needsNullableString |= carrierOf(typeOf(v)) == carrier::nullableString;
         if (!llvm::isa<ctjs::ValueType>(v.getType())) { return; }
+        if (auto found = ownedObjectTypes.find(v); found != ownedObjectTypes.end()) {
+            v.setType(found->second);
+            return;
+        }
         // A closed object keeps its ctjs type until its shape is known
         // below; everything else takes its carrier now.
         if (admission::isClosedObject(v)) { return; }
@@ -121,6 +125,7 @@ void lowering::retype(ctjs::FuncOp fn) {
     // type of its own site.
     fn.getBody().walk([&](ctjs::CreateObjectOp object) {
         if (!methodTableName(object).empty() || object->hasAttr(kNativeObjectIdentity)) { return; }
+        if (ownedObjectTypes.contains(object.getResult())) { return; }
         mlir::Value(object.getResult()).setType(classType(shapeAt(object.getResult())));
     });
     // AND THE RECEIVER, which is the same shape one indirection away. It is

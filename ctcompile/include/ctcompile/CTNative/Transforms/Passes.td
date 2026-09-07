@@ -227,6 +227,15 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
     numeric global is printed as `name=%.17g` - the convention the
     compilation-unit gate compares against the interpreter.
 
+    With explicit `host-manifest`, instead preserve the fingerprinted input
+    before admission and consume a bounded complete ordinary-global owner
+    proof. This first tier requires one straight-line script function and
+    one initialized numeric field. It emits a shared owning class handle,
+    separate from numeric storage, and prints only the driver's observations.
+    Default optimizations and closure/provider preparation do not rewrite
+    this contract-bound input. Stale or incomplete proofs never authorize
+    ownership; ordinary escape analysis remains unchanged.
+
     NOT a dialect conversion. The function is already structured and typed;
     the lowering retypes every value in place from the lattice and replaces
     each operation with its EmitC form, which keeps the whole of `scf`
@@ -277,6 +286,10 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
            "Maximum graph discovery work in the default pipeline">,
     Option<"exceptionMaxSteps", "exception-max-steps", "unsigned", "100000",
            "Maximum exception-region recovery work per function">,
+    Option<"hostManifest", "host-manifest", "std::string", "\"\"",
+           "Explicit ordinary global owner contract; preserve the fingerprinted source IR before admission">,
+    Option<"hostMaxSteps", "host-max-steps", "unsigned", "100000",
+           "Maximum complete host and ordinary global owner proof work per query">,
     Option<"optimizationReport", "optimization-report", "bool", "false",
            "Report precomputation and reachability counts for the default pipeline">,
     Option<"report", "report", "bool", /*default=*/"false",

@@ -2,6 +2,10 @@
 
 #include "../LoweringSupport.h"
 
+namespace ctcompile::ctnative {
+class OwnedGlobalRoots;
+}
+
 namespace ctcompile::ctnative::lowering_detail {
 
 // Only for the compiler-owned helper ABIs below: non-lvalue operands are
@@ -23,6 +27,23 @@ struct lowering {
     lowering(mlir::DataFlowSolver & s, mlir::MLIRContext * c, mlir::ModuleOp m)
         : solver(s), context(c), module(m), declarative(declarativePatterns(c)) {}
     llvm::StringSet<> globals; // numeric globals the emitted unit declares
+    llvm::StringSet<> observations;
+    bool explicitObservations = false;
+    // Committed after whole-function admission while source operations still
+    // exist. These are emission plans, never reusable ownership proofs.
+    struct ownedGlobalStorage {
+        std::string binding;
+        std::string className;
+        std::string field;
+        mlir::Type type;
+        mlir::Type fieldType;
+    };
+    llvm::SmallVector<ownedGlobalStorage> ownedGlobalStoragePlans;
+    llvm::StringMap<mlir::Type> ownedGlobals;
+    llvm::DenseMap<mlir::Value, mlir::Type> ownedObjectTypes;
+    llvm::DenseMap<mlir::Operation *, unsigned> ownedGlobalOperations;
+    void censusOwnedGlobals(const OwnedGlobalRoots & roots, llvm::ArrayRef<ctjs::FuncOp> accepted);
+    bool replaceOwnedGlobal(mlir::Operation * operation);
     // ctjs symbol -> emitc symbol, decided for EVERY accepted function before
     // any is lowered, so a call lowered before its callee already names the
     // callee's new symbol and no symbol use is ever rewritten in place. A

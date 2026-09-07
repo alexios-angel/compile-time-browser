@@ -341,6 +341,19 @@ def CTNative_ObjectIdentityType : CTNative_Type<"ObjectIdentity", "object_identi
   }];
 }
 
+def CTNative_GlobalObjectType : CTNative_Type<"GlobalObject", "global_object"> {
+  let summary = "An ordinary object retained by a checked module global owner";
+  let description = [{
+    The binding identifies one source allocation in a live OwnedGlobalRoots
+    query. It does not identify every object with the same field schema.
+    Native lowering must independently consume that query for each global
+    load and field access; this type or an input annotation never authorizes
+    ownership. The source allocation still escapes through StoredGlobal.
+  }];
+  let parameters = (ins StringRefParameter<>:$binding);
+  let assemblyFormat = "`<` $binding `>`";
+}
+
 def CTNative_MethodTableType : CTNative_Type<"MethodTable", "method_table"> {
   let summary = "An owning closed table of immutable stored callable fields";
   let description = [{

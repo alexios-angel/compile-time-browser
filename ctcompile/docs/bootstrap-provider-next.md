@@ -27,7 +27,7 @@ accessors, prototype changes, publication and object/Map cycles. Field writes,
 deletion and reinsertion remain runtime. Provider-local object allocations and
 general heap graphs still require further work.
 
-## Next: explicitly owned global storage, then current callees
+## Completed prerequisite: one ordinary global owner
 
 Prefix discovery describes one executed startup path. Bootstrap publishes
 callable objects for future callers, so native admission still needs live
@@ -36,24 +36,28 @@ confined method-table-field proof cannot be applied to an arbitrary realm or
 global owner. Keep the seven-function denominator and named native refusals
 while connecting proved value flow to those consumers.
 
-The [export-boundary regression](native-export-boundary.md) isolates the next
-implementation. A complete live host proof already accepts an ordinary scalar
-root (`var host = {}; host.slot = 42; var trace = host.slot;`), while native
-admission remains **0/1**. Add explicit module ownership and typed field/global
-storage under that live proof, preserving `StoredGlobal` and the external escape
-rule. Separate owner storage from the driver's numeric observation globals.
-Missing/conditional initialization, replacement, mutation and incomplete budgets
-must withhold the owner plan.
+The [ordinary global owner](native-owned-globals.md) now admits
+`var host = {}; host.slot = 42; var trace = host.slot;` at **1/1 native** with
+explicit `host-manifest` input. Its bounded live proof carries the allocation
+through nominal type inference, final admission and shared owning storage.
+`StoredGlobal` and external alias semantics remain; only driver-selected numeric
+observations are printed. Six programs pass Node/interpreter and GCC/Clang in
+explicit/deduced forms, including owning lifetime sanitizers. Missing/conditional
+initialization, replacement, mutation, stale contracts and incomplete budgets
+withhold the owner plan. Without the option, the baseline remains **0/1**.
 
-Then connect one fixed field containing an uncaptured owning method table to
+## Next: owning method fields and current callees
+
+Connect one fixed field containing an uncaptured owning method table to
 its current stored closure. That smaller specimen is **1/3 native**; the
 Map-backed four-function publication specimen is **0/4**, although its startup
-prefix already completes. Their **1/1**, **3/3** and **4/4** native gates remain
-proposed, not implemented. See the linked design for concrete consumer sites,
+prefix already completes. Their **3/3** and **4/4** native gates remain
+proposed. See [the export design](native-export-boundary.md) for concrete consumer sites,
 lifetime checks and future-call obligations.
 
 Exceptions do not make a callback or allocation inert. Native try/catch covers
-one acyclic handler with homogeneous number, boolean or owning string throws;
+one acyclic handler with homogeneous number, boolean or owning string throws
+and proved nonthrowing primitive helpers in its catch. Protected callee resolution,
 throwing callees, general finally, reentry and object payloads require further work.
 Normal-return provider facts cannot authorize an exceptional continuation.
 

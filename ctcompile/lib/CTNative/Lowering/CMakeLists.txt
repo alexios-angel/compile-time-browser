@@ -127,6 +127,7 @@ add_library(ctcompile-ctnative-lowering
   Admission/Operations.cpp
   Admission/Functions.cpp
   EmitC/Shapes.cpp
+  EmitC/OwnedGlobals.cpp
   EmitC/Module.cpp
   EmitC/Expressions.cpp
   EmitC/Calls.cpp

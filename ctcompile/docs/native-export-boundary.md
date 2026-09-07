@@ -1,14 +1,14 @@
 # Native export ownership and calls
 
-**Status: measured boundary and implementation design, 2026-09-07.** No native
-export consumer is implemented by this increment. Provider-prefix discovery and
-native export admission answer different questions: a completed startup trace
-can retain the same native refusals.
+**Status: first scalar owner implemented, 2026-09-07.** The explicit
+[ordinary global owner](native-owned-globals.md) now admits the scalar specimen
+at **1/1 native** under a live driver contract. The baseline regression below
+intentionally runs without that option and retains **0/1**. Provider-prefix
+discovery and native export admission remain separate proofs.
 
-The next implementation should begin with an explicit owner for one checked
-ordinary global root and a fixed own-data field. Then connect a returned owning
-method table through that field to a live callable proof. Do not change global
-confinement or make published functions private from a prefix observation.
+Next connect a returned owning method table through the fixed field to a live
+callable proof. Global confinement remains unchanged; published functions
+cannot become private from a prefix observation.
 
 ## Measured boundary
 
@@ -24,7 +24,7 @@ reproducible and checks reports, final admission and reruns.
 | Exported Map-backed getter below | Entire startup prefix completes: two resolved calls, one factory and one completed provider summary | **0/4** | `trace=0` |
 | Confined local root holding the same kind of owning table | Existing confined-field proof | **4/4** | `trace=0` |
 
-The scalar specimen is the smallest missing ownership consumer:
+The scalar specimen isolates the owner consumer:
 
 ```js
 var host = {};
@@ -33,7 +33,7 @@ var trace = host.slot;
 ```
 
 Its complete, live host proof succeeds, including one initialized source root,
-one field write and one field read. Native admission still reports:
+one field write and one field read. Without `host-manifest`, native admission reports:
 
 ```text
 an object literal that escapes - it reaches `ctjs.store_global`
@@ -73,7 +73,8 @@ ownership. It compares four observations against both Node and the interpreter.
 The complete scalar report must identify the actual `host.slot` root, one
 write/read edge and one observation store; complete analysis of the published
 source before and after prefix rewriting must refuse with zero usable edges.
-It does not claim a new standalone native export binary. Existing confined-table
+That baseline regression does not claim a new standalone native export binary.
+The separate ordinary-owner gate now executes one. Existing confined-table
 execution and lifetime checks remain in the
 [owning field gate](native-owned-method-table-slots.md).
 
@@ -82,48 +83,44 @@ The checkpoint preceding this audit reports **0/7 native** in each
 CommonJS/browser/realm-fallback mode, despite 20 resolved entry calls. The tiny
 specimens above do not replace that census or establish Bootstrap execution.
 
-## First consumer: an owned ordinary global root
+## Implemented consumer: an owned ordinary global root
 
-Implement a bounded live query over the current module and driver-supplied
-contract. Start with the scalar specimen; making it **1/1 native is a proposed
-gate, not a measured result**.
+The bounded `OwnedGlobalRoots` query and its native consumer implement the
+scalar **0/1 -> 1/1** gate. See [the implementation and measured checks](native-owned-globals.md).
+The requirements below remain the contract for this consumer and future extensions.
 
-The query must require the complete `HostContractAnalysis` proof and further
-restrict it to one source-created ordinary root with one unconditional binding
+The query requires the complete `HostContractAnalysis` proof and further
+restricts it to one source-created ordinary root with one unconditional binding
 initialization, one fixed own-data field initialization and only supported
 reads. Every read needs definite initialization. Existing host contracts allow
-some ordered replacement; the first native owner consumer should explicitly
-refuse replacement instead of inheriting a broader storage model accidentally.
+some ordered replacement; the native owner consumer explicitly refuses it.
 Alias loads refer to the same allocation; schema equality never equates objects.
 
-Give this root an explicit module owner, for example an owning `shared_ptr` to
-its concrete native class. Preserve source allocation, initialization and
-publication order. Global loads copy or borrow that checked owner according to
-its proved lifetime; they never reference the old script stack frame. Keep the
+The root uses a module `shared_ptr` to its concrete native class. Source
+allocation, initialization and publication keep their runtime order. Global
+loads copy the checked owner; they never reference the old script stack frame. Keep the
 escape verdict `StoredGlobal` and the global/external rule from plan part 25 R3.
 A root named `host`, `module`, `globalThis` or `window` receives no special
 confinement exemption.
 
-This is more than a field-flow exception. Admission currently supports only
-numeric/nullable globals, and emitted globals also serve as numeric observations.
-The implementation must carry proved owned roots separately from scalar
-observation storage, emit their real carrier, and print only the driver's
-observation roots. A host manifest is an environment contract, not a proof of
+Owned roots now have separate typed storage from scalar observations; output
+prints only the driver's selected observation roots. The first field carrier
+is a definite number. A host manifest is an environment contract, not a proof of
 future argument types or effects.
 
-The existing integration points are:
+The integration points are:
 
 - `Analysis/OwnedMethodTableSlots.cpp` intentionally accepts only confined local
-  owners. Keep that query's contract intact; add a distinct owned global query.
-- `Analysis/TypeInference.cpp` needs the proved owner/field types and definite
-  initialization at these loads. Its ordinary global rule includes absence;
+  owners. `Analysis/OwnedGlobalRoots.cpp` is a distinct query.
+- `Analysis/TypeInference.cpp` consumes the proved owner/field types and definite
+  initialization at these loads. Its ordinary global rule still includes absence;
   neither a familiar binding name nor one observed prefix can narrow that rule.
 - `Lowering/Admission/Operations.cpp` admits numeric global loads/stores;
   `Lowering/Admission/Objects.cpp` owns object escape admission. Both need the
-  live owned-root result, not a report attribute.
+  live owned-root result, not a report attribute, through a separate admission path.
 - `Lowering/EmitC/Expressions.cpp`, `EmitC/Module.cpp` and `EmitC/Operations.cpp`
-  implement current global storage and observations. They need a typed owner
-  plan committed only after whole-component admission.
+  implement global storage and observations. `EmitC/OwnedGlobals.cpp` commits
+  the typed owner plan only after whole-component admission.
 
 Rebuild the query after semantic changes and before final admission. The
 supplied fingerprint must still match; never silently rebind a stale manifest

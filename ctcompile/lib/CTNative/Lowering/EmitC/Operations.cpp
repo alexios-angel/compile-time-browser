@@ -62,6 +62,7 @@ mlir::Value lowering::memberAccess(mlir::OpBuilder & b, mlir::Location where, ml
 }
 
 void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType) {
+    if (replaceOwnedGlobal(o)) { return; }
     if (replaceException(o)) { return; }
     if (replaceMethodTable(o)) { return; }
     if (replaceEnvironment(o)) { return; }
@@ -499,7 +500,9 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         if (isEntry) {
             // main: print the globals, return 0. The convention the gate
             // reads: `name=%.17g`, one per line, sorted by name.
-            llvm::SmallVector<llvm::StringRef> names(globals.keys().begin(), globals.keys().end());
+            const auto & printedGlobals = explicitObservations ? observations : globals;
+            llvm::SmallVector<llvm::StringRef> names(printedGlobals.keys().begin(),
+                                                     printedGlobals.keys().end());
             llvm::sort(names);
             for (llvm::StringRef name : names) {
                 mlir::Value loaded = convertScalar(b, where, lvalueOfGlobal(b, where, name),
