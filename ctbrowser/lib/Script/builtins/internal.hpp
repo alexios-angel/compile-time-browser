@@ -664,109 +664,343 @@ inline value settle_with(context & cx, value on_ok, value on_err,
 
 // --- JSON -----------------------------------------------------------------
 
-inline void write_json(context & cx, value v, std::string & out) {
-    if (v.is_string()) {
-        out += '"';
-        for (const char c : static_cast<string_object *>(v.as_heap())->text) {
-            switch (c) {
-            case '"': out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20) {
-                    static constexpr char hex[] = "0123456789abcdef";
-                    out += "\\u00";
-                    out += hex[(static_cast<unsigned char>(c) >> 4) & 0xF];
-                    out += hex[static_cast<unsigned char>(c) & 0xF];
-                } else {
-                    out += c;
-                }
+// QuoteJSONString, 25.5.2.3. The escape TABLE is the specification's, and two
+// of its rows were missing: U+0008 and U+000C have the short forms \b and \f
+// and were being written as the six-character \u0008 and \u000c forms by the
+// fall-through below. Both spellings parse back to the same character, so
+// nothing round-tripped wrong; what they cost is every byte-for-byte comparison
+// against another engine's output, which is what value-string-escape-ascii.js
+// is.
+//
+// A byte at or above 0x80 passes THROUGH. Strings here are UTF-8 and JSON is a
+// UTF-8 format, so the escaping stops at the C0 controls; \uXXXX for a
+// non-ASCII code point would be legal and is not what any other engine emits.
+inline void quote_json(std::string_view text, std::string & out) {
+    out += '"';
+    for (const char c : text) {
+        switch (c) {
+        case '"': out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\b': out += "\\b"; break;
+        case '\f': out += "\\f"; break;
+        case '\n': out += "\\n"; break;
+        case '\r': out += "\\r"; break;
+        case '\t': out += "\\t"; break;
+        default:
+            if (static_cast<unsigned char>(c) < 0x20) {
+                static constexpr char hex[] = "0123456789abcdef";
+                out += "\\u00";
+                out += hex[(static_cast<unsigned char>(c) >> 4) & 0xF];
+                out += hex[static_cast<unsigned char>(c) & 0xF];
+            } else {
+                out += c;
             }
         }
-        out += '"';
-        return;
     }
-    if (v.is_array()) {
-        out += '[';
-        const auto & items = static_cast<array_object *>(v.as_heap())->items;
-        for (std::size_t i = 0; i < items.size(); ++i) {
-            if (i > 0) { out += ','; }
-            write_json(cx, items[i], out);
-        }
-        out += ']';
-        return;
-    }
-    if (v.is_object()) {
-        out += '{';
-        auto * obj = static_cast<object_object *>(v.as_heap());
-        bool first = true;
-        // ENUMERABLE OWN KEYS ONLY. SerializeJSONObject (25.5.2.5) walks
-        // EnumerableOwnProperties, and a symbol key is filtered out by
-        // each_own_enumerable_key for the same reason it always was: this
-        // engine spells one "@@sym:N:description" and keeps it in the ordinary
-        // property table, so without the filter the internal spelling was
-        // serialised into the page's own data.
-        obj->each_own_enumerable_key([&](const std::string & key) {
-            const value item = cx.lookup_property(v, key);
-            // undefined and functions are OMITTED from an object, per spec -
-            // which is why round-tripping a value through JSON can lose fields.
-            if (item.is_undefined() || item.is_callable()) { return; }
-            if (!first) { out += ','; }
-            first = false;
-            write_json(cx, cx.string(key), out);
-            out += ':';
-            write_json(cx, item, out);
-        });
-        out += '}';
-        return;
-    }
-    if (v.is_undefined()) {
-        out += "null"; // undefined inside an array becomes null, per spec
-        return;
-    }
-    // NaN AND THE INFINITIES ARE NOT JSON. 25.5.2 serialises every non-finite
-    // number as null, and emitting the bare words instead produces output that
-    // NO JSON PARSER WILL READ BACK - so a page round-tripping its own data
-    // through JSON.parse got a SyntaxError from bytes this engine wrote. That
-    // is a data fault rather than a conformance nicety, which is why it is
-    // worth the two lines.
-    if (v.is_number() && !std::isfinite(v.as_number())) {
-        out += "null";
-        return;
-    }
-    // A BIGINT IS NOT JSON and there is no lossless spelling for one, so 25.5.2
-    // throws rather than picking between a string and a rounded number.
-    if (v.is_kind(heap_kind::bigint)) {
-        cx.throw_error("TypeError", "Do not know how to serialize a BigInt");
-        return;
-    }
-    out += cx.to_string(v);
+    out += '"';
 }
 
+// THE SERIALISER IS A STATE OBJECT because 25.5.2 says it is.
+//
+// What used to be here was one free function of (value, string &): no
+// ReplacerFunction, no PropertyList, no gap, no stack. That is not four
+// missing features, it is one - every one of them is a field of the
+// specification's `state` record, threaded through SerializeJSONProperty, and
+// none can be added without the record. The cost of not having it was not only
+// the options: with no stack there was no cycle check either, so
+// `a = []; a[0] = a; JSON.stringify(a)` recursed until the C++ stack ran out.
+// The specification makes that a TypeError, and a TypeError is a page's own bug
+// reported to it rather than a dead process.
+struct json_writer {
+    explicit json_writer(context & c) : cx(c) {}
+
+    context & cx;
+    std::string indent;                     // 25.5.2 state.[[Indent]]
+    std::string gap;                        // 25.5.2 state.[[Gap]]
+    value replacer = value::undefined();    // state.[[ReplacerFunction]]
+    std::vector<std::string> property_list; // state.[[PropertyList]]
+    bool has_property_list = false;
+    // state.[[Stack]], the cycle check. Raw pointers rather than values: the
+    // question SerializeJSONObject asks is identity, and nothing pushed here
+    // outlives the call that pushed it.
+    std::vector<const heap_object *> stack;
+    // A throw already happened and the answer is worthless. A native here
+    // throws by calling context::throw_error, which unwinds the VM and RETURNS
+    // - so every recursive step has to be told to stop rather than discovering
+    // it.
+    bool failed = false;
+
+    // SerializeJSONProperty, 25.5.2.2, from step 2 - its step 1 is the [[Get]],
+    // and the CALLER does that: an array's elements are its std::vector and are
+    // not in a property table at all, so reading one is lookup_index and
+    // reading an object's member is lookup_property. Passing the value in keeps
+    // the two spellings of Get at the two places that know which they need.
+    //
+    // False means the value is not serialisable at all (undefined, a function,
+    // a symbol) and its holder must OMIT it - which is a different answer from
+    // the string "null", and is why this returns a bool rather than a string.
+    [[nodiscard]] bool serialize(value holder, const std::string & key, value v,
+                                 std::string & out) {
+        if (failed) { return false; }
+        // Steps 2-3: an Object or a BigInt is asked for `toJSON` FIRST, before
+        // the replacer sees it. A Date's ISO string comes from there.
+        if (v.is_object_like() || v.is_kind(heap_kind::bigint)) {
+            const value to_json = cx.lookup_property(v, "toJSON");
+            if (to_json.is_callable()) {
+                const value args[1] = {cx.string(key)};
+                v = cx.call(to_json, args, v);
+            }
+        }
+        // Step 4: the replacer is called with the HOLDER as its receiver and
+        // (key, value) as its arguments, so it can see which object a value
+        // came out of.
+        if (replacer.is_callable()) {
+            const value args[2] = {cx.string(key), v};
+            v = cx.call(replacer, args, holder);
+        }
+        if (v.is_null()) {
+            out += "null";
+            return true;
+        }
+        if (v.is_boolean()) {
+            out += v.as_boolean() ? "true" : "false";
+            return true;
+        }
+        if (v.is_string()) {
+            quote_json(static_cast<const string_object *>(v.as_heap())->text, out);
+            return true;
+        }
+        if (v.is_number()) {
+            // NaN AND THE INFINITIES ARE NOT JSON. Step 9 serialises every
+            // non-finite number as null, and emitting the bare words instead
+            // produces output that NO JSON PARSER WILL READ BACK - so a page
+            // round-tripping its own data through JSON.parse got a SyntaxError
+            // from bytes this engine wrote.
+            out += std::isfinite(v.as_number()) ? number_to_string(v.as_number()) : "null";
+            return true;
+        }
+        // A BIGINT IS NOT JSON and there is no lossless spelling for one, so
+        // step 10 throws rather than picking between a string and a rounded
+        // number.
+        if (v.is_kind(heap_kind::bigint)) {
+            failed = true;
+            cx.throw_error("TypeError", "Do not know how to serialize a BigInt");
+            return false;
+        }
+        if (v.is_array()) { return write_array(v, out); }
+        if (v.is_object_like() && !v.is_callable()) { return write_object(v, out); }
+        // undefined, a function and a symbol are all OMITTED - which is why
+        // round-tripping a value through JSON can lose fields.
+        return false;
+    }
+
+    // The cycle check, 25.5.2.4/25.5.2.5 step 1. False means it has thrown.
+    [[nodiscard]] bool enter(value v) {
+        const heap_object * self = v.as_heap();
+        for (const heap_object * seen : stack) {
+            if (seen == self) {
+                failed = true;
+                cx.throw_error("TypeError", "Converting circular structure to JSON");
+                return false;
+            }
+        }
+        stack.push_back(self);
+        return true;
+    }
+
+    // How a member list becomes the finished text: 25.5.2.4 step 9 and
+    // 25.5.2.5 step 10, which are the same shape twice. With no gap it is one
+    // line; with one, every member sits on its own line indented by the INNER
+    // indent and the closing bracket by the enclosing one - which is why both
+    // indents are parameters rather than read off `indent`. The field has been
+    // restored to `stepback` by the time this runs.
+    void join(const std::vector<std::string> & parts, const std::string & inner,
+              const std::string & stepback, char open, char close, std::string & out) const {
+        out += open;
+        if (!parts.empty()) {
+            const std::string separator = gap.empty() ? std::string{","} : ",\n" + inner;
+            if (!gap.empty()) {
+                out += '\n';
+                out += inner;
+            }
+            for (std::size_t i = 0; i < parts.size(); ++i) {
+                if (i > 0) { out += separator; }
+                out += parts[i];
+            }
+            if (!gap.empty()) {
+                out += '\n';
+                out += stepback;
+            }
+        }
+        out += close;
+    }
+
+    // SerializeJSONArray, 25.5.2.5. An element that is not serialisable is
+    // "null" here where an object's member is omitted - the two differ because
+    // an array's indices have to stay where they are.
+    [[nodiscard]] bool write_array(value v, std::string & out) {
+        if (!enter(v)) { return false; }
+        const std::string stepback = indent;
+        indent += gap;
+        std::vector<std::string> parts;
+        auto * arr = static_cast<array_object *>(v.as_heap());
+        // ITEMS, NOT `length`. An array records an index it refused to
+        // materialise and raises `length` over it (see array_object::sparse),
+        // so walking to `length` would turn `a[4294967295] = 1` into four
+        // billion "null"s. The deviation is array_object's own and every array
+        // built-in shares it.
+        const std::size_t count = arr->items.size();
+        for (std::size_t i = 0; i < count && !failed; ++i) {
+            std::string each;
+            const value item = cx.lookup_index(v, value::number(static_cast<double>(i)));
+            if (!serialize(v, std::to_string(i), item, each)) { each = "null"; }
+            parts.push_back(std::move(each));
+        }
+        const std::string inner = indent;
+        indent = stepback;
+        stack.pop_back();
+        if (failed) { return false; }
+        join(parts, inner, stepback, '[', ']', out);
+        return true;
+    }
+
+    // SerializeJSONObject, 25.5.2.4.
+    [[nodiscard]] bool write_object(value v, std::string & out) {
+        if (!enter(v)) { return false; }
+        const std::string stepback = indent;
+        indent += gap;
+        std::vector<std::string> keys;
+        if (has_property_list) {
+            keys = property_list;
+        } else if (v.is_object()) {
+            // ENUMERABLE OWN STRING KEYS ONLY - EnumerableOwnProperties, step
+            // 5. A symbol key is filtered out by each_own_enumerable_key for
+            // the reason it always was: this engine spells one
+            // "@@sym:N:description" and keeps it in the ordinary property
+            // table, so without the filter the internal spelling was serialised
+            // into the page's own data.
+            static_cast<const object_object *>(v.as_heap())
+                ->each_own_enumerable_key([&](const std::string & key) { keys.push_back(key); });
+        }
+        std::vector<std::string> parts;
+        for (const std::string & key : keys) {
+            if (failed) { break; }
+            std::string each;
+            if (!serialize(v, key, cx.lookup_property(v, key), each)) { continue; }
+            std::string member;
+            quote_json(key, member);
+            member += ':';
+            if (!gap.empty()) { member += ' '; }
+            member += each;
+            parts.push_back(std::move(member));
+        }
+        const std::string inner = indent;
+        indent = stepback;
+        stack.pop_back();
+        if (failed) { return false; }
+        join(parts, inner, stepback, '{', '}', out);
+        return true;
+    }
+};
+
+// 25.5.2 steps 4 through 8: the second and third arguments, which decide what
+// the serialiser IS before it has seen a value.
+inline void read_stringify_options(json_writer & state, value replacer, value space) {
+    if (replacer.is_callable()) {
+        state.replacer = replacer;
+    } else if (replacer.is_array()) {
+        // A PROPERTY LIST IS A SET, in insertion order: step 4.b.iii.3 appends
+        // only a name that is not already there, so
+        // `JSON.stringify(o, ["a", "a"])` writes `a` once.
+        for (const value & each : static_cast<array_object *>(replacer.as_heap())->items) {
+            std::string name;
+            if (each.is_string()) {
+                name = static_cast<const string_object *>(each.as_heap())->text;
+            } else if (each.is_number()) {
+                name = number_to_string(each.as_number());
+            } else {
+                continue; // anything else contributes nothing to the list
+            }
+            if (std::find(state.property_list.begin(), state.property_list.end(), name) ==
+                state.property_list.end()) {
+                state.property_list.push_back(std::move(name));
+            }
+        }
+        state.has_property_list = true;
+    }
+    // TEN IS THE CEILING for both forms (steps 6 and 7), and a number is
+    // ToIntegerOrInfinity'd rather than rounded: `JSON.stringify(o, null, 1.9)`
+    // indents by one space.
+    if (space.is_number()) {
+        const double n = space.as_number();
+        const double count = std::isnan(n) ? 0.0 : std::min(10.0, std::trunc(n));
+        if (count >= 1) { state.gap.assign(static_cast<std::size_t>(count), ' '); }
+    } else if (space.is_string()) {
+        const std::string & text = static_cast<const string_object *>(space.as_heap())->text;
+        state.gap = text.substr(0, std::min<std::size_t>(10, text.size()));
+    }
+}
+
+// --- JSON.parse -----------------------------------------------------------
+//
+// THE GRAMMAR IS JSON's, NOT JavaScript's, and it is far narrower than what
+// this reader used to accept. 25.5.1 parses the source against the JSON grammar
+// and throws a SyntaxError when it does not fit; the previous reader returned
+// `undefined` for a malformed document and accepted `+1`, `01`, `1.`, `.5`, a
+// raw control character inside a string, an unknown escape, and anything at all
+// AFTER the value. Answering `undefined` instead of throwing is the worse half
+// of that: `JSON.parse(x)` inside a try/catch - which is how a page validates
+// input - could not fail, so a truncated response became `undefined` and the
+// fault surfaced somewhere else entirely.
 struct json_reader {
     context & cx;
     std::string_view text;
     std::size_t at = 0;
     bool ok = true;
 
+    // 25.5.1: JSON whitespace is these four characters and nothing else. A form
+    // feed or a vertical tab is a SyntaxError, which is what
+    // parse/invalid-whitespace.js asserts.
     void skip() {
         while (at < text.size() &&
                (text[at] == ' ' || text[at] == '\t' || text[at] == '\n' || text[at] == '\r')) {
             ++at;
         }
     }
+    void fail() { ok = false; }
+    [[nodiscard]] bool eat(char c) {
+        if (at < text.size() && text[at] == c) {
+            ++at;
+            return true;
+        }
+        fail();
+        return false;
+    }
+
+    // The whole document: one value, whitespace either side, and NOTHING after
+    // it. The trailing check is the one this reader did not do at all, so
+    // `JSON.parse("[1,2]junk")` answered [1,2].
+    [[nodiscard]] value parse_text() {
+        const value out = parse();
+        skip();
+        if (at != text.size()) { fail(); }
+        return ok ? out : value::undefined();
+    }
+
     [[nodiscard]] value parse() {
         skip();
         if (at >= text.size()) {
-            ok = false;
+            fail();
             return value::undefined();
         }
         const char c = text[at];
         if (c == '{') { return parse_object(); }
         if (c == '[') { return parse_array(); }
-        if (c == '"') { return cx.string(parse_string()); }
+        if (c == '"') {
+            std::string s;
+            if (!parse_string(s)) { return value::undefined(); }
+            return cx.string(s);
+        }
         if (text.compare(at, 4, "true") == 0) {
             at += 4;
             return value::boolean(true);
@@ -781,63 +1015,148 @@ struct json_reader {
         }
         return parse_number();
     }
-    [[nodiscard]] std::string parse_string() {
-        std::string out;
-        ++at; // opening quote
+
+    // \uXXXX, exactly four hex digits. False rather than reading past the end
+    // or treating a non-hex byte as a digit, which the old arithmetic did:
+    // `(h | 0x20) - 'a' + 10` turns ANY byte into a number.
+    [[nodiscard]] bool read_hex4(std::uint32_t & out) {
+        if (at + 4 > text.size()) { return false; }
+        out = 0;
+        for (int i = 0; i < 4; ++i) {
+            const char h = text[at + static_cast<std::size_t>(i)];
+            int digit = 0;
+            if (h >= '0' && h <= '9') {
+                digit = h - '0';
+            } else if (h >= 'a' && h <= 'f') {
+                digit = h - 'a' + 10;
+            } else if (h >= 'A' && h <= 'F') {
+                digit = h - 'A' + 10;
+            } else {
+                return false;
+            }
+            out = out * 16 + static_cast<std::uint32_t>(digit);
+        }
+        at += 4;
+        return true;
+    }
+
+    static void append_utf8(std::uint32_t code, std::string & out) {
+        if (code < 0x80) {
+            out += static_cast<char>(code);
+        } else if (code < 0x800) {
+            out += static_cast<char>(0xC0 | (code >> 6));
+            out += static_cast<char>(0x80 | (code & 0x3F));
+        } else if (code < 0x10000) {
+            out += static_cast<char>(0xE0 | (code >> 12));
+            out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+            out += static_cast<char>(0x80 | (code & 0x3F));
+        } else {
+            out += static_cast<char>(0xF0 | (code >> 18));
+            out += static_cast<char>(0x80 | ((code >> 12) & 0x3F));
+            out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+            out += static_cast<char>(0x80 | (code & 0x3F));
+        }
+    }
+
+    [[nodiscard]] bool parse_string(std::string & out) {
+        if (!eat('"')) { return false; }
         while (at < text.size() && text[at] != '"') {
-            if (text[at] == '\\' && at + 1 < text.size()) {
-                ++at;
-                switch (text[at]) {
-                case 'n': out += '\n'; break;
-                case 't': out += '\t'; break;
-                case 'r': out += '\r'; break;
-                case 'b': out += '\b'; break;
-                case 'f': out += '\f'; break;
-                case 'u': {
-                    // \uXXXX, encoded as UTF-8. Surrogate pairs are not joined:
-                    // a lone high surrogate becomes U+FFFD rather than silently
-                    // producing invalid UTF-8.
-                    std::uint32_t code = 0;
-                    for (int i = 0; i < 4 && at + 1 < text.size(); ++i) {
-                        ++at;
-                        const char h = text[at];
-                        code = code * 16 + static_cast<std::uint32_t>(
-                                               h <= '9' ? h - '0' : (h | 0x20) - 'a' + 10);
-                    }
-                    if (code >= 0xD800 && code <= 0xDFFF) { code = 0xFFFD; }
-                    if (code < 0x80) {
-                        out += static_cast<char>(code);
-                    } else if (code < 0x800) {
-                        out += static_cast<char>(0xC0 | (code >> 6));
-                        out += static_cast<char>(0x80 | (code & 0x3F));
-                    } else {
-                        out += static_cast<char>(0xE0 | (code >> 12));
-                        out += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
-                        out += static_cast<char>(0x80 | (code & 0x3F));
-                    }
-                    break;
-                }
-                default: out += text[at];
-                }
-                ++at;
+            const auto byte = static_cast<unsigned char>(text[at]);
+            // A RAW CONTROL CHARACTER IS NOT A JSON STRING CHARACTER. A literal
+            // newline between quotes has to be spelled \n, and accepting it
+            // made this reader read documents no other one will.
+            if (byte < 0x20) {
+                fail();
+                return false;
+            }
+            if (text[at] != '\\') {
+                out += text[at++];
                 continue;
             }
-            out += text[at++];
+            ++at;
+            if (at >= text.size()) {
+                fail();
+                return false;
+            }
+            const char escape = text[at++];
+            switch (escape) {
+            case '"': out += '"'; break;
+            case '\\': out += '\\'; break;
+            case '/': out += '/'; break;
+            case 'b': out += '\b'; break;
+            case 'f': out += '\f'; break;
+            case 'n': out += '\n'; break;
+            case 'r': out += '\r'; break;
+            case 't': out += '\t'; break;
+            case 'u': {
+                std::uint32_t code = 0;
+                if (!read_hex4(code)) {
+                    fail();
+                    return false;
+                }
+                // A SURROGATE PAIR IS ONE CODE POINT. Encoding each half
+                // separately produces CESU-8, which is not UTF-8 and which no
+                // consumer of this engine's strings can read - so an astral
+                // character came out of JSON.parse as two replacement
+                // characters and went into the page's own data that way.
+                if (code >= 0xD800 && code <= 0xDBFF && at + 1 < text.size() && text[at] == '\\' &&
+                    text[at + 1] == 'u') {
+                    const std::size_t saved = at;
+                    at += 2;
+                    std::uint32_t low = 0;
+                    if (read_hex4(low) && low >= 0xDC00 && low <= 0xDFFF) {
+                        code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+                    } else {
+                        at = saved;
+                    }
+                }
+                // A LONE SURROGATE cannot be spelled in UTF-8 and a string here
+                // is UTF-8 bytes, so it becomes U+FFFD rather than an
+                // ill-formed string. It is the same deviation that makes
+                // `isWellFormed` unimplementable here.
+                if (code >= 0xD800 && code <= 0xDFFF) { code = 0xFFFD; }
+                append_utf8(code, out);
+                break;
+            }
+            default: fail(); return false;
+            }
         }
-        if (at < text.size()) { ++at; } // closing quote
-        return out;
+        if (!eat('"')) { return false; }
+        return true;
     }
+
+    // JSONNumber: an optional minus, an integer part with no leading zero, an
+    // optional fraction that must have a digit after the point, and an optional
+    // exponent that must have one after the marker. `+1`, `01`, `1.`, `.5` and
+    // `1e` are each a SyntaxError and each used to parse.
     [[nodiscard]] value parse_number() {
         const std::size_t start = at;
-        if (at < text.size() && (text[at] == '-' || text[at] == '+')) { ++at; }
-        while (at < text.size() &&
-               ((text[at] >= '0' && text[at] <= '9') || text[at] == '.' || text[at] == 'e' ||
-                text[at] == 'E' || text[at] == '-' || text[at] == '+')) {
-            ++at;
-        }
-        if (at == start) {
-            ok = false;
+        if (at < text.size() && text[at] == '-') { ++at; }
+        if (at >= text.size() || text[at] < '0' || text[at] > '9') {
+            fail();
             return value::undefined();
+        }
+        if (text[at] == '0') {
+            ++at;
+        } else {
+            while (at < text.size() && text[at] >= '0' && text[at] <= '9') { ++at; }
+        }
+        if (at < text.size() && text[at] == '.') {
+            ++at;
+            if (at >= text.size() || text[at] < '0' || text[at] > '9') {
+                fail();
+                return value::undefined();
+            }
+            while (at < text.size() && text[at] >= '0' && text[at] <= '9') { ++at; }
+        }
+        if (at < text.size() && (text[at] == 'e' || text[at] == 'E')) {
+            ++at;
+            if (at < text.size() && (text[at] == '+' || text[at] == '-')) { ++at; }
+            if (at >= text.size() || text[at] < '0' || text[at] > '9') {
+                fail();
+                return value::undefined();
+            }
+            while (at < text.size() && text[at] >= '0' && text[at] <= '9') { ++at; }
         }
         // from_chars, NOT strtod: strtod respects LC_NUMERIC, so on a host whose
         // locale writes decimals with a comma `JSON.parse("{\"n\":1.5}")` would
@@ -849,6 +1168,7 @@ struct json_reader {
         std::from_chars(digits.data(), digits.data() + digits.size(), parsed);
         return value::number(parsed);
     }
+
     [[nodiscard]] value parse_array() {
         auto * arr = static_cast<array_object *>(cx.make_array().as_heap());
         const value held = value::object(arr);
@@ -858,18 +1178,23 @@ struct json_reader {
             ++at;
             return held;
         }
-        while (at < text.size() && ok) {
+        while (ok) {
             arr->items.push_back(parse());
+            if (!ok) { break; }
             skip();
             if (at < text.size() && text[at] == ',') {
                 ++at;
                 continue;
             }
+            // No comma, so the array must end here. A trailing comma lands back
+            // in parse() on the next round and fails there, which is what the
+            // grammar says.
+            (void)eat(']');
             break;
         }
-        if (at < text.size() && text[at] == ']') { ++at; }
         return held;
     }
+
     [[nodiscard]] value parse_object() {
         auto * obj = new_table(cx);
         const value held = value::object(obj);
@@ -879,27 +1204,72 @@ struct json_reader {
             ++at;
             return held;
         }
-        while (at < text.size() && ok) {
+        while (ok) {
             skip();
-            if (at >= text.size() || text[at] != '"') {
-                ok = false;
-                break;
-            }
-            const std::string key = parse_string();
+            std::string key;
+            if (!parse_string(key)) { break; }
             skip();
-            if (at < text.size() && text[at] == ':') { ++at; }
-            obj->set(key, parse());
+            if (!eat(':')) { break; }
+            const value each = parse();
+            if (!ok) { break; }
+            obj->set(key, each);
             skip();
             if (at < text.size() && text[at] == ',') {
                 ++at;
                 continue;
             }
+            (void)eat('}');
             break;
         }
-        if (at < text.size() && text[at] == '}') { ++at; }
         return held;
     }
 };
+
+// InternalizeJSONProperty, 25.5.1.1 - the reviver walk.
+//
+// POST-ORDER: a child is revived and written back before its parent is offered
+// to the reviver, so a reviver rebuilding a Date out of a string sees a
+// finished object. A reviver returning `undefined` DELETES the property, which
+// is how one filters, and is why this cannot be a plain map.
+inline value internalize_json(context & cx, value holder, const std::string & key, value held,
+                              value reviver, std::uint32_t depth) {
+    // The recursion follows the parsed document's shape, so it is bounded by
+    // nesting - but a reviver may graft an object onto itself and this walk
+    // would then never end. The ceiling is the VM's own for the same reason the
+    // VM has one.
+    if (depth > context::reentry_ceiling) { return value::undefined(); }
+    if (held.is_array()) {
+        auto * arr = static_cast<array_object *>(held.as_heap());
+        for (std::size_t i = 0; i < arr->items.size(); ++i) {
+            const value revived =
+                internalize_json(cx, held, std::to_string(i), arr->items[i], reviver, depth + 1);
+            // A DELETED ELEMENT IS A HOLE, NOT A SHORTER ARRAY: 25.5.1.1 does
+            // [[Delete]] and leaves `length` where it was. An array here has no
+            // holes to write (see context::delete_own_property), so a deleted
+            // element reads back as `undefined`, which is what it would be.
+            if (i < arr->items.size()) { arr->items[i] = revived; }
+        }
+    } else if (held.is_object()) {
+        // The key list is taken BEFORE the walk (step 3.d.i takes OwnPropertyKeys
+        // once): a property the reviver adds must not be visited, and one it
+        // deletes ahead of the cursor must not be either.
+        auto * obj = static_cast<object_object *>(held.as_heap());
+        std::vector<std::string> keys;
+        obj->each_own_enumerable_key([&](const std::string & k) { keys.push_back(k); });
+        for (const std::string & each : keys) {
+            value * slot = obj->find(each);
+            if (slot == nullptr) { continue; } // an earlier round deleted it
+            const value revived = internalize_json(cx, held, each, *slot, reviver, depth + 1);
+            if (revived.is_undefined()) {
+                (void)obj->erase(each);
+            } else {
+                obj->set(each, revived);
+            }
+        }
+    }
+    const value args[2] = {cx.string(key), held};
+    return cx.call(reviver, args, holder);
+}
 
 } // namespace detail
 
