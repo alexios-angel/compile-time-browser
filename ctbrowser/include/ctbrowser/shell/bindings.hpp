@@ -872,7 +872,18 @@ private:
     const layout::box_node * boxes_ = nullptr;
     int viewport_width_ = 0;
     int viewport_height_ = 0;
-    double now_ms_ = 0;
+    // A POSITIVE TIME ORIGIN, not zero. `performance.now()` and every event's
+    // `timeStamp` read this, and `dom/events/Event-constructors.any.js` asserts
+    // `timeStamp > 0` twice - which is the only thing between that file and a
+    // pass. Zero is also not what a browser reports: the origin is when the
+    // document began loading and script runs after that, so a page reading
+    // `performance.now()` on its first line sees a small positive number
+    // everywhere else.
+    //
+    // A FIXED number rather than a real one, for the reason `Math.random` is
+    // seeded: three example pages byte-compare their render against a golden,
+    // and a clock that differs run to run cannot have one.
+    double now_ms_ = 1;
 
     std::vector<listener> listeners_;
     std::vector<timer> timers_;
