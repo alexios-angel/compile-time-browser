@@ -4,7 +4,9 @@ The next source exception increment is a protected direct call whose return is
 assigned to a local. The existing `ctjs.invoke` representation and live type
 queries cover its two completions. An internal structural recovery mode now
 connects them to the enclosing try; native admission and emission do not consume
-that mode yet. Ordinary lowering retains its throwing-call refusal. See
+that mode yet. An additional effect-checked mode validates the operations whose
+status edges would disappear before adopting the recovered body. Ordinary
+lowering retains its throwing-call refusal. See
 [native exceptions](native-exceptions.md).
 
 [The source/import regression](../test/CTJS/Import/invocation-state.mlir) keeps
@@ -89,16 +91,56 @@ graph and the rerun remains valid. This unit is one of **8/8 passing focused
 CTests** in `/tmp/ctcompile-arguments-integrated-focused4.log` and also passes
 in the full **475/475** gate.
 
+## Live effect validation before adoption
+
+`ExceptionRecoveryMode::EffectCheckedInvocations` adds a bounded validation to
+the same recovery transaction. It first collects the original acyclic normal
+and catch tails, then checks every operation outside the exact represented
+calls. Every original `check` still has its normal and handler successors while
+this proof runs. An unsupported operation or exhausted budget rejects the
+transaction before a recovered body is constructed or adopted.
+
+The proof accepts declaratively pure operations without throw/reentry/suspend
+traits, handler/frame bookkeeping, total tag operations, and primitive
+arithmetic/conversions. It uses the existing `staticResultType` query for
+unconditional normal-result facts and follows every original predecessor
+operand for other primitive values. A join with an unknown input refuses.
+Numbers, booleans, strings, null and undefined exclude object, Symbol and BigInt
+coercion; `ToObject` remains unsupported because nullish values throw.
+
+Result facts are separate from effects: unary plus always returns a Number
+when it returns, but its operand may run `valueOf` or throw. The producer is
+still visited by the effect scan. No stored type, nothrow or prior recovery
+annotation is authority. Both normal and catch continuations are scanned;
+an unprotected call in either continuation cannot borrow the represented
+invocation's unwind edge.
+
+This mode deliberately refuses the source fixtures' `ctjs.load_global` callee
+lookups. A resolved direct target does not independently prove a current global
+binding is initialized, immutable and free of getters. Until that proof is
+available, all original status edges remain in the untouched source function.
+The structural-only mode remains available for completion-wiring tests.
+
+The `ctcompile_exception_recovery` additions cover a closed primitive CFG with
+two status edges, both edges of one conditional targeting the same block,
+normal/catch effects, a numeric-result coercion that can throw, property and
+global reads, publication, allocation, nullish `ToObject`, an unprotected
+direct call, forged markers, every incomplete work budget, exact completion,
+and exact rollback before a fresh mutated proof. These are compiler structure
+and proof tests, not native execution measurements.
+
 ## Remaining native recovery integration
 
 Use [Exceptions/Recovery.cpp](../lib/CTNative/Lowering/Exceptions/Recovery.cpp),
 which already clones, bounds and structures an acyclic handler CFG. Do not add
-a parallel exception-recovery pass. Its current `cloneTail` converts every
-`check` into its normal edge, with the explicit requirement that later native
-admission prove all discarded exceptional operations nonthrowing.
+a parallel exception-recovery pass. Its `cloneTail` converts non-call `check`s
+into normal edges. The structural-only mode requires later native admission
+to prove the discarded exceptional operations nonthrowing; the effect-checked
+mode validates them first and conservatively refuses unproved effects.
 
-The complete native path requires all five stages. The internal mode implements
-the structural stages 1–3; stages 4–5 remain admission and emission work:
+The complete native path requires all five stages. The structural mode implements
+stages 1–3; the new mode supplies a narrow pre-adoption effect check for stage 4.
+Complete source admission and stage 5 emission remain unfinished:
 
 1. Identify its actual `call_direct` and corresponding check, keeping the full
    pre-instruction vector. Prove there is no intervening fallible computation or

@@ -11,6 +11,7 @@ struct ExceptionRecoveryResult {
     bool recovered = false;
     std::string refusal;
     mlir::OwningOpRef<ctjs::FuncOp> original = {};
+    unsigned steps = 0;
 };
 
 enum class ExceptionRecoveryMode {
@@ -18,6 +19,10 @@ enum class ExceptionRecoveryMode {
     // Structural prerequisite only. Native admission/emission do not consume
     // invocation completions yet, so ordinary lowering must use ExplicitThrows.
     CheckedInvocations,
+    // Also prove every operation outside the represented call unable to throw
+    // or reenter before adopting the clone. This still does not admit the
+    // throwing call component or prove its payload/result/state carriers.
+    EffectCheckedInvocations,
 };
 
 // Reconstruct one preserved importer handler. Failure leaves the function
@@ -27,6 +32,9 @@ enum class ExceptionRecoveryMode {
 // CheckedInvocations also needs the invocation effect/carrier and call-component
 // consumers before adoption. Its snapshot retains all non-call checks too;
 // structural success does not discharge any of those status edges.
+// EffectCheckedInvocations discharges them from the current source graph, not
+// inferred result types or persisted attributes. Unsupported effects and work
+// exhaustion leave the original function untouched, including all checks.
 ExceptionRecoveryResult recoverPrimitiveExceptionRegion(
     ctjs::FuncOp function, unsigned maxSteps = 100000,
     ExceptionRecoveryMode mode = ExceptionRecoveryMode::ExplicitThrows);

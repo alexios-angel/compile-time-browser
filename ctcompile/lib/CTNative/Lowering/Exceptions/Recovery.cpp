@@ -1,5 +1,8 @@
 #include "Recovery.h"
 
+#include "ctcompile/CTNative/Analysis/TypeInference.h"
+#include "ctcompile/CTNative/IR/CTNativeDialect.h"
+
 #include "mlir/Conversion/ControlFlowToSCF/ControlFlowToSCF.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -10,11 +13,13 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/CFGToSCF.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -170,6 +175,113 @@ struct recovery {
         return true;
     }
 
+    bool primitive(mlir::Value value) {
+        // This source CFG has already passed the acyclic-tail check. Follow
+        // every predecessor operand, including status unwind state: a value
+        // joining a primitive and an unknown never proves conversion safe.
+        // staticResultType supplies only unconditional normal-result facts;
+        // its producer's effects are checked separately below. No cached
+        // dataflow state or user-supplied native marker is consulted.
+        llvm::SmallVector<mlir::Value> pending{value};
+        llvm::DenseSet<mlir::Value> seen;
+        bool hasDefinition = false;
+        while (!pending.empty()) {
+            if (!spend()) { return false; }
+            value = pending.pop_back_val();
+            if (!seen.insert(value).second) { continue; }
+            if (auto * definition = value.getDefiningOp()) {
+                const auto type = staticResultType(definition);
+                if (llvm::isa_and_nonnull<NumType, BoolType, StrType>(type) ||
+                    (llvm::isa_and_nonnull<OptType>(type) &&
+                     llvm::isa<BottomType>(llvm::cast<OptType>(type).getElementType()))) {
+                    hasDefinition = true;
+                    continue;
+                }
+                if (llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp, ctjs::UnaryOp>(definition)) {
+                    llvm::append_range(pending, definition->getOperands());
+                    continue;
+                }
+                return false;
+            }
+            auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+            if (!argument || argument.getOwner()->isEntryBlock() ||
+                argument.getOwner()->hasNoPredecessors()) {
+                return false;
+            }
+            auto & block = *argument.getOwner();
+            for (auto pred = block.pred_begin(), end = block.pred_end(); pred != end; ++pred) {
+                if (!spend()) { return false; }
+                auto branch = llvm::dyn_cast<mlir::BranchOpInterface>((*pred)->getTerminator());
+                if (!branch) { return false; }
+                auto operands = branch.getSuccessorOperands(pred.getSuccessorIndex());
+                const unsigned index = argument.getArgNumber();
+                if (index >= operands.size() || operands.isOperandProduced(index)) { return false; }
+                pending.push_back(operands[index]);
+            }
+        }
+        return hasDefinition;
+    }
+
+    bool nonthrowing(mlir::Operation * operation) {
+        if (llvm::isa<ctjs::CheckOp, ctjs::ReturnOp, ctjs::ThrowOp, ctjs::PopHandlerOp,
+                      ctjs::FrameExitOp, ctjs::CatchLandOp, ctjs::RootOp, mlir::cf::BranchOp,
+                      mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(operation)) {
+            return true;
+        }
+        // Pure alone is not a substitute for CTJS's exception/reentry traits.
+        // Unknown operations have neither an effect proof nor a special case.
+        if (mlir::isPure(operation) && !operation->hasTrait<ctjs::CTJSMayThrow>() &&
+            !operation->hasTrait<ctjs::CTJSMayReenterJS>() &&
+            !operation->hasTrait<ctjs::CTJSMaySuspend>()) {
+            return true;
+        }
+        if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
+            if (unary.getKind() == ctjs::UnaryKind::Not ||
+                unary.getKind() == ctjs::UnaryKind::TypeOf ||
+                unary.getKind() == ctjs::UnaryKind::Void) {
+                return true;
+            }
+        }
+        if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
+            if (compare.getKind() == ctjs::CompareKind::StrictEq) { return true; }
+        }
+        if (auto convert = llvm::dyn_cast<ctjs::ConvertOp>(operation)) {
+            if (convert.getKind() == ctjs::ConvertKind::ToBoolean) { return true; }
+            if (convert.getKind() == ctjs::ConvertKind::ToObject) { return false; }
+            return primitive(convert.getOperand());
+        }
+        if (llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp, ctjs::UnaryOp, ctjs::CompareOp>(
+                operation)) {
+            return llvm::all_of(operation->getOperands(),
+                                [&](mlir::Value value) { return primitive(value); });
+        }
+        return false;
+    }
+
+    bool proveEffects(const tail & normal, const tail & caught) {
+        // The old check still owns both successors while this runs. Only the
+        // exact call recorded by inspectInvocation has a represented unwind;
+        // a property read, callee lookup, second call or callback cannot borrow
+        // that permission. Scan both continuations, including unchecked catch
+        // operations, before constructing or adopting any recovered body.
+        for (const tail * plan : {&normal, &caught}) {
+            for (mlir::Block * block : plan->blocks) {
+                for (mlir::Operation & operation : *block) {
+                    if (!spend(uint64_t(1) + operation.getNumOperands())) { return false; }
+                    auto invocation = invocations.lookup(block->getTerminator());
+                    if (plan == &normal && invocation.getOperation() == &operation) { continue; }
+                    if (!nonthrowing(&operation)) {
+                        return reject(("native invocation recovery cannot prove a nonthrowing "
+                                       "status or continuation operation: `" +
+                                       operation.getName().getStringRef() + "`")
+                                          .str());
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
     bool collect(tail & result, mlir::Block * start, bool initiallyActive, bool isCatch) {
         llvm::SmallVector<std::pair<mlir::Block *, bool>> pending{{start, initiallyActive}};
         while (!pending.empty()) {
@@ -234,8 +346,7 @@ struct recovery {
                     return reject(
                         "native exception check lacks a complete register vector for its handler");
                 }
-                if (mode == ExceptionRecoveryMode::CheckedInvocations &&
-                    !inspectInvocation(check)) {
+                if (mode != ExceptionRecoveryMode::ExplicitThrows && !inspectInvocation(check)) {
                     return false;
                 }
                 result.edges[block].push_back(check.getCont());
@@ -663,6 +774,10 @@ struct recovery {
         if (throws == 0 && invocations.empty()) {
             return reject("native try/catch needs an explicit throw in its active handler");
         }
+        if (mode == ExceptionRecoveryMode::EffectCheckedInvocations &&
+            !proveEffects(normal, caught)) {
+            return false;
+        }
         mlir::OpBuilder builder(push);
         mlir::OperationState state(push.getLoc(), "ctjs.try");
         state.addTypes(ctjs::ValueType::get(function.getContext()));
@@ -713,14 +828,19 @@ ExceptionRecoveryResult recoverPrimitiveExceptionRegion(ctjs::FuncOp function, u
     // functions; no rewrite is visible until every stage succeeds.
     recovery attempt{function, maxSteps, mode};
     if (!attempt.inspect() || !attempt.spend(maxSteps - attempt.remaining)) {
-        return {false, std::move(attempt.refusal)};
+        return {false, std::move(attempt.refusal), {}, maxSteps - attempt.remaining};
     }
     function.getContext()->getOrLoadDialect<mlir::arith::ArithDialect>();
     function.getContext()->getOrLoadDialect<mlir::ub::UBDialect>();
     function.getContext()->getOrLoadDialect<mlir::cf::ControlFlowDialect>();
+    if (mode == ExceptionRecoveryMode::EffectCheckedInvocations) {
+        function.getContext()->getOrLoadDialect<CTNativeDialect>();
+    }
     mlir::OwningOpRef<ctjs::FuncOp> scratch(llvm::cast<ctjs::FuncOp>(function->clone()));
     attempt.function = *scratch;
-    if (!attempt.run()) { return {false, std::move(attempt.refusal)}; }
+    if (!attempt.run()) {
+        return {false, std::move(attempt.refusal), {}, maxSteps - attempt.remaining};
+    }
     mlir::Region original;
     original.takeBody(function.getBody());
     function.getBody().takeBody(scratch->getBody());
@@ -729,7 +849,7 @@ ExceptionRecoveryResult recoverPrimitiveExceptionRegion(ctjs::FuncOp function, u
     // must retain the original attributes as well as the original body.
     (*scratch)->setAttrs(function->getAttrs());
     function->removeAttr("ctjs.not_structured");
-    return {true, {}, std::move(scratch)};
+    return {true, {}, std::move(scratch), maxSteps - attempt.remaining};
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

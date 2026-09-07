@@ -2,6 +2,7 @@
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/Import/BytecodeImport.hpp"
 #include "ctcompile/CTJS/Transforms/Passes.h"
+#include "ctcompile/CTNative/Analysis/TypeInference.h"
 
 #include "ctbrowser/script/compile.hpp"
 
@@ -11,6 +12,7 @@
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/Parser/Parser.h"
 #include "mlir/Pass/PassManager.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
@@ -181,6 +183,11 @@ void testSource(mlir::MLIRContext & context, llvm::StringRef name, llvm::StringR
     mlir::OwningOpRef<ctjs::FuncOp> detached(llvm::cast<ctjs::FuncOp>(function->clone()));
     const auto snapshot = printed(*detached);
     const auto checks = countChecks(function);
+    auto effects = recoverPrimitiveExceptionRegion(function, 100000,
+                                                   ExceptionRecoveryMode::EffectCheckedInvocations);
+    check(!effects.recovered && effects.refusal.find("ctjs.load_global") != std::string::npos &&
+              printed(function) == original && countChecks(function) == checks,
+          "a source callee lookup needs a live binding effect proof before its check disappears");
     auto ordinary = recoverPrimitiveExceptionRegion(function);
     check(!ordinary.recovered &&
               ordinary.refusal ==
@@ -296,6 +303,188 @@ void testMutations(mlir::MLIRContext & context, llvm::StringRef source) {
           "an unresolved source call supplies no invocation recovery permission");
 }
 
+constexpr llvm::StringLiteral effectFixture = R"mlir(
+module {
+  ctjs.func private @leaf(%r: !ctjs.value, %nt: !ctjs.value,
+                           %c: !ctjs.value) -> !ctjs.value
+      attributes {upvalue_count = 0 : i32} {
+    %payload = ctjs.constant #ctjs.number<4629700416936869888>
+    ctjs.throw %payload
+  }
+  ctjs.func @guarded$effects(%r: !ctjs.value, %nt: !ctjs.value,
+                              %c: !ctjs.value, %unknown: !ctjs.value) -> !ctjs.value
+      attributes {upvalue_count = 0 : i32, ctjs.not_structured = "preserved"} {
+    %frame = ctjs.frame_enter 2
+    %zero = ctjs.constant #ctjs.number<0>
+    %one = ctjs.constant #ctjs.number<4607182418800017408>
+    ctjs.push_handler ^body(%zero, %zero : !ctjs.value, !ctjs.value)
+      catch ^handler(%zero, %zero : !ctjs.value, !ctjs.value)
+  ^body(%a: !ctjs.value, %b: !ctjs.value):
+    %condition = ctjs.truthy %unknown
+    cf.cond_br %condition, ^arithmetic(%a, %b : !ctjs.value, !ctjs.value),
+      ^arithmetic(%one, %b : !ctjs.value, !ctjs.value)
+  ^arithmetic(%left: !ctjs.value, %scratch: !ctjs.value):
+    %sum = ctjs.binary add %left, %one
+    ctjs.check ^call(%sum, %scratch : !ctjs.value, !ctjs.value)
+      caught ^handler(%left, %scratch : !ctjs.value, !ctjs.value)
+  ^call(%saved: !ctjs.value, %old: !ctjs.value):
+    %called = ctjs.call_direct @leaf(%r, %nt, %c)
+    ctjs.check ^done(%saved, %called : !ctjs.value, !ctjs.value)
+      caught ^handler(%saved, %old : !ctjs.value, !ctjs.value)
+  ^done(%state: !ctjs.value, %returned: !ctjs.value):
+    ctjs.pop_handler
+    ctjs.frame_exit %frame
+    ctjs.return %returned
+  ^handler(%before: !ctjs.value, %oldScratch: !ctjs.value):
+    %pad, %thrown = ctjs.catch_land
+    %caught = ctjs.binary add %before, %one
+    ctjs.frame_exit %frame
+    ctjs.return %caught
+  }
+}
+)mlir";
+
+void restore(ctjs::FuncOp function,
+             ctcompile::ctnative::lowering_detail::ExceptionRecoveryResult & result) {
+    function.getBody().takeBody(result.original->getBody());
+    function->setAttrs((*result.original)->getAttrs());
+}
+
+void testEffects(mlir::MLIRContext & context) {
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(effectFixture, &context);
+    if (!check(static_cast<bool>(module), "closed primitive effect fixture parses")) { return; }
+    auto function = guarded(*module);
+    const auto before = printed(function);
+    const unsigned checks = countChecks(function);
+    auto result = recoverPrimitiveExceptionRegion(function, 100000,
+                                                  ExceptionRecoveryMode::EffectCheckedInvocations);
+    if (!check(result.recovered, "live primitive status and continuation effects discharge")) {
+        llvm::errs() << result.refusal << '\n';
+        return;
+    }
+    check(mlir::succeeded(mlir::verify(*module)), "effect-checked invocation IR verifies");
+    check(checks == 2 && countChecks(function) == 0 && countChecks(*result.original) == checks,
+          "a proved arithmetic check disappears only with the complete recovery transaction");
+    unsigned calls = 0;
+    function.walk([&](ctjs::InvokeOp) { ++calls; });
+    check(calls == 1, "the throwing call keeps its separate invocation completion");
+    const auto firstSteps = result.steps;
+    restore(function, result);
+    check(printed(function) == before,
+          "effect-checked rollback restores exact source and attributes");
+
+    // Every incomplete budget must fail before adoption, including cutoffs
+    // inside primitive predecessor walks, the effect scan and structuring.
+    for (unsigned budget = 0; budget < firstSteps; ++budget) {
+        auto limited = recoverPrimitiveExceptionRegion(
+            function, budget, ExceptionRecoveryMode::EffectCheckedInvocations);
+        if (!check(!limited.recovered &&
+                       limited.refusal.find("budget exhausted") != std::string::npos &&
+                       printed(function) == before && countChecks(function) == checks,
+                   "every incomplete effect/recovery budget preserves the original graph")) {
+            llvm::errs() << "budget " << budget << ": " << limited.refusal << '\n';
+            return;
+        }
+    }
+    auto exact = recoverPrimitiveExceptionRegion(function, firstSteps,
+                                                 ExceptionRecoveryMode::EffectCheckedInvocations);
+    if (!check(exact.recovered && exact.steps == firstSteps,
+               "the first complete effect/recovery budget succeeds exactly")) {
+        return;
+    }
+    restore(function, exact);
+    check(printed(function) == before, "exact-budget rollback permits a fresh proof");
+    llvm::outs() << "effect recovery: " << firstSteps
+                 << " steps, every incomplete budget preserves " << checks << " checks\n";
+
+    for (unsigned mutation = 0; mutation != 13; ++mutation) {
+        auto current = mlir::parseSourceString<mlir::ModuleOp>(effectFixture, &context);
+        if (!current) { return; }
+        auto candidate = guarded(*current);
+        // Establish and roll back a success before every mutation: neither
+        // the earlier success nor forged nothrow/type markers may survive as
+        // authority for the next source graph.
+        auto prior = recoverPrimitiveExceptionRegion(
+            candidate, 100000, ExceptionRecoveryMode::EffectCheckedInvocations);
+        if (!check(prior.recovered, "mutation fixture first proves unchanged effects")) { return; }
+        restore(candidate, prior);
+        auto & entry = candidate.getBody().front();
+        ctjs::BinaryOp arithmetic, caught;
+        mlir::cf::CondBranchOp branch;
+        ctjs::PopHandlerOp normal;
+        candidate.walk([&](ctjs::BinaryOp binary) {
+            if (!arithmetic) {
+                arithmetic = binary;
+            } else {
+                caught = binary;
+            }
+        });
+        candidate.walk([&](mlir::cf::CondBranchOp found) { branch = found; });
+        candidate.walk([&](ctjs::PopHandlerOp found) { normal = found; });
+        mlir::OpBuilder at(arithmetic);
+        const auto where = arithmetic.getLoc();
+        const auto unknown = entry.getArgument(3);
+        const auto type = ctjs::ValueType::get(&context);
+        if (mutation == 0 || mutation == 3 || mutation == 4 || mutation == 9) {
+            if (mutation == 3) { at.setInsertionPoint(normal); }
+            if (mutation == 4) { at.setInsertionPoint(caught); }
+            auto load = ctjs::LoadGlobalOp::create(at, where, "unprovedGetter");
+            if (mutation == 9) {
+                load->setAttr("ctnative.nothrow", at.getUnitAttr());
+                load->setAttr("ctnative.type", at.getStringAttr("num<i32>"));
+                candidate->setAttr("ctnative.nonthrowing", at.getUnitAttr());
+            }
+        } else if (mutation == 1) {
+            mlir::OperationState allocation(where, "ctjs.create_object");
+            allocation.addTypes(type);
+            at.create(allocation);
+        } else if (mutation == 2) {
+            mlir::OperationState store(where, "ctjs.store_global");
+            store.addAttribute("name", at.getStringAttr("published"));
+            store.addOperands(arithmetic->getOperand(0));
+            at.create(store);
+        } else if (mutation == 5) {
+            // Both edges have the same successor. Checking only the first
+            // incoming operand would incorrectly retain a primitive fact.
+            branch->setOperand(1u + static_cast<unsigned>(branch.getTrueDestOperands().size()),
+                               unknown);
+        } else if (mutation == 6) {
+            arithmetic->setOperand(1, unknown);
+        } else if (mutation == 7) {
+            auto absent =
+                ctjs::ConstantOp::create(at, where, type, ctjs::UndefinedAttr::get(&context));
+            ctjs::ConvertOp::create(
+                at, where, type, ctjs::ConvertKindAttr::get(&context, ctjs::ConvertKind::ToObject),
+                absent);
+        } else if (mutation == 8) {
+            arithmetic.setKindAttr(ctjs::BinaryKindAttr::get(&context, ctjs::BinaryKind::Concat));
+            arithmetic->setOperand(1, unknown);
+        } else if (mutation == 10) {
+            auto key =
+                ctjs::ConstantOp::create(at, where, type, ctjs::StringAttr::get(&context, "x"));
+            ctjs::GetPropertyOp::create(at, where, type, unknown, key);
+        } else if (mutation == 11) {
+            at.setInsertionPoint(normal);
+            at.clone(*firstCall(candidate).getOperation());
+        } else {
+            // Its normal result is always numeric, but coercing the input
+            // can run valueOf or throw. Result facts do not discharge it.
+            auto numeric = ctjs::UnaryOp::create(
+                at, where, type, ctjs::UnaryKindAttr::get(&context, ctjs::UnaryKind::Plus),
+                unknown);
+            check(llvm::isa<ctcompile::ctnative::NumType>(
+                      ctcompile::ctnative::staticResultType(numeric)),
+                  "throwing coercion has an unconditional numeric normal-result fact");
+        }
+        const auto changed = printed(candidate);
+        auto refused = recoverPrimitiveExceptionRegion(
+            candidate, 100000, ExceptionRecoveryMode::EffectCheckedInvocations);
+        check(!refused.recovered && refused.refusal.find("nonthrowing") != std::string::npos &&
+                  printed(candidate) == changed && countChecks(candidate) == checks,
+              "live status/continuation effect mutation preserves all original edges");
+    }
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -319,5 +508,6 @@ int main(int argc, char ** argv) {
     testSource(context, "sequential", source("sequential"), 2, 20, 32);
     testSource(context, "argument", source("argument"), 1, 14, 14);
     testMutations(context, source("assignment"));
+    testEffects(context);
     return failures == 0 ? 0 : 1;
 }
