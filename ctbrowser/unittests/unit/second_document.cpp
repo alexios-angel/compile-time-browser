@@ -129,13 +129,22 @@ void test_a_node_of_one_document_is_refused_by_the_other() {
     // The primary's `handle_of` now checks that a wrapper is in ITS table, so a
     // foreign node reads as no node - a method that does nothing - rather than
     // as whatever happens to occupy that slot here.
+    // WHAT THE DOM ACTUALLY REQUIRES IS ADOPTION: `appendChild` runs "adopt
+    // node" first, so a node of another document is MOVED into this one rather
+    // than refused. That needs a subtree copy across two slabs and it is not
+    // done - `importNode` and `adoptNode` are not done either, and the same
+    // work buys all three. What the engine does instead is refuse, and it
+    // refuses through the one step that already exists: `handle_of` does not
+    // find the wrapper in THIS instance's table, so the argument is not a Node
+    // and "ensure pre-insertion validity" step 1 throws a TypeError. That is
+    // wrong about the DOM and right about the engine's own model, and it is
+    // pinned here so the day adoption arrives this line has to change.
     is("(function () {"
        " var d = document.implementation.createHTMLDocument('m');"
        " var p = d.createElement('p');"
-       " var before = document.body.childNodes.length;"
-       " document.body.appendChild(p);"
-       " return before === document.body.childNodes.length; })()",
-       "true");
+       " try { document.body.appendChild(p); return 'appended'; }"
+       " catch (e) { return e.name + ',' + document.body.childNodes.length; } })()",
+       "TypeError,3");
     is("(function () {"
        " var d = document.implementation.createHTMLDocument('m');"
        " return document.contains(d.body); })()",

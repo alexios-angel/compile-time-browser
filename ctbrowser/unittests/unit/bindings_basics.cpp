@@ -972,9 +972,14 @@ void test_document_implementation() {
                     ',' + (typeof impl.hasFeature.apply));
         var dt = impl.createDocumentType('html', '', '');
         console.log('doctype=' + dt.name + ',' + (dt.publicId === '') + ',' + dt.nodeType);
-        // Named absences, so a page can detect them rather than get a lie.
-        console.log('absent=' + (impl.createHTMLDocument === undefined) +
-                    ',' + (impl.createDocument === undefined));
+        // BOTH OF THESE USED TO BE ABSENT, and this line asserted the absence
+        // by name. A second Document exists now - see unit/second_document -
+        // so the same line asserts that the two are functions and that the
+        // document each returns is not this one.
+        var made = impl.createHTMLDocument('m');
+        console.log('second=' + (typeof impl.createHTMLDocument) +
+                    ',' + (typeof impl.createDocument) +
+                    ',' + (made !== document) + ',' + made.title);
       </script></body></html>)");
     check(page.script_error().empty(), "the implementation script ran: " + page.script_error());
     const auto & log = log_of(page);
@@ -982,8 +987,8 @@ void test_document_implementation() {
     check(log[0] == "feature=true,true,true,function", "hasFeature is always true: " + log[0]);
     check(log[1] == "doctype=html,true,10",
           "createDocumentType carries its three strings: " + log[1]);
-    check(log[2] == "absent=true,true",
-          "the two that need a second Document are absent: " + log[2]);
+    check(log[2] == "second=function,function,true,m",
+          "createHTMLDocument makes a SECOND document: " + log[2]);
 }
 
 // `createElementNS`, and the round trip that has to survive it: the exact

@@ -1123,6 +1123,14 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
 }
 
 std::string dom_bindings::author_style_text() {
+    // THE DOCUMENT'S OWN SHEETS ARE COLLECTED LAZILY, on a read of
+    // `document.styleSheets` - so a page that adopted a constructed sheet
+    // without ever touching `document.styleSheets` had `css_document_sheets_`
+    // empty here, and its `<style>` element vanished from the serialisation
+    // while the adopted sheets survived. Syncing first is what makes this the
+    // FINAL list of style sheets CSSOM defines rather than whatever the page
+    // happened to have asked for.
+    if (cx_ != nullptr) { sync_style_sheets(*cx_); }
     std::string out;
     const auto emit = [&](std::size_t at) {
         if (at >= css_sheets_.size()) { return; }

@@ -1246,6 +1246,13 @@ value dom_bindings::make_html_document(context & cx, const std::string * title) 
                                        std::function<void(node_id)>{}));
     made.secondary_ = true;
     made.cx_ = &cx;
+    // BEFORE the adoption, and this is not belt and braces. The primary builds
+    // its interface table lazily, on the first `wrap()` - so a page whose very
+    // first statement is `createHTMLDocument(...).createElement("div")` adopted
+    // an EMPTY table and set `interfaces_linked_`, and the made document could
+    // then never build one. `instanceof HTMLDivElement` was false for exactly
+    // that page and true for one that had touched an element first.
+    ensure_dom_interfaces(cx);
     made.adopt_interfaces_of(*this);
     if (title != nullptr) {
         const node_id head = made.first_html_element("head");
@@ -1277,6 +1284,7 @@ value dom_bindings::make_xml_document(context & cx, std::string_view ns,
                                        std::function<void(node_id)>{}));
     made.secondary_ = true;
     made.cx_ = &cx;
+    ensure_dom_interfaces(cx); // see make_html_document
     made.adopt_interfaces_of(*this);
     if (!qualified_name.empty()) {
         const node_ns kind = ns == "http://www.w3.org/1999/xhtml" ? node_ns::html
@@ -1430,9 +1438,23 @@ void dom_bindings::install_tree_accessors(context & cx, script::object_object & 
     // the DOCUMENT ELEMENT that is a `body` or a `frameset`, which is why
     // `Document.body.html` builds a `<body>` inside a `<div>` and expects
     // `document.body` not to be it.
+    // `documentElement` IS THE ROOT, not `find_by_tag("html")`. For a parsed
+    // page the two are the same node - this tree builder makes `<html>` the
+    // root - but `createDocument(null, "foo")` has a root called `foo` and no
+    // `<html>` anywhere, and by tag name that document had no document element
+    // at all. The root of a document that was never parsed is the Document
+    // node itself, which is not an element, and that is what makes
+    // `createDocument(null, "").documentElement === null` true.
     accessor(
         "documentElement",
-        [this](context & c, std::span<value>) { return wrap(c, first_html_element("html")); },
+        [this](context & c, std::span<value>) {
+            const auto txn = doc_->read();
+            const node_id root = txn.root();
+            if (txn.kind(root).value_or(node_kind::document) != node_kind::element) {
+                return value::null();
+            }
+            return wrap(c, root);
+        },
         nullptr);
     accessor(
         "body", [this](context & c, std::span<value>) { return wrap(c, body_element()); },
@@ -2861,6 +2883,12 @@ value dom_bindings::make_live_collection(context & cx,
     // reading `length`, which already worked, and then ask what the thing IS.
     // The interface objects exist (install_dom_interfaces); nothing had linked
     // a collection to one.
+    // The table is built lazily on the first `wrap()`, and a page can ask for a
+    // collection before it has touched a single element - `document.images`
+    // reaches here without wrapping anything. Without this the prototype was
+    // `undefined` and `instanceof HTMLCollection` was false for the first
+    // collection a page made and true for every one after it.
+    ensure_dom_interfaces(cx);
     target->prototype = interface_prototype("HTMLCollection");
     // Shared rather than copied into each trap: `members` walks the document, and
     // three copies of the same walk is three chances for them to disagree.
