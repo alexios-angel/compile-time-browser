@@ -35,8 +35,9 @@ Ordinary `std::less<double>` would not provide the required NaN semantics.
 String comparison operates on the owning byte strings, and object keys retain
 their owning identity handles.
 
-Any `keys()`, `values()`, or snapshot copy selects the insertion-ordered vector
-representation for every Map in that native module. This conservative choice
+Every admitted `Array.from(map.keys())` or `Array.from(map.values())` selects
+the insertion-ordered vector representation for every Map in that native
+module. This conservative choice
 is made before deforestation, so eliminating a temporary snapshot does not
 turn a positional projection into sorted-key traversal. Deforestation requires
 the exact ordered-storage and snapshot helper definitions as well as the
@@ -68,8 +69,8 @@ for its numeric payload, whose underlying type remains `double`.
 | `delete(key)` | Remove the entry and report whether it existed |
 | `clear()` | Remove all entries and return absent |
 | `size` | Number of current entries |
-| `keys()` | Independent numeric or string array snapshot |
-| `values()` | Independent numeric array snapshot |
+| `Array.from(map.keys())` | Independent numeric or string array snapshot after proved immediate iterator consumption |
+| `Array.from(map.values())` | Independent numeric array snapshot after proved immediate iterator consumption |
 
 Numeric lookup uses SameValueZero: NaN finds NaN, and positive and negative
 zero are one key. Replacement preserves the original key and position;
@@ -77,11 +78,18 @@ deleting and reinserting moves the entry to the end. The current interpreter
 retains the sign of the first inserted zero key, so native `keys()` does too.
 This differs from ECMAScript Map's zero normalization.
 
-The interpreter returns arrays from `keys()` and `values()`, rather than
-ECMAScript iterators. Native snapshots therefore copy their elements and
-survive subsequent mutation or clearing. Reads and `length` are supported;
-snapshot mutation, escape and elements other than numbers or strings are refused.
-Proved standard `Array.from` copies and optional string scalar reads are covered
+Runtime commit `e6c77fc` changed `keys()` and `values()` to return iterators.
+Native admission requires exactly one semantic use of each iterator: a proved
+`Array.from` argument in the same block, with only constants, root bookkeeping
+and proved Array builtin lookups in between. Direct indexing, mutation,
+publication, delayed consumption and repeated consumption refuse. The internal
+eager vector is equivalent only under this proof; it is not a general iterator
+representation.
+
+The materialized arrays survive subsequent mutation or clearing. Scalar reads
+and `length` are supported; array mutation, escape and unsupported element
+types remain refused. Standard `Array.from` materialization and optional string
+scalar reads are covered
 by [native-string-snapshots.md](native-string-snapshots.md). Strings retain
 the interpreter's UTF-8/WTF-8 byte semantics, including embedded NUL and lone
 surrogates, as described in [native-strings.md](native-strings.md).
@@ -164,6 +172,12 @@ capture cells must not be reused for that lifetime.
 
 ## Validation
 
+The measurements in this section predate the 2026-09-07 iterator correction.
+The six affected execution fixtures and positive lowering cases now materialize
+arrays explicitly without changing functions or expected observations. The
+devbox build and all **162/162 lit cases** pass for correction `c7a849c`.
+The full generated-program CTest gate remains pending.
+
 The original confined-Map checkpoint `8286564` passed **283/283** devbox tests,
 including **94** lit tests. The validation below records that checkpoint;
 the call/return extension is recorded separately after it.
@@ -215,7 +229,8 @@ The importer and boxed lowering are unchanged.
 
 ### Closed calls, returns and captures
 
-The complete devbox gate passes **290/290**, including **96/96** lit tests;
+The closed-call checkpoint's complete devbox gate passed **290/290**, including
+**96/96** lit tests;
 the pinned formatting gate and `git diff --check` pass. A 30-function claim
 floor fails against the measured 29. Bootstrap remains **19/574**, p5
 **39/4754** and Phaser **43/7725**, with the same direct/lift counts above.

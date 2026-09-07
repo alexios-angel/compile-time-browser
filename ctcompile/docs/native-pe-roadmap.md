@@ -1,9 +1,24 @@
 # Native partial evaluation: implementation plan
 
-Baseline: `46e94cb`. Closed factories and static entry prefixes already evaluate
+Historical baseline: `46e94cb`. Closed factories and static entry prefixes already evaluate
 over a compiler-owned heap. BTA distinguishes known values from executable static
 operations. Bootstrap still compiles 19/574 functions natively; its Data initializer
 needs retained closures, component values and host contracts.
+
+The 2026-09-07 iterator boundary follows runtime commit `e6c77fc`: Map
+`keys()`/`values()` results need one immediate, proved `Array.from` consumption
+before native array operations. The consumer must be the iterator's only
+semantic use in the same block; only constants, root bookkeeping and proved
+Array builtin lookups may intervene. Direct iterator reads, mutation,
+publication, delayed consumption and reuse refuse. This proof permits the
+internal eager vector; materialized-array confinement remains unchanged.
+
+Partial evaluation permits only rederived Array snapshot builtin/copy markers
+through its environment check. Its evaluator still declines actual snapshot
+evaluation, so allowing that environment does not execute an iterator at
+compile time. Updated source fixtures explicitly materialize their snapshots;
+the devbox build and all **162/162 lit cases** pass for correction `c7a849c`.
+The full generated-program CTest gate remains pending.
 
 The initial work is divided into four independently implemented tracks. Each lands
 only with source observations and adversarial tests for its own proof boundary.
@@ -65,7 +80,8 @@ snapshots, selecting the identity strategy on conflicts. The first implementatio
 is a restricted adaptation of Lumberhack; recursive fusion and its higher-order
 subtyping machinery require later work. See [the implemented strategy](native-deforestation.md).
 
-The first target is a compiler-proved Map `keys()`/`values()` snapshot whose
+The first target is an array materialized by a compiler-proved immediate
+`Array.from(map.keys())` or `Array.from(map.values())` call whose
 consumers need only length or indexed elements. Avoid constructing an intermediate
 vector where a direct scalar projection has the same semantics. Preserve the
 snapshot's observation time: a mutation between construction and consumption must
@@ -180,7 +196,8 @@ module-wide environment guards can be relaxed.
 
 ## Integrated results, 2026-09-06
 
-The devbox gate passes **448/448 CTests**, including **144/144 lit cases**, in
+These historical measurements predate `e6c77fc` and the iterator correction.
+The devbox gate passed **448/448 CTests**, including **144/144 lit cases**, in
 **532.31 seconds**.
 All **537 C++ files** pass the pinned formatter, and
 `git diff --check` passes. The optimization source fixtures pass ordinary and deduced
@@ -349,7 +366,8 @@ does not establish these effect and lifetime contracts. The broader
 incomplete. Unchecked mixed-result field accesses
 also need path-sensitive receiver/presence evidence or a supported exception boundary.
 The [string-key snapshot and Array.from prerequisite](native-string-snapshots.md)
-is implemented for confined proved Maps, including absent and empty keys.
+requires immediate single iterator consumption for confined proved Maps,
+including absent and empty keys.
 The exact recorder path is proved; general error reporting and typed export
 publication remain open. The host audit's
 script receiver and callee/accessor evaluation-order differences are fixed.

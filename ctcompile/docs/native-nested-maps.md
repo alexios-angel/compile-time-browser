@@ -9,9 +9,12 @@ captured by the existing owning closure environments.
 
 A numeric leaf retains `std::shared_ptr<ctnative::number_map<K>>`. A parent
 uses `std::shared_ptr<ctnative::map_storage<K, V>>`, where `V` is the child's
-owning handle type. Numeric `keys()` snapshots remain available on parents.
-Snapshots of Map values remain refused because the array tier currently
-carries only numbers.
+owning handle type. Numeric key arrays remain available through
+`Array.from(parent.keys())`, with one immediate proved consumption of the
+iterator. Raw iterator reads, delayed consumption and reuse remain refused;
+the full [snapshot proof](native-string-snapshots.md) applies to parents too.
+Materializing Map-valued elements remains refused because the array tier
+cannot carry owning child Maps.
 
 ## Schema and ownership proof
 
@@ -50,6 +53,13 @@ keys. Component-instance values, general object/host identities and native
 publication remain outstanding for Bootstrap Data.
 
 ## Validation
+
+The measurements below predate runtime commit `e6c77fc` and the 2026-09-07
+iterator admission correction. The fixture now materializes its parent keys
+with `Array.from`, preserving the nine expected observations and function
+count. Correction `c7a849c` passes the devbox build and all **162/162 lit
+cases**, including the nested Map presence proof across materialization.
+The full generated-program CTest gate remains pending.
 
 `native-nested-map-fixture.js` compares nine numeric observations with the
 independent interpreter: shared aliases, replacement, child lifetime after

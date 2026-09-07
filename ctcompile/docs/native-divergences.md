@@ -584,10 +584,19 @@ first: `[10,20,30][0.5]` is `10`, `[1.5]` is `20`, `[2.9]` is `30`, and
 `[-1.5]` still miss. ECMAScript engines treat these as non-index properties;
 the native backend follows this project's interpreter.
 
-Map `keys()` and `values()` return array snapshots in the current interpreter.
-Adding their native lowering made the old defect a dependency of the new
-feature. The shared helper now calls `std::trunc` before testing its bounds;
+When that correction was measured, Map `keys()` and `values()` returned array
+snapshots in the interpreter. Adding their native lowering made the old defect
+a dependency of the new feature. The shared helper calls `std::trunc` before
+testing its bounds;
 NaN and infinity still fail the guard before any integer conversion.
+
+Runtime commit `e6c77fc` now returns iterators. Native array indexing therefore
+requires explicit `Array.from(map.keys())` or `Array.from(map.values())`, with
+one immediate proved consumption in the same block. Only constants, root
+bookkeeping and proved Array builtin lookups may intervene. Direct iterator
+indexing, mutation, publication, delayed consumption and reuse are refused;
+the eager internal vector is permitted only by this proof. Fractional indexing
+of the materialized array still follows the interpreter behavior above.
 
 `native-index-truncation-fixture.js` is retained as a passing differential
 regression, with GCC/Clang, deduced-type and off-by-one controls. The Map fixture

@@ -14,11 +14,17 @@ instances, Data as a whole, or full Bootstrap.
 
 ## Carriers and absent reads
 
-A confined string-key `keys()` snapshot owns a `std::vector<std::string>`. An
-admitted `Array.from` call copies that vector. Both preserve insertion order,
-replacement position and the reference interpreter's byte strings, including
-embedded NUL and lone-surrogate encodings. Subsequent deletion, reinsertion or
-clearing of the Map does not change either snapshot.
+Since runtime commit `e6c77fc`, `keys()` and `values()` return iterators. Native
+admission requires one immediate, proved `Array.from` consumption of each
+iterator. The resulting string-key array owns a `std::vector<std::string>`;
+the internal eager vector is safe only under that consumption proof and is
+never exposed as an indexable JavaScript iterator.
+
+Materialized arrays preserve insertion order, replacement position and the
+interpreter's byte strings, including embedded NUL and lone-surrogate encodings.
+Subsequent deletion, reinsertion or clearing of the Map does not change them.
+Two independent snapshots require two materializations, each from a fresh
+iterator; copying a general array is outside this admission rule.
 
 An indexed read has the existing `opt<str<utf8>>` inferred type and uses
 `ctnative::nullable_string`: separate undefined, null and string tags with an
@@ -50,13 +56,16 @@ hold:
   and the call receiver is that exact loaded value.
 - There is exactly one argument, produced by an already proved Map `keys()`
   or `values()` call. Mapping callbacks and general arrays are refused.
+- That iterator has exactly one semantic use: this `Array.from` argument in
+  the same block, after its producer. Only constants, root bookkeeping and
+  proved Array builtin lookups may intervene. Direct iterator indexing,
+  mutation, publication, delayed consumption and repeated consumption refuse.
 - The module does not reassign `Array`, inspect or mutate other Array
   properties, expose the builtin, read an unproved host/global value, or invoke
   an unknown call or constructor. The existing Map identity proof remains in
   force.
-- Both snapshots stay confined to scalar index/length reads and the proved
-  copy operation. Mutation, return, argument escape and structured array flow
-  are refused.
+- The materialized array stays confined to scalar index/length reads.
+  Mutation, return, argument escape and structured array flow are refused.
 
 The copy and erased builtin annotations are cleared and rederived with the
 Map proof on every pass invocation. User-supplied markers cannot establish
@@ -65,10 +74,10 @@ and object snapshots remain refused. Deforestation's numeric carrier checks
 exclude string snapshots; this work introduces no new allocation-elimination
 assumption.
 
-## Validation
+## Validation before the iterator correction
 
-The fixture admits **10/10 functions** and compares **24 numeric observations**.
-The generated standalone C++ also passes ASan/UBSan with leak detection, preserving
+The preceding checkpoint admitted **10/10 functions** and compared **24 numeric
+observations**. The generated standalone C++ also passed ASan/UBSan with leak detection, preserving
 all 24 observations. Snapshot emission explicitly loads the source lvalue before
 copy assignment; the EmitC verifier checks that boundary. Type inference retains
 an unresolved key type until callers provide evidence, avoiding a spurious
@@ -78,7 +87,7 @@ numeric alternative when a later caller supplies a string.
 with the independent interpreter, including an empty Map and a present empty
 key. It covers null/undefined/string tags across direct calls and conditional
 flow, numeric index edge cases, byte-string preservation, ordered independent
-snapshots, and numeric `Array.from` copies. The standard native pipeline checks
+snapshots, and numeric `Array.from` materializations. The standard native pipeline checks
 both compilers' warnings, standalone/no-VM output and an off-by-one negative
 control.
 
@@ -88,3 +97,12 @@ snapshot mutation/escape, unsupported coercion, optional addition and boolean
 keys. `native-string-snapshot-proof.mlir` pins exact receiver identity,
 unknown-call invalidation and forged proof-marker clearing, including a second
 lowering pass.
+
+The 2026-09-07 iterator correction keeps the same functions and observations,
+but explicitly materializes both independent arrays before mutating the Map.
+Correction `c7a849c` passes the devbox build and all **162/162 lit cases**.
+Its ten-source regression checks raw reads, mutation, publication, repeated and
+delayed consumption under default/disabled optimization, partial evaluation,
+deforestation, reruns and forged markers. Immediate materialization remains
+native. The full generated-program CTest gate remains pending; the preceding
+measurements do not establish that result.
