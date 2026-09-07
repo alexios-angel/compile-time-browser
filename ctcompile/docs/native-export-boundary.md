@@ -79,10 +79,11 @@ programs and check post-entry owning lifetimes. Existing confined-table
 execution and lifetime checks remain in the
 [owning field gate](native-owned-method-table-slots.md).
 
-The exact Bootstrap Data probes remain the separate seven-function denominator.
-The checkpoint preceding this audit reports **0/7 native** in each
-CommonJS/browser/realm-fallback mode, despite 20 resolved entry calls. The tiny
-specimens above do not replace that census or establish Bootstrap execution.
+The exact Bootstrap Data probes remain the separate seven-function denominator:
+**0/7 native** in each CommonJS/browser/realm-fallback mode, despite 24 resolved
+entry calls and 23 completed provider summaries with object following enabled.
+The tiny specimens above do not replace that census or establish Bootstrap
+execution.
 
 ## Implemented consumer: an owned ordinary global root
 

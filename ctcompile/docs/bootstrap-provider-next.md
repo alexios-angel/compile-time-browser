@@ -67,6 +67,20 @@ Map/capture types and table admission. Do not treat completed provider summaries
 as permission for future callers, mutable slots or a typed export ABI. See
 [the export design](native-export-boundary.md) for those obligations.
 
+The exact specimen has four functions and publishes inside its wrapper.
+`HostContract/Values.cpp::propertyCall()` currently accepts only uncaptured
+literal getters; `Analysis/OwnedGlobalMethods.cpp` requires three functions and
+entry-local publication. Extend those queries to one checked entry/wrapper/
+factory chain and one immutable capture cell referring to a standard empty Map.
+Then reuse capture/signature preparation for the getter's `size` read.
+`Analysis/NativeMap.cpp::prepareNativeMaps()` also rejects other host/global
+value reads while proving standard Map identity. It must consume the complete
+live owning-root proof for the permitted host reads; merely enabling Map
+preparation on the manifest path will still refuse. Keep mutable captures,
+shadowed/replaced Map bindings, separate Map publication, repeated invocations,
+reentry, throws, cycles and incomplete budgets as refusals. The proposed gate
+must retain and invoke the captured callable after entry/root/table release.
+
 Exceptions do not make a callback or allocation inert. Native try/catch covers
 one acyclic handler with homogeneous number, boolean or owning string throws
 and proved nonthrowing primitive helpers in its try and catch. Checked callee
