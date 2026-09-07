@@ -159,7 +159,7 @@ void dom_bindings::install_dom_exception(context & cx) {
     // `Object.getOwnPropertyDescriptor(DOMException.prototype, 'name').get`
     // does, and which a page can do by accident - must not fault, so an absent
     // private slot answers the initial value rather than throwing.
-    const auto reader = [this](std::string slot, value fallback) {
+    const auto reader = [](std::string slot, value fallback) {
         return [slot = std::move(slot), fallback](context & c, std::span<value>) {
             const value self = c.current_this();
             if (!self.is_object()) { return fallback; }

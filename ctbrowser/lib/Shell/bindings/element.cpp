@@ -774,7 +774,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // ACCESSORS, like `parentNode` above and for the same reason: the three
     // dynamic tests add and remove children and read the count again, so a
     // value captured at wrapping time is wrong by construction.
-    const auto element_children = [this](const read_txn & txn, node_id parent) {
+    const auto element_children = [](const read_txn & txn, node_id parent) {
         std::vector<node_id> out;
         for (const node_id child : txn.children(parent)) {
             if (txn.kind(child).value_or(node_kind::text) == node_kind::element) {
