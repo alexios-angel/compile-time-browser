@@ -144,6 +144,11 @@ void dom_bindings::register_roots(context & cx) {
         mark(event_prototype_);
         mark(custom_event_prototype_);
         mark(event_target_prototype_);
+        // DOMException.prototype, for the same reason: `assert_throws_dom`
+        // requires `e.constructor === DOMException`, and a prototype the
+        // collector could not see would break that on the first sweep.
+        mark(dom_exception_prototype_);
+        mark(css_interface_);
         mark(location_);
         mark(document_);
         mark(window_);
@@ -164,6 +169,9 @@ void dom_bindings::install(context & cx) {
     // back to the globals, which is what makes one bare global answer both
     // `getComputedStyle(el)` and `window.getComputedStyle(el)`.
     install_computed_style(cx);
+    // BEFORE anything that may throw one.
+    install_dom_exception(cx);
+    install_css_interface(cx);
     install_timers(cx);
     install_resources(cx);
     install_navigation(cx);

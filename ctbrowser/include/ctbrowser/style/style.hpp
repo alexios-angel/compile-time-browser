@@ -18,6 +18,7 @@
 #include <ctbrowser/style/css/calc.hpp>
 #include <ctbrowser/style/css/media.hpp>
 #include <ctbrowser/style/css/parser.hpp>
+#include <ctbrowser/style/css/properties.hpp>
 #include <ctbrowser/style/css/substitute.hpp>
 #include <ctbrowser/style/css/token.hpp>
 #include <ctbrowser/style/engine.hpp>

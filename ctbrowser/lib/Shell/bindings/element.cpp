@@ -9,8 +9,12 @@
 #include <ctbrowser/shell/bindings.hpp>
 #include <ctbrowser/shell/net/url.hpp>
 
+#include <ctbrowser/style/css/properties.hpp>
+
 #include <numbers>
 #include <optional>
+#include <string>
+#include <vector>
 
 // dom_bindings' method bodies - the API a page's script actually calls.
 //
@@ -222,17 +226,21 @@ namespace {
 // `backgroundColor` -> `background-color`. The IDL name and the CSS name are
 // different spellings of the same property, and the attribute the style engine
 // parses wants the CSS one.
-std::string css_property_name(std::string_view idl) {
-    std::string out;
-    for (const char c : idl) {
-        if (c >= 'A' && c <= 'Z') {
-            out += '-';
-            out += static_cast<char>(c - 'A' + 'a');
-        } else {
-            out += c;
-        }
-    }
-    return out;
+//
+// THE CONVERSION MOVED to style/css/properties.hpp, where the property table
+// is: it had a second copy inside `computed_style.cpp`'s `getPropertyValue`,
+// and both of them got `-webkit-transform` wrong in the same way - the IDL name
+// drops the prefix's leading dash, so a plain camel-to-hyphen loop produces
+// `webkit-transform` and finds nothing.
+using style::css::css_name_of;
+
+// Whether a key on the declaration store is a DECLARATION rather than one of
+// the methods sharing the object with them. A method is a callable and is
+// skipped on that ground alone; `length`, `cssText` and the indexed properties
+// are answered by the proxy and never stored, which is what keeps this test to
+// one condition.
+[[nodiscard]] bool is_declaration(const value & v) {
+    return !v.is_nullish() && !v.is_callable();
 }
 
 // The declarations an object holds, as a `style` attribute. Serialising the
@@ -242,22 +250,66 @@ std::string css_property_name(std::string_view idl) {
 std::string style_attribute(script::object_object & held, context & cx) {
     std::string out;
     for (const auto & [name, v] : held.props) {
-        if (v.is_nullish()) { continue; }
         // `setProperty` and friends live on the same object, and a CSS value is
         // never a function - without this the methods serialise themselves into
         // the attribute as `set-property: function;`.
-        if (v.is_callable()) { continue; }
+        if (!is_declaration(v)) { continue; }
         const std::string text = cx.to_string(v);
         // Assigning "" REMOVES a declaration, which is how a page turns one
         // off - emitting `display: ;` instead would leave the old value in
         // place as far as the parser is concerned.
         if (text.empty()) { continue; }
-        out += css_property_name(name);
+        out += css_name_of(name);
         out += ": ";
         out += text;
         out += "; ";
     }
     return out;
+}
+
+// `cssText`: the same declarations, without the trailing space CSSOM does not
+// ask for. A separate function from the one above because the ATTRIBUTE is a
+// derived artefact the style engine re-parses and `cssText` is an answer to
+// script, and the two have drifted before.
+std::string css_text_of(script::object_object & held, context & cx) {
+    std::string out;
+    for (const auto & [name, v] : held.props) {
+        if (!is_declaration(v)) { continue; }
+        const std::string text = cx.to_string(v);
+        if (text.empty()) { continue; }
+        if (!out.empty()) { out += ' '; }
+        out += css_name_of(name);
+        out += ": ";
+        out += text;
+        out += ';';
+    }
+    return out;
+}
+
+// ONE WRITE THROUGH THE VALUE GRAMMAR. Every path into the declaration store -
+// `el.style.color = x`, `setProperty`, `cssText`, and the seed from the
+// element's own `style` attribute - goes through here, so there is exactly one
+// answer to "is this valid" and exactly one canonical form.
+//
+// An INVALID value is a NO-OP, which is what CSSOM §6.7.2 says and what
+// `test_invalid_value` measures: the test clears the property, sets the bad
+// value, and asserts the read is `""`. Refusing the write is the whole test.
+// Before this, `el.style` recorded whatever it was given and handed it back
+// unchanged - `expected "" but got "round()"`, ~600 subtests of `css-values`.
+bool store_declaration(script::object_object & held, context & cx, const std::string & css_name,
+                       std::string_view text) {
+    const style::css::value_check checked = style::css::check_declaration(css_name, text);
+    if (!checked.valid) {
+        // An empty value REMOVES the declaration; anything else that fails to
+        // parse leaves the old one exactly where it was.
+        if (trim(text, html_whitespace).empty()) {
+            held.erase(css_name);
+            return true;
+        }
+        return false;
+    }
+    held.set(css_name, cx.string(checked.serialized));
+    return true;
 }
 
 // The declarations already in a `style` attribute, so a write through
@@ -272,14 +324,13 @@ void seed_declarations(script::object_object & held, context & cx, std::string_v
         if (colon == std::string_view::npos) { break; }
         std::size_t end = text.find(';', colon);
         if (end == std::string_view::npos) { end = text.size(); }
-        const auto trim = [](std::string_view piece) {
-            const std::size_t first = piece.find_first_not_of(" \t\n\r\f");
-            if (first == std::string_view::npos) { return std::string_view{}; }
-            return piece.substr(first, piece.find_last_not_of(" \t\n\r\f") - first + 1);
-        };
-        const std::string_view name = trim(text.substr(i, colon - i));
-        const std::string_view v = trim(text.substr(colon + 1, end - colon - 1));
-        if (!name.empty()) { held.set(std::string{name}, cx.string(std::string{v})); }
+        const std::string_view name = trim(text.substr(i, colon - i), html_whitespace);
+        const std::string_view v = trim(text.substr(colon + 1, end - colon - 1), html_whitespace);
+        // THROUGH THE SAME GRAMMAR as a write from script, so the object a page
+        // reads back cannot disagree with the attribute it was built from - and
+        // so an invalid declaration in the markup is dropped here rather than
+        // surviving as a value no engine would compute.
+        if (!name.empty()) { store_declaration(held, cx, ascii_lower_copy(name), v); }
         i = end + 1;
     }
 }
@@ -323,20 +374,69 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     const auto trap = [&](std::string name, script::native_fn fn) {
         handler->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
     };
+    // `length`, `cssText` and the indexed properties are COMPUTED here rather
+    // than stored. Storing them would put `length: 5` in the element's style
+    // attribute - the store IS the declaration list, and anything in it that is
+    // not a declaration has to be filtered back out by every reader.
     trap("get", [](context & c, std::span<value> args) {
         if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
         auto * store = static_cast<script::object_object *>(args[0].as_heap());
         const std::string name = c.to_string(args[1]);
+        if (name == "length") {
+            double count = 0;
+            for (const auto & [key, v] : store->props) {
+                if (is_declaration(v)) { count += 1; }
+            }
+            return value::number(count);
+        }
+        if (name == "cssText") { return c.string(css_text_of(*store, c)); }
+        // AN INDEX NAMES A PROPERTY, not a value: CSSOM §6.7.1 makes the
+        // indexed properties of a CSSStyleDeclaration its property NAMES, in
+        // declaration order, which is what `[...el.style]` and every
+        // `for (const p of el.style)` in the corpus iterates.
+        if (!name.empty() && name.find_first_not_of("0123456789") == std::string::npos) {
+            // COUNTED DOWN rather than converted. `std::stoull` throws on an
+            // index a page can write in one keystroke (`el.style[1e30]` arrives
+            // here as twenty digits), and an uncaught std::out_of_range out of a
+            // native is a terminate() rather than a TypeError.
+            std::size_t want = 0;
+            for (const char digit : name) {
+                if (want > store->props.size()) { return value::undefined(); }
+                want = want * 10 + static_cast<std::size_t>(digit - '0');
+            }
+            for (const auto & [key, v] : store->props) {
+                if (!is_declaration(v)) { continue; }
+                if (want-- == 0) { return c.string(key); }
+            }
+            return value::undefined();
+        }
         // The raw name first: that is where setProperty and getPropertyValue
         // live, and canonicalising them turns them into `set-property`.
         if (const value * found = store->find(name)) { return *found; }
-        const value * found = store->find(css_property_name(name));
+        const value * found = store->find(css_name_of(name));
         return found == nullptr ? value::undefined() : *found;
     });
     trap("set", [this, id](context & c, std::span<value> args) {
         if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
         auto * store = static_cast<script::object_object *>(args[0].as_heap());
-        store->set(css_property_name(c.to_string(args[1])), args[2]);
+        const std::string name = c.to_string(args[1]);
+        if (name == "cssText") {
+            // A WHOLE-BLOCK REPLACEMENT, not a merge: `el.style.cssText = "…"`
+            // drops every declaration the element had. Erasing in place would
+            // leave the methods behind, which is exactly what has to survive.
+            std::vector<std::string> declared;
+            for (const auto & [key, v] : store->props) {
+                if (is_declaration(v)) { declared.push_back(key); }
+            }
+            for (const std::string & key : declared) { store->erase(key); }
+            seed_declarations(*store, c, c.to_string(args[2]));
+        } else {
+            // The IDL spelling, canonicalised, and the value through the
+            // grammar. A refusal is silent - CSSOM says an unparseable value
+            // leaves the declaration alone, and a throw here would break every
+            // page that sets a property this engine has not implemented.
+            (void)store_declaration(*store, c, css_name_of(name), c.to_string(args[2]));
+        }
         (void)doc_->set_attribute(id, atoms_->intern("style"), style_attribute(*store, c));
         mutated();
         return value::boolean(true);
@@ -350,21 +450,50 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     const auto declaration_method = [&](std::string name, script::native_fn fn) {
         held->set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
     };
-    declaration_method("setProperty", [this, id, held](context & c, std::span<value> args) {
-        held->set(arg_string(c, args, 0), args.size() > 1 ? args[1] : value::undefined());
-        (void)doc_->set_attribute(id, atoms_->intern("style"), style_attribute(*held, c));
-        mutated();
-        return value::undefined();
-    });
-    declaration_method("removeProperty", [this, id, held](context & c, std::span<value> args) {
-        held->erase(arg_string(c, args, 0));
-        (void)doc_->set_attribute(id, atoms_->intern("style"), style_attribute(*held, c));
-        mutated();
-        return value::undefined();
-    });
-    declaration_method("getPropertyValue", [held](context & c, std::span<value> args) {
-        const value * found = held->find(arg_string(c, args, 0));
+    // A NON-CUSTOM PROPERTY NAME IS LOWERCASED, a custom one is not: `--X` and
+    // `--x` are two different properties and `COLOR` and `color` are one.
+    const auto asked_name = [](context & c, std::span<value> args) {
+        const std::string given = arg_string(c, args, 0);
+        return given.starts_with("--") ? given : ascii_lower_copy(given);
+    };
+    declaration_method(
+        "setProperty", [this, id, held, asked_name](context & c, std::span<value> args) {
+            (void)store_declaration(*held, c, asked_name(c, args),
+                                    args.size() > 1 ? c.to_string(args[1]) : std::string{});
+            (void)doc_->set_attribute(id, atoms_->intern("style"), style_attribute(*held, c));
+            mutated();
+            return value::undefined();
+        });
+    // ...and it ANSWERS with the value it removed, which is what CSSOM says and
+    // what a page toggling a property reads to put it back.
+    declaration_method(
+        "removeProperty", [this, id, held, asked_name](context & c, std::span<value> args) {
+            const std::string name = asked_name(c, args);
+            const value * found = held->find(name);
+            const std::string was = found == nullptr ? std::string{} : c.to_string(*found);
+            held->erase(name);
+            (void)doc_->set_attribute(id, atoms_->intern("style"), style_attribute(*held, c));
+            mutated();
+            return c.string(was);
+        });
+    declaration_method("getPropertyValue", [held, asked_name](context & c, std::span<value> args) {
+        const value * found = held->find(asked_name(c, args));
         return found == nullptr ? c.string("") : c.string(c.to_string(*found));
+    });
+    // Always empty: `!important` is refused by the value grammar, so nothing
+    // this object holds can have a priority. Present because `test_valid_value`
+    // and several cssom tests call it unconditionally.
+    declaration_method("getPropertyPriority",
+                       [](context & c, std::span<value>) { return c.string(""); });
+    declaration_method("item", [held](context & c, std::span<value> args) {
+        double want = args.empty() ? 0 : context::to_number(args[0]);
+        if (!(want >= 0)) { return c.string(""); }
+        for (const auto & [key, v] : held->props) {
+            if (!is_declaration(v)) { continue; }
+            if (want < 1) { return c.string(key); }
+            want -= 1;
+        }
+        return c.string("");
     });
     obj.set("style", style_view);
 

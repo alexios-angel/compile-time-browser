@@ -392,6 +392,28 @@ private:
     void install_computed_style(context & cx);
     [[nodiscard]] value computed_style_object(context & cx, node_id id);
 
+    // --- DOMException, and the CSS interface --------------------------------
+    //
+    // Both are scaffolding placed here so two concerns can be worked on in
+    // separate translation units: `bindings/exceptions.cpp` owns the exception
+    // hierarchy every DOM method throws through, `bindings/css.cpp` owns the
+    // `CSS` namespace object the CSS suites ask before every computed-value
+    // test.
+    void install_dom_exception(context & cx);
+    // A DOMException instance with the right `name`, `code` and `message`, on
+    // `DOMException.prototype` - which is what `assert_throws_dom` checks and
+    // what `context::throw_error` cannot build, because an engine-raised error
+    // is an ECMAScript Error by construction.
+    [[nodiscard]] value make_dom_exception(context & cx, std::string_view name,
+                                           std::string message);
+    // ...and thrown, which is the form a native binding needs.
+    void throw_dom_exception(context & cx, std::string_view name, std::string message);
+
+    // The `CSS` namespace object - `CSS.supports` and `CSS.escape`. Its answers
+    // come from style/css/properties.hpp, so it can never disagree with
+    // `el.style` about whether a value is valid.
+    void install_css_interface(context & cx);
+
     [[nodiscard]] node_id id_or_nothing(context & c) { return receiver(c); }
 
     // The 2D context. Its methods close over the canvas node, so the object can
@@ -769,6 +791,13 @@ private:
     node_id focused_;
     std::string location_href_;
     std::string location_hash_;
+    // DOMException.prototype, held here as well as on the global for the reason
+    // blob_prototype_ is: a page can delete a global, and an exception whose
+    // prototype was collected stops being a DOMException.
+    value dom_exception_prototype_;
+    // The `CSS` namespace object, held for the reason above: a page can delete
+    // the global and `CSS.supports` must still be the same function afterwards.
+    value css_interface_;
     value location_;
     value document_;
     value window_;

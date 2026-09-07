@@ -27,6 +27,9 @@ target_sources(ctbrowser-style
     css/substitute.cpp
     css/media.cpp
     css/calc.cpp
+    # the property table, the value grammar and the canonical serialisation -
+    # what el.style, getComputedStyle and CSS.supports all three ask
+    css/properties.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
@@ -35,6 +38,7 @@ target_sources(ctbrowser-style
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/token.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/calc.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/value.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/properties.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/selector.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/parser.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/style/css/substitute.hpp"

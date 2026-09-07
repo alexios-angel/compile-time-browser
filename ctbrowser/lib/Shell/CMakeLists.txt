@@ -17,6 +17,13 @@ target_sources(ctbrowser-shell
     bindings/document.cpp
     bindings/element.cpp
     bindings/events.cpp
+    # DOMException: the platform's error type, which is not an ECMAScript
+    # Error and cannot be built by context::throw_error. Its own file because
+    # every binding throws through it and none of them owns it.
+    bindings/exceptions.cpp
+    # the `CSS` namespace object: CSS.supports gates every computed-value test
+    # in css/css-values, and it is a binding over style/css/properties.hpp
+    bindings/css.cpp
     # getComputedStyle: its own file because it is property dispatch over three
     # sources, and element.cpp is already 1,100 lines.
     bindings/computed_style.cpp

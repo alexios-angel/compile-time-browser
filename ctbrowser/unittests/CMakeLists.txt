@@ -46,6 +46,7 @@ ctbrowser_test(unit/image_basics)
 ctbrowser_test(unit/style_basics)
 # The CSS tokenizer, against the cases the submodule it replaced got wrong.
 ctbrowser_test(unit/css_syntax)
+ctbrowser_test(unit/css_values)
 ctbrowser_test(unit/layout_basics)
 # The flex formatting context. Its own file rather than more of layout_basics:
 # S9.7's freeze loop has more cases than the other three contexts together.
