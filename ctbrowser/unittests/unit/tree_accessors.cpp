@@ -178,6 +178,29 @@ void test_get_elements_by_tag_name_knows_about_namespaces() {
        "IMG");
 }
 
+// --- a BARE identifier, which is the same rule one level up ----------------
+
+// HTML 7.3.3 makes an element with an `id` a named property of the global
+// OBJECT, and a bare identifier resolves against that object - so `ia.tagName`
+// with `ia` written nowhere but in the markup is the specified behaviour and
+// not a page being sloppy. web-platform-tests leans on it constantly;
+// `getComputedStyle(target1)` in six `css/cssom` files is exactly this.
+void test_a_bare_identifier_finds_an_element() {
+    is("ia.tagName", "IMG");
+    is("ib.id", "ia");
+    is("theform.tagName", "FORM");
+    // Several of one name is a collection here too.
+    is("anchor1.getAttribute('name')", "anchor1");
+    // A DECLARED name still wins: the hook is consulted only on a miss.
+    is("(function () { var ia = 7; return ia; })()", "7");
+    // And a name that is neither a global nor an element is still undefined
+    // rather than a ReferenceError, which is this runtime's documented shape.
+    is("typeof nosuchnameanywhere", "undefined");
+    // The hook answers named elements ONLY - a bare `toString` does not reach
+    // Object.prototype, which would be a much larger change.
+    is("typeof toString", "undefined");
+}
+
 // --- named access on the Document ------------------------------------------
 
 void test_an_element_answers_to_its_name_and_its_id() {
@@ -290,6 +313,7 @@ int main() {
     test_the_collections_count_what_they_name();
     test_the_collections_are_live();
     test_get_elements_by_tag_name_knows_about_namespaces();
+    test_a_bare_identifier_finds_an_element();
     test_an_element_answers_to_its_name_and_its_id();
     test_the_id_route_needs_a_name_and_the_name_route_does_not();
     test_a_name_never_shadows_a_real_property();

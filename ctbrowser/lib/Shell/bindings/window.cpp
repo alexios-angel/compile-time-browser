@@ -936,6 +936,28 @@ void dom_bindings::install_window(context & cx) {
         walk(walk, txn.root());
         return found;
     };
+    // AND A BARE IDENTIFIER GETS THE SAME ANSWER, which is the half that was
+    // missing. HTML 7.3.3 makes an element with an `id` a named property of the
+    // global OBJECT, and a bare identifier resolves against that object - so
+    // `target1.style` with `target1` written nowhere but in the markup is not
+    // a page being sloppy, it is the specified behaviour, and
+    // web-platform-tests leans on it constantly. The VM answered `undefined`
+    // and every read off it was `undefined` in turn.
+    //
+    // ONLY THE NAMED ELEMENTS, not the whole trap: a bare identifier that
+    // reaches Object.prototype - `toString` with no receiver - is a much larger
+    // change and is not this one. See context::set_undeclared_name_hook.
+    cx.set_undeclared_name_hook([this, named_element](std::string_view name) {
+        if (cx_ == nullptr) { return value::undefined(); }
+        const std::vector<node_id> found = named_element(name);
+        if (found.empty()) { return value::undefined(); }
+        if (found.size() == 1) { return wrap(*cx_, found.front()); }
+        const std::string wanted{name};
+        return make_live_collection(*cx_, [this, wanted, named_element] {
+            (void)this;
+            return named_element(wanted);
+        });
+    });
     window_trap("get", [this, named_element](context & c, std::span<value> args) {
         if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
         auto * target = static_cast<script::object_object *>(args[0].as_heap());
