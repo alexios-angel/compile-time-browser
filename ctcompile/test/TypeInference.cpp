@@ -19,6 +19,7 @@
 // `-0 | 0` is an int32 and `-0` alone is not.
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
+#include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
@@ -27,6 +28,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/MLIRContext.h"
@@ -78,17 +80,7 @@ std::string prologue() {
     return std::string{kPrologue};
 }
 
-void check(mlir::MLIRContext & context, const row & r) {
-    std::string text = r.wholeModule ? r.body : prologue() + r.body + "  ctjs.return %p\n}\n";
-
-    mlir::OwningOpRef<mlir::ModuleOp> module =
-        mlir::parseSourceString<mlir::ModuleOp>(text, &context);
-    if (!module) {
-        std::printf("FAIL %s: the module did not parse\n%s\n", r.what, text.c_str());
-        ++failures;
-        return;
-    }
-
+void check(mlir::ModuleOp module, const char * what, const char * expected) {
     // DeadCodeAnalysis IS NOT OPTIONAL. The sparse framework gets its
     // predecessor information from it; without it a block argument never
     // receives what was branched into it and every answer is uninitialized.
@@ -104,18 +96,18 @@ void check(mlir::MLIRContext & context, const row & r) {
     // single-block unit rows all passed.
     solver.load<mlir::dataflow::SparseConstantPropagation>();
     solver.load<TypeInference>();
-    if (failed(solver.initializeAndRun(module->getOperation()))) {
-        std::printf("FAIL %s: the solver did not converge\n", r.what);
+    if (failed(solver.initializeAndRun(module))) {
+        std::printf("FAIL %s: the solver did not converge\n", what);
         ++failures;
         return;
     }
 
     mlir::Operation * marked = nullptr;
-    module->walk([&](mlir::Operation * op) {
+    module.walk([&](mlir::Operation * op) {
         if (op->hasAttr("check")) { marked = op; }
     });
     if (marked == nullptr || marked->getNumResults() != 1) {
-        std::printf("FAIL %s: no single-result operation carried `check`\n", r.what);
+        std::printf("FAIL %s: no single-result operation carried `check`\n", what);
         ++failures;
         return;
     }
@@ -128,10 +120,22 @@ void check(mlir::MLIRContext & context, const row & r) {
         llvm::raw_string_ostream os{got};
         lattice->getValue().print(os);
     }
-    if (got != r.expected) {
-        std::printf("FAIL %s\n  expected %s\n  got      %s\n", r.what, r.expected, got.c_str());
+    if (got != expected) {
+        std::printf("FAIL %s\n  expected %s\n  got      %s\n", what, expected, got.c_str());
         ++failures;
     }
+}
+
+void check(mlir::MLIRContext & context, const row & r) {
+    std::string text = r.wholeModule ? r.body : prologue() + r.body + "  ctjs.return %p\n}\n";
+    mlir::OwningOpRef<mlir::ModuleOp> module =
+        mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+    if (!module) {
+        std::printf("FAIL %s: the module did not parse\n%s\n", r.what, text.c_str());
+        ++failures;
+        return;
+    }
+    check(*module, r.what, r.expected);
 }
 
 std::string invokeModule(const std::string & helpers, llvm::StringRef observed = "%payload",
@@ -175,6 +179,26 @@ std::string throwingHelper(llvm::StringRef payload, llvm::StringRef prefix = "")
       attributes {upvalue_count = 0 : i32} {
 )mlir" + prefix.str() +
            "    %thrown = ctjs.constant " + payload.str() + "\n    ctjs.throw %thrown\n  }\n";
+}
+
+std::string conditionalHelper(llvm::StringRef result, llvm::StringRef payload,
+                              llvm::StringRef prefix = "") {
+    return R"mlir(
+  ctjs.func private @helper(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                            %callee: !ctjs.value, %condition: !ctjs.value,
+                            %argument: !ctjs.value) -> !ctjs.value
+      attributes {upvalue_count = 0 : i32, ctnative.nothrow} {
+)mlir" + prefix.str() +
+           R"mlir(
+    %bit = ctjs.truthy %condition
+    cf.cond_br %bit, ^normal, ^throwing
+  ^normal:
+)mlir" + "    %normal = ctjs.constant " +
+           result.str() + R"mlir(
+    ctjs.return %normal
+  ^throwing:
+)mlir" + "    %thrown = ctjs.constant " +
+           payload.str() + "\n    ctjs.throw %thrown\n  }\n";
 }
 
 std::string helperChain(unsigned depth) {
@@ -583,6 +607,138 @@ int main() {
          "!ctnative.boxed", true},
     };
     for (const row & r : invocationRows) { check(context, r); }
+
+    const std::string numericCompletion = conditionalHelper(kFive, "#ctjs.string<\"failure\">");
+    std::string parameterCompletion = numericCompletion;
+    parameterCompletion.replace(parameterCompletion.find("ctjs.return %normal"), 19,
+                                "ctjs.return %argument");
+    const std::string joinedParameterCompletion = R"mlir(
+  ctjs.func private @helper(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                            %callee: !ctjs.value, %condition: !ctjs.value,
+                            %argument: !ctjs.value) -> !ctjs.value
+      attributes {upvalue_count = 0 : i32} {
+    %bit = ctjs.truthy %condition
+    cf.cond_br %bit, ^first, ^second
+  ^first:
+    cf.br ^normal(%argument : !ctjs.value)
+  ^second:
+    %other = ctjs.constant #ctjs.number<9223372036854775808>
+    cf.cond_br %bit, ^throwing, ^normal(%other : !ctjs.value)
+  ^normal(%joined: !ctjs.value):
+    ctjs.return %joined
+  ^throwing:
+    %thrown = ctjs.constant #ctjs.string<"failure">
+    ctjs.throw %thrown
+  }
+)mlir";
+    std::string ordinaryCompletion = invokeModule(numericCompletion, "%returned", true);
+    const auto normalObservation = ordinaryCompletion.find("    %observed = scf.execute_region");
+    ordinaryCompletion.insert(normalObservation,
+                              "    %ordinary = ctjs.call_direct "
+                              "@helper(%nil, %nil, %nil, %condition, %argument) {check}\n");
+    ordinaryCompletion.replace(ordinaryCompletion.find("} {check}"), 9, "}");
+
+    std::string twoReturns = numericCompletion;
+    const auto firstReturn = twoReturns.find("    ctjs.return %normal");
+    twoReturns.replace(firstReturn, std::string("    ctjs.return %normal").size(), R"mlir(
+    cf.cond_br %bit, ^first, ^second
+  ^first:
+    ctjs.return %normal
+  ^second:
+    %other = ctjs.constant #ctjs.boolean<true>
+    ctjs.return %other
+)mlir");
+
+    std::string transitive = numericCompletion;
+    transitive.replace(transitive.find("@helper"), 7, "@leaf");
+    transitive += R"mlir(
+  ctjs.func private @helper(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                            %callee: !ctjs.value, %condition: !ctjs.value,
+                            %argument: !ctjs.value) -> !ctjs.value
+      attributes {upvalue_count = 0 : i32} {
+    %nested = ctjs.call_direct @leaf(%receiver, %new_target, %callee, %condition, %argument)
+    %normal = ctjs.constant #ctjs.boolean<true>
+    ctjs.return %normal
+  }
+)mlir";
+
+    std::string publicHelper = numericCompletion;
+    publicHelper.erase(publicHelper.find("private "), 8);
+    std::string capturedHelper = numericCompletion;
+    capturedHelper.replace(capturedHelper.find("upvalue_count = 0"), 17, "upvalue_count = 1");
+    const std::string propertyEffect = "    %key = ctjs.constant #ctjs.string<\"x\">\n"
+                                       "    %read = ctjs.get_property %receiver[%key]\n";
+    const std::string recursiveCall =
+        "    %recursive = ctjs.call_direct "
+        "@helper(%receiver, %new_target, %callee, %condition, %argument)\n";
+    const std::vector<row> normalInvocationRows = {
+        {"invoke joins normal returns independently from string throws",
+         invokeModule(numericCompletion, "%returned", true), "!ctnative.num<i32>", true},
+        {"invoke forwards a passed parameter across a helper with throw exits",
+         invokeModule(parameterCompletion, "%returned", true), "!ctnative.num<i32>", true},
+        {"invoke subscribes a passed parameter and SSA joins before normal return",
+         invokeModule(joinedParameterCompletion, "%returned", true), "!ctnative.num<f64>", true},
+        {"invoke preserves negative zero on normal completion",
+         invokeModule(conditionalHelper(kNegativeZero, kFive), "%returned", true),
+         "!ctnative.num<f64>", true},
+        {"invoke preserves boolean normal completion independently from number throws",
+         invokeModule(conditionalHelper("#ctjs.boolean<true>", kFive), "%returned", true),
+         "!ctnative.bool", true},
+        {"invoke preserves owning string normal completion independently from boolean throws",
+         invokeModule(conditionalHelper("#ctjs.string<\"normal\">", "#ctjs.boolean<false>"),
+                      "%returned", true),
+         "!ctnative.str<utf8>", true},
+        {"invoke joins all normal return alternatives", invokeModule(twoReturns, "%returned", true),
+         "!ctnative.variant<!ctnative.bool, !ctnative.num<i32>>", true},
+        {"invoke takes normal returns from its own helper, not transitive callees",
+         invokeModule(transitive, "%returned", true), "!ctnative.bool", true},
+        {"invoke leaves an ordinary call in its normal continuation conservative",
+         ordinaryCompletion, "!ctnative.boxed", true},
+        {"invoke does not invent a normal result for an unconditional throw",
+         invokeModule(throwingHelper(kFive), "%returned", true), "!ctnative.boxed", true},
+        {"invoke refuses checked normal flow through unknown property effects",
+         invokeModule(conditionalHelper(kFive, kFive, propertyEffect), "%returned", true),
+         "!ctnative.boxed", true},
+        {"invoke refuses checked normal flow through a recursive helper",
+         invokeModule(conditionalHelper(kFive, kFive, recursiveCall), "%returned", true),
+         "!ctnative.boxed", true},
+        {"invoke refuses checked normal flow from an open public helper",
+         invokeModule(publicHelper, "%returned", true), "!ctnative.boxed", true},
+        {"invoke refuses checked normal flow from a captured helper",
+         invokeModule(capturedHelper, "%returned", true), "!ctnative.boxed", true},
+        {"invoke refuses checked normal flow after exhausting the work bound",
+         invokeModule(conditionalHelper(kFive, kFive, largeBody), "%returned", true),
+         "!ctnative.boxed", true},
+    };
+    for (const row & r : normalInvocationRows) { check(context, r); }
+
+    // Every solve must inspect the same live helper again. Retain a forged
+    // nothrow marker while changing its return and adding a global mutation;
+    // neither the old completion query nor the marker may authorize the next.
+    {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(
+            invokeModule(numericCompletion, "%returned", true), &context);
+        if (!module) {
+            std::printf("FAIL invocation normal-flow mutation fixture did not parse\n");
+            ++failures;
+        } else {
+            check(*module, "invoke normal flow before live mutation", "!ctnative.num<i32>");
+            auto helper = module->lookupSymbol<ctcompile::ctjs::FuncOp>("helper");
+            ctcompile::ctjs::ReturnOp returned;
+            helper.walk([&](ctcompile::ctjs::ReturnOp found) { returned = found; });
+            auto constant = returned.getValue().getDefiningOp<ctcompile::ctjs::ConstantOp>();
+            constant->setAttr("value", ctcompile::ctjs::StringAttr::get(&context, "changed"));
+            check(*module, "invoke rederives a changed normal return", "!ctnative.str<utf8>");
+            mlir::OpBuilder before(returned);
+            auto effect = ctcompile::ctjs::StoreGlobalOp::create(before, returned.getLoc(),
+                                                                 "published", returned.getValue());
+            check(*module, "invoke refuses a newly effectful live helper", "!ctnative.boxed");
+            check(*module, "invoke rerun retains the changed helper refusal", "!ctnative.boxed");
+            effect.erase();
+            check(*module, "invoke rebuilds completion flow after removing the effect",
+                  "!ctnative.str<utf8>");
+        }
+    }
 
     // AND ONE MODULE THAT MUST NOT PARSE. `ctjs.binary_static sub` names a
     // kind context::binary_op_static has no arm for - it answers undefined -

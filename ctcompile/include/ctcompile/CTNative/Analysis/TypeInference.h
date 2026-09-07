@@ -227,6 +227,16 @@ public:
         mlir::Operation * top);
 
 private:
+    /// The one direct call protected by invoke has a checked normal-only
+    /// result. Join live return operands after a fresh bounded completion
+    /// query, without treating throw exits as returns. All ordinary calls,
+    /// including calls in either continuation, keep upstream conservative
+    /// call inference. This does not authorize native exception admission.
+    mlir::LogicalResult visitCallOperation(
+        mlir::CallOpInterface call,
+        llvm::ArrayRef<const mlir::dataflow::AbstractSparseLattice *> operands,
+        llvm::ArrayRef<mlir::dataflow::AbstractSparseLattice *> results) override;
+
     // A live proof supplied by the consumer, never reconstructed from a
     // diagnostic annotation. The module must remain unchanged during solving.
     const OwnedGlobalRoots * ownedRoots_;

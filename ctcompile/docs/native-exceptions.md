@@ -12,8 +12,9 @@ remain further source work. The target verifier now follows explicit throws
 through defined EmitC direct callees and checks their escaping payload against
 the active handler. This target prerequisite grants no source effect proof.
 Explicit CTJS invocation regions now separate normal results from pre-call
-unwind state and infer a payload from live direct callees. This is an IR and
-analysis prerequisite; source recovery and native lowering do not emit it yet.
+unwind state and infer both normal returns and a payload from live direct
+callees. This is an IR and analysis prerequisite; source recovery and native
+lowering do not emit it yet.
 This is separate from
 [private provider mutation summaries](native-provider-mutations.md).
 
@@ -327,7 +328,15 @@ result was produced; it does not evaluate that unavailable operand on failure.
 The continuations themselves are outside this invocation's protection.
 
 The standard `RegionBranch` interfaces forward normal results and unwind state
-separately. Sparse type inference handles the implicit payload through its
+separately. The protected direct call has a checked normal-return transfer:
+it joins only that helper's return operands after the complete bounded query
+succeeds, excluding transitive callees' returns and explicit throw exits.
+It subscribes to later widening of those operands and preserves the framework's
+argument propagation. A throw-only helper supplies no invented normal value.
+Ordinary calls, including calls inside either continuation, retain upstream
+conservative result inference.
+
+Sparse type inference handles the implicit payload through its
 non-forwarded region-argument hook. Each visit resolves the actual direct
 callees, with no retained proof or annotation permission, within 4096 operations
 and 32 active helper bodies. The query follows explicit calls, throws and
@@ -345,12 +354,19 @@ and recursion. The [IR regression](../test/CTJS/IR/invoke.mlir) round-trips all
 three operations and rejects malformed call bodies, state/result misuse,
 continuation signatures and terminators.
 
+The checked normal-return increment adds fifteen inference rows and five live
+mutation checks. They cover passed arguments and SSA joins, negative zero,
+boolean/string results, multiple normal alternatives, transitive callees,
+ordinary-call conservatism, throw-only helpers, effects, recursion, public and
+captured helpers, and work exhaustion. Mutating a return type or adding a
+global store forces a new result even with a forged `ctnative.nothrow` marker.
+The focused devbox `ctcompile_type_inference` CTest passes (2026-09-07).
+
 This does not change native source admission or its explicit-throw guard.
 Recovery still needs to construct these continuations from importer register
 vectors, preserve source assignment order and prove effects before discarding
-any status edge. Ordinary call-result inference also remains conservative when
-a callee has an unmodelled throwing exit; source admission must establish the
-normal-return flow as well as the payload. Native emission must then save live
+any status edge. It must connect the checked normal-return and payload flows
+to native admission. Native emission must then save live
 pre-call state before the C++ call and use the tested target owning-payload
 contract. No new source function, executable, lifetime or Bootstrap coverage is
 claimed from the IR prerequisite.
