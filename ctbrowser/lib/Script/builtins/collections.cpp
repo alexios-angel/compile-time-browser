@@ -8,6 +8,64 @@
 
 namespace ctbrowser::script::builtins_detail {
 
+namespace {
+
+// A REAL ITERATOR over a list that already exists.
+//
+// `keys()`, `values()` and `entries()` are specified to return an Iterator, and
+// this file used to hand back a plain Array with a comment saying that for..of
+// walks one and that is what they are for. It is - `op::iterable` materialises
+// through `context::iterable_values` and never touches `next` - but a PAGE may
+// drive an iterator by hand, and one does: Babylon walks a Map of shadow
+// generators with `for (let n = i.next(); !0 !== n.done; n = i.next())`, which
+// threw "`next` is undefined" and took its shadows with it.
+//
+// So the object answers BOTH protocols. `next` and `@@iterator` are the real
+// ones; `__items` is what `iterable_values` recognises, so `for (const x of
+// m.values())` still costs one array copy and no interpretation. A partly
+// consumed iterator handed to for..of restarts, which is the one place the two
+// disagree and is written down here rather than discovered - nothing drives an
+// iterator halfway and then spreads it.
+[[nodiscard]] value list_iterator(context & cx, value items, const char * tag) {
+    auto * it = static_cast<object_object *>(cx.make_object().as_heap());
+    it->set("__items", items);
+    it->set("__at", value::number(0));
+    it->set("@@toStringTag", cx.string(std::string{tag}));
+    const auto method_on = [&](const char * name, native_fn fn) {
+        it->set(name, value::object(cx.allocate<native_object>(name, std::move(fn))));
+    };
+    // Reads its state off the RECEIVER rather than out of the closure, so the
+    // collector sees one object holding everything and a native captures
+    // nothing it would have to root.
+    method_on("next", [](context & c, std::span<value>) {
+        auto * out = static_cast<object_object *>(c.make_object().as_heap());
+        const value self = c.current_this();
+        array_object * items = nullptr;
+        std::size_t at = 0;
+        if (self.is_object()) {
+            auto * holder = static_cast<object_object *>(self.as_heap());
+            if (value * list = holder->find("__items"); list != nullptr && list->is_array()) {
+                items = static_cast<array_object *>(list->as_heap());
+            }
+            if (value * cursor = holder->find("__at"); cursor != nullptr) {
+                const double n = context::to_number(*cursor);
+                at = n > 0 ? static_cast<std::size_t>(n) : 0;
+            }
+            if (items != nullptr && at < items->items.size()) {
+                holder->set("__at", value::number(static_cast<double>(at + 1)));
+            }
+        }
+        const bool done = items == nullptr || at >= items->items.size();
+        out->set("done", value::boolean(done));
+        out->set("value", done ? value::undefined() : items->items[at]);
+        return value::object(out);
+    });
+    method_on("@@iterator", [](context & c, std::span<value>) { return c.current_this(); });
+    return value::object(it);
+}
+
+} // namespace
+
 // Array.prototype
 void install_array(context & cx) {
     using detail::method;
@@ -1021,10 +1079,8 @@ void install_array(context & cx) {
         }
         return c.string(out);
     });
-    // `entries`, `keys` and `values`. Each hands back an ARRAY where the spec
-    // says an iterator, for the same reason matchAll does: `for (const [i, v] of
-    // xs.entries())` and a spread both work over one, which is everything
-    // anybody does with them. p5's Table walks its rows with entries().
+    // `entries`, `keys` and `values`, as real iterators - see list_iterator for
+    // why they answer both protocols and where the two disagree.
     method(cx, array_proto, "entries", 0, [](context & c, std::span<value>) {
         auto * self = detail::this_array(c);
         value out = c.make_array();
@@ -1037,24 +1093,24 @@ void install_array(context & cx) {
             both->items.push_back(self->items[i]);
             pairs->items.push_back(pair);
         }
-        return out;
+        return list_iterator(c, out, "Array Iterator");
     });
     method(cx, array_proto, "keys", 0, [](context & c, std::span<value>) {
         auto * self = detail::this_array(c);
         value out = c.make_array();
-        if (self == nullptr) { return out; }
-        auto * items = static_cast<array_object *>(out.as_heap());
-        for (std::size_t i = 0; i < self->items.size(); ++i) {
-            items->items.push_back(value::number(static_cast<double>(i)));
+        if (self != nullptr) {
+            auto * items = static_cast<array_object *>(out.as_heap());
+            for (std::size_t i = 0; i < self->items.size(); ++i) {
+                items->items.push_back(value::number(static_cast<double>(i)));
+            }
         }
-        return out;
+        return list_iterator(c, out, "Array Iterator");
     });
     method(cx, array_proto, "values", 0, [](context & c, std::span<value>) {
         auto * self = detail::this_array(c);
         value out = c.make_array();
-        if (self == nullptr) { return out; }
-        static_cast<array_object *>(out.as_heap())->items = self->items;
-        return out;
+        if (self != nullptr) { static_cast<array_object *>(out.as_heap())->items = self->items; }
+        return list_iterator(c, out, "Array Iterator");
     });
     // --- THE FIVE THAT WERE NOT HERE AT ALL ---------------------------------
     //
@@ -1404,14 +1460,18 @@ void install_collections(context & cx) {
         }
         return out;
     };
-    // Arrays, not iterators: for..of walks an array, and that is what these are
-    // for. `[...map.keys()]` works; `map.keys().next()` does not.
-    method(cx, map_proto, "keys", 0,
-           [column](context & c, std::span<value>) { return column(c, 0); });
-    method(cx, map_proto, "values", 0,
-           [column](context & c, std::span<value>) { return column(c, 1); });
-    method(cx, map_proto, "entries", 0,
-           [column](context & c, std::span<value>) { return column(c, 2); });
+    // REAL ITERATORS. They were arrays, with a comment saying `map.keys().next()`
+    // does not work - and Babylon drives exactly that, by hand, for the Map of
+    // shadow generators a light owns. See list_iterator.
+    method(cx, map_proto, "keys", 0, [column](context & c, std::span<value>) {
+        return list_iterator(c, column(c, 0), "Map Iterator");
+    });
+    method(cx, map_proto, "values", 0, [column](context & c, std::span<value>) {
+        return list_iterator(c, column(c, 1), "Map Iterator");
+    });
+    method(cx, map_proto, "entries", 0, [column](context & c, std::span<value>) {
+        return list_iterator(c, column(c, 2), "Map Iterator");
+    });
     map_proto->define_accessor(
         "size",
         value::object(cx.allocate<native_object>(
@@ -1469,10 +1529,12 @@ void install_collections(context & cx) {
         }
         return out;
     };
-    method(cx, set_proto, "values", 0,
-           [members](context & c, std::span<value>) { return members(c); });
-    method(cx, set_proto, "keys", 0,
-           [members](context & c, std::span<value>) { return members(c); });
+    method(cx, set_proto, "values", 0, [members](context & c, std::span<value>) {
+        return list_iterator(c, members(c), "Set Iterator");
+    });
+    method(cx, set_proto, "keys", 0, [members](context & c, std::span<value>) {
+        return list_iterator(c, members(c), "Set Iterator");
+    });
     // A Set's `entries` pairs each member WITH ITSELF, which looks odd and is
     // the spec: it exists so a Set and a Map can be walked by the same code.
     method(cx, set_proto, "entries", 0, [members](context & c, std::span<value>) {
@@ -1487,7 +1549,7 @@ void install_collections(context & cx) {
             both->items.push_back(member);
             pairs->items.push_back(pair);
         }
-        return out;
+        return list_iterator(c, out, "Set Iterator");
     });
     set_proto->define_accessor(
         "size",

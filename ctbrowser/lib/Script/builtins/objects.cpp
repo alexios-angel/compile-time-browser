@@ -99,15 +99,24 @@ enum class key_filter : std::uint8_t {
         // has no `prototype` and a closure with no compiled proto has neither
         // of the other two - and skipped here when the table already carries
         // it, so a redefined `length` is reported once rather than twice.
+        //
+        // ASKING FOR `prototype` CREATES IT. `context::ensure_prototype` is lazy
+        // and materialises the slot into the table the moment anything looks, so
+        // the loop below then found the entry this loop had just caused and
+        // reported `prototype` TWICE. The names taken here are remembered and
+        // skipped there rather than the test being taken twice.
+        std::vector<std::string_view> taken;
         for (const char * synthesised : {"length", "name", "prototype"}) {
             if (closure->find(synthesised) == nullptr &&
                 closure->find_accessor(synthesised) == nullptr &&
                 cx.has_own_property(of, synthesised)) {
                 out.emplace_back(synthesised);
+                taken.emplace_back(synthesised);
             }
         }
         for (const auto & [key, held] : closure->props) {
             (void)held;
+            if (std::ranges::find(taken, key) != taken.end()) { continue; }
             out.push_back(key);
         }
         for (const accessor_entry & entry : closure->accessors.entries) {
