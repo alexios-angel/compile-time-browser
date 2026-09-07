@@ -29,12 +29,14 @@ field edges. Its unit fixture completes at 164 charged steps, and every smaller
 budget refuses atomically. Fingerprinting itself retains the host analysis's
 existing whole-module hashing behavior.
 
-The native entry preserves the fingerprinted input before admission when
-`host-manifest` is supplied: default precomputation, reachability pruning,
-closure lifting and provider preparation do not rewrite it. Explicitly run
-any desired preparation before creating the driver manifest. The compiler
-never silently rebinds a stale manifest to rewritten IR. It rebuilds the query
-before final admission; printed success attributes are ignored.
+The native entry validates the original fingerprint before preparing a clone.
+It discards old native source-operation facts, then requires a complete live
+proof for the clone before using it. This prevents stale `ctnative.method`
+markers from erasing a real field initialization or observation store. Default
+precomputation, reachability pruning and provider preparation remain skipped;
+only the checked exported getter receives the narrow closure preparation
+described in [its implementation](native-owned-global-methods.md). A stale
+manifest never reaches this process. Final admission rebuilds the live query.
 
 Type inference gives the owner and its global loads a nominal
 `!ctnative.global_object<binding>` type and subscribes each field read to the
@@ -57,11 +59,12 @@ other name; its spelling is no confinement exemption or realm-identity proof.
 
 ## Measured gate
 
-[The source regression](../test/CTNative/native-owned-globals.test) covers six
+[The source regression](../test/CTNative/native-owned-globals.test) covers eight
 complete programs at **1/1 native each**, including initialization before and
 after publication, fractional numbers, repeated loads, the ordinary `window`
-binding and an unobserved numeric global. Six selected observations match Node,
-the interpreter and standalone GCC 13/Clang 18 in explicit/deduced forms.
+binding, an unobserved numeric global and stale store/field markers. Eight
+selected observations match Node, the interpreter and standalone GCC 13/Clang 18
+in explicit/deduced forms.
 Source and binary VM-symbol checks include an interpreter positive control.
 
 Both generated forms pass ASan/UBSan, stack-use-after-return, use-after-scope
@@ -79,14 +82,13 @@ semantic mutation, unimported source and distinct allocation checks.
 
 ## Next boundary
 
-The uncaptured exported getter now has a complete host callable proof and
-[owning source graph](native-owned-global-methods.md), including its exact
-factory/table/field identity. It remains **1/3 native** with and without an
-explicit manifest; a completed Map-backed publication remains **0/4**. Next
-consume the graph in returned-table flow, owning field emission and final
-call-component admission. A startup prefix cannot supply future argument types
-or an open typed export ABI. Complete host analysis still refuses the captured
-Map/provider path.
+The uncaptured exported getter now consumes its complete host callable and
+[owning source graph](native-owned-global-methods.md) in returned-table flow,
+field emission and final call-component admission. It advances to **3/3 native**
+with the explicit manifest and stays **1/3** without it. Next prove the captured
+Map environment across publication; that completed startup specimen remains
+**0/4**. A startup prefix cannot supply future argument types or a typed export
+ABI. Complete host analysis still refuses the captured Map/provider path.
 
 The exact Bootstrap Data probes remain **0/7 native** in CommonJS/browser/
 realm-fallback modes. This scalar owner does not implement a realm owner,

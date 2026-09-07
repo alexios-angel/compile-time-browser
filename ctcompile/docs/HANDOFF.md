@@ -6,7 +6,95 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Current checked-getter and protected-helper checkpoint, 2026-09-07
+## Current native exported-getter checkpoint, 2026-09-07
+
+Three work commits landed locally on `ctcompile-v1`: **`8455458`** (nested-region
+escape retention), **`fecb9af`** (exception payloads through defined EmitC
+helpers), and **`be76faa`** (native owning global method tables). No push was
+performed. The incoming uncommitted escape work was completed and saved first.
+
+The [exported constant getter](native-owned-global-methods.md) advances
+**1/3 -> 3/3 native** with an explicit `host-manifest`; its default remains
+**1/3**. The existing live source graph now connects fixed field stores and
+loads in the returned-table census. Narrow preparation preserves the real
+receiver, then global field types, whole-component admission and emission use
+the existing shared owner/table and owning callable carriers. No runtime or
+escape semantics changed: publication is still `StoredGlobal`, and general
+global loads remain external.
+
+Preparation validates the original manifest before working on a clone. It
+rebuilds native source-operation facts, prepares only the checked uncaptured
+table, and requires a complete live proof of the transformed graph before using
+it. Final admission rebuilds the proof again. This also fixes stale
+`ctnative.method` annotations that could otherwise erase a real scalar/table
+field initialization or observation store. Fresh-fingerprint execution controls
+cover both owners; a stale manifest cannot enter preparation.
+
+Eight complete **3/3** getter variants match Node/interpreter and explicit/deduced
+GCC 13/Clang 18 output without VM symbols. Owner, table and callable are retained
+independently after entry; global release, allocation churn, reentry, distinct
+identity, weak expiry and invocation after table release pass lifetime checks.
+Both forms pass ASan/UBSan, use-after-scope, stack-use-after-return and leak
+checks. Twenty-four source refusals, four unsupported observation-result types,
+stale/forged/rerun controls and the unchanged default boundary pass. The scalar
+gate now covers **eight 1/1 programs**, including both stale-marker controls.
+
+The imported getter needs **499 proof steps** before preparation and **510**
+afterwards. Budgets **499 through 509** discard the speculative clone without
+leaking source allocation/field/call rewrites and retain **1/3** admission.
+These counts differ from the smaller handwritten query unit, whose completed
+budget remains **361**; the scalar unit remains **164**.
+
+[Native exception target validation](native-exceptions.md) now follows defined
+`emitc.call` helpers and requires homogeneous escaping number, boolean or owning
+string payloads to agree with the surrounding catch. Locally caught throws do
+not escape; catch rethrows do. Each verification uses a fresh bounded query
+(4096 operations, 32 active helpers), refusing unresolved/external definitions,
+recursion, mismatches and exhausted budgets. Opaque calls retain their existing
+foreign-exception contract. Five positive and 13 refusal controls pass, along
+with explicit/deduced/hoisted GCC/Clang execution and owning string sanitizers.
+The fixture checks pre-call state, normal-return-only assignment publication,
+exact-once cleanup, local catch/rethrow, negative zero and foreign exceptions.
+This is a target prerequisite; **source throwing calls are still unsupported**.
+The existing source suite remains **52/52 functions and 39 observations**.
+
+Escape analysis now sinks implicit nested-region captures and retains
+whole-frame suspend/late-arguments refusals even without explicit SSA operands.
+Nested allocation sites receive no CFG-only confinement verdict. Twenty-one
+additional rows bring the unit to **157/157**; escape unit, fixture oracle and
+Bootstrap oracle CTests pass **3/3** in **0.59 seconds**.
+
+The final compiler gate passes **159/159 lit cases** through **1/1 CTest** in
+**48.64 seconds**. A full `tools/remote-build.sh` attempt stopped before CTest
+on Claude's concurrent `ctbrowser/lib/Shell/bindings/exceptions.cpp:162` unused
+`this` lambda capture under `-Werror`; it is reported in `AGENT-SYNC.md` and was
+left untouched. The last full formatter run reports only Claude's live
+`Shell/bindings/document.cpp`; all compiler C++
+files and compiler whitespace checks pass. Logs are
+`/tmp/ctcompile-native-integration-gate2.log` and
+`/tmp/ctcompile-native-session-full-gate.log`. A complete new full-suite result
+is not yet claimed; the preceding successful full gate is recorded below.
+
+**Exact next native boundary:** extend the complete live callable/source-owner
+graph to the immutable captured Map environment through wrapper return and
+global publication, preserving allocation identity and shared ownership.
+Connect that proof to existing Map/capture/table types and final component
+admission. The Map publication specimen remains **0/4**; its **4/4** native gate
+is proposed. Exact Bootstrap Data stays **0/7** in each CommonJS/browser/realm
+fallback mode. Prefix completion cannot authorize future callers. Typed export
+ABI, mutable slots and general realm owners remain further work. Full native
+Bootstrap is unfinished.
+
+**Parallel next boundaries:** represent source throwing calls with an explicit
+exceptional call edge carrying the pre-call register vector and an owning
+payload, then use the now-tested target helper contract. Publish assignment
+results only on normal return; do not relax the current explicit-throw guard.
+General source handlers, uncaught entry adapters and mixed/object payloads
+remain separate. Escape precision still needs contents/points-to evidence before
+weakening retained elements' `Stored` verdicts. See
+[the Bootstrap boundary](bootstrap-provider-next.md).
+
+## Preceding checked-getter and protected-helper checkpoint, 2026-09-07
 
 Five work commits landed locally on `ctcompile-v1`: **`688461c`** (spread escape
 lifetimes), **`fd756f9`** (checked native helper callees), **`12c1b6b`** (deferred

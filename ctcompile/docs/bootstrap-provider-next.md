@@ -41,7 +41,7 @@ The [ordinary global owner](native-owned-globals.md) now admits
 explicit `host-manifest` input. Its bounded live proof carries the allocation
 through nominal type inference, final admission and shared owning storage.
 `StoredGlobal` and external alias semantics remain; only driver-selected numeric
-observations are printed. Six programs pass Node/interpreter and GCC/Clang in
+observations are printed. Eight programs pass Node/interpreter and GCC/Clang in
 explicit/deduced forms, including owning lifetime sanitizers. Missing/conditional
 initialization, replacement, mutation, stale contracts and incomplete budgets
 withhold the owner plan. Without the option, the baseline remains **0/1**.

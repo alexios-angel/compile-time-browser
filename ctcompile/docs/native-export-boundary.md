@@ -1,15 +1,15 @@
 # Native export ownership and calls
 
-**Status: scalar owner and exported getter source proof, 2026-09-07.** The explicit
+**Status: scalar owner and native exported getter, 2026-09-07.** The explicit
 [ordinary global owner](native-owned-globals.md) now admits the scalar specimen
 at **1/1 native** under a live driver contract. The baseline regression below
 intentionally runs without that option and retains **0/1**. Provider-prefix
 discovery and native export admission remain separate proofs.
 
-The exported getter's live callable and owning source graph are now proved.
-Next consume that graph in native table storage and call admission. Global
-confinement remains unchanged; published functions cannot become private from
-a prefix observation.
+The exported getter's live callable and owning source graph now feed native
+table storage and call admission: **3/3 native** with its explicit manifest,
+**1/3** without. Global confinement remains unchanged; published functions
+cannot become private from a prefix observation.
 
 ## Measured boundary
 
@@ -21,7 +21,7 @@ reproducible and checks reports, final admission and reruns.
 | Source | Complete host/prefix evidence | Native admission | Node/interpreter |
 |---|---|---|---|
 | One ordinary global root holding a number | Complete `HostContractAnalysis`: one usable write/read edge | **0/1** | `trace=42` |
-| Exported table with an uncaptured constant getter | Complete current callable and fixed owning source graph | **1/3** | `trace=42` |
+| Exported table with an uncaptured constant getter | Complete current callable and fixed owning source graph | **1/3** by default; **3/3** with manifest | `trace=42` |
 | Exported Map-backed getter below | Entire startup prefix completes: two resolved calls, one factory and one completed provider summary | **0/4** | `trace=0` |
 | Confined local root holding the same kind of owning table | Existing confined-field proof | **4/4** | `trace=0` |
 
@@ -74,8 +74,8 @@ ownership. It compares four observations against both Node and the interpreter.
 The complete scalar report must identify the actual `host.slot` root, one
 write/read edge and one observation store; complete analysis of the published
 source before and after prefix rewriting must refuse with zero usable edges.
-That baseline regression does not claim a new standalone native export binary.
-The separate ordinary-owner gate now executes one. Existing confined-table
+The separate ordinary-owner and exported-getter gates execute standalone native
+programs and check post-entry owning lifetimes. Existing confined-table
 execution and lifetime checks remain in the
 [owning field gate](native-owned-method-table-slots.md).
 
@@ -128,10 +128,10 @@ supplied fingerprint must still match; never silently rebind a stale manifest
 to the changed module. Exhaustion or an incomplete environment exposes no
 usable owner or field edge.
 
-## Following consumer: owning tables and current callees
+## Implemented consumer: owning tables and current callees
 
-After the scalar owner gate, carry the existing owning method-table handle in
-its fixed field. Start with the smallest three-function callable specimen:
+The smallest three-function callable specimen carries the existing owning
+method-table handle in its fixed field:
 
 ```js
 var host = {};
@@ -140,19 +140,19 @@ host.slot = make();
 var trace = host.slot.get();
 ```
 
-It measures **1/3 native**; the independent constant getter is the one admitted
-function. Its complete host contract now proves the current property callee,
-and `OwnedGlobalRoots` proves the exact factory/table/field source graph.
-Explicit-manifest lowering retains the definite-numeric-field and closure-value
-refusals. Allocation, publication, property and call operations remain intact.
-See [the proof and its measured budget](native-owned-global-methods.md).
-A complete **3/3** standalone native gate remains proposed.
+It measures **3/3 native** with an explicit manifest. Without one, only the
+independent getter is admitted (**1/3**). Its complete host contract proves the
+current property callee, and `OwnedGlobalRoots` proves the exact
+factory/table/field source graph. Checked preparation preserves source receiver
+and runtime effects while reconstructing native facts on a speculative clone.
+The standalone and post-entry lifetime gates pass; see
+[the implementation and measured budgets](native-owned-global-methods.md).
 
 `Analysis/ClosedValueFlow.h` and
-`Lowering/ClosureLifting/MethodTables.cpp` already explicitly consume the local
-slot query. The analogous exported edge must be requested explicitly by this
-consumer, and must preserve the table, its callable environments and their Map
-handles after factory and script-entry return.
+`Lowering/ClosureLifting/MethodTables.cpp` explicitly consume both the local
+slot query and the checked exported edge. The latter preserves the uncaptured
+table and callable after factory and script-entry return. Captured Map
+environments are the next source-proof boundary.
 
 The published Map specimen still needs a complete callable/environment proof.
 `HostContractAnalysis::property()` and `callable()` return no edge after any
