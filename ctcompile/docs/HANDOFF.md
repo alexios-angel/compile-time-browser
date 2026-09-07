@@ -6,7 +6,92 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Current native staging checkpoint, 2026-09-07
+## Current checked-getter and protected-helper checkpoint, 2026-09-07
+
+Five work commits landed locally on `ctcompile-v1`: **`688461c`** (spread escape
+lifetimes), **`fd756f9`** (checked native helper callees), **`12c1b6b`** (deferred
+generator invocation refusal), **`94024fb`** (current host getter proof), and
+**`2772cd6`** (fixed global method-table source ownership). No push was performed.
+
+[Current host getters](native-host-callables.md) now expose live
+`HostCallableEdge` records for an uncaptured literal-return getter's actual
+call, property read, preceding initialization, source closure and function.
+Both indirect and already resolved calls preserve their receiver and operands.
+The complete contract validates source-program provenance, undefined lexical
+receiver, unused implicit arguments and effect-free literal bodies. Its unit
+finishes at **295 charged steps**; all smaller budgets withhold slot and call
+edges. Eight positive and 22 refusal programs pass, including replacement,
+receiver/capture/effect controls, stale/forged contracts and generators/async.
+
+The [owning source graph](native-owned-global-methods.md) connects the exported
+constant getter's root, sole factory invocation, returned table, fixed method
+and actual calls. It requires three straight-line functions and rejects extra
+publications, allocations, factory invocations, schema extension and rewrites.
+Its unit covers indirect/direct/repeated calls, detached tables/callables,
+reordered initialization and semantic mutations; **361 charged steps** complete
+the base query and **all 361 incomplete budgets** refuse atomically. The scalar
+owner query now measures **164 steps**, previously 162, after host accounting
+changes. `StoredGlobal` and external-global escape rules remain unchanged.
+
+The exported getter stays **1/3 native** with and without `host-manifest`.
+Explicit-manifest lowering reports a proved source owner but retains the
+numeric-field and closure-value native refusals. Source allocation, publication,
+property and call counts remain unchanged; Node/interpreter `trace=42` still
+agrees. Reusing the original manifest after partial native lowering refuses its
+changed fingerprint. No native table binary or new table lifetime result is
+claimed. Captured Map publication remains **0/4**, and exact Bootstrap Data
+remains **0/7** in CommonJS/browser/realm-fallback modes.
+
+[Protected helper resolution](native-exceptions.md) follows branch successor
+register vectors in a bounded query, independently checking every incoming
+callee definition. It preserves `ctjs.check` status and exception snapshots,
+including mixed-predecessor and work-exhaustion refusals. The exception gate now
+passes **20 programs, 52/52 functions and 39 observations** across Node,
+interpreter and explicit/deduced GCC/Clang. Numeric/string defaults and owning
+string ASan/UBSan lifetime checks pass. Twenty-two source refusals, late effects,
+forged/rerun reports, mixed incoming callees and a 2100-block budget control pass.
+
+The callable review found an importer hole: a generator without `yield` looked
+like an ordinary eager function. Import now refuses every generator invocation
+until its deferred iterator semantics are represented, retaining skipped source
+identities and global-store accounting. Ordinary async returns retain the
+existing promise-wrapper refusal. This fix has its own importer regression.
+
+The spread audit found no production escape solver defect. Seven added unit
+rows bring the suite to **136/136**. The oracle records **106 observed sites,
+103 claims, zero violations and 16 sound confined claims**. Six source/packing
+arrays are confined while three literal elements/receivers are retained.
+Constructor-created objects stay explicitly unclaimed; mutation controls reject
+both unsound child confinement and unnecessary packing-array escape claims.
+
+Serialized full devbox gate: **469/469 CTests**, **157/157 lit cases**, in
+**555.03 seconds**. Final source-program provenance and extra ownership controls
+pass a subsequent **4/4 targeted CTest gate**, including all **157 lit cases**,
+in **44.31 seconds** (lit **44.24 seconds**). All **568 C++ files** pass formatting;
+whitespace checks pass. Default/disabled native coverage remains Bootstrap
+**19/574**, p5 **39/4754**, Phaser **45/7725**. Exact Data provider progress stays
+24 resolved calls, 23 completed summaries and 19/19/24 matching observations.
+
+**Exact next native boundary:** consume the now-existing live source graph in
+`ClosedValueFlow` and the returned-method-table census, then carry the existing
+owning table carrier through global field types, final call-component admission
+and emission. The **3/3** standalone getter gate and post-entry lifetime checks
+are still proposed. The manifest path skips closure lifting; any new preparation
+must validate the original fingerprint and reconstruct proof for transformed IR
+without silently refreshing a stale manifest. Do not rediscover these source
+edges or treat their reports as native ownership permission. Captured Maps and
+future-call/typed-export contracts follow. Full native Bootstrap is unfinished.
+
+**Next exception boundary:** the throwing `fail()` target now resolves, but
+recovery still says `native try/catch needs an explicit throw in its active
+handler`. Add a call-region exceptional edge carrying pre-call register state
+and an owning payload. Publish assignment results only after normal return;
+relaxing the existing `throws == 0` guard cannot model unwinding before
+`try_exit`. General finally/nested handlers, uncaught entry adapters and
+mixed/object payloads remain separate work. Escape precision next needs a
+contents/points-to proof before weakening the element's `Stored` verdict.
+
+## Preceding scalar-owner checkpoint, 2026-09-07
 
 Four more work commits are local on `ctcompile-v1`: **`c822d24`** (composed
 global escape regressions), **`98df646`** (live ordinary-global owner query),
