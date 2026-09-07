@@ -273,6 +273,12 @@ struct probe {
     // and `min-height` - are answered nowhere else, so it is gathered with the
     // rest of the parent lookup rather than costing a second tree walk.
     bool flex_item = false;
+    // ...AND IS IT A GRID ITEM? The same question and the same two properties,
+    // but it cannot be asked of the box tree the way `flex_item` is: there is no
+    // grid box kind, because there is no grid algorithm - `display: grid` lays
+    // out as a block. The parent's DECLARED display is where the fact survives,
+    // and getComputedStyle-resolved-min-size-auto asks about a grid item by name.
+    bool grid_item = false;
     // DOES THIS ELEMENT GENERATE A PRINCIPAL BOX? Everything CSSOM reports as a
     // USED value has no answer when it does not - `display: none`,
     // `display: contents`, and anything inside such a subtree - and the rule
@@ -464,16 +470,31 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
     // computed before it returns.
     const style::style_map * styles = styles_;
     atom_table * atoms = atoms_;
+    // WHAT THE CASCADE SAID ABOUT ONE NODE. Taken as a node rather than as
+    // "this element" because two of the answers below are about the PARENT:
+    // whether it is a grid container, which no box kind records.
+    const auto declared_on = [styles, atoms](node_id node,
+                                             std::string_view property) -> std::string_view {
+        if (styles == nullptr || !node) { return {}; }
+        const auto found = styles->find(style::engine::key_of(node));
+        if (found == styles->end() || !found->second) { return {}; }
+        return found->second->get(atoms->intern(property));
+    };
+    // A GRID CONTAINER IS A DECLARATION, NOT A BOX KIND - `display: grid` makes a
+    // block box here, so the box tree cannot be asked the way it is asked for
+    // flex just above.
+    if (at.chain.size() >= 2) {
+        const std::string parent_display = collapse_keyword(declared_on(at.chain[1], "display"));
+        at.grid_item = parent_display == "grid" || parent_display == "inline-grid";
+    }
     // ONE LOOKUP. This used to walk DOM ancestors for an inherited property, because
     // the cascade produced only the declarations that matched and inheritance happened
     // in four other places downstream. The cascade inherits now, so `get` on the
     // element's own style is the whole answer - and the fifth ad-hoc inheritance
     // mechanism this file used to be is gone.
-    const auto declared = [styles, atoms, at](std::string_view property) -> std::string_view {
-        if (styles == nullptr || at.chain.empty()) { return {}; }
-        const auto found = styles->find(style::engine::key_of(at.chain.front()));
-        if (found == styles->end() || !found->second) { return {}; }
-        return found->second->get(atoms->intern(property));
+    const auto declared = [declared_on, at](std::string_view property) -> std::string_view {
+        if (at.chain.empty()) { return {}; }
+        return declared_on(at.chain.front(), property);
     };
 
     // THE FONT SIZE OF AN ELEMENT WITH NO BOX. Every `em` below resolves against
@@ -634,8 +655,32 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         //     `auto` "resolves to zero when no box is generated" whatever the
         //     parent is (CSS Sizing 3), which is the second half of
         //     getComputedStyle-resolved-min-size-auto.
-        if (text.empty() && (property == "min-width" || property == "min-height")) {
-            return at.flex_item && at.has_box ? "auto" : "0px";
+        //
+        //     AN `auto` THE AUTHOR WROTE IS THE SAME `auto`. This asked
+        //     `text.empty()`, so the rule applied to the INITIAL value and to
+        //     nothing else: `min-width: auto` in a style attribute fell through
+        //     to the length branch below and came back as the keyword. That is
+        //     half of getComputedStyle-resolved-min-size-auto by construction -
+        //     the file asserts each element twice, once as the initial value and
+        //     once with the same `auto` set through `style.setProperty`, and
+        //     seven of its fourteen failures were the second assertion of a pair
+        //     whose first one passed.
+        //
+        //     AND THREE THINGS PRESERVE IT, not one. A flex item, a GRID item -
+        //     which is a declaration on the parent rather than a box kind, since
+        //     `display: grid` lays out as a block here - and any element with a
+        //     specified `aspect-ratio`, where the automatic minimum is the
+        //     transferred size and genuinely is not zero. A degenerate ratio
+        //     (`0/1`) and the two-part form (`auto 1/1`) preserve it too: the
+        //     rule is "an aspect-ratio was specified", not "it is usable".
+        if (property == "min-width" || property == "min-height") {
+            const std::string given = collapse_keyword(text);
+            if (given.empty() || given == "auto") {
+                if (!at.has_box) { return "0px"; }
+                if (at.flex_item || at.grid_item) { return "auto"; }
+                const std::string ratio = collapse_keyword(declared("aspect-ratio"));
+                return !ratio.empty() && ratio != "auto" ? "auto" : "0px";
+            }
         }
         // 2d. THE INSETS. CSSOM §6.7.2 gives them the longest special case in the
         //     specification, and all three of its arms are here:

@@ -621,6 +621,45 @@ void test_a_pseudo_element_argument_is_not_the_element() {
              std::string{"readonly=NoModificationAllowedError|NoModificationAllowedError"});
 }
 
+// `min-width: auto` RESOLVES TO ZERO unless something makes the automatic
+// minimum mean a size, and css/cssom's getComputedStyle-resolved-min-size-auto
+// asserts every element in its fixture twice - once as the initial value and
+// once with the same `auto` written down. Only the first of the pair used to
+// reach this rule: an `auto` the author wrote fell through to the length branch
+// and came back as the keyword.
+//
+// THREE THINGS PRESERVE IT: a flex item, a grid item, and a specified
+// `aspect-ratio` - and none of them if the element generates no box at all.
+void test_the_automatic_minimum_size() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>#f { display: flex } #g { display: grid }
+    </style></head><body>
+    <div id=plain style="min-width: auto; min-height: 5px"></div>
+    <div id=ratio style="aspect-ratio: 1/1; min-width: auto"></div>
+    <div id=degenerate style="aspect-ratio: 0/1"></div>
+    <div id=twopart style="aspect-ratio: auto 1/1"></div>
+    <div id=f><div id=fi style="min-width: auto"></div></div>
+    <div id=g><div id=gi></div></div>
+    <div style="display: none"><div id=hidden style="min-width: auto"></div></div>
+    <script>
+        const min = (id) => getComputedStyle(document.getElementById(id)).minWidth;
+        console.log('zero=' + min('plain') + '|' + min('hidden'));
+        console.log('ratio=' + min('ratio') + '|' + min('degenerate') + '|' + min('twopart'));
+        console.log('items=' + min('fi') + '|' + min('gi'));
+        // The property still answers what the author wrote when it is not `auto`.
+        console.log('given=' + getComputedStyle(document.getElementById('plain')).minHeight);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    // A written `auto` and an absent one are the same `auto`, and neither
+    // survives on an ordinary block or on an element with no box.
+    CHECK_EQ(logged(page, "zero="), std::string{"zero=0px|0px"});
+    // A degenerate ratio and the two-part form preserve it too: the rule is
+    // "an aspect-ratio was specified", not "it is usable".
+    CHECK_EQ(logged(page, "ratio="), std::string{"ratio=auto|auto|auto"});
+    CHECK_EQ(logged(page, "items="), std::string{"items=auto|auto"});
+    CHECK_EQ(logged(page, "given="), std::string{"given=5px"});
+}
+
 } // namespace
 
 int main() {
@@ -638,5 +677,6 @@ int main() {
     test_replace_refuses_a_regular_sheet();
     test_an_injected_style_element_restyles();
     test_a_pseudo_element_argument_is_not_the_element();
+    test_the_automatic_minimum_size();
     REPORT("cssom");
 }
