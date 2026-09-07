@@ -199,6 +199,86 @@ void test_insert_and_delete() {
     CHECK_EQ(logged(page, "empty="), std::string{"empty=SyntaxError"});
 }
 
+// THE MEDIA QUERY LIST, SERIALISED FROM THE AUTHOR'S TEXT. Every string here is
+// one `css/cssom/serialize-media-rule.html` compares byte for byte, and the two
+// that look like typos are not: `@media  {` really does carry two spaces when
+// the query list is empty, and a grouping rule really is the one multi-line
+// serialisation in the CSSOM.
+void test_media_rules_and_their_lists() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style id=s></style></head><body><script>
+        const sheet = document.getElementById('s').sheet;
+        sheet.insertRule('@media aLL and (Color) { #a { color: red } }', 0);
+        sheet.insertRule('@media {}', 1);
+        sheet.insertRule('@media not all and (color) {}', 2);
+        sheet.insertRule('@media screen and (max-width: 23px) and (max-width: 45px) {}', 3);
+        console.log('n=' + sheet.cssRules.length);
+        console.log('c0=' + sheet.cssRules[0].conditionText);
+        console.log('t0=' + sheet.cssRules[0].cssText);
+        console.log('t1=' + sheet.cssRules[1].cssText);
+        console.log('t2=' + sheet.cssRules[2].cssText);
+        console.log('t3=' + sheet.cssRules[3].cssText);
+        const media = sheet.cssRules[0].media;
+        console.log('m=' + media.length + ',' + media[0] + ',' + media[3] + ',' +
+                    media.item(1) + ',' + (media === sheet.cssRules[0].media));
+        media.appendMedium('PRINT');
+        media.appendMedium('print');
+        console.log('app=' + media.mediaText + ',' + media.length);
+        media.deleteMedium('print');
+        console.log('del=' + media.mediaText + ',' + media.toString());
+        let caught = '';
+        try { media.deleteMedium('speech'); } catch (e) { caught = e.name; }
+        console.log('missing=' + caught);
+        media.mediaText = null;
+        console.log('nulled=[' + media.mediaText + '],' + media.length);
+        console.log('emptied=' + sheet.cssRules[0].cssText);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "n="), std::string{"n=4"});
+    // `all and <features>` drops the `all`; a NEGATED one keeps it, because
+    // dropping it there would invert the query.
+    CHECK_EQ(logged(page, "c0="), std::string{"c0=(color)"});
+    CHECK_EQ(logged(page, "t0="), std::string{"t0=@media (color) {\n  #a { color: red; }\n}"});
+    CHECK_EQ(logged(page, "t1="), std::string{"t1=@media  {\n}"});
+    CHECK_EQ(logged(page, "t2="), std::string{"t2=@media not all and (color) {\n}"});
+    // A feature written twice is KEPT twice: de-duplicating is an open CSSWG
+    // issue and the suite asserts the author's list survives.
+    CHECK_EQ(logged(page, "t3="),
+             std::string{"t3=@media screen and (max-width: 23px) and (max-width: 45px) {\n}"});
+    CHECK_EQ(logged(page, "m="), std::string{"m=1,(color),undefined,null,true"});
+    CHECK_EQ(logged(page, "app="), std::string{"app=(color), print,2"});
+    CHECK_EQ(logged(page, "del="), std::string{"del=(color),(color)"});
+    CHECK_EQ(logged(page, "missing="), std::string{"missing=NotFoundError"});
+    CHECK_EQ(logged(page, "nulled="), std::string{"nulled=[],0"});
+    CHECK_EQ(logged(page, "emptied="), std::string{"emptied=@media  {\n  #a { color: red; }\n}"});
+}
+
+// A SHEET HAS A MediaList TOO, and it is the same interface over the same kind
+// of list - `css/cssom/medialist-interfaces-001.html` drives the `<style>`'s
+// `media` attribute through exactly these four steps.
+void test_the_media_list_of_a_sheet() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style id=s media=all>.a { color: red }</style></head>
+    <body><script>
+        const sheet = document.getElementById('s').sheet;
+        const list = sheet.media;
+        console.log('m0=' + list.mediaText + ',' + list.length);
+        list.appendMedium('screen');
+        console.log('m1=' + list.mediaText);
+        list.deleteMedium('all');
+        console.log('m2=' + list.mediaText);
+        sheet.media = 'print, Screen and (Min-Width: 10px)';
+        console.log('m3=' + sheet.media.mediaText + ',' + (sheet.media === list));
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "m0="), std::string{"m0=all,1"});
+    CHECK_EQ(logged(page, "m1="), std::string{"m1=all, screen"});
+    CHECK_EQ(logged(page, "m2="), std::string{"m2=screen"});
+    // A feature NAME folds and a media type folds; a feature's VALUE does not,
+    // being a string, a url() or a number with a unit rather than an identifier.
+    CHECK_EQ(logged(page, "m3="), std::string{"m3=print, screen and (min-width: 10px),true"});
+}
+
 void test_a_constructed_sheet() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>.z { color: red }</style></head><body><script>
@@ -323,6 +403,8 @@ int main() {
     test_the_list_and_the_rules();
     test_a_style_rule();
     test_insert_and_delete();
+    test_media_rules_and_their_lists();
+    test_the_media_list_of_a_sheet();
     test_a_constructed_sheet();
     test_the_sheet_of_an_element();
     test_the_text_the_cascade_would_get();

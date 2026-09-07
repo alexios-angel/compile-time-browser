@@ -392,6 +392,209 @@ void append_compound(std::string & out, const style::compound & part, const atom
     return out;
 }
 
+// --- a media query list, as CSSOM asks for it ------------------------------
+//
+// MEDIA QUERIES 4 §"serializing a media query list", over the query's TEXT
+// rather than over the `media_query` above. The AST is what the CASCADE needs
+// and it is deliberately narrow - three media types, twelve features, one float
+// per value - so it answers `all` for `speech`, `768px` for `48em` and nothing
+// at all for a feature this engine does not model. Every one of those is a
+// string `css/cssom/serialize-media-rule.html` compares byte for byte, so the
+// object model normalises the text instead and never consults the AST when it
+// has the author's bytes.
+//
+// The normalisation is exactly the specification's and no more: lowercase the
+// `not`/`only`, the media type and each feature NAME; put one space after a
+// feature's colon; drop an `all` that has features after it and keep a negated
+// one; and preserve the order and the multiplicity of the features, because
+// `(max-width: 23px) and (max-width: 45px)` is a query a page may have written
+// on purpose and de-duplicating it is an open CSSWG issue.
+
+[[nodiscard]] std::string collapse_whitespace(std::string_view text) {
+    std::string out;
+    bool space = false;
+    for (const char c : trim(text, html_whitespace)) {
+        if (html_whitespace.find(c) != std::string_view::npos) {
+            space = true;
+            continue;
+        }
+        if (space && !out.empty()) { out += ' '; }
+        space = false;
+        out += c;
+    }
+    return out;
+}
+
+// The top-level commas of a media query list. Top-level because a feature's
+// parentheses may hold one - `(width >= calc(1px, 2px))` does not exist, but a
+// `url()` in a `@supports` prelude does, and this splitter is used for both.
+[[nodiscard]] std::vector<std::string_view> split_on_commas(std::string_view text) {
+    std::vector<std::string_view> out;
+    std::size_t depth = 0;
+    std::size_t start = 0;
+    char quote = '\0';
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const char c = text[i];
+        if (quote != '\0') {
+            if (c == '\\') {
+                ++i;
+            } else if (c == quote) {
+                quote = '\0';
+            }
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            quote = c;
+        } else if (c == '(') {
+            ++depth;
+        } else if (c == ')' && depth != 0) {
+            --depth;
+        } else if (c == ',' && depth == 0) {
+            out.push_back(text.substr(start, i - start));
+            start = i + 1;
+        }
+    }
+    out.push_back(text.substr(start));
+    return out;
+}
+
+// `(name)` or `(name: value)`, with the parentheses already on it.
+[[nodiscard]] std::string serialize_media_feature_text(std::string_view part) {
+    const std::string_view inside = part.substr(1, part.size() - 2);
+    const std::size_t colon = inside.find(':');
+    if (colon == std::string_view::npos) {
+        return "(" + ascii_lower_copy(collapse_whitespace(inside)) + ")";
+    }
+    // THE NAME IS FOLDED AND THE VALUE IS NOT. A feature name is an identifier
+    // and `(Color)` and `(color)` are one feature; a value may be a string, a
+    // `url()` or a number with a unit, none of which fold.
+    return "(" + ascii_lower_copy(collapse_whitespace(inside.substr(0, colon))) + ": " +
+           collapse_whitespace(inside.substr(colon + 1)) + ")";
+}
+
+// One query. An unparseable one is `not all`, which is what Media Queries says a
+// query a browser does not understand means - never true, and never an error.
+[[nodiscard]] std::string serialize_media_query_text(std::string_view text) {
+    static constexpr std::string_view not_all = "not all";
+    // The parts: `not`/`only`, a type, and parenthesised features joined by
+    // `and`. A feature is ATOMIC - its parentheses may contain spaces - which is
+    // why this is a scan and not a split on whitespace.
+    std::vector<std::string> parts;
+    std::size_t at = 0;
+    while (at < text.size()) {
+        while (at < text.size() && html_whitespace.find(text[at]) != std::string_view::npos) {
+            ++at;
+        }
+        if (at >= text.size()) { break; }
+        const std::size_t start = at;
+        if (text[at] == '(') {
+            std::size_t depth = 0;
+            bool closed = false;
+            for (; at < text.size(); ++at) {
+                if (text[at] == '(') {
+                    ++depth;
+                } else if (text[at] == ')') {
+                    --depth;
+                    if (depth == 0) {
+                        ++at;
+                        closed = true;
+                        break;
+                    }
+                }
+            }
+            if (!closed) { return std::string{not_all}; }
+            parts.push_back(std::string{text.substr(start, at - start)});
+            continue;
+        }
+        while (at < text.size() && text[at] != '(' &&
+               html_whitespace.find(text[at]) == std::string_view::npos) {
+            ++at;
+        }
+        parts.push_back(std::string{text.substr(start, at - start)});
+    }
+    if (parts.empty()) { return {}; }
+
+    std::size_t i = 0;
+    std::string prefix;
+    if (parts[i].front() != '(' &&
+        (ascii_iequals(parts[i], "not") || ascii_iequals(parts[i], "only"))) {
+        prefix = ascii_lower_copy(parts[i]) + " ";
+        ++i;
+    }
+    std::string type;
+    if (i < parts.size() && parts[i].front() != '(') {
+        // A MEDIA TYPE IS AN IDENTIFIER, so `@media 42` and `@media .x` are
+        // queries this cannot serialise rather than types it has not heard of -
+        // and the two have to be told apart, `speech` and `projection` being
+        // perfectly good types that this engine does not model.
+        const auto ident_char = [](unsigned char c, bool start) {
+            if (c >= 0x80 || c == '_' || c == '-' || (c >= 'a' && c <= 'z') ||
+                (c >= 'A' && c <= 'Z')) {
+                return true;
+            }
+            return !start && c >= '0' && c <= '9';
+        };
+        const std::string & word = parts[i];
+        bool ident = !word.empty();
+        for (std::size_t c = 0; c < word.size() && ident; ++c) {
+            ident = ident_char(static_cast<unsigned char>(word[c]), c == 0);
+        }
+        if (!ident || ascii_iequals(word, "and")) { return std::string{not_all}; }
+        type = ascii_lower_copy(word);
+        ++i;
+    }
+    std::vector<std::string> features;
+    bool first = true;
+    while (i < parts.size()) {
+        // Everything after the media type - and everything after the first
+        // feature - is joined to what precedes it by `and`. `not (color)` has
+        // neither, and is a query with one feature and no type.
+        if (!first || !type.empty()) {
+            if (!ascii_iequals(parts[i], "and")) { return std::string{not_all}; }
+            ++i;
+            if (i >= parts.size()) { return std::string{not_all}; }
+        }
+        if (parts[i].front() != '(') { return std::string{not_all}; }
+        features.push_back(serialize_media_feature_text(parts[i]));
+        ++i;
+        first = false;
+    }
+
+    std::string out = prefix;
+    // "If the query is `all and <features>`, omit the `all and`" - but only for
+    // a query that is not negated: `not all and (color)` is a query that is
+    // false whenever `(color)` is true, and dropping the type inverts it.
+    const bool omit_all = type == "all" && prefix.empty() && !features.empty();
+    if (!type.empty() && !omit_all) { out += type; }
+    for (const std::string & feature : features) {
+        if (!out.empty() && out.back() != ' ') { out += " and "; }
+        out += feature;
+    }
+    return out;
+}
+
+[[nodiscard]] std::vector<std::string> parse_media_query_list(std::string_view text) {
+    std::vector<std::string> out;
+    if (trim(text, html_whitespace).empty()) { return out; }
+    for (const std::string_view one : split_on_commas(text)) {
+        std::string query = serialize_media_query_text(one);
+        if (query.empty()) { query = "not all"; }
+        out.push_back(std::move(query));
+    }
+    return out;
+}
+
+// "To serialize a comma-separated list, concatenate all items while separating
+// them by a COMMA followed by a SPACE" - CSSOM §2.
+[[nodiscard]] std::string serialize_media_query_list(std::span<const std::string> list) {
+    std::string out;
+    for (const std::string & query : list) {
+        if (!out.empty()) { out += ", "; }
+        out += query;
+    }
+    return out;
+}
+
 // --- the JS side, in general -----------------------------------------------
 
 [[nodiscard]] script::object_object * as_object(value v) {
@@ -514,16 +717,33 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
     // discarded by the front end, so there is nothing to reconstruct and an
     // `@keyframes anim { }` would be a claim about a rule nobody read.
     if (!rule.verbatim.empty()) { return rule.verbatim; }
-    // A grouping rule prints its children, which is the only place in this file
-    // a serialisation is recursive.
+    // A GROUPING RULE IS THE ONE MULTI-LINE SERIALISATION IN THE CSSOM, and it
+    // is not a style choice - CSSOM 6.4.1 spells it out for CSSMediaRule: the
+    // at-keyword, a SPACE, the media query list, a SPACE, `{`, a newline, then
+    // each child rule indented by two spaces and followed by a newline, then
+    // `}`. `css/cssom/serialize-media-rule.html` compares the result byte for
+    // byte, including the DOUBLE space an empty query list leaves in
+    // `@media  {` - one after the at-keyword and one before the brace.
     std::string out = "@" + rule.at_name;
-    if (!rule.prelude.empty()) { out += " " + rule.prelude; }
-    out += " {";
+    if (rule.type == media_rule) {
+        out += " " + serialize_media_query_list(rule.media_queries);
+    } else if (!rule.prelude.empty()) {
+        out += " " + rule.prelude;
+    }
+    out += " {\n";
     for (const std::size_t child : rule.children) {
         if (child >= css_rule_store_.size()) { continue; }
-        out += " " + rule_css_text(*css_rule_store_[child]);
+        // TWO SPACES ON EVERY LINE of the child rather than on its first, so a
+        // nested group indents cumulatively - which is what the recursion means
+        // and what a single leading indent would get wrong.
+        out += "  ";
+        for (const char c : rule_css_text(*css_rule_store_[child])) {
+            out += c;
+            if (c == '\n') { out += "  "; }
+        }
+        out += '\n';
     }
-    out += " }";
+    out += '}';
     return out;
 }
 
@@ -604,8 +824,15 @@ void dom_bindings::parse_sheet_rules(std::size_t sheet, std::string_view css) {
                 const std::size_t at = add_record();
                 css_rule_store_[at]->type = media_rule;
                 css_rule_store_[at]->at_name = "media";
-                css_rule_store_[at]->prelude =
-                    serialize_media_queries(parsed.conditions[r.condition].queries);
+                // THE ONE PLACE THE AST IS STILL THE SOURCE, and it is lossy:
+                // the front end keeps a `@media` prelude only as a compiled
+                // condition, with no span back to the bytes, so a sheet's own
+                // `(min-width: 48em)` comes back in px. The reconstruction still
+                // goes through the text serialiser above so that a rule from a
+                // `<style>` and one from `insertRule` cannot be spelled two
+                // different ways.
+                css_rule_store_[at]->media_queries = parse_media_query_list(
+                    serialize_media_queries(parsed.conditions[r.condition].queries));
                 css_sheets_[sheet]->rules.push_back(at);
                 group_rule = at;
             }
@@ -679,6 +906,10 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
         // A `@media` whose block this front end CAN read gets its children, so
         // an inserted media rule is a real grouping rule rather than a string.
         if (made.type == media_rule) {
+            // THE AUTHOR'S BYTES, which is the whole reason a media rule made
+            // here serialises exactly and one recovered from a sheet does not.
+            made.media_queries = parse_media_query_list(made.prelude);
+            made.prelude.clear();
             const style::css::stylesheet parsed = style::css::parse_stylesheet(trimmed, *atoms_);
             for (const style::css::raw_rule & r : parsed.rules) {
                 css_rule_store_.push_back(std::make_unique<css_rule_record>());
@@ -875,7 +1106,15 @@ void dom_bindings::sync_style_sheets(context & cx) {
         }
         css_sheet_record & record = *css_sheets_[at];
         record.title = each.title;
-        record.media = each.media;
+        // THE ATTRIBUTE IS RE-READ, THE LIST IS NOT. This walk runs on every
+        // read of `document.styleSheets`, and a MediaList is mutable - a page
+        // that has called `appendMedium` must not have it undone by the next
+        // property access. So the query list is re-derived only when the
+        // element's `media` attribute has actually changed under it.
+        if (fresh || record.media != each.media) {
+            record.media = each.media;
+            record.media_queries = parse_media_query_list(record.media);
+        }
         if (each.linked) {
             // A `<link>`'s bytes come from the asset registry, exactly as
             // load_author_styles resolves them, and only when the href changes -
@@ -943,6 +1182,66 @@ dom_bindings::css_sheet_record * dom_bindings::receiver_sheet(context & cx) {
 dom_bindings::css_rule_record * dom_bindings::receiver_rule(context & cx) {
     const std::size_t at = slot_index(as_object(cx.current_this()), rule_key);
     return at < css_rule_store_.size() ? css_rule_store_[at].get() : nullptr;
+}
+
+std::vector<std::string> * dom_bindings::receiver_media(context & cx) {
+    // A RULE FIRST, because a media rule's own object carries both private slots
+    // - `rule_key` and the `sheet_key` that says which sheet it came from - and
+    // the sheet's list is not the rule's. A MediaList itself carries exactly one.
+    if (css_rule_record * rule = receiver_rule(cx)) { return &rule->media_queries; }
+    if (css_sheet_record * sheet = receiver_sheet(cx)) { return &sheet->media_queries; }
+    return nullptr;
+}
+
+value dom_bindings::media_list_object(context & cx, script::object_object & owner) {
+    // [SameObject]: `sheet.media === sheet.media`, and a page's expando on one
+    // survives - so the list is cached on its owner under a private key and
+    // REFRESHED rather than rebuilt.
+    if (const value * held = owner.find(media_key)) {
+        refresh_media_list(cx, *held);
+        return *held;
+    }
+    const value list = cx.make_object();
+    script::object_object * obj = as_object(list);
+    if (obj == nullptr) { return list; }
+    if (script::object_object * internals = cssom_internals(cx)) {
+        if (const value * proto = internals->find("MediaList.prototype")) {
+            obj->prototype = *proto;
+        }
+    }
+    // THE OWNER'S SLOT, COPIED ONTO THE LIST. It is how every method below finds
+    // the vector it is a view of: a MediaList has no owner pointer of its own,
+    // and re-deriving one from the JS object graph would need a back-reference
+    // the collector would then have to know about.
+    if (const value * rule = owner.find(rule_key)) {
+        obj->define(rule_key, *rule, script::attr_none);
+    } else if (const value * sheet = owner.find(sheet_key)) {
+        obj->define(sheet_key, *sheet, script::attr_none);
+    }
+    obj->define("length", value::number(0), script::attr_none);
+    owner.define(media_key, list, script::attr_none);
+    refresh_media_list(cx, list);
+    return list;
+}
+
+void dom_bindings::refresh_media_list(context & cx, value list) {
+    script::object_object * obj = as_object(list);
+    if (obj == nullptr) { return; }
+    const std::vector<std::string> * queries = nullptr;
+    {
+        const std::size_t rule = slot_index(obj, rule_key);
+        const std::size_t sheet = slot_index(obj, sheet_key);
+        if (rule < css_rule_store_.size()) {
+            queries = &css_rule_store_[rule]->media_queries;
+        } else if (sheet < css_sheets_.size()) {
+            queries = &css_sheets_[sheet]->media_queries;
+        }
+    }
+    if (queries == nullptr) { return; }
+    std::vector<value> items;
+    items.reserve(queries->size());
+    for (const std::string & query : *queries) { items.push_back(cx.string(query)); }
+    set_indexed(*obj, items);
 }
 
 value dom_bindings::make_rule_list(context & cx, std::span<const std::size_t> rules) {
@@ -1129,25 +1428,70 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     };
 
     // --- MediaList
+    //
+    // A VIEW OF A RECORD'S QUERY LIST, not a list of its own. `mediaText`,
+    // `appendMedium` and `deleteMedium` all write through to the sheet or the
+    // media rule the object came from, which is what makes
+    // `rule.media.appendMedium('print')` change `rule.cssText` - the two are one
+    // list read two ways rather than two lists that have to be kept in step.
     script::object_object * media_proto = interface("MediaList", nullptr, nullptr);
     method(media_proto, "item",
            [](context & c, std::span<value> a) { return collection_item(c, a); });
-    getter(media_proto, "mediaText", [](context & c, std::span<value>) {
-        script::object_object * self = as_object(c.current_this());
-        if (self == nullptr) { return c.string(""); }
-        std::string out;
-        std::size_t count = 0;
-        if (const value * held = self->find("length"); held != nullptr && held->is_number()) {
-            const double n = held->as_number();
-            if (n > 0) { count = static_cast<std::size_t>(n); }
+    accessor(
+        media_proto, "mediaText",
+        [this](context & c, std::span<value>) {
+            const std::vector<std::string> * queries = receiver_media(c);
+            return c.string(queries == nullptr ? std::string{}
+                                               : serialize_media_query_list(*queries));
+        },
+        [this](context & c, std::span<value> a) {
+            std::vector<std::string> * queries = receiver_media(c);
+            if (queries == nullptr) { return value::undefined(); }
+            // [LegacyNullToEmptyString]: `media.mediaText = null` EMPTIES the
+            // list rather than parsing the string "null", which
+            // `css/cssom/MediaList.html` asserts by name.
+            const std::string text = a.empty() || a[0].is_null() || a[0].is_undefined()
+                                         ? std::string{}
+                                         : c.to_string(a[0]);
+            *queries = parse_media_query_list(text);
+            refresh_media_list(c, c.current_this());
+            style_sheets_changed();
+            return value::undefined();
+        });
+    // The stringifier. `media.toString()` and `'' + media` are both `mediaText`.
+    method(media_proto, "toString", [](context & c, std::span<value>) {
+        return c.lookup_property(c.current_this(), "mediaText");
+    });
+    method(media_proto, "appendMedium", [this](context & c, std::span<value> a) {
+        std::vector<std::string> * queries = receiver_media(c);
+        if (queries == nullptr) { return value::undefined(); }
+        const std::string added = serialize_media_query_text(arg_string(c, a, 0));
+        if (added.empty()) { return value::undefined(); }
+        // "If comparing medium with any of the media queries in the collection
+        // returns true, then return" - appending a medium twice is a no-op.
+        if (std::find(queries->begin(), queries->end(), added) != queries->end()) {
+            return value::undefined();
         }
-        for (std::size_t i = 0; i < count; ++i) {
-            if (const value * held = self->find(std::to_string(i))) {
-                if (!out.empty()) { out += ", "; }
-                out += c.to_string(*held);
-            }
+        queries->push_back(added);
+        refresh_media_list(c, c.current_this());
+        style_sheets_changed();
+        return value::undefined();
+    });
+    method(media_proto, "deleteMedium", [this](context & c, std::span<value> a) {
+        std::vector<std::string> * queries = receiver_media(c);
+        if (queries == nullptr) { return value::undefined(); }
+        const std::string wanted = serialize_media_query_text(arg_string(c, a, 0));
+        const auto found = std::find(queries->begin(), queries->end(), wanted);
+        if (wanted.empty() || found == queries->end()) {
+            // "If nothing was removed, then throw a NotFoundError" - the one
+            // place in the CSSOM where deleting something absent is an error.
+            throw_dom_exception(c, "NotFoundError", "that medium is not in the list");
+            return value::undefined();
         }
-        return c.string(out);
+        queries->erase(found);
+        refresh_media_list(c, c.current_this());
+        style_sheets_changed();
+        return value::undefined();
     });
 
     // --- StyleSheetList
@@ -1186,39 +1530,20 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         }
         return c.string(sheet->title);
     });
-    getter(base_proto, "media", [this](context & c, std::span<value>) {
-        script::object_object * self = as_object(c.current_this());
-        const css_sheet_record * sheet = receiver_sheet(c);
-        if (self == nullptr || sheet == nullptr) { return value::undefined(); }
-        value list = value::undefined();
-        if (const value * held = self->find(media_key)) { list = *held; }
-        if (!list.is_object()) {
-            list = c.make_object();
-            if (script::object_object * obj = as_object(list)) {
-                if (script::object_object * held = cssom_internals(c)) {
-                    if (const value * proto = held->find("MediaList.prototype")) {
-                        obj->prototype = *proto;
-                    }
-                }
-                obj->define("length", value::number(0), script::attr_none);
-            }
-            self->define(media_key, list, script::attr_none);
-        }
-        std::vector<value> queries;
-        std::size_t at = 0;
-        while (at < sheet->media.size()) {
-            const std::size_t comma = sheet->media.find(',', at);
-            const std::string_view one =
-                trim(std::string_view{sheet->media}.substr(
-                         at, comma == std::string::npos ? std::string::npos : comma - at),
-                     html_whitespace);
-            if (!one.empty()) { queries.push_back(c.string(std::string{one})); }
-            if (comma == std::string::npos) { break; }
-            at = comma + 1;
-        }
-        if (script::object_object * obj = as_object(list)) { set_indexed(*obj, queries); }
-        return list;
-    });
+    accessor(
+        base_proto, "media",
+        [this](context & c, std::span<value>) {
+            script::object_object * self = as_object(c.current_this());
+            if (self == nullptr || receiver_sheet(c) == nullptr) { return value::undefined(); }
+            return media_list_object(c, *self);
+        },
+        [](context & c, std::span<value> a) {
+            // [PutForwards=mediaText]: `sheet.media = 'print'` assigns to the
+            // MediaList's mediaText and the list object itself never changes.
+            const value list = c.lookup_property(c.current_this(), "media");
+            c.store_property(list, "mediaText", a.empty() ? c.string("") : a[0]);
+            return value::undefined();
+        });
     accessor(
         base_proto, "disabled",
         [this](context & c, std::span<value>) {
@@ -1249,6 +1574,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                 auto * options = static_cast<script::object_object *>(args[0].as_heap());
                 if (const value * media = options->find("media")) {
                     css_sheets_[at]->media = c.to_string(*media);
+                    css_sheets_[at]->media_queries = parse_media_query_list(css_sheets_[at]->media);
                 }
                 if (const value * disabled = options->find("disabled")) {
                     css_sheets_[at]->disabled = context::truthy(*disabled);
@@ -1485,9 +1811,30 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         interface("CSSConditionRule", "CSSGroupingRule", nullptr);
     getter(condition_proto, "conditionText", [this](context & c, std::span<value>) {
         const css_rule_record * rule = receiver_rule(c);
-        return c.string(rule == nullptr ? std::string{} : rule->prelude);
+        if (rule == nullptr) { return c.string(""); }
+        // "The conditionText of a CSSMediaRule is its media's mediaText" -
+        // CSSOM 6.4.4. Only `@supports` answers from `prelude`, its condition
+        // being a `<supports-condition>` and not a media query list.
+        if (rule->type == media_rule) {
+            return c.string(serialize_media_query_list(rule->media_queries));
+        }
+        return c.string(rule->prelude);
     });
-    (void)interface("CSSMediaRule", "CSSConditionRule", nullptr);
+    script::object_object * media_rule_proto =
+        interface("CSSMediaRule", "CSSConditionRule", nullptr);
+    accessor(
+        media_rule_proto, "media",
+        [this](context & c, std::span<value>) {
+            script::object_object * self = as_object(c.current_this());
+            if (self == nullptr || receiver_rule(c) == nullptr) { return value::undefined(); }
+            return media_list_object(c, *self);
+        },
+        [](context & c, std::span<value> a) {
+            const value list = c.lookup_property(c.current_this(), "media");
+            c.store_property(list, "mediaText", a.empty() ? c.string("") : a[0]);
+            return value::undefined();
+        });
+    (void)interface("CSSSupportsRule", "CSSConditionRule", nullptr);
     script::object_object * font_face_proto = interface("CSSFontFaceRule", "CSSRule", nullptr);
     (void)font_face_proto;
     (void)interface("CSSImportRule", "CSSRule", nullptr);
