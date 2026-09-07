@@ -11,6 +11,8 @@
 #include <ctbrowser/style/style.hpp>
 
 #include "check.hpp"
+
+#include <cmath>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -1657,12 +1659,17 @@ void test_calc() {
     invalid("1px + 2");      // a length and a number
     invalid("2px * 3px");    // an area, which calc has no type for
     invalid("2px / 3px");    // the divisor has to be a number
-    invalid("2px / 0");      // and a nonzero one
     invalid("1px 2px");      // no operator
     invalid("1px +");        // nothing after one
-    invalid("(1px");         // unclosed
     invalid("5");            // a bare number is not a length
     invalid("1frobs + 2px"); // an unmodelled unit, rather than a silent zero
+    // TWO THAT USED TO BE REFUSED HERE AND ARE NOT SYNTAX ERRORS AT ALL.
+    // Division by zero is an infinity (CSS Values 4 10.9) - IEEE already gives
+    // the right signed answer, and the guard against it was the whole bug - and
+    // EOF CLOSES AN UNTERMINATED FUNCTION OR BLOCK (CSS Syntax 5.4.9), which
+    // `calc(min(1em, 21px) * 2` relies on four times in one corpus file.
+    CHECK(std::isinf(px("2px / 0")));
+    CHECK(px("(1px") == 1.0f);
     // `+` and `-` REQUIRE surrounding whitespace, and this gets that for free: the
     // tokenizer makes `-12px` one dimension, so there is no operator between the
     // two terms. Chrome rejects it too.

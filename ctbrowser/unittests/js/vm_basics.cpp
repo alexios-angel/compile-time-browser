@@ -758,7 +758,10 @@ void test_collections() {
     expect_result(
         "const m = new Map(); m.set('k', 1); m.set('k', 9); return m.get('k') + '|' + m.size;",
         "9|1");
-    expect_result("const m = new Map([['a', 1], ['b', 2]]); return m.keys().join(',');", "a,b");
+    // An ITERATOR, so it has no `join` - `[...m.keys()].join(',')` is how it is
+    // written in a browser and here.
+    expect_result("const m = new Map([['a', 1], ['b', 2]]); return [...m.keys()].join(',');",
+                  "a,b");
     expect_result("const m = new Map([['a', 1]]); return m.has('z');", "false");
     // NaN matches NaN as a key, which === does not
     expect_result("const s = new Set([NaN]); return s.has(NaN);", "true");
@@ -2141,12 +2144,21 @@ void test_spread() {
 // from either can have a golden.
 // `entries`, `keys` and `values` on an array, and `entries` on a Set.
 //
-// Each hands back an ARRAY where the spec says an iterator, for the same reason
-// matchAll does: `for (const [i, v] of xs.entries())` and a spread both work
-// over one, which is everything anybody does with them. p5's Table walks its
-// rows with entries(), so loadTable could not parse a file without this.
+// Each is a REAL ITERATOR: it has `next` and `@@iterator`, its own state is not
+// enumerable, and for..of and spread both walk it - the last because the object
+// also carries the array under `__items`, which is what `iterable_values`
+// recognises. They used to be bare Arrays, and a page that drove one by hand -
+// Babylon does, for the Map of shadow generators a light owns - got
+// "`next` is undefined".
 void test_array_iterators() {
-    expect_result("return JSON.stringify(['x', 'y'].entries());", "[[0,\"x\"],[1,\"y\"]]");
+    // `{}` and not the pairs: an iterator has no enumerable own property, which
+    // is also the guard that its `__items` and `__at` stay invisible.
+    expect_result("return JSON.stringify(['x', 'y'].entries());", "{}");
+    expect_result("return JSON.stringify([...['x', 'y'].entries()]);", "[[0,\"x\"],[1,\"y\"]]");
+    expect_result("const it = [7, 8].values(); const a = it.next();"
+                  "return a.value + ',' + a.done + ',' + it.next().value + ',' + it.next().done;",
+                  "7,false,8,true");
+    expect_result("const it = [1].values(); return it[Symbol.iterator]() === it;", "true");
     expect_result("let out = ''; for (const pair of ['x', 'y'].entries()) {"
                   "  out += pair[0] + ':' + pair[1] + ';'; } return out;",
                   "0:x;1:y;");
@@ -2154,8 +2166,8 @@ void test_array_iterators() {
     expect_result("let out = ''; for (const [i, v] of ['a', 'b'].entries()) {"
                   "  out += i + v; } return out;",
                   "0a1b");
-    expect_result("return [7, 8].keys().join(',');", "0,1");
-    expect_result("return [7, 8].values().join(',');", "7,8");
+    expect_result("return [...[7, 8].keys()].join(',');", "0,1");
+    expect_result("return [...[7, 8].values()].join(',');", "7,8");
     // A Set's entries pairs each member WITH ITSELF, which looks odd and is the
     // spec: it exists so a Set and a Map can be walked by the same code.
     expect_result("const s = new Set(['a']);"

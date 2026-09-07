@@ -28,11 +28,17 @@ namespace {
 // iterator halfway and then spreads it.
 [[nodiscard]] value list_iterator(context & cx, value items, const char * tag) {
     auto * it = static_cast<object_object *>(cx.make_object().as_heap());
-    it->set("__items", items);
-    it->set("__at", value::number(0));
-    it->set("@@toStringTag", cx.string(std::string{tag}));
+    // NON-ENUMERABLE, all five. `__items` and `__at` are internal slots wearing
+    // property names, and an iterator's own methods and tag are not enumerable
+    // either - so `JSON.stringify(xs.entries())` is `{}` and `Object.keys` of one
+    // is empty, which is what a browser answers and what the first version of
+    // this got wrong by publishing its own bookkeeping.
+    it->define("__items", items, attr_builtin);
+    it->define("__at", value::number(0), attr_builtin);
+    it->define("@@toStringTag", cx.string(std::string{tag}), attr_configurable);
     const auto method_on = [&](const char * name, native_fn fn) {
-        it->set(name, value::object(cx.allocate<native_object>(name, std::move(fn))));
+        it->define(name, value::object(cx.allocate<native_object>(name, std::move(fn))),
+                   attr_builtin);
     };
     // Reads its state off the RECEIVER rather than out of the closure, so the
     // collector sees one object holding everything and a native captures
@@ -52,7 +58,7 @@ namespace {
                 at = n > 0 ? static_cast<std::size_t>(n) : 0;
             }
             if (items != nullptr && at < items->items.size()) {
-                holder->set("__at", value::number(static_cast<double>(at + 1)));
+                holder->define("__at", value::number(static_cast<double>(at + 1)), attr_builtin);
             }
         }
         const bool done = items == nullptr || at >= items->items.size();

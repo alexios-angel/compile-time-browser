@@ -2505,20 +2505,34 @@ void test_collection_happens_on_its_own() {
 
     // A page that makes garbage on a timer must not grow without bound. Before
     // this, nothing was ever freed for the life of the document.
-    std::size_t peak = 0;
+    //
+    // WHAT IS MEASURED IS THE SHAPE OF THE CURVE, not a threshold on the peak.
+    // This used to assert `peak > 3000` - 3,000 objects being what one call of
+    // `churn` makes - and then that the heap came back down from it. That held
+    // only while `collect_if_due` did NOT fire every tick: the sample is taken
+    // AFTER each tick, so a collector that keeps up is never seen holding the
+    // garbage, and the assertion started failing the moment the page's baseline
+    // heap grew enough (the DOM interface prototypes, the CSSOM) to make every
+    // tick due. A collector doing its job cannot be what makes this red.
+    //
+    // So: the timer really ran, and after sixty rounds of three thousand
+    // objects each the heap is no bigger than it was after the first.
     std::size_t ticked = 0;
-    for (int i = 0; i < 60; ++i) {
+    ticked += page.tick(20);
+    const std::size_t early = page.live_script_objects();
+    std::size_t peak = early;
+    for (int i = 0; i < 59; ++i) {
         ticked += page.tick(20);
         peak = std::max(peak, page.live_script_objects());
     }
     const std::size_t settled = page.live_script_objects();
-    // The numbers are IN the message: both of these are thresholds over a live
-    // heap, and a bare "failed" tells whoever reads it nothing about whether the
-    // page allocated less than expected or never ran its timer at all.
-    check(peak > 3000, "the page really did allocate (peak " + std::to_string(peak) + ", ticks " +
-                           std::to_string(ticked) + ")");
-    check(settled < peak, "and the heap came back down on its own (settled " +
-                              std::to_string(settled) + " of " + std::to_string(peak) + ")");
+    // The numbers are IN the message: a bare "failed" tells whoever reads it
+    // nothing about which half of the claim broke.
+    check(ticked >= 60, "the timer really ran (" + std::to_string(ticked) + " callbacks)");
+    check(early > 100, "and the page has a heap at all (" + std::to_string(early) + ")");
+    check(settled <= early + 200, "the heap did not grow over 60 rounds of 3,000 objects (" +
+                                      std::to_string(early) + " -> " + std::to_string(settled) +
+                                      ", peak " + std::to_string(peak) + ")");
 }
 
 // A LINK LEAVES THE PAGE THROUGH run_app, and lands in the SYSTEM BROWSER.

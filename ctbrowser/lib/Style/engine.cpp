@@ -281,6 +281,57 @@ std::vector<node_id> engine::select(const read_txn & txn, node_id root,
     return found;
 }
 
+bool engine::element_matches(const read_txn & txn, node_id node,
+                             std::span<const compiled_selector> list) {
+    if (list.empty()) { return false; }
+    if (txn.kind(node).value_or(node_kind::text) != node_kind::element) { return false; }
+    // The element chain from the document down to `node`. Only elements occupy a
+    // depth, exactly as resolve_subtree has it, or `+` would mean two things.
+    std::vector<node_id> chain;
+    for (node_id at = node; at; at = txn.parent(at)) {
+        if (txn.kind(at).value_or(node_kind::text) == node_kind::element) { chain.push_back(at); }
+    }
+    if (chain.empty()) { return false; }
+    std::ranges::reverse(chain);
+
+    for (std::vector<visited_element> & level : levels_) { level.clear(); }
+    ancestor_filter ancestors;
+    for (std::size_t depth = 0; depth < chain.size(); ++depth) {
+        if (levels_.size() <= depth) { levels_.resize(depth + 1); }
+        if (path_.size() <= depth) { path_.resize(depth + 1); }
+        if (totals_.size() <= depth) { totals_.resize(depth + 1); }
+        // The parent whose children occupy this level. Depth 0 is entered from the
+        // document node, which is what gives <html> a sibling count at all.
+        const node_id parent = depth == 0 ? txn.root() : chain[depth - 1];
+        enter_level(txn, parent, depth);
+        // EVERY EARLIER SIBLING, because `.a + .b` and `.a ~ .b` look backwards
+        // and there is no previous-sibling link to walk. Later ones are never
+        // read, so the loop stops at the chain element.
+        for (const node_id child : txn.children(parent)) {
+            if (txn.kind(child).value_or(node_kind::text) != node_kind::element) { continue; }
+            element_facts facts = facts_of(txn, child);
+            facts.sibling_index = static_cast<std::uint32_t>(levels_[depth].size()) + 1;
+            facts.sibling_count = totals_[depth].elements;
+            facts.type_index = totals_[depth].next_for(facts.tag);
+            facts.type_count = totals_[depth].total_for(facts.tag);
+            levels_[depth].push_back(visited_element{child, std::move(facts)});
+            if (child == chain[depth]) { break; }
+        }
+        if (levels_[depth].empty()) { return false; } // the chain left the tree
+        path_[depth] = levels_[depth].size() - 1;
+        // The filter holds the SUBJECT's ancestors and not the subject itself.
+        if (depth + 1 < chain.size()) {
+            const element_facts & mine = levels_[depth][path_[depth]].facts;
+            ancestors.push(mine.tag, mine.id, mine.classes);
+        }
+    }
+    const std::size_t at = chain.size() - 1;
+    for (const compiled_selector & sel : list) {
+        if (matches(txn, ancestors, sel, at)) { return true; }
+    }
+    return false;
+}
+
 const engine::inline_block & engine::inline_style_of(const read_txn & txn, node_id id) {
     static const inline_block none;
     const std::string_view text = txn.attribute_value(id, style_name());

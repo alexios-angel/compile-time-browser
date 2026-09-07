@@ -1147,6 +1147,17 @@ public:
                                               std::span<const compiled_selector> list,
                                               bool first_only);
 
+    // WHETHER ONE ELEMENT MATCHES, without walking the document to find out.
+    //
+    // `matches` and `closest` are defined in terms of `select` in the Shell -
+    // ask for every match in the tree, then look for this element in the answer -
+    // which is O(document) per call and is what makes a page that calls
+    // `el.matches(s)` in a loop quadratic. Matching ONE element needs its
+    // ancestor chain and the earlier siblings at each step of it, and nothing
+    // else: this builds exactly that cursor and then runs the same matcher.
+    [[nodiscard]] bool element_matches(const read_txn & txn, node_id node,
+                                       std::span<const compiled_selector> list);
+
     // Start a level: clear the siblings seen at that depth and count what the
     // traversal cannot know from them alone - the level's element total and its
     // per-tag totals, which `:last-child` and the `-of-type` family need.
