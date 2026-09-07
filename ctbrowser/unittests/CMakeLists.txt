@@ -137,3 +137,10 @@ ctbrowser_test(js/call_order)
 # same reason as the one above: it asks about the SHAPE of a thrown value rather
 # than about the value an expression computes.
 ctbrowser_test(js/error_types)
+# --- Array.prototype over a receiver that is not an Array -------------------
+# Every one of these methods is specified generic and every one of them opened
+# with `this_array()`, which answers nullptr for anything else - about 580
+# test262 files across the nine iteration methods. Its own file for the same
+# reason the two above have one, and it also covers the seven Array.prototype
+# methods that did not exist at all.
+ctbrowser_test(js/array_generics)

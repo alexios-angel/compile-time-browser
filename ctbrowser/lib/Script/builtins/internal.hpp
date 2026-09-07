@@ -128,6 +128,22 @@ inline constexpr double max_string_length = 268435456.0; // 2^28 bytes
     return raw > static_cast<double>(length) ? length : static_cast<std::size_t>(raw);
 }
 
+// ToLength, 7.1.20 - ToIntegerOrInfinity clamped into [0, 2^53-1]. A negative
+// `length` is ZERO, not an error and not a huge unsigned number, which is the
+// difference between `Array.prototype.map.call({length: -1}, f)` being `[]` and
+// being a loop that never ends.
+inline constexpr double max_safe_integer = 9007199254740991.0; // 2^53 - 1
+// 6.1.7: an array index is at most 2^32-2, so an Array's length is at most
+// 2^32-1 and ArrayCreate REFUSES anything larger with a RangeError. That is
+// what `Array.prototype.map.call({length: 4294967296}, f)` asserts.
+inline constexpr double max_array_length = 4294967295.0; // 2^32 - 1
+[[nodiscard]] inline double to_length(double n) {
+    if (std::isnan(n)) { return 0.0; }
+    const double truncated = std::trunc(n);
+    if (truncated <= 0.0) { return 0.0; }
+    return truncated > max_safe_integer ? max_safe_integer : truncated;
+}
+
 namespace detail {
 
 // The receiver as its concrete type, or null when a method was called on
@@ -172,6 +188,100 @@ namespace detail {
     return std::nan("");
 }
 
+// --- AN Array.prototype METHOD'S RECEIVER, WHICH NEED NOT BE AN ARRAY ------
+//
+// Every one of them is specified GENERIC: `this` is ToObject'd and then read
+// through [[Get]] with string index keys, so
+// `Array.prototype.reduce.call({length: 2, 0: 'a', 1: 'b'}, f)` is not a
+// curiosity. It is 91 of reduce's 260 test262 files, 89 of reduceRight's, and
+// about 580 across the nine iteration methods (counted over the corpus at the
+// pinned hash, 2026-09-07). Every method here opened with `this_array()`,
+// which answers nullptr for anything that is not an array_object, and then
+// returned a default - so all 580 measured "no exception" or a wrong answer.
+//
+// Reads go through context::lookup_index and context::store_index, which are
+// the SAME [[Get]] and [[Set]] the interpreter's `a[i]` uses. That is not a
+// slower path for a real array - lookup_index tests `is_array()` first and
+// indexes `items` - and it is the only one that gets an accessor, a prototype
+// chain and a Proxy right for anything else.
+
+// LengthOfArrayLike, 7.3.18.
+//
+// FOR A REAL ARRAY THIS IS `items.size()` AND NOT the `length` property, which
+// is unchanged from what these methods have always done and is deliberate:
+// array_object records an index it refused to materialise in `sparse` and
+// raises `length` to cover it, so `a[4294967295] = 'x'` makes `length` four
+// billion from one assignment. Iterating to it would be four billion [[Get]]s
+// and a TIMEOUT where there is an answer today. array_object's own comment
+// names that deviation ("the array built-ins walk items and do not consult
+// sparse"); this keeps it rather than widening it.
+[[nodiscard]] inline double array_like_length(context & cx, value self) {
+    if (self.is_array()) {
+        return static_cast<double>(static_cast<array_object *>(self.as_heap())->length());
+    }
+    return to_length(cx.to_number_value(cx.lookup_property(self, "length")));
+}
+
+[[nodiscard]] inline value element_at(context & cx, value self, double i) {
+    return cx.lookup_index(self, value::number(i));
+}
+
+inline void put_element(context & cx, value self, double i, value v) {
+    cx.store_index(self, value::number(i), v);
+}
+
+// HasProperty over an index - what makes the iteration methods SKIP A HOLE.
+//
+// Free on a dense array, which cannot have one: `delete a[i]` is specified to
+// leave a hole and array_object is a std::vector with nowhere to put one (see
+// context::delete_own_property, which answers true and removes nothing), so
+// every index below its size is present. For anything else this is the real
+// HasProperty, and it is what makes
+// `Array.prototype.forEach.call({length: 3, 1: 'x'}, f)` call back once rather
+// than three times.
+[[nodiscard]] inline bool has_element(context & cx, value self, double i) {
+    if (self.is_array()) {
+        auto * arr = static_cast<array_object *>(self.as_heap());
+        if (arr->sparse.empty()) { return i >= 0 && i < static_cast<double>(arr->length()); }
+    }
+    return cx.has_property(self, value::number(i));
+}
+
+// RequireObjectCoercible on `this`, which every Array.prototype method begins
+// with (as ToObject, 7.1.18, whose step 1 is the same refusal). The methods
+// answered a default instead, so `Array.prototype.forEach.call(null, f)` did
+// nothing quietly - and 141 of built-ins/Array's failures are "Expected a
+// TypeError to be thrown but no exception was thrown at all" (2026-09-07).
+//
+// FALSE means the throw is already in flight and the caller must return at
+// once; it does not mean "carry on with a default".
+[[nodiscard]] inline bool coercible_this(context & cx, value self, const char * method) {
+    if (!self.is_nullish()) { return true; }
+    cx.throw_error("TypeError",
+                   std::string{"Array.prototype."} + method + " called on null or undefined");
+    return false;
+}
+
+// IsCallable, 7.2.3, at the one place every iteration method checks it: an
+// absent or non-function callback is a TypeError BEFORE anything is read.
+[[nodiscard]] inline bool callable_arg(context & cx, value fn, const char * what) {
+    if (fn.is_callable()) { return true; }
+    cx.throw_error("TypeError", std::string{what} + " is not a function");
+    return false;
+}
+
+// ArrayCreate, 10.4.2.2 step 1: a length past 2^32-1 is a RangeError rather
+// than an allocation. `map`, `filter`, `with`, `toReversed`, `toSorted` and
+// `toSpliced` all build a fresh Array and all inherit it, and every one of them
+// goes through array_object::set_js_length - which is the same refusal AND the
+// cap that keeps a four-billion-element result from being materialised.
+[[nodiscard]] inline array_object * new_array_of_length(context & cx, value out, double len) {
+    auto * made = static_cast<array_object *>(out.as_heap());
+    if (made->set_js_length(len)) { return made; }
+    cx.throw_error("RangeError", "Invalid array length");
+    return nullptr;
+}
+
 [[nodiscard]] inline object_object * new_table(context & cx) {
     return static_cast<object_object *>(cx.make_object().as_heap());
 }
@@ -200,16 +310,60 @@ inline void constant(native_object * table, std::string_view name, value v) {
     table->define(name, v, attr_none);
 }
 
+// A BUILT-IN FUNCTION'S OWN `length` AND `name`, both { false, false, true }
+// (10.2.5, and clause 17 for every method in 19 through 28). They are real
+// table entries rather than answers synthesised on demand, and the difference
+// is measurable:
+//
+// * `name` WAS synthesised, by context::own_property, out of the C++ object.
+//   A synthesised slot cannot refuse a write and cannot be deleted, so
+//   test262's verifyProperty saw its isWritable() probe land and its
+//   isConfigurable() delete fail, and every `name.js` in the corpus reported
+//   BOTH at once - "name descriptor should not be writable; name descriptor
+//   should be configurable", 33 times in built-ins/Array alone (measured
+//   2026-09-07). An own entry answers all three the way the specification
+//   does, because store_property and delete_own_property already consult the
+//   attribute bits of a native's table.
+// * `length` was ABSENT: a native_fn takes a span and records no arity
+//   anywhere, which docs/test262.md names as a known gap. 39 more of
+//   built-ins/Array said "length should be an own property". The arity cannot
+//   be recovered from the C++ side at all, so it is passed at the INSTALL
+//   SITE, from the specification's own clause for that method.
+//
+// `length` is defined FIRST so that OwnPropertyKeys of a built-in reads
+// ["length", "name"], which is the creation order every other engine has.
+inline void install_arity(context & cx, native_object * fn, double arity) {
+    fn->define("length", value::number(arity), attr_configurable);
+    fn->define("name", cx.string(fn->name), attr_configurable);
+}
+
+// The arity-less form installs `name` and NOT `length`, which is the honest
+// answer for a built-in whose specified arity has not been checked at its
+// install site: an absent property is a gap, a wrong one is a wrong answer.
 inline void method(context & cx, object_object * table, std::string name, native_fn fn) {
-    table->define(name, value::object(cx.allocate<native_object>(name, std::move(fn))),
-                  attr_builtin);
+    auto * made = cx.allocate<native_object>(std::move(name), std::move(fn));
+    made->define("name", cx.string(made->name), attr_configurable);
+    table->define(made->name, value::object(made), attr_builtin);
+}
+inline void method(context & cx, object_object * table, std::string name, double arity,
+                   native_fn fn) {
+    auto * made = cx.allocate<native_object>(std::move(name), std::move(fn));
+    install_arity(cx, made, arity);
+    table->define(made->name, value::object(made), attr_builtin);
 }
 // The same, on a NATIVE. A built-in that is both callable and a namespace -
 // `Object(x)` coerces and `Object.keys` is a static - has to be a native
 // carrying properties, and its statics are installed exactly like a table's.
 inline void method(context & cx, native_object * table, std::string name, native_fn fn) {
-    table->define(name, value::object(cx.allocate<native_object>(name, std::move(fn))),
-                  attr_builtin);
+    auto * made = cx.allocate<native_object>(std::move(name), std::move(fn));
+    made->define("name", cx.string(made->name), attr_configurable);
+    table->define(made->name, value::object(made), attr_builtin);
+}
+inline void method(context & cx, native_object * table, std::string name, double arity,
+                   native_fn fn) {
+    auto * made = cx.allocate<native_object>(std::move(name), std::move(fn));
+    install_arity(cx, made, arity);
+    table->define(made->name, value::object(made), attr_builtin);
 }
 
 // --- promises ---------------------------------------------------------------
@@ -715,18 +869,27 @@ void install_generator(context & cx);
 // `Object.getPrototypeOf(x).constructor.name` is the standard walk, and with
 // either half missing it yields undefined, which compares equal to the other
 // undefined it is being tested against and reports a false match.
-inline void link_constructor(context & cx, object_object * table, const char * name, value ctor) {
+// `arity` is the constructor's own `length`, from its clause - 1 for Array,
+// String, Number, Boolean, Object and every Error, 7 for Date. It is passed
+// rather than derived because a native_fn takes a span and records none.
+inline void link_constructor(context & cx, object_object * table, const char * name, double arity,
+                             value ctor) {
     if (table == nullptr) { return; }
     // `X.prototype.constructor` is { true, false, true } (clause 17), and
-    // `X.name` is { false, false, true } (10.2.5). Enumerable in either place
-    // is what put "constructor" in `Object.keys(SomeClass.prototype)`.
+    // `X.name` and `X.length` are { false, false, true } (10.2.5). Enumerable
+    // in either place is what put "constructor" in
+    // `Object.keys(SomeClass.prototype)`. `length` is defined before `name` so
+    // OwnPropertyKeys reads ["length", "name"], the creation order 10.2.5 and
+    // every other engine give.
     table->define("constructor", ctor, attr_builtin);
     if (ctor.is_kind(heap_kind::native)) {
-        static_cast<native_object *>(ctor.as_heap())
-            ->define("name", cx.string(name), attr_configurable);
+        auto * fn = static_cast<native_object *>(ctor.as_heap());
+        fn->define("length", value::number(arity), attr_configurable);
+        fn->define("name", cx.string(name), attr_configurable);
     } else if (ctor.is_object()) {
-        static_cast<object_object *>(ctor.as_heap())
-            ->define("name", cx.string(name), attr_configurable);
+        auto * obj = static_cast<object_object *>(ctor.as_heap());
+        obj->define("length", value::number(arity), attr_configurable);
+        obj->define("name", cx.string(name), attr_configurable);
     }
 }
 

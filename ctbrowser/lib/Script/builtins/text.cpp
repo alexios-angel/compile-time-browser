@@ -13,7 +13,7 @@ void install_string(context & cx) {
     using detail::method;
     using detail::new_table;
     object_object * string_proto = new_table(cx);
-    method(cx, string_proto, "charAt", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "charAt", 1, [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
         // A NEGATIVE POSITION IS OUT OF RANGE, not clamped to zero - that is
         // `at`'s job, not `charAt`'s. Clamping made `"abc".charAt(-1)` answer
@@ -25,7 +25,7 @@ void install_string(context & cx) {
     // `at` is charAt that counts from the END for a negative index, which is
     // the whole reason to reach for it - `s.at(-1)` is the last character.
     // Arrays had it and strings did not, and the two are meant to match.
-    method(cx, string_proto, "at", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "at", 1, [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
         // index_at, not num_at: a NaN index is 0 here, and casting it to
         // size_t instead is what hung the engine on `s.at(undefined)`.
@@ -42,11 +42,11 @@ void install_string(context & cx) {
     // template literal all reach for toString, and a library that calls it
     // directly - p5.js does, on its own colour objects and on plain strings
     // through the same path - got "undefined is not a function".
-    method(cx, string_proto, "toString",
+    method(cx, string_proto, "toString", 0,
            [](context & c, std::span<value>) { return c.string(detail::this_string(c)); });
-    method(cx, string_proto, "valueOf",
+    method(cx, string_proto, "valueOf", 0,
            [](context & c, std::span<value>) { return c.string(detail::this_string(c)); });
-    method(cx, string_proto, "codePointAt", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "codePointAt", 1, [](context & c, std::span<value> a) {
         const std::string str = detail::this_string(c);
         // Out of range - including NEGATIVE, which used to clamp to zero and
         // answer with the first character - is undefined.
@@ -62,15 +62,15 @@ void install_string(context & cx) {
     // there is no decomposition to compose. Returning the string unchanged is
     // what a page that calls it defensively expects; refusing would break
     // pages that only ever pass ASCII, which is all of them here.
-    method(cx, string_proto, "normalize",
+    method(cx, string_proto, "normalize", 0,
            [](context & c, std::span<value>) { return c.string(detail::this_string(c)); });
-    method(cx, string_proto, "localeCompare", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "localeCompare", 1, [](context & c, std::span<value> a) {
         // Byte order, which is the locale this engine has.
         const std::string self = detail::this_string(c);
         const std::string other = str_at(c, a, 0);
         return value::number(self < other ? -1 : (self == other ? 0 : 1));
     });
-    method(cx, string_proto, "charCodeAt", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "charCodeAt", 1, [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
         // Out of range - including NEGATIVE - is NaN, not the first character.
         const double i = index_at(a, 0);
@@ -87,14 +87,14 @@ void install_string(context & cx) {
     // The needle is ToString'd through `arg_at` rather than `str_at`, because a
     // MISSING argument is `undefined` and ToString(undefined) is "undefined" -
     // `"abc".indexOf()` is -1, not 0 for an empty needle.
-    method(cx, string_proto, "indexOf", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "indexOf", 1, [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
         const auto from = static_cast<std::size_t>(
             std::clamp(index_at(a, 1), 0.0, static_cast<double>(s.size())));
         const std::size_t found = s.find(c.to_string(arg_at(a, 0)), from);
         return value::number(found == std::string::npos ? -1 : static_cast<double>(found));
     });
-    method(cx, string_proto, "lastIndexOf", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "lastIndexOf", 1, [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
         // The position is the LAST index the match may START at, and it
         // defaults to the end. NaN means the end too, which is why the default
@@ -108,20 +108,20 @@ void install_string(context & cx) {
         const std::size_t found = s.rfind(c.to_string(arg_at(a, 0)), last);
         return value::number(found == std::string::npos ? -1 : static_cast<double>(found));
     });
-    method(cx, string_proto, "includes", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "includes", 1, [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
         const auto from = static_cast<std::size_t>(
             std::clamp(index_at(a, 1), 0.0, static_cast<double>(s.size())));
         return value::boolean(s.find(c.to_string(arg_at(a, 0)), from) != std::string::npos);
     });
-    method(cx, string_proto, "startsWith", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "startsWith", 1, [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
         const auto from = static_cast<std::size_t>(
             std::clamp(index_at(a, 1), 0.0, static_cast<double>(s.size())));
         return value::boolean(
             std::string_view{s}.substr(from).starts_with(c.to_string(arg_at(a, 0))));
     });
-    method(cx, string_proto, "endsWith", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "endsWith", 1, [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
         // endsWith takes an END position, not a start: `"abc".endsWith("b", 2)`
         // asks whether the first two characters end in "b".
@@ -131,14 +131,14 @@ void install_string(context & cx) {
         return value::boolean(
             std::string_view{s}.substr(0, stop).ends_with(c.to_string(arg_at(a, 0))));
     });
-    method(cx, string_proto, "slice", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "slice", 2, [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
         const std::size_t from = clamp_index(index_at(a, 0), s.size());
         // has_index: `slice(1, undefined)` ends at the LENGTH, not at 0.
         const std::size_t to = has_index(a, 1) ? clamp_index(index_at(a, 1), s.size()) : s.size();
         return c.string(to > from ? s.substr(from, to - from) : std::string{});
     });
-    method(cx, string_proto, "substring", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "substring", 2, [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
         // substring CLAMPS negatives to 0 and swaps its arguments if they are
         // backwards, which is the whole difference from slice.
@@ -154,7 +154,7 @@ void install_string(context & cx) {
         if (from > to) { std::swap(from, to); }
         return c.string(s.substr(from, to - from));
     });
-    method(cx, string_proto, "substr", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "substr", 2, [](context & c, std::span<value> a) {
         // LEGACY, and present because real code still uses it - Phaser 4 calls
         // it fourteen times and died on the first. It is Annex B rather than
         // the main specification, which is why it was missed: it takes a START
@@ -177,7 +177,7 @@ void install_string(context & cx) {
         const auto count = static_cast<std::size_t>(std::min(want, size - start));
         return c.string(s.substr(from, count));
     });
-    method(cx, string_proto, "split", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "split", 2, [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
         value out = c.make_array();
         auto * result = static_cast<array_object *>(out.as_heap());
@@ -410,7 +410,7 @@ void install_string(context & cx) {
         return c.string(out);
     };
 
-    method(cx, string_proto, "replace",
+    method(cx, string_proto, "replace", 2,
            [replace_with](context & c, std::span<value> a) { return replace_with(c, a, false); });
     // `match` - the single commonest thing done with a regular expression, and
     // it simply was not here. A page calling it got "undefined is not a
@@ -420,7 +420,7 @@ void install_string(context & cx) {
     // get wrong: with `g` it is a flat list of the matched strings and nothing
     // else, and without it a single exec result carrying index, input and the
     // capture groups. Code branches on that difference.
-    method(cx, string_proto, "match", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "match", 1, [](context & c, std::span<value> a) {
         if (a.empty() || !a[0].is_object()) { return value::null(); }
         const value pattern = a[0];
         const value exec = c.lookup_property(pattern, "exec");
@@ -463,7 +463,7 @@ void install_string(context & cx) {
     // ON `exec`, LIKE `match` AND `matchAll`, so the three cannot disagree
     // about what matched. `search` ignores `lastIndex` and the `g` flag by
     // specification, so it is reset first and the search always starts at 0.
-    method(cx, string_proto, "search", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "search", 1, [](context & c, std::span<value> a) {
         if (a.empty() || !a[0].is_object()) { return value::number(-1); }
         const value pattern = a[0];
         const value exec = c.lookup_property(pattern, "exec");
@@ -484,7 +484,7 @@ void install_string(context & cx) {
     // `for (const m of ...)` and with a spread, which is all anyone does with
     // one; a real iterator would only differ for a caller that stops early on a
     // pattern expensive enough to notice.
-    method(cx, string_proto, "matchAll", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "matchAll", 1, [](context & c, std::span<value> a) {
         value list = c.make_array();
         auto * items = static_cast<array_object *>(list.as_heap());
         if (a.empty() || !a[0].is_object()) { return list; }
@@ -508,23 +508,23 @@ void install_string(context & cx) {
         }
         return list;
     });
-    method(cx, string_proto, "replaceAll",
+    method(cx, string_proto, "replaceAll", 2,
            [replace_with](context & c, std::span<value> a) { return replace_with(c, a, true); });
-    method(cx, string_proto, "toUpperCase", [](context & c, std::span<value>) {
+    method(cx, string_proto, "toUpperCase", 0, [](context & c, std::span<value>) {
         std::string s = detail::this_string(c);
         for (char & ch : s) {
             if (ch >= 'a' && ch <= 'z') { ch = static_cast<char>(ch - 'a' + 'A'); }
         }
         return c.string(s);
     });
-    method(cx, string_proto, "toLowerCase", [](context & c, std::span<value>) {
+    method(cx, string_proto, "toLowerCase", 0, [](context & c, std::span<value>) {
         std::string s = detail::this_string(c);
         for (char & ch : s) {
             if (ch >= 'A' && ch <= 'Z') { ch = static_cast<char>(ch - 'A' + 'a'); }
         }
         return c.string(s);
     });
-    method(cx, string_proto, "trim", [](context & c, std::span<value>) {
+    method(cx, string_proto, "trim", 0, [](context & c, std::span<value>) {
         const std::string s = detail::this_string(c);
         const std::size_t from = s.find_first_not_of(" \t\n\r\f\v");
         if (from == std::string::npos) { return c.string(std::string{}); }
@@ -536,7 +536,7 @@ void install_string(context & cx) {
     // clamp could not see the case that mattered - an object count coerces to
     // NaN through the static to_number, `std::clamp` passes NaN straight
     // through, and the cast to size_t is undefined behaviour. See integer_arg.
-    method(cx, string_proto, "repeat", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "repeat", 1, [](context & c, std::span<value> a) {
         const std::string s = detail::this_string(c);
         const double n = integer_arg(c, a, 0);
         if (n < 0 || std::isinf(n)) {
@@ -583,28 +583,28 @@ void install_string(context & cx) {
         filled.resize(fill_length);
         return c.string(at_start ? filled + self : self + filled);
     };
-    method(cx, string_proto, "padStart",
+    method(cx, string_proto, "padStart", 1,
            [pad](context & c, std::span<value> a) { return pad(c, a, true); });
-    method(cx, string_proto, "padEnd",
+    method(cx, string_proto, "padEnd", 1,
            [pad](context & c, std::span<value> a) { return pad(c, a, false); });
-    method(cx, string_proto, "trimStart", [](context & c, std::span<value>) {
+    method(cx, string_proto, "trimStart", 0, [](context & c, std::span<value>) {
         const std::string self = detail::this_string(c);
         const std::size_t from = self.find_first_not_of(" \t\n\r\f\v");
         return c.string(from == std::string::npos ? std::string{} : self.substr(from));
     });
-    method(cx, string_proto, "trimEnd", [](context & c, std::span<value>) {
+    method(cx, string_proto, "trimEnd", 0, [](context & c, std::span<value>) {
         const std::string self = detail::this_string(c);
         const std::size_t to = self.find_last_not_of(" \t\n\r\f\v");
         return c.string(to == std::string::npos ? std::string{} : self.substr(0, to + 1));
     });
-    method(cx, string_proto, "toLocaleUpperCase", [](context & c, std::span<value>) {
+    method(cx, string_proto, "toLocaleUpperCase", 0, [](context & c, std::span<value>) {
         std::string self = detail::this_string(c);
         for (char & ch : self) {
             ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
         }
         return c.string(self);
     });
-    method(cx, string_proto, "toLocaleLowerCase", [](context & c, std::span<value>) {
+    method(cx, string_proto, "toLocaleLowerCase", 0, [](context & c, std::span<value>) {
         // ASCII-ONLY, and toLocaleLowerCase is where that shows most: a real
         // one folds by locale, this one does not, which keeps a render the same
         // on every host. Said here rather than discovered.
@@ -612,7 +612,7 @@ void install_string(context & cx) {
         ascii_lower_in_place(self);
         return c.string(self);
     });
-    method(cx, string_proto, "concat", [](context & c, std::span<value> a) {
+    method(cx, string_proto, "concat", 1, [](context & c, std::span<value> a) {
         std::string s = detail::this_string(c);
         for (std::size_t i = 0; i < a.size(); ++i) { s += c.to_string(a[i]); }
         return c.string(s);
@@ -788,7 +788,7 @@ void install_regexp(context & cx) {
     object_object * regexp_proto = new_table(cx);
     cx.set_prototype(context::proto_kind::regexp, regexp_proto);
 
-    method(cx, regexp_proto, "test", [cache](context & c, std::span<value> a) {
+    method(cx, regexp_proto, "test", 1, [cache](context & c, std::span<value> a) {
         std::string source;
         std::string flags;
         if (!regex_parts(c, c.current_this(), source, flags)) { return value::boolean(false); }
@@ -799,7 +799,7 @@ void install_regexp(context & cx) {
         return value::boolean(rx::rx_search(*program, subject, 0, m));
     });
 
-    method(cx, regexp_proto, "exec", [cache](context & c, std::span<value> a) {
+    method(cx, regexp_proto, "exec", 1, [cache](context & c, std::span<value> a) {
         std::string source;
         std::string flags;
         if (!regex_parts(c, c.current_this(), source, flags)) { return value::null(); }
@@ -826,7 +826,7 @@ void install_regexp(context & cx) {
         return exec_result(c, *program, subject, m);
     });
 
-    method(cx, regexp_proto, "toString", [](context & c, std::span<value>) {
+    method(cx, regexp_proto, "toString", 0, [](context & c, std::span<value>) {
         std::string source;
         std::string flags;
         if (!regex_parts(c, c.current_this(), source, flags)) { return c.string("/(?:)/"); }
@@ -881,7 +881,7 @@ void install_symbol(context & cx) {
     auto counter = std::make_shared<std::uint64_t>(0);
 
     object_object * symbol_proto = new_table(cx);
-    method(cx, symbol_proto, "toString", [](context & c, std::span<value>) {
+    method(cx, symbol_proto, "toString", 0, [](context & c, std::span<value>) {
         const value self = c.current_this();
         if (!self.is_kind(heap_kind::symbol)) { return c.string("Symbol()"); }
         return c.string("Symbol(" + static_cast<symbol_object *>(self.as_heap())->description +
@@ -971,7 +971,7 @@ void install_symbol(context & cx) {
     // a TypeError in the specification because there is no wrapper object to
     // make. This engine does not box at all, so calling it is the only form.
     object_object * bigint_proto = new_table(cx);
-    method(cx, bigint_proto, "toString", [](context & c, std::span<value> a) {
+    method(cx, bigint_proto, "toString", 0, [](context & c, std::span<value> a) {
         const value self = c.current_this();
         if (!self.is_kind(heap_kind::bigint)) { return c.string("0"); }
         const int radix = a.empty() || a[0].is_undefined()
@@ -980,7 +980,7 @@ void install_symbol(context & cx) {
         return c.string(
             bigint_to_string(static_cast<bigint_object *>(self.as_heap())->digits, radix));
     });
-    method(cx, bigint_proto, "valueOf",
+    method(cx, bigint_proto, "valueOf", 0,
            [](context & c, std::span<value>) { return c.current_this(); });
     cx.set_prototype(context::proto_kind::bigint, bigint_proto);
 
@@ -1013,7 +1013,7 @@ void install_symbol(context & cx) {
         return value::object(c.allocate<bigint_object>(*parsed));
     });
     detail::constant(bigint_ctor, "prototype", value::object(bigint_proto));
-    link_constructor(cx, bigint_proto, "BigInt", value::object(bigint_ctor));
+    link_constructor(cx, bigint_proto, "BigInt", 1, value::object(bigint_ctor));
     cx.define_global("BigInt", value::object(bigint_ctor));
 }
 

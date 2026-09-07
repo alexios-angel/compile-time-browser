@@ -13,7 +13,7 @@ void install_json(context & cx) {
     using detail::method;
     using detail::new_table;
     object_object * json = new_table(cx);
-    method(cx, json, "stringify", [](context & c, std::span<value> a) {
+    method(cx, json, "stringify", 3, [](context & c, std::span<value> a) {
         // AT THE TOP LEVEL an unserialisable value yields UNDEFINED, not the
         // string "null" - 25.5.2 step 12. Inside an array the same value
         // becomes null, which is why write_json cannot decide this and the
@@ -25,7 +25,7 @@ void install_json(context & cx) {
         detail::write_json(c, subject, out);
         return c.string(out);
     });
-    method(cx, json, "parse", [](context & c, std::span<value> a) {
+    method(cx, json, "parse", 2, [](context & c, std::span<value> a) {
         // The source is held in a NAMED local: json_reader keeps a string_view
         // into it, and passing the temporary directly leaves the view dangling
         // for the whole parse.
@@ -56,15 +56,15 @@ void install_promise(context & cx) {
         detail::settle(c, promise, with, rejected);
     });
     object_object * promise_ctor = new_table(cx);
-    method(cx, promise_ctor, "resolve", [](context & c, std::span<value> a) {
+    method(cx, promise_ctor, "resolve", 1, [](context & c, std::span<value> a) {
         return detail::make_promise(c, a.empty() ? value::undefined() : a[0], false);
     });
-    method(cx, promise_ctor, "reject", [](context & c, std::span<value> a) {
+    method(cx, promise_ctor, "reject", 1, [](context & c, std::span<value> a) {
         return detail::make_promise(c, a.empty() ? value::undefined() : a[0], true);
     });
     // Settled promises make `all` a plain unwrap-each: the first rejection wins,
     // otherwise the result is an array of the values in order.
-    method(cx, promise_ctor, "all", [](context & c, std::span<value> a) {
+    method(cx, promise_ctor, "all", 1, [](context & c, std::span<value> a) {
         const value out = c.make_array();
         auto * items = static_cast<array_object *>(out.as_heap());
         if (!a.empty() && a[0].is_array()) {
@@ -153,6 +153,20 @@ void install_promise(context & cx) {
     cx.define_native("isFinite", [](context &, std::span<value> a) {
         return value::boolean(std::isfinite(num_at(a, 0)));
     });
+    // Their own `name` and `length` (19.2.2, 19.2.3, both of arity 1).
+    // define_native allocates a bare native, so `length` was absent and `name`
+    // came from context::own_property's synthesised fallback - which cannot
+    // refuse a write or be deleted, and which verifyProperty reports as two
+    // failures at once.
+    const auto slots = [&](const char * name, double arity) {
+        const value fn = cx.global(name);
+        if (!fn.is_kind(heap_kind::native)) { return; }
+        auto * made = static_cast<native_object *>(fn.as_heap());
+        made->define("length", value::number(arity), attr_configurable);
+        made->define("name", cx.string(name), attr_configurable);
+    };
+    slots("isNaN", 1);
+    slots("isFinite", 1);
     // `String` is a NAMESPACE as well as a coercion, the same way Number is.
     // `String.fromCharCode.apply(null, bytes)` is how a page turns a byte array
     // into text - 27 uses in p5.js - and it read undefined and applied it.
@@ -179,8 +193,12 @@ void install_promise(context & cx) {
         // object; before the flag it evaluated to an empty object and the value was
         // gone.
         detail::constant(string_ctor, "__conversion", value::boolean(true));
-        const auto stat = [&](const char * name, native_fn fn) {
-            string_ctor->set(name, value::object(cx.allocate<native_object>(name, std::move(fn))));
+        // detail::method, not `set`: clause 17 makes every one of these
+        // { writable: true, enumerable: FALSE, configurable: true }, and `set`
+        // gave them the default attributes - so `Object.keys(String)` listed
+        // fromCharCode and fromCodePoint and `for (k in String)` walked them.
+        const auto stat = [&](const char * name, double arity, native_fn fn) {
+            detail::method(cx, string_ctor, name, arity, std::move(fn));
         };
         // UTF-8 out, because strings here are bytes: a code point above 0x7F
         // becomes its encoding rather than one char, which is what makes the
@@ -202,21 +220,56 @@ void install_promise(context & cx) {
                 out += static_cast<char>(0x80 | (code & 0x3F));
             }
         };
-        stat("fromCharCode", [encode](context & c, std::span<value> a) {
+        stat("fromCharCode", 1, [encode](context & c, std::span<value> a) {
             std::string out;
             for (std::size_t i = 0; i < a.size(); ++i) {
                 encode(out, static_cast<std::uint32_t>(context::to_uint32(a[i]) & 0xFFFFu));
             }
             return c.string(out);
         });
-        stat("fromCodePoint", [encode](context & c, std::span<value> a) {
+        stat("fromCodePoint", 1, [encode](context & c, std::span<value> a) {
             std::string out;
-            for (std::size_t i = 0; i < a.size(); ++i) { encode(out, context::to_uint32(a[i])); }
+            for (std::size_t i = 0; i < a.size(); ++i) {
+                // 22.1.2.2 step 2c: a code point must be an INTEGER in
+                // [0, 0x10FFFF] and anything else is a RangeError. to_uint32
+                // wrapped instead, so `String.fromCodePoint(-1)` produced the
+                // encoding of 0xFFFFFFFF and `fromCodePoint(1.5)` produced one
+                // for 1.
+                const double code = c.to_number_value(a[i]);
+                if (code != std::trunc(code) || std::isnan(code) || code < 0 || code > 0x10FFFF) {
+                    c.throw_error("RangeError", "Invalid code point");
+                    return c.string(std::string{});
+                }
+                encode(out, static_cast<std::uint32_t>(code));
+            }
+            return c.string(out);
+        });
+        // `String.raw`, 22.1.2.4. It is the tag every template-literal library
+        // reaches for and it is also callable directly, which is the only way
+        // this engine can reach it - the compiler still refuses a TAGGED
+        // template (docs/script.md names it), so `String.raw({raw: [...]}, ...)`
+        // is the whole surface. 25 of the 30 test262 files read "TypeError:
+        // raw is undefined, not a function" before this.
+        stat("raw", 1, [](context & c, std::span<value> a) {
+            const value cooked = arg_at(a, 0);
+            const value literals = c.lookup_property(cooked, "raw");
+            const value raw_len = c.lookup_property(literals, "length");
+            const double count = to_length(c.to_number_value(raw_len));
+            std::string out;
+            for (double k = 0; k < count; k += 1.0) {
+                out += c.to_string(c.lookup_index(literals, value::number(k)));
+                if (k + 1 == count) { break; }
+                // One substitution BETWEEN each pair of literals, and running
+                // out of them ends the interpolation rather than the string:
+                // `String.raw({raw: ['a','b','c']}, 'x')` is "axbc".
+                const std::size_t at = static_cast<std::size_t>(k) + 1;
+                if (at < a.size()) { out += c.to_string(a[at]); }
+            }
             return c.string(out);
         });
         if (object_object * table = cx.prototype(context::proto_kind::string)) {
             detail::constant(string_ctor, "prototype", value::object(table));
-            link_constructor(cx, table, "String", value::object(string_ctor));
+            link_constructor(cx, table, "String", 1, value::object(string_ctor));
         }
         cx.define_global("String", value::object(string_ctor));
     }

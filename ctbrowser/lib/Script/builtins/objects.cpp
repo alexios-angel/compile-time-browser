@@ -173,7 +173,7 @@ void install_object(context & cx) {
     // `hasOwnProperty` in particular is how half the library code in existence
     // asks whether a key is really there rather than inherited.
     object_object * object_proto = new_table(cx);
-    method(cx, object_proto, "hasOwnProperty", [](context & c, std::span<value> a) {
+    method(cx, object_proto, "hasOwnProperty", 1, [](context & c, std::span<value> a) {
         const value self = c.current_this();
         const std::string key = str_at(c, a, 0);
         if (self.is_object()) {
@@ -224,7 +224,7 @@ void install_object(context & cx) {
     // parse the result: colorjs, bundled inside p5.js, does
     // `str.match(/^\[object\s+(.*?)\]$/)[1].toLowerCase()`, which against a
     // string that is not in that shape indexes null.
-    method(cx, object_proto, "toString", [](context & c, std::span<value>) {
+    method(cx, object_proto, "toString", 0, [](context & c, std::span<value>) {
         const value self = c.current_this();
         std::string_view tag = "Object";
         if (self.is_undefined()) {
@@ -246,9 +246,9 @@ void install_object(context & cx) {
         }
         return c.string("[object " + std::string{tag} + "]");
     });
-    method(cx, object_proto, "valueOf",
+    method(cx, object_proto, "valueOf", 0,
            [](context & c, std::span<value>) { return c.current_this(); });
-    method(cx, object_proto, "isPrototypeOf", [](context & c, std::span<value> a) {
+    method(cx, object_proto, "isPrototypeOf", 1, [](context & c, std::span<value> a) {
         const value self = c.current_this();
         value walk = arg_at(a, 0);
         for (int depth = 0; depth < 64 && walk.is_object(); ++depth) {
@@ -259,7 +259,7 @@ void install_object(context & cx) {
         }
         return value::boolean(false);
     });
-    method(cx, object_proto, "propertyIsEnumerable", [](context & c, std::span<value> a) {
+    method(cx, object_proto, "propertyIsEnumerable", 1, [](context & c, std::span<value> a) {
         context::property_descriptor found;
         if (!c.own_property(c.current_this(), str_at(c, a, 0), found)) {
             return value::boolean(false);
@@ -293,8 +293,8 @@ void install_object(context & cx) {
     // It is the same object lookup uses, so a page that adds to it is seen by
     // every object, which is what a page doing that expects.
     detail::constant(object_ctor, "prototype", value::object(object_proto));
-    link_constructor(cx, object_proto, "Object", value::object(object_ctor));
-    method(cx, object_ctor, "hasOwn", [](context & c, std::span<value> a) {
+    link_constructor(cx, object_proto, "Object", 1, value::object(object_ctor));
+    method(cx, object_ctor, "hasOwn", 2, [](context & c, std::span<value> a) {
         return value::boolean(c.has_own_property(arg_at(a, 0), str_at(c, a, 1)));
     });
 
@@ -302,7 +302,7 @@ void install_object(context & cx) {
     // reason the object model grew accessors at all. A descriptor is either
     // data (`value`) or accessor (`get`/`set`); the two are the same property
     // described two ways, so defining one removes the other.
-    method(cx, object_ctor, "defineProperty", [](context & c, std::span<value> a) {
+    method(cx, object_ctor, "defineProperty", 3, [](context & c, std::span<value> a) {
         // A NON-OBJECT TARGET IS A TypeError (19.1.2.4 step 1) and so is a
         // non-object descriptor (10.1.6.3 via ToPropertyDescriptor). Returning
         // the argument instead is how `Object.defineProperty(undefined, ...)`
@@ -321,7 +321,7 @@ void install_object(context & cx) {
         }
         return a[0];
     });
-    method(cx, object_ctor, "defineProperties", [](context & c, std::span<value> a) {
+    method(cx, object_ctor, "defineProperties", 2, [](context & c, std::span<value> a) {
         if (!arg_at(a, 0).is_object_like()) {
             c.throw_error("TypeError", "Object.defineProperties called on non-object");
             return value::undefined();
@@ -347,7 +347,7 @@ void install_object(context & cx) {
         }
         return a[0];
     });
-    method(cx, object_ctor, "getOwnPropertyDescriptor", [](context & c, std::span<value> a) {
+    method(cx, object_ctor, "getOwnPropertyDescriptor", 2, [](context & c, std::span<value> a) {
         context::property_descriptor found;
         if (!c.own_property(arg_at(a, 0), c.to_string(arg_at(a, 1)), found)) {
             return value::undefined();
@@ -357,7 +357,7 @@ void install_object(context & cx) {
     // `Object.create(proto)` and the two prototype accessors. A real chain has
     // existed since `extends`; what was missing was any way for a page to reach
     // it. p5.js uses create 19 times.
-    method(cx, object_ctor, "create", [](context & c, std::span<value> a) {
+    method(cx, object_ctor, "create", 2, [](context & c, std::span<value> a) {
         object_object * out = new_table(c);
         if (arg_at(a, 0).is_object()) { out->prototype = a[0]; }
         return value::object(out);
@@ -377,7 +377,7 @@ void install_object(context & cx) {
     // other, undefined === undefined reported a MATCH - so a plain string
     // passed as an instance of a colour space, and every conversion through it
     // silently handed the string straight back.
-    method(cx, object_ctor, "getPrototypeOf", [](context & c, std::span<value> a) {
+    method(cx, object_ctor, "getPrototypeOf", 1, [](context & c, std::span<value> a) {
         const value of = arg_at(a, 0);
         if (of.is_object()) { return static_cast<object_object *>(of.as_heap())->prototype; }
         if (of.is_kind(heap_kind::function)) {
@@ -401,7 +401,7 @@ void install_object(context & cx) {
         if (of.is_kind(heap_kind::symbol)) { return table(context::proto_kind::symbol); }
         return value::null();
     });
-    method(cx, object_ctor, "setPrototypeOf", [](context &, std::span<value> a) {
+    method(cx, object_ctor, "setPrototypeOf", 2, [](context &, std::span<value> a) {
         const value of = arg_at(a, 0);
         if (of.is_object()) {
             static_cast<object_object *>(of.as_heap())->prototype = arg_at(a, 1);
@@ -414,7 +414,7 @@ void install_object(context & cx) {
     });
     // NAMES, so string keys only - Reflect.ownKeys is the one that reports
     // symbols as well, and it keeps the unfiltered walk.
-    method(cx, object_ctor, "getOwnPropertyNames", [](context & c, std::span<value> a) {
+    method(cx, object_ctor, "getOwnPropertyNames", 1, [](context & c, std::span<value> a) {
         value out = c.make_array();
         auto * result = static_cast<array_object *>(out.as_heap());
         for (const std::string & key : own_property_names(c, arg_at(a, 0))) {
@@ -422,7 +422,7 @@ void install_object(context & cx) {
         }
         return out;
     });
-    method(cx, object_ctor, "getOwnPropertyDescriptors", [](context & c, std::span<value> a) {
+    method(cx, object_ctor, "getOwnPropertyDescriptors", 1, [](context & c, std::span<value> a) {
         object_object * out = new_table(c);
         const value from = arg_at(a, 0);
         for (const std::string & key : own_property_names(c, from)) {
@@ -433,7 +433,7 @@ void install_object(context & cx) {
         }
         return value::object(out);
     });
-    method(cx, object_ctor, "fromEntries", [](context & c, std::span<value> a) {
+    method(cx, object_ctor, "fromEntries", 1, [](context & c, std::span<value> a) {
         object_object * out = new_table(c);
         if (arg_at(a, 0).is_array()) {
             for (const value & pair : static_cast<array_object *>(a[0].as_heap())->items) {
@@ -451,32 +451,32 @@ void install_object(context & cx) {
     // Both now do what 7.3.15/7.3.16 say: seal clears [[Configurable]] on every
     // own property and [[Extensible]] on the object; freeze clears
     // [[Writable]] as well, except on an accessor, which has none.
-    method(cx, object_ctor, "freeze", [](context & c, std::span<value> a) {
+    method(cx, object_ctor, "freeze", 1, [](context & c, std::span<value> a) {
         set_integrity(c, arg_at(a, 0), true);
         return arg_at(a, 0);
     });
-    method(cx, object_ctor, "seal", [](context & c, std::span<value> a) {
+    method(cx, object_ctor, "seal", 1, [](context & c, std::span<value> a) {
         set_integrity(c, arg_at(a, 0), false);
         return arg_at(a, 0);
     });
-    method(cx, object_ctor, "preventExtensions", [](context & c, std::span<value> a) {
+    method(cx, object_ctor, "preventExtensions", 1, [](context & c, std::span<value> a) {
         c.prevent_extensions(arg_at(a, 0));
         return arg_at(a, 0);
     });
-    method(cx, object_ctor, "isFrozen", [](context & c, std::span<value> a) {
+    method(cx, object_ctor, "isFrozen", 1, [](context & c, std::span<value> a) {
         return value::boolean(test_integrity(c, arg_at(a, 0), true));
     });
-    method(cx, object_ctor, "isSealed", [](context & c, std::span<value> a) {
+    method(cx, object_ctor, "isSealed", 1, [](context & c, std::span<value> a) {
         return value::boolean(test_integrity(c, arg_at(a, 0), false));
     });
-    method(cx, object_ctor, "isExtensible", [](context & c, std::span<value> a) {
+    method(cx, object_ctor, "isExtensible", 1, [](context & c, std::span<value> a) {
         return value::boolean(c.is_extensible(arg_at(a, 0)));
     });
     // SameValue, 7.2.11 - which is `===` except that it separates the two
     // zeros and calls NaN equal to itself. Those are exactly the two questions
     // `===` cannot answer, which is why every test in this directory that cares
     // about -0 had to spell it `1/x === -Infinity` instead.
-    method(cx, object_ctor, "is", [](context &, std::span<value> a) {
+    method(cx, object_ctor, "is", 2, [](context &, std::span<value> a) {
         const value x = arg_at(a, 0);
         const value y = arg_at(a, 1);
         if (x.is_number() && y.is_number()) {
@@ -490,7 +490,7 @@ void install_object(context & cx) {
         }
         return value::boolean(x.strict_equals(y));
     });
-    method(cx, object_ctor, "keys", [](context & c, std::span<value> a) {
+    method(cx, object_ctor, "keys", 1, [](context & c, std::span<value> a) {
         value out = c.make_array();
         auto * result = static_cast<array_object *>(out.as_heap());
         if (arg_at(a, 0).is_object()) {
@@ -504,7 +504,7 @@ void install_object(context & cx) {
         }
         return out;
     });
-    method(cx, object_ctor, "values", [](context & c, std::span<value> a) {
+    method(cx, object_ctor, "values", 1, [](context & c, std::span<value> a) {
         value out = c.make_array();
         auto * result = static_cast<array_object *>(out.as_heap());
         if (arg_at(a, 0).is_object()) {
@@ -515,7 +515,7 @@ void install_object(context & cx) {
         }
         return out;
     });
-    method(cx, object_ctor, "entries", [](context & c, std::span<value> a) {
+    method(cx, object_ctor, "entries", 1, [](context & c, std::span<value> a) {
         value out = c.make_array();
         auto * result = static_cast<array_object *>(out.as_heap());
         if (arg_at(a, 0).is_object()) {
@@ -530,7 +530,7 @@ void install_object(context & cx) {
         }
         return out;
     });
-    method(cx, object_ctor, "assign", [](context & c, std::span<value> a) {
+    method(cx, object_ctor, "assign", 2, [](context & c, std::span<value> a) {
         const value target = arg_at(a, 0);
         if (!target.is_object()) { return target; }
         for (std::size_t i = 1; i < a.size(); ++i) {
@@ -574,7 +574,7 @@ void install_errors(context & cx) {
     // what put them in `Object.keys(e)` and in `JSON.stringify(e)`.
     error_proto->define("name", cx.string("Error"), attr_builtin);
     error_proto->define("message", cx.string(""), attr_builtin);
-    method(cx, error_proto, "toString", [](context & c, std::span<value>) {
+    method(cx, error_proto, "toString", 0, [](context & c, std::span<value>) {
         const value self = c.current_this();
         const std::string name = c.to_string(c.lookup_property(self, "name"));
         const std::string message = c.to_string(c.lookup_property(self, "message"));
@@ -634,9 +634,8 @@ void install_errors(context & cx) {
         // `X.prototype` on a built-in constructor is { false, false, false }
         // (20.5.6.2.1), and `X.length` is 1 - both non-enumerable. link_constructor
         // wires `prototype.constructor` and `X.name` with the right attributes.
-        link_constructor(cx, proto, name, value::object(ctor));
+        link_constructor(cx, proto, name, 1, value::object(ctor));
         ctor->define("prototype", value::object(proto), attr_none);
-        ctor->define("length", value::number(1), attr_configurable);
         // 20.5.6.2: a NativeError constructor's [[Prototype]] is %Error%.
         if (error_ctor != nullptr) { ctor->proto_link = value::object(error_ctor); }
         cx.register_error_prototype(name, proto);
@@ -673,30 +672,30 @@ void install_proxy(context & cx) {
     // thing - `Reflect.get(t, k)` inside a `get` trap is how a proxy adds
     // behaviour instead of replacing it.
     object_object * reflect = new_table(cx);
-    method(cx, reflect, "get", [](context & c, std::span<value> a) {
+    method(cx, reflect, "get", 2, [](context & c, std::span<value> a) {
         return c.lookup_index(arg_at(a, 0), arg_at(a, 1));
     });
-    method(cx, reflect, "set", [](context & c, std::span<value> a) {
+    method(cx, reflect, "set", 3, [](context & c, std::span<value> a) {
         if (arg_at(a, 0).is_object()) {
             static_cast<object_object *>(a[0].as_heap())
                 ->set(c.to_string(arg_at(a, 1)), arg_at(a, 2));
         }
         return value::boolean(true);
     });
-    method(cx, reflect, "has", [](context & c, std::span<value> a) {
+    method(cx, reflect, "has", 2, [](context & c, std::span<value> a) {
         return value::boolean(!c.lookup_index(arg_at(a, 0), arg_at(a, 1)).is_undefined());
     });
-    method(cx, reflect, "construct", [](context & c, std::span<value> a) {
+    method(cx, reflect, "construct", 2, [](context & c, std::span<value> a) {
         std::vector<value> args;
         if (arg_at(a, 1).is_array()) { args = static_cast<array_object *>(a[1].as_heap())->items; }
         return c.construct(arg_at(a, 0), args);
     });
-    method(cx, reflect, "apply", [](context & c, std::span<value> a) {
+    method(cx, reflect, "apply", 3, [](context & c, std::span<value> a) {
         std::vector<value> args;
         if (arg_at(a, 2).is_array()) { args = static_cast<array_object *>(a[2].as_heap())->items; }
         return c.call(arg_at(a, 0), args, arg_at(a, 1));
     });
-    method(cx, reflect, "ownKeys", [](context & c, std::span<value> a) {
+    method(cx, reflect, "ownKeys", 1, [](context & c, std::span<value> a) {
         value out = c.make_array();
         auto * result = static_cast<array_object *>(out.as_heap());
         if (arg_at(a, 0).is_object()) {
@@ -709,28 +708,28 @@ void install_proxy(context & cx) {
     // The un-throwing halves of Object.defineProperty and friends: Reflect
     // ANSWERS FALSE where Object throws, which is the whole difference between
     // the two namespaces.
-    method(cx, reflect, "defineProperty", [](context & c, std::span<value> a) {
+    method(cx, reflect, "defineProperty", 3, [](context & c, std::span<value> a) {
         if (!arg_at(a, 2).is_object()) { return value::boolean(false); }
         return value::boolean(define_one(c, arg_at(a, 0), c.to_string(arg_at(a, 1)), a[2]));
     });
-    method(cx, reflect, "getOwnPropertyDescriptor", [](context & c, std::span<value> a) {
+    method(cx, reflect, "getOwnPropertyDescriptor", 2, [](context & c, std::span<value> a) {
         context::property_descriptor found;
         if (!c.own_property(arg_at(a, 0), c.to_string(arg_at(a, 1)), found)) {
             return value::undefined();
         }
         return value::object(descriptor_object(c, found));
     });
-    method(cx, reflect, "deleteProperty", [](context & c, std::span<value> a) {
+    method(cx, reflect, "deleteProperty", 2, [](context & c, std::span<value> a) {
         return value::boolean(c.delete_own_property(arg_at(a, 0), c.to_string(arg_at(a, 1))));
     });
-    method(cx, reflect, "isExtensible", [](context & c, std::span<value> a) {
+    method(cx, reflect, "isExtensible", 1, [](context & c, std::span<value> a) {
         return value::boolean(c.is_extensible(arg_at(a, 0)));
     });
-    method(cx, reflect, "preventExtensions", [](context & c, std::span<value> a) {
+    method(cx, reflect, "preventExtensions", 1, [](context & c, std::span<value> a) {
         c.prevent_extensions(arg_at(a, 0));
         return value::boolean(true);
     });
-    method(cx, reflect, "getPrototypeOf", [](context &, std::span<value> a) {
+    method(cx, reflect, "getPrototypeOf", 1, [](context &, std::span<value> a) {
         if (!arg_at(a, 0).is_object()) { return value::null(); }
         return static_cast<object_object *>(a[0].as_heap())->prototype;
     });
@@ -745,20 +744,20 @@ void install_function(context & cx) {
     using detail::new_table;
     object_object * function_proto = new_table(cx);
 
-    method(cx, function_proto, "call", [](context & c, std::span<value> a) {
+    method(cx, function_proto, "call", 1, [](context & c, std::span<value> a) {
         const value self = c.current_this();
         if (!self.is_callable()) { return value::undefined(); }
         const std::vector<value> rest(a.begin() + (a.empty() ? 0 : 1), a.end());
         return c.call(self, rest, arg_at(a, 0));
     });
-    method(cx, function_proto, "apply", [](context & c, std::span<value> a) {
+    method(cx, function_proto, "apply", 2, [](context & c, std::span<value> a) {
         const value self = c.current_this();
         if (!self.is_callable()) { return value::undefined(); }
         std::vector<value> args;
         if (arg_at(a, 1).is_array()) { args = static_cast<array_object *>(a[1].as_heap())->items; }
         return c.call(self, args, arg_at(a, 0));
     });
-    method(cx, function_proto, "bind", [](context & c, std::span<value> a) {
+    method(cx, function_proto, "bind", 1, [](context & c, std::span<value> a) {
         const value self = c.current_this();
         if (!self.is_callable()) { return value::undefined(); }
         const value receiver = arg_at(a, 0);
@@ -789,6 +788,21 @@ void install_function(context & cx) {
         fn->retained.push_back(self);
         fn->retained.push_back(receiver);
         fn->retained.insert(fn->retained.end(), bound->begin(), bound->end());
+        // 20.2.3.2: a bound function's `length` is the target's less the
+        // arguments already supplied, floored at zero, and its `name` is
+        // "bound " prefixed to the target's - both { false, false, true }. It
+        // had neither, so `f.bind(o).length` was undefined and `.name` was the
+        // synthesised "bound", which is a different string from the one every
+        // engine gives.
+        const value target_length = c.lookup_property(self, "length");
+        const double left =
+            to_length(c.to_number_value(target_length)) - static_cast<double>(bound->size());
+        fn->define("length", value::number(std::max(0.0, left)), attr_configurable);
+        const value target_name = c.lookup_property(self, "name");
+        fn->define("name",
+                   c.string("bound " +
+                            (target_name.is_string() ? c.to_string(target_name) : std::string{})),
+                   attr_configurable);
         return value::object(fn);
     });
     // TODO: return the REAL source. p5's Friendly Error System parses a sketch
@@ -797,7 +811,7 @@ void install_function(context & cx) {
     // a string_view INTO the source, so the offset is a subtraction - plus the
     // program keeping its source string. Error.stack wants the same thing, and
     // would get real line numbers from it.
-    method(cx, function_proto, "toString", [](context & c, std::span<value>) {
+    method(cx, function_proto, "toString", 0, [](context & c, std::span<value>) {
         // THE REAL SOURCE, when there is any. A closure knows which program its
         // protos came from, and the program kept the text - so this is a
         // substring, not a reconstruction, and what comes back is exactly what
@@ -868,7 +882,7 @@ void install_dynamic_function(context & cx) {
     if (object_object * table = cx.prototype(context::proto_kind::function)) {
         static_cast<native_object *>(cx.global("Function").as_heap())
             ->set("prototype", value::object(table));
-        link_constructor(cx, table, "Function", cx.global("Function"));
+        link_constructor(cx, table, "Function", 1, cx.global("Function"));
     }
 }
 
@@ -887,12 +901,12 @@ void install_generator(context & cx) {
             return c.generator_resume(c.current_this(), arg_at(a, 0), how);
         };
     };
-    detail::method(cx, table, "next", driver(context::resume_mode::next));
-    detail::method(cx, table, "throw", driver(context::resume_mode::thrown));
-    detail::method(cx, table, "return", driver(context::resume_mode::returned));
+    detail::method(cx, table, "next", 1, driver(context::resume_mode::next));
+    detail::method(cx, table, "throw", 1, driver(context::resume_mode::thrown));
+    detail::method(cx, table, "return", 1, driver(context::resume_mode::returned));
     // A GENERATOR IS ITS OWN ITERATOR, which is what `for (x of gen())` needs
     // and what makes `[...gen()]` work.
-    detail::method(cx, table, "@@iterator",
+    detail::method(cx, table, "@@iterator", 0,
                    [](context & c, std::span<value>) { return c.current_this(); });
     cx.set_prototype(context::proto_kind::generator, table);
 }

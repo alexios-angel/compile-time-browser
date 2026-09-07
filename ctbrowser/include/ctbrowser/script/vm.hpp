@@ -174,6 +174,7 @@ struct native_object final : heap_object {
     bool erase(std::string_view key) {
         const std::size_t at = position(key);
         if (at >= props.size()) { return false; }
+        if (key == "name") { name_erased = true; }
         accessors.erase(key);
         props.erase(props.begin() + static_cast<std::ptrdiff_t>(at));
         if (at < attrs.size()) { attrs.erase(attrs.begin() + static_cast<std::ptrdiff_t>(at)); }
@@ -184,6 +185,15 @@ struct native_object final : heap_object {
     // `_inherits` needed one. A NativeError constructor's is %Error% (20.5.6.2)
     // rather than Function.prototype, so `Object.getPrototypeOf(TypeError)` is
     // `Error` and a static on Error is inherited by all six.
+    // WAS THE OWN `name` DELETED? `context::own_property` synthesises a native's
+    // `name` out of the C++ object when the table has none, which is right for a
+    // native that never had one installed and wrong after a `delete`: the
+    // synthesised slot uncovers, `hasOwnProperty("name")` stays true, and that
+    // is precisely what test262's `verifyProperty` asks when it checks the
+    // descriptor is configurable. A flag rather than deleting the fallback,
+    // because every native `define_native` makes - the DOM bindings, setTimeout,
+    // 400 others - has no own entry and still has to answer.
+    bool name_erased = false;
     value proto_link = value::null();
 
     native_object(std::string n, native_fn f)

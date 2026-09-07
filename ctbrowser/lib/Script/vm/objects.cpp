@@ -757,7 +757,14 @@ bool context::own_property(value target, const std::string & name, property_desc
         // synthesised here. `length` is NOT: a native_fn takes a span and its
         // declared arity is not recorded anywhere, so this engine cannot answer
         // for it and says so by leaving the property absent.
-        if (name == "name") {
+        //
+        // ...AND NOT AFTER A `delete`. The synthesised slot has no memory, so
+        // deleting a native's own `name` uncovered it again and
+        // `hasOwnProperty("name")` stayed true - which is exactly the question
+        // test262's `verifyProperty` asks to decide the descriptor is
+        // configurable, so every `name.js` in the suite failed on a property
+        // that had just been removed.
+        if (name == "name" && !fn->name_erased) {
             out = property_descriptor::data(string(fn->name), attr_configurable);
             out.virtual_slot = true;
             return true;
@@ -1190,7 +1197,7 @@ value context::lookup_property(value target, const std::string & name) {
         // its message out of `expectedErrorConstructor.name`. It lives on the
         // C++ object rather than in the table, which is why it is answered here
         // rather than installed on 400 natives.
-        if (name == "name") { return string(fn->name); }
+        if (name == "name" && !fn->name_erased) { return string(fn->name); }
         // STATIC INHERITANCE through the constructor's own [[Prototype]] - the
         // same walk a closure does. `TypeError.__proto__` is `Error`, so a
         // static installed on Error is found through all six NativeErrors.

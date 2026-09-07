@@ -311,5 +311,83 @@ int main() {
     })())",
               "7,true,false");
 
+    // ================================================================
+    // A BUILT-IN FUNCTION'S OWN `name` AND `length` - 10.2.5
+    // ================================================================
+    //
+    // Both are { writable: false, enumerable: false, configurable: true } and
+    // both are REAL own properties now. `name` used to be synthesised by
+    // context::own_property out of the C++ object, and a synthesised slot
+    // cannot refuse a write or be deleted - so verifyProperty's probes saw a
+    // write land and a delete fail, and every `name.js` in test262 reported
+    // both at once (33 files in built-ins/Array, 34 in String, 26 in Object,
+    // measured 2026-09-07). `length` was absent entirely, because a native_fn
+    // takes a span and records no arity; it is passed at the install site now,
+    // from the specification's clause for each method.
+    js_expect("Array.prototype.forEach.length", "1");
+    js_expect("Array.prototype.slice.length", "2");
+    js_expect("Array.prototype.pop.length", "0");
+    js_expect("Array.prototype.reduce.length", "1");
+    js_expect("Object.defineProperty.length", "3");
+    js_expect("Object.keys.length", "1");
+    js_expect("Math.max.length", "2");
+    js_expect("Math.floor.length", "1");
+    js_expect("Math.random.length", "0");
+    js_expect("String.prototype.replace.length", "2");
+    js_expect("String.prototype.trim.length", "0");
+    // A CONSTRUCTOR'S OWN length is its clause's, not one: Date takes seven
+    // components and Array takes one.
+    js_expect("Array.length", "1");
+    js_expect("Object.length", "1");
+    js_expect("Date.length", "7");
+    js_expect("TypeError.length", "1");
+
+    js_expect("Array.prototype.forEach.name", "forEach");
+    js_expect("Math.floor.name", "floor");
+    js_expect("(function(){var d=Object.getOwnPropertyDescriptor(Array.prototype.forEach,'name');"
+              "return d.writable+','+d.enumerable+','+d.configurable;})()",
+              "false,false,true");
+    js_expect("(function(){var d=Object.getOwnPropertyDescriptor(Array.prototype.forEach,'length');"
+              "return d.writable+','+d.enumerable+','+d.configurable;})()",
+              "false,false,true");
+    // ...which means a write is DROPPED and a delete WORKS, both silently -
+    // this is sloppy mode, as the header says.
+    js_expect("(function(){Array.prototype.map.name='x';return Array.prototype.map.name;})()",
+              "map");
+    js_expect("(function(){Math.floor.length=99;return Math.floor.length;})()", "1");
+    js_expect("(function(){var f=Array.prototype.map;delete f.length;"
+              "return Object.hasOwn(f,'length');})()",
+              "false");
+    // ...AND `name` DOES NOT COME BACK CLEAN, which is asserted as it IS rather
+    // than as the specification has it. context::own_property STILL synthesises
+    // a native's `name` from the C++ object when the table has none
+    // (lib/Script/vm/objects.cpp), so deleting the own entry uncovers the
+    // synthesised one and `hasOwnProperty` stays true. That is the whole
+    // remaining reason test262's `name.js` files fail - verifyProperty's
+    // isConfigurable() deletes and then asks - and closing it is a change to
+    // the VM, not to the standard library. When it lands this line reads
+    // "false" and the assertion below it can go.
+    js_expect("(function(){var f=Array.prototype.map;delete f.name;"
+              "return Object.hasOwn(f,'name');})()",
+              "true");
+    // In CREATION ORDER, which 10.2.5 gives as length then name.
+    js_expect("Object.getOwnPropertyNames(Math.floor).join(',')", "length,name");
+    // Neither is enumerable, so neither reaches for-in, Object.keys or a
+    // spread - and nor do the String statics, which were installed through
+    // `set` with the DEFAULT attributes and were therefore enumerable.
+    js_expect("Object.getOwnPropertyDescriptor(Math.floor,'name').enumerable", "false");
+    js_expect("Object.getOwnPropertyDescriptor(String,'fromCharCode').enumerable", "false");
+    js_expect("Object.getOwnPropertyDescriptor(String,'raw').enumerable", "false");
+    js_expect("Object.keys(Math).length", "0");
+    // `Number.parseFloat` and `Number.parseInt` are THE SAME FUNCTION OBJECTS
+    // as the globals (21.1.2.12, 21.1.2.13), not copies. Both were absent.
+    js_expect("Number.parseFloat === parseFloat", "true");
+    js_expect("Number.parseInt === parseInt", "true");
+    js_expect("Number.parseFloat('1.5px')", "1.5");
+    js_expect("Number.parseInt('0x1f')", "31");
+    js_expect("parseInt.length + ',' + parseFloat.length", "2,1");
+    js_expect("Number.isFinite.length", "1");
+    js_expect("Object.getOwnPropertyDescriptor(Number,'isFinite').enumerable", "false");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

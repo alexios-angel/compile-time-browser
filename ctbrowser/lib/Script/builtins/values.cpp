@@ -34,7 +34,7 @@ void install_math(context & cx, std::uint64_t seed) {
         return i < a.size() ? c.to_number_value(a[i]) : std::nan("");
     };
     const auto unary = [&](std::string name, double (*fn)(double)) {
-        method(cx, math, name, [fn, math_arg](context & c, std::span<value> a) {
+        method(cx, math, name, 1, [fn, math_arg](context & c, std::span<value> a) {
             return value::number(fn(math_arg(c, a, 0)));
         });
     };
@@ -84,13 +84,13 @@ void install_math(context & cx, std::uint64_t seed) {
     unary("acosh", [](double x) { return std::acosh(x); });
     unary("atanh", [](double x) { return std::atanh(x); });
     unary("fround", [](double x) { return static_cast<double>(static_cast<float>(x)); });
-    method(cx, math, "clz32", [](context &, std::span<value> a) {
+    method(cx, math, "clz32", 1, [](context &, std::span<value> a) {
         const std::uint32_t x = context::to_uint32(arg_at(a, 0));
         int n = 0;
         for (std::uint32_t bit = 0x80000000u; bit != 0 && (x & bit) == 0; bit >>= 1) { ++n; }
         return value::number(x == 0 ? 32 : n);
     });
-    method(cx, math, "imul", [](context &, std::span<value> a) {
+    method(cx, math, "imul", 2, [](context &, std::span<value> a) {
         return value::number(static_cast<double>(static_cast<std::int32_t>(
             context::to_uint32(arg_at(a, 0)) * context::to_uint32(arg_at(a, 1)))));
     });
@@ -127,7 +127,7 @@ void install_math(context & cx, std::uint64_t seed) {
     // Splitting on floor(x) instead adds nothing to x, so none of the three can
     // happen: an integral value is already its own floor, and the zero cases are
     // handled before any arithmetic.
-    method(cx, math, "round", [math_arg](context & c, std::span<value> a) {
+    method(cx, math, "round", 1, [math_arg](context & c, std::span<value> a) {
         const double x = math_arg(c, a, 0);
         // NaN, the infinities and every integral value (including both zeros)
         // come straight back - step 2.
@@ -141,10 +141,10 @@ void install_math(context & cx, std::uint64_t seed) {
     // Number::exponentiate says NaN for exactly those. Three lines of special
     // case, and without them `Math.pow(1, NaN)` was 1 - a value a page will
     // happily do arithmetic on rather than checking with isNaN.
-    method(cx, math, "pow", [math_arg](context & c, std::span<value> a) {
+    method(cx, math, "pow", 2, [math_arg](context & c, std::span<value> a) {
         return value::number(context::exponentiate(math_arg(c, a, 0), math_arg(c, a, 1)));
     });
-    method(cx, math, "atan2", [math_arg](context & c, std::span<value> a) {
+    method(cx, math, "atan2", 2, [math_arg](context & c, std::span<value> a) {
         return value::number(std::atan2(math_arg(c, a, 0), math_arg(c, a, 1)));
     });
     // SCALED, AND INFINITY BEATS NaN. `sqrt(sum of squares)` is the obvious
@@ -167,7 +167,7 @@ void install_math(context & cx, std::uint64_t seed) {
     // The scale factor is the largest magnitude rather than a power of two, and
     // that is deliberate: it keeps `hypot(3, 4)` exactly 5 and leaves the
     // already-correct mid-range answers bit-identical.
-    method(cx, math, "hypot", [](context & c, std::span<value> a) {
+    method(cx, math, "hypot", 2, [](context & c, std::span<value> a) {
         bool saw_nan = false;
         double largest = 0;
         for (const value & v : a) {
@@ -199,7 +199,7 @@ void install_math(context & cx, std::uint64_t seed) {
     // false, so which zero came back depended on ARGUMENT ORDER: `Math.min(0,
     // -0)` gave +0 while `Math.min(-0, 0)` was accidentally right. Steps 4.b
     // make the zero ordering explicit, and so does this.
-    method(cx, math, "min", [](context & c, std::span<value> a) {
+    method(cx, math, "min", 2, [](context & c, std::span<value> a) {
         double best = std::numeric_limits<double>::infinity();
         for (const value & v : a) {
             const double x = c.to_number_value(v);
@@ -208,7 +208,7 @@ void install_math(context & cx, std::uint64_t seed) {
         }
         return value::number(best);
     });
-    method(cx, math, "max", [](context & c, std::span<value> a) {
+    method(cx, math, "max", 2, [](context & c, std::span<value> a) {
         double best = -std::numeric_limits<double>::infinity();
         for (const value & v : a) {
             const double x = c.to_number_value(v);
@@ -219,7 +219,7 @@ void install_math(context & cx, std::uint64_t seed) {
     });
     // xorshift64*, held in the closure so each context has its own stream.
     auto state = std::make_shared<std::uint64_t>(seed == 0 ? 1 : seed);
-    method(cx, math, "random", [state](context &, std::span<value>) {
+    method(cx, math, "random", 0, [state](context &, std::span<value>) {
         std::uint64_t x = *state;
         x ^= x >> 12;
         x ^= x << 25;
@@ -235,10 +235,10 @@ void install_boolean(context & cx) {
     using detail::method;
     using detail::new_table;
     object_object * boolean_proto = new_table(cx);
-    method(cx, boolean_proto, "toString", [](context & c, std::span<value>) {
+    method(cx, boolean_proto, "toString", 0, [](context & c, std::span<value>) {
         return c.string(context::truthy(c.current_this()) ? "true" : "false");
     });
-    method(cx, boolean_proto, "valueOf", [](context & c, std::span<value>) {
+    method(cx, boolean_proto, "valueOf", 0, [](context & c, std::span<value>) {
         return value::boolean(context::truthy(c.current_this()));
     });
     cx.set_prototype(context::proto_kind::boolean, boolean_proto);
@@ -251,7 +251,7 @@ void install_boolean(context & cx) {
     // gone.
     detail::constant(boolean_ctor, "__conversion", value::boolean(true));
     detail::constant(boolean_ctor, "prototype", value::object(boolean_proto));
-    link_constructor(cx, boolean_proto, "Boolean", value::object(boolean_ctor));
+    link_constructor(cx, boolean_proto, "Boolean", 1, value::object(boolean_ctor));
     cx.define_global("Boolean", value::object(boolean_ctor));
 }
 
@@ -291,12 +291,15 @@ void install_number(context & cx) {
     constant("POSITIVE_INFINITY", std::numeric_limits<double>::infinity());
     constant("NEGATIVE_INFINITY", -std::numeric_limits<double>::infinity());
     constant("NaN", std::nan(""));
+    // detail::method, not `set`: clause 17 makes each of these
+    // { writable: true, enumerable: FALSE, configurable: true } with a `length`
+    // of 1, and `set` gave them the default attributes - so `Object.keys` and a
+    // for-in over `Number` walked them.
     const auto predicate = [&](const char * name, bool (*fn)(const value &)) {
-        number_ctor->set(name, value::object(cx.allocate<native_object>(
-                                   name, [fn](context &, std::span<value> a) {
-                                       const value v = arg_at(a, 0);
-                                       return value::boolean(fn(v));
-                                   })));
+        detail::method(cx, number_ctor, name, 1, [fn](context &, std::span<value> a) {
+            const value v = arg_at(a, 0);
+            return value::boolean(fn(v));
+        });
     };
     // These do NOT coerce - `Number.isFinite("1")` is false where the global
     // `isFinite("1")` is true, and code uses the difference deliberately.
@@ -315,7 +318,7 @@ void install_number(context & cx) {
     cx.define_global("Number", value::object(number_ctor));
 
     object_object * number_proto = new_table(cx);
-    method(cx, number_proto, "toFixed", [](context & c, std::span<value> a) {
+    method(cx, number_proto, "toFixed", 1, [](context & c, std::span<value> a) {
         const double self = detail::this_number_value(c, "Number.prototype.toFixed");
         const auto digits = static_cast<int>(std::clamp(num_at(a, 0), 0.0, 20.0));
         // NOT snprintf("%.*f"): it is locale-dependent, it prints a thousand
@@ -330,7 +333,7 @@ void install_number(context & cx) {
     // `'#' + (220).toString(16)` came out as "#220" rather than "#dc". That is
     // a string a colour parser can neither reject nor read correctly, which is
     // how p5.js ended up filling a sketch's background with white.
-    method(cx, number_proto, "toString", [](context & c, std::span<value> a) {
+    method(cx, number_proto, "toString", 1, [](context & c, std::span<value> a) {
         const double v = detail::this_number_value(c, "Number.prototype.toString");
         // AN OUT-OF-RANGE RADIX IS A RangeError (21.1.3.6 step 4), not a silent
         // fall back to 10 - and that fall back was the segfault: it reached
@@ -373,10 +376,10 @@ void install_number(context & cx) {
         }
         return c.string(negative ? "-" + out : out);
     });
-    method(cx, number_proto, "valueOf", [](context & c, std::span<value>) {
+    method(cx, number_proto, "valueOf", 0, [](context & c, std::span<value>) {
         return value::number(detail::this_number_value(c, "Number.prototype.valueOf"));
     });
-    method(cx, number_proto, "toExponential", [](context & c, std::span<value> a) {
+    method(cx, number_proto, "toExponential", 1, [](context & c, std::span<value> a) {
         const double v = detail::this_number_value(c, "Number.prototype.toExponential");
         // NO ARGUMENT IS NOT SIX. The specification asks for as many digits as
         // uniquely specify the value, so `(5).toExponential()` is "5e+0" and
@@ -386,7 +389,7 @@ void install_number(context & cx) {
                                : std::clamp(static_cast<int>(context::to_number(a[0])), 0, 100);
         return c.string(number_to_exponential(v, places));
     });
-    method(cx, number_proto, "toPrecision", [](context & c, std::span<value> a) {
+    method(cx, number_proto, "toPrecision", 1, [](context & c, std::span<value> a) {
         const double v = detail::this_number_value(c, "Number.prototype.toPrecision");
         // No argument at all is toString, not zero significant digits - of the
         // NUMBER, not of the receiver. `c.to_string(c.current_this())` here was
@@ -398,7 +401,7 @@ void install_number(context & cx) {
         return c.string(number_to_precision(v, digits));
     });
     detail::constant(number_ctor, "prototype", value::object(number_proto));
-    link_constructor(cx, number_proto, "Number", value::object(number_ctor));
+    link_constructor(cx, number_proto, "Number", 1, value::object(number_ctor));
     cx.set_prototype(context::proto_kind::number, number_proto);
 }
 
@@ -483,7 +486,7 @@ void install_date(context & cx) {
         return out;
     };
     const auto field_method = [&](const char * name, int fields::* which) {
-        method(cx, date_proto, name, [epoch_ms, split, which](context & c, std::span<value>) {
+        method(cx, date_proto, name, 0, [epoch_ms, split, which](context & c, std::span<value>) {
             return value::number(split(epoch_ms(c)).*which);
         });
     };
@@ -492,27 +495,27 @@ void install_date(context & cx) {
     field_method("getSeconds", &fields::second);
     field_method("getDay", &fields::weekday);
     field_method("getFullYear", &fields::year);
-    method(cx, date_proto, "getMonth", [epoch_ms, split](context & c, std::span<value>) {
+    method(cx, date_proto, "getMonth", 0, [epoch_ms, split](context & c, std::span<value>) {
         // ZERO-BASED, which is the wart every calendar bug starts with and
         // which a page's arithmetic is written against.
         return value::number(static_cast<double>(split(epoch_ms(c)).month) - 1);
     });
-    method(cx, date_proto, "getDate", [epoch_ms, split](context & c, std::span<value>) {
+    method(cx, date_proto, "getDate", 0, [epoch_ms, split](context & c, std::span<value>) {
         return value::number(static_cast<double>(split(epoch_ms(c)).day));
     });
-    method(cx, date_proto, "getMilliseconds", [epoch_ms](context & c, std::span<value>) {
+    method(cx, date_proto, "getMilliseconds", 0, [epoch_ms](context & c, std::span<value>) {
         const double ms = epoch_ms(c);
         return value::number(std::fmod(std::fmod(ms, 1000.0) + 1000.0, 1000.0));
     });
-    method(cx, date_proto, "getTime",
+    method(cx, date_proto, "getTime", 0,
            [epoch_ms](context & c, std::span<value>) { return value::number(epoch_ms(c)); });
-    method(cx, date_proto, "valueOf",
+    method(cx, date_proto, "valueOf", 0,
            [epoch_ms](context & c, std::span<value>) { return value::number(epoch_ms(c)); });
     // No timezone here, so the local getters ARE the UTC ones and say so rather
     // than pretending to a zone this engine does not have.
-    method(cx, date_proto, "getTimezoneOffset",
+    method(cx, date_proto, "getTimezoneOffset", 0,
            [](context &, std::span<value>) { return value::number(0); });
-    method(cx, date_proto, "toISOString", [epoch_ms, split](context & c, std::span<value>) {
+    method(cx, date_proto, "toISOString", 0, [epoch_ms, split](context & c, std::span<value>) {
         const fields f = split(epoch_ms(c));
         std::array<char, 40> out{};
         const int written = std::snprintf(
@@ -521,7 +524,7 @@ void install_date(context & cx) {
             static_cast<int>(std::fmod(std::fmod(epoch_ms(c), 1000.0) + 1000.0, 1000.0)));
         return c.string(std::string{out.data(), static_cast<std::size_t>(std::max(0, written))});
     });
-    method(cx, date_proto, "toString", [epoch_ms, split](context & c, std::span<value>) {
+    method(cx, date_proto, "toString", 0, [epoch_ms, split](context & c, std::span<value>) {
         const fields f = split(epoch_ms(c));
         std::array<char, 48> out{};
         const int written = std::snprintf(out.data(), out.size(), "%04d-%02u-%02u %02d:%02d:%02d",
@@ -561,10 +564,10 @@ void install_date(context & cx) {
             return self;
         });
     detail::constant(ctor, "prototype", value::object(date_proto));
-    link_constructor(cx, date_proto, "Date", value::object(ctor));
-    method(cx, ctor, "now",
+    link_constructor(cx, date_proto, "Date", 7, value::object(ctor));
+    method(cx, ctor, "now", 0,
            [](context & c, std::span<value>) { return value::number(c.clock_ms()); });
-    method(cx, ctor, "UTC", [days_from_civil](context & c, std::span<value> a) {
+    method(cx, ctor, "UTC", 7, [days_from_civil](context & c, std::span<value> a) {
         const auto part = [&](std::size_t i, double fallback) {
             return i < a.size() ? context::to_number(a[i]) : fallback;
         };
@@ -621,6 +624,32 @@ void install_globals(context & cx) {
     cx.define_global("NaN", value::number(std::nan("")));
     cx.define_global("Infinity", value::number(std::numeric_limits<double>::infinity()));
     cx.define_global("undefined", value::undefined());
+
+    // `Number.parseFloat` and `Number.parseInt` are THE SAME FUNCTION OBJECTS
+    // as the globals - 21.1.2.12 and 21.1.2.13 say "the same function object",
+    // and `Number.parseFloat === parseFloat` is what test262 asserts. So this
+    // is an alias, not a second copy.
+    //
+    // Installed HERE rather than in install_number because that runs first (see
+    // install_builtins), when neither global exists yet. Four `css/css-values`
+    // files in the WPT sweep fail on `Number.parseFloat` alone.
+    //
+    // Their own `name` and `length` go on at the same time: define_native
+    // allocates a bare native, so both were answered by context::own_property's
+    // synthesised fallback or not at all. 19.2.5 gives parseInt two parameters
+    // and 19.2.4 gives parseFloat one.
+    const auto expose = [&](const char * name, double arity) {
+        const value fn = cx.global(name);
+        if (!fn.is_kind(heap_kind::native)) { return; }
+        auto * made = static_cast<native_object *>(fn.as_heap());
+        made->define("length", value::number(arity), attr_configurable);
+        made->define("name", cx.string(name), attr_configurable);
+        if (const value number = cx.global("Number"); number.is_kind(heap_kind::native)) {
+            static_cast<native_object *>(number.as_heap())->define(name, fn, attr_builtin);
+        }
+    };
+    expose("parseInt", 2);
+    expose("parseFloat", 1);
 }
 
 } // namespace ctbrowser::script::builtins_detail

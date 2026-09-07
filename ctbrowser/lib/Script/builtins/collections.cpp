@@ -33,29 +33,42 @@ void install_array(context & cx) {
         }
         return out;
     });
-    const auto static_method = [&](const char * name, native_fn fn) {
-        method(cx, array_ctor, name, std::move(fn));
+    const auto static_method = [&](const char * name, double arity, native_fn fn) {
+        method(cx, array_ctor, name, arity, std::move(fn));
     };
-    static_method("isArray", [](context &, std::span<value> a) {
+    static_method("isArray", 1, [](context &, std::span<value> a) {
         return value::boolean(arg_at(a, 0).is_array());
     });
-    static_method("of", [](context & c, std::span<value> a) {
+    static_method("of", 0, [](context & c, std::span<value> a) {
         value out = c.make_array();
         static_cast<array_object *>(out.as_heap())->items.assign(a.begin(), a.end());
         return out;
     });
-    static_method("from", [](context & c, std::span<value> a) {
+    static_method("from", 1, [](context & c, std::span<value> a) {
         value out = c.make_array();
+        // A mapping function that is PRESENT AND NOT CALLABLE is a TypeError
+        // (23.1.2.1 step 2), checked before the source is touched. It was
+        // silently ignored, so `Array.from(xs, 'nope')` copied xs and said
+        // nothing.
+        const value mapper = arg_at(a, 1);
+        if (!mapper.is_undefined() && !mapper.is_callable()) {
+            c.throw_error("TypeError", "the map function is not a function");
+            return out;
+        }
+        const context::rooted keep(c, out);
         auto * made = static_cast<array_object *>(out.as_heap());
         // Through the one conversion for..of and spread use, so all three agree
         // about what "iterable" means - a Map, a Set, a string, an array or
         // anything array-LIKE (a NodeList, `arguments`, a typed-array shim).
         const value from = c.iterable_values(arg_at(a, 0));
         if (from.is_array()) { made->items = static_cast<array_object *>(from.as_heap())->items; }
-        if (a.size() > 1 && a[1].is_callable()) {
+        if (mapper.is_callable()) {
+            // `thisArg` is argument 3 and was dropped, exactly as it was on
+            // every Array.prototype method.
+            const value this_arg = arg_at(a, 2);
             for (std::size_t i = 0; i < made->items.size(); ++i) {
                 const value args[2] = {made->items[i], value::number(static_cast<double>(i))};
-                made->items[i] = c.call(a[1], args);
+                made->items[i] = c.call(mapper, args, this_arg);
             }
         }
         return out;
@@ -66,24 +79,33 @@ void install_array(context & cx) {
     // The prototype methods p5.js uses that were not here. `at` and `fill` are
     // the ones it leans on hardest - 43 and 31 uses - because a typed-array
     // shim reaches for both.
-    method(cx, array_proto, "at", [](context & c, std::span<value> a) {
-        auto * self = detail::this_array(c);
-        if (self == nullptr) { return value::undefined(); }
-        double i = num_at(a, 0);
-        if (i < 0) { i += static_cast<double>(self->items.size()); }
-        if (i < 0 || i >= static_cast<double>(self->items.size())) { return value::undefined(); }
-        return self->items[static_cast<std::size_t>(i)];
+    method(cx, array_proto, "at", 1, [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, "at")) { return value::undefined(); }
+        const double len = detail::array_like_length(c, self);
+        // integer_arg, not num_at: ToIntegerOrInfinity runs a `valueOf`, so
+        // `xs.at({valueOf: () => 1})` is `xs[1]` rather than `xs[NaN]`.
+        double i = integer_arg(c, a, 0);
+        if (i < 0) { i += len; }
+        if (i < 0 || i >= len) { return value::undefined(); }
+        return detail::element_at(c, self, i);
     });
-    method(cx, array_proto, "fill", [](context & c, std::span<value> a) {
-        auto * self = detail::this_array(c);
-        if (self == nullptr) { return c.current_this(); }
-        const std::size_t n = self->items.size();
-        const std::size_t from = a.size() > 1 ? clamp_index(num_at(a, 1), n) : 0;
-        const std::size_t to = a.size() > 2 ? clamp_index(num_at(a, 2), n) : n;
-        for (std::size_t i = from; i < to; ++i) { self->items[i] = arg_at(a, 0); }
-        return c.current_this();
+    method(cx, array_proto, "fill", 1, [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, "fill")) { return self; }
+        const double len = detail::array_like_length(c, self);
+        const value filler = arg_at(a, 0);
+        const double start = integer_arg(c, a, 1);
+        double k = start < 0 ? std::max(len + start, 0.0) : std::min(start, len);
+        // AN ABSENT `end` AND AN EXPLICIT `undefined` BOTH MEAN "to the end".
+        // A count test sees three arguments for `fill(0, 0, undefined)`,
+        // coerces the undefined to 0 and fills nothing.
+        const double raw_end = has_index(a, 2) ? integer_arg(c, a, 2) : len;
+        const double end = raw_end < 0 ? std::max(len + raw_end, 0.0) : std::min(raw_end, len);
+        for (; k < end; k += 1.0) { detail::put_element(c, self, k, filler); }
+        return self;
     });
-    method(cx, array_proto, "flat", [](context & c, std::span<value> a) {
+    method(cx, array_proto, "flat", 0, [](context & c, std::span<value> a) {
         // depth defaults to 1, which is what every use in p5 wants
         const double depth = a.empty() ? 1.0 : num_at(a, 0);
         auto * self = detail::this_array(c);
@@ -110,7 +132,7 @@ void install_array(context & cx) {
         }
         return out;
     });
-    method(cx, array_proto, "flatMap", [](context & c, std::span<value> a) {
+    method(cx, array_proto, "flatMap", 1, [](context & c, std::span<value> a) {
         auto * self = detail::this_array(c);
         value out = c.make_array();
         if (self == nullptr || a.empty() || !a[0].is_callable()) { return out; }
@@ -131,66 +153,75 @@ void install_array(context & cx) {
         }
         return out;
     });
-    method(cx, array_proto, "findLast", [](context & c, std::span<value> a) {
-        auto * self = detail::this_array(c);
-        if (self == nullptr || a.empty() || !a[0].is_callable()) { return value::undefined(); }
-        for (std::size_t i = self->items.size(); i-- > 0;) {
-            const value args[3] = {self->items[i], value::number(static_cast<double>(i)),
-                                   c.current_this()};
-            if (context::truthy(c.call(a[0], args))) { return self->items[i]; }
+    method(cx, array_proto, "findLast", 1, [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, "findLast")) { return value::undefined(); }
+        const value callback = arg_at(a, 0);
+        if (!detail::callable_arg(c, callback, "callback")) { return value::undefined(); }
+        const value this_arg = arg_at(a, 1);
+        for (double k = detail::array_like_length(c, self) - 1; k >= 0; k -= 1.0) {
+            const value item = detail::element_at(c, self, k);
+            const value args[3] = {item, value::number(k), self};
+            if (context::truthy(c.call(callback, args, this_arg))) { return item; }
         }
         return value::undefined();
     });
-    method(cx, array_proto, "findLastIndex", [](context & c, std::span<value> a) {
-        auto * self = detail::this_array(c);
-        if (self == nullptr || a.empty() || !a[0].is_callable()) { return value::number(-1); }
-        for (std::size_t i = self->items.size(); i-- > 0;) {
-            const value args[3] = {self->items[i], value::number(static_cast<double>(i)),
-                                   c.current_this()};
-            if (context::truthy(c.call(a[0], args))) {
-                return value::number(static_cast<double>(i));
-            }
+    method(cx, array_proto, "findLastIndex", 1, [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, "findLastIndex")) { return value::number(-1); }
+        const value callback = arg_at(a, 0);
+        if (!detail::callable_arg(c, callback, "callback")) { return value::number(-1); }
+        const value this_arg = arg_at(a, 1);
+        for (double k = detail::array_like_length(c, self) - 1; k >= 0; k -= 1.0) {
+            const value args[3] = {detail::element_at(c, self, k), value::number(k), self};
+            if (context::truthy(c.call(callback, args, this_arg))) { return value::number(k); }
         }
         return value::number(-1);
     });
-    method(cx, array_proto, "push", [](context & c, std::span<value> a) {
+    method(cx, array_proto, "push", 1, [](context & c, std::span<value> a) {
         array_object * self = detail::this_array(c);
         if (self == nullptr) { return value::number(0); }
         for (std::size_t i = 0; i < a.size(); ++i) { self->items.push_back(a[i]); }
         return value::number(static_cast<double>(self->items.size()));
     });
-    method(cx, array_proto, "pop", [](context & c, std::span<value>) {
+    method(cx, array_proto, "pop", 0, [](context & c, std::span<value>) {
         array_object * self = detail::this_array(c);
         if (self == nullptr || self->items.empty()) { return value::undefined(); }
         const value out = self->items.back();
         self->items.pop_back();
         return out;
     });
-    method(cx, array_proto, "shift", [](context & c, std::span<value>) {
+    method(cx, array_proto, "shift", 0, [](context & c, std::span<value>) {
         array_object * self = detail::this_array(c);
         if (self == nullptr || self->items.empty()) { return value::undefined(); }
         const value out = self->items.front();
         self->items.erase(self->items.begin());
         return out;
     });
-    method(cx, array_proto, "unshift", [](context & c, std::span<value> a) {
+    method(cx, array_proto, "unshift", 1, [](context & c, std::span<value> a) {
         array_object * self = detail::this_array(c);
         if (self == nullptr) { return value::number(0); }
         self->items.insert(self->items.begin(), a.begin(), a.end());
         return value::number(static_cast<double>(self->items.size()));
     });
-    method(cx, array_proto, "slice", [](context & c, std::span<value> a) {
-        array_object * self = detail::this_array(c);
+    method(cx, array_proto, "slice", 2, [](context & c, std::span<value> a) {
+        const value self = c.current_this();
         value out = c.make_array();
-        if (self == nullptr) { return out; }
-        const std::size_t n = self->items.size();
-        const std::size_t from = clamp_index(a.empty() ? 0 : num_at(a, 0), n);
-        const std::size_t to = a.size() > 1 ? clamp_index(num_at(a, 1), n) : n;
+        if (!detail::coercible_this(c, self, "slice")) { return out; }
+        const double len = detail::array_like_length(c, self);
+        const double raw_from = integer_arg(c, a, 0);
+        double k = raw_from < 0 ? std::max(len + raw_from, 0.0) : std::min(raw_from, len);
+        const double raw_to = has_index(a, 1) ? integer_arg(c, a, 1) : len;
+        const double to = raw_to < 0 ? std::max(len + raw_to, 0.0) : std::min(raw_to, len);
+        const context::rooted keep(c, out);
         auto * result = static_cast<array_object *>(out.as_heap());
-        for (std::size_t i = from; i < to; ++i) { result->items.push_back(self->items[i]); }
+        // The count is the SPAN, not the number of elements found: a hole in
+        // the middle leaves an undefined behind rather than shortening the
+        // result, which is what `A.length = n` at the end of 23.1.3.28 says.
+        for (; k < to; k += 1.0) { result->items.push_back(detail::element_at(c, self, k)); }
         return out;
     });
-    method(cx, array_proto, "splice", [](context & c, std::span<value> a) {
+    method(cx, array_proto, "splice", 2, [](context & c, std::span<value> a) {
         array_object * self = detail::this_array(c);
         value removed = c.make_array();
         if (self == nullptr) { return removed; }
@@ -214,39 +245,107 @@ void install_array(context & cx) {
         }
         return removed;
     });
-    method(cx, array_proto, "indexOf", [](context & c, std::span<value> a) {
-        array_object * self = detail::this_array(c);
-        if (self == nullptr) { return value::number(-1); }
-        for (std::size_t i = 0; i < self->items.size(); ++i) {
-            if (self->items[i].strict_equals(arg_at(a, 0))) {
-                return value::number(static_cast<double>(i));
+    // `fromIndex`, WHICH BOTH SEARCHES ACCEPTED AND NEITHER READ. `xs.indexOf(v,
+    // 5)` searched from 0, so a scan-from-here loop - the standard way to find
+    // every occurrence - found the first one forever.
+    method(cx, array_proto, "indexOf", 1, [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, "indexOf")) { return value::number(-1); }
+        const double len = detail::array_like_length(c, self);
+        if (len == 0) { return value::number(-1); }
+        const double n = a.size() > 1 ? integer_arg(c, a, 1) : 0.0;
+        if (std::isinf(n) && n > 0) { return value::number(-1); }
+        double k = n >= 0 ? n : len + n;
+        if (k < 0) { k = 0; }
+        const value target = arg_at(a, 0);
+        for (; k < len; k += 1.0) {
+            if (detail::has_element(c, self, k) &&
+                detail::element_at(c, self, k).strict_equals(target)) {
+                return value::number(k);
             }
         }
         return value::number(-1);
     });
-    method(cx, array_proto, "includes", [](context & c, std::span<value> a) {
-        array_object * self = detail::this_array(c);
-        if (self == nullptr) { return value::boolean(false); }
-        for (const value & item : self->items) {
-            if (item.strict_equals(arg_at(a, 0))) { return value::boolean(true); }
+    method(cx, array_proto, "lastIndexOf", 1, [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, "lastIndexOf")) { return value::number(-1); }
+        const double len = detail::array_like_length(c, self);
+        if (len == 0) { return value::number(-1); }
+        // The default is the LAST index, not the first, and a negative
+        // fromIndex counts back from the end without clamping up to 0 - it
+        // clamps the search away entirely.
+        const double n = a.size() > 1 ? integer_arg(c, a, 1) : len - 1;
+        if (std::isinf(n) && n < 0) { return value::number(-1); }
+        double k = n >= 0 ? std::min(n, len - 1) : len + n;
+        const value target = arg_at(a, 0);
+        for (; k >= 0; k -= 1.0) {
+            if (detail::has_element(c, self, k) &&
+                detail::element_at(c, self, k).strict_equals(target)) {
+                return value::number(k);
+            }
+        }
+        return value::number(-1);
+    });
+    method(cx, array_proto, "includes", 1, [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, "includes")) { return value::boolean(false); }
+        const double len = detail::array_like_length(c, self);
+        if (len == 0) { return value::boolean(false); }
+        const double n = a.size() > 1 ? integer_arg(c, a, 1) : 0.0;
+        if (std::isinf(n) && n > 0) { return value::boolean(false); }
+        double k = n >= 0 ? n : len + n;
+        if (k < 0) { k = 0; }
+        const value target = arg_at(a, 0);
+        const bool want_nan = target.is_number() && std::isnan(target.as_number());
+        for (; k < len; k += 1.0) {
+            // SameValueZero (7.2.11), not strict equality: `includes` is the
+            // one search that FINDS A NaN, which is the whole reason it exists
+            // beside `indexOf`. And it does not skip a hole - it reads one as
+            // undefined - so `[, 1].includes(undefined)` is true.
+            const value item = detail::element_at(c, self, k);
+            if (want_nan ? (item.is_number() && std::isnan(item.as_number()))
+                         : item.strict_equals(target)) {
+                return value::boolean(true);
+            }
         }
         return value::boolean(false);
     });
-    method(cx, array_proto, "join", [](context & c, std::span<value> a) {
-        array_object * self = detail::this_array(c);
-        if (self == nullptr) { return c.string(std::string{}); }
-        const std::string sep = a.empty() ? "," : c.to_string(a[0]);
+    method(cx, array_proto, "join", 1, [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, "join")) { return c.string(std::string{}); }
+        const double len = detail::array_like_length(c, self);
+        // AN ABSENT SEPARATOR AND AN EXPLICIT `undefined` BOTH MEAN ",". The
+        // argument COUNT was tested instead, so `[1, 2].join(undefined)` was
+        // "1undefined2".
+        const std::string sep = has_index(a, 0) ? c.to_string(a[0]) : std::string{","};
         std::string out;
-        for (std::size_t i = 0; i < self->items.size(); ++i) {
-            if (i > 0) { out += sep; }
+        for (double k = 0; k < len; k += 1.0) {
+            if (k > 0) { out += sep; }
             // null and undefined join as EMPTY, not as "null"/"undefined".
-            if (!self->items[i].is_undefined() && !self->items[i].is_null()) {
-                out += c.to_string(self->items[i]);
-            }
+            const value item = detail::element_at(c, self, k);
+            if (!item.is_nullish()) { out += c.to_string(item); }
         }
         return c.string(out);
     });
-    method(cx, array_proto, "concat", [](context & c, std::span<value> a) {
+    // 23.1.3.32. Every element is asked for its OWN `toLocaleString`, which is
+    // the only difference from `join(",")` and is what makes a Date or a Number
+    // in an array format itself.
+    method(cx, array_proto, "toLocaleString", 0, [](context & c, std::span<value>) {
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, "toLocaleString")) { return c.string(std::string{}); }
+        const double len = detail::array_like_length(c, self);
+        std::string out;
+        for (double k = 0; k < len; k += 1.0) {
+            if (k > 0) { out += ','; }
+            const value item = detail::element_at(c, self, k);
+            if (item.is_nullish()) { continue; }
+            const value fn = c.lookup_property(item, "toLocaleString");
+            out += fn.is_callable() ? c.to_string(c.call(fn, std::span<const value>{}, item))
+                                    : c.to_string(item);
+        }
+        return c.string(out);
+    });
+    method(cx, array_proto, "concat", 1, [](context & c, std::span<value> a) {
         array_object * self = detail::this_array(c);
         value out = c.make_array();
         auto * result = static_cast<array_object *>(out.as_heap());
@@ -261,7 +360,7 @@ void install_array(context & cx) {
         }
         return out;
     });
-    method(cx, array_proto, "reverse", [](context & c, std::span<value>) {
+    method(cx, array_proto, "reverse", 0, [](context & c, std::span<value>) {
         array_object * self = detail::this_array(c);
         if (self != nullptr) { std::ranges::reverse(self->items); }
         return c.current_this();
@@ -269,22 +368,48 @@ void install_array(context & cx) {
     // The iteration methods call back INTO the VM, which is what
     // context::call() exists for. Each snapshots the item first, because the
     // callback may mutate the array underneath it.
-    const auto each = [](context & c, std::span<value> a, auto && body) {
-        array_object * self = detail::this_array(c);
-        if (self == nullptr) { return; }
+    //
+    // ALL OF THEM ARE GENERIC OVER THE RECEIVER now (detail::array_like_length
+    // and the two accessors beside it say why), ALL OF THEM TAKE A `thisArg`,
+    // and all of them refuse a non-callable callback with a TypeError. The
+    // second was accepted and dropped - a callback written as a method and
+    // handed its object explicitly ran against `undefined` - and the third is
+    // 141 of built-ins/Array's "Expected a TypeError to be thrown but no
+    // exception was thrown at all" (measured 2026-09-07).
+    //
+    // `body` gets the index, the element and what the callback answered, and
+    // returns false to stop. `each` reports whether it ran to the end, which is
+    // what `every` needs and what a `return` out of the middle is not.
+    const auto each = [](context & c, std::span<value> a, const char * name, auto && body) {
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, name)) { return false; }
         const value callback = arg_at(a, 0);
-        for (std::size_t i = 0; i < self->items.size(); ++i) {
-            const value call_args[3] = {self->items[i], value::number(static_cast<double>(i)),
-                                        c.current_this()};
-            if (!body(i, c.call(callback, call_args))) { return; }
+        if (!detail::callable_arg(c, callback, "callback")) { return false; }
+        const value this_arg = arg_at(a, 1);
+        const double len = detail::array_like_length(c, self);
+        for (double k = 0; k < len; k += 1.0) {
+            // A HOLE IS SKIPPED, not visited with undefined. That is the whole
+            // difference between `[, 1].forEach(f)` calling back once and
+            // twice, and it is what the array-like tests are written around.
+            if (!detail::has_element(c, self, k)) { continue; }
+            const value item = detail::element_at(c, self, k);
+            const value call_args[3] = {item, value::number(k), self};
+            if (!body(k, item, c.call(callback, call_args, this_arg))) { return false; }
         }
+        return true;
     };
-    method(cx, array_proto, "forEach", [each](context & c, std::span<value> a) {
-        each(c, a, [](std::size_t, value) { return true; });
+    method(cx, array_proto, "forEach", 1, [each](context & c, std::span<value> a) {
+        (void)each(c, a, "forEach", [](double, value, value) { return true; });
         return value::undefined();
     });
-    method(cx, array_proto, "map", [each](context & c, std::span<value> a) {
+    method(cx, array_proto, "map", 1, [](context & c, std::span<value> a) {
+        const value self = c.current_this();
         value out = c.make_array();
+        if (!detail::coercible_this(c, self, "map")) { return out; }
+        const value callback = arg_at(a, 0);
+        if (!detail::callable_arg(c, callback, "callback")) { return out; }
+        const value this_arg = arg_at(a, 1);
+        const double len = detail::array_like_length(c, self);
         // THE RESULT IS A C++ LOCAL ACROSS EVERY CALLBACK, and a C++ local is
         // in none of the collector's roots. It is allocated BEFORE the first
         // call, so a callback that collects - `$262.gc()`, or gc stress, which
@@ -295,164 +420,151 @@ void install_array(context & cx) {
         // was only reachable through the array that had already been freed.
         // context::rooted is the primitive for exactly this.
         const context::rooted keep(c, out);
-        auto * result = static_cast<array_object *>(out.as_heap());
-        each(c, a, [&](std::size_t, value produced) {
-            result->items.push_back(produced);
-            return true;
-        });
+        // ArrayCreate(len) FIRST, and it is what refuses a `length` of 2^32.
+        // Sizing it up front is also the only way a hole in the source can
+        // stay a hole in the result rather than shifting everything after it.
+        if (detail::new_array_of_length(c, out, len) == nullptr) { return out; }
+        for (double k = 0; k < len; k += 1.0) {
+            if (!detail::has_element(c, self, k)) { continue; }
+            const value call_args[3] = {detail::element_at(c, self, k), value::number(k), self};
+            detail::put_element(c, out, k, c.call(callback, call_args, this_arg));
+        }
         return out;
     });
-    method(cx, array_proto, "filter", [](context & c, std::span<value> a) {
-        array_object * self = detail::this_array(c);
+    method(cx, array_proto, "filter", 1, [each](context & c, std::span<value> a) {
         value out = c.make_array();
-        if (self == nullptr) { return out; }
         // Unrooted exactly as `map`'s was. It survived only because the values
         // it collects are also in the rooted source array - the ARRAY itself
         // was still freed under the push, which asan reports and which is not
         // something to leave standing on the strength of a coincidence.
         const context::rooted keep(c, out);
         auto * result = static_cast<array_object *>(out.as_heap());
-        const value callback = arg_at(a, 0);
-        for (std::size_t i = 0; i < self->items.size(); ++i) {
-            const value item = self->items[i];
-            const value call_args[3] = {item, value::number(static_cast<double>(i)),
-                                        c.current_this()};
-            if (context::truthy(c.call(callback, call_args))) { result->items.push_back(item); }
-        }
+        (void)each(c, a, "filter", [&](double, value item, value verdict) {
+            if (context::truthy(verdict)) { result->items.push_back(item); }
+            return true;
+        });
         return out;
     });
-    method(cx, array_proto, "find", [](context & c, std::span<value> a) {
-        array_object * self = detail::this_array(c);
-        if (self == nullptr) { return value::undefined(); }
+    // `find` and `findIndex` DO NOT SKIP A HOLE - 23.1.3.9 reads every index
+    // with [[Get]] and hands the callback an undefined - which is why neither
+    // goes through `each`.
+    method(cx, array_proto, "find", 1, [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, "find")) { return value::undefined(); }
         const value callback = arg_at(a, 0);
-        for (std::size_t i = 0; i < self->items.size(); ++i) {
-            const value item = self->items[i];
-            const value call_args[3] = {item, value::number(static_cast<double>(i)),
-                                        c.current_this()};
-            if (context::truthy(c.call(callback, call_args))) { return item; }
+        if (!detail::callable_arg(c, callback, "callback")) { return value::undefined(); }
+        const value this_arg = arg_at(a, 1);
+        const double len = detail::array_like_length(c, self);
+        for (double k = 0; k < len; k += 1.0) {
+            const value item = detail::element_at(c, self, k);
+            const value call_args[3] = {item, value::number(k), self};
+            if (context::truthy(c.call(callback, call_args, this_arg))) { return item; }
         }
         return value::undefined();
     });
-    method(cx, array_proto, "findIndex", [](context & c, std::span<value> a) {
-        array_object * self = detail::this_array(c);
-        if (self == nullptr) { return value::number(-1); }
+    method(cx, array_proto, "findIndex", 1, [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, "findIndex")) { return value::number(-1); }
         const value callback = arg_at(a, 0);
-        for (std::size_t i = 0; i < self->items.size(); ++i) {
-            const value call_args[3] = {self->items[i], value::number(static_cast<double>(i)),
-                                        c.current_this()};
-            if (context::truthy(c.call(callback, call_args))) {
-                return value::number(static_cast<double>(i));
-            }
+        if (!detail::callable_arg(c, callback, "callback")) { return value::number(-1); }
+        const value this_arg = arg_at(a, 1);
+        const double len = detail::array_like_length(c, self);
+        for (double k = 0; k < len; k += 1.0) {
+            const value call_args[3] = {detail::element_at(c, self, k), value::number(k), self};
+            if (context::truthy(c.call(callback, call_args, this_arg))) { return value::number(k); }
         }
         return value::number(-1);
     });
-    method(cx, array_proto, "some", [](context & c, std::span<value> a) {
-        array_object * self = detail::this_array(c);
-        if (self == nullptr) { return value::boolean(false); }
-        const value callback = arg_at(a, 0);
-        for (std::size_t i = 0; i < self->items.size(); ++i) {
-            const value call_args[3] = {self->items[i], value::number(static_cast<double>(i)),
-                                        c.current_this()};
-            if (context::truthy(c.call(callback, call_args))) { return value::boolean(true); }
-        }
-        return value::boolean(false);
+    method(cx, array_proto, "some", 1, [each](context & c, std::span<value> a) {
+        bool answer = false;
+        (void)each(c, a, "some", [&](double, value, value verdict) {
+            answer = context::truthy(verdict);
+            return !answer;
+        });
+        return value::boolean(answer);
     });
-    method(cx, array_proto, "every", [](context & c, std::span<value> a) {
-        array_object * self = detail::this_array(c);
-        if (self == nullptr) { return value::boolean(true); }
-        const value callback = arg_at(a, 0);
-        for (std::size_t i = 0; i < self->items.size(); ++i) {
-            const value call_args[3] = {self->items[i], value::number(static_cast<double>(i)),
-                                        c.current_this()};
-            if (!context::truthy(c.call(callback, call_args))) { return value::boolean(false); }
-        }
-        return value::boolean(true);
+    method(cx, array_proto, "every", 1, [each](context & c, std::span<value> a) {
+        bool answer = true;
+        (void)each(c, a, "every", [&](double, value, value verdict) {
+            answer = context::truthy(verdict);
+            return answer;
+        });
+        // A THROW MUST NOT READ AS `true`. `each` stops on a refusal from the
+        // callback AND on a TypeError it raised itself; `answer` is only
+        // meaningful in the first case, and it starts true for the empty array
+        // that 23.1.3.6 says is vacuously every.
+        return value::boolean(answer);
     });
-    method(cx, array_proto, "reduce", [](context & c, std::span<value> a) {
-        array_object * self = detail::this_array(c);
-        if (self == nullptr) { return value::undefined(); }
+    // `reduce` and `reduceRight` are one shape walked in two directions. Both
+    // throw a TypeError on an empty array with no initial value - which was an
+    // `undefined` here, and is the one error every fold is written to rely on.
+    const auto fold = [](context & c, std::span<value> a, const char * name, bool backwards) {
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, name)) { return value::undefined(); }
         const value callback = arg_at(a, 0);
-        std::size_t i = 0;
+        if (!detail::callable_arg(c, callback, "callback")) { return value::undefined(); }
+        const double len = detail::array_like_length(c, self);
+        double k = backwards ? len - 1 : 0;
+        const double step = backwards ? -1.0 : 1.0;
+        const auto in_range = [&] { return backwards ? k >= 0 : k < len; };
         value total;
         if (a.size() > 1) {
             total = a[1];
         } else {
-            if (self->items.empty()) { return value::undefined(); }
-            total = self->items[0];
-            i = 1;
+            bool found = false;
+            for (; !found && in_range(); k += step) {
+                if (detail::has_element(c, self, k)) {
+                    total = detail::element_at(c, self, k);
+                    found = true;
+                }
+            }
+            if (!found) {
+                c.throw_error("TypeError", "Reduce of empty array with no initial value");
+                return value::undefined();
+            }
         }
-        for (; i < self->items.size(); ++i) {
-            const value call_args[4] = {total, self->items[i],
-                                        value::number(static_cast<double>(i)), c.current_this()};
+        // The callback is a C++ local across every call it makes, and the only
+        // reference to it once whatever produced it has been overwritten -
+        // exactly the hazard `map` and `sort` document above.
+        const context::rooted keep_callback(c, callback);
+        for (; in_range(); k += step) {
+            // THE ACCUMULATOR IS ROOTED PER ITERATION, not once: `rooted` takes
+            // a COPY, so a root taken before the loop would pin the initial
+            // value and leave every accumulator the callback produces after it
+            // unreachable. Constructing it first thing in the body covers the
+            // element read and the call; between the destructor here and the
+            // constructor on the next turn nothing allocates.
+            const context::rooted keep_total(c, total);
+            if (!detail::has_element(c, self, k)) { continue; }
+            const value call_args[4] = {total, detail::element_at(c, self, k), value::number(k),
+                                        self};
             total = c.call(callback, call_args);
         }
         return total;
-    });
-    method(cx, array_proto, "sort", [](context & c, std::span<value> a) {
-        array_object * self = detail::this_array(c);
-        if (self == nullptr) { return c.current_this(); }
-        const value comparator = arg_at(a, 0);
-        if (comparator.is_callable()) {
-            // A BOTTOM-UP MERGE SORT, and every word of that is load-bearing.
-            //
-            // `std::sort` would be undefined behaviour with an inconsistent
-            // comparator, and a comparator written in JavaScript can be
-            // anything at all - it can return random numbers, or mutate the
-            // array it is sorting. That is why this was a stable INSERTION
-            // sort: it cannot be talked into reading out of bounds.
-            //
-            // But it was O(n^2), measured: 250 elements 0.5 ms, 4000 elements
-            // 104 ms, tracking n^2 to within a tenth. Ten thousand would be
-            // most of a second and a page would look hung.
-            //
-            // Merge sort keeps the property that mattered. Each merge reads
-            // only within two index ranges it computed itself, so no answer the
-            // comparator gives can move an index out of them - the safety comes
-            // from the STRUCTURE rather than from the comparator behaving. It
-            // is stable, which the specification requires. And it is n log n.
-            //
-            // ON A SNAPSHOT, which is a robustness fix rather than a speed one.
-            // The old loop indexed `self->items` while calling out to the
-            // comparator, so a comparator that shortened the array - `a.sort(()
-            // => { a.length = 0; return 0; })` - left it indexing past the end.
-            // Sorting a copy and writing it back cannot: the comparator may do
-            // what it likes to the array meanwhile.
-            std::vector<value> work = self->items;
-            // ...AND THE SNAPSHOT IS THE ONLY REFERENCE THERE IS once the
-            // comparator has emptied the array. A bare std::vector<value> is in
-            // none of the collector's roots, so `a.sort(function (x, y) {
-            // a.length = 0; $262.gc(); ... })` freed every element that was not
-            // currently an argument and the next merge step read them - a
-            // segfault in Release and a heap-use-after-free under asan. The
-            // work vector is permuted, never added to, so rooting the initial
-            // contents roots every value this loop can reach.
-            const context::rooted_values keep_work(c, work);
-            // The comparator is a C++ local too, and the only reference to it
-            // once whatever produced it has been overwritten.
-            const context::rooted keep_comparator(c, comparator);
-            const std::size_t n = work.size();
-            if (n > 1) {
-                std::vector<value> spare(n);
-                for (std::size_t width = 1; width < n; width *= 2) {
-                    for (std::size_t lo = 0; lo < n; lo += 2 * width) {
-                        const std::size_t mid = std::min(lo + width, n);
-                        const std::size_t hi = std::min(lo + 2 * width, n);
-                        std::size_t left = lo, right = mid, out = lo;
-                        while (left < mid && right < hi) {
-                            // `<= 0` TAKES THE LEFT, which is what makes this
-                            // stable: equal elements keep their order.
-                            const value pair[2] = {work[left], work[right]};
-                            const double order = context::to_number(c.call(comparator, pair));
-                            spare[out++] = order <= 0 ? work[left++] : work[right++];
-                        }
-                        while (left < mid) { spare[out++] = work[left++]; }
-                        while (right < hi) { spare[out++] = work[right++]; }
-                    }
-                    work.swap(spare);
-                }
-            }
-            self->items = std::move(work);
-        } else {
+    };
+    method(cx, array_proto, "reduce", 1,
+           [fold](context & c, std::span<value> a) { return fold(c, a, "reduce", false); });
+    method(cx, array_proto, "reduceRight", 1,
+           [fold](context & c, std::span<value> a) { return fold(c, a, "reduceRight", true); });
+    // SORTING A VECTOR, once, for both `sort` and `toSorted`.
+    //
+    // It was inline in `sort` and `toSorted` needs exactly the same thing over
+    // a copy; two spellings of a merge sort that has this much reasoning behind
+    // it is how the two of them come to disagree about stability.
+    const auto sort_values = [](context & c, std::vector<value> & work, value comparator) {
+        // ...AND THE VECTOR IS THE ONLY REFERENCE THERE IS once the comparator
+        // has emptied the array it came from. A bare std::vector<value> is in
+        // none of the collector's roots, so `a.sort(function (x, y) {
+        // a.length = 0; $262.gc(); ... })` freed every element that was not
+        // currently an argument and the next merge step read them - a segfault
+        // in Release and a heap-use-after-free under asan. The work vector is
+        // permuted, never added to, so rooting the initial contents roots every
+        // value this loop can reach.
+        const context::rooted_values keep_work(c, work);
+        // The comparator is a C++ local too, and the only reference to it once
+        // whatever produced it has been overwritten.
+        const context::rooted keep_comparator(c, comparator);
+        if (!comparator.is_callable()) {
             // The default really is lexicographic on the STRING form, which is
             // why [10, 9].sort() is [10, 9].
             //
@@ -462,28 +574,99 @@ void install_array(context & cx) {
             // thousand items paid for twenty thousand conversions to answer a
             // thousand questions.
             //
-            // ON A SNAPSHOT TOO, and for the same two reasons the comparator
-            // path sorts one. THIS PATH ALSO RUNS PAGE JAVASCRIPT: `to_string`
-            // of an object calls the page's own `toString`. That code could
-            // push to the very array this loop was walking with a range-for -
-            // which invalidates the iterators - and could empty it, after which
-            // the write-back below indexed `self->items` past the end. Neither
-            // needed a comparator to reach; `[].sort()` was enough.
-            std::vector<value> items = self->items;
-            const context::rooted_values keep_items(c, items);
+            // undefined SORTS LAST, ahead of the comparison rather than
+            // through it: 23.1.3.30 moves every undefined to the end and never
+            // asks about one, and ToString(undefined) is "undefined", which
+            // lands between "u" and "v" instead.
             std::vector<std::pair<std::string, value>> keyed;
-            keyed.reserve(items.size());
-            for (const value & item : items) { keyed.emplace_back(c.to_string(item), item); }
+            std::size_t undefined_count = 0;
+            keyed.reserve(work.size());
+            for (const value & item : work) {
+                if (item.is_undefined()) {
+                    ++undefined_count;
+                } else {
+                    keyed.emplace_back(c.to_string(item), item);
+                }
+            }
             std::ranges::stable_sort(keyed, {}, &std::pair<std::string, value>::first);
-            // ASSIGNED, not written slot by slot - the same thing the
-            // comparator arm does with its own snapshot, so the two arms agree
-            // about what the array holds afterwards. Where nothing mutated
-            // during to_string the two spellings are identical; where something
-            // did, this is defined and the old one was not.
-            self->items.clear();
-            self->items.reserve(keyed.size());
-            for (const auto & [key, item] : keyed) { self->items.push_back(item); }
+            work.clear();
+            for (const auto & [key, item] : keyed) { work.push_back(item); }
+            work.resize(work.size() + undefined_count, value::undefined());
+            return;
         }
+        // A BOTTOM-UP MERGE SORT, and every word of that is load-bearing.
+        //
+        // `std::sort` would be undefined behaviour with an inconsistent
+        // comparator, and a comparator written in JavaScript can be anything at
+        // all - it can return random numbers, or mutate the array it is
+        // sorting. That is why this was a stable INSERTION sort: it cannot be
+        // talked into reading out of bounds.
+        //
+        // But it was O(n^2), measured: 250 elements 0.5 ms, 4000 elements
+        // 104 ms, tracking n^2 to within a tenth. Ten thousand would be most of
+        // a second and a page would look hung.
+        //
+        // Merge sort keeps the property that mattered. Each merge reads only
+        // within two index ranges it computed itself, so no answer the
+        // comparator gives can move an index out of them - the safety comes
+        // from the STRUCTURE rather than from the comparator behaving. It is
+        // stable, which the specification requires. And it is n log n.
+        const std::size_t n = work.size();
+        if (n <= 1) { return; }
+        std::vector<value> spare(n);
+        for (std::size_t width = 1; width < n; width *= 2) {
+            for (std::size_t lo = 0; lo < n; lo += 2 * width) {
+                const std::size_t mid = std::min(lo + width, n);
+                const std::size_t hi = std::min(lo + 2 * width, n);
+                std::size_t left = lo, right = mid, out = lo;
+                while (left < mid && right < hi) {
+                    // undefined IS NEVER COMPARED, in this arm either: it sorts
+                    // after everything, so it loses every merge it is on the
+                    // left of and wins none.
+                    double order = 0;
+                    if (work[left].is_undefined()) {
+                        order = work[right].is_undefined() ? 0.0 : 1.0;
+                    } else if (work[right].is_undefined()) {
+                        order = -1.0;
+                    } else {
+                        const value pair[2] = {work[left], work[right]};
+                        order = context::to_number(c.call(comparator, pair));
+                    }
+                    // `<= 0` TAKES THE LEFT, which is what makes this stable:
+                    // equal elements keep their order. A NaN comparator answer
+                    // is treated as 0 by the same test, which 23.1.3.30 says.
+                    spare[out++] = order <= 0 ? work[left++] : work[right++];
+                }
+                while (left < mid) { spare[out++] = work[left++]; }
+                while (right < hi) { spare[out++] = work[right++]; }
+            }
+            work.swap(spare);
+        }
+    };
+    method(cx, array_proto, "sort", 1, [sort_values](context & c, std::span<value> a) {
+        const value comparator = arg_at(a, 0);
+        // The comparator is checked BEFORE the receiver is touched (23.1.3.30
+        // step 1), so `[].sort(1)` is a TypeError rather than a sorted nothing.
+        if (!comparator.is_undefined() && !comparator.is_callable()) {
+            c.throw_error("TypeError",
+                          "The comparison function must be either a function or undefined");
+            return c.current_this();
+        }
+        array_object * self = detail::this_array(c);
+        if (self == nullptr) { return c.current_this(); }
+        // ON A SNAPSHOT, which is a robustness fix rather than a speed one. The
+        // old loop indexed `self->items` while calling out to the comparator,
+        // so a comparator that shortened the array - `a.sort(() => { a.length =
+        // 0; return 0; })` - left it indexing past the end. Sorting a copy and
+        // writing it back cannot: the comparator may do what it likes to the
+        // array meanwhile.
+        std::vector<value> work = self->items;
+        sort_values(c, work, comparator);
+        // ASSIGNED, not written slot by slot, so both arms agree about what the
+        // array holds afterwards. Where nothing mutated during the sort the two
+        // spellings are identical; where something did, this is defined and the
+        // old one was not.
+        self->items = std::move(work);
         return c.current_this();
     });
     detail::constant(array_ctor, "prototype", value::object(array_proto));
@@ -491,7 +674,7 @@ void install_array(context & cx) {
     // that; the prototype did not, so once conversion started going through an
     // object's own toString an array fell back to Object.prototype's and
     // stringified as "[object Array]".
-    method(cx, array_proto, "toString", [](context & c, std::span<value>) {
+    method(cx, array_proto, "toString", 0, [](context & c, std::span<value>) {
         auto * self = detail::this_array(c);
         if (self == nullptr) { return c.string(""); }
         std::string out;
@@ -505,7 +688,7 @@ void install_array(context & cx) {
     // says an iterator, for the same reason matchAll does: `for (const [i, v] of
     // xs.entries())` and a spread both work over one, which is everything
     // anybody does with them. p5's Table walks its rows with entries().
-    method(cx, array_proto, "entries", [](context & c, std::span<value>) {
+    method(cx, array_proto, "entries", 0, [](context & c, std::span<value>) {
         auto * self = detail::this_array(c);
         value out = c.make_array();
         if (self == nullptr) { return out; }
@@ -519,7 +702,7 @@ void install_array(context & cx) {
         }
         return out;
     });
-    method(cx, array_proto, "keys", [](context & c, std::span<value>) {
+    method(cx, array_proto, "keys", 0, [](context & c, std::span<value>) {
         auto * self = detail::this_array(c);
         value out = c.make_array();
         if (self == nullptr) { return out; }
@@ -529,14 +712,159 @@ void install_array(context & cx) {
         }
         return out;
     });
-    method(cx, array_proto, "values", [](context & c, std::span<value>) {
+    method(cx, array_proto, "values", 0, [](context & c, std::span<value>) {
         auto * self = detail::this_array(c);
         value out = c.make_array();
         if (self == nullptr) { return out; }
         static_cast<array_object *>(out.as_heap())->items = self->items;
         return out;
     });
-    link_constructor(cx, array_proto, "Array", value::object(array_ctor));
+    // --- THE FIVE THAT WERE NOT HERE AT ALL ---------------------------------
+    //
+    // `copyWithin` (23.1.3.4) and the four change-by-copy methods added in
+    // ES2023 - `with`, `toReversed`, `toSorted`, `toSpliced` (23.1.3.39, .33,
+    // .34, .35). test262 spends 39, 21, 17, 21 and 30 files on them and every
+    // one read "TypeError: X is undefined, not a function". All five are
+    // generic over the receiver; the four copying ones build an ordinary Array
+    // whatever they were called on, which is what the specification says and
+    // what makes `Array.prototype.toReversed.call({length: 2, ...})` an array.
+    method(cx, array_proto, "copyWithin", 2, [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, "copyWithin")) { return self; }
+        const double len = detail::array_like_length(c, self);
+        const double raw_to = integer_arg(c, a, 0);
+        double to = raw_to < 0 ? std::max(len + raw_to, 0.0) : std::min(raw_to, len);
+        const double raw_from = integer_arg(c, a, 1);
+        double from = raw_from < 0 ? std::max(len + raw_from, 0.0) : std::min(raw_from, len);
+        const double raw_end = has_index(a, 2) ? integer_arg(c, a, 2) : len;
+        const double end = raw_end < 0 ? std::max(len + raw_end, 0.0) : std::min(raw_end, len);
+        double count = std::min(end - from, len - to);
+        // OVERLAPPING RANGES COPY BACKWARDS. Forwards would overwrite a source
+        // element before reading it, which is the one thing memmove semantics
+        // are for and the one thing a naive loop gets wrong.
+        double direction = 1.0;
+        if (count > 0 && from < to && to < from + count) {
+            direction = -1.0;
+            from += count - 1;
+            to += count - 1;
+        }
+        for (; count > 0; count -= 1.0, from += direction, to += direction) {
+            if (detail::has_element(c, self, from)) {
+                detail::put_element(c, self, to, detail::element_at(c, self, from));
+            } else {
+                c.delete_index(self, value::number(to));
+            }
+        }
+        return self;
+    });
+    method(cx, array_proto, "with", 2, [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        value out = c.make_array();
+        if (!detail::coercible_this(c, self, "with")) { return out; }
+        const double len = detail::array_like_length(c, self);
+        const double relative = integer_arg(c, a, 0);
+        const double at = relative >= 0 ? relative : len + relative;
+        // OUT OF RANGE IS A RangeError, not a silent grow: `with` exists to
+        // hand back a copy of the same shape, so an index it cannot hold is
+        // a question with no answer.
+        if (at >= len || at < 0) {
+            c.throw_error("RangeError", "Invalid index");
+            return out;
+        }
+        const context::rooted keep(c, out);
+        if (detail::new_array_of_length(c, out, len) == nullptr) { return out; }
+        const value replacement = arg_at(a, 1);
+        for (double k = 0; k < len; k += 1.0) {
+            detail::put_element(c, out, k, k == at ? replacement : detail::element_at(c, self, k));
+        }
+        return out;
+    });
+    method(cx, array_proto, "toReversed", 0, [](context & c, std::span<value>) {
+        const value self = c.current_this();
+        value out = c.make_array();
+        if (!detail::coercible_this(c, self, "toReversed")) { return out; }
+        const double len = detail::array_like_length(c, self);
+        const context::rooted keep(c, out);
+        if (detail::new_array_of_length(c, out, len) == nullptr) { return out; }
+        for (double k = 0; k < len; k += 1.0) {
+            detail::put_element(c, out, k, detail::element_at(c, self, len - k - 1));
+        }
+        return out;
+    });
+    // `toSorted` and `toSpliced` READ THE WHOLE RECEIVER FIRST, into a rooted
+    // vector, and then build the result out of it. That is what the
+    // specification's SortIndexedProperties does and it is also the only shape
+    // that survives a comparator which mutates the array it was handed.
+    method(cx, array_proto, "toSorted", 1, [sort_values](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        value out = c.make_array();
+        const value comparator = arg_at(a, 0);
+        // The comparator is checked BEFORE the receiver is read, which is the
+        // order 23.1.3.34 gives and which one test262 file per method asserts.
+        if (!comparator.is_undefined() && !comparator.is_callable()) {
+            c.throw_error("TypeError", "The comparison function must be either a function or "
+                                       "undefined");
+            return out;
+        }
+        if (!detail::coercible_this(c, self, "toSorted")) { return out; }
+        const double len = detail::array_like_length(c, self);
+        if (len > max_array_length) {
+            c.throw_error("RangeError", "Invalid array length");
+            return out;
+        }
+        const context::rooted keep(c, out);
+        // READ INTO THE RESULT, not into a bare std::vector. `element_at` can
+        // run a getter, a getter can collect, and a value sitting only in a C++
+        // vector is in none of the collector's roots - the same hazard `sort`
+        // documents. Everything pushed here is reachable through `out`, which
+        // is rooted, from the moment it lands.
+        auto * result = static_cast<array_object *>(out.as_heap());
+        result->items.reserve(static_cast<std::size_t>(std::min(len, 65536.0)));
+        for (double k = 0; k < len; k += 1.0) {
+            result->items.push_back(detail::element_at(c, self, k));
+        }
+        sort_values(c, result->items, comparator);
+        return out;
+    });
+    method(cx, array_proto, "toSpliced", 2, [](context & c, std::span<value> a) {
+        const value self = c.current_this();
+        value out = c.make_array();
+        if (!detail::coercible_this(c, self, "toSpliced")) { return out; }
+        const double len = detail::array_like_length(c, self);
+        const double raw_start = integer_arg(c, a, 0);
+        const double start =
+            raw_start < 0 ? std::max(len + raw_start, 0.0) : std::min(raw_start, len);
+        const double inserted = a.size() > 2 ? static_cast<double>(a.size() - 2) : 0.0;
+        double skipped = 0;
+        if (a.empty()) {
+            skipped = 0;
+        } else if (a.size() == 1) {
+            skipped = len - start;
+        } else {
+            skipped = std::min(std::max(integer_arg(c, a, 1), 0.0), len - start);
+        }
+        const double new_len = len + inserted - skipped;
+        // 2^53-1 is a TypeError here rather than the RangeError ArrayCreate
+        // gives, because 23.1.3.35 step 12 checks it BEFORE creating anything.
+        if (new_len > max_safe_integer) {
+            c.throw_error("TypeError", "Invalid array length");
+            return out;
+        }
+        const context::rooted keep(c, out);
+        if (detail::new_array_of_length(c, out, new_len) == nullptr) { return out; }
+        double at = 0;
+        for (; at < start; at += 1.0) {
+            detail::put_element(c, out, at, detail::element_at(c, self, at));
+        }
+        for (std::size_t i = 2; i < a.size(); ++i, at += 1.0) {
+            detail::put_element(c, out, at, a[i]);
+        }
+        for (double from = start + skipped; at < new_len; at += 1.0, from += 1.0) {
+            detail::put_element(c, out, at, detail::element_at(c, self, from));
+        }
+        return out;
+    });
+    link_constructor(cx, array_proto, "Array", 1, value::object(array_ctor));
     cx.set_prototype(context::proto_kind::array, array_proto);
 }
 
@@ -671,16 +999,16 @@ void install_collections(context & cx) {
         }
         return nullptr;
     };
-    method(cx, map_proto, "get", [find_entry](context & c, std::span<value> a) {
+    method(cx, map_proto, "get", 1, [find_entry](context & c, std::span<value> a) {
         value * entry = find_entry(c, arg_at(a, 0));
         if (entry == nullptr) { return value::undefined(); }
         const auto & pair = static_cast<array_object *>(entry->as_heap())->items;
         return pair.size() > 1 ? pair[1] : value::undefined();
     });
-    method(cx, map_proto, "has", [find_entry](context & c, std::span<value> a) {
+    method(cx, map_proto, "has", 1, [find_entry](context & c, std::span<value> a) {
         return value::boolean(find_entry(c, arg_at(a, 0)) != nullptr);
     });
-    method(cx, map_proto, "set", [find_entry, entries_of](context & c, std::span<value> a) {
+    method(cx, map_proto, "set", 2, [find_entry, entries_of](context & c, std::span<value> a) {
         if (value * entry = find_entry(c, arg_at(a, 0))) {
             static_cast<array_object *>(entry->as_heap())->items[1] = arg_at(a, 1);
             return c.current_this();
@@ -694,23 +1022,24 @@ void install_collections(context & cx) {
         }
         return c.current_this();
     });
-    method(cx, map_proto, "delete", [entries_of, same_value_zero](context & c, std::span<value> a) {
-        array_object * entries = entries_of(c);
-        if (entries == nullptr) { return value::boolean(false); }
-        for (std::size_t i = 0; i < entries->items.size(); ++i) {
-            auto * pair = static_cast<array_object *>(entries->items[i].as_heap());
-            if (!pair->items.empty() && same_value_zero(pair->items[0], arg_at(a, 0))) {
-                entries->items.erase(entries->items.begin() + static_cast<std::ptrdiff_t>(i));
-                return value::boolean(true);
+    method(
+        cx, map_proto, "delete", 1, [entries_of, same_value_zero](context & c, std::span<value> a) {
+            array_object * entries = entries_of(c);
+            if (entries == nullptr) { return value::boolean(false); }
+            for (std::size_t i = 0; i < entries->items.size(); ++i) {
+                auto * pair = static_cast<array_object *>(entries->items[i].as_heap());
+                if (!pair->items.empty() && same_value_zero(pair->items[0], arg_at(a, 0))) {
+                    entries->items.erase(entries->items.begin() + static_cast<std::ptrdiff_t>(i));
+                    return value::boolean(true);
+                }
             }
-        }
-        return value::boolean(false);
-    });
-    method(cx, map_proto, "clear", [entries_of](context & c, std::span<value>) {
+            return value::boolean(false);
+        });
+    method(cx, map_proto, "clear", 0, [entries_of](context & c, std::span<value>) {
         if (array_object * entries = entries_of(c)) { entries->items.clear(); }
         return value::undefined();
     });
-    method(cx, map_proto, "forEach", [entries_of](context & c, std::span<value> a) {
+    method(cx, map_proto, "forEach", 1, [entries_of](context & c, std::span<value> a) {
         array_object * entries = entries_of(c);
         if (entries == nullptr || a.empty() || !a[0].is_callable()) { return value::undefined(); }
         // A copy: a callback that mutates the map must not invalidate the walk.
@@ -740,10 +1069,11 @@ void install_collections(context & cx) {
     };
     // Arrays, not iterators: for..of walks an array, and that is what these are
     // for. `[...map.keys()]` works; `map.keys().next()` does not.
-    method(cx, map_proto, "keys", [column](context & c, std::span<value>) { return column(c, 0); });
-    method(cx, map_proto, "values",
+    method(cx, map_proto, "keys", 0,
+           [column](context & c, std::span<value>) { return column(c, 0); });
+    method(cx, map_proto, "values", 0,
            [column](context & c, std::span<value>) { return column(c, 1); });
-    method(cx, map_proto, "entries",
+    method(cx, map_proto, "entries", 0,
            [column](context & c, std::span<value>) { return column(c, 2); });
     map_proto->define_accessor(
         "size",
@@ -765,27 +1095,27 @@ void install_collections(context & cx) {
         }
         return -1;
     };
-    method(cx, set_proto, "has", [set_index](context & c, std::span<value> a) {
+    method(cx, set_proto, "has", 1, [set_index](context & c, std::span<value> a) {
         return value::boolean(set_index(c, arg_at(a, 0)) >= 0);
     });
-    method(cx, set_proto, "add", [set_index, entries_of](context & c, std::span<value> a) {
+    method(cx, set_proto, "add", 1, [set_index, entries_of](context & c, std::span<value> a) {
         if (set_index(c, arg_at(a, 0)) < 0) {
             if (array_object * entries = entries_of(c)) { entries->items.push_back(arg_at(a, 0)); }
         }
         return c.current_this();
     });
-    method(cx, set_proto, "delete", [set_index, entries_of](context & c, std::span<value> a) {
+    method(cx, set_proto, "delete", 1, [set_index, entries_of](context & c, std::span<value> a) {
         const std::ptrdiff_t at = set_index(c, arg_at(a, 0));
         if (at < 0) { return value::boolean(false); }
         array_object * entries = entries_of(c);
         entries->items.erase(entries->items.begin() + at);
         return value::boolean(true);
     });
-    method(cx, set_proto, "clear", [entries_of](context & c, std::span<value>) {
+    method(cx, set_proto, "clear", 0, [entries_of](context & c, std::span<value>) {
         if (array_object * entries = entries_of(c)) { entries->items.clear(); }
         return value::undefined();
     });
-    method(cx, set_proto, "forEach", [entries_of](context & c, std::span<value> a) {
+    method(cx, set_proto, "forEach", 1, [entries_of](context & c, std::span<value> a) {
         array_object * entries = entries_of(c);
         if (entries == nullptr || a.empty() || !a[0].is_callable()) { return value::undefined(); }
         const std::vector<value> snapshot = entries->items;
@@ -802,12 +1132,13 @@ void install_collections(context & cx) {
         }
         return out;
     };
-    method(cx, set_proto, "values",
+    method(cx, set_proto, "values", 0,
            [members](context & c, std::span<value>) { return members(c); });
-    method(cx, set_proto, "keys", [members](context & c, std::span<value>) { return members(c); });
+    method(cx, set_proto, "keys", 0,
+           [members](context & c, std::span<value>) { return members(c); });
     // A Set's `entries` pairs each member WITH ITSELF, which looks odd and is
     // the spec: it exists so a Set and a Map can be walked by the same code.
-    method(cx, set_proto, "entries", [members](context & c, std::span<value>) {
+    method(cx, set_proto, "entries", 0, [members](context & c, std::span<value>) {
         const value all = members(c);
         value out = c.make_array();
         if (!all.is_array()) { return out; }
@@ -879,7 +1210,7 @@ void install_typed_arrays(context & cx) {
     };
 
     object_object * typed_proto = new_table(cx);
-    method(cx, typed_proto, "set", [](context & c, std::span<value> a) {
+    method(cx, typed_proto, "set", 1, [](context & c, std::span<value> a) {
         auto * self = detail::this_array(c);
         if (self == nullptr || !arg_at(a, 0).is_array()) { return value::undefined(); }
         auto * source = static_cast<array_object *>(a[0].as_heap());
@@ -897,7 +1228,7 @@ void install_typed_arrays(context & cx) {
         }
         return value::undefined();
     });
-    method(cx, typed_proto, "subarray", [](context & c, std::span<value> a) {
+    method(cx, typed_proto, "subarray", 2, [](context & c, std::span<value> a) {
         auto * self = detail::this_array(c);
         value out = c.make_array();
         if (self == nullptr) { return out; }
@@ -1006,9 +1337,9 @@ void install_typed_arrays(context & cx) {
             }
             return out;
         };
-        method(cx, ctor, "of",
+        method(cx, ctor, "of", 0,
                [build](context & c, std::span<value> a) { return build(c, a, nullptr); });
-        method(cx, ctor, "from", [build](context & c, std::span<value> a) {
+        method(cx, ctor, "from", 1, [build](context & c, std::span<value> a) {
             const value source = arg_at(a, 0);
             const value mapper = arg_at(a, 1);
             // An iterable OR an array-like, because both reach here: p5 passes
