@@ -525,6 +525,14 @@ enum class dataset_fault : std::uint8_t {
     return given.is_nullish() ? std::string{} : cx.to_string(given);
 }
 
+// DOES THE REFLECTION TABLE ALREADY ANSWER `width` FOR THIS TAG? Declared here
+// and defined with the table itself, which is the only place that knows. The
+// wrapper installs an OWN `width`/`height` accessor pair on an element carrying
+// either attribute, and an own property shadows a prototype one - so a row for
+// `<td width>` would be dead on a parsed <td> and live on a created one, which
+// is two answers to one question. See the note where it is called.
+[[nodiscard]] bool interface_reflects_size(std::string_view tag);
+
 } // namespace
 
 // DOM 4.2.3, "ensure pre-insertion validity". Every one of these checks stands
@@ -1536,8 +1544,16 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             const value files = cx.make_array();
             static_cast<script::array_object *>(files.as_heap())->items.clear();
             obj.set("files", files);
-        } else if (txn.has_attribute(id, atoms_->intern("width")) ||
-                   txn.has_attribute(id, atoms_->intern("height"))) {
+        } else if ((txn.has_attribute(id, atoms_->intern("width")) ||
+                    txn.has_attribute(id, atoms_->intern("height"))) &&
+                   !interface_reflects_size(tag)) {
+            // AND NOT WHERE THE TABLE HAS A ROW. `<td width=50>`, `<marquee
+            // width=50>` and `<iframe width=50>` reflect a DOMString - "50",
+            // not 50 - and `<input width=50>` an unsigned long with HTML's
+            // integer rules rather than the digit loop above. This branch is
+            // what is left: an element whose interface says nothing about
+            // width, `<div width=50>` and `<svg width=50>` among them, where a
+            // number is better than nothing at all.
             reflect_size("width", 0);
             reflect_size("height", 0);
         }
@@ -3153,6 +3169,7 @@ constexpr reflected_attribute reflection_table[] = {
 
     // --- metadata
     text_attr("HTMLBaseElement", "target"),
+    url_attr("HTMLBaseElement", "href"),
     url_attr("HTMLLinkElement", "href"),
     nullable_enum_attr("HTMLLinkElement", "crossOrigin", cors_keywords, "anonymous", "crossorigin"),
     text_attr("HTMLLinkElement", "rel"),
@@ -3217,6 +3234,8 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLIFrameElement", "frameBorder", "frameborder"),
     text_attr("HTMLIFrameElement", "marginHeight", "marginheight"),
     text_attr("HTMLIFrameElement", "marginWidth", "marginwidth"),
+    text_attr("HTMLIFrameElement", "width"),
+    text_attr("HTMLIFrameElement", "height"),
     url_attr("HTMLIFrameElement", "longDesc", "longdesc"),
     bool_attr("HTMLIFrameElement", "allowFullscreen", "allowfullscreen"),
     enum_attr("HTMLIFrameElement", "referrerPolicy", referrer_keywords, "", "", "referrerpolicy"),
@@ -3224,6 +3243,8 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLEmbedElement", "type"),
     text_attr("HTMLEmbedElement", "align"),
     text_attr("HTMLEmbedElement", "name"),
+    text_attr("HTMLEmbedElement", "width"),
+    text_attr("HTMLEmbedElement", "height"),
     text_attr("HTMLObjectElement", "type"),
     text_attr("HTMLObjectElement", "name"),
     text_attr("HTMLObjectElement", "useMap", "usemap"),
@@ -3237,6 +3258,8 @@ constexpr reflected_attribute reflection_table[] = {
     ulong_attr("HTMLObjectElement", "hspace"),
     ulong_attr("HTMLObjectElement", "vspace"),
     url_attr("HTMLObjectElement", "codeBase", "codebase"),
+    text_attr("HTMLObjectElement", "width"),
+    text_attr("HTMLObjectElement", "height"),
     text_attr("HTMLParamElement", "name"),
     text_attr("HTMLParamElement", "value"),
     text_attr("HTMLParamElement", "type"),
@@ -3252,6 +3275,8 @@ constexpr reflected_attribute reflection_table[] = {
     enum_attr("HTMLMediaElement", "loading", "lazy eager", "eager", "eager"),
     url_attr("HTMLVideoElement", "poster"),
     bool_attr("HTMLVideoElement", "playsInline", "playsinline"),
+    ulong_attr("HTMLVideoElement", "width"),
+    ulong_attr("HTMLVideoElement", "height"),
     url_attr("HTMLSourceElement", "src"),
     text_attr("HTMLSourceElement", "type"),
     text_attr("HTMLSourceElement", "srcset"),
@@ -3286,12 +3311,14 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLTableElement", "bgColor", "bgcolor"),
     text_attr("HTMLTableElement", "cellPadding", "cellpadding"),
     text_attr("HTMLTableElement", "cellSpacing", "cellspacing"),
+    text_attr("HTMLTableElement", "width"),
     text_attr("HTMLTableCaptionElement", "align"),
     text_attr("HTMLTableColElement", "align"),
     text_attr("HTMLTableColElement", "ch", "char"),
     text_attr("HTMLTableColElement", "chOff", "charoff"),
     text_attr("HTMLTableColElement", "vAlign", "valign"),
     clamped_attr("HTMLTableColElement", "span", 1, 1, 1000),
+    text_attr("HTMLTableColElement", "width"),
     text_attr("HTMLTableSectionElement", "align"),
     text_attr("HTMLTableSectionElement", "ch", "char"),
     text_attr("HTMLTableSectionElement", "chOff", "charoff"),
@@ -3310,6 +3337,8 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLTableCellElement", "vAlign", "valign"),
     text_attr("HTMLTableCellElement", "bgColor", "bgcolor"),
     bool_attr("HTMLTableCellElement", "noWrap", "nowrap"),
+    text_attr("HTMLTableCellElement", "width"),
+    text_attr("HTMLTableCellElement", "height"),
     clamped_attr("HTMLTableCellElement", "colSpan", 1, 1, 1000, "colspan"),
     clamped_attr("HTMLTableCellElement", "rowSpan", 1, 0, 65534, "rowspan"),
     enum_attr("HTMLTableCellElement", "scope", "row col rowgroup colgroup", "", ""),
@@ -3341,6 +3370,9 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLInputElement", "step"),
     text_attr("HTMLInputElement", "align"),
     text_attr("HTMLInputElement", "useMap", "usemap"),
+    text_attr("HTMLInputElement", "autocomplete"),
+    ulong_attr("HTMLInputElement", "width"),
+    ulong_attr("HTMLInputElement", "height"),
     text_attr("HTMLInputElement", "defaultValue", "value"),
     bool_attr("HTMLInputElement", "defaultChecked", "checked"),
     bool_attr("HTMLInputElement", "disabled"),
@@ -3412,6 +3444,8 @@ constexpr reflected_attribute reflection_table[] = {
     ulong_attr("HTMLMarqueeElement", "scrollAmount", 6, "scrollamount"),
     ulong_attr("HTMLMarqueeElement", "scrollDelay", 85, "scrolldelay"),
     bool_attr("HTMLMarqueeElement", "trueSpeed", "truespeed"),
+    text_attr("HTMLMarqueeElement", "width"),
+    text_attr("HTMLMarqueeElement", "height"),
     enum_attr("HTMLMarqueeElement", "behavior", "scroll slide alternate", "scroll", "scroll"),
     enum_attr("HTMLMarqueeElement", "direction", "up right down left", "left", "left"),
 };
@@ -3585,6 +3619,21 @@ constexpr dom_interface interface_table[] = {
     }
     return interface_index(tag.find('-') == std::string_view::npos ? "HTMLUnknownElement"
                                                                    : "HTMLElement");
+}
+
+// ...and the question the wrapper asks before it installs its own pair. The
+// INHERITED rows count: `width` is on HTMLMediaElement, so a <video> has one
+// even though no row names HTMLVideoElement. Walked rather than cached because
+// it is asked only of an element that carries a width or height attribute.
+[[nodiscard]] bool interface_reflects_size(std::string_view tag) {
+    constexpr std::size_t count = std::size(interface_table);
+    for (std::size_t at = interface_for_tag(tag); at < count;
+         at = interface_index(interface_table[at].parent)) {
+        for (const reflected_attribute & row : reflection_table) {
+            if (row.idl == "width" && interface_index(row.interface) == at) { return true; }
+        }
+    }
+    return false;
 }
 
 // THE RULES FOR PARSING INTEGERS, HTML 2.4.4.1, which the numeric reflection

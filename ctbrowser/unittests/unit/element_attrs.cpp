@@ -596,6 +596,51 @@ void test_a_nullable_enumerated_attribute_defaults_to_null() {
        "object,object,undefined");
 }
 
+// --- and `width` is three different types, depending on who is asked ---------
+
+void test_width_and_height_reflect_the_type_their_interface_names() {
+    // `<td>`, `<marquee>` and `<iframe>` reflect width and height as DOMStrings
+    // - "50", not 50 - and `<input>` and `<video>` as unsigned longs. The
+    // corpus spells the difference out per element in `elements-tabular.js`,
+    // `elements-obsolete.js` and `elements-forms.js`, and it is not a
+    // presentation detail: `td.width + 1` is "501" and `input.width + 1` is 51.
+    is(R"JS((function () {
+        var td = document.createElement('td');
+        var marquee = document.createElement('marquee');
+        var input = document.createElement('input');
+        td.setAttribute('width', '50');
+        marquee.setAttribute('height', '6');
+        input.setAttribute('width', '50');
+        return (typeof td.width) + ',' + td.width + ',' + (typeof marquee.height) + ',' +
+               marquee.height + ',' + (typeof input.width) + ',' + input.width;
+    })())JS",
+       "string,50,string,6,number,50");
+    // THE SAME ANSWER FOR A PARSED ELEMENT. The wrapper installs its own
+    // numeric `width`/`height` pair on any element carrying either attribute,
+    // and an own property shadows the prototype - so before the table was asked
+    // first, a <td> written in the markup answered 50 and one built by script
+    // answered "50".
+    is(R"JS((function () {
+        document.body.innerHTML = '<table><tr><td width="50"></td></tr></table>' +
+                                  '<div id="plain" width="50"></div>';
+        var td = document.getElementsByTagName('td')[0];
+        var div = document.getElementById('plain');
+        return (typeof td.width) + ',' + td.width + ',' + (typeof div.width) + ',' + div.width;
+    })())JS",
+       "string,50,number,50");
+    // A number is parsed by HTML's integer rules rather than by a digit loop,
+    // so a leading sign and trailing rubbish are the attribute's problem and
+    // an unparseable one is the missing value default.
+    is(R"JS((function () {
+        var e = document.createElement('input');
+        e.setAttribute('height', ' 12abc');
+        var loose = e.height;
+        e.setAttribute('height', 'x');
+        return loose + ',' + e.height + ',' + (e.width = 7) + ',' + e.getAttribute('width');
+    })())JS",
+       "12,0,7,7");
+}
+
 } // namespace
 
 int main() {
@@ -611,5 +656,6 @@ int main() {
     test_aria_reflects_as_a_nullable_string();
     test_an_enumerated_attribute_is_limited_to_its_keywords();
     test_a_nullable_enumerated_attribute_defaults_to_null();
+    test_width_and_height_reflect_the_type_their_interface_names();
     REPORT("element_attrs");
 }
