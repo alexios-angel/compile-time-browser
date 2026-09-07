@@ -4,3 +4,6 @@
 # sibling getter retains its zero-argument signature. Saved typed C++ callables
 # receive new keys after startup and retain the same Map after owner release.
 # Missing, extra, mixed and unproved actuals must preserve every source call.
+# Primitive-producing sibling calls retain their typed results and runtime
+# order, including two mutating actuals, repeated calls and local aliases.
+# Missing/unknown/mixed results and circular evidence remain refusals.

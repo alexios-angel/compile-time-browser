@@ -507,29 +507,56 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
     for (mlir::Operation * member : familyFunctions) {
         if (!step() || creations.lookup(member) != 1) { return {}; }
     }
-    // Discover every current actual independently of the captured bodies.
-    // A body/result cannot authorize its own parameter through propertyCall.
+    // Discover all call identities before inspecting arguments or bodies.
+    // No propertyCall recursion may supply this family's own type authority.
+    llvm::SmallVector<llvm::SmallVector<mlir::Operation *>> familyCalls(publications.size());
     for (ctjs::SetPropertyOp publication : publications) {
-        HostMethodParameters parameters;
         auto member = callable(publication.getValue());
-        if (!capturedMapParameters(member, publication, prepared, parameters)) { return {}; }
-        result.parameters.push_back(std::move(parameters));
+        if (!capturedMapCalls(member, publication, prepared,
+                              familyCalls[result.parameters.size()])) {
+            return {};
+        }
+        result.parameters.push_back({member, {}});
     }
-    for (const HostMethodParameters & parameters : result.parameters) {
-        if (!capturedMapBody(parameters.function, prepared, parameters, result)) { return {}; }
+    // Only a completed body/effect proof may publish a primitive result tag.
+    // This is a dependency worklist, not an optimistic recursive type join:
+    // an unseeded cycle cannot authorize itself. No result value is evaluated
+    // or substituted, and every getter and mutation remains in runtime order.
+    llvm::DenseMap<mlir::Value, mlir::TypeID> completedResults;
+    llvm::DenseSet<mlir::Operation *> completed;
+    while (completed.size() != result.parameters.size()) {
+        bool progress = false;
+        for (unsigned index = 0; index < result.parameters.size(); ++index) {
+            if (!step()) { return {}; }
+            auto & parameters = result.parameters[index];
+            if (completed.contains(parameters.function)) { continue; }
+            if (!capturedMapParameters(parameters.function, prepared, familyCalls[index],
+                                       completedResults, parameters)) {
+                continue;
+            }
+            std::optional<mlir::TypeID> tag;
+            if (!capturedMapBody(parameters.function, prepared, parameters, result, tag)) {
+                return {};
+            }
+            if (tag) {
+                for (mlir::Operation * invocation : familyCalls[index]) {
+                    if (!step()) { return {}; }
+                    completedResults.try_emplace(invocation->getResult(0), *tag);
+                }
+            }
+            completed.insert(parameters.function);
+            progress = true;
+        }
+        if (!progress || exhausted) { return {}; }
     }
     if (exhausted) { return {}; }
     return result;
 }
 
-bool analyzer::capturedMapParameters(ctjs::FuncOp function, ctjs::SetPropertyOp publication,
-                                     bool prepared, HostMethodParameters & result) {
+bool analyzer::capturedMapCalls(ctjs::FuncOp function, ctjs::SetPropertyOp publication,
+                                bool prepared, llvm::SmallVectorImpl<mlir::Operation *> & calls) {
     if (!function || !step()) { return false; }
     auto & body = function.getBody().front();
-    const unsigned offset = prepared ? 4u : 3u;
-    const unsigned count = body.getNumArguments() - offset;
-    result.function = function;
-    bool found = false;
     const auto census = module.walk([&](mlir::Operation * operation) {
         if (!step()) { return mlir::WalkResult::interrupt(); }
         auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
@@ -565,30 +592,48 @@ bool analyzer::capturedMapParameters(ctjs::FuncOp function, ctjs::SetPropertyOp 
                 }
             }
         }
-        std::vector<mlir::TypeID> tags;
-        for (mlir::Value actual : args.drop_front(prepared ? 1u : 0u)) {
-            if (!step()) { return mlir::WalkResult::interrupt(); }
-            // This evaluator follows only independently proved primitive
-            // source values. It never queries a property call's body/result.
-            auto value = primitive(actual);
-            if (!llvm::isa_and_nonnull<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
-                                       ctjs::NullAttr, ctjs::UndefinedAttr>(value)) {
-                return mlir::WalkResult::interrupt();
-            }
-            tags.push_back(value.getTypeID());
-        }
-        if (found && result.primitiveTags != tags) { return mlir::WalkResult::interrupt(); }
-        result.primitiveTags = std::move(tags);
-        found = true;
+        calls.push_back(operation);
         return mlir::WalkResult::advance();
     });
+    return !census.wasInterrupted() && !exhausted;
+}
+
+bool analyzer::capturedMapParameters(ctjs::FuncOp function, bool prepared,
+                                     llvm::ArrayRef<mlir::Operation *> calls,
+                                     const llvm::DenseMap<mlir::Value, mlir::TypeID> & results,
+                                     HostMethodParameters & result) {
+    const unsigned count = function.getBody().front().getNumArguments() - (prepared ? 4u : 3u);
+    std::optional<std::vector<mlir::TypeID>> found;
+    for (mlir::Operation * operation : calls) {
+        if (!step()) { return false; }
+        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
+        const auto args = direct ? direct.getArgs() : llvm::cast<ctjs::CallOp>(operation).getArgs();
+        std::vector<mlir::TypeID> tags;
+        for (mlir::Value actual : args.drop_front(prepared ? 1u : 0u)) {
+            if (!step()) { return false; }
+            auto value = primitive(actual);
+            if (llvm::isa_and_nonnull<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
+                                      ctjs::NullAttr, ctjs::UndefinedAttr>(value)) {
+                tags.push_back(value.getTypeID());
+            } else if (auto known = results.find(actual); known != results.end()) {
+                tags.push_back(known->second);
+            } else {
+                return false;
+            }
+        }
+        if (found && *found != tags) { return false; }
+        found = std::move(tags);
+    }
     // An uncalled zero-argument sibling can still have its effects checked;
     // the owning plan separately requires current calls for the full family.
-    return !census.wasInterrupted() && !exhausted && (found || count == 0);
+    if (exhausted || (!found && count != 0)) { return false; }
+    result.primitiveTags = found ? std::move(*found) : std::vector<mlir::TypeID>{};
+    return true;
 }
 
 bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
-                               const HostMethodParameters & parameters, HostCapturedMap & result) {
+                               const HostMethodParameters & parameters, HostCapturedMap & result,
+                               std::optional<mlir::TypeID> & returnTag) {
     // This is an effects and ownership proof, not an evaluation of the first
     // invocation. The immutable slot always denotes this Map; its contents
     // may change at every call. A complete body census closes all writes over
@@ -598,6 +643,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
     const auto firstRead = result.reads.size();
     const auto firstUpvalue = result.upvalues.size();
     llvm::DenseSet<mlir::Value> maps, primitives;
+    llvm::DenseMap<mlir::Value, mlir::TypeID> tags;
     llvm::DenseSet<mlir::Operation *> reads, calls, upvalues;
     if (prepared) { maps.insert(body.getArgument(3)); }
     const unsigned offset = prepared ? 4u : 3u;
@@ -608,6 +654,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
     for (mlir::BlockArgument parameter : body.getArguments().drop_front(offset)) {
         if (!step()) { return false; }
         primitives.insert(parameter);
+        tags.try_emplace(parameter, parameters.primitiveTags[parameter.getArgNumber() - offset]);
     }
     ctjs::ReturnOp returned;
     for (mlir::Operation & operation : body) {
@@ -618,6 +665,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                 return false;
             }
             primitives.insert(constant.getResult());
+            tags.try_emplace(constant.getResult(), constant.getValue().getTypeID());
         } else if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
             if (prepared || load.getIndex() != 0 || load.getClosure() != body.getArgument(2)) {
                 return false;
@@ -634,7 +682,10 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
             }
             result.reads.push_back(read);
             reads.insert(read);
-            if (key == "size") { primitives.insert(read.getResult()); }
+            if (key == "size") {
+                primitives.insert(read.getResult());
+                tags.try_emplace(read.getResult(), mlir::TypeID::get<ctjs::NumberAttr>());
+            }
         } else if (auto invoke = llvm::dyn_cast<ctjs::CallOp>(operation)) {
             auto read = invoke.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
             if (!read || !reads.contains(read) || read.getObject() != invoke.getReceiver()) {
@@ -653,6 +704,9 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                 maps.insert(invoke.getResult());
             } else {
                 primitives.insert(invoke.getResult());
+                if (key == "has" || key == "delete") {
+                    tags.try_emplace(invoke.getResult(), mlir::TypeID::get<ctjs::BooleanAttr>());
+                }
             }
         } else if (auto ret = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
             if (returned || !primitives.contains(ret.getValue())) { return false; }
@@ -702,6 +756,9 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
             return false;
         }
     }
+    // Map.get remains primitive but potentially nullable/mixed. Its complete
+    // carrier needs a separate contents/presence proof, never a guessed tag.
+    if (auto tag = tags.find(returned.getValue()); tag != tags.end()) { returnTag = tag->second; }
     return true;
 }
 

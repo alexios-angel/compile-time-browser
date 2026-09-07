@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute checked published Map methods and typed arguments without the VM."""
+"""Execute checked published Map methods and live primitive results without the VM."""
 
 import argparse
 import importlib.util
@@ -23,6 +23,7 @@ SHARED = SHARED.replace("var trace = host.slot.get();",
     "host.slot.set(); var trace = host.slot.get();")
 PARAMETER = SHARED.replace("set() { state.set('x', 1)", "set(key) { state.set(key, 1)")
 PARAMETER = PARAMETER.replace("host.slot.set();", "host.slot.set('x');")
+CALL_RESULT = PARAMETER.replace("host.slot.set('x');", "host.slot.set(host.slot.get());")
 
 
 def parameter_sources():
@@ -40,6 +41,100 @@ def parameter_sources():
             "set(key, value) { state.set(key, value)").replace("host.slot.set('x');",
             "host.slot.set('x', 1); host.slot.set('y', 2); host.slot.set('x', 3);"), "host", 2),
     }
+
+
+def result_sources():
+    observed_size = CALL_RESULT.replace("get() { return state.size; },",
+        "size() { return state.size; }, get() { return state.has(false); },")
+    observed_size = observed_size.replace("var trace = host.slot.get();",
+                                          "var trace = host.slot.size();")
+    repeated_bool = observed_size.replace("host.slot.set(host.slot.get());",
+        "host.slot.set(host.slot.get()); host.slot.set(host.slot.get());")
+    return {
+        "parameter_call_result": (CALL_RESULT, "host", 1),
+        "result_reverse_members": (CALL_RESULT.replace(
+            "get() { return state.size; }, set(key) { state.set(key, 1); return state.size; }",
+            "set(key) { state.set(key, 1); return state.size; }, get() { return state.size; }"),
+            "host", 1),
+        "result_repeated": (CALL_RESULT.replace("host.slot.set(host.slot.get());",
+            "host.slot.set(host.slot.get()); host.slot.set(host.slot.get());"), "host", 2),
+        "result_alias": (CALL_RESULT.replace("get() { return state.size; }",
+            "get() { const result = state.size; return result; }")
+            .replace("set(key) { state.set(key, 1)",
+                     "set(key) { const alias = key; state.set(alias, 1)"), "host", 1),
+        # JS evaluates the two actuals left to right. The first inserts key 0
+        # and yields 1; the second inserts key 1 and yields 2. The setter must
+        # overwrite key 1. Reversing the actuals instead inserts key 2, making
+        # the final growing getter return 4 rather than 3.
+        "result_argument_order": (CALL_RESULT.replace("get() { return state.size; }",
+            "get() { state.set(state.size, 1); return state.size; }")
+            .replace("set(key) { state.set(key, 1)", "set(key, value) { state.set(key, value)")
+            .replace("host.slot.set(host.slot.get());",
+                     "host.slot.set(host.slot.get(), host.slot.get());"), "host", 3),
+        "result_bool": (repeated_bool, "host", 2),
+        "result_delete": (observed_size.replace("state.has(false)", "state.delete(false)")
+            .replace("host.slot.set(host.slot.get());",
+                     "host.slot.set(host.slot.get()); " * 3), "host", 2),
+        "result_string": (observed_size.replace("return state.has(false);",
+            "state.set('produced', 1); return '" + "result-key-" * 12 + "';"), "host", 2),
+        "result_formal": (observed_size.replace("get() { return state.has(false); }",
+            "get(key) { state.has(key); return key; }")
+            .replace("host.slot.set(host.slot.get());", "host.slot.set(host.slot.get(7));"),
+            "host", 1),
+    }
+
+
+RESULT_SIGNATURES = {
+    "parameter_call_result": ("js_num", "js_num", 5),
+    "result_reverse_members": ("js_num", "js_num", 5),
+    "result_repeated": ("js_num", "js_num", 5),
+    "result_alias": ("js_num", "js_num", 5),
+    "result_argument_order": ("js_num", "js_num, js_num", 5),
+    "result_bool": ("bool", "bool", 6),
+    "result_delete": ("bool", "bool", 6),
+    "result_string": ("std::string", "std::string", 6),
+    "result_formal": ("js_num", "js_num", 6),
+}
+
+
+def check_result_calls(cpp, name, mode):
+    entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
+    if not entry:
+        raise RuntimeError(f"{name}/{mode}: missing native entry for result-call census")
+    methods_by_value = dict(re.findall(
+        r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1]))
+    calls = re.findall(
+        r"(?:\b(\w+)\s*=\s*)?ctnative::invoke_callable\((\w+)([^;\n]*)\);", entry[1])
+    sequence, pending = [], []
+    for result, callee, arguments in calls:
+        method = methods_by_value.get(callee)
+        if not method:
+            raise RuntimeError(f"{name}/{mode}: result call lost its current method binding")
+        sequence.append(method)
+        if method == "get":
+            if not result:
+                raise RuntimeError(f"{name}/{mode}: dropped the producing call's result")
+            pending.append(result)
+        elif method == "set":
+            actuals = [argument.strip() for argument in arguments.split(",")[1:]]
+            actuals = [re.sub(r"^std::move\((\w+)\)$", r"\1", argument)
+                       for argument in actuals]
+            if not pending or actuals != pending:
+                raise RuntimeError(f"{name}/{mode}: setter lost live producing-call operands/order")
+            pending.clear()
+    expected = {
+        "parameter_call_result": ["get", "set", "get"],
+        "result_reverse_members": ["get", "set", "get"],
+        "result_repeated": ["get", "set", "get", "set", "get"],
+        "result_alias": ["get", "set", "get"],
+        "result_argument_order": ["get", "get", "set", "get"],
+        "result_bool": ["get", "set", "get", "set", "size"],
+        "result_delete": ["get", "set", "get", "set", "get", "set", "size"],
+        "result_string": ["get", "set", "size"],
+        "result_formal": ["get", "set", "size"],
+    }[name]
+    if sequence != expected or "ctnative::map_set(" not in cpp:
+        raise RuntimeError(f"{name}/{mode}: lost runtime getter/mutation/final observation calls")
 
 
 def source_calls(text):
@@ -262,6 +357,13 @@ def standalone(args, output, name, value, compilers, nm):
                       "shared_two_parameters": "std::string, js_num"}.get(name, "std::string")
             if f"std::function<js_num({params})>" not in cpp:
                 raise RuntimeError(f"{name}/{mode}: missing typed setter arguments\n{cpp}")
+        if name in RESULT_SIGNATURES:
+            result, params, _ = RESULT_SIGNATURES[name]
+            getter_params = "js_num" if name == "result_formal" else ""
+            if (f"std::function<{result}({getter_params})>" not in cpp
+                    or f"std::function<js_num({params})>" not in cpp):
+                raise RuntimeError(f"{name}/{mode}: missing typed producer/consumer signatures\n{cpp}")
+            check_result_calls(cpp, name, mode)
         source = args.work / f"{name}.{mode}.cpp"
         source.write_text(cpp)
         for index, compiler in enumerate(compilers):
@@ -321,13 +423,33 @@ def parameter_refusals():
         "parameter_callback": PARAMETER.replace("host.slot.set('x');",
             "host.slot.set(function() { return 'x'; });"),
         "parameter_unproved": PARAMETER.replace("host.slot.set('x');", "host.slot.set(host.key);"),
-        "parameter_call_result": PARAMETER.replace("host.slot.set('x');",
-            "host.slot.set(host.slot.get());"),
         "parameter_getter_extra": PARAMETER.replace("host.slot.get();", "host.slot.get('x');"),
         "parameter_second_missing": parameter_sources()["shared_two_parameters"][0]
                                     + "\nhost.slot.set('z');",
         "parameter_second_heterogeneous": parameter_sources()["shared_two_parameters"][0]
                                           + "\nhost.slot.set('z', true);",
+    }
+
+
+def result_refusals():
+    return {
+        "result_unknown_map_get": CALL_RESULT.replace("get() { return state.size; }",
+            "get() { return state.get(0); }"),
+        "result_seeded_map_get": CALL_RESULT.replace("get() { return state.size; }",
+            "get() { state.set(0, 1); return state.get(0); }"),
+        "result_unknown_effect": CALL_RESULT.replace("get() { return state.size; }",
+            "get() { inspect(state); return state.size; }"),
+        "result_unknown_call": CALL_RESULT.replace("get() { return state.size; }",
+            "get() { state.has(0); return inspect(); }"),
+        "result_recursive": CALL_RESULT.replace("get() { return state.size; }",
+            "get() { state.has(0); return host.slot.get(); }"),
+        "result_mixed_return": CALL_RESULT.replace("get() { return state.size; }",
+            "get() { if (state.has(0)) { return 1; } return false; }"),
+        "result_mixed_actual": CALL_RESULT + "\nhost.slot.set('x');",
+        "result_missing_actual": CALL_RESULT.replace("get() { return state.size; }",
+            "get(key) { state.has(key); return state.size; }"),
+        "result_map_return": CALL_RESULT.replace("get() { return state.size; }",
+            "get() { return state; }"),
     }
 
 
@@ -436,11 +558,13 @@ def main():
                          "size() { return state.size; }, get() { return state.size; },")
                          + "\ntrace = host.slot.size();", "host", 1),
         **parameter_sources(),
+        **result_sources(),
     }
     saved = {}
     for name, (source, binding, value) in positives.items():
         js, ir, count = boundary.prepare(args, name, source)
-        functions = 6 if name == "shared_three" else 5 if name.startswith("shared") else 4
+        functions = (RESULT_SIGNATURES[name][2] if name in RESULT_SIGNATURES
+                     else 6 if name == "shared_three" else 5 if name.startswith("shared") else 4)
         if count != functions:
             raise RuntimeError(f"{name}: lost the {functions}-function source chain")
         if name == "already_resolved":
@@ -500,6 +624,8 @@ def main():
     rollback += check_budgets(args, shared_ir, shared_config, "shared_growing", functions=5)
     parameter_ir, parameter_config, parameter_output = saved["shared_parameter"]
     rollback += check_budgets(args, parameter_ir, parameter_config, "shared_parameter", functions=5)
+    result_ir, result_config, result_output = saved["parameter_call_result"]
+    rollback += check_budgets(args, result_ir, result_config, "parameter_call_result", functions=5)
 
     for name, source in refusal_sources().items():
         _, rejected, _ = boundary.prepare(args, name, source)
@@ -549,12 +675,63 @@ def main():
             forged_config = contract(args, forged, "parameter-forged")
             failed = methods.refused(args, forged, "parameter-forged", forged_config, admitted=0)
             check_call_preservation(forged.read_text(), failed.read_text(), "parameter-forged")
+    for name, source in result_refusals().items():
+        _, rejected, count = boundary.prepare(args, name, source)
+        if count != 5:
+            raise RuntimeError(f"{name}: changed result-refusal source denominator")
+        fresh = contract(args, rejected, name)
+        failed = methods.refused(args, rejected, name, fresh, admitted=0)
+        check_call_preservation(rejected.read_text(), failed.read_text(), name)
+        if name == "result_unknown_map_get":
+            # A fresh fingerprint authenticates the unsupported source, not
+            # a forged conclusion about its Map contents or method result.
+            forged = args.work / "result-forged.mlir"
+            forged.write_text(methods.forge_reports(rejected.read_text()))
+            forged_config = contract(args, forged, "result-forged")
+            failed = methods.refused(args, forged, "result-forged", forged_config, admitted=0)
+            check_call_preservation(forged.read_text(), failed.read_text(), "result-forged")
+    # An implicit undefined return has an exact primitive tag, but that alone
+    # does not supply an implemented native Map key. The separate size method
+    # keeps the observation numeric so that it cannot cause this refusal.
+    js, missing, count = boundary.prepare(args, "result_missing_return",
+        result_sources()["result_bool"][0].replace("get() { return state.has(false); }",
+                                                   "get() { state.size; }"))
+    if count != 6:
+        raise RuntimeError("result_missing_return: changed source denominator")
+    if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != "trace=1\n"
+            or host.run([str(reference), str(js)]).stdout != "trace=1\n"):
+        raise RuntimeError("result_missing_return: Node/interpreter observation mismatch")
+    missing_config = contract(args, missing, "result_missing_return")
+    missing_output = owned.lower(args, missing, "result_missing_return", missing_config, cleanup=False)
+    text = methods.census(missing_output, 6, "result_missing_return", admitted=0)
+    if ("ctnative.host_owner_proved = true" not in text
+            or "native Map needs supported keys" not in text
+            or "!ctnative.map<!ctnative.opt<!ctnative.bottom>" not in text):
+        raise RuntimeError("result_missing_return: missing unsupported-result diagnostic")
+    # Ownership succeeded, so the established preparation may resolve calls
+    # and insert their environment arguments before carrier admission refuses.
+    # Check those runtime calls and result edges, not the old source spelling.
+    prepared_calls = re.findall(
+        r"^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) "
+        r"\{ctnative\.stored_call = 1 : i32\}", text, re.M)
+    actuals = [arguments.split(", ") for _, _, arguments in prepared_calls]
+    if (len(source_calls(text)) != len(source_calls(missing.read_text()))
+            or [target for _, target, _ in prepared_calls]
+            != ["fn$4", "fn$5", "fn$4", "fn$5", "fn$3"]
+            or [len(arguments) for arguments in actuals] != [4, 5, 4, 5, 4]
+            or actuals[1][-1] != prepared_calls[0][0]
+            or actuals[3][-1] != prepared_calls[2][0]
+            or f'ctjs.store_global "trace", {prepared_calls[4][0]}' not in text):
+        raise RuntimeError("result_missing_return: prepared calls lost live result order/operands")
     boundary.native(args, shared_ir, "shared-no-manifest", 5)
     methods.refused(args, shared_ir, "shared-no-intrinsic",
                     owned.contract(args, shared_ir, "shared-no-intrinsic"), admitted=0)
     boundary.native(args, parameter_ir, "parameter-no-manifest", 5)
     methods.refused(args, parameter_ir, "parameter-no-intrinsic",
                     owned.contract(args, parameter_ir, "parameter-no-intrinsic"), admitted=0)
+    boundary.native(args, result_ir, "result-no-manifest", 5)
+    methods.refused(args, result_ir, "result-no-intrinsic",
+                    owned.contract(args, result_ir, "result-no-intrinsic"), admitted=0)
     stale_parameter = args.work / "parameter-stale.mlir"
     text, count = re.subn(r'#ctjs\.string<"x">', '#ctjs.string<"y">', parameter_ir.read_text())
     if count != 1:
@@ -567,12 +744,26 @@ def main():
     text = methods.census(rerun, 5, "parameter-rerun", admitted=5)
     if "ctnative.host_owner_proved = false" not in text or "fingerprint mismatch" not in text:
         raise RuntimeError("parameter-rerun: prepared argument signature reused source authority")
+    stale_result = args.work / "result-stale.mlir"
+    text, count = re.subn(r'#ctjs\.string<"size">', '#ctjs.string<"other">', result_ir.read_text())
+    if count != 2:
+        raise RuntimeError("result-stale: lost a source Map size read")
+    stale_result.write_text(text)
+    failed = methods.refused(args, stale_result, "result-stale", result_config,
+                             reason="fingerprint mismatch", admitted=0)
+    check_call_preservation(text, failed.read_text(), "result-stale")
+    rerun = owned.lower(args, result_output, "result-rerun", result_config, cleanup=False)
+    text = methods.census(rerun, 5, "result-rerun", admitted=5)
+    if "ctnative.host_owner_proved = false" not in text or "fingerprint mismatch" not in text:
+        raise RuntimeError("result-rerun: prepared result signature reused source authority")
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
           "Node/interpreter/GCC/Clang explicit+deduced and Map/table/callable lifetime pass; "
           f"{len(refusal_sources())} source refusals and contract/rerun/budget controls pass; "
           f"three carrier refusals and {len(shared_refusals)} shared-method refusals; "
           f"{len(parameter_refusals())} argument refusals preserve current call operands; "
           "typed parameterized setters 5/5 with changing source and saved-callable keys; "
+          f"{len(result_sources())} live result programs preserve call order and operands; "
+          f"{len(result_refusals())} result-proof refusals and missing-return carrier refusal; "
           f"{len(rollback)} speculative rollback cutoffs")
 
 

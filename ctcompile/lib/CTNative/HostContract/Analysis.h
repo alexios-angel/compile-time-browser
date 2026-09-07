@@ -36,10 +36,15 @@ struct analyzer {
     std::optional<HostCallableEdge> propertyCall(mlir::Operation * call);
     std::optional<HostCapturedMap> capturedMap(ctjs::CreateClosureOp closure, ctjs::FuncOp function,
                                                mlir::Operation * call, ctjs::GetPropertyOp read);
-    bool capturedMapParameters(ctjs::FuncOp function, ctjs::SetPropertyOp publication,
-                               bool prepared, HostMethodParameters & result);
+    bool capturedMapCalls(ctjs::FuncOp function, ctjs::SetPropertyOp publication, bool prepared,
+                          llvm::SmallVectorImpl<mlir::Operation *> & calls);
+    bool capturedMapParameters(ctjs::FuncOp function, bool prepared,
+                               llvm::ArrayRef<mlir::Operation *> calls,
+                               const llvm::DenseMap<mlir::Value, mlir::TypeID> & results,
+                               HostMethodParameters & result);
     bool capturedMapBody(ctjs::FuncOp function, bool prepared,
-                         const HostMethodParameters & parameters, HostCapturedMap & result);
+                         const HostMethodParameters & parameters, HostCapturedMap & result,
+                         std::optional<mlir::TypeID> & returnTag);
     ctjs::CreateObjectOp object(mlir::Value value, unsigned depth = 0);
     mlir::Attribute primitive(mlir::Value value, unsigned depth = 0);
     std::optional<bool> truth(mlir::Value value, unsigned depth = 0);
