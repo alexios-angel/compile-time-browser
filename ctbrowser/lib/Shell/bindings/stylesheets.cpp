@@ -2007,7 +2007,15 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             return value::undefined();
         }
         const std::string text = c.to_string(args[0]);
-        const double asked = args.size() > 1 ? context::to_number(args[1]) : 0;
+        // `insertRule(text)` and `insertRule(text, undefined)` ARE THE SAME
+        // CALL. `index` is an optional unsigned long defaulting to 0, and Web
+        // IDL says an `undefined` passed for an optional argument means the
+        // default was not supplied - it is not `ToNumber(undefined)`, which is
+        // NaN and was answering IndexSizeError for a perfectly ordinary
+        // insertion. `insertRule-no-index.html` and its four siblings are one
+        // subtest each of exactly that.
+        const double asked =
+            args.size() > 1 && !args[1].is_undefined() ? context::to_number(args[1]) : 0;
         if (!(asked >= 0) || asked > static_cast<double>(sheet->rules.size())) {
             throw_dom_exception(c, "IndexSizeError", "the index is past the end of the sheet");
             return value::undefined();
@@ -2022,10 +2030,60 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                                 "the text is not a single CSS rule");
             return value::undefined();
         }
-        if (css_rule_store_[made]->type == import_rule && sheet->constructed) {
+        const std::uint32_t kind = css_rule_store_[made]->type;
+        if (kind == import_rule && sheet->constructed) {
             // "@import rules are not allowed in a constructed stylesheet."
             throw_dom_exception(c, "SyntaxError", "@import is not allowed here");
             return value::undefined();
+        }
+        // WHAT MAY PRECEDE WHAT - CSSOM 6.3.3 steps 4 and 5, and the two steps
+        // answer different questions. Step 4 is about the POSITION: `@import`
+        // may only go where everything before it is `@charset`, `@layer` or
+        // another `@import`, `@namespace` may additionally follow those, and
+        // everything else may only go after all of them. Step 5 is about the
+        // WHOLE LIST: a `@namespace` may not be added to a sheet that already
+        // has a style rule in it at all, wherever the insertion point is,
+        // because the namespace would change what the existing selectors mean.
+        // `at-namespace.html` is one assertion of exactly that and says so in
+        // its title.
+        const auto rule_type = [this, sheet](std::size_t i) {
+            const std::size_t which = sheet->rules[i];
+            return which < css_rule_store_.size() ? css_rule_store_[which]->type : 0;
+        };
+        const auto before_ok = [&](std::uint32_t allowed_a, std::uint32_t allowed_b) {
+            for (std::size_t i = 0; i < at; ++i) {
+                const std::uint32_t each = rule_type(i);
+                if (each != allowed_a && each != allowed_b) { return false; }
+            }
+            return true;
+        };
+        bool allowed = true;
+        if (kind == import_rule) {
+            allowed = before_ok(import_rule, import_rule);
+        } else if (kind == namespace_rule) {
+            allowed = before_ok(import_rule, namespace_rule);
+        } else {
+            // Nothing else may be inserted BEFORE an `@import` or a
+            // `@namespace`, so every rule from the insertion point on must be
+            // neither.
+            for (std::size_t i = at; i < sheet->rules.size(); ++i) {
+                const std::uint32_t each = rule_type(i);
+                if (each == import_rule || each == namespace_rule) { allowed = false; }
+            }
+        }
+        if (!allowed) {
+            throw_dom_exception(c, "HierarchyRequestError", "that rule may not go there");
+            return value::undefined();
+        }
+        if (kind == namespace_rule) {
+            for (std::size_t i = 0; i < sheet->rules.size(); ++i) {
+                const std::uint32_t each = rule_type(i);
+                if (each != import_rule && each != namespace_rule) {
+                    throw_dom_exception(c, "InvalidStateError",
+                                        "the sheet already has rules a namespace would change");
+                    return value::undefined();
+                }
+            }
         }
         sheet->rules.insert(sheet->rules.begin() + static_cast<std::ptrdiff_t>(at), made);
         style_sheets_changed();
@@ -2042,6 +2100,21 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         if (!(asked >= 0) || asked >= static_cast<double>(sheet->rules.size())) {
             throw_dom_exception(c, "IndexSizeError", "there is no rule at that index");
             return value::undefined();
+        }
+        // THE MIRROR OF THE INSERT RULE, CSSOM 6.3.4: removing a `@namespace`
+        // from a sheet that has anything but `@import` and `@namespace` in it
+        // would change what the remaining selectors mean, so it is refused.
+        const std::size_t going = sheet->rules[static_cast<std::size_t>(asked)];
+        if (going < css_rule_store_.size() && css_rule_store_[going]->type == namespace_rule) {
+            for (const std::size_t each : sheet->rules) {
+                const std::uint32_t kind =
+                    each < css_rule_store_.size() ? css_rule_store_[each]->type : 0;
+                if (kind != import_rule && kind != namespace_rule) {
+                    throw_dom_exception(c, "InvalidStateError",
+                                        "the sheet has rules that namespace would change");
+                    return value::undefined();
+                }
+            }
         }
         sheet->rules.erase(sheet->rules.begin() + static_cast<std::ptrdiff_t>(asked));
         style_sheets_changed();
@@ -2241,7 +2314,10 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             return value::undefined();
         }
         const std::string text = c.to_string(args[0]);
-        const double asked = args.size() > 1 ? context::to_number(args[1]) : 0;
+        // `undefined` for an optional argument is the DEFAULT, not
+        // `ToNumber(undefined)` - see the sheet's `insertRule`.
+        const double asked =
+            args.size() > 1 && !args[1].is_undefined() ? context::to_number(args[1]) : 0;
         // THE INDEX IS CHECKED BEFORE THE TEXT IS PARSED, which is the order
         // CSSOM 6.4.3 gives and which `CSSGroupingRule-insertRule.html` asserts
         // by passing a deliberate syntax error at an out-of-range index and

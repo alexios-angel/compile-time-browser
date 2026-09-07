@@ -865,6 +865,74 @@ void test_the_at_rules_that_are_all_prelude() {
     CHECK_EQ(logged(page, "bogus="), std::string{"bogus=named:first"});
 }
 
+// WHAT MAY PRECEDE WHAT, and the index that was never given.
+//
+// CSSOM 6.3.3 steps 4 and 5 answer two different questions. Step 4 is about the
+// POSITION - an `@import` may only go where everything before it is another
+// `@import`, a `@namespace` may also follow those, and everything else may only
+// go after all of them. Step 5 is about the WHOLE LIST: a `@namespace` may not
+// be added to a sheet that already has a style rule in it at all, wherever the
+// insertion point is, because it would change what the existing selectors mean.
+// `css/cssom/at-namespace.html` is one assertion of exactly that, and
+// `delete-namespace-rule-when-child-rule-exists.html` is its mirror.
+//
+// And `insertRule(text)` and `insertRule(text, undefined)` are the SAME CALL.
+// `index` is an optional unsigned long defaulting to 0, and Web IDL says an
+// `undefined` passed for one means the default was not supplied - it is not
+// `ToNumber(undefined)`, which is NaN and was answering IndexSizeError for a
+// perfectly ordinary insertion.
+void test_where_a_rule_may_be_inserted() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>
+        @import url("a.css");
+        @namespace svg url(http://servo);
+    </style></head><body><script>
+        const sheet = document.styleSheets[0];
+        const shout = (name, fn) => {
+            let caught = 'none';
+            try { fn(); } catch (e) { caught = e.name; }
+            console.log(name + '=' + caught + ',' + sheet.cssRules.length);
+        };
+        // A style rule may not go before the @import or the @namespace...
+        shout('early', () => sheet.insertRule('p { color: green }'));
+        // ...and at the end it is fine, with no index given at all.
+        shout('late', () => sheet.insertRule('p { color: green }', 2));
+        // A @namespace may follow an @import; a second one may not now that
+        // there is a style rule in the list.
+        shout('nsnow', () => sheet.insertRule('@namespace foo url(http://x);', 1));
+        // Nor may the @namespace be deleted while that style rule is there.
+        shout('undelete', () => sheet.deleteRule(1));
+        console.log('order=' + sheet.cssRules[0].type + ',' + sheet.cssRules[1].type + ',' +
+                    sheet.cssRules[2].type);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "early="), std::string{"early=HierarchyRequestError,2"});
+    CHECK_EQ(logged(page, "late="), std::string{"late=none,3"});
+    CHECK_EQ(logged(page, "nsnow="), std::string{"nsnow=InvalidStateError,3"});
+    CHECK_EQ(logged(page, "undelete="), std::string{"undelete=InvalidStateError,3"});
+    CHECK_EQ(logged(page, "order="), std::string{"order=3,10,1"});
+}
+
+void test_an_omitted_index_is_zero() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>
+        nosuchelement { color: red; }
+    </style></head><body><script>
+        const sheet = document.styleSheets[0];
+        sheet.insertRule('p { color: green; }');
+        console.log('omitted=' + sheet.cssRules.length + '|' + sheet.cssRules[0].cssText);
+        sheet.insertRule('p { color: yellow; }', undefined);
+        console.log('explicit=' + sheet.cssRules.length + '|' + sheet.cssRules[0].cssText);
+        sheet.insertRule('@media print { p {} }', undefined);
+        sheet.cssRules[0].insertRule('b {}', undefined);
+        console.log('group=' + sheet.cssRules[0].cssRules.length);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "omitted="), std::string{"omitted=2|p { color: green; }"});
+    CHECK_EQ(logged(page, "explicit="), std::string{"explicit=3|p { color: yellow; }"});
+    CHECK_EQ(logged(page, "group="), std::string{"group=2"});
+}
+
 } // namespace
 
 int main() {
@@ -887,5 +955,7 @@ int main() {
     test_the_inline_style_follows_the_attribute();
     test_every_rule_a_sheet_carries();
     test_the_at_rules_that_are_all_prelude();
+    test_where_a_rule_may_be_inserted();
+    test_an_omitted_index_is_zero();
     REPORT("cssom");
 }
