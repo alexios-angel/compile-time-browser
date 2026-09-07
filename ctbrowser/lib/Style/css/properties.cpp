@@ -53,9 +53,10 @@ constexpr std::array<std::string_view, 2> time_units{"s", "ms"};
 // owns the evaluation and answers `unresolved` for the cases that have no
 // answer until layout (`min(10px, 5%)`), so refusing here would condemn a
 // declaration the cascade deliberately keeps.
-constexpr std::array<std::string_view, 22> math_functions{
-    "calc", "min",  "max",  "clamp", "round", "mod", "rem",  "abs",   "sign", "sin", "cos",
-    "tan",  "asin", "acos", "atan",  "atan2", "pow", "sqrt", "hypot", "log",  "exp", "calc-size"};
+constexpr std::array<std::string_view, 23> math_functions{
+    "calc", "min",  "max",   "clamp", "round", "mod",       "rem",     "abs",
+    "sign", "sin",  "cos",   "tan",   "asin",  "acos",      "atan",    "atan2",
+    "pow",  "sqrt", "hypot", "log",   "exp",   "calc-size", "progress"};
 
 // A value containing one of these is valid by construction: what it means is
 // not known until substitution, so the declaration survives parsing with its
@@ -68,7 +69,15 @@ constexpr std::array<std::string_view, 22> math_functions{
 // split is the point: it is a substitution in the specification, so a
 // declaration using one is not a syntax error and must survive - and this engine
 // does not PERFORM it, so `CSS.supports` has to say no.
-constexpr std::array<std::string_view, 3> substitution_functions{"var", "env", "attr"};
+//
+// `random-item()`, `inherit()` and `ident()` are three more of them, and naming
+// them is what makes `width: random-item(auto, 1px, 2px, 3px)` and
+// `left: inherit(--x)` declarations rather than lengths the grammar could not
+// read. CSS Values 5 calls all of these ARBITRARY SUBSTITUTION FUNCTIONS: their
+// specified value is their arguments and what those arguments mean is decided
+// later. `substitution_grammar_ok` below is the part that IS decided now.
+constexpr std::array<std::string_view, 6> substitution_functions{"var",         "env",     "attr",
+                                                                 "random-item", "inherit", "ident"};
 constexpr std::array<std::string_view, 2> performed_substitutions{"var", "env"};
 
 // THE VALUE FUNCTIONS THIS ENGINE IMPLEMENTS, beside the math ones and the two
@@ -278,9 +287,12 @@ constexpr property_syntax table[] = {
     {"font-weight", k::number, "normal bold bolder lighter", "400", true, true},
     {"font-variant", k::freeform, "", "normal", true, false},
     {"font-stretch", k::freeform, "", "100%", true, false},
-    {"line-height", k::number_length, "normal", "normal", true, true},
-    {"letter-spacing", k::length, "normal", "normal", true, false},
-    {"word-spacing", k::length, "normal", "normal", true, false},
+    {"line-height", k::number_length_percentage, "normal", "normal", true, true},
+    // CSS Text 4 gave both of these a percentage: `normal | <length-percentage>`.
+    // `calc-letter-spacing` asks for `letter-spacing: calc(100%)` to compute to
+    // `100%` rather than be dropped, which is the same question.
+    {"letter-spacing", k::length_percentage, "normal", "normal", true, false},
+    {"word-spacing", k::length_percentage, "normal", "normal", true, false},
     {"text-align", k::keyword_only, "start end left right center justify match-parent", "start",
      true, false},
     {"text-indent", k::length_percentage, "", "0px", true, false},
@@ -435,6 +447,72 @@ struct scan {
     return out;
 }
 
+// AN ARBITRARY SUBSTITUTION FUNCTION HAS A GRAMMAR AT PARSE TIME even though
+// what it MEANS has none until substitution, and two of them are tested here to
+// the letter (CSS Values 5 §arbitrary-substitution):
+//
+//   ident( <declaration-value> )       one argument, and not an empty one
+//   inherit( <custom-property-name> [, <declaration-value>]? )
+//
+// `ident()`, `ident( )`, `ident({})` and `ident(a, b)` are four assertions of
+// `ident-function-parsing`; `inherit(, foo)` and `inherit(!!, foo)` are two of
+// `inherit-function-parsing`. The other twenty-one assertions of those two files
+// are values that must SURVIVE - `ident(rgb(1, 2, 3))` and `ident( myident)` and
+// `inherit(--x,)` among them - so this is the grammar and nothing more, and in
+// particular the argument is never re-serialised: the corpus asserts that
+// `ident( myident)` keeps its space.
+//
+// It looks INSIDE other functions, because `calc(inherit(--x) + 1px)` is one of
+// the values that must survive and `left: inherit(!!)` is not.
+[[nodiscard]] bool substitution_grammar_ok(const token_stream & ts) {
+    for (std::size_t i = 0; i < ts.tokens.size(); ++i) {
+        if (ts.tokens[i].type != token_type::function) { continue; }
+        const std::string_view fn = function_name(ts, ts.tokens[i]);
+        const bool is_ident = ascii_iequals(fn, "ident");
+        if (!is_ident && !ascii_iequals(fn, "inherit")) { continue; }
+        // Everything about the argument list that either grammar asks: how many
+        // top-level commas there are, what the first argument's significant
+        // tokens are, and whether a `{}` block sits at the top of it.
+        int depth = 1;
+        std::size_t commas = 0;
+        std::vector<std::size_t> first;
+        bool curly = false;
+        for (std::size_t j = i + 1; j < ts.tokens.size() && depth > 0; ++j) {
+            const css_token & t = ts.tokens[j];
+            if (t.type == token_type::eof) { break; }
+            if (t.type == token_type::close_paren || t.type == token_type::close_square ||
+                t.type == token_type::close_curly) {
+                if (--depth == 0) { break; }
+                continue;
+            }
+            if (t.type == token_type::whitespace) { continue; }
+            if (depth == 1 && t.type == token_type::comma) {
+                ++commas;
+                continue;
+            }
+            if (depth == 1 && commas == 0) { first.push_back(j); }
+            if (depth == 1 && t.type == token_type::open_curly) { curly = true; }
+            if (t.type == token_type::function || t.type == token_type::open_paren ||
+                t.type == token_type::open_square || t.type == token_type::open_curly) {
+                ++depth;
+            }
+        }
+        if (first.empty()) { return false; }
+        if (is_ident && (commas != 0 || curly)) { return false; }
+        if (!is_ident) {
+            // A CUSTOM PROPERTY NAME and nothing else: `inherit(!!, foo)` names
+            // no property, and `inherit(--x, foo)` has its fallback after the
+            // comma rather than beside the name.
+            if (commas > 1 || first.size() != 1) { return false; }
+            const css_token & name = ts.tokens[first.front()];
+            if (name.type != token_type::ident || !ts.text_of(name).starts_with("--")) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 // Whether the WHOLE value is one math function applied to everything - which is
 // the only shape this file accepts one in. `calc(1px) calc(2px)` is two values
 // and belongs to a property that takes two.
@@ -468,6 +546,33 @@ struct scan {
     return depth > 0;
 }
 
+// DOES A PERCENTAGE MEAN ANYTHING FOR THIS PROPERTY? It is the property that
+// supplies §10.11's calculation context, so this is the one question a math
+// function cannot answer for itself: `text-indent: min(1px, 0%)` resolves
+// against a containing block and `border-left-width: min(1px, 0%)` has nothing
+// to resolve against and is a syntax error, however alike the two look.
+//
+// A `freeform` property answers YES, and has to: the grammar is not modelled, so
+// `transform: translate(50%)` and `background-position: calc(50% - 1px)` would
+// both be lost to a guess.
+[[nodiscard]] constexpr bool takes_percentage_of(value_kind kind) noexcept {
+    switch (kind) {
+    case k::length_percentage:
+    case k::percentage:
+    case k::number_percentage:
+    case k::number_length_percentage:
+    case k::freeform:
+    case k::keyword_only: return true;
+    case k::length:
+    case k::number:
+    case k::integer:
+    case k::number_length:
+    case k::angle:
+    case k::time: return false;
+    }
+    return true;
+}
+
 // DOES THIS MATH FUNCTION'S ANSWER FIT THE PROPERTY? CSS Values 4 §10.2: a math
 // function is valid where its RESOLVED TYPE is, so `width: calc(2 * 3)` is a
 // syntax error for the same reason `width: 3` is, and `rotate: calc(1s)` for the
@@ -485,11 +590,12 @@ struct scan {
     const bool bare_percentage = v.has_percent && v.px == 0;
     const bool length = !v.is_number && v.type == numeric_type::length;
     switch (p.kind) {
-    // A `<length>` and not a `<length-percentage>`: `letter-spacing: calc(10%)`
-    // is invalid where `text-indent: calc(10%)` is not.
+    // A `<length>` and not a `<length-percentage>`: `border-left-width:
+    // calc(10%)` is invalid where `text-indent: calc(10%)` is not.
     case k::length: return length && !v.has_percent;
     case k::length_percentage: return length;
-    case k::number_length: return length || v.is_number;
+    case k::number_length: return (length && !v.has_percent) || v.is_number;
+    case k::number_length_percentage: return length || v.is_number;
     case k::number:
     case k::integer: return v.is_number;
     case k::number_percentage: return v.is_number || bare_percentage;
@@ -506,12 +612,12 @@ struct scan {
 // never "malformed" - the caller decides what an unmatched value means.
 [[nodiscard]] bool match_typed(const token_stream & ts, const css_token & t,
                                const property_syntax & p, std::string & out) {
-    const bool takes_length =
-        p.kind == k::length || p.kind == k::length_percentage || p.kind == k::number_length;
-    const bool takes_percentage = p.kind == k::length_percentage || p.kind == k::percentage ||
-                                  p.kind == k::number_percentage || p.kind == k::number_length;
+    const bool takes_length = p.kind == k::length || p.kind == k::length_percentage ||
+                              p.kind == k::number_length || p.kind == k::number_length_percentage;
+    const bool takes_percentage = takes_percentage_of(p.kind);
     const bool takes_number = p.kind == k::number || p.kind == k::integer ||
-                              p.kind == k::number_percentage || p.kind == k::number_length;
+                              p.kind == k::number_percentage || p.kind == k::number_length ||
+                              p.kind == k::number_length_percentage;
     if (p.nonnegative && t.number < 0) { return false; }
 
     switch (t.type) {
@@ -612,14 +718,10 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // Variables 1 §2): its value is a token stream, not a value.
     if (property.starts_with("--")) { return yes(std::string{text}); }
 
-    const property_syntax * p = find_property(property);
-    // AN UNKNOWN PROPERTY IS STORED, NOT REFUSED. CSSOM says a page may set one
-    // and read it back; refusing here would be a behaviour change for every
-    // property this table has not reached yet, and the corpora write several.
-    if (p == nullptr) { return yes(verbatim); }
-
     // A value holding var()/env()/attr() is valid by construction - what it
-    // means is not known until substitution.
+    // means is not known until substitution. Its ARGUMENT LIST is known now,
+    // though, and two of the functions have one worth checking.
+    if (!substitution_grammar_ok(ts)) { return {}; }
     if (found.substituted) { return yes(verbatim); }
 
     // A MALFORMED MATH FUNCTION KILLS THE DECLARATION WHEREVER IT SITS, and
@@ -640,6 +742,30 @@ value_check check_declaration(std::string_view property, std::string_view value,
     // bytes for everything it cannot answer, so a value with no math in it and a
     // value whose math needs a font size both come back untouched.
     const std::string simplified = may_have_math(text) ? simplify_math(text) : verbatim;
+
+    const property_syntax * p = find_property(property);
+    // AN UNKNOWN PROPERTY IS STORED, NOT REFUSED. CSSOM says a page may set one
+    // and read it back; refusing here would be a behaviour change for every
+    // property this table has not reached yet, and the corpora write several.
+    //
+    // ...BUT ITS MATH IS STILL MATH, which is why the two questions above are
+    // asked before this one rather than after it. `offset-rotate:
+    // calc(sign(50%) * 1deg)` and `offset-path: ray(calc(sign(50%) * 1deg))` are
+    // two properties this table has never heard of carrying an expression that
+    // is a syntax error in every property there is, and `calc()` is simplified
+    // by CSS Values 4 §10.12 wherever it stands - the table knowing the name is
+    // not one of the conditions.
+    if (p == nullptr) { return yes(simplified); }
+
+    // A PERCENTAGE INSIDE A MATH FUNCTION IS STILL A PERCENTAGE, and this is the
+    // half of §10.11's calculation context that only the table can supply.
+    // `calc.cpp` refuses one whose own answer has no percentages to resolve - an
+    // angle, a time; this refuses one whose PROPERTY has none, which is
+    // `border-left-width: min(1px, 0%)`, `font-weight: sign(10%)` and
+    // `tab-size: abs(10%)`, the last failures of `minmax-length-invalid` and
+    // `signs-abs-invalid`. It is asked before `freeform` because a freeform
+    // property answers yes to it and the two orders are the same answer.
+    if (!takes_percentage_of(p->kind) && math_uses_percentage(text)) { return {}; }
 
     if (p->kind == k::freeform) { return yes(simplified); }
 
