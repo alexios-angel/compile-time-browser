@@ -23,12 +23,11 @@
 //     `document.styleSheets` needs one in `dom_bindings::install`. Both are in
 //     files the CSSOM rung does not own; without them these cases fail with
 //     "undefined", which is the honest way for a missing wire to report.
-//   * a rule with an EMPTY declaration block is dropped by the CSS front end
-//     (`consume_qualified_rule` keeps a rule only when it has both a selector
-//     and a declaration), so `div {}` in a `<style>` is not in `cssRules`.
-//     `insertRule` splits the text at the brace itself and so keeps one;
-//     `parse_sheet_rules` has only the front end's answer to work from, and the
-//     deviation is asserted below rather than believed.
+//   * an at-rule whose block this engine does not model keeps the author's
+//     bytes. `@namespace` and `@import` have no block at all and nothing to
+//     reconstruct a prelude from, so `cssText` is the source text and says so.
+//     Every at-rule whose block IS rules or IS declarations serialises like any
+//     other rule; `test_every_rule_a_sheet_carries` asserts which is which.
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -737,6 +736,243 @@ void test_the_inline_style_follows_the_attribute() {
     CHECK_EQ(logged(page, "unset="), std::string{"unset=|true|true"});
 }
 
+// EVERY RULE THE AUTHOR WROTE, AND ITS TYPE.
+//
+// The CSSOM was built from `style::css::parse_stylesheet`, whose `stylesheet`
+// models the three shapes the CASCADE needs - a qualified rule, `@media`, a
+// `@font-face` - and discards every other at-rule outright. So an `@import`, an
+// `@namespace`, a `@page` or a `@keyframes` was not a rule with less in it, it
+// was absent, and the damage was not the missing rule: `cssRules[0]` was the
+// WRONG rule and every index after it was off by one.
+// `css/cssom/cssom-ruleTypeAndOrder.html` asserts exactly that indexing over
+// seven sheets, and `rule-restrictions.html` asserts two of the types by number.
+//
+// A qualified rule with an EMPTY block was dropped by the same front end, which
+// this file used to record as a deviation. It is not one any more: the sheet is
+// split into rules by a byte scanner and each span goes through the same
+// `parse_one_rule` that `insertRule` uses, and that function already split at
+// the brace for exactly this reason. `@media all { * {} }` is the setup of
+// every fixture in `css/cssom/CSSGroupingRule-*.html`.
+void test_every_rule_a_sheet_carries() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>
+        @namespace svg "http://www.w3.org/2000/svg";
+        @import url("main.css");
+        @page :left { margin: 1px; }
+        div { }
+        @media print { * {} }
+        @keyframes spin { from { opacity: 0 } to { opacity: 1 } }
+    </style></head><body><script>
+        const rules = document.styleSheets[0].cssRules;
+        console.log('count=' + rules.length);
+        let types = [];
+        for (let i = 0; i < rules.length; i++) { types.push(rules[i].type); }
+        console.log('types=' + types.join(','));
+        console.log('ns=' + rules[0].cssText);
+        console.log('import=' + rules[1].cssText);
+        console.log('page=' + rules[2].cssText);
+        console.log('empty=' + rules[3].cssText);
+        console.log('media=' + rules[4].cssRules.length + '|' + rules[4].cssRules[0].cssText);
+        console.log('frames=' + rules[5].cssRules.length + '|' + rules[5].cssRules[0].cssText);
+        console.log('is=' + (rules[4] instanceof CSSMediaRule) + ',' +
+                    (rules[0] instanceof CSSNamespaceRule) + ',' +
+                    (rules[5].cssRules[0] instanceof CSSKeyframeRule));
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "count="), std::string{"count=6"});
+    // CSSRule.NAMESPACE_RULE, IMPORT_RULE, PAGE_RULE, STYLE_RULE, MEDIA_RULE
+    // and KEYFRAMES_RULE - in the order the author wrote them.
+    CHECK_EQ(logged(page, "types="), std::string{"types=10,3,6,1,4,7"});
+    // AN AT-RULE WITH NO BLOCK KEEPS THE AUTHOR'S BYTES, because there is
+    // nothing to reconstruct from and an invented prelude would be a claim
+    // about a rule nobody parsed.
+    CHECK_EQ(logged(page, "ns="), std::string{"ns=@namespace svg \"http://www.w3.org/2000/svg\";"});
+    CHECK_EQ(logged(page, "import="), std::string{"import=@import url(\"main.css\");"});
+    // `@page`'s block IS declarations, so it serialises like any other block,
+    // and its prelude is the page selector.
+    CHECK_EQ(logged(page, "page="), std::string{"page=@page :left { margin: 1px; }"});
+    CHECK_EQ(logged(page, "empty="), std::string{"empty=div { }"});
+    CHECK_EQ(logged(page, "media="), std::string{"media=1|* { }"});
+    // A `<keyframe-selector>` is not a selector, so a keyframe's prelude is its
+    // keyText and `from` keeps the spelling the author used.
+    CHECK_EQ(logged(page, "frames="), std::string{"frames=2|from { opacity: 0; }"});
+    CHECK_EQ(logged(page, "is="), std::string{"is=true,true,true"});
+}
+
+// THE PIECES OF A PRELUDE, AND THE `.style` OF EVERY RULE THAT HAS ONE.
+//
+// `.style` lived on CSSStyleRule alone, and CSSOM gives one to five rules.
+// `css/cssom/property-accessors.html` reaches straight for
+// `document.styleSheets[0].cssRules[0].style` where rule zero is a `@font-face`
+// and all nine of its subtests died on `getPropertyValue is undefined`, before
+// they had asked anything about a property.
+//
+// `@import` and `@namespace` have no block, so their prelude IS the rule and
+// the interface reports its pieces one at a time. Neither can be answered from
+// the author's bytes: `url(a.css)` and `"a.css"` are the same URL and CSSOM
+// serialises both as `url("a.css")`.
+void test_the_at_rules_that_are_all_prelude() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>
+        @namespace svg "http://servo";
+        @namespace "http://servo1";
+        @import url(a.css);
+        @import "b.css" supports((display: flex) or (display: block)) screen;
+        @font-face { font-family: Foo; }
+        @page :Left { margin-top: 1px }
+    </style></head><body><script>
+        const rules = document.styleSheets[0].cssRules;
+        console.log('ns=' + rules[0].prefix + '|' + rules[0].namespaceURI + '|' +
+                    rules[0].cssText);
+        console.log('default=' + rules[1].prefix + '|' + rules[1].cssText);
+        console.log('import=' + rules[2].href + '|' + rules[2].cssText + '|' +
+                    rules[2].supportsText + '|' + rules[2].styleSheet);
+        console.log('supports=' + rules[3].supportsText + '|' + rules[3].media.mediaText +
+                    '|' + rules[3].cssText);
+        console.log('face=' + rules[4].style.getPropertyValue('font-family') + '|' +
+                    rules[4].style.length);
+        console.log('page=' + rules[5].selectorText + '|' + rules[5].style.marginTop);
+        rules[5].selectorText = 'named:First';
+        console.log('renamed=' + rules[5].selectorText);
+        // `named :first` is not two selectors, it is a parse failure - a
+        // `<page-selector>` has no whitespace in it anywhere - and CSSOM says a
+        // refused selector leaves the rule alone.
+        rules[5].selectorText = 'named :first';
+        console.log('refused=' + rules[5].selectorText);
+        rules[5].selectorText = ':notapagepseudo';
+        console.log('bogus=' + rules[5].selectorText);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "ns="), std::string{"ns=svg|http://servo|"
+                                              "@namespace svg url(\"http://servo\");"});
+    // A DEFAULT namespace has no prefix, and CSSOM reports that as the empty
+    // string rather than as null.
+    CHECK_EQ(logged(page, "default="), std::string{"default=|@namespace url(\"http://servo1\");"});
+    // `styleSheet` is null because nothing here fetches an `@import`, which a
+    // page must be able to find out rather than be handed an empty sheet that
+    // claims the import succeeded.
+    CHECK_EQ(logged(page, "import="),
+             std::string{"import=a.css|@import url(\"a.css\");|null|null"});
+    CHECK_EQ(logged(page, "supports="),
+             std::string{"supports=(display: flex) or (display: block)|screen|"
+                         "@import url(\"b.css\") supports((display: flex) or (display: block)) "
+                         "screen;"});
+    CHECK_EQ(logged(page, "face="), std::string{"face=Foo|1"});
+    // A pseudo-page is lowercased and a page NAME keeps the author's case.
+    CHECK_EQ(logged(page, "page="), std::string{"page=:left|1px"});
+    CHECK_EQ(logged(page, "renamed="), std::string{"renamed=named:first"});
+    CHECK_EQ(logged(page, "refused="), std::string{"refused=named:first"});
+    CHECK_EQ(logged(page, "bogus="), std::string{"bogus=named:first"});
+}
+
+// WHAT MAY PRECEDE WHAT, and the index that was never given.
+//
+// CSSOM 6.3.3 steps 4 and 5 answer two different questions. Step 4 is about the
+// POSITION - an `@import` may only go where everything before it is another
+// `@import`, a `@namespace` may also follow those, and everything else may only
+// go after all of them. Step 5 is about the WHOLE LIST: a `@namespace` may not
+// be added to a sheet that already has a style rule in it at all, wherever the
+// insertion point is, because it would change what the existing selectors mean.
+// `css/cssom/at-namespace.html` is one assertion of exactly that, and
+// `delete-namespace-rule-when-child-rule-exists.html` is its mirror.
+//
+// And `insertRule(text)` and `insertRule(text, undefined)` are the SAME CALL.
+// `index` is an optional unsigned long defaulting to 0, and Web IDL says an
+// `undefined` passed for one means the default was not supplied - it is not
+// `ToNumber(undefined)`, which is NaN and was answering IndexSizeError for a
+// perfectly ordinary insertion.
+void test_where_a_rule_may_be_inserted() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>
+        @import url("a.css");
+        @namespace svg url(http://servo);
+    </style></head><body><script>
+        const sheet = document.styleSheets[0];
+        const shout = (name, fn) => {
+            let caught = 'none';
+            try { fn(); } catch (e) { caught = e.name; }
+            console.log(name + '=' + caught + ',' + sheet.cssRules.length);
+        };
+        // A style rule may not go before the @import or the @namespace...
+        shout('early', () => sheet.insertRule('p { color: green }'));
+        // ...and at the end it is fine, with no index given at all.
+        shout('late', () => sheet.insertRule('p { color: green }', 2));
+        // A @namespace may follow an @import; a second one may not now that
+        // there is a style rule in the list.
+        shout('nsnow', () => sheet.insertRule('@namespace foo url(http://x);', 1));
+        // Nor may the @namespace be deleted while that style rule is there.
+        shout('undelete', () => sheet.deleteRule(1));
+        console.log('order=' + sheet.cssRules[0].type + ',' + sheet.cssRules[1].type + ',' +
+                    sheet.cssRules[2].type);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "early="), std::string{"early=HierarchyRequestError,2"});
+    CHECK_EQ(logged(page, "late="), std::string{"late=none,3"});
+    CHECK_EQ(logged(page, "nsnow="), std::string{"nsnow=InvalidStateError,3"});
+    CHECK_EQ(logged(page, "undelete="), std::string{"undelete=InvalidStateError,3"});
+    CHECK_EQ(logged(page, "order="), std::string{"order=3,10,1"});
+}
+
+void test_an_omitted_index_is_zero() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>
+        nosuchelement { color: red; }
+    </style></head><body><script>
+        const sheet = document.styleSheets[0];
+        sheet.insertRule('p { color: green; }');
+        console.log('omitted=' + sheet.cssRules.length + '|' + sheet.cssRules[0].cssText);
+        sheet.insertRule('p { color: yellow; }', undefined);
+        console.log('explicit=' + sheet.cssRules.length + '|' + sheet.cssRules[0].cssText);
+        sheet.insertRule('@media print { p {} }', undefined);
+        sheet.cssRules[0].insertRule('b {}', undefined);
+        console.log('group=' + sheet.cssRules[0].cssRules.length);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "omitted="), std::string{"omitted=2|p { color: green; }"});
+    CHECK_EQ(logged(page, "explicit="), std::string{"explicit=3|p { color: yellow; }"});
+    CHECK_EQ(logged(page, "group="), std::string{"group=2"});
+}
+
+// A MEDIUM IS ONE QUERY, AND DELETING ONE DELETES ALL OF THEM.
+//
+// Three separate readings of CSSOM 6.5's three-line methods, each of which the
+// suite has a file for. `appendMedium` parses A media query, singular, so a
+// comma-separated argument parses to null and the call is a no-op rather than
+// two appends or one query called `screen, print`. `deleteMedium` removes EVERY
+// query that matches, because a list may hold the same one twice and removing
+// the first leaves behind the one the page just asked to be rid of. And its
+// argument is REQUIRED, so calling it with none is a TypeError and not a
+// NotFoundError about the empty string.
+void test_the_three_readings_of_a_media_list() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>
+        @media screen, print, screen { * {} }
+    </style></head><body><script>
+        const media = document.styleSheets[0].cssRules[0].media;
+        console.log('start=' + media.length + '|' + media.mediaText);
+        media.appendMedium('speech, tv');
+        console.log('comma=' + media.length + '|' + media.mediaText);
+        media.appendMedium('print');
+        console.log('dup=' + media.length);
+        media.deleteMedium('screen');
+        console.log('all=' + media.length + '|' + media.mediaText);
+        let caught = 'none';
+        try { media.deleteMedium(); } catch (e) { caught = e.name; }
+        console.log('bare=' + caught);
+        caught = 'none';
+        try { media.deleteMedium('nosuchmedium'); } catch (e) { caught = e.name; }
+        console.log('absent=' + caught);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "start="), std::string{"start=3|screen, print, screen"});
+    CHECK_EQ(logged(page, "comma="), std::string{"comma=3|screen, print, screen"});
+    CHECK_EQ(logged(page, "dup="), std::string{"dup=3"});
+    CHECK_EQ(logged(page, "all="), std::string{"all=1|print"});
+    CHECK_EQ(logged(page, "bare="), std::string{"bare=TypeError"});
+    // The one place in the CSSOM where deleting something absent is an error.
+    CHECK_EQ(logged(page, "absent="), std::string{"absent=NotFoundError"});
+}
+
 } // namespace
 
 int main() {
@@ -757,5 +993,10 @@ int main() {
     test_the_automatic_minimum_size();
     test_the_computed_font_family_keeps_its_case();
     test_the_inline_style_follows_the_attribute();
+    test_every_rule_a_sheet_carries();
+    test_the_at_rules_that_are_all_prelude();
+    test_where_a_rule_may_be_inserted();
+    test_an_omitted_index_is_zero();
+    test_the_three_readings_of_a_media_list();
     REPORT("cssom");
 }
