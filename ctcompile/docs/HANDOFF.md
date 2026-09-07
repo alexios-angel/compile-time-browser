@@ -64,16 +64,21 @@ Nested allocation sites receive no CFG-only confinement verdict. Twenty-one
 additional rows bring the unit to **157/157**; escape unit, fixture oracle and
 Bootstrap oracle CTests pass **3/3** in **0.59 seconds**.
 
-The final compiler gate passes **159/159 lit cases** through **1/1 CTest** in
-**48.64 seconds**. A full `tools/remote-build.sh` attempt stopped before CTest
-on Claude's concurrent `ctbrowser/lib/Shell/bindings/exceptions.cpp:162` unused
-`this` lambda capture under `-Werror`; it is reported in `AGENT-SYNC.md` and was
-left untouched. The last full formatter run reports only Claude's live
-`Shell/bindings/document.cpp`; all compiler C++
-files and compiler whitespace checks pass. Logs are
-`/tmp/ctcompile-native-integration-gate2.log` and
-`/tmp/ctcompile-native-session-full-gate.log`. A complete new full-suite result
-is not yet claimed; the preceding successful full gate is recorded below.
+The complete compiler rebuild and CTest gate pass **366/366 tests** in
+**547.65 seconds**, including **159/159 lit cases** (lit **48.54 seconds**).
+The shared full devbox build then succeeds, and its CTest run passes
+**468/471 tests** in **565.53 seconds**. All **366 compiler tests** pass again
+against the updated runtime, including all **159 lit cases** in **48.50 seconds**.
+The three failures are in Claude's active browser work: `bindings_basics`
+(`isTrusted` own accessor), `bootstrap_layout` (computed-style baselines), and
+`property_attributes` (old builtin name/length expectations). They are journaled
+in `AGENT-SYNC.md`; no browser files were edited by Codex. The initial unused
+lambda capture build failure was fixed by Claude in **`3d30c82`**.
+
+All **574 C++ files** pass the final `tools/format.sh --check`; compiler whitespace
+checks pass. Logs are `/tmp/ctcompile-native-session-compiler-gate.log`,
+`/tmp/ctb-build4.log` and `/tmp/ctcompile-native-checkpoint-final-format.log`.
+The monorepo CTest gate is not wholly green while those browser failures remain.
 
 **Exact next native boundary:** extend the complete live callable/source-owner
 graph to the immutable captured Map environment through wrapper return and
@@ -84,6 +89,14 @@ is proposed. Exact Bootstrap Data stays **0/7** in each CommonJS/browser/realm
 fallback mode. Prefix completion cannot authorize future callers. Typed export
 ABI, mutable slots and general realm owners remain further work. Full native
 Bootstrap is unfinished.
+
+The next proof must preserve the specimen's four-function entry/wrapper/factory
+chain; current host calls allow only literal uncaptured getters and current
+owners require entry-local publication in three functions. After extending
+those proofs and capture preparation, `prepareNativeMaps()` must also consume
+proved owning-root reads: its standard-builtin check currently refuses every
+other host/global value read. Enabling Map preparation alone is insufficient.
+See [the exact implementation boundaries](bootstrap-provider-next.md).
 
 **Parallel next boundaries:** represent source throwing calls with an explicit
 exceptional call edge carrying the pre-call register vector and an owning
