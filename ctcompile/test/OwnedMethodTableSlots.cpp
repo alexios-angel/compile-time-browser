@@ -1,6 +1,7 @@
 #include "../lib/CTNative/Analysis/OwnedMethodTableSlots.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Parser/Parser.h"
 
@@ -98,6 +99,48 @@ int main() {
         check(shortByOne.exhausted() && empty(shortByOne),
               "one step below completion withholds all slot edges");
     }
-    if (failures == 0) { std::puts("owned method-table slot budget queries passed"); }
+    // A completed query borrows one IR snapshot. Rebuild after semantic edits:
+    // neither a previously successful edge nor a supplied marker can rescue an
+    // owner whose initialization, read ordering or confinement has changed.
+    // The independent second owner must remain available in each local refusal.
+    const auto rejectsFirst = [&](const OwnedMethodTableSlots & query) {
+        const auto * second = query.lookup(writes[1]);
+        return !query.exhausted() && query.slots().size() == 1 && !query.lookup(writes[0]) &&
+               !query.lookup(reads[0]) && second && second == query.lookup(reads[1]) &&
+               second->initialization == writes[1];
+    };
+    auto firstOwner = writes[0].getObject().getDefiningOp();
+    for (mlir::Operation * operation :
+         {firstOwner, writes[0].getOperation(), reads[0].getOperation()}) {
+        operation->setAttr("ctnative.owned_method_table_slot",
+                           mlir::StringAttr::get(&context, "stale-success"));
+        operation->setAttr("ctnative.method_table", mlir::StringAttr::get(&context, "forged"));
+    }
+    check(complete(OwnedMethodTableSlots(*module)), "markers do not change a valid slot census");
+
+    mlir::OpBuilder builder(&context);
+    builder.setInsertionPointAfter(reads[0]);
+    auto * rewrite = builder.clone(*writes[0].getOperation());
+    OwnedMethodTableSlots rewritten(*module);
+    check(rejectsFirst(rewritten) && !rewritten.lookup(llvm::cast<ctjs::SetPropertyOp>(rewrite)),
+          "a later rewrite revokes both stores and the original read despite stale markers");
+    rewrite->erase();
+    check(complete(OwnedMethodTableSlots(*module)), "removing the rewrite restores both slots");
+
+    writes[0]->moveAfter(reads[0]);
+    check(rejectsFirst(OwnedMethodTableSlots(*module)),
+          "moving initialization after its read revokes the slot despite stale markers");
+    writes[0]->moveBefore(reads[0]);
+    check(complete(OwnedMethodTableSlots(*module)), "restoring dominance restores both slots");
+
+    auto returned = llvm::cast<ctjs::ReturnOp>(writes[0]->getBlock()->getTerminator());
+    const auto originalResult = returned.getValue();
+    returned->setOperand(0, writes[0].getObject());
+    check(rejectsFirst(OwnedMethodTableSlots(*module)),
+          "a newly escaping owner revokes its slot despite stale markers");
+    returned->setOperand(0, originalResult);
+    check(complete(OwnedMethodTableSlots(*module)), "removing the escape restores both slots");
+
+    if (failures == 0) { std::puts("owned method-table slot budget and live-query checks passed"); }
     return failures == 0 ? 0 : 1;
 }
