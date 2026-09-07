@@ -323,6 +323,23 @@ void test_create_attribute_and_its_name_rule() {
        "threw:InvalidCharacterError");
 }
 
+// `document.fonts` - a FontFaceSet whose `ready` is already resolved, because
+// `browser::load_page_fonts` runs before any script does. Ten `css/css-values`
+// files call `document.fonts.ready.then(...)` on their first line and every one
+// of them died there on `` `then` is undefined ``.
+void test_the_font_face_set() {
+    is("typeof document.fonts", "object");
+    is("document.fonts.status", "loaded");
+    is("document.fonts.size", "0");
+    is("typeof document.fonts.ready.then", "function");
+    is("document.fonts.check('12px serif')", "true");
+    // Two reads are the same promise's shape, not two different objects with
+    // one working - the accessor is what roots the set.
+    is("(function () { var a = document.fonts.ready, b = document.fonts.ready;"
+       " return (typeof a.then) + ',' + (typeof b.then); })()",
+       "function,function");
+}
+
 } // namespace
 
 int main() {
@@ -334,5 +351,6 @@ int main() {
     test_append_and_prepend_on_the_document();
     test_normalize_merges_the_text_nodes_below_the_document();
     test_create_attribute_and_its_name_rule();
+    test_the_font_face_set();
     REPORT("document_node");
 }

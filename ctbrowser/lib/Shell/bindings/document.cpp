@@ -977,6 +977,67 @@ void dom_bindings::install_document(context & cx) {
                                return c.make_promise(value::undefined(), false);
                            })));
     }
+    // `document.fonts` - A FontFaceSet THAT IS ALREADY DONE.
+    //
+    // Ten `css/css-values` files call `document.fonts.ready.then(...)` on their
+    // first line and every one of them died there, before a single assertion,
+    // on `` `then` is undefined ``. The engine loads a page's `@font-face`
+    // files synchronously in `browser::load_page_fonts`, BEFORE any script
+    // runs - so by the time a page can ask, the answer really is "loaded", and
+    // a resolved promise is not a stub standing in for work that has not
+    // happened. It is the honest report of work that happened earlier than the
+    // API's shape expects.
+    //
+    // WHAT IS NOT HERE, and it is named rather than faked: the set is EMPTY.
+    // `size` is 0, iterating yields nothing and `check()` answers true for
+    // every query. A FontFaceSet whose members were real would need a
+    // `FontFace` object per loaded face and a way to add one from script, and
+    // `add()` would have to reach the font store - none of which any of those
+    // ten tests asks for. `check()` answering true is the same decision
+    // `hasFeature()` makes two hundred lines above: the DOM defines it as a
+    // question every browser now answers yes to.
+    {
+        auto * fonts = static_cast<script::object_object *>(cx.make_object().as_heap());
+        const auto font_method = [&](std::string name, script::native_fn fn) {
+            fonts->set(name,
+                       value::object(cx.allocate<script::native_object>(name, std::move(fn))));
+        };
+        {
+            // THE SET IS ROOTED THROUGH THE GETTER, the same channel
+            // `element.attributes` uses: a C++ lambda's captures are invisible
+            // to a precise collector, so `retained` is what keeps the object
+            // the promise resolves with alive. See native_object::retained.
+            const value set_value = value::object(fonts);
+            auto * ready = cx.allocate<script::native_object>(
+                "ready", [set_value](context & c, std::span<value>) {
+                    // Resolved WITH THE SET, which is what
+                    // `document.fonts.ready.then(s => ...)` is handed.
+                    return c.make_promise(set_value, false);
+                });
+            ready->retained.push_back(set_value);
+            fonts->define_accessor("ready", value::object(ready), value::undefined());
+        }
+        fonts->set("status", cx.string("loaded"));
+        fonts->set("size", value::number(0));
+        font_method("check", [](context &, std::span<value>) { return value::boolean(true); });
+        font_method("load", [](context & c, std::span<value>) {
+            return c.make_promise(c.make_array(), false);
+        });
+        font_method("forEach", [](context &, std::span<value>) { return value::undefined(); });
+        font_method("clear", [](context &, std::span<value>) { return value::undefined(); });
+        font_method("delete", [](context &, std::span<value>) { return value::boolean(false); });
+        font_method("has", [](context &, std::span<value>) { return value::boolean(false); });
+        // `add` is the one that would need a font store behind it. It accepts
+        // and does nothing, which is what a page adding a face it then never
+        // measures already gets.
+        font_method("add", [](context &, std::span<value>) { return value::undefined(); });
+        font_method("addEventListener",
+                    [](context &, std::span<value>) { return value::undefined(); });
+        font_method("removeEventListener",
+                    [](context &, std::span<value>) { return value::undefined(); });
+        doc->set("fonts", value::object(fonts));
+    }
+
     // `document.cookie`, IN MEMORY AND FOR THIS PAGE ONLY.
     //
     // An accessor rather than a string, because the API is not a string: READING
