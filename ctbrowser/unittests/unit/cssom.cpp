@@ -699,6 +699,42 @@ void test_the_computed_font_family_keeps_its_case() {
              std::string{"list=Twisty Tie, \"34J\", \"serif\", Veronica, sans-serif"});
 }
 
+// `el.style` FOLLOWS THE ATTRIBUTE, and the attribute follows `el.style`.
+//
+// The declaration store was filled once, when the wrapper was made, and never
+// again - so `el.setAttribute("style", ...)`, which writes the attribute
+// directly and never touches the proxy, left the read side answering with what
+// the element had at construction. `css-style-attr-decl-block.html` says it in
+// its own subtest name ("Changes to style attribute should reflect on CSS
+// declaration block"), and `serialize-values.html` is 697 subtests of exactly
+// that shape: createElement, setAttribute("style", ...), read the IDL attribute.
+void test_the_inline_style_follows_the_attribute() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body><p id=t>x</p><script>
+        var t = document.getElementById('t');
+        console.log('before=' + t.style.color + '|' + t.style.length);
+        t.setAttribute('style', 'color: rgb(1, 2, 3); width: 10px');
+        console.log('after=' + t.style.color + '|' + t.style.length + '|' +
+                    t.style.getPropertyValue('width') + '|' + t.style.item(0));
+        // A SECOND CHANGE, so it is not a one-off refresh on first read.
+        t.setAttribute('style', 'height: 2px');
+        console.log('again=' + t.style.color + '|' + t.style.height + '|' + t.style.length);
+        // And a write through the proxy still reaches the attribute.
+        t.style.color = 'rgb(4, 5, 6)';
+        console.log('wrote=' + t.getAttribute('style'));
+        // A SUPPORTED PROPERTY THAT IS NOT SET IS "", not undefined; a name
+        // that is not a property at all is still undefined.
+        console.log('unset=' + t.style.marginTop + '|' + (t.style.marginTop === '') + '|' +
+                    (t.style.notAProperty === undefined));
+      </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "before="), std::string{"before=|0"});
+    CHECK_EQ(logged(page, "after="), std::string{"after=rgb(1, 2, 3)|2|10px|color"});
+    CHECK_EQ(logged(page, "again="), std::string{"again=|2px|1"});
+    CHECK_EQ(logged(page, "wrote="), std::string{"wrote=height: 2px; color: rgb(4, 5, 6);"});
+    CHECK_EQ(logged(page, "unset="), std::string{"unset=|true|true"});
+}
+
 } // namespace
 
 int main() {
@@ -718,5 +754,6 @@ int main() {
     test_a_pseudo_element_argument_is_not_the_element();
     test_the_automatic_minimum_size();
     test_the_computed_font_family_keeps_its_case();
+    test_the_inline_style_follows_the_attribute();
     REPORT("cssom");
 }

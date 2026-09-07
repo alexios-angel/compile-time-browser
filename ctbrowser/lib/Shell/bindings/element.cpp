@@ -885,10 +885,44 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // `background-color` are two spellings of ONE property. Storing them as
     // written put both in the attribute and made a read miss a write.
     auto * held = static_cast<script::object_object *>(cx.make_object().as_heap());
-    {
-        const auto txn = doc_->read();
-        seed_declarations(*held, cx, txn.attribute_value(id, atoms_->intern("style")));
-    }
+    // AND IT IS RE-SEEDED, not seeded once. The store was filled from the
+    // `style` attribute at wrapper construction and never again, so
+    // `el.setAttribute("style", "color: red")` - which writes the attribute
+    // directly and never touches this proxy - left `el.style.color` reading the
+    // empty store. `css-style-attr-decl-block.html` names the defect outright
+    // ("Changes to style attribute should reflect on CSS declaration block")
+    // and `serialize-values.html` is 697 subtests of it: it does createElement,
+    // setAttribute("style", …) and then reads the IDL attribute back.
+    //
+    // The last text SEEN rather than the document version, because a write
+    // through this proxy sets the attribute itself and must not then re-seed
+    // from what it just wrote - `seen` is updated to the serialisation instead,
+    // so a write costs nothing and only a change from OUTSIDE re-reads.
+    const auto seen = std::make_shared<std::string>();
+    const auto reseed = [this, id, seen](context & c, script::object_object & store) {
+        std::string now;
+        {
+            const auto txn = doc_->read();
+            now = std::string{txn.attribute_value(id, atoms_->intern("style"))};
+        }
+        if (now == *seen) { return; }
+        *seen = now;
+        // The METHODS stay: `setProperty` and its four siblings live on this
+        // same object, and erasing everything would take them with it.
+        std::vector<std::string> declared;
+        for (const auto & [key, v] : store.props) {
+            if (is_declaration(v)) { declared.push_back(key); }
+        }
+        for (const std::string & key : declared) { store.erase(key); }
+        seed_declarations(store, c, now);
+    };
+    // The write side of the same bookkeeping: after this proxy has written the
+    // attribute, what is in it is what we put there.
+    const auto wrote = [this, id, seen](context & c, script::object_object & store) {
+        *seen = style_attribute(store, c);
+        (void)doc_->set_attribute(id, atoms_->intern("style"), *seen);
+    };
+    reseed(cx, *held);
     const value target = value::object(held);
     auto * handler = static_cast<script::object_object *>(cx.make_object().as_heap());
     const auto trap = [&](std::string name, script::native_fn fn) {
@@ -898,9 +932,10 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     // than stored. Storing them would put `length: 5` in the element's style
     // attribute - the store IS the declaration list, and anything in it that is
     // not a declaration has to be filtered back out by every reader.
-    trap("get", [](context & c, std::span<value> args) {
+    trap("get", [reseed](context & c, std::span<value> args) {
         if (args.size() < 2 || !args[0].is_object()) { return value::undefined(); }
         auto * store = static_cast<script::object_object *>(args[0].as_heap());
+        reseed(c, *store);
         const std::string name = c.to_string(args[1]);
         if (name == "length") {
             double count = 0;
@@ -939,13 +974,25 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             if (found->is_callable()) { return *found; }
             return c.string(std::string{declared_value(c.to_string(*found))});
         }
-        const value * found = store->find(css_name_of(name));
-        if (found == nullptr) { return value::undefined(); }
+        const std::string css = css_name_of(name);
+        const value * found = store->find(css);
+        if (found == nullptr) {
+            // A SUPPORTED PROPERTY THAT IS NOT SET IS "", NOT undefined.
+            // CSSOM 6.7.2 gives every property in the IDL a getter that
+            // returns the empty string when the declaration block has none,
+            // and `serialize-values.html` reads exactly that for the ones it
+            // could not set. `undefined` is reserved for a name that is not a
+            // property at all - `el.style.toString`, `el.style.constructor` -
+            // because answering "" there would break every ordinary lookup.
+            if (style::css::find_property(css) != nullptr) { return c.string(""); }
+            return value::undefined();
+        }
         return c.string(std::string{declared_value(c.to_string(*found))});
     });
-    trap("set", [this, id](context & c, std::span<value> args) {
+    trap("set", [this, reseed, wrote](context & c, std::span<value> args) {
         if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
         auto * store = static_cast<script::object_object *>(args[0].as_heap());
+        reseed(c, *store);
         const std::string name = c.to_string(args[1]);
         if (name == "cssText") {
             // A WHOLE-BLOCK REPLACEMENT, not a merge: `el.style.cssText = "…"`
@@ -965,7 +1012,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             (void)store_declaration(*store, c, css_name_of(name), c.to_string(args[2]), false,
                                     false);
         }
-        (void)doc_->set_attribute(id, atoms_->intern("style"), style_attribute(*store, c));
+        wrote(c, *store);
         mutated();
         return value::boolean(true);
     });
@@ -985,7 +1032,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         return given.starts_with("--") ? given : ascii_lower_copy(given);
     };
     declaration_method(
-        "setProperty", [this, id, held, asked_name](context & c, std::span<value> args) {
+        "setProperty", [this, held, asked_name, reseed, wrote](context & c, std::span<value> args) {
             // "If priority is not the empty string and is not an ASCII
             // case-insensitive match for 'important', return." - CSSOM 6.7.2.
             // The VALUE may not carry one; the third argument is the only way
@@ -994,38 +1041,44 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             if (!priority.empty() && !ascii_iequals(priority, "important")) {
                 return value::undefined();
             }
+            reseed(c, *held);
             (void)store_declaration(*held, c, asked_name(c, args),
                                     args.size() > 1 ? c.to_string(args[1]) : std::string{}, false,
                                     !priority.empty());
-            (void)doc_->set_attribute(id, atoms_->intern("style"), style_attribute(*held, c));
+            wrote(c, *held);
             mutated();
             return value::undefined();
         });
     // ...and it ANSWERS with the value it removed, which is what CSSOM says and
     // what a page toggling a property reads to put it back.
-    declaration_method(
-        "removeProperty", [this, id, held, asked_name](context & c, std::span<value> args) {
-            const std::string name = asked_name(c, args);
-            const value * found = held->find(name);
-            const std::string was =
-                found == nullptr ? std::string{} : std::string{declared_value(c.to_string(*found))};
-            held->erase(name);
-            (void)doc_->set_attribute(id, atoms_->intern("style"), style_attribute(*held, c));
-            mutated();
-            return c.string(was);
-        });
-    declaration_method("getPropertyValue", [held, asked_name](context & c, std::span<value> args) {
-        const value * found = held->find(asked_name(c, args));
-        if (found == nullptr) { return c.string(""); }
-        return c.string(std::string{declared_value(c.to_string(*found))});
+    declaration_method("removeProperty", [this, held, asked_name, reseed,
+                                          wrote](context & c, std::span<value> args) {
+        reseed(c, *held);
+        const std::string name = asked_name(c, args);
+        const value * found = held->find(name);
+        const std::string was =
+            found == nullptr ? std::string{} : std::string{declared_value(c.to_string(*found))};
+        held->erase(name);
+        wrote(c, *held);
+        mutated();
+        return c.string(was);
     });
+    declaration_method("getPropertyValue",
+                       [held, asked_name, reseed](context & c, std::span<value> args) {
+                           reseed(c, *held);
+                           const value * found = held->find(asked_name(c, args));
+                           if (found == nullptr) { return c.string(""); }
+                           return c.string(std::string{declared_value(c.to_string(*found))});
+                       });
     declaration_method("getPropertyPriority",
-                       [held, asked_name](context & c, std::span<value> args) {
+                       [held, asked_name, reseed](context & c, std::span<value> args) {
+                           reseed(c, *held);
                            const value * found = held->find(asked_name(c, args));
                            if (found == nullptr) { return c.string(""); }
                            return c.string(std::string{declared_priority(c.to_string(*found))});
                        });
-    declaration_method("item", [held](context & c, std::span<value> args) {
+    declaration_method("item", [held, reseed](context & c, std::span<value> args) {
+        reseed(c, *held);
         double want = args.empty() ? 0 : context::to_number(args[0]);
         if (!(want >= 0)) { return c.string(""); }
         for (const auto & [key, v] : held->props) {
