@@ -9,8 +9,11 @@
 #include <ctbrowser/shell/bindings.hpp>
 #include <ctbrowser/shell/net/url.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <numbers>
+#include <vector>
 
 // dom_bindings' method bodies - the API a page's script actually calls.
 //
@@ -55,20 +58,34 @@ bool dom_bindings::dispatch(std::string_view type, node_id target) {
 // is the window-and-document bucket every global listener already lives in, so
 // this reaches `window.onerror` and `addEventListener("error", ...)` alike.
 //
-// The `error` property is undefined rather than a fabricated Error object: this
-// engine's failure is a STRING by the time it gets here, and handing a page a
-// synthetic exception whose stack is a lie is worse than handing it nothing.
-// testharness.js reads `e.error && e.error.stack` and falls back to
-// filename:lineno:colno, which is the branch this takes.
+// The `error` property is whatever the throw left behind, and `undefined` when
+// there was nothing to leave: a VM fault - the allocation ceiling, the call
+// stack ceiling - is a failure that was never an exception, and a synthetic
+// Error whose stack is a lie is worse than nothing. testharness.js reads
+// `e.error && e.error.stack` and falls back to filename:lineno:colno, so both
+// shapes are ones it understands.
 bool dom_bindings::dispatch_error(std::string_view message) {
+    return dispatch_error_value(message, value::undefined());
+}
+
+// THE VALUE MATTERS AND NOT ONLY THE TEXT. A page's own reporting is written
+// against `event.error`, and so is the suite's: EventListener-handleEvent.html
+// rethrows it - `throw event.error` - and asserts the identity of the object it
+// gets back against the one its getter threw, which no string can answer.
+bool dom_bindings::dispatch_error_value(std::string_view message, value error) {
     if (cx_ == nullptr) { return false; }
+    // ROOTED ACROSS THE ALLOCATIONS BELOW. `error` arrives in a C++ local, which
+    // is not somewhere the collector looks, and building the event object
+    // allocates - so an unrooted thrown object can be swept between the throw
+    // and the listener that was going to read it.
+    const context::rooted keep_error{*cx_, error};
     value event = make_event(*cx_, "error", node_id{});
     auto * object = static_cast<script::object_object *>(event.as_heap());
     object->set("message", cx_->string(std::string{message}));
     object->set("filename", cx_->string(std::string{}));
     object->set("lineno", value::number(0));
     object->set("colno", value::number(0));
-    object->set("error", value::undefined());
+    object->set("error", error);
     return dispatch_event("error", node_id{}, event);
 }
 
@@ -437,7 +454,26 @@ void invoke_listener(context & cx, value callback, value receiver, value event) 
     // registers five. A callable one has already been handled above.
     if (!callback.is_object_like()) { return; }
     const value handler = cx.lookup_property(callback, "handleEvent");
-    if (!handler.is_callable()) { return; }
+    // THE LOOKUP IS THE PAGE'S OWN CODE AND IT MAY THROW.
+    //
+    // `handleEvent` is fetched at DISPATCH time, and a page may make it an
+    // accessor - EventListener-handleEvent.html registers a listener whose
+    // getter throws and then asserts on the object it threw. WebIDL's "call a
+    // user object's operation" propagates an abrupt Get rather than swallowing
+    // it, so the fault stands and fire_at's reporter turns it into the page's
+    // `error` event. Returning here without the check would read the failure as
+    // "no handleEvent" and fall into the TypeError below, which would REPLACE
+    // the page's exception with one of ours.
+    if (cx.failed()) { return; }
+    // AND A LISTENER OBJECT WITHOUT A CALLABLE ONE IS A TypeError, not a
+    // listener that quietly does nothing. Same clause: if the fetched value is
+    // not callable, throw. `{handleEvent: null}` and `{handleEvent: 42}` are
+    // two of that file's tests and both expect to see a TypeError reported.
+    if (!handler.is_callable()) {
+        cx.throw_error("TypeError", "Failed to invoke an EventListener: the object's "
+                                    "'handleEvent' property is not a function.");
+        return;
+    }
     // THE OBJECT IS THE RECEIVER, not the target: `handleEvent` is a method of
     // the listener object and reads its own state.
     (void)cx.call(handler, std::span<const value>{&event, 1}, callback);
@@ -669,7 +705,16 @@ dom_bindings::listener dom_bindings::make_listener(context & cx, path_step targe
         // it is also how a page feature-DETECTS the option at all - it hands
         // addEventListener a dictionary whose members are getters and watches
         // which of them run, which is what every passive polyfill does.
-        made.passive = context::truthy(cx.lookup_property(options, "passive"));
+        //
+        // AN ABSENT MEMBER IS NOT `false`, it is the DEFAULT PASSIVE VALUE. The
+        // IDL gives `passive` no default precisely so the DOM can compute one
+        // from the type and the target, and `{passive: undefined}` is the same
+        // as leaving it out - WebIDL treats a member whose value is undefined
+        // as not present, which passive-by-default.html tests separately from
+        // omitting it for all 40 of its combinations.
+        const value asked = cx.lookup_property(options, "passive");
+        made.passive = asked.is_undefined() ? default_passive_value(made.type, target)
+                                            : context::truthy(asked);
         const value signal = cx.lookup_property(options, "signal");
         if (!signal.is_undefined()) {
             // `AbortSignal signal` IS NOT NULLABLE IN THE IDL, so `{signal:
@@ -689,10 +734,56 @@ dom_bindings::listener dom_bindings::make_listener(context & cx, path_step targe
             // the opposite of what the page asked for.
             if (context::truthy(cx.lookup_property(signal, "aborted"))) { made.spent = true; }
         }
-    } else if (args.size() > 2) {
-        made.capture = context::truthy(options);
+    } else {
+        // The bare capture flag, or no third argument at all. Either way the
+        // dictionary's other members are at their defaults - and `passive`'s
+        // default is computed, so the commonest spelling on the web,
+        // `addEventListener(type, fn)`, is where the rule matters most.
+        if (args.size() > 2) { made.capture = context::truthy(options); }
+        made.passive = default_passive_value(made.type, target);
     }
+    // A NULL OR ABSENT CALLBACK REGISTERS NOTHING. The DOM returns before the
+    // listener is built rather than storing one that can never be invoked, and
+    // it matters now that a listener object without a callable `handleEvent` is
+    // a TypeError: a stored `null` would report one on every dispatch.
+    if (made.callback.is_nullish()) { made.spent = true; }
     return made;
+}
+
+// https://dom.spec.whatwg.org/#default-passive-value - the four SCROLL-BLOCKING
+// types, on the four targets a page scrolls through.
+//
+// The rule reads as one sentence and is worth stating as one: a `touchstart`,
+// `touchmove`, `wheel` or `mousewheel` listener on the WINDOW, the DOCUMENT, the
+// DOCUMENT ELEMENT or the BODY is passive unless the page said `{passive:
+// false}`. Anywhere else, and for any other type, only what was asked for
+// counts. It exists because those four listeners on those four targets are how
+// a page blocks a scroll, and a browser cannot start scrolling until it knows
+// whether one of them will - so the platform changed the default rather than
+// wait.
+//
+// `find_by_tag` walks the tree, so the type test comes FIRST: four string
+// comparisons decide it for every listener a page registers that is not one of
+// these, which is nearly all of them.
+bool dom_bindings::default_passive_value(std::string_view type, const path_step & target) {
+    if (type != "touchstart" && type != "touchmove" && type != "wheel" && type != "mousewheel") {
+        return false;
+    }
+    switch (target.on) {
+    case listen_on::window:
+    case listen_on::document: return true;
+    case listen_on::node:
+        // The document element and the body, by tag rather than by position:
+        // `documentElement` here is `find_by_tag("html")` for the same reason
+        // the document's own property is, so the two answers agree.
+        return target.node &&
+               (target.node == find_by_tag("html") || target.node == find_by_tag("body"));
+    // A standalone EventTarget is not in any document, so no scroll depends on
+    // it: generic-events-stay-cancelable.html is that case exactly, and a
+    // passive default there would make an event it dispatches uncancellable.
+    case listen_on::object: return false;
+    }
+    return false;
 }
 
 void dom_bindings::add_listener(listener made) {
@@ -743,35 +834,73 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
     // all and tells the page nothing twice.
     const auto report_fault = [this, type] {
         if (cx_ == nullptr || !cx_->failed() || type == "error") { return; }
+        // THE THROWN VALUE, READ BEFORE `take_error` CLEARS THE FLAG, and only
+        // when the failure WAS a throw: `last_thrown()` is stale after a run
+        // that succeeded, and a VM fault - the allocation ceiling, the call
+        // stack ceiling - fails without one. "uncaught " is the prefix the VM
+        // puts on the flattened text of a throw and on nothing else, so it is
+        // the question "was there a value?" asked where the answer is kept.
+        const bool threw = cx_->error().starts_with("uncaught ");
+        const value thrown = threw ? cx_->last_thrown() : value::undefined();
         const std::string fault = std::string{type} + " listener: " + cx_->take_error();
         // The page gets it first. If nothing handled it - `preventDefault` on
         // an error event is how a page says it did - it goes to the embedder
         // as well, which is what a browser's console is for. The FIRST one is
         // kept there, exactly as note_callback_fault keeps it: a listener that
         // faults on every event has one bug, not a thousand.
-        const bool handled = dispatch_error(fault);
+        const bool handled = dispatch_error_value(fault, thrown);
         ++callback_faults_;
         if (!handled && callback_error_.empty()) { callback_error_ = fault; }
     };
-    // Indexed rather than iterated: a listener may register another one, and
-    // appending to the vector being walked invalidates an iterator. A listener
-    // added during a dispatch does not run in that dispatch, which is the rule.
-    const std::size_t count = listeners_.size();
-    for (std::size_t i = 0; i < count && i < listeners_.size(); ++i) {
+    // THE LIST IS COPIED BEFORE ANY OF IT RUNS, which is what the DOM says and
+    // is not the same thing as walking it carefully.
+    //
+    // concept-event-listener-inner-invoke opens with "let listeners be a clone
+    // of the object's event listener list", and then two rules fall out of the
+    // clone rather than being written anywhere: a listener REGISTERED during
+    // this dispatch is not in the copy and does not run, and a listener REMOVED
+    // during it is in the copy and is skipped by its `removed` flag.
+    //
+    // Walking the live vector by index cannot do the second half here, because
+    // `removeEventListener` is `std::erase_if` in five places across four files
+    // - it MOVES every entry after the one it takes, so the index the loop is
+    // holding now names the NEXT listener and that one is silently skipped. A
+    // handler that removes itself is not exotic; it is the shape of every
+    // "run this once" listener written before `{once: true}` existed, and
+    // Event-dispatch-handlers-changed.html removes one at each of eight targets.
+    //
+    // What is copied is IDENTITY, not the listener: a `value` in a plain vector
+    // is invisible to the collector, and a callback dropped by the removal that
+    // happened mid-dispatch could be swept while this loop still held it. The
+    // re-find below reads the callback back out of `listeners_`, which IS
+    // traced, and finding nothing is exactly the `removed` check.
+    std::vector<std::uint64_t> queued;
+    const auto belongs = [&](const listener & l) {
+        if (l.on != step.on || l.type != type || l.capture != capturing) { return false; }
+        if (l.on == listen_on::node && l.target != step.node) { return false; }
+        if (l.on == listen_on::object && l.host.bits() != step.host.bits()) { return false; }
+        return true;
+    };
+    for (const listener & l : listeners_) {
+        if (!l.spent && belongs(l)) { queued.push_back(l.callback.bits()); }
+    }
+    for (const std::uint64_t identity : queued) {
         // RE-READ THE FLAG EACH TIME. stopImmediatePropagation is defined by
         // stopping the listeners that would have run next at this very step, so
         // a check hoisted out of the loop implements the other method.
         if (flag_of(*cx_, event, stop_immediate_property)) { return; }
-        listener & l = listeners_[i];
-        if (l.on != step.on || l.type != type || l.capture != capturing || l.spent) { continue; }
-        if (l.on == listen_on::node && l.target != step.node) { continue; }
-        if (l.on == listen_on::object && l.host.bits() != step.host.bits()) { continue; }
-        if (l.once) { l.spent = true; }
-        // COPIED OUT BEFORE THE CALL. `l` is a reference into a vector a
+        const auto found = std::ranges::find_if(listeners_, [&](const listener & l) {
+            return !l.spent && l.callback.bits() == identity && belongs(l);
+        });
+        // Gone since the copy was taken - removed by a listener that ran
+        // earlier at this step, or by its AbortSignal.
+        if (found == listeners_.end()) { continue; }
+        if (found->once) { found->spent = true; }
+        // COPIED OUT BEFORE THE CALL. `found` is an iterator into a vector a
         // listener can grow (addEventListener) or shrink (an AbortSignal), so
         // nothing may touch it once script is running.
-        const value callback = l.callback;
-        const bool passive = l.passive;
+        const value callback = found->callback;
+        const bool passive = found->passive;
         // SET AND CLEARED rather than saved and restored: an event that is
         // already being dispatched is refused, so one can never be inside two
         // of these at once. It stays set across a NESTED dispatch on purpose -
@@ -1481,19 +1610,30 @@ void dom_bindings::install_event_interfaces(context & cx) {
     // dispatching AT it runs only the window's own listeners - which is what the
     // old stub did by accident and this does on purpose.
     if (auto * window = window_object()) {
-        window->set("dispatchEvent",
-                    value::object(cx.allocate<script::native_object>(
-                        "dispatchEvent", [this](context & c, std::span<value> args) {
-                            const value event = arg(args, 0);
-                            if (!inherits_from(event, event_prototype_)) {
-                                c.throw_error("TypeError",
-                                              "Failed to execute 'dispatchEvent' on 'Window': "
-                                              "parameter 1 is not of type 'Event'.");
-                                return value::boolean(false);
-                            }
-                            return value::boolean(
-                                !dispatch_to(event, path_step{node_id{}, listen_on::window}));
-                        })));
+        const value window_dispatch = value::object(cx.allocate<script::native_object>(
+            "dispatchEvent", [this](context & c, std::span<value> args) {
+                const value event = arg(args, 0);
+                if (!inherits_from(event, event_prototype_)) {
+                    c.throw_error("TypeError", "Failed to execute 'dispatchEvent' on 'Window': "
+                                               "parameter 1 is not of type 'Event'.");
+                    return value::boolean(false);
+                }
+                return value::boolean(!dispatch_to(event, path_step{node_id{}, listen_on::window}));
+            }));
+        window->set("dispatchEvent", window_dispatch);
+        // AND THE BARE NAME, which was the missing third of the set. The window
+        // is the global object, so `addEventListener`, `removeEventListener` and
+        // `dispatchEvent` are all three ordinary globals; the first two were
+        // defined as such and this one was not, so a page written the way the
+        // specification's own examples are written -
+        //
+        //     addEventListener("wheel", handler);
+        //     dispatchEvent(new Event("wheel"));
+        //
+        // got a listener registered and then a TypeError on the very next line.
+        // non-cancelable-when-passive/synthetic-events-cancelable.html is
+        // twelve subtests of exactly that pair and never reached an assertion.
+        cx.define_global("dispatchEvent", window_dispatch);
         // `window.event` EXISTS AND IS UNDEFINED outside a dispatch, which is a
         // different thing from not existing: event-global.html opens with
         // assert_own_property(window, "event"). dispatch_to writes it, and
