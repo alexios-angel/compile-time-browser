@@ -568,6 +568,137 @@ void test_an_injected_style_element_restyles() {
     CHECK_EQ(logged(undo, "gone="), std::string{"gone=rgb(1, 2, 3)|rgb(0, 0, 0)"});
 }
 
+// A PSEUDO-ELEMENT ARGUMENT IS NOT AN ARGUMENT TO IGNORE. `getComputedStyle`
+// took a second argument and threw it away, so `getComputedStyle(el,
+// '::before')` reported the ORIGINATING ELEMENT's style as the
+// pseudo-element's - `100px` where every engine says `""`. CSSOM says a
+// pseudo-element that does not exist reports an EMPTY declaration, and this
+// engine has no pseudo-element styling at all, so every colon-prefixed argument
+// is that case.
+//
+// THE THREE SHAPES, which are what css/cssom's getComputedStyle-pseudo,
+// -pseudo-with-argument, -pseudo-picker and -pseudo-checkmark divide their
+// assertions into: no colon is IGNORED, one colon and two colons are both
+// pseudo-element requests, and an empty declaration is still a
+// CSSStyleDeclaration - it answers the empty string rather than `undefined`,
+// and it still refuses to be written to.
+void test_a_pseudo_element_argument_is_not_the_element() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>#t { color: rgb(255, 0, 0); width: 100px }
+    </style></head><body><div id=t></div><script>
+        const el = document.getElementById('t');
+        const own = getComputedStyle(el);
+        // No colon: the argument is ignored and the ELEMENT answers.
+        const ignored = getComputedStyle(el, 'totallynotapseudo');
+        const before = getComputedStyle(el, '::before');
+        const legacy = getComputedStyle(el, ':checkmark');
+        // A trailing token makes it unparseable, which is the same answer.
+        const broken = getComputedStyle(el, '::before,::after');
+        console.log('own=' + own.color + '|' + (own.length > 0));
+        console.log('ignored=' + ignored.color + '|' + (ignored.length > 0));
+        console.log('before=' + before.length + '|' + before.color + '|' + before.width);
+        console.log('legacy=' + legacy.length + '|' + broken.length);
+        // ...and null, undefined and the empty string are not pseudo-elements.
+        console.log('absent=' + getComputedStyle(el, null).color + '|' +
+                    getComputedStyle(el, '').color + '|' +
+                    getComputedStyle(el, undefined).color);
+        let threw = '';
+        try { before.color = 'blue'; } catch (e) { threw = e.name; }
+        let refused = '';
+        try { before.setProperty('color', 'blue'); } catch (e) { refused = e.name; }
+        console.log('readonly=' + threw + '|' + refused);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "own="), std::string{"own=rgb(255, 0, 0)|true"});
+    CHECK_EQ(logged(page, "ignored="), std::string{"ignored=rgb(255, 0, 0)|true"});
+    // Empty - and empty means the EMPTY STRING for every property, not the
+    // `undefined` a missing accessor would give.
+    CHECK_EQ(logged(page, "before="), std::string{"before=0||"});
+    CHECK_EQ(logged(page, "legacy="), std::string{"legacy=0|0"});
+    CHECK_EQ(logged(page, "absent="),
+             std::string{"absent=rgb(255, 0, 0)|rgb(255, 0, 0)|rgb(255, 0, 0)"});
+    CHECK_EQ(logged(page, "readonly="),
+             std::string{"readonly=NoModificationAllowedError|NoModificationAllowedError"});
+}
+
+// `min-width: auto` RESOLVES TO ZERO unless something makes the automatic
+// minimum mean a size, and css/cssom's getComputedStyle-resolved-min-size-auto
+// asserts every element in its fixture twice - once as the initial value and
+// once with the same `auto` written down. Only the first of the pair used to
+// reach this rule: an `auto` the author wrote fell through to the length branch
+// and came back as the keyword.
+//
+// THREE THINGS PRESERVE IT: a flex item, a grid item, and a specified
+// `aspect-ratio` - and none of them if the element generates no box at all.
+void test_the_automatic_minimum_size() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>#f { display: flex } #g { display: grid }
+    </style></head><body>
+    <div id=plain style="min-width: auto; min-height: 5px"></div>
+    <div id=ratio style="aspect-ratio: 1/1; min-width: auto"></div>
+    <div id=degenerate style="aspect-ratio: 0/1"></div>
+    <div id=twopart style="aspect-ratio: auto 1/1"></div>
+    <div id=f><div id=fi style="min-width: auto"></div></div>
+    <div id=g><div id=gi></div></div>
+    <div style="display: none"><div id=hidden style="min-width: auto"></div></div>
+    <script>
+        const min = (id) => getComputedStyle(document.getElementById(id)).minWidth;
+        console.log('zero=' + min('plain') + '|' + min('hidden'));
+        console.log('ratio=' + min('ratio') + '|' + min('degenerate') + '|' + min('twopart'));
+        console.log('items=' + min('fi') + '|' + min('gi'));
+        // The property still answers what the author wrote when it is not `auto`.
+        console.log('given=' + getComputedStyle(document.getElementById('plain')).minHeight);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    // A written `auto` and an absent one are the same `auto`, and neither
+    // survives on an ordinary block or on an element with no box.
+    CHECK_EQ(logged(page, "zero="), std::string{"zero=0px|0px"});
+    // A degenerate ratio and the two-part form preserve it too: the rule is
+    // "an aspect-ratio was specified", not "it is usable".
+    CHECK_EQ(logged(page, "ratio="), std::string{"ratio=auto|auto|auto"});
+    CHECK_EQ(logged(page, "items="), std::string{"items=auto|auto"});
+    CHECK_EQ(logged(page, "given="), std::string{"given=5px"});
+}
+
+// A FONT FAMILY IS NOT A KEYWORD, and `getComputedStyle` folded it like one:
+// `Twisty Tie` came back `twisty tie` on every element of every page that names
+// a font. The case is the author's. So is the QUOTING, which CSSOM decides
+// rather than copies: a name that is a valid identifier sequence loses its
+// quotes, one that is not keeps them, and the quotes it keeps are double ones
+// whichever the author wrote. css/cssom/font-family-serialization-001 makes
+// five assertions about the computed value and these are them.
+void test_the_computed_font_family_keeps_its_case() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><body>
+    <div id=a style="font-family: Twisty Tie"></div>
+    <div id=b style="font-family: 'Times New Roman'"></div>
+    <div id=c style="font-family: '34J'"></div>
+    <div id=d style='font-family: "serif"'></div>
+    <div id=e style='font-family: Twisty Tie, "34J", "serif", Veronica, sans-serif'></div>
+    <div id=f style="font-family: 'A  B'"></div>
+    <script>
+        const fam = (id) => getComputedStyle(document.getElementById(id)).fontFamily;
+        console.log('bare=' + fam('a'));
+        console.log('unquoted=' + fam('b'));
+        console.log('digits=' + fam('c'));
+        console.log('generic=' + fam('d'));
+        console.log('list=' + fam('e'));
+        console.log('spaces=' + fam('f'));
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "bare="), std::string{"bare=Twisty Tie"});
+    // A quoted name that IS an identifier sequence loses its quotes...
+    CHECK_EQ(logged(page, "unquoted="), std::string{"unquoted=Times New Roman"});
+    // ...and one that is not keeps them: `34J` starts with a digit, `serif`
+    // would become the generic family, and the double space in `A  B` would not
+    // survive being written as identifiers.
+    CHECK_EQ(logged(page, "digits="), std::string{"digits=\"34J\""});
+    CHECK_EQ(logged(page, "generic="), std::string{"generic=\"serif\""});
+    CHECK_EQ(logged(page, "spaces="), std::string{"spaces=\"A  B\""});
+    CHECK_EQ(logged(page, "list="),
+             std::string{"list=Twisty Tie, \"34J\", \"serif\", Veronica, sans-serif"});
+}
+
 } // namespace
 
 int main() {
@@ -584,5 +715,8 @@ int main() {
     test_an_adopted_sheet_reaches_the_author_css();
     test_replace_refuses_a_regular_sheet();
     test_an_injected_style_element_restyles();
+    test_a_pseudo_element_argument_is_not_the_element();
+    test_the_automatic_minimum_size();
+    test_the_computed_font_family_keeps_its_case();
     REPORT("cssom");
 }
