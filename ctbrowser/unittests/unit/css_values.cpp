@@ -110,9 +110,11 @@ void test_the_things_that_must_survive() {
     ok("width", "clamp(1rem, 2vw, 3rem)", "clamp(1rem, 2vw, 3rem)");
     // THE AUTHOR'S BYTES for anything the grammar does not model, spacing and
     // all. `test_valid_value` asserts the round-trip exactly, and normalising a
-    // value whose grammar is unknown turned two passing `css-values` files into
-    // failing ones on 2026-09-07.
-    ok("width", "min(10px,5%)", "min(10px,5%)");
+    // value whose grammar is UNKNOWN turned two passing `css-values` files into
+    // failing ones on 2026-09-07. A math function's grammar is known, so its
+    // argument list is re-serialised and `min(10px,5%)` gains its space.
+    ok("width", "min(10px, 5%)", "min(10px, 5%)");
+    ok("width", "min(10px,5%)", "min(10px, 5%)");
     ok("font-family", "random-item(auto ,serif)", "random-item(auto ,serif)");
     ok("font-family", "\"Helvetica Neue\", sans-serif", "\"Helvetica Neue\", sans-serif");
     // An UNKNOWN property is stored, not refused: CSSOM lets a page set one.
@@ -438,8 +440,12 @@ void test_a_sum_that_cannot_fold_still_has_an_order() {
 
     // ...AND A COMPARISON STILL CANNOT BE DECIDED. `min(1em, 1px)` has no order
     // before a font size, exactly as `min(10px, 5%)` has none before a
-    // containing block, and both keep the author's bytes.
+    // containing block - but each SIDE of it is a calculation like any other and
+    // simplifies like any other, which is what `minmax-length-percent-serialize`
+    // and `calc-infinity-nan-serialize-length` end on.
     ok("width", "min(1em, 1px)", "min(1em, 1px)");
+    ok("width", "min(10% + 30px, 5em + 5%)", "min(10% + 30px, 5% + 5em)");
+    ok("width", "calc(1 * min(NaN * 2px, NaN * 4em))", "calc(1 * min(NaN * 1px, NaN * 1em))");
     ok("width", "clamp(1rem, 2vw, 3rem)", "clamp(1rem, 2vw, 3rem)");
     ok("width", "min(1em)", "calc(1em)"); // ...one argument is not a comparison
 }

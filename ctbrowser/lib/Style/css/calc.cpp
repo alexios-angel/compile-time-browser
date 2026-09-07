@@ -1008,14 +1008,26 @@ private:
 // relative units to say so - `px` among them, in its alphabetical place between
 // `lvw` and `rcap` rather than first for being the canonical one.
 //
-// AN EMPTY ANSWER MEANS "PRINT THE AUTHOR'S BYTES INSTEAD". An infinity or a NaN
-// coefficient has no spelling in a multi-term sum - `calc(NaN * 1px)` is a whole
-// value, not a term of one - and a plain number sitting beside the symbols is a
-// shape this file does not build. Neither is a reason to condemn a declaration.
+// AN INFINITY OR A NaN MOVES ITS UNIT OUT TO A MULTIPLIER, exactly as
+// `serialize_calc` does it and for the same reason: `NaNem` is not a token.
+// It is only spellable when the whole sum is that one term - `NaN * 1em + 1px`
+// has no canonical form and there is no case for one - so anything else comes
+// back EMPTY, which means "print the author's bytes instead" and is never a
+// reason to condemn a declaration. A plain number sitting beside the symbols is
+// the other such shape, and this file does not build it.
 [[nodiscard]] std::string serialize_symbolic(const term & value) {
-    if (value.value != 0.0 || !std::isfinite(value.percent)) { return {}; }
-    for (const auto & [unit, coefficient] : value.symbols) {
-        if (!std::isfinite(coefficient)) { return {}; }
+    if (value.value != 0.0) { return {}; }
+    const std::size_t parts = value.symbols.size() + (value.has_percent ? 1 : 0);
+    const bool finite =
+        std::isfinite(value.percent) && std::ranges::all_of(value.symbols, [](const auto & one) {
+            return std::isfinite(one.second);
+        });
+    if (!finite) {
+        if (parts != 1) { return {}; }
+        const double lead = value.has_percent ? value.percent : value.symbols.front().second;
+        const std::string unit = value.has_percent ? "%" : value.symbols.front().first;
+        const std::string word = std::isnan(lead) ? "NaN" : (lead > 0 ? "infinity" : "-infinity");
+        return word + " * 1" + unit;
     }
     std::vector<std::pair<std::string, double>> sorted = value.symbols;
     std::ranges::sort(sorted, [](const auto & a, const auto & b) { return a.first < b.first; });
@@ -1435,25 +1447,6 @@ struct function_span {
     return span_of(body, 0, calc).end == body.size();
 }
 
-// HOW MANY `)` EOF OWES THIS TEXT. CSS Syntax 3 §5.4.9 closes every open block
-// at the end of the input, so `calc(pow(2, sibling-index())` IS
-// `calc(pow(2, sibling-index()))` - and a specified value is serialised from
-// what the tokenizer made of the bytes, not from the bytes.
-// `calc-complex-unresolved-serialize` writes six values with a paren missing and
-// asks for all six back with it there.
-[[nodiscard]] std::size_t unclosed_depth(std::string_view text) noexcept {
-    std::size_t depth = 0;
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        if (const std::size_t quoted = end_of_string_at(text, i); quoted != i) {
-            i = quoted - 1;
-            continue;
-        }
-        if (text[i] == '(') { ++depth; }
-        if (text[i] == ')' && depth > 0) { --depth; }
-    }
-    return depth;
-}
-
 // Is `text` exactly one math function and nothing else, and which one?
 [[nodiscard]] std::string_view lone_math_function(std::string_view text) {
     const std::string_view name = math_name_at(text, 0);
@@ -1548,6 +1541,34 @@ constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(
     return true;
 }
 
+// A FUNCTION WITH NO ANSWER STILL HAS ARGUMENTS, and every one of them is a
+// calculation in its own right. `min(1em, 1px)` cannot be ordered, but
+// `min(10% + 30px, 5em + 5%)` is `min(10% + 30px, 5% + 5em)` - the comparison is
+// undecidable and each side of it is still a sum with a canonical order.
+// `minmax-length-percent-serialize` and `calc-infinity-nan-serialize-length` ask
+// for exactly that, the second one through `min(NaN * 2px, NaN * 4em)`.
+//
+// An argument with no simplified form of its own - `none`, `nearest`,
+// `sibling-index()` - is handed back to `simplify_math`, which copies what it
+// cannot answer for and closes what EOF closed. That recursion terminates
+// because `inner` is always shorter than the function it came out of.
+[[nodiscard]] std::string simplified_arguments(std::string_view name, std::string_view inner) {
+    std::string out{name};
+    bool first = true;
+    for (const std::string_view argument : top_level_arguments(inner)) {
+        if (!first) { out += ", "; }
+        first = false;
+        const std::string_view one = trim(argument, html_whitespace);
+        std::string text;
+        if (const auto [outcome, sum] = evaluate_symbolic(one); outcome == math_outcome::resolved) {
+            text = serialize_symbolic(sum);
+        }
+        out += text.empty() ? simplify_math(one) : text;
+    }
+    out += ')';
+    return out;
+}
+
 } // namespace
 
 std::string simplify_math(std::string_view value) {
@@ -1584,6 +1605,10 @@ std::string simplify_math(std::string_view value) {
         const function_span span = span_of(value, at, name);
         const std::string_view whole = value.substr(at, span.end - at);
         const std::string_view body = body_of(value, at, name, span);
+        // The argument list alone, which is `body` for a `calc()` and `body`
+        // with the name and the closing paren taken off for everything else.
+        const std::size_t from = at + name.size();
+        const std::string_view inner = value.substr(from, span.end - from - (span.closed ? 1 : 0));
         at = span.end;
         // A calc() AROUND ONE OTHER calc() IS REDUNDANT. §10.12's simplification
         // returns a lone child rather than wrapping it, so
@@ -1612,17 +1637,14 @@ std::string simplify_math(std::string_view value) {
                 continue;
             }
         }
-        // NOT SIMPLIFIABLE HERE KEEPS THE AUTHOR'S BYTES, which is the answer
-        // for `min(10px, 5%)` (no answer until layout, §10.11), for
-        // `min(1em, 1px)` (no font size to order them by) and for a function
-        // this file cannot evaluate at all. Re-serialising a value whose grammar
-        // is unknown is how `random-item(auto ,serif)` came back respaced.
-        //
-        // THE BYTES EOF ADDED COUNT AS THE AUTHOR'S. A function left open at the
-        // end of the value was closed by CSS Syntax 3 §5.4.9 before anything
-        // here saw it, so the paren belongs in the serialisation.
-        out.append(whole);
-        out.append(unclosed_depth(whole), ')');
+        // ...AND A FUNCTION WITH NO ANSWER AT ALL STILL HAS ARGUMENTS. §10.11
+        // says a comparison that cannot be ORDERED is its own computed value -
+        // `min(10px, 5%)`, `min(1em, 1px)` - and says nothing about the two
+        // sides of it, which are calculations like any other and simplify like
+        // any other. What genuinely has no simplified form here comes back
+        // through this same function and keeps the author's bytes, which is
+        // where `sibling-index()` and `nearest` land.
+        out.append(simplified_arguments(name, inner));
     }
     return out;
 }
