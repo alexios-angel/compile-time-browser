@@ -11,6 +11,7 @@
 
 #include <ctbrowser/style/css/properties.hpp>
 
+#include <algorithm>
 #include <numbers>
 #include <optional>
 #include <string>
@@ -352,6 +353,67 @@ std::vector<std::string> class_tokens(std::string_view text) {
 
 } // namespace
 
+// DOM 4.2.3, "ensure pre-insertion validity". Every one of these checks stands
+// in front of a `assert_throws_dom` in `dom/nodes/Node-insertBefore.html`,
+// `Node-appendChild.html` and `Node-removeChild.html`, and the FIRST one is the
+// reason this is not merely conformance work: appending a node to its own
+// descendant built a cycle, and every tree walk in this file has a depth cap
+// precisely because nothing stopped one being made.
+bool dom_bindings::pre_insert_valid(context & cx, node_id parent, node_id child, value node_arg,
+                                    value ref_arg) {
+    if (!child) {
+        // Not a Node at all. WebIDL reports a failed conversion as a TypeError
+        // rather than a DOMException, which is the one case in these steps that
+        // is not a DOMException.
+        (void)node_arg;
+        cx.throw_error("TypeError", "the argument is not a Node");
+        return false;
+    }
+    if (!parent) {
+        cx.throw_error("TypeError", "the receiver is not a Node");
+        return false;
+    }
+    const auto txn = doc_->read();
+    // 1. "If parent is not a Document, DocumentFragment, or Element node, throw
+    //    a HierarchyRequestError." A text node has no children to insert into.
+    const node_kind parent_kind = txn.kind(parent).value_or(node_kind::element);
+    if (parent_kind != node_kind::document && parent_kind != node_kind::document_fragment &&
+        parent_kind != node_kind::element) {
+        throw_dom_exception(cx, "HierarchyRequestError", "the parent cannot have children");
+        return false;
+    }
+    // 2. "If node is a host-including inclusive ancestor of parent, throw a
+    //    HierarchyRequestError." The cycle case, and the one with teeth.
+    for (node_id at = parent; at; at = txn.parent(at)) {
+        if (at != child) { continue; }
+        throw_dom_exception(cx, "HierarchyRequestError",
+                            "the node is an ancestor of the parent it would go into");
+        return false;
+    }
+    // 3. "If child is non-null and its parent is not parent, throw a
+    //    NotFoundError."
+    if (!ref_arg.is_nullish()) {
+        const node_id before = handle_of(ref_arg);
+        if (!before) {
+            cx.throw_error("TypeError", "the reference node is not a Node");
+            return false;
+        }
+        if (txn.parent(before) != parent) {
+            throw_dom_exception(cx, "NotFoundError",
+                                "the reference node is not a child of the parent");
+            return false;
+        }
+    }
+    // 4. "If node is not a DocumentFragment, DocumentType, Element, or
+    //    CharacterData node, throw a HierarchyRequestError." A Document is the
+    //    one this engine can produce and must refuse.
+    if (txn.kind(child).value_or(node_kind::element) == node_kind::document) {
+        throw_dom_exception(cx, "HierarchyRequestError", "a Document cannot be inserted");
+        return false;
+    }
+    return true;
+}
+
 void dom_bindings::install_element_views(context & cx, script::object_object & obj, node_id id) {
     // --- element.style
     //
@@ -688,10 +750,108 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         const auto txn = doc_->read();
         return wrap(c, txn.parent(id));
     });
+    // `parentElement` IS NOT `parentNode`. It is null when the parent is not an
+    // element, which is exactly the case a tree-walking page tests to know it
+    // has reached the top: `<html>`'s parent is the DOCUMENT, and answering
+    // with it made the walk run one level past the root.
     navigate("parentElement", [this, id](context & c, std::span<value>) {
         const auto txn = doc_->read();
-        return wrap(c, txn.parent(id));
+        const node_id parent = txn.parent(id);
+        if (!parent || txn.kind(parent).value_or(node_kind::element) != node_kind::element) {
+            return value::null();
+        }
+        return wrap(c, parent);
     });
+    // --- ParentNode and NonDocumentTypeChildNode -----------------------------
+    //
+    // THE ELEMENT-ONLY HALF OF THE TREE, which this wrapper had none of. Every
+    // one of these is a one-assertion test file in `dom/nodes`, and there are
+    // eight of them: Element-firstElementChild, -lastElementChild,
+    // -nextElementSibling, -previousElementSibling, -childElementCount and
+    // three -childElementCount-dynamic-* variants, each reporting `undefined`
+    // where a node or a count belongs.
+    //
+    // ACCESSORS, like `parentNode` above and for the same reason: the three
+    // dynamic tests add and remove children and read the count again, so a
+    // value captured at wrapping time is wrong by construction.
+    const auto element_children = [this](const read_txn & txn, node_id parent) {
+        std::vector<node_id> out;
+        for (const node_id child : txn.children(parent)) {
+            if (txn.kind(child).value_or(node_kind::text) == node_kind::element) {
+                out.push_back(child);
+            }
+        }
+        return out;
+    };
+    navigate("firstElementChild", [this, id, element_children](context & c, std::span<value>) {
+        const auto txn = doc_->read();
+        const std::vector<node_id> kids = element_children(txn, id);
+        return kids.empty() ? value::null() : wrap(c, kids.front());
+    });
+    navigate("lastElementChild", [this, id, element_children](context & c, std::span<value>) {
+        const auto txn = doc_->read();
+        const std::vector<node_id> kids = element_children(txn, id);
+        return kids.empty() ? value::null() : wrap(c, kids.back());
+    });
+    navigate("childElementCount", [this, id, element_children](context & c, std::span<value>) {
+        (void)c;
+        const auto txn = doc_->read();
+        return value::number(static_cast<double>(element_children(txn, id).size()));
+    });
+    // A SIBLING WALK NEEDS THE PARENT, because the tree is stored as a child
+    // list rather than as sibling links: the element's position among its
+    // parent's children is the only place the answer lives. A node with no
+    // parent has no siblings, which is null rather than an empty walk.
+    const auto sibling = [this, element_children](context & c, node_id self, bool forward,
+                                                  bool elements_only) {
+        const auto txn = doc_->read();
+        const node_id parent = txn.parent(self);
+        if (!parent) { return value::null(); }
+        const std::vector<node_id> kids =
+            elements_only
+                ? element_children(txn, parent)
+                : std::vector<node_id>{txn.children(parent).begin(), txn.children(parent).end()};
+        for (std::size_t i = 0; i < kids.size(); ++i) {
+            if (kids[i] != self) { continue; }
+            if (forward) { return i + 1 < kids.size() ? wrap(c, kids[i + 1]) : value::null(); }
+            return i > 0 ? wrap(c, kids[i - 1]) : value::null();
+        }
+        // NOT AMONG ITS PARENT'S ELEMENT CHILDREN: a text node asked for its
+        // previousElementSibling. Walk the full child list to find where it
+        // sits and then scan outward for an element.
+        if (!elements_only) { return value::null(); }
+        const std::span<const node_id> all = txn.children(parent);
+        for (std::size_t i = 0; i < all.size(); ++i) {
+            if (all[i] != self) { continue; }
+            for (std::size_t step = 1; step <= all.size(); ++step) {
+                const std::size_t at = forward ? i + step : i - step;
+                if (forward ? at >= all.size() : step > i) { break; }
+                if (txn.kind(all[at]).value_or(node_kind::text) == node_kind::element) {
+                    return wrap(c, all[at]);
+                }
+            }
+            return value::null();
+        }
+        return value::null();
+    };
+    navigate("firstChild", [this, id](context & c, std::span<value>) {
+        const auto txn = doc_->read();
+        const std::span<const node_id> kids = txn.children(id);
+        return kids.empty() ? value::null() : wrap(c, kids.front());
+    });
+    navigate("lastChild", [this, id](context & c, std::span<value>) {
+        const auto txn = doc_->read();
+        const std::span<const node_id> kids = txn.children(id);
+        return kids.empty() ? value::null() : wrap(c, kids.back());
+    });
+    navigate("nextSibling",
+             [id, sibling](context & c, std::span<value>) { return sibling(c, id, true, false); });
+    navigate("previousSibling",
+             [id, sibling](context & c, std::span<value>) { return sibling(c, id, false, false); });
+    navigate("nextElementSibling",
+             [id, sibling](context & c, std::span<value>) { return sibling(c, id, true, true); });
+    navigate("previousElementSibling",
+             [id, sibling](context & c, std::span<value>) { return sibling(c, id, false, true); });
     // `childNodes` is EVERY child, text nodes included; `children` is the
     // elements only. Both exist because they answer different questions, and a
     // page that wants the text nodes has no other way to reach them.
@@ -1082,7 +1242,40 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         // A null reference node means "at the end", which is what makes
         // `insertBefore(node, null)` a documented spelling of appendChild -
         // insert_node reads an empty handle the same way.
+        if (!pre_insert_valid(c, parent, child, arg(args, 0), arg(args, 1))) {
+            return value::undefined();
+        }
         (void)insert_node(parent, child, before);
+        return arg(args, 0);
+    });
+    // `moveBefore` IS `insertBefore` THAT DOES NOT REMOVE FIRST. The DOM says a
+    // move preserves state an insertion would destroy - an <iframe>'s document,
+    // a playing <video>, a focused control, a running animation - and this
+    // engine has none of those, so what is left of the operation is exactly the
+    // insertion. The DIFFERENCE that IS observable here is the validity checks,
+    // which are stricter than insertBefore's: the node must already have a
+    // parent, and both nodes must be in the same document.
+    //
+    // Named rather than aliased, because `moveBefore === insertBefore` would be
+    // a lie a page can test for, and because when state preservation does
+    // arrive it arrives here.
+    method("moveBefore", [this](context & c, std::span<value> args) {
+        const node_id parent = receiver(c);
+        const node_id child = handle_of(arg(args, 0));
+        if (!pre_insert_valid(c, parent, child, arg(args, 0), arg(args, 1))) {
+            return value::undefined();
+        }
+        {
+            const auto txn = doc_->read();
+            // "If node's parent is null, then throw a HierarchyRequestError" -
+            // a move has to move something from somewhere.
+            if (!txn.parent(child)) {
+                throw_dom_exception(c, "HierarchyRequestError",
+                                    "moveBefore: the node being moved has no parent");
+                return value::undefined();
+            }
+        }
+        (void)insert_node(parent, child, handle_of(arg(args, 1)));
         return arg(args, 0);
     });
     // WHERE THE ELEMENT IS ON SCREEN. A page turns a pointer event's viewport
@@ -1246,16 +1439,62 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
     method("appendChild", [this](context & c, std::span<value> args) {
         // THROUGH insert_node, which is where a DocumentFragment is flattened:
         // appending one must move its children and leave the fragment behind.
-        (void)insert_node(receiver(c), handle_of(arg(args, 0)), node_id{});
+        const node_id parent = receiver(c);
+        const node_id child = handle_of(arg(args, 0));
+        if (!pre_insert_valid(c, parent, child, arg(args, 0), value::null())) {
+            return value::undefined();
+        }
+        (void)insert_node(parent, child, node_id{});
         return arg(args, 0);
     });
-    method("removeChild", [this](context &, std::span<value> args) {
+    // "If child's parent is not this, then throw a NotFoundError" - DOM
+    // §4.2.3. Removing a node from an element that is not its parent used to
+    // succeed and remove it from wherever it actually was, which is a silent
+    // corruption of the caller's tree rather than a refused operation.
+    method("removeChild", [this](context & c, std::span<value> args) {
         const node_id child = handle_of(arg(args, 0));
-        if (child) {
-            (void)doc_->remove_child(child);
-            mutated();
+        const node_id parent = receiver(c);
+        if (!child) {
+            c.throw_error("TypeError", "removeChild: the argument is not a Node");
+            return value::undefined();
         }
+        {
+            const auto txn = doc_->read();
+            if (txn.parent(child) != parent) {
+                throw_dom_exception(c, "NotFoundError",
+                                    "removeChild: the node is not a child of this one");
+                return value::undefined();
+            }
+        }
+        (void)doc_->remove_child(child);
+        mutated();
         return arg(args, 0);
+    });
+    // `matches` and `closest`, DEFINED IN TERMS OF THE SAME MATCHER
+    // `querySelectorAll` uses, so neither can be right about a selector the
+    // other is wrong about. That matters more than it sounds: `query()` is a
+    // hand-rolled compound matcher with no combinator support at all, quite
+    // separate from the real Selectors engine in `lib/Style/css/selector.cpp`,
+    // and answering `matches` from a second, differently-limited matcher would
+    // make `el.matches(s)` and `[...root.querySelectorAll(s)].includes(el)`
+    // disagree. Rewiring BOTH onto the style engine is the next rung and is
+    // recorded in docs/wpt.md.
+    method("matches", [this](context & c, std::span<value> args) {
+        const node_id self = receiver(c);
+        if (!self) { return value::boolean(false); }
+        const std::vector<node_id> found = query(arg_string(c, args, 0), node_id{});
+        return value::boolean(std::find(found.begin(), found.end(), self) != found.end());
+    });
+    method("closest", [this](context & c, std::span<value> args) {
+        const node_id self = receiver(c);
+        if (!self) { return value::null(); }
+        const std::vector<node_id> found = query(arg_string(c, args, 0), node_id{});
+        const auto txn = doc_->read();
+        // INCLUSIVE, and upward: the element itself is the first candidate.
+        for (node_id at = self; at; at = txn.parent(at)) {
+            if (std::find(found.begin(), found.end(), at) != found.end()) { return wrap(c, at); }
+        }
+        return value::null();
     });
     method("addEventListener", [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);

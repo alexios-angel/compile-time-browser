@@ -363,6 +363,16 @@ private:
     // method goes through here, because a fragment is legal at every one of them
     // and handling it at four call sites is three chances to forget.
     bool insert_node(node_id parent, node_id child, node_id before);
+
+    // THE "ENSURE PRE-INSERTION VALIDITY" STEPS, DOM 4.2.3, shared by
+    // `insertBefore`, `appendChild` and `moveBefore`. Answers false having
+    // ALREADY THROWN, so a caller is one `if` rather than an error channel.
+    //
+    // It exists because all three used to succeed at anything: appending a node
+    // to its own descendant built a cycle the tree walkers then hung on, and
+    // `insertBefore(node, notAChild)` silently appended.
+    [[nodiscard]] bool pre_insert_valid(context & cx, node_id parent, node_id child, value node_arg,
+                                        value ref_arg);
     // One argument of append/prepend/before/after/replaceWith, as a node. A
     // wrapper resolves to its node; ANYTHING ELSE becomes a Text node, which is
     // what makes `el.append("hello")` work and is the whole reason those methods
