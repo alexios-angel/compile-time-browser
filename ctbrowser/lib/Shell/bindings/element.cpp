@@ -3745,6 +3745,35 @@ constexpr long long max_int32 = 2147483647;
     return at;
 }
 
+// THE RENDERED TEXT FRAGMENT, which is what the `innerText` and `outerText`
+// SETTERS both build. The assigned string is cut at every U+000A, U+000D or
+// CRLF pair: each run of other code points is a Text node and each break is a
+// `br` element, so `el.innerText = "a\nb"` leaves three children where
+// `textContent` would have left one.
+//
+// NOTHING IS PARSED AND NOTHING IS ESCAPED, which is the reason this builds
+// nodes rather than markup for set_inner_html to re-read: `abc<def` is seven
+// characters of TEXT, and a U+0000 in the middle survives - the HTML tokenizer
+// would have made an element of the first and U+FFFD of the second, and
+// innertext-setter-tests.js asserts both by name.
+template <typename OnText, typename OnBreak>
+void each_rendered_text_part(std::string_view text, OnText && on_text, OnBreak && on_break) {
+    std::size_t at = 0;
+    while (at < text.size()) {
+        const std::size_t start = at;
+        while (at < text.size() && text[at] != '\n' && text[at] != '\r') { ++at; }
+        if (at > start) { on_text(text.substr(start, at - start)); }
+        while (at < text.size() && (text[at] == '\n' || text[at] == '\r')) {
+            // ONE break for CRLF and two for CR CR: the pair is a single line
+            // ending, which is the only place the two characters are not
+            // independent.
+            if (text[at] == '\r' && at + 1 < text.size() && text[at + 1] == '\n') { ++at; }
+            ++at;
+            on_break();
+        }
+    }
+}
+
 } // namespace
 
 // One reflected attribute's getter: read the content attribute, apply the rule
@@ -4084,6 +4113,150 @@ void dom_bindings::install_dom_interfaces(context & cx) {
                                    property, [this, held_row](context & c, std::span<value> a) {
                                        return reflected_set(c, held_row, a);
                                    })));
+    }
+
+    // --- innerText AND outerText, THE SETTER HALF -----------------------------
+    //
+    // `el.innerText = "a\nb"` is NOT `textContent = "a\nb"`: the newline becomes
+    // a <br> element and the text on either side of it becomes a Text node.
+    // That rule - "the rendered text fragment" - is the whole of both setters
+    // and it reads no layout at all, which is why the two halves of this
+    // property can be separated. innertext-setter.html is 126 subtests of it.
+    //
+    // THE GETTERS ARE NOT HERE, and reading either still answers `undefined`.
+    // `innerText` is the RENDERED text: the specification's first step is "if
+    // this is not being rendered, return this's descendant text content" and
+    // every step after it reads the box tree - `display`, `white-space`, a
+    // ::before, a table cell's tab. This engine lays out on a FRAME rather than
+    // on demand, so the boxes a getter would walk here are the ones from before
+    // the script's own mutations: `container.innerHTML = x; e.innerText` would
+    // answer about the page as it was. Answering out of textContent instead
+    // would be a different property wearing this one's name. What the getter
+    // needs first is a layout flush a binding can ask for, and that is
+    // browser.cpp's to give.
+    if (const value html_interface = interface_prototype("HTMLElement");
+        html_interface.is_object()) {
+        auto * proto = static_cast<script::object_object *>(html_interface.as_heap());
+        // ON HTMLElement AND NOT ON Element, which is a rule with a test behind
+        // it: `svg.innerText = "abc"` must leave the <svg> empty, and
+        // innertext-setter-tests.js checks a MathML element as well.
+        //
+        // [LegacyNullToEmptyString], so `null` clears the element and
+        // `undefined` writes those nine letters - the same asymmetry
+        // `CharacterData.data` has.
+        const auto assigned = [](context & c, std::span<value> args) {
+            return arg(args, 0).is_null() ? std::string{} : arg_string(c, args, 0);
+        };
+        // The fragment, as a list of nodes in document order. Built before
+        // anything is removed: these calls only MAKE nodes, and a fragment that
+        // failed to build should not have emptied the element on its way out.
+        const auto rendered_nodes = [this](std::string_view text) {
+            std::vector<node_id> made;
+            each_rendered_text_part(
+                text,
+                [&](std::string_view run) {
+                    if (const node_id node = doc_->create_text(run)) { made.push_back(node); }
+                },
+                [&] {
+                    if (const node_id node = doc_->create_element(atoms_->intern_lower("br"))) {
+                        made.push_back(node);
+                    }
+                });
+            return made;
+        };
+        // "Merge with the next text node": a Text node followed by a Text node
+        // becomes one, and NOTHING ELSE is normalised. outerText leaves
+        // `A|B|Replaced|D|E` as `A|BReplacedD|E` on purpose, which the corpus
+        // spells out in a subtest called "does not completely normalize".
+        const auto merge_forward = [this](node_id node) {
+            if (!node) { return; }
+            std::string joined;
+            node_id next;
+            {
+                const auto txn = doc_->read();
+                if (txn.kind(node) != node_kind::text) { return; }
+                const node_id parent = txn.parent(node);
+                if (!parent) { return; }
+                const std::span<const node_id> kids = txn.children(parent);
+                for (std::size_t i = 0; i + 1 < kids.size(); ++i) {
+                    if (kids[i] == node) {
+                        next = kids[i + 1];
+                        break;
+                    }
+                }
+                if (!next || txn.kind(next) != node_kind::text) { return; }
+                joined = std::string{txn.text(node)} + std::string{txn.text(next)};
+            }
+            (void)doc_->set_text(node, joined);
+            (void)doc_->remove_child(next);
+        };
+        const auto set_inner_text = [this, assigned, rendered_nodes](context & c,
+                                                                     std::span<value> args) {
+            const node_id id = receiver(c);
+            if (!id) { return value::undefined(); }
+            const std::vector<node_id> made = rendered_nodes(assigned(c, args));
+            // "Replace all with fragment within this."
+            std::vector<node_id> existing;
+            {
+                const auto txn = doc_->read();
+                for (const node_id child : txn.children(id)) { existing.push_back(child); }
+            }
+            for (const node_id child : existing) { (void)doc_->remove_child(child); }
+            for (const node_id child : made) { (void)doc_->append_child(id, child); }
+            mutated();
+            return value::undefined();
+        };
+        const auto set_outer_text = [this, assigned, rendered_nodes,
+                                     merge_forward](context & c, std::span<value> args) {
+            const node_id id = receiver(c);
+            if (!id) { return value::undefined(); }
+            node_id parent;
+            node_id next;
+            node_id previous;
+            {
+                const auto txn = doc_->read();
+                parent = txn.parent(id);
+                if (parent) {
+                    const std::span<const node_id> kids = txn.children(parent);
+                    for (std::size_t i = 0; i < kids.size(); ++i) {
+                        if (kids[i] != id) { continue; }
+                        if (i + 1 < kids.size()) { next = kids[i + 1]; }
+                        if (i > 0) { previous = kids[i - 1]; }
+                        break;
+                    }
+                }
+            }
+            // "If this's parent is null, then throw a
+            // NoModificationAllowedError" - the one way either setter can fail,
+            // and the only reason outerText needs a body of its own at all.
+            if (!parent) {
+                throw_dom_exception(c, "NoModificationAllowedError",
+                                    "outerText: the element has no parent to replace it in");
+                return value::undefined();
+            }
+            std::vector<node_id> made = rendered_nodes(assigned(c, args));
+            // "If fragment has no children, append a new Text node whose data
+            // is the empty string": `el.outerText = ""` REPLACES the element
+            // with an empty text node rather than removing it, which is what
+            // lets the merge below join the text on either side of it.
+            if (made.empty()) {
+                if (const node_id empty = doc_->create_text("")) { made.push_back(empty); }
+            }
+            for (const node_id node : made) { (void)doc_->insert_before(parent, node, id); }
+            (void)doc_->remove_child(id);
+            // The two merges the specification names, in its order: the node
+            // now in front of `next` first, then `previous`.
+            if (!made.empty() && next) { merge_forward(made.back()); }
+            merge_forward(previous);
+            mutated();
+            return value::undefined();
+        };
+        proto->define_accessor(
+            "innerText", value::undefined(),
+            value::object(cx.allocate<script::native_object>("innerText", set_inner_text)));
+        proto->define_accessor(
+            "outerText", value::undefined(),
+            value::object(cx.allocate<script::native_object>("outerText", set_outer_text)));
     }
 
     // THE OPERATIONS THAT ARE NOT REFLECTED ATTRIBUTES, and so far that is the
