@@ -392,6 +392,36 @@ void test_the_angle_functions_take_an_angle() {
     ok("transform", "translate(min(10px, 5%))", "translate(min(10px, 5%))");
 }
 
+// A SUM THAT COULD NOT BE FOLDED IS STILL SIMPLIFIED. Its terms have no single
+// magnitude before there is a font size, a viewport and a containing block, and
+// §10.12's simplified form is not the author's bytes but one term per unit in
+// §10.13's order: the percentage first, then the units sorted ASCII
+// case-insensitively - `px` among them in its alphabetical place, not first for
+// being the canonical one. `calc-serialization` is six of these and
+// `calc-dimension-serialization-order` walks all forty-four relative units.
+void test_a_sum_that_cannot_fold_still_has_an_order() {
+    ok("width", "calc(10px + 1vmin + 10%)", "calc(10% + 10px + 1vmin)");
+    ok("width", "calc(10px + 1vmin)", "calc(10px + 1vmin)");
+    ok("width", "calc(10px + 1em)", "calc(1em + 10px)");
+    ok("width", "calc(1vmin - 10px)", "calc(-10px + 1vmin)");
+    ok("width", "calc(-10px + 1em)", "calc(1em - 10px)");
+    ok("height", "calc(1ch + 1cap)", "calc(1cap + 1ch)");
+    ok("height", "calc(1rcap + 1px)", "calc(1px + 1rcap)"); // px sorts, it does not lead
+    ok("height", "calc(1lvw + 1px)", "calc(1lvw + 1px)");
+    ok("width", "calc(3 * (1em + 1px))", "calc(3em + 3px)"); // a coefficient scales every term
+    // A UNIT WITH NO BASIS IS NOT A UNIT WITH NO ARITHMETIC. `fr` converts to
+    // nothing and never will, which is a different fact from `1fr + 1fr`.
+    ok("grid-template-rows", "calc(1fr + 1fr)", "calc(2fr)");
+
+    // ...AND A COMPARISON STILL CANNOT BE DECIDED. `min(1em, 1px)` has no order
+    // before a font size, exactly as `min(10px, 5%)` has none before a
+    // containing block, and both keep the author's bytes.
+    ok("width", "min(1em, 1px)", "min(1em, 1px)");
+    ok("width", "clamp(1rem, 2vw, 3rem)", "clamp(1rem, 2vw, 3rem)");
+    ok("width", "calc(min(1em, 21px) * 2", "calc(min(1em, 21px) * 2");
+    ok("width", "min(1em)", "calc(1em)"); // ...one argument is not a comparison
+}
+
 void test_important_and_the_empty_value() {
     // `!important` is a DECLARATION's business, never a value's. CSSOM's
     // setProperty takes the priority as its own argument, and the IDL setter
@@ -532,6 +562,7 @@ int main() {
     test_the_percentage_half_of_simplification();
     test_a_percentage_needs_a_context();
     test_the_angle_functions_take_an_angle();
+    test_a_sum_that_cannot_fold_still_has_an_order();
     test_important_and_the_empty_value();
     test_a_custom_property_takes_anything_that_tokenises();
     test_the_two_spellings_of_one_property();

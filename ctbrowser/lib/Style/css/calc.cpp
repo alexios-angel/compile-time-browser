@@ -10,6 +10,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <ctbrowser/core/algorithms.hpp>
@@ -29,14 +30,41 @@ struct term {
     double value = 0.0;
     double percent = 0.0;
     bool has_percent = false;
+    // THE DIMENSIONS THAT COULD NOT BE ADDED TOGETHER, one entry per unit, in
+    // the order they were first written.
+    //
+    // Empty in the ordinary evaluation, where every unit has a basis and every
+    // length is a number of pixels. A SPECIFIED value has no bases at all, and
+    // there `calc(1em + 1cap)` is two terms for good - which is not a failure to
+    // simplify but the simplified form itself, CSS Values 4 §10.12. Sorted only
+    // when it is printed, because §10.13's order is a serialisation rule and the
+    // arithmetic does not care.
+    std::vector<std::pair<std::string, double>> symbols;
 
     [[nodiscard]] bool is_number() const noexcept { return type == numeric_type::number; }
 };
+
+// `unit`'s coefficient in `into`, created at the end if it is not there yet.
+// Linear because a sum has a handful of distinct units and the write order is
+// what keeps a serialisation stable before it is sorted.
+void add_symbol(term & into, std::string_view unit, double coefficient) {
+    for (auto & [name, value] : into.symbols) {
+        if (name == unit) {
+            value += coefficient;
+            return;
+        }
+    }
+    into.symbols.emplace_back(unit, coefficient);
+}
 
 // A term whose whole magnitude is in ONE slot, so a non-linear function can be
 // applied to it. `10px` and `10%` both qualify; `calc(10px + 10%)` does not,
 // because `abs()` of it depends on a containing block nobody has yet.
 [[nodiscard]] bool is_scalar(const term & t) noexcept {
+    // A SYMBOLIC SUM IS NEVER ONE. `min(1em, 1px)` cannot be ordered before a
+    // font size exists, exactly as `min(10px, 5%)` cannot be ordered before a
+    // containing block does, and the two undecidable cases answer the same way.
+    if (!t.symbols.empty()) { return false; }
     return !t.has_percent || t.value == 0.0;
 }
 [[nodiscard]] double scalar_of(const term & t) noexcept {
@@ -59,6 +87,10 @@ struct term {
     out.value = a.value + sign * b.value;
     out.percent = a.percent + sign * b.percent;
     out.has_percent = a.has_percent || b.has_percent;
+    out.symbols = a.symbols;
+    for (const auto & [unit, coefficient] : b.symbols) {
+        add_symbol(out, unit, sign * coefficient);
+    }
     return out;
 }
 
@@ -76,9 +108,13 @@ struct term {
     // beside the right answer and `calc(1% * infinity)` printed as `calc(NaN *
     // 1px)` where it is `calc(infinity * 1%)`. `calc(0px * infinity)` IS a NaN
     // and still is: there the zero is a length the author wrote.
-    const bool percentage_only = dim.has_percent && dim.value == 0.0;
-    out.value = percentage_only ? 0.0 : dim.value * scale;
+    //
+    // A SYMBOLIC TERM IS THE SAME CASE: `1em` carries its magnitude in `symbols`
+    // and leaves `value` at nought, and there is no length there either.
+    const bool no_plain_part = (dim.has_percent || !dim.symbols.empty()) && dim.value == 0.0;
+    out.value = no_plain_part ? 0.0 : dim.value * scale;
     out.percent = dim.has_percent ? dim.percent * scale : 0.0;
+    for (auto & [unit, coefficient] : out.symbols) { coefficient *= scale; }
     return out;
 }
 
@@ -94,9 +130,10 @@ struct term {
     term out = a;
     // The same absent-component rule multiply() carries, and for the same
     // reason: `calc(1% / 0)` is `calc(infinity * 1%)` and not a NaN length.
-    const bool percentage_only = a.has_percent && a.value == 0.0;
-    out.value = percentage_only ? 0.0 : a.value / b.value;
+    const bool no_plain_part = (a.has_percent || !a.symbols.empty()) && a.value == 0.0;
+    out.value = no_plain_part ? 0.0 : a.value / b.value;
     out.percent = a.has_percent ? a.percent / b.value : 0.0;
+    for (auto & [unit, coefficient] : out.symbols) { coefficient /= b.value; }
     return out;
 }
 
@@ -118,6 +155,20 @@ constexpr std::string_view known_units[] = {
 
 [[nodiscard]] bool is_known_unit(std::string_view unit) noexcept {
     for (const std::string_view one : known_units) {
+        if (ascii_iequals(one, unit)) { return true; }
+    }
+    return false;
+}
+
+// THE UNITS WHOSE VALUE IS THE SAME EVERYWHERE. An absolute length, an angle, a
+// time, a frequency and a resolution all convert to their canonical unit by a
+// constant; `em`, `vw`, `lh`, `cqw`, `fr` and `%` do not, and a SPECIFIED value
+// is written before any of their bases exist.
+[[nodiscard]] bool context_free_unit(std::string_view unit) noexcept {
+    static constexpr std::string_view units[] = {"px",  "cm",   "mm",   "q",    "in", "pt", "pc",
+                                                 "deg", "grad", "rad",  "turn", "s",  "ms", "hz",
+                                                 "khz", "dpi",  "dpcm", "dppx", "x"};
+    for (const std::string_view one : units) {
         if (ascii_iequals(one, unit)) { return true; }
     }
     return false;
@@ -176,6 +227,32 @@ constexpr std::string_view known_units[] = {
         return out;
     }
     return std::nullopt;
+}
+
+// ONE DIMENSION WITH NO BASES AVAILABLE, which is what a SPECIFIED value is
+// written against. A unit whose value is the same everywhere folds into its
+// family's canonical unit exactly as it always did; one that needs a font size,
+// a viewport or a container becomes a term of its OWN, keyed by the unit the
+// author wrote. `nullopt` for a typo, which is a syntax error at any stage.
+//
+// `fr` is here rather than in `context_free_unit` because the two questions
+// differ: a flex converts to nothing and never will, so `calc(1fr + 1fr)` may
+// not be FOLDED against a basis - but it is still two terms of one unit and
+// `calc(2fr)` is their sum.
+[[nodiscard]] std::optional<term> symbolic_term(double value, std::string_view unit) {
+    if (context_free_unit(unit)) {
+        const std::optional<term> fixed = canonical_term(value, unit, length_context{});
+        if (!fixed) { return std::nullopt; }
+        term out;
+        out.type = fixed->type;
+        add_symbol(out, canonical_unit(out.type), fixed->value);
+        return out;
+    }
+    if (!is_known_unit(unit)) { return std::nullopt; }
+    term out;
+    out.type = ascii_iequals(unit, "fr") ? numeric_type::flex : numeric_type::length;
+    add_symbol(out, ascii_lower_copy(unit), value);
+    return out;
 }
 
 // --- the non-linear functions, CSS Values 4 §10.4-§10.8 ------------------
@@ -240,23 +317,74 @@ enum class round_to : std::uint8_t {
     return std::fmod(a, b);
 }
 
+// WHAT A DIMENSION IS MEASURED AGAINST. Two answers, and the second is what a
+// SPECIFIED value needs: there are no bases yet when one is written, so `1em`
+// and `1cqw` are terms in their own right rather than numbers of pixels.
+enum class basis : std::uint8_t {
+    // `ctx` supplies a font size and a viewport and every length becomes pixels.
+    // This is the computed-value evaluation and the only one that ever answers
+    // with a `calc_result`.
+    against_context,
+    // Nothing is supplied and nothing is guessed. `calc(10px + 1vmin + 10%)` is
+    // three terms, and printing them in §10.13's order is the whole answer.
+    symbolic,
+};
+
 // A recursive-descent parser over the token stream, one instance per expression.
 // `ok_` latches false on the first error so every level can stop checking.
 class evaluator {
 public:
-    evaluator(const token_stream & tokens, const length_context & ctx) : t_(tokens), ctx_(ctx) {}
+    evaluator(const token_stream & tokens, const length_context & ctx,
+              basis measure = basis::against_context)
+        : t_(tokens), ctx_(ctx), basis_(measure) {}
 
     [[nodiscard]] math_answer run() {
+        const std::optional<term> value = settle();
+        if (!value) { return math_answer{outcome_, {}}; }
+        calc_result out;
+        // A NUMBER IS AN ANSWER. `calc()` of a bare number used to be reported as
+        // no answer at all, which the cascade read as an invalid declaration and
+        // threw away - so `opacity: calc(2 / 4)` and `rgb(calc(0), calc(255),
+        // calc(0))` produced nothing. CSS Values 3 §8.1 says a math function may
+        // resolve to a <number>; whether the PROPERTY accepts one is a separate
+        // question, and math_context is where it is asked.
+        out.type = value->type;
+        out.is_number = value->is_number();
+        out.px = value->value;
+        out.percent = value->percent;
+        out.has_percent = value->has_percent;
+        return math_answer{math_outcome::resolved, out};
+    }
+
+    // The SYMBOLIC evaluation's answer, which is the term itself: a
+    // `calc_result` carries one magnitude and a percentage and cannot hold
+    // `calc(10% + 10px + 1vmin)`.
+    [[nodiscard]] std::pair<math_outcome, term> run_symbolic() {
+        const std::optional<term> value = settle();
+        if (!value) { return {outcome_, term{}}; }
+        return {math_outcome::resolved, *value};
+    }
+
+private:
+    // The whole expression, parsed and ruled on. `nullopt` leaves the reason in
+    // `outcome_`, which is what both entry points above report.
+    [[nodiscard]] std::optional<term> settle() {
         const std::optional<term> value = sum();
         skip_whitespace();
         // UNRESOLVED WINS OVER INVALID. A comparison that could not be decided
         // here stopped the parse the same way an error does, so the latch has to
         // be read before the missing value is: `min(10px, 5%)` is a valid
         // declaration and reporting it as a syntax error would delete it.
-        if (unresolved_) { return math_answer{math_outcome::unresolved, {}}; }
+        if (unresolved_) {
+            outcome_ = math_outcome::unresolved;
+            return std::nullopt;
+        }
         // A trailing token means the expression did not consume its input -
         // `calc(1px 2px)` - which is an error and not a partial answer.
-        if (!ok_ || !value || !at_end()) { return math_answer{math_outcome::invalid, {}}; }
+        if (!ok_ || !value || !at_end()) {
+            outcome_ = math_outcome::invalid;
+            return std::nullopt;
+        }
         // A PERCENTAGE HAS TO BE A PERCENTAGE OF SOMETHING. CSS Values 4 §10.11
         // calls it the calculation context, and the only one this engine ever
         // supplies is a length: no property resolves a percentage into an angle,
@@ -274,24 +402,13 @@ public:
         // context that the property does supply.
         if (saw_percent_ && value->type != numeric_type::number &&
             value->type != numeric_type::length) {
-            return math_answer{math_outcome::invalid, {}};
+            outcome_ = math_outcome::invalid;
+            return std::nullopt;
         }
-        calc_result out;
-        // A NUMBER IS AN ANSWER. `calc()` of a bare number used to be reported as
-        // no answer at all, which the cascade read as an invalid declaration and
-        // threw away - so `opacity: calc(2 / 4)` and `rgb(calc(0), calc(255),
-        // calc(0))` produced nothing. CSS Values 3 §8.1 says a math function may
-        // resolve to a <number>; whether the PROPERTY accepts one is a separate
-        // question, and math_context is where it is asked.
-        out.type = value->type;
-        out.is_number = value->is_number();
-        out.px = value->value;
-        out.percent = value->percent;
-        out.has_percent = value->has_percent;
-        return math_answer{math_outcome::resolved, out};
+        outcome_ = math_outcome::resolved;
+        return value;
     }
 
-private:
     [[nodiscard]] const css_token & peek() const noexcept { return t_.tokens[at_]; }
     [[nodiscard]] bool at_end() const noexcept { return peek().type == token_type::eof; }
     void skip_whitespace() noexcept {
@@ -378,7 +495,9 @@ private:
         }
         case token_type::dimension: {
             const std::string_view unit = t_.unit_of(tok);
-            const std::optional<term> one = canonical_term(tok.number, unit, ctx_);
+            const std::optional<term> one = basis_ == basis::symbolic
+                                                ? symbolic_term(tok.number, unit)
+                                                : canonical_term(tok.number, unit, ctx_);
             if (!one) {
                 // A unit the specification names and this engine has no basis
                 // for - `1lh`, `1cqw` - is UNRESOLVED, not invalid. A typo is
@@ -793,6 +912,8 @@ private:
 
     const token_stream & t_;
     const length_context & ctx_;
+    basis basis_ = basis::against_context;
+    math_outcome outcome_ = math_outcome::invalid;
     std::size_t at_ = 0;
     bool ok_ = true;
     bool unresolved_ = false;
@@ -813,6 +934,51 @@ private:
     while (text.size() > 1 && text.back() == '0') { text.pop_back(); }
     if (!text.empty() && text.back() == '.') { text.pop_back(); }
     return text;
+}
+
+// One expression with NO bases at all - which is what a specified value is
+// written against - and its answer as a term rather than as a `calc_result`,
+// because a sum of units that could not be added has no single magnitude.
+[[nodiscard]] std::pair<math_outcome, term> evaluate_symbolic(std::string_view expression) {
+    const token_stream tokens = tokenize(expression);
+    const length_context none; // deliberately unused: nothing is measured here
+    evaluator run{tokens, none, basis::symbolic};
+    return run.run_symbolic();
+}
+
+// THE INSIDE OF A SYMBOLIC calc(), in CSS Values 4 §10.13's order: the
+// percentage first, then one term per unit sorted ASCII case-insensitively by
+// unit name. `calc(10px + 1vmin + 10%)` is `calc(10% + 10px + 1vmin)` in every
+// browser, and `calc-dimension-serialization-order` walks all forty-four
+// relative units to say so - `px` among them, in its alphabetical place between
+// `lvw` and `rcap` rather than first for being the canonical one.
+//
+// AN EMPTY ANSWER MEANS "PRINT THE AUTHOR'S BYTES INSTEAD". An infinity or a NaN
+// coefficient has no spelling in a multi-term sum - `calc(NaN * 1px)` is a whole
+// value, not a term of one - and a plain number sitting beside the symbols is a
+// shape this file does not build. Neither is a reason to condemn a declaration.
+[[nodiscard]] std::string serialize_symbolic(const term & value) {
+    if (value.value != 0.0 || !std::isfinite(value.percent)) { return {}; }
+    for (const auto & [unit, coefficient] : value.symbols) {
+        if (!std::isfinite(coefficient)) { return {}; }
+    }
+    std::vector<std::pair<std::string, double>> sorted = value.symbols;
+    std::ranges::sort(sorted, [](const auto & a, const auto & b) { return a.first < b.first; });
+    std::string out;
+    // The sign is folded into the operator the way every engine prints it:
+    // `calc(100% - 12px)`, never `calc(100% + -12px)`.
+    const auto append = [&out](double n, std::string_view unit) {
+        if (out.empty()) {
+            out += format_number(n);
+        } else {
+            out += n < 0.0 ? " - " : " + ";
+            out += format_number(n < 0.0 ? -n : n);
+        }
+        out += unit;
+    };
+    if (value.has_percent) { append(value.percent, "%"); }
+    for (const auto & [unit, coefficient] : sorted) { append(coefficient, unit); }
+    return out;
 }
 
 } // namespace
@@ -1160,20 +1326,6 @@ struct function_span {
     return value.substr(from, span.end - from - (span.closed ? 1 : 0));
 }
 
-// THE UNITS WHOSE VALUE IS THE SAME EVERYWHERE. An absolute length, an angle, a
-// time, a frequency and a resolution all convert to their canonical unit by a
-// constant; `em`, `vw`, `lh`, `cqw`, `fr` and `%` do not, and a SPECIFIED value
-// is written before any of their bases exist.
-[[nodiscard]] bool context_free_unit(std::string_view unit) noexcept {
-    static constexpr std::string_view units[] = {"px",  "cm",   "mm",   "q",    "in", "pt", "pc",
-                                                 "deg", "grad", "rad",  "turn", "s",  "ms", "hz",
-                                                 "khz", "dpi",  "dpcm", "dppx", "x"};
-    for (const std::string_view one : units) {
-        if (ascii_iequals(one, unit)) { return true; }
-    }
-    return false;
-}
-
 // Can this text be simplified WHERE IT STANDS - before a font size, a viewport
 // or a containing block exists?
 //
@@ -1372,11 +1524,25 @@ std::string simplify_math(std::string_view value) {
             out.append(specified_math(answer.value));
             continue;
         }
+        // A SUM THAT COULD NOT BE FOLDED IS STILL SIMPLIFIED. `calc(10px + 1vmin
+        // + 10%)` has no single magnitude before there is a viewport and a
+        // containing block, and §10.12's simplified form is not the author's
+        // bytes but the three terms in §10.13's canonical order -
+        // `calc(10% + 10px + 1vmin)`. There is nothing to guess: the terms are
+        // added per unit and printed, and a comparison whose arguments cannot be
+        // ORDERED still says so and falls through below.
+        if (const auto [outcome, sum] = evaluate_symbolic(body);
+            outcome == math_outcome::resolved) {
+            if (const std::string text = serialize_symbolic(sum); !text.empty()) {
+                out.append("calc(").append(text).append(")");
+                continue;
+            }
+        }
         // NOT SIMPLIFIABLE HERE KEEPS THE AUTHOR'S BYTES, which is the answer
         // for `min(10px, 5%)` (no answer until layout, §10.11), for
-        // `calc(1em + 1px)` (no font size yet) and for a function this file
-        // cannot evaluate at all. Re-serialising a value whose grammar is
-        // unknown is how `random-item(auto ,serif)` came back respaced.
+        // `min(1em, 1px)` (no font size to order them by) and for a function
+        // this file cannot evaluate at all. Re-serialising a value whose grammar
+        // is unknown is how `random-item(auto ,serif)` came back respaced.
         out.append(whole);
     }
     return out;
