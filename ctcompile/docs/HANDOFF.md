@@ -8,6 +8,73 @@ committing. There is no CI. Do not build on the small local machine.
 
 ## Current native staging checkpoint, 2026-09-07
 
+Four work commits are local on `ctcompile-v1`: **`0a4a7c9`** (export-boundary
+evidence), **`c358c1b`** (owning primitive exceptions), **`454a886`** (provider
+object payloads), and **`6cab1a0`** (live owning-field query regressions).
+No push was performed.
+
+[Provider object payloads](native-provider-objects.md) add opt-in
+`follow-provider-objects=true`, requiring publication/read/mutation following.
+The exact CommonJS/browser/realm-fallback programs additionally enable
+diagnostic/callback following. They now resolve **24 calls** and complete
+**23 provider summaries**, up from 20 and 18. Each records **68 reads, seven
+sets, three deletes, three distinct nested Maps, one callback and two global
+writes**. The actual initialized `instance` survives Map storage and both
+getter returns as one identity. Current scalar fields follow alias mutation,
+replacement and named/computed deletion/reinsertion. Maps, objects and callback
+globals commit together only after normal return; runtime effects remain.
+Thirty-eight source cases, provenance/refusal controls and incomplete-budget
+checks pass. All **19/19/24 exact observations** agree across Node, interpreter
+and boxed script/wrapper execution, including GC stress. Source/vendor hashes
+and the seven-function denominator are unchanged; native admission stays **0/7**.
+
+CommonJS/browser prefix following reaches the end. The fallback completes every
+Data call and then stops at the appended `scriptThis === this` observer:
+`unproved comparison behavior at ctjs.compare`. It has no remaining provider
+boundary. Realm comparisons and the following missing-own-property observer
+reads remain outside this object proof; all runtime observations still pass.
+
+[Native exceptions](native-exceptions.md) now own homogeneous number, boolean
+or string payloads and catch state through `js_exception<T>`. Completed
+scratch-register computations no longer block recovery, while every discarded
+implicit exception edge still requires nonthrowing admission. Thirteen source
+programs admit **27/27 functions** with **25 matching observations** in Node,
+the interpreter and explicit/deduced GCC/Clang output. Numeric and owning-string
+default-optimization checks pass. Source/target string lifetime tests pass
+ASan/UBSan, use-after-scope, stack-use-after-return and leak checks. Thirteen
+source refusals, six additional target-verifier controls and the prior budget
+and wrong-state controls pass. Mixed/null/undefined/object payloads, throwing
+callees and general finally/nested source handlers remain unsupported.
+
+[Export-boundary evidence](native-export-boundary.md) isolates the next native
+consumer: a scalar global root has a complete live host proof but stays **0/1**
+native. An exported constant-getter table is **1/3**; a Map-backed table whose
+startup prefix completes is **0/4**; the confined local control is **4/4**.
+All four observations match Node/interpreter. Reports, forged annotations and
+reruns never supply native ownership. The owning-field audit found no production
+defect; its new unit controls rebuild an initially successful query after a late
+rewrite, lost initialization dominance or owner escape, retaining an independent
+valid owner and rejecting stale markers.
+
+Final serialized devbox gate: **467/467 CTests**, including **155/155 lit
+cases**, in **540.22 seconds**. All **559 C++ files** and the exception printer
+include pass formatting; whitespace checks pass. Default and disabled native
+coverage stays Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725**.
+
+**Next native boundary:** implement an explicit owner for the checked ordinary
+scalar global root, preserving `StoredGlobal` and external escape semantics.
+Carry its live proof through type inference, global/field admission and emission;
+keep owning storage separate from driver-selected observation globals. The
+**0/1 -> 1/1** scalar gate is proposed, not implemented. Then connect one fixed
+export field to its current uncaptured getter (**1/3 -> 3/3**, proposed), before
+captured Map tables and future-call/typed-export proofs. See
+[the exact next boundary](bootstrap-provider-next.md). Full native Bootstrap
+initialization is unfinished. In parallel, exceptions next need a closed throwing
+callee and pre-call assignment state, followed by an explicit uncaught-entry
+adapter; prefix facts cannot authorize exceptional continuations.
+
+## Preceding native checkpoint, 2026-09-07
+
 [Provider diagnostics and callback effects](native-provider-diagnostics.md)
 now extend the optional mutation prefix through checked Map.keys/Array.from
 snapshots, string messages and the actual source recorder's scalar global writes.
