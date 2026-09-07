@@ -8,15 +8,19 @@
 
 namespace ctcompile::ctnative {
 
+struct OwnedGlobalMethod {
+    ctjs::SetPropertyOp initialization;
+    ctjs::CreateClosureOp closure;
+    ctjs::FuncOp function;
+};
+
 // A callable table retained by the ordinary root. These are live
 // source edges, not a native carrier or permission for future external calls.
 struct OwnedGlobalMethodTable {
     mlir::Operation * factoryCall = nullptr;
     ctjs::FuncOp factory;
     ctjs::CreateObjectOp table;
-    ctjs::SetPropertyOp methodInitialization;
-    ctjs::CreateClosureOp closure;
-    ctjs::FuncOp method;
+    llvm::SmallVector<OwnedGlobalMethod> methods;
     llvm::SmallVector<HostCallableEdge> calls;
     ctjs::FuncOp wrapper;
     ctjs::CallDirectOp wrapperCall;

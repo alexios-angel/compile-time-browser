@@ -295,17 +295,26 @@ std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
     const auto & current = prepared ? *prepared : globals;
     returnedMethodTableCensus(&current);
     const auto table = *current.roots().front().methodTable;
-    auto made = table.closure;
-    const auto plan = returnedClosures.find(made);
-    if (plan == returnedClosures.end() || !plan->second.reason.empty() ||
-        whyNotReturnedClosure(made)) {
-        return std::nullopt;
+    for (const auto & method : table.methods) {
+        auto made = method.closure;
+        const auto plan = returnedClosures.find(made);
+        if (plan == returnedClosures.end() || !plan->second.reason.empty() ||
+            whyNotReturnedClosure(made)) {
+            return std::nullopt;
+        }
     }
     // Preserve the actual source receiver for the post-rewrite callable proof.
-    // The capture becomes a leading typed argument and an owning environment
-    // slot; the emitted call invokes the stored callable directly.
+    // Each capture becomes a leading typed argument and an owning environment
+    // slot. Validate the entire family before changing any method, and unbox
+    // the shared cell only after every closure has acquired its own Map owner.
+    for (const auto & method : table.methods) {
+        if (table.capturedMap) {
+            lift(method.function, {method.closure}, out, true);
+        } else {
+            liftReturnedClosure(method.closure, method.function, 0, 0, out, true);
+        }
+    }
     if (table.capturedMap) {
-        lift(table.method, {made}, out, true);
         unboxCells(out);
         llvm::SmallVector<ctjs::CreateCellOp> dead;
         module.walk([&](ctjs::CreateCellOp cell) {
@@ -314,8 +323,6 @@ std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
             }
         });
         for (ctjs::CreateCellOp cell : dead) { cell.erase(); }
-    } else {
-        liftReturnedClosure(made, table.method, 0, 0, out, true);
     }
     return out;
 }

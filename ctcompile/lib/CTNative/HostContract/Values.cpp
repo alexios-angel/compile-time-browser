@@ -312,12 +312,6 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
     if (!factory || !llvm::hasSingleElement(factory.getBody()) || !singleInvocation(factory)) {
         return {};
     }
-    unsigned creations = 0;
-    module.walk([&](ctjs::CreateClosureOp made) {
-        if (step() && callable(made.getResult()) == function) { ++creations; }
-    });
-    if (creations != 1 || exhausted) { return {}; }
-
     HostCapturedMap result;
     auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(call);
     auto capture = closure.getUpvalues().front();
@@ -350,6 +344,16 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
     // its factory. Recover that cell from the allocation uses and check it as
     // strictly as the source binding; markers never authorize extra writes.
     mlir::Value resource = capture;
+    llvm::DenseSet<mlir::Operation *> captures;
+    const auto collectCapture = [&](mlir::OpOperand & use) {
+        auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
+        if (!made || use.getOperandNumber() != 2 || made.getUpvalues().size() != 1 ||
+            made->getBlock() != closure->getBlock()) {
+            return false;
+        }
+        captures.insert(made);
+        return true;
+    };
     if (result.cell) {
         for (mlir::OpOperand & use : result.cell.getResult().getUses()) {
             if (!step()) { return {}; }
@@ -413,7 +417,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
                 (use.getOwner() == result.initialization.getOperation() &&
                  use.getOperandNumber() == 0) ||
-                (!prepared && use.getOwner() == closure && use.getOperandNumber() == 2)) {
+                (!prepared && collectCapture(use))) {
                 continue;
             }
             return {};
@@ -425,32 +429,95 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             (use.getOwner() == result.cell.getOperation() && use.getOperandNumber() == 0) ||
             (use.getOwner() == result.initialization.getOperation() &&
              use.getOperandNumber() == 1) ||
-            (prepared && use.getOwner() == closure && use.getOperandNumber() == 2)) {
+            (prepared && collectCapture(use))) {
             continue;
         }
         return {};
     }
 
+    // A selected getter cannot close the Map contents by itself. Every
+    // closure that can reach the same immutable slot must have a checked body
+    // and exactly one fixed-field publication in this factory's same table.
+    // Walk source order so separate current calls derive identical families.
+    ctjs::CreateObjectOp table;
+    llvm::DenseSet<mlir::Operation *> familyFunctions;
+    llvm::DenseSet<llvm::StringRef> fields;
+    for (mlir::Operation & operation : factory.getBody().front()) {
+        if (!step()) { return {}; }
+        if (!captures.contains(&operation)) { continue; }
+        auto made = llvm::cast<ctjs::CreateClosureOp>(operation);
+        auto member = callable(made.getResult());
+        const auto indices = made.getEnclosingIndicesAttr();
+        auto enclosingThis = made.getEnclosingThis().getDefiningOp<ctjs::ConstantOp>();
+        if (!member || member == entry || member == factory ||
+            !familyFunctions.insert(member).second || !llvm::hasSingleElement(member.getBody()) ||
+            member.getUpvalueCount() != (prepared ? 0u : 1u) ||
+            member.getBody().front().getNumArguments() != (prepared ? 4u : 3u) ||
+            (indices && (indices.size() != 1 || indices[0] >= 0)) || !enclosingThis ||
+            !llvm::isa<ctjs::UndefinedAttr>(enclosingThis.getValue()) ||
+            !result.allocation->isBeforeInBlock(made) ||
+            (result.cell && !result.cell->isBeforeInBlock(made)) ||
+            (result.initialization && !result.initialization->isBeforeInBlock(made))) {
+            return {};
+        }
+        ctjs::SetPropertyOp publication;
+        for (mlir::OpOperand & use : made.getResult().getUses()) {
+            if (!step()) { return {}; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+            auto owner = write ? write.getObject().getDefiningOp<ctjs::CreateObjectOp>()
+                               : ctjs::CreateObjectOp{};
+            if (!write || publication || use.getOperandNumber() != 2 || !owner ||
+                owner->getBlock() != made->getBlock() || write->getBlock() != made->getBlock() ||
+                (table && table != owner) || !ordinaryKey(keyOf(write.getKey())) ||
+                !fields.insert(keyOf(write.getKey())).second || !owner->isBeforeInBlock(write) ||
+                !made->isBeforeInBlock(write)) {
+                return {};
+            }
+            table = owner;
+            publication = write;
+        }
+        if (!publication || !capturedMapBody(member, prepared, result)) { return {}; }
+        result.closures.push_back(made);
+    }
+    if (!captures.contains(closure) || result.closures.size() != captures.size()) { return {}; }
+    llvm::DenseMap<mlir::Operation *, unsigned> creations;
+    module.walk([&](ctjs::CreateClosureOp made) {
+        if (!step()) { return; }
+        auto member = callable(made.getResult());
+        if (member && familyFunctions.contains(member)) { ++creations[member]; }
+    });
+    for (mlir::Operation * member : familyFunctions) {
+        if (!step() || creations.lookup(member) != 1) { return {}; }
+    }
+    if (exhausted) { return {}; }
+    return result;
+}
+
+bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, HostCapturedMap & result) {
     // This is an effects and ownership proof, not an evaluation of the first
     // invocation. The immutable slot always denotes this Map; its contents
     // may change at every call. A complete body census closes all writes over
     // primitives, making get results primitive without promising a value or
     // native carrier. Type inference must still prove the latter separately.
+    auto & body = function.getBody().front();
+    const auto firstRead = result.reads.size();
+    const auto firstUpvalue = result.upvalues.size();
     llvm::DenseSet<mlir::Value> maps, primitives;
     llvm::DenseSet<mlir::Operation *> reads, calls, upvalues;
     if (prepared) { maps.insert(body.getArgument(3)); }
     ctjs::ReturnOp returned;
     for (mlir::Operation & operation : body) {
-        if (!step()) { return {}; }
+        if (!step()) { return false; }
         if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(operation)) {
             if (!llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr, ctjs::NullAttr,
                            ctjs::UndefinedAttr>(constant.getValue())) {
-                return {};
+                return false;
             }
             primitives.insert(constant.getResult());
         } else if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
             if (prepared || load.getIndex() != 0 || load.getClosure() != body.getArgument(2)) {
-                return {};
+                return false;
             }
             result.upvalues.push_back(load);
             upvalues.insert(load);
@@ -460,7 +527,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             if (!maps.contains(read.getObject()) ||
                 (key != "size" && key != "set" && key != "get" && key != "has" &&
                  key != "delete")) {
-                return {};
+                return false;
             }
             result.reads.push_back(read);
             reads.insert(read);
@@ -468,12 +535,14 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         } else if (auto invoke = llvm::dyn_cast<ctjs::CallOp>(operation)) {
             auto read = invoke.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
             if (!read || !reads.contains(read) || read.getObject() != invoke.getReceiver()) {
-                return {};
+                return false;
             }
             const auto key = keyOf(read.getKey());
-            if (key == "size" || invoke.getArgs().size() != (key == "set" ? 2u : 1u)) { return {}; }
+            if (key == "size" || invoke.getArgs().size() != (key == "set" ? 2u : 1u)) {
+                return false;
+            }
             for (mlir::Value argument : invoke.getArgs()) {
-                if (!step() || !primitives.contains(argument)) { return {}; }
+                if (!step() || !primitives.contains(argument)) { return false; }
             }
             result.calls.push_back(invoke);
             calls.insert(invoke);
@@ -483,49 +552,53 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                 primitives.insert(invoke.getResult());
             }
         } else if (auto ret = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
-            if (returned || !primitives.contains(ret.getValue())) { return {}; }
+            if (returned || !primitives.contains(ret.getValue())) { return false; }
             returned = ret;
         } else if (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(operation)) {
-            return {};
+            return false;
         }
     }
-    if (!returned || result.reads.empty() || (!prepared && result.upvalues.empty())) { return {}; }
+    if (!returned || result.reads.size() == firstRead ||
+        (!prepared && result.upvalues.size() == firstUpvalue)) {
+        return false;
+    }
     for (mlir::BlockArgument argument : body.getArguments()) {
         if (prepared && argument.getArgNumber() == 3) { continue; }
         for (mlir::OpOperand & use : argument.getUses()) {
-            if (!step()) { return {}; }
+            if (!step()) { return false; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
                 (!prepared && argument.getArgNumber() == 2 && upvalues.contains(use.getOwner()) &&
                  use.getOperandNumber() == 0)) {
                 continue;
             }
-            return {};
+            return false;
         }
     }
     for (mlir::Value alias : maps) {
         for (mlir::OpOperand & use : alias.getUses()) {
-            if (!step()) { return {}; }
+            if (!step()) { return false; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
                 (reads.contains(use.getOwner()) && use.getOperandNumber() == 0) ||
                 (calls.contains(use.getOwner()) && use.getOperandNumber() == 1)) {
                 continue;
             }
-            return {};
+            return false;
         }
     }
-    for (ctjs::GetPropertyOp read : result.reads) {
-        if (!step()) { return {}; }
+    for (std::size_t index = firstRead; index < result.reads.size(); ++index) {
+        auto read = result.reads[index];
+        if (!step()) { return false; }
         if (keyOf(read.getKey()) == "size") { continue; }
         for (mlir::OpOperand & use : read.getResult().getUses()) {
-            if (!step()) { return {}; }
+            if (!step()) { return false; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
                 (calls.contains(use.getOwner()) && use.getOperandNumber() == 0)) {
                 continue;
             }
-            return {};
+            return false;
         }
     }
-    return result;
+    return true;
 }
 
 bool analyzer::singleInvocation(ctjs::FuncOp function) {

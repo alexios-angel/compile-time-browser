@@ -215,7 +215,8 @@ void checkCapturedCallables(mlir::MLIRContext & context) {
                       "    %key = ctjs.constant #ctjs.string<\"size\">\n"
                       "    %answer = ctjs.get_property %state[%key]");
     const auto query = [&](const std::string & program, bool expected, unsigned reads = 1,
-                           unsigned calls = 0, unsigned upvalues = 1) {
+                           unsigned calls = 0, unsigned upvalues = 1, unsigned members = 1,
+                           unsigned visibleCalls = 1) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
         check(static_cast<bool>(module), "captured host getter fixture parses");
         if (!module) { return; }
@@ -227,19 +228,29 @@ void checkCapturedCallables(mlir::MLIRContext & context) {
         check(hostContractFingerprint(*module) == contract.moduleSha256,
               "captured getter evidence does not rewrite source operations");
         if (expected && result.proved()) {
-            check(result.callables().size() == 1 && result.callables().front().capturedMap,
+            check(result.callables().size() == visibleCalls &&
+                      result.callables().front().capturedMap,
                   "host callable edge includes the exact captured Map source graph");
-            if (result.callables().size() != 1 || !result.callables().front().capturedMap) {
+            if (result.callables().size() != visibleCalls ||
+                !result.callables().front().capturedMap) {
                 return;
             }
             auto capture = *result.callables().front().capturedMap;
             check(capture.intrinsic && capture.allocation && capture.cell &&
-                      capture.initialization && capture.upvalues.size() == upvalues &&
-                      capture.reads.size() == reads && capture.calls.size() == calls &&
-                      !capture.argument &&
+                      capture.initialization && capture.closures.size() == members &&
+                      capture.upvalues.size() == upvalues && capture.reads.size() == reads &&
+                      capture.calls.size() == calls && !capture.argument &&
                       capture.initialization.getValue() == capture.allocation.getResult() &&
                       capture.reads.front().getObject() == capture.upvalues.front().getResult(),
                   "source capture retains the immutable binding and every live Map effect");
+            for (const auto & edge : result.callables()) {
+                check(edge.capturedMap && edge.capturedMap->closures == capture.closures &&
+                          edge.capturedMap->allocation == capture.allocation &&
+                          edge.capturedMap->upvalues == capture.upvalues &&
+                          edge.capturedMap->reads == capture.reads &&
+                          edge.capturedMap->calls == capture.calls,
+                      "every current call proves the same complete captured Map family");
+            }
         } else if (!expected) {
             check(result.callables().empty(), "failed environment publishes no captured calls");
             module->walk([&](mlir::Operation * operation) {
@@ -264,6 +275,82 @@ void checkCapturedCallables(mlir::MLIRContext & context) {
                    "ctjs.store_global \"trace\", %answer\n"
                    "    %external = ctjs.load_global \"external\""),
           false);
+
+    auto shared = replaced(source, "    ctjs.return %table",
+                           "    %putter = ctjs.create_closure %callee[3] this %u captures %cell\n"
+                           "    %putKey = ctjs.constant #ctjs.string<\"put\">\n"
+                           "    ctjs.set_property %table[%putKey], %putter\n"
+                           "    ctjs.return %table");
+    shared = replaced(shared, "\n}\n", R"MLIR(
+  ctjs.func private @put$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 1 : i32} {
+    %state = ctjs.load_upvalue %callee[0]
+    %setKey = ctjs.constant #ctjs.string<"set">
+    %setter = ctjs.get_property %state[%setKey]
+    %entryKey = ctjs.constant #ctjs.string<"x">
+    %value = ctjs.constant #ctjs.number<4607182418800017408>
+    %written = ctjs.call %setter(%state, %entryKey, %value)
+    %u = ctjs.constant #ctjs.undefined
+    ctjs.return %u
+  }
+}
+)MLIR");
+    // Even an uncalled sibling can observe and mutate the same retained Map;
+    // its complete body must be checked before exposing the getter edge.
+    query(shared, true, 2, 1, 2, 2);
+    query(replaced(shared, "ctjs.call %setter(%state, %entryKey, %value)",
+                   "ctjs.call %setter(%state, %entryKey, %state)"),
+          false);
+    query(replaced(shared, "    %written = ctjs.call %setter(%state, %entryKey, %value)",
+                   "    ctjs.store_global \"leaked\", %state\n"
+                   "    %written = ctjs.call %setter(%state, %entryKey, %value)"),
+          false);
+    query(replaced(shared, "%putter = ctjs.create_closure %callee[3] this %u captures %cell",
+                   "%putter = ctjs.create_closure %callee[2] this %u captures %cell"),
+          false);
+    shared = replaced(shared, "    %answer = ctjs.call %getter(%owned)",
+                      "    %putKey = ctjs.constant #ctjs.string<\"put\">\n"
+                      "    %putter = ctjs.get_property %owned[%putKey]\n"
+                      "    %putResult = ctjs.call %putter(%owned)\n"
+                      "    %answer = ctjs.call %getter(%owned)");
+    query(shared, true, 2, 1, 2, 2, 2);
+    query(replaced(shared, "ctjs.call %putter(%owned)", "ctjs.call %putter(%host)"), false);
+    query(replaced(shared, "ctjs.call %putter(%owned)", "ctjs.call %putter(%owned, %u)"), false);
+    auto sharedModule = mlir::parseSourceString<mlir::ModuleOp>(shared, &context);
+    check(static_cast<bool>(sharedModule), "shared captured Map host fixture parses");
+    if (sharedModule) {
+        auto requested = contractFor(*sharedModule);
+        requested.initialIntrinsics = {"Map"};
+        HostContractAnalysis complete(*sharedModule, requested);
+        check(complete.proved(), "shared host census completes before work-budget controls");
+        if (complete.proved()) {
+            const unsigned completion = complete.steps();
+            check(completion < 10000, "shared host work stays within the bounded fixture limit");
+            if (completion < 10000) {
+                for (unsigned budget = 0; budget < completion; ++budget) {
+                    HostContractAnalysis limited(*sharedModule, requested, budget);
+                    check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                              limited.callables().empty(),
+                          "every incomplete family budget withholds all current callable edges");
+                }
+                check(HostContractAnalysis(*sharedModule, requested, completion).proved(),
+                      "exact shared host completion budget reproduces the full family");
+            }
+            auto mutation = complete.callables().front().capturedMap->calls.front();
+            const auto originalValue = mutation.getArgs().back();
+            mutation->setOperand(3, mutation.getReceiver());
+            HostContractAnalysis stale(*sharedModule, requested);
+            check(!stale.proved() && stale.reason().contains("fingerprint"),
+                  "a sibling mutation invalidates the original source fingerprint");
+            requested.moduleSha256 = hostContractFingerprint(*sharedModule);
+            HostContractAnalysis changed(*sharedModule, requested);
+            check(!changed.proved() && changed.callables().empty(),
+                  "a fresh fingerprint cannot hide a sibling Map cycle");
+            mutation->setOperand(3, originalValue);
+            requested.moduleSha256 = hostContractFingerprint(*sharedModule);
+            check(HostContractAnalysis(*sharedModule, requested).proved(),
+                  "restoring the sibling body restores the independently proved family");
+        }
+    }
 
     constexpr llvm::StringLiteral set = R"MLIR(
     %entryKey = ctjs.constant #ctjs.string<"x">

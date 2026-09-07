@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute the checked four-function captured Map publication without the VM."""
+"""Execute checked published methods sharing a captured Map without the VM."""
 
 import argparse
 import importlib.util
@@ -17,6 +17,10 @@ methods = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(methods)
 owned, boundary, host = methods.owned, methods.boundary, methods.host
 SOURCE = Path(__file__).with_name("native-export-boundary.js").read_text()
+SHARED = SOURCE.replace("get() { return state.size; }",
+    "get() { return state.size; }, set() { state.set('x', 1); return state.size; }")
+SHARED = SHARED.replace("var trace = host.slot.get();",
+    "host.slot.set(); var trace = host.slot.get();")
 
 
 def contract(args, ir, name, binding="host"):
@@ -124,6 +128,75 @@ int main() {
         raise RuntimeError(f"{name}/{mode}: captured Map lifetime failure\n{result.stdout}{result.stderr}")
 
 
+def shared_lifetime(args, cpp, name, mode, compiler):
+    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
+    if count != 1:
+        raise RuntimeError("shared lifetime harness needs exactly one entry")
+    changed = ("#include <memory>\n#include <vector>\n"
+               "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed)
+    changed, count = re.subn(r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
+        lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
+                      "ctn_test_maps.emplace_back(made); return made;", changed)
+    if count != 2:
+        raise RuntimeError("shared Map lifetime observer lost its allocation helpers")
+    changed += r'''
+int main() {
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1) { return 90; }
+    auto owner = g_host;
+    auto table = owner->slot;
+    auto setter = table->m_set;
+    auto getter = table->m_get;
+    std::weak_ptr owner_lifetime = owner;
+    std::weak_ptr table_lifetime = table;
+    g_host.reset();
+    owner.reset();
+    table.reset();
+    if (!owner_lifetime.expired() || !table_lifetime.expired() ||
+        ctn_test_maps[0].expired() || getter() != 1) { return 91; }
+    for (int index = 0; index < 4096; ++index) {
+        auto churn = std::make_shared<ctn_slot>();
+        churn->slot = std::make_shared<typename decltype(g_host->slot)::element_type>();
+    }
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
+        ctn_test_maps[0].lock() == ctn_test_maps[1].lock()) { return 92; }
+    if (setter() != 2 || getter() != 2 || g_host->slot->m_get() != 1) { return 93; }
+    for (int index = 0; index < 1024; ++index) {
+        if (setter() != index + 3 || getter() != index + 3 ||
+            g_host->slot->m_get() != index + 1 ||
+            g_host->slot->m_set() != index + 2) { return 94; }
+    }
+    setter = {};
+    if (ctn_test_maps[0].expired() || getter() != 1026) { return 95; }
+    auto copied = getter;
+    getter = {};
+    if (ctn_test_maps[0].expired() || copied() != 1026) { return 96; }
+    copied = {};
+    if (!ctn_test_maps[0].expired() || ctn_test_maps[1].expired()) { return 97; }
+    auto fresh_getter = g_host->slot->m_get;
+    std::weak_ptr fresh_owner = g_host;
+    std::weak_ptr fresh_table = g_host->slot;
+    g_host.reset();
+    if (!fresh_owner.expired() || !fresh_table.expired() ||
+        ctn_test_maps[1].expired() || fresh_getter() != 1025) { return 98; }
+    fresh_getter = {};
+    if (!ctn_test_maps[1].expired()) { return 99; }
+    return 0;
+}
+'''
+    source = args.work / f"{name}.{mode}.lifetime.cpp"
+    source.write_text(changed)
+    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
+    host.run([compiler, *owned.FLAGS, "-O1", "-g", "-fno-omit-frame-pointer",
+              "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
+              str(source), "-o", str(binary)])
+    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
+        env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+                 UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+    if result.returncode or result.stdout != "trace=1\n" * 2:
+        raise RuntimeError(f"{name}/{mode}: shared Map lifetime failure\n"
+                           f"{result.stdout}{result.stderr}")
+
+
 def standalone(args, output, name, value, compilers, nm):
     deduced = args.work / f"{name}.deduced.mlir"
     host.run([args.opt, str(output), "--ctnative-print-deduced", "-o", str(deduced)])
@@ -144,6 +217,8 @@ def standalone(args, output, name, value, compilers, nm):
                 raise RuntimeError(f"{name}/{mode}: standalone result mismatch")
         if name in {"ordinary", "mutate_map", "growing"}:
             lifetime(args, cpp, name, mode, value, compilers[1])
+        if name == "shared_growing":
+            shared_lifetime(args, cpp, name, mode, compilers[1])
 
 
 def refusal_sources():
@@ -181,7 +256,7 @@ def refusal_sources():
     }
 
 
-def check_budgets(args, ir, config, name):
+def check_budgets(args, ir, config, name, functions=4):
     original = ir.read_text()
     signatures = re.findall(r"^\s*ctjs\.func (.*?) -> !ctjs.value attributes \{.*?"
                             r"upvalue_count = (\d+) : i32", original, re.M)
@@ -196,9 +271,9 @@ def check_budgets(args, ir, config, name):
             return checked[budget]
         output = owned.lower(args, ir, f"{name}-budget-{budget}", config,
                              options=f"host-max-steps={budget}", cleanup=False)
-        text = methods.census(output, 4, name)
+        text = methods.census(output, functions, name)
         native = len(boundary.NATIVE.findall(text))
-        if native not in (0, 4):
+        if native not in (0, functions):
             raise RuntimeError(f"{name}/{budget}: published an incomplete native component")
         if native == 0:
             if re.findall(r"^\s*ctjs\.func (.*?) -> !ctjs.value attributes \{.*?"
@@ -209,7 +284,7 @@ def check_budgets(args, ir, config, name):
                     raise RuntimeError(f"{name}/{budget}: leaked speculative {op} rewrites")
             if "ctnative.host_owner_proved = true" in text:
                 rollback.append(budget)
-        checked[budget] = native == 4
+        checked[budget] = native == functions
         return checked[budget]
 
     low, high = 0, 100000
@@ -269,12 +344,23 @@ def main():
         "delete_result": (SOURCE.replace("return state.size;",
             "state.set(false, 0); state.set(true, 1); state.set(state.delete(true), 2); "
             "return state.size;"), "host", 2),
+        "shared": (SHARED, "host", 1),
+        "shared_growing": (SHARED.replace("state.set('x', 1)", "state.set(state.size, 1)"),
+                           "host", 1),
+        "shared_repeated": (SHARED.replace("state.set('x', 1)", "state.set(state.size, 1)")
+                            + "\nhost.slot.set(); trace = host.slot.get();", "host", 2),
+        "shared_early_read": (SHARED.replace("host.slot.set();", "host.slot.get(); host.slot.set();"),
+                              "host", 1),
+        "shared_three": (SHARED.replace("get() { return state.size; },",
+                         "size() { return state.size; }, get() { return state.size; },")
+                         + "\ntrace = host.slot.size();", "host", 1),
     }
     saved = {}
     for name, (source, binding, value) in positives.items():
         js, ir, count = boundary.prepare(args, name, source)
-        if count != 4:
-            raise RuntimeError(f"{name}: lost the four-function source chain")
+        functions = 6 if name == "shared_three" else 5 if name.startswith("shared") else 4
+        if count != functions:
+            raise RuntimeError(f"{name}: lost the {functions}-function source chain")
         if name == "already_resolved":
             ir = resolve_getter(args, ir)
         if name.startswith("legacy_"):
@@ -286,7 +372,7 @@ def main():
         config = contract(args, ir, name, binding)
         original, manifest = ir.read_text(), config.read_text()
         output = owned.lower(args, ir, name, config)
-        text = methods.census(output, 4, name, admitted=4)
+        text = methods.census(output, functions, name, admitted=functions)
         if "ctnative.host_owner_proved = true" not in text:
             raise RuntimeError(f"{name}: lost live owning proof")
         if ir.read_text() != original or config.read_text() != manifest:
@@ -328,6 +414,8 @@ def main():
     rollback += check_budgets(args, repeated, fresh, "repeated")
     growing_ir, growing_config, _ = saved["growing"]
     rollback += check_budgets(args, growing_ir, growing_config, "growing")
+    shared_ir, shared_config, _ = saved["shared_growing"]
+    rollback += check_budgets(args, shared_ir, shared_config, "shared_growing", functions=5)
 
     for name, source in refusal_sources().items():
         _, rejected, _ = boundary.prepare(args, name, source)
@@ -355,22 +443,34 @@ def main():
                 or not boundary.REFUSAL.search(text)):
             raise RuntimeError(f"{name}: ownership supplied an unsupported native carrier\n{text}")
 
-    # The next publication boundary needs a complete multi-method capture
-    # graph. Keep both runtime methods and their shared mutable Map visible.
-    multiple = SOURCE.replace("get() { return state.size; }",
-        "get() { return state.size; }, set() { state.set('x', 1); return state.size; }")
-    multiple = multiple.replace("var trace = host.slot.get();",
-        "host.slot.set(); var trace = host.slot.get();")
-    js, rejected, count = boundary.prepare(args, "multiple_methods", multiple)
-    if count != 5 or (host.run([node, "-e", boundary.NODE, str(js)]).stdout != "trace=1\n"
-            or host.run([str(reference), str(js)]).stdout != "trace=1\n"):
-        raise RuntimeError("multiple_methods: lost the source chain or shared Map result")
-    fresh = contract(args, rejected, "multiple_methods")
-    methods.refused(args, rejected, "multiple_methods", fresh, admitted=0)
-    print(f"native captured Map ownership: {len(positives)} programs at 4/4; "
+    shared_refusals = {
+        "shared_uncalled": SHARED.replace("host.slot.set(); ", ""),
+        "shared_effect": SHARED.replace("state.set('x', 1)", "inspect(state)"),
+        "shared_return_map": SHARED.replace("get() { return state.size; }", "get() { return state; }"),
+        "shared_rewrite": SHARED + "\nhost.slot.set = function() { return 1; };",
+        "shared_detached": SHARED + "\nvar saved = host.slot.set;",
+        "shared_parameter": SHARED.replace("set() { state.set('x', 1)", "set(key) { state.set(key, 1)")
+                            .replace("host.slot.set();", "host.slot.set('x');"),
+    }
+    for name, source in shared_refusals.items():
+        js, rejected, count = boundary.prepare(args, name, source)
+        fresh = contract(args, rejected, name)
+        if name == "shared_parameter":
+            if count != 5 or (
+                    host.run([node, "-e", boundary.NODE, str(js)]).stdout != "trace=1\n"
+                    or host.run([str(reference), str(js)]).stdout != "trace=1\n"):
+                raise RuntimeError("shared_parameter: next source boundary changed")
+            methods.refused(args, rejected, name, fresh, admitted=0)
+        else:
+            methods.refused(args, rejected, name, fresh)
+    boundary.native(args, shared_ir, "shared-no-manifest", 5)
+    methods.refused(args, shared_ir, "shared-no-intrinsic",
+                    owned.contract(args, shared_ir, "shared-no-intrinsic"), admitted=0)
+    print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
           "Node/interpreter/GCC/Clang explicit+deduced and Map/table/callable lifetime pass; "
           f"{len(refusal_sources())} source refusals and contract/rerun/budget controls pass; "
-          "three carrier refusals; next multi-method boundary 0/5 with Node/interpreter trace=1; "
+          f"three carrier refusals and {len(shared_refusals)} shared-method refusals; "
+          "parameterized setter remains 0/5 with Node/interpreter trace=1; "
           f"{len(rollback)} speculative rollback cutoffs")
 
 

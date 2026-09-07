@@ -6,6 +6,7 @@
 
 #include <cstdio>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -192,9 +193,10 @@ bool complete(const OwnedGlobalRoots & query, unsigned calls = 1) {
     const auto & table = *root.methodTable;
     auto factoryCall = table.factoryCall;
     auto field = root.fieldInitialization;
-    return table.calls.size() == calls && table.calls.front().function == table.method &&
-           table.calls.front().closure == table.closure &&
-           table.calls.front().write == table.methodInitialization &&
+    return table.methods.size() == 1 && table.calls.size() == calls &&
+           table.calls.front().function == table.methods.front().function &&
+           table.calls.front().closure == table.methods.front().closure &&
+           table.calls.front().write == table.methods.front().initialization &&
            factoryCall->getResult(0) == field.getValue() && !query.lookup(table.table) &&
            !query.lookup(table.calls.front().call);
 }
@@ -204,6 +206,258 @@ std::string replaced(std::string source, llvm::StringRef from, llvm::StringRef t
     if (offset == std::string::npos) { return {}; }
     source.replace(offset, from.size(), to.str());
     return source;
+}
+
+void checkSharedMap(mlir::MLIRContext & context) {
+    auto source = replaced(capturedFixture, "ctjs.call_direct @make$2(%u, %u, %factory)",
+                           "ctjs.call %factory(%u)");
+    source = replaced(source, "    ctjs.return %table",
+                      "    %putter = ctjs.create_closure %callee[4] this %u captures %cell\n"
+                      "    %putKey = ctjs.constant #ctjs.string<\"put\">\n"
+                      "    ctjs.set_property %table[%putKey], %putter\n"
+                      "    ctjs.return %table");
+    source = replaced(source, "\n}\n", R"MLIR(
+  ctjs.func private @put$4(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 1 : i32} {
+    %state = ctjs.load_upvalue %callee[0]
+    %setKey = ctjs.constant #ctjs.string<"set">
+    %setter = ctjs.get_property %state[%setKey]
+    %entryKey = ctjs.constant #ctjs.string<"x">
+    %value = ctjs.constant #ctjs.number<4607182418800017408>
+    %written = ctjs.call %setter(%state, %entryKey, %value)
+    %u = ctjs.constant #ctjs.undefined
+    ctjs.return %u
+  }
+}
+)MLIR");
+    source = replaced(source, "    %answer = ctjs.call %getter(%owned)",
+                      "    %putKey = ctjs.constant #ctjs.string<\"put\">\n"
+                      "    %putter = ctjs.get_property %owned[%putKey]\n"
+                      "    %putResult = ctjs.call %putter(%owned)\n"
+                      "    %answer = ctjs.call %getter(%owned)");
+    const auto replaceAll = [](std::string text, llvm::StringRef from, llvm::StringRef to) {
+        std::size_t offset = 0;
+        while ((offset = text.find(from.str(), offset)) != std::string::npos) {
+            text.replace(offset, from.size(), to.str());
+            offset += to.size();
+        }
+        return text;
+    };
+    const auto prepare = [&](std::string text) {
+        text =
+            replaced(text, "ctjs.call %factory(%u)", "ctjs.call_direct @make$2(%u, %u, %factory)");
+        text = replaced(text, "    %cell = ctjs.create_cell %u\n", "");
+        text = replaced(text, "    ctjs.cell_set %cell, %state\n", "");
+        text = replaceAll(text, "captures %cell", "captures %state");
+        text = replaceAll(text, "    %state = ctjs.load_upvalue %callee[0]\n", "");
+        text = replaceAll(text, "upvalue_count = 1 : i32", "upvalue_count = 0 : i32");
+        for (const auto & [name, closure, result] : {std::tuple{"get$3", "getter", "answer"},
+                                                     {"put$4", "putter", "putResult"},
+                                                     {"has$5", "hasMethod", "hasResult"}}) {
+            const auto signature = std::string("@") + name +
+                                   "(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value";
+            if (text.find(signature) == std::string::npos) { continue; }
+            text = replaced(text, signature + ")", signature + ", %state: !ctjs.value)");
+            const auto call = std::string("%") + result + " = ctjs.call %" + closure + "(%owned)";
+            const auto lifted = std::string("%") + closure + "Env = ctjs.load_upvalue %" + closure +
+                                "[0]\n    %" + result + " = ctjs.call_direct @" + name +
+                                "(%owned, %u, %" + closure + ", %" + closure + "Env)";
+            text = replaced(text, call, lifted);
+        }
+        return text;
+    };
+    auto three = replaced(source, "    ctjs.return %table",
+                          "    %hasMethod = ctjs.create_closure %callee[5] this %u captures %cell\n"
+                          "    %hasKey = ctjs.constant #ctjs.string<\"has\">\n"
+                          "    ctjs.set_property %table[%hasKey], %hasMethod\n"
+                          "    ctjs.return %table");
+    three = replaced(three, "\n}\n", R"MLIR(
+  ctjs.func private @has$5(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 1 : i32} {
+    %state = ctjs.load_upvalue %callee[0]
+    %key = ctjs.constant #ctjs.string<"has">
+    %method = ctjs.get_property %state[%key]
+    %entryKey = ctjs.constant #ctjs.string<"x">
+    %found = ctjs.call %method(%state, %entryKey)
+    ctjs.return %found
+  }
+}
+)MLIR");
+    three = replaced(three, "    %answer = ctjs.call %getter(%owned)",
+                     "    %hasKey = ctjs.constant #ctjs.string<\"has\">\n"
+                     "    %hasMethod = ctjs.get_property %owned[%hasKey]\n"
+                     "    %hasResult = ctjs.call %hasMethod(%owned)\n"
+                     "    %answer = ctjs.call %getter(%owned)");
+    const auto requested = [](mlir::ModuleOp module) {
+        auto contract = contractFor(module);
+        contract.initialIntrinsics = {"Map"};
+        return contract;
+    };
+    for (const auto & [program, members, lifted] : {std::tuple{source, 2u, false},
+                                                    {prepare(source), 2u, true},
+                                                    {three, 3u, false},
+                                                    {prepare(three), 3u, true}}) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "shared Map source and prepared fixtures parse");
+        if (!module) { continue; }
+        const auto contract = requested(*module);
+        OwnedGlobalRoots query(*module, contract);
+        if (!query.proved()) {
+            std::fprintf(stderr, "shared owner: %s\n", query.reason().str().c_str());
+        }
+        check(query.proved() && query.roots().size() == 1,
+              "every fixed method shares the same completely checked ordinary owner");
+        if (!query.proved() || query.roots().empty()) { continue; }
+        const auto & table = *query.roots().front().methodTable;
+        const auto & capture = *table.capturedMap;
+        check(table.methods.size() == members && table.calls.size() == members &&
+                  capture.closures.size() == members && capture.reads.size() == members &&
+                  capture.calls.size() == members - 1 &&
+                  capture.upvalues.size() == (lifted ? 0 : members),
+              "shared owner records all method, capture, body and current-call edges");
+        for (const auto & edge : table.calls) {
+            check(edge.capturedMap && edge.capturedMap->allocation == capture.allocation &&
+                      edge.capturedMap->closures == capture.closures &&
+                      edge.capturedMap->reads == capture.reads &&
+                      edge.capturedMap->calls == capture.calls &&
+                      static_cast<bool>(edge.capturedMap->argument) == lifted,
+                  "all actual calls carry the same full family and their own lifted argument");
+        }
+        const unsigned completion = query.steps();
+        check(completion < 10000, "shared Map source proof is bounded");
+        if (completion < 10000) {
+            for (unsigned budget = 0; budget < completion; ++budget) {
+                OwnedGlobalRoots limited(*module, contract, budget);
+                check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                          empty(*module, limited),
+                      "every incomplete shared-owner budget exposes no partial source graph");
+            }
+            check(OwnedGlobalRoots(*module, contract, completion).proved(),
+                  "exact shared-owner completion budget reproduces all methods");
+        }
+        mlir::Builder attributes(&context);
+        (*module)->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
+        check(OwnedGlobalRoots(*module, contract).proved(),
+              "shared ownership rederives its family despite forged report attributes");
+        auto mutation = capture.calls.front();
+        const auto originalValue = mutation.getArgs().back();
+        mutation->setOperand(3, mutation.getReceiver());
+        OwnedGlobalRoots stale(*module, contract);
+        check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
+              "a changed sibling body invalidates the original shared-owner fingerprint");
+        OwnedGlobalRoots changed(*module, requested(*module));
+        check(!changed.proved() && empty(*module, changed),
+              "a fresh shared-owner fingerprint cannot authorize a sibling Map cycle");
+        mutation->setOperand(3, originalValue);
+        check(OwnedGlobalRoots(*module, contract).proved(),
+              "restoring the sibling method restores its live shared-owner proof");
+        auto sibling = module->lookupSymbol<ctjs::FuncOp>("put$4");
+        auto returned = llvm::cast<ctjs::ReturnOp>(sibling.getBody().front().getTerminator());
+        const auto originalReturn = returned.getValue();
+        for (unsigned implicit : {0u, 1u}) {
+            returned->setOperand(0, sibling.getBody().front().getArgument(implicit));
+            OwnedGlobalRoots oldReceiver(*module, contract);
+            check(!oldReceiver.proved() && oldReceiver.reason().contains("fingerprint") &&
+                      empty(*module, oldReceiver),
+                  "a sibling implicit-receiver mutation invalidates the original fingerprint");
+            OwnedGlobalRoots newReceiver(*module, requested(*module));
+            check(!newReceiver.proved() && empty(*module, newReceiver),
+                  "every sibling must remain independent of this and new.target");
+            returned->setOperand(0, originalReturn);
+            check(OwnedGlobalRoots(*module, contract).proved(),
+                  "restoring sibling receiver independence restores the live family");
+        }
+        if (!lifted) {
+            auto upvalue = llvm::cast<ctjs::LoadUpvalueOp>(sibling.getBody().front().front());
+            upvalue.setIndexAttr(attributes.getI32IntegerAttr(1));
+            OwnedGlobalRoots oldSlot(*module, contract);
+            check(!oldSlot.proved() && oldSlot.reason().contains("fingerprint") &&
+                      empty(*module, oldSlot),
+                  "a sibling capture-index mutation invalidates the original fingerprint");
+            OwnedGlobalRoots newSlot(*module, requested(*module));
+            check(!newSlot.proved() && empty(*module, newSlot),
+                  "an earlier sibling proof cannot authorize another environment slot");
+            upvalue.setIndexAttr(attributes.getI32IntegerAttr(0));
+            check(OwnedGlobalRoots(*module, contract).proved(),
+                  "restoring the sibling environment index restores the live family");
+        }
+        std::printf("shared Map %u-method %s proof and all %u incomplete budgets checked\n",
+                    members, lifted ? "prepared" : "source", completion);
+    }
+    const auto refuse = [&](std::string program, const char * message) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "shared Map refusal fixture parses");
+        if (!module) { return; }
+        OwnedGlobalRoots query(*module, requested(*module));
+        check(!query.proved() && !query.exhausted() && empty(*module, query), message);
+    };
+    refuse(replaced(source, "    %putResult = ctjs.call %putter(%owned)\n", ""),
+           "an uncalled published sibling withholds the complete owner plan");
+    refuse(replaced(source, "ctjs.call %putter(%owned)", "ctjs.call %putter(%host)"),
+           "every method needs its actual receiver in the checked table family");
+    refuse(replaced(source, "ctjs.call %putter(%owned)", "ctjs.call %putter(%owned, %u)"),
+           "public parameters remain outside the zero-argument shared Map boundary");
+    refuse(replaced(source, "ctjs.set_property %table[%putKey], %putter",
+                    "ctjs.set_property %table[%key], %putter"),
+           "fixed shared methods cannot replace each other");
+    refuse(replaced(source, "%putter = ctjs.create_closure %callee[4] this %u captures %cell",
+                    "%putter = ctjs.create_closure %callee[3] this %u captures %cell"),
+           "two closure creations cannot silently merge one source method identity");
+    refuse(replaced(source, "ctjs.call %setter(%state, %entryKey, %value)",
+                    "ctjs.call %setter(%state, %entryKey, %state)"),
+           "every captured method participates in the primitive contents proof");
+    refuse(replaced(source, "    %written = ctjs.call %setter(%state, %entryKey, %value)",
+                    "    ctjs.store_global \"escaped\", %state\n"
+                    "    %written = ctjs.call %setter(%state, %entryKey, %value)"),
+           "a sibling cannot separately publish the shared Map");
+    refuse(replaced(source, "    ctjs.set_property %table[%putKey], %putter",
+                    "    ctjs.set_property %table[%putKey], %putter\n"
+                    "    ctjs.store_global \"escapedMethod\", %putter"),
+           "a sibling callable cannot acquire an unchecked export alias");
+    refuse(replaced(source, "    ctjs.cell_set %cell, %state",
+                    "    ctjs.cell_set %cell, %state\n    ctjs.cell_set %cell, %u"),
+           "all family members depend on one immutable Map slot");
+    refuse(replaced(prepare(source), "%putterEnv = ctjs.load_upvalue %putter[0]",
+                    "%putterEnv = ctjs.load_upvalue %getter[0]"),
+           "prepared sibling arguments must come from their own current callable");
+    auto mixed =
+        replaced(source, "@put$4(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value)",
+                 "@put$4(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, "
+                 "%state: !ctjs.value)");
+    mixed = replaced(mixed,
+                     "attributes {upvalue_count = 1 : i32} {\n"
+                     "    %state = ctjs.load_upvalue %callee[0]\n"
+                     "    %setKey = ctjs.constant",
+                     "attributes {upvalue_count = 0 : i32} {\n"
+                     "    %setKey = ctjs.constant");
+    mixed = replaced(mixed, "%putResult = ctjs.call %putter(%owned)",
+                     "%putterEnv = ctjs.load_upvalue %putter[0]\n"
+                     "    %putResult = ctjs.call_direct @put$4(%owned, %u, %putter, %putterEnv)");
+    refuse(mixed, "partially lifted sibling signatures cannot publish a complete family proof");
+    mixed = replaced(mixed, "%putter = ctjs.create_closure %callee[4] this %u captures %cell",
+                     "%putter = ctjs.create_closure %callee[4] this %u captures %state");
+    refuse(mixed, "raw-resource and original-cell siblings cannot mix capture ownership stages");
+
+    auto distinct =
+        replaced(source, "%putter = ctjs.create_closure %callee[4] this %u captures %cell",
+                 "%otherState = ctjs.construct %constructor(%constructor)\n"
+                 "    %otherCell = ctjs.create_cell %otherState\n"
+                 "    %putter = ctjs.create_closure %callee[4] this %u captures %otherCell");
+    auto distinctModule = mlir::parseSourceString<mlir::ModuleOp>(distinct, &context);
+    check(static_cast<bool>(distinctModule), "distinct sibling Map environment fixture parses");
+    if (distinctModule) {
+        const auto contract = requested(*distinctModule);
+        HostContractAnalysis host(*distinctModule, contract);
+        check(host.proved() && host.callables().size() == 2,
+              "each separate sibling Map can satisfy its individual live callable proof");
+        if (host.proved() && host.callables().size() == 2) {
+            check(host.callables()[0].capturedMap && host.callables()[1].capturedMap &&
+                      host.callables()[0].capturedMap->allocation !=
+                          host.callables()[1].capturedMap->allocation,
+                  "the live host census retains distinct sibling allocation identities");
+        }
+        OwnedGlobalRoots owner(*distinctModule, contract);
+        check(!owner.proved() && !owner.exhausted() && empty(*distinctModule, owner),
+              "individually valid sibling Maps cannot inherit the one-shared-Map owner plan");
+    }
 }
 
 void checkCapturedMap(mlir::MLIRContext & context) {
@@ -490,6 +744,7 @@ int main() {
     mlir::MLIRContext context;
     context.getOrLoadDialect<ctjs::CTJSDialect>();
     checkCapturedMap(context);
+    checkSharedMap(context);
     auto module = mlir::parseSourceString<mlir::ModuleOp>(fixture, &context);
     check(static_cast<bool>(module), "owned global method fixture parses");
     if (!module) { return 1; }
@@ -584,8 +839,8 @@ int main() {
     extra.erase();
     restored();
 
-    builder.setInsertionPointAfter(table.methodInitialization);
-    auto * methodWrite = builder.clone(*table.methodInitialization.getOperation());
+    builder.setInsertionPointAfter(table.methods.front().initialization);
+    auto * methodWrite = builder.clone(*table.methods.front().initialization.getOperation());
     refused("method replacement is outside the fixed callable storage tier");
     methodWrite->erase();
     restored();
@@ -601,14 +856,15 @@ int main() {
     root.fieldInitialization->moveBefore(root.loads.front());
     restored();
 
-    auto * methodTerminator = table.method.getBody().front().getTerminator();
+    auto * methodTerminator = table.methods.front().function.getBody().front().getTerminator();
     const auto answer = methodTerminator->getOperand(0);
-    methodTerminator->setOperand(0, table.method.getBody().front().getArgument(0));
+    methodTerminator->setOperand(0,
+                                 table.methods.front().function.getBody().front().getArgument(0));
     refused("a receiver-observing getter needs an additional invocation proof");
     methodTerminator->setOperand(0, answer);
     restored();
 
-    builder.setInsertionPointAfter(table.methodInitialization);
+    builder.setInsertionPointAfter(table.methods.front().initialization);
     auto extraKey = ctjs::ConstantOp::create(builder, root.owner.getLoc(),
                                              ctjs::StringAttr::get(&context, "extra"));
     ctjs::ConstantOp factoryUndefined;

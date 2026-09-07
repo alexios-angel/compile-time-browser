@@ -57,24 +57,80 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     }
 
     auto first = host.callables().front();
-    auto method = first.function;
-    auto closure = first.closure;
-    auto methodInitialization = first.write;
-    auto table = methodInitialization.getObject().getDefiningOp<ctjs::CreateObjectOp>();
-    if (!table || method == entry || method == factory ||
-        table->getParentOfType<ctjs::FuncOp>() != factory ||
-        closure->getParentOfType<ctjs::FuncOp>() != factory ||
-        methodInitialization->getParentOfType<ctjs::FuncOp>() != factory) {
-        reject("owned global method table requires a fresh factory-local table and closure");
+    auto table = first.write.getObject().getDefiningOp<ctjs::CreateObjectOp>();
+    if (!table || table->getParentOfType<ctjs::FuncOp>() != factory) {
+        reject("owned global method table requires a fresh factory-local table");
         return;
     }
     if (capture &&
-        (capture->allocation->getParentOfType<ctjs::FuncOp>() != factory || wrapper == method ||
-         wrapper == factory || wrapper.getUpvalueCount() != 0 || wrapper.getBody().empty() ||
+        (capture->allocation->getParentOfType<ctjs::FuncOp>() != factory || wrapper == factory ||
+         wrapper.getUpvalueCount() != 0 || wrapper.getBody().empty() ||
          (wrapper.getBody().front().getNumArguments() != 3 &&
           wrapper.getBody().front().getNumArguments() != 4))) {
         reject("owned global captured table requires one wrapper, factory and Map environment");
         return;
+    }
+
+    llvm::SmallVector<OwnedGlobalMethod> methods;
+    llvm::DenseMap<mlir::Operation *, unsigned> methodIndices;
+    llvm::DenseSet<mlir::Operation *> methodFunctions;
+    llvm::DenseSet<mlir::Operation *> methodInitializations;
+    llvm::DenseSet<mlir::Operation *> methodReads;
+    llvm::DenseSet<mlir::Operation *> methodCalls;
+    for (const HostCallableEdge & edge : host.callables()) {
+        if (!spend()) { return; }
+        auto method = edge.function;
+        auto closure = edge.closure;
+        auto write = edge.write;
+        if (method == entry || method == factory || method == wrapper ||
+            closure->getParentOfType<ctjs::FuncOp>() != factory ||
+            write->getParentOfType<ctjs::FuncOp>() != factory ||
+            write.getObject() != table.getResult() ||
+            edge.capturedMap.has_value() != capture.has_value() ||
+            (capture && (edge.capturedMap->intrinsic != capture->intrinsic ||
+                         edge.capturedMap->allocation != capture->allocation ||
+                         edge.capturedMap->cell != capture->cell ||
+                         edge.capturedMap->initialization != capture->initialization ||
+                         edge.capturedMap->closures != capture->closures ||
+                         edge.capturedMap->upvalues != capture->upvalues ||
+                         edge.capturedMap->reads != capture->reads ||
+                         edge.capturedMap->calls != capture->calls)) ||
+            edge.call->getParentOfType<ctjs::FuncOp>() != entry) {
+            reject("owned global method table has another environment or invocation context");
+            return;
+        }
+        const auto [position, inserted] =
+            methodIndices.try_emplace(closure, static_cast<unsigned>(methods.size()));
+        if (inserted) {
+            if ((!capture && !methods.empty()) || !methodFunctions.insert(method).second ||
+                !methodInitializations.insert(write).second) {
+                reject("owned global method table requires distinct fixed captured methods");
+                return;
+            }
+            methods.push_back({write, closure, method});
+        } else {
+            const auto & previous = methods[position->second];
+            if (previous.function != method || previous.initialization != write) {
+                reject("owned global method identity disagrees across current calls");
+                return;
+            }
+        }
+        methodReads.insert(edge.read);
+        methodCalls.insert(edge.call);
+    }
+    if (capture) {
+        if (!spend()) { return; }
+        if (capture->closures.size() != methods.size()) {
+            reject("owned global Map family lacks a current call for every published method");
+            return;
+        }
+        for (ctjs::CreateClosureOp closure : capture->closures) {
+            if (!spend()) { return; }
+            if (!methodIndices.contains(closure)) {
+                reject("owned global Map family has another captured closure");
+                return;
+            }
+        }
     }
 
     llvm::SmallVector<mlir::Operation *> operations;
@@ -84,7 +140,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         if (operation == module.getOperation()) { return mlir::WalkResult::advance(); }
         if (auto function = llvm::dyn_cast<ctjs::FuncOp>(operation)) {
             ++functions;
-            if ((function != entry && function != factory && function != method &&
+            if ((function != entry && function != factory && !methodFunctions.contains(function) &&
                  function != wrapper) ||
                 function->getParentOp() != module || !llvm::hasSingleElement(function.getBody()) ||
                 function->hasAttr("ctjs.skipped")) {
@@ -101,7 +157,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         return refusal.empty() ? mlir::WalkResult::advance() : mlir::WalkResult::interrupt();
     });
     if (!refusal.empty()) { return; }
-    if (functions != (wrapper ? 4u : 3u)) {
+    if (functions != methods.size() + (wrapper ? 3u : 2u)) {
         reject("owned global method table requires its exact source function chain");
         return;
     }
@@ -111,27 +167,6 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     ctjs::ReturnOp factoryReturn;
     ctjs::CallDirectOp wrapperCall;
     ctjs::ReturnOp wrapperReturn;
-    llvm::DenseSet<mlir::Operation *> methodReads;
-    llvm::DenseSet<mlir::Operation *> methodCalls;
-    for (const HostCallableEdge & edge : host.callables()) {
-        if (!spend()) { return; }
-        if (edge.function != method || edge.closure != closure ||
-            edge.write != methodInitialization ||
-            edge.capturedMap.has_value() != capture.has_value() ||
-            (capture && (edge.capturedMap->intrinsic != capture->intrinsic ||
-                         edge.capturedMap->allocation != capture->allocation ||
-                         edge.capturedMap->cell != capture->cell ||
-                         edge.capturedMap->initialization != capture->initialization ||
-                         edge.capturedMap->upvalues != capture->upvalues ||
-                         edge.capturedMap->reads != capture->reads ||
-                         edge.capturedMap->calls != capture->calls)) ||
-            edge.call->getParentOfType<ctjs::FuncOp>() != entry) {
-            reject("owned global method table has another callable or invocation context");
-            return;
-        }
-        methodReads.insert(edge.read);
-        methodCalls.insert(edge.call);
-    }
     for (mlir::Operation * operation : operations) {
         if (!spend()) { return; }
         if (auto made = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
@@ -155,7 +190,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             loads.push_back(load);
         }
         if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-            if (write != field && write != methodInitialization) {
+            if (write != field && !methodInitializations.contains(write)) {
                 reject("owned global method fields cannot be replaced or extended");
             }
         }
@@ -197,15 +232,22 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         if (!refusal.empty()) { return; }
     }
     if (!initialization || !factoryReturn || !owner->isBeforeInBlock(initialization) ||
-        !table->isBeforeInBlock(methodInitialization) ||
-        !closure->isBeforeInBlock(methodInitialization) ||
-        !methodInitialization->isBeforeInBlock(factoryReturn) ||
         !factoryCall->isBeforeInBlock(field) ||
         (wrapper &&
          (!wrapperCall || !wrapperReturn || !initialization->isBeforeInBlock(wrapperCall) ||
           !field->isBeforeInBlock(wrapperReturn)))) {
         reject("owned global method table lacks unconditional allocation and initialization order");
         return;
+    }
+
+    for (const OwnedGlobalMethod & method : methods) {
+        if (!spend()) { return; }
+        if (!table->isBeforeInBlock(method.initialization) ||
+            !method.closure->isBeforeInBlock(method.initialization) ||
+            !method.initialization->isBeforeInBlock(factoryReturn)) {
+            reject("owned global method table has an incomplete method initialization order");
+            return;
+        }
     }
 
     llvm::DenseSet<mlir::Value> owners{owner.getResult()};
@@ -258,7 +300,7 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             auto * user = use.getOwner();
             if (llvm::isa<ctjs::RootOp>(user) || user == factoryReturn.getOperation()) { continue; }
             if (user == field.getOperation() && use.getOperandNumber() == 2) { continue; }
-            if (user == methodInitialization.getOperation() && use.getOperandNumber() == 0 &&
+            if (methodInitializations.contains(user) && use.getOperandNumber() == 0 &&
                 alias == table.getResult()) {
                 continue;
             }
@@ -285,16 +327,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     OwnedGlobalRoot result{owner, initialization, std::move(loads), field,
                            {},    slot.binding,   slot.property,    std::nullopt};
     result.reads.append(slot.reads.begin(), slot.reads.end());
-    result.methodTable.emplace(OwnedGlobalMethodTable{factoryCall,
-                                                      factory,
-                                                      table,
-                                                      methodInitialization,
-                                                      closure,
-                                                      method,
-                                                      {},
-                                                      wrapper,
-                                                      wrapperCall,
-                                                      capture});
+    result.methodTable.emplace(OwnedGlobalMethodTable{
+        factoryCall, factory, table, std::move(methods), {}, wrapper, wrapperCall, capture});
     result.methodTable->calls.append(host.callables().begin(), host.callables().end());
     llvm::DenseMap<mlir::Operation *, unsigned> committed;
     for (ctjs::LoadGlobalOp load : result.loads) {
