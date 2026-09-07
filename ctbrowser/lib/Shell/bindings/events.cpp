@@ -391,7 +391,16 @@ void initialise_event(context & cx, script::object_object & event, std::string_v
     // inherited one. Both halves are observable: getOwnPropertyDescriptor on an
     // instance must find it, and the getters of two instances must be the same
     // function.
-    if (is_trusted_getter.is_object()) {
+    //
+    // `is_callable()` AND NOT `is_object()`. `value::is_object()` is
+    // heap_kind::object EXACTLY, and a getter is a heap_kind::native - so the
+    // obvious test is false for every getter there has ever been, and this
+    // silently took the fallback below and made `isTrusted` a DATA property on
+    // every event in the engine. Nothing about that looks wrong from the page
+    // until something asks for the descriptor. It is the same trap that
+    // context::make_instance sets for a native constructor's prototype, one
+    // function up, and it is worth knowing there are two of them.
+    if (is_trusted_getter.is_callable()) {
         event.define_accessor("isTrusted", is_trusted_getter, value::undefined(),
                               script::attr_enumerable);
     } else {
@@ -422,7 +431,11 @@ void invoke_listener(context & cx, value callback, value receiver, value event) 
         (void)cx.call(callback, std::span<const value>{&event, 1}, receiver);
         return;
     }
-    if (!callback.is_object()) { return; }
+    // `is_object_like()` for the third time in this file and for the third
+    // reason: EventListener is "any object", and a page may register a Proxy
+    // wrapping one - dom/events/EventListener-handleEvent-cross-realm.html
+    // registers five. A callable one has already been handled above.
+    if (!callback.is_object_like()) { return; }
     const value handler = cx.lookup_property(callback, "handleEvent");
     if (!handler.is_callable()) { return; }
     // THE OBJECT IS THE RECEIVER, not the target: `handleEvent` is a method of
@@ -798,7 +811,16 @@ void dom_bindings::fire_at(path_step step, std::string_view type, value event, b
 // order - and cheap, versus a listener list that must be rewritten whenever a
 // property is assigned.
 void dom_bindings::fire_handler_property(value target, std::string_view type, value event) {
-    if (cx_ == nullptr || !target.is_object()) { return; }
+    // `is_object_like()` AND NOT `is_object()`, and this one was load-bearing:
+    // `value::is_object()` is heap_kind::object EXACTLY, and THE WINDOW IS A
+    // PROXY. So this returned at the door for every window step of every
+    // dispatch there has ever been, and `window.onerror`, `window.onload`,
+    // `window.onclick` - every handler PROPERTY on the window - has never once
+    // fired. An element's worked, which is why nothing noticed: the wrapper is
+    // an ordinary object and the only test covering handler properties used
+    // one. Found by asserting on window.onerror rather than by a page
+    // complaining, because a handler that is never called says nothing.
+    if (cx_ == nullptr || !target.is_object_like()) { return; }
     const value handler = cx_->lookup_property(target, "on" + std::string{type});
     if (!handler.is_callable()) { return; }
     // `window.onerror` IS THE ONE HANDLER THAT IS NOT HANDED ITS EVENT.

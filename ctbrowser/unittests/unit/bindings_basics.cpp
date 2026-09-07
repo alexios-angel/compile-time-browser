@@ -607,11 +607,18 @@ void test_dispatch_refuses_and_binds_this() {
         console.log('this=' + seen + 'lookups=' + lookups);
 
         var during = null;
+        var atWindow = '';
         t.addEventListener('peek', function () { during = window.event; });
-        var peek = new Event('peek');
+        // A HANDLER PROPERTY ON THE WINDOW. It is the one target whose
+        // `on<type>` never fired: the window is a PROXY and the guard tested
+        // for a plain object, so every window handler property in the engine
+        // was dead and an element's - the only kind any test used - was not.
+        // Bubbling, or the event never reaches the window to begin with.
+        window.onpeek = function (e) { atWindow = e.type + ':' + (this === window); };
+        var peek = new Event('peek', {bubbles: true});
         t.dispatchEvent(peek);
         console.log('global=' + (during === peek) + ',' + (window.event === undefined) +
-                    ',' + ('event' in window));
+                    ',' + ('event' in window) + ',' + atWindow);
 
         var et = new EventTarget();
         var fired = 0;
@@ -633,8 +640,10 @@ void test_dispatch_refuses_and_binds_this() {
           "an uninitialised event and a re-entered one are both refused: " + log[0]);
     check(log[1] == "this=true;obj;true;obj;lookups=2",
           "`this` is the current target, and handleEvent is looked up every time: " + log[1]);
-    check(log[2] == "global=true,true,true",
-          "window.event is the travelling event and exists outside a dispatch: " + log[2]);
+    check(log[2] == "global=true,true,true,peek:true",
+          "window.event travels, exists outside a dispatch, and the window's own "
+          "handler property fires: " +
+              log[2]);
     check(log[3] == "signal=0,TypeError",
           "an aborted signal adds nothing and a null one throws: " + log[3]);
 }
@@ -2647,7 +2656,13 @@ void test_window_and_performance() {
     check(log.size() == 2, "two console lines");
     if (log.size() == 2) {
         check(log[0] == "size 321x234", "window reports the viewport");
-        check(log[1] == "t0 0", "and the page clock starts at zero");
+        // A POSITIVE TIME ORIGIN, and a FIXED one. `performance.now()` on a
+        // page's first line is not zero in any browser - the origin is when the
+        // document began loading and script runs after that - and
+        // `dom/events/Event-constructors.any.js` asserts `timeStamp > 0`. It is
+        // a constant rather than a real clock for the reason `Math.random` is
+        // seeded: three example pages byte-compare their render.
+        check(log[1] == "t0 1", "and the page clock starts at a positive origin");
     }
 }
 
