@@ -1,5 +1,7 @@
 #include "Recovery.h"
 
+#include "../../../CTJS/Lowering/Globals/RegisterFlow.h"
+#include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
 
@@ -13,6 +15,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/CFGToSCF.h"
@@ -45,6 +48,8 @@ namespace {
 // both regions structure successfully is the recovered body adopted.
 struct recovery {
     ctjs::FuncOp function;
+    mlir::ModuleOp module;
+    mlir::IRMapping copies;
     unsigned remaining;
     std::string refusal;
     ctjs::PushHandlerOp push;
@@ -54,9 +59,12 @@ struct recovery {
     unsigned throws = 0;
     ExceptionRecoveryMode mode;
     llvm::DenseMap<mlir::Operation *, ctjs::CallDirectOp> invocations;
+    llvm::DenseMap<mlir::StringAttr, ctjs::FuncOp> bindings;
+    llvm::DenseSet<mlir::Operation *> boundTargets;
 
     recovery(ctjs::FuncOp function, unsigned maxSteps, ExceptionRecoveryMode mode)
-        : function(function), remaining(maxSteps), mode(mode) {}
+        : function(function), module(function->getParentOfType<mlir::ModuleOp>()),
+          remaining(maxSteps), mode(mode) {}
 
     struct tail {
         llvm::SmallVector<mlir::Block *> blocks;
@@ -175,20 +183,263 @@ struct recovery {
         return true;
     }
 
-    bool primitive(mlir::Value value) {
+    bool hasOrigin(mlir::Value value, mlir::Value origin) {
+        unsigned used = 0;
+        bool found = ctjs::globals_detail::registerFlowHasOrigin(value, origin, remaining, &used);
+        if (!spend(used)) { return false; }
+        if (!found && remaining == 0) { return spend(); }
+        return found;
+    }
+
+    std::optional<llvm::SmallVector<mlir::OpOperand *>> uses(mlir::Value value) {
+        unsigned used = 0;
+        auto found = ctjs::globals_detail::registerFlowUses(value, remaining, &used);
+        if (!spend(used)) { return {}; }
+        if (!found && remaining == 0) { (void)spend(); }
+        return found;
+    }
+
+    bool bindingFailure(llvm::StringRef why) {
+        return reject(("native invocation recovery cannot prove nonthrowing source callee "
+                       "bindings: " +
+                       why)
+                          .str());
+    }
+
+    bool proveBindings() {
+        // This is a closed source-declaration proof, not permission from the
+        // resolved symbol or a host name. Inventory every current body before
+        // accepting any load. A missing body, property operation, host call or
+        // coercion that could reenter leaves the original checks intact.
+        if (!module) { return bindingFailure("the source module is unavailable"); }
+        if (auto skipped = module->getAttr("ctjs.skipped")) {
+            auto rows = llvm::dyn_cast<mlir::ArrayAttr>(skipped);
+            if (!rows || !rows.empty()) { return bindingFailure("source bodies are missing"); }
+        }
+        llvm::DenseMap<unsigned, ctjs::FuncOp> functions;
+        llvm::DenseSet<mlir::StringAttr> symbols;
+        llvm::DenseMap<mlir::StringAttr, llvm::SmallVector<ctjs::StoreGlobalOp>> stores;
+        llvm::SmallVector<ctjs::LoadGlobalOp> loads;
+        llvm::SmallVector<ctjs::CreateClosureOp> closures;
+        llvm::SmallVector<ctjs::CallDirectOp> calls;
+        llvm::SmallVector<mlir::Operation *> operations;
+        for (mlir::Operation & operation : module.getBody()->getOperations()) {
+            if (!spend()) { return false; }
+            auto body = llvm::dyn_cast<ctjs::FuncOp>(operation);
+            auto index = body ? functionIndex(body) : std::optional<unsigned>{};
+            if (!body || !index || body.getBody().empty() || body.getUpvalueCount() != 0 ||
+                body.getBody().front().getNumArguments() < 3 || body->hasAttr("ctjs.not_lowered") ||
+                !functions.try_emplace(*index, body).second ||
+                !symbols.insert(body.getSymNameAttr()).second) {
+                return bindingFailure("source function identity or body is incomplete");
+            }
+            auto walked = body.getBody().walk([&](mlir::Operation * op) {
+                if (!spend(uint64_t(1) + op->getNumOperands())) {
+                    return mlir::WalkResult::interrupt();
+                }
+                operations.push_back(op);
+                if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op)) {
+                    stores[store.getNameAttr()].push_back(store);
+                }
+                if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) { loads.push_back(load); }
+                if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
+                    closures.push_back(closure);
+                }
+                if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) { calls.push_back(call); }
+                return mlir::WalkResult::advance();
+            });
+            if (walked.wasInterrupted()) { return false; }
+        }
+        auto entry = functions.lookup(0);
+        if (!entry) { return bindingFailure("there is no unique source entry"); }
+        llvm::DenseSet<mlir::Operation *> declarations;
+        for (auto closure : closures) {
+            if (!spend()) { return false; }
+            auto target = closure.getFunction() < 0
+                              ? ctjs::FuncOp{}
+                              : functions.lookup(static_cast<unsigned>(closure.getFunction()));
+            if (!target || target == entry || !closure.getUpvalues().empty() ||
+                closure->getBlock() != &entry.getBody().front() ||
+                closure.getEnclosingClosure() != entry.getBody().front().getArgument(2) ||
+                mlir::SymbolTable::getSymbolVisibility(target) !=
+                    mlir::SymbolTable::Visibility::Private) {
+                return bindingFailure("a closure lacks its exact source declaration");
+            }
+            auto currentUses = uses(closure.getResult());
+            if (!currentUses) { return false; }
+            ctjs::StoreGlobalOp declaration;
+            for (mlir::OpOperand * use : *currentUses) {
+                if (!spend()) { return false; }
+                if (llvm::isa<ctjs::RootOp>(use->getOwner())) { continue; }
+                auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(use->getOwner());
+                if (!store || declaration || store.getValue() != closure.getResult() ||
+                    stores.find(store.getNameAttr())->second.size() != 1 ||
+                    store->getBlock() != &entry.getBody().front()) {
+                    return bindingFailure("a function binding is mutated or its closure escapes");
+                }
+                declaration = store;
+            }
+            if (!declaration) { return bindingFailure("a closure is not uniquely bound"); }
+            for (mlir::Operation & before : entry.getBody().front()) {
+                if (!spend()) { return false; }
+                if (&before == declaration.getOperation()) { break; }
+                if (!llvm::isa<ctjs::FrameEnterOp, ctjs::ConstantOp, ctjs::CreateClosureOp,
+                               ctjs::StoreGlobalOp, ctjs::RootOp>(before)) {
+                    return bindingFailure("a call may precede declaration initialization");
+                }
+            }
+            bindings.try_emplace(declaration.getNameAttr(), target);
+            boundTargets.insert(target);
+            declarations.insert(declaration);
+        }
+        llvm::DenseSet<mlir::Operation *> knownCalls;
+        for (auto load : loads) {
+            if (!spend()) { return false; }
+            auto target = bindings.lookup(load.getNameAttr());
+            if (!target) {
+                return bindingFailure("a global read has a host or unknown alternative");
+            }
+            auto currentUses = uses(load.getResult());
+            if (!currentUses) { return false; }
+            for (mlir::OpOperand * use : *currentUses) {
+                if (!spend()) { return false; }
+                if (llvm::isa<ctjs::RootOp>(use->getOwner())) { continue; }
+                auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use->getOwner());
+                if (!call || use->getOperandNumber() != 2 ||
+                    call.getCallee() != target.getSymName() ||
+                    call.getNumOperands() != target.getBody().front().getNumArguments() ||
+                    !hasOrigin(call.getCalleeValue(), load.getResult())) {
+                    return bindingFailure("a callee has an unknown use, identity or predecessor");
+                }
+                knownCalls.insert(call);
+            }
+        }
+        for (auto call : calls) {
+            if (!spend()) { return false; }
+            if (!knownCalls.contains(call)) {
+                return bindingFailure("a direct-call symbol lacks live callee identity");
+            }
+        }
+        for (auto [index, body] : functions) {
+            if (!spend()) { return false; }
+            auto currentUses = uses(body.getBody().front().getArgument(2));
+            if (!currentUses) { return false; }
+            for (mlir::OpOperand * use : *currentUses) {
+                if (!spend()) { return false; }
+                if (llvm::isa<ctjs::RootOp>(use->getOwner()) ||
+                    (index == 0 && llvm::isa<ctjs::CreateClosureOp>(use->getOwner()) &&
+                     use->getOperandNumber() == 0)) {
+                    continue;
+                }
+                return bindingFailure("an implicit callee value is observed or escapes");
+            }
+        }
+        // Declarations publish own source bindings before any call. Other
+        // named stores are allowed only in the entry, and the complete name
+        // census above already excludes writes to a callable binding.
+        for (mlir::Operation * original : operations) {
+            if (!spend()) { return false; }
+            auto * op = copies.lookupOrDefault(original);
+            if (auto thrown = llvm::dyn_cast<ctjs::ThrowOp>(op)) {
+                // Throw diagnostics may coerce the payload. Prove every
+                // actual input to a leaf formal too; an uncalled body with
+                // an unknown payload cannot borrow a represented invoke's
+                // primitive payload fact.
+                if (primitive(thrown.getValue())) { continue; }
+                if (!refusal.empty()) { return false; }
+                auto body = thrown->getParentOfType<ctjs::FuncOp>();
+                bool called = false;
+                for (auto sourceCall : calls) {
+                    if (!spend()) { return false; }
+                    if (sourceCall.getCallee() != body.getSymName()) { continue; }
+                    called = true;
+                    auto call = llvm::cast<ctjs::CallDirectOp>(
+                        copies.lookupOrDefault(sourceCall.getOperation()));
+                    if (!primitive(thrown.getValue(), call)) {
+                        return bindingFailure("a throw payload may reenter while being observed");
+                    }
+                }
+                if (!called) { return bindingFailure("an uncalled throw has an unknown payload"); }
+                continue;
+            }
+            if (llvm::isa<ctjs::CreateClosureOp, ctjs::CallDirectOp, ctjs::FrameEnterOp,
+                          ctjs::PushHandlerOp>(op)) {
+                continue;
+            }
+            if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(original)) {
+                if (declarations.contains(store) ||
+                    store->getParentOfType<ctjs::FuncOp>() == entry) {
+                    continue;
+                }
+                return bindingFailure("a non-entry body writes global state");
+            }
+            if (!nonthrowing(op)) {
+                return bindingFailure(("an operation may alter bindings through reentry: `" +
+                                       op->getName().getStringRef() + "`")
+                                          .str());
+            }
+        }
+        return true;
+    }
+
+    using primitiveInput = std::pair<mlir::Value, ctjs::CallDirectOp>;
+
+    bool completionInputs(ctjs::CallDirectOp call, bool thrown,
+                          llvm::SmallVectorImpl<primitiveInput> & inputs) {
+        // A bounded leaf completion query over current source operands. It
+        // does not prove the call nonthrowing or license native carriers.
+        auto target = module ? module.lookupSymbol<ctjs::FuncOp>(call.getCallee()) : ctjs::FuncOp{};
+        if (!target || !boundTargets.contains(target) || target.getBody().empty() ||
+            target.getUpvalueCount() != 0 ||
+            target.getBody().front().getNumArguments() != call.getNumOperands() ||
+            mlir::SymbolTable::getSymbolVisibility(target) !=
+                mlir::SymbolTable::Visibility::Private) {
+            return false;
+        }
+        bool found = false;
+        for (mlir::Block & block : target.getBody()) {
+            if (!spend(uint64_t(1) + block.getNumArguments())) { return false; }
+            for (mlir::Operation & operation : block) {
+                if (!spend(uint64_t(1) + operation.getNumOperands())) { return false; }
+                if (auto exit = llvm::dyn_cast<ctjs::ThrowOp>(operation)) {
+                    if (thrown) {
+                        inputs.emplace_back(exit.getValue(), call);
+                        found = true;
+                    }
+                } else if (auto exit = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
+                    if (!thrown) {
+                        inputs.emplace_back(exit.getValue(), call);
+                        found = true;
+                    }
+                } else if (operation.getNumRegions() != 0 ||
+                           (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
+                                       mlir::cf::BranchOp, mlir::cf::CondBranchOp>(operation) &&
+                            (!mlir::isPure(&operation) ||
+                             operation.hasTrait<ctjs::CTJSMayThrow>() ||
+                             operation.hasTrait<ctjs::CTJSMayReenterJS>() ||
+                             operation.hasTrait<ctjs::CTJSMaySuspend>()))) {
+                    return false;
+                }
+            }
+        }
+        return found;
+    }
+
+    bool primitive(mlir::Value value, ctjs::CallDirectOp invocation = {}) {
         // This source CFG has already passed the acyclic-tail check. Follow
         // every predecessor operand, including status unwind state: a value
         // joining a primitive and an unknown never proves conversion safe.
         // staticResultType supplies only unconditional normal-result facts;
         // its producer's effects are checked separately below. No cached
         // dataflow state or user-supplied native marker is consulted.
-        llvm::SmallVector<mlir::Value> pending{value};
-        llvm::DenseSet<mlir::Value> seen;
+        llvm::SmallVector<primitiveInput> pending{{value, invocation}};
+        llvm::DenseSet<std::pair<mlir::Value, mlir::Operation *>> seen;
         bool hasDefinition = false;
         while (!pending.empty()) {
             if (!spend()) { return false; }
-            value = pending.pop_back_val();
-            if (!seen.insert(value).second) { continue; }
+            auto [current, call] = pending.pop_back_val();
+            value = current;
+            if (!seen.insert({value, call.getOperation()}).second) { continue; }
             if (auto * definition = value.getDefiningOp()) {
                 const auto type = staticResultType(definition);
                 if (llvm::isa_and_nonnull<NumType, BoolType, StrType>(type) ||
@@ -197,13 +448,38 @@ struct recovery {
                     hasDefinition = true;
                     continue;
                 }
+                if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(definition)) {
+                    if (call || !completionInputs(direct, false, pending)) { return false; }
+                    continue;
+                }
+                if (definition == landing.getOperation() && value == landing.getThrown()) {
+                    if (call || invocations.empty() || throws != 0) { return false; }
+                    for (auto [check, direct] : invocations) {
+                        (void)check;
+                        if (!spend() || !completionInputs(direct, true, pending)) { return false; }
+                    }
+                    continue;
+                }
                 if (llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp, ctjs::UnaryOp>(definition)) {
-                    llvm::append_range(pending, definition->getOperands());
+                    for (auto operand : definition->getOperands()) {
+                        pending.emplace_back(operand, call);
+                    }
                     continue;
                 }
                 return false;
             }
             auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+            if (argument && argument.getOwner()->isEntryBlock() && call) {
+                auto owner = argument.getOwner()->getParentOp();
+                auto body = llvm::dyn_cast<ctjs::FuncOp>(owner);
+                if (!body || body.getSymName() != call.getCallee() ||
+                    argument.getArgNumber() >= call.getNumOperands()) {
+                    return false;
+                }
+                pending.emplace_back(call->getOperand(argument.getArgNumber()),
+                                     ctjs::CallDirectOp{});
+                continue;
+            }
             if (!argument || argument.getOwner()->isEntryBlock() ||
                 argument.getOwner()->hasNoPredecessors()) {
                 return false;
@@ -216,13 +492,16 @@ struct recovery {
                 auto operands = branch.getSuccessorOperands(pred.getSuccessorIndex());
                 const unsigned index = argument.getArgNumber();
                 if (index >= operands.size() || operands.isOperandProduced(index)) { return false; }
-                pending.push_back(operands[index]);
+                pending.emplace_back(operands[index], call);
             }
         }
         return hasDefinition;
     }
 
     bool nonthrowing(mlir::Operation * operation) {
+        if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
+            return bindings.contains(load.getNameAttr());
+        }
         if (llvm::isa<ctjs::CheckOp, ctjs::ReturnOp, ctjs::ThrowOp, ctjs::PopHandlerOp,
                       ctjs::FrameExitOp, ctjs::CatchLandOp, ctjs::RootOp, mlir::cf::BranchOp,
                       mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(operation)) {
@@ -264,6 +543,16 @@ struct recovery {
         // a property read, callee lookup, second call or callback cannot borrow
         // that permission. Scan both continuations, including unchecked catch
         // operations, before constructing or adopting any recovered body.
+        bool needsBindings = false;
+        for (const tail * plan : {&normal, &caught}) {
+            for (mlir::Block * block : plan->blocks) {
+                for (mlir::Operation & operation : *block) {
+                    if (!spend()) { return false; }
+                    needsBindings |= llvm::isa<ctjs::LoadGlobalOp>(operation);
+                }
+            }
+        }
+        if (needsBindings && !proveBindings()) { return false; }
         for (const tail * plan : {&normal, &caught}) {
             for (mlir::Block * block : plan->blocks) {
                 for (mlir::Operation & operation : *block) {
@@ -836,7 +1125,8 @@ ExceptionRecoveryResult recoverPrimitiveExceptionRegion(ctjs::FuncOp function, u
     if (mode == ExceptionRecoveryMode::EffectCheckedInvocations) {
         function.getContext()->getOrLoadDialect<CTNativeDialect>();
     }
-    mlir::OwningOpRef<ctjs::FuncOp> scratch(llvm::cast<ctjs::FuncOp>(function->clone()));
+    mlir::OwningOpRef<ctjs::FuncOp> scratch(
+        llvm::cast<ctjs::FuncOp>(function->clone(attempt.copies)));
     attempt.function = *scratch;
     if (!attempt.run()) {
         return {false, std::move(attempt.refusal), {}, maxSteps - attempt.remaining};

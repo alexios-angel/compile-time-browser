@@ -4,20 +4,37 @@
 #include "llvm/ADT/DenseSet.h"
 
 namespace ctcompile::ctjs::globals_detail {
+namespace {
+struct work {
+    unsigned remaining;
+    unsigned * steps;
+
+    work(unsigned maxSteps, unsigned * steps) : remaining(maxSteps), steps(steps) {
+        if (steps) { *steps = 0; }
+    }
+
+    bool spend() {
+        if (remaining == 0) { return false; }
+        --remaining;
+        if (steps) { ++*steps; }
+        return true;
+    }
+};
+} // namespace
 
 std::optional<llvm::SmallVector<mlir::OpOperand *>> registerFlowUses(mlir::Value value,
-                                                                     unsigned maxSteps) {
+                                                                     unsigned maxSteps,
+                                                                     unsigned * steps) {
+    work budget(maxSteps, steps);
     llvm::SmallVector<mlir::Value> pending{value};
     llvm::DenseSet<mlir::Value> seen;
     llvm::SmallVector<mlir::OpOperand *> uses;
     while (!pending.empty()) {
-        if (maxSteps == 0) { return std::nullopt; }
-        --maxSteps;
+        if (!budget.spend()) { return std::nullopt; }
         value = pending.pop_back_val();
         if (!seen.insert(value).second) { continue; }
         for (mlir::OpOperand & use : value.getUses()) {
-            if (maxSteps == 0) { return std::nullopt; }
-            --maxSteps;
+            if (!budget.spend()) { return std::nullopt; }
             if (auto branch = llvm::dyn_cast<mlir::BranchOpInterface>(use.getOwner())) {
                 if (auto argument = branch.getSuccessorBlockArgument(use.getOperandNumber())) {
                     pending.push_back(*argument);
@@ -30,13 +47,14 @@ std::optional<llvm::SmallVector<mlir::OpOperand *>> registerFlowUses(mlir::Value
     return uses;
 }
 
-bool registerFlowHasOrigin(mlir::Value value, mlir::Value source, unsigned maxSteps) {
+bool registerFlowHasOrigin(mlir::Value value, mlir::Value source, unsigned maxSteps,
+                           unsigned * steps) {
+    work budget(maxSteps, steps);
     llvm::SmallVector<mlir::Value> pending{value};
     llvm::DenseSet<mlir::Value> seen;
     bool foundSource = false;
     while (!pending.empty()) {
-        if (maxSteps == 0) { return false; }
-        --maxSteps;
+        if (!budget.spend()) { return false; }
         value = pending.pop_back_val();
         if (value == source) {
             foundSource = true;
@@ -48,8 +66,7 @@ bool registerFlowHasOrigin(mlir::Value value, mlir::Value source, unsigned maxSt
         mlir::Block & block = *argument.getOwner();
         if (block.hasNoPredecessors()) { return false; }
         for (auto pred = block.pred_begin(), end = block.pred_end(); pred != end; ++pred) {
-            if (maxSteps == 0) { return false; }
-            --maxSteps;
+            if (!budget.spend()) { return false; }
             auto branch = llvm::dyn_cast<mlir::BranchOpInterface>((*pred)->getTerminator());
             if (!branch) { return false; }
             auto operands = branch.getSuccessorOperands(pred.getSuccessorIndex());

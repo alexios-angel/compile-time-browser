@@ -22,6 +22,8 @@ enum class ExceptionRecoveryMode {
     // Also prove every operation outside the represented call unable to throw
     // or reenter before adopting the clone. This still does not admit the
     // throwing call component or prove its payload/result/state carriers.
+    // Source callee loads require a fresh bounded declaration/identity/use and
+    // whole-module effect census; host reads and unknown alternatives refuse.
     EffectCheckedInvocations,
 };
 

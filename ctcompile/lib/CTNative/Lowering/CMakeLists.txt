@@ -152,6 +152,7 @@ target_link_libraries(ctcompile-ctnative-lowering
     # Compiler-side primitive semantics only. Generated native C++ links no VM.
     ctbrowser::script
   PUBLIC
+    ctcompile::ctjs-lowering
     CTNativeAnalysis
     CTNativeDialect
     CTJSDialect

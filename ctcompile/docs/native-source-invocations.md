@@ -115,19 +115,62 @@ annotation is authority. Both normal and catch continuations are scanned;
 an unprotected call in either continuation cannot borrow the represented
 invocation's unwind edge.
 
-This mode deliberately refuses the source fixtures' `ctjs.load_global` callee
-lookups. A resolved direct target does not independently prove a current global
-binding is initialized, immutable and free of getters. Until that proof is
-available, all original status edges remain in the untouched source function.
-The structural-only mode remains available for completion-wiring tests.
+The source fixtures' `ctjs.load_global` callee lookups now have a separate
+bounded declaration and binding proof. A complete current module census must
+find one source entry, every indexed body, one hoisting store for each closure,
+and no missing body. The closure must retain its exact enclosing source and
+zero-capture target. Every load stays in root bookkeeping or a direct callee
+operand whose full predecessor closure has that exact load as its origin.
+The current named target, implicit operand and arity must agree. A second store,
+late initialization, escaping callee, observed implicit callee, duplicate
+identity or unknown/host load rejects the proof.
+
+After the identity census, every current body is checked for effects that could
+change bindings indirectly. Property reads/writes, accessors, unknown calls,
+non-entry global mutation and unknown coercions remain unsupported. Source
+declarations and entry publication retain their original operations; no getter
+is replaced by a guessed value. The existing register-flow helpers report exact
+work consumed, sharing recovery's budget through the complete use/origin walks.
+The proof reads original module operations and their exact disposable clones;
+there is no persisted binding marker or symbol-only completion permission.
+Throw payloads must also be primitive, since observing a thrown object can
+reenter. A leaf's formal payload is checked against every current actual; an
+uncalled helper with an unknown payload refuses the whole binding proof.
+
+The catch arithmetic also needs facts about the helper's completions. A narrow
+leaf query scans its current returns and explicit throws, rejecting unknown
+effects and nested calls/regions. Primitive operands follow all predecessor
+edges; helper formals map to the actual call operands. The normal return and
+thrown payload are separate facts, and both remain separate from proving the
+call nonthrowing. Other normal/catch effects still need the full effect scan.
+This admits structural recovery of the direct source fixtures without admitting
+the native call component or its payload/state carriers.
 
 The `ctcompile_exception_recovery` additions cover a closed primitive CFG with
 two status edges, both edges of one conditional targeting the same block,
 normal/catch effects, a numeric-result coercion that can throw, property and
 global reads, publication, allocation, nullish `ToObject`, an unprotected
 direct call, forged markers, every incomplete work budget, exact completion,
-and exact rollback before a fresh mutated proof. These are compiler structure
-and proof tests, not native execution measurements.
+and exact rollback before a fresh mutated proof. The source tests run both
+internal modes, check their original state/argument observations, every
+incomplete source-proof budget and exact completion, and then mutate live
+stores, initialization order, targets, operands, predecessor state, closure
+origin, helper completions and getter/effect paths after a successful rollback.
+Forged prior-proof markers are present in every mutation. These are compiler
+structure and proof tests, not native execution measurements; the ordinary
+native throwing-call refusals remain in force.
+
+The focused devbox gate passes **2/2 CTests in 130.38 seconds**, including
+**163/163 lit cases** and the recovery unit in **0.43 seconds**. The three
+imported sources pass both internal modes. Effect-checked recovery retains
+**one/two/one invokes** with **seven/ten/nine original checks** in the rollback
+snapshots, completing at **3521/6068/4875 steps** for assignment, sequential
+calls and argument mutation. Every one of the assignment's **3521 incomplete
+budgets** and the closed effect fixture's **937 incomplete budgets** refuses
+without changing the source; exact completion and rollback pass. All nineteen
+live binding mutations and both uncalled-throw variants pass. Log:
+`/tmp/ctcompile-map-presence-invocations.log`. No native program or new Bootstrap
+component is admitted by this increment.
 
 ## Remaining native recovery integration
 

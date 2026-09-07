@@ -174,7 +174,7 @@ void checkCompletion(ctjs::TryOp attempt, ctjs::InvokeOp failing, double payload
 }
 
 void testSource(mlir::MLIRContext & context, llvm::StringRef name, llvm::StringRef source,
-                unsigned expectedCalls, double saved, double payload) {
+                unsigned expectedCalls, double saved, double payload, ExceptionRecoveryMode mode) {
     auto module = import(context, source);
     if (!module) { return; }
     auto function = guarded(*module);
@@ -183,11 +183,6 @@ void testSource(mlir::MLIRContext & context, llvm::StringRef name, llvm::StringR
     mlir::OwningOpRef<ctjs::FuncOp> detached(llvm::cast<ctjs::FuncOp>(function->clone()));
     const auto snapshot = printed(*detached);
     const auto checks = countChecks(function);
-    auto effects = recoverPrimitiveExceptionRegion(function, 100000,
-                                                   ExceptionRecoveryMode::EffectCheckedInvocations);
-    check(!effects.recovered && effects.refusal.find("ctjs.load_global") != std::string::npos &&
-              printed(function) == original && countChecks(function) == checks,
-          "a source callee lookup needs a live binding effect proof before its check disappears");
     auto ordinary = recoverPrimitiveExceptionRegion(function);
     check(!ordinary.recovered &&
               ordinary.refusal ==
@@ -195,8 +190,7 @@ void testSource(mlir::MLIRContext & context, llvm::StringRef name, llvm::StringR
               printed(function) == original,
           "ordinary native recovery keeps its exact throwing-call refusal and source graph");
 
-    auto recovered = recoverPrimitiveExceptionRegion(function, 100000,
-                                                     ExceptionRecoveryMode::CheckedInvocations);
+    auto recovered = recoverPrimitiveExceptionRegion(function, 100000, mode);
     if (!check(recovered.recovered, ("checked invocation recovery succeeds for " + name).str())) {
         llvm::errs() << recovered.refusal << '\n';
         return;
@@ -239,8 +233,7 @@ void testSource(mlir::MLIRContext & context, llvm::StringRef name, llvm::StringR
     // The first argument-free handler cannot be recovered a second time. A
     // failed rerun must not consume its existing continuations.
     const auto structured = printed(function);
-    auto rerun = recoverPrimitiveExceptionRegion(function, 100000,
-                                                 ExceptionRecoveryMode::CheckedInvocations);
+    auto rerun = recoverPrimitiveExceptionRegion(function, 100000, mode);
     check(!rerun.recovered && printed(function) == structured,
           "recovery rerun preserves the existing invocation graph");
 
@@ -249,14 +242,15 @@ void testSource(mlir::MLIRContext & context, llvm::StringRef name, llvm::StringR
     function->setAttrs((*recovered.original)->getAttrs());
     check(printed(function) == original, "source rollback is byte-identical");
     for (unsigned budget : {0u, 1u, 64u, 256u}) {
-        auto limited = recoverPrimitiveExceptionRegion(function, budget,
-                                                       ExceptionRecoveryMode::CheckedInvocations);
+        auto limited = recoverPrimitiveExceptionRegion(function, budget, mode);
         check(!limited.recovered && limited.refusal.find("budget exhausted") != std::string::npos &&
                   printed(function) == original,
               "bounded recovery leaves all original status edges on failure");
     }
     llvm::outs() << name << ": " << expectedCalls << " checked invocation(s), " << checks
-                 << " original checks retained for admission rollback\n";
+                 << " original checks retained for admission rollback, " << recovered.steps
+                 << " steps, effects=" << (mode == ExceptionRecoveryMode::EffectCheckedInvocations)
+                 << '\n';
 }
 
 void testMutations(mlir::MLIRContext & context, llvm::StringRef source) {
@@ -348,6 +342,173 @@ void restore(ctjs::FuncOp function,
              ctcompile::ctnative::lowering_detail::ExceptionRecoveryResult & result) {
     function.getBody().takeBody(result.original->getBody());
     function->setAttrs((*result.original)->getAttrs());
+}
+
+void testBindings(mlir::MLIRContext & context, llvm::StringRef source) {
+    auto module = import(context, source);
+    if (!module) { return; }
+    auto function = guarded(*module);
+    const auto before = printed(*module);
+    const auto checks = countChecks(function);
+    auto result = recoverPrimitiveExceptionRegion(function, 100000,
+                                                  ExceptionRecoveryMode::EffectCheckedInvocations);
+    if (!check(result.recovered, "source bindings first prove without stored annotations")) {
+        llvm::errs() << result.refusal << '\n';
+        return;
+    }
+    const unsigned complete = result.steps;
+    restore(function, result);
+    check(printed(*module) == before, "source binding proof rollback restores the whole module");
+    for (unsigned budget = 0; budget < complete; ++budget) {
+        auto limited = recoverPrimitiveExceptionRegion(
+            function, budget, ExceptionRecoveryMode::EffectCheckedInvocations);
+        if (!check(!limited.recovered &&
+                       limited.refusal.find("budget exhausted") != std::string::npos &&
+                       printed(*module) == before && countChecks(function) == checks,
+                   "every incomplete source binding/effect budget preserves all original IR")) {
+            llvm::errs() << "budget " << budget << ": " << limited.refusal << '\n';
+            return;
+        }
+    }
+    auto exact = recoverPrimitiveExceptionRegion(function, complete,
+                                                 ExceptionRecoveryMode::EffectCheckedInvocations);
+    if (!check(exact.recovered && exact.steps == complete,
+               "the complete source binding/effect budget succeeds exactly")) {
+        return;
+    }
+    restore(function, exact);
+    check(printed(*module) == before, "exact source budget permits a fresh proof after rollback");
+    llvm::outs() << "source binding recovery: " << complete
+                 << " steps, every incomplete budget preserves " << checks << " checks\n";
+
+    for (unsigned mutation = 0; mutation != 19; ++mutation) {
+        auto current = import(context, source);
+        if (!current) { return; }
+        auto candidate = guarded(*current);
+        auto prior = recoverPrimitiveExceptionRegion(
+            candidate, 100000, ExceptionRecoveryMode::EffectCheckedInvocations);
+        if (!check(prior.recovered, "binding mutation first proves the unchanged module")) {
+            return;
+        }
+        restore(candidate, prior);
+        auto call = firstCall(candidate);
+        ctjs::FuncOp helper;
+        ctjs::StoreGlobalOp declaration;
+        ctjs::LoadGlobalOp load;
+        for (auto body : current->getOps<ctjs::FuncOp>()) {
+            if (body.getSymName() == call.getCallee()) { helper = body; }
+        }
+        current->walk([&](ctjs::StoreGlobalOp store) {
+            if (store.getName() == "choose") { declaration = store; }
+        });
+        candidate.walk([&](ctjs::LoadGlobalOp found) {
+            if (!load) { load = found; }
+        });
+        if (!check(helper && declaration && load, "binding controls find live source operands")) {
+            return;
+        }
+        auto entry = declaration->getParentOfType<ctjs::FuncOp>();
+        auto closure = declaration.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+        auto type = ctjs::ValueType::get(&context);
+        mlir::OpBuilder at(entry.getBody().front().getTerminator());
+        auto where = call.getLoc();
+        if (mutation == 0) {
+            at.clone(*declaration.getOperation());
+        } else if (mutation == 1) {
+            declaration->setOperand(0, entry.getBody().front().getArgument(0));
+        } else if (mutation == 2) {
+            declaration->moveBefore(entry.getBody().front().getTerminator());
+        } else if (mutation == 3) {
+            call.setCalleeAttr(mlir::FlatSymbolRefAttr::get(&context, candidate.getSymName()));
+        } else if (mutation == 4) {
+            call->setOperand(2, candidate.getBody().front().getArgument(0));
+        } else if (mutation == 5) {
+            load.setNameAttr(at.getStringAttr("hostAlternative"));
+        } else if (mutation == 6 || mutation == 7) {
+            auto global = ctjs::LoadGlobalOp::create(at, where, "globalThis");
+            auto key = ctjs::ConstantOp::create(at, where, type,
+                                                ctjs::StringAttr::get(&context, "choose"));
+            if (mutation == 6) {
+                ctjs::SetPropertyOp::create(at, where, global, key, declaration.getValue());
+            } else {
+                ctjs::GetPropertyOp::create(at, where, type, global, key);
+            }
+        } else if (mutation == 8) {
+            (*current)->setAttr("ctjs.skipped", at.getArrayAttr({at.getDictionaryAttr({})}));
+        } else if (mutation == 9) {
+            mlir::OperationState unknown(where, "ctjs.unproved_binding_effect");
+            at.create(unknown);
+        } else if (mutation == 10) {
+            at.setInsertionPoint(helper.getBody().front().getTerminator());
+            ctjs::StoreGlobalOp::create(at, where, "unrelated",
+                                        helper.getBody().front().getArgument(3));
+        } else if (mutation == 11) {
+            at.setInsertionPoint(helper.getBody().front().getTerminator());
+            ctjs::UnaryOp::create(at, where, type,
+                                  ctjs::UnaryKindAttr::get(&context, ctjs::UnaryKind::Plus),
+                                  helper.getBody().front().getArgument(3));
+        } else if (mutation == 12) {
+            helper.walk([&](ctjs::ThrowOp thrown) {
+                thrown->setOperand(0, helper.getBody().front().getArgument(3));
+            });
+        } else if (mutation == 13) {
+            auto copy = llvm::cast<ctjs::FuncOp>(helper->clone());
+            copy.setSymName("duplicate$1");
+            current->getBody()->push_back(copy);
+        } else if (mutation == 14) {
+            helper.walk([&](ctjs::ReturnOp returned) {
+                returned->setOperand(0, helper.getBody().front().getArgument(2));
+            });
+        } else if (mutation == 15) {
+            at.setInsertionPoint(call);
+            ctjs::StoreGlobalOp::create(at, where, "escapedCallee", call.getCalleeValue());
+        } else if (mutation == 16) {
+            auto status = llvm::cast<ctjs::CheckOp>(load->getBlock()->getTerminator());
+            for (auto [index, operand] : llvm::enumerate(status.getContOperands())) {
+                if (operand == load.getResult()) {
+                    status->setOperand(static_cast<unsigned>(index),
+                                       candidate.getBody().front().getArgument(0));
+                }
+            }
+        } else if (mutation == 17) {
+            closure->setOperand(0, entry.getBody().front().getArgument(0));
+        } else {
+            at.setInsertionPoint(helper.getBody().front().getTerminator());
+            auto key = ctjs::ConstantOp::create(at, where, type,
+                                                ctjs::StringAttr::get(&context, "getter"));
+            ctjs::GetPropertyOp::create(at, where, type, helper.getBody().front().getArgument(0),
+                                        key);
+        }
+        // The entire proof must be rebuilt after real IR changes, even when
+        // forged summaries agree with its previous successful conclusion.
+        load->setAttr("ctnative.nothrow", at.getUnitAttr());
+        helper->setAttr("ctnative.nonthrowing", at.getUnitAttr());
+        (*current)->setAttr("ctnative.global_bindings_complete", at.getUnitAttr());
+        const auto changed = printed(*current);
+        auto refused = recoverPrimitiveExceptionRegion(
+            candidate, 100000, ExceptionRecoveryMode::EffectCheckedInvocations);
+        if (!check(
+                !refused.recovered && !refused.refusal.empty() && printed(*current) == changed &&
+                    countChecks(candidate) == checks,
+                "live binding, identity, getter and completion mutations preserve source checks")) {
+            llvm::errs() << "binding mutation " << mutation << ": " << refused.refusal << '\n';
+        }
+    }
+    for (bool knownPayload : {true, false}) {
+        auto suffix = knownPayload ? "\nfunction unused(value) { throw 1; }\n"
+                                   : "\nfunction unused(value) { throw value; }\n";
+        auto current = import(context, source.str() + suffix);
+        if (!current) { return; }
+        auto candidate = guarded(*current);
+        const auto unchanged = printed(*current);
+        auto checked = recoverPrimitiveExceptionRegion(
+            candidate, 100000, ExceptionRecoveryMode::EffectCheckedInvocations);
+        check(checked.recovered == knownPayload,
+              "uncalled helpers need independent primitive throw payloads for binding stability");
+        if (checked.recovered) { restore(candidate, checked); }
+        check(printed(*current) == unchanged,
+              "uncalled throw effect proof preserves every source function and operation");
+    }
 }
 
 void testEffects(mlir::MLIRContext & context) {
@@ -504,10 +665,14 @@ int main(int argc, char ** argv) {
         auto tail = (*file)->getBuffer().split(("//--- " + name + ".js\n").str()).second;
         return tail.split("//--- ").first;
     };
-    testSource(context, "assignment", source("assignment"), 1, 10, 32);
-    testSource(context, "sequential", source("sequential"), 2, 20, 32);
-    testSource(context, "argument", source("argument"), 1, 14, 14);
+    for (auto mode : {ExceptionRecoveryMode::CheckedInvocations,
+                      ExceptionRecoveryMode::EffectCheckedInvocations}) {
+        testSource(context, "assignment", source("assignment"), 1, 10, 32, mode);
+        testSource(context, "sequential", source("sequential"), 2, 20, 32, mode);
+        testSource(context, "argument", source("argument"), 1, 14, 14, mode);
+    }
     testMutations(context, source("assignment"));
+    testBindings(context, source("assignment"));
     testEffects(context);
     return failures == 0 ? 0 : 1;
 }
