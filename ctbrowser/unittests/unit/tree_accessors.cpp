@@ -178,6 +178,26 @@ void test_get_elements_by_tag_name_knows_about_namespaces() {
        "IMG");
 }
 
+// A LIVE COLLECTION STILL ITERATES. It is a proxy, and `iterable_values` used
+// to fall off the end for one - so `for (const x of el.children)` and
+// `[...document.getElementsByTagName("img")]` each read an EMPTY list. Not an
+// error: a wrong answer, and one that a page walking `for (i = 0; i < n; i++)`
+// could not see.
+void test_a_live_collection_iterates() {
+    is("(function () {"
+       " var n = 0;"
+       " for (var e of document.getElementsByTagName('img')) { n += 1; }"
+       " return n; })()",
+       "4");
+    is("[...document.getElementsByTagName('img')].length", "4");
+    is("Array.from(document.body.children).length > 0", "true");
+    is("(function () {"
+       " var tags = [];"
+       " for (var e of document.body.children) { tags.push(e.tagName); }"
+       " return tags.indexOf('IMG') >= 0; })()",
+       "true");
+}
+
 // --- a BARE identifier, which is the same rule one level up ----------------
 
 // HTML 7.3.3 makes an element with an `id` a named property of the global
@@ -313,6 +333,7 @@ int main() {
     test_the_collections_count_what_they_name();
     test_the_collections_are_live();
     test_get_elements_by_tag_name_knows_about_namespaces();
+    test_a_live_collection_iterates();
     test_a_bare_identifier_finds_an_element();
     test_an_element_answers_to_its_name_and_its_id();
     test_the_id_route_needs_a_name_and_the_name_route_does_not();
