@@ -347,6 +347,23 @@ void append_compound(std::string & out, const style::compound & part, const atom
         case style::pseudo_kind::where_:
             out += ":where(" + serialize_selector_list(pseudo.args, atoms) + ")";
             break;
+        // `:lang()` AND `:dir()` KEEP THEIR ARGUMENT AS WRITTEN, because a
+        // language RANGE is not an identifier: `*-Latn` is a legal one, and
+        // `:lang(de, fr)` is a comma-separated list of them. They used to
+        // compile to nothing at all, so a rule carrying one serialised as `*` -
+        // eight of `css/cssom/selectorSerialize.html`'s twenty-three.
+        case style::pseudo_kind::lang:
+        case style::pseudo_kind::dir: {
+            out += pseudo.kind == style::pseudo_kind::lang ? ":lang(" : ":dir(";
+            bool first = true;
+            for (const std::string & range : pseudo.ranges) {
+                if (!first) { out += ", "; }
+                first = false;
+                out += range;
+            }
+            out += ')';
+            break;
+        }
         }
     }
     // "If there is only one simple selector in the compound selector which is a
