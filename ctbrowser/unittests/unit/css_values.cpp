@@ -196,8 +196,9 @@ void test_what_a_math_function_may_not_be() {
     bad("width", "calc(2 * 3)");
     bad("rotate", "calc(1s)");
     bad("transition-duration", "calc(1px)");
-    bad("letter-spacing", "calc(10%)"); // <length>, not <length-percentage>
+    bad("border-left-width", "calc(10%)"); // <length>, not <length-percentage>
     ok("text-indent", "calc(10%)", "calc(10%)");
+    ok("letter-spacing", "calc(100%)", "calc(100%)"); // CSS Text 4 gave it a percentage
     ok("rotate", "calc(45deg + 45deg)", "calc(90deg)");
     ok("transition-duration", "calc(1s / 2)", "calc(0.5s)");
     ok("opacity", "calc(2 / 4)", "calc(0.5)");
@@ -478,7 +479,7 @@ void test_a_percentage_needs_a_property_that_takes_one() {
     bad("border-left-width", "min(1px, 0%)");
     bad("border-left-width", "max(1px, 0%)");
     bad("font-weight", "sign(10%)");
-    bad("letter-spacing", "calc(10%)");
+    bad("outline-width", "calc(10%)");
     ok("text-indent", "min(1px, 0%)", "min(1px, 0%)");
     ok("width", "calc(50% - 10px)", "calc(50% - 10px)");
     // A FREEFORM PROPERTY ANSWERS YES and has to: the grammar is not modelled,

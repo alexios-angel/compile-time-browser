@@ -288,8 +288,11 @@ constexpr property_syntax table[] = {
     {"font-variant", k::freeform, "", "normal", true, false},
     {"font-stretch", k::freeform, "", "100%", true, false},
     {"line-height", k::number_length_percentage, "normal", "normal", true, true},
-    {"letter-spacing", k::length, "normal", "normal", true, false},
-    {"word-spacing", k::length, "normal", "normal", true, false},
+    // CSS Text 4 gave both of these a percentage: `normal | <length-percentage>`.
+    // `calc-letter-spacing` asks for `letter-spacing: calc(100%)` to compute to
+    // `100%` rather than be dropped, which is the same question.
+    {"letter-spacing", k::length_percentage, "normal", "normal", true, false},
+    {"word-spacing", k::length_percentage, "normal", "normal", true, false},
     {"text-align", k::keyword_only, "start end left right center justify match-parent", "start",
      true, false},
     {"text-indent", k::length_percentage, "", "0px", true, false},
@@ -587,8 +590,8 @@ struct scan {
     const bool bare_percentage = v.has_percent && v.px == 0;
     const bool length = !v.is_number && v.type == numeric_type::length;
     switch (p.kind) {
-    // A `<length>` and not a `<length-percentage>`: `letter-spacing: calc(10%)`
-    // is invalid where `text-indent: calc(10%)` is not.
+    // A `<length>` and not a `<length-percentage>`: `border-left-width:
+    // calc(10%)` is invalid where `text-indent: calc(10%)` is not.
     case k::length: return length && !v.has_percent;
     case k::length_percentage: return length;
     case k::number_length: return (length && !v.has_percent) || v.is_number;
