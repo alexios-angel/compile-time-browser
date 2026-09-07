@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <ctbrowser/core/core.hpp>
@@ -72,10 +73,78 @@ enum class node_ns : std::uint8_t {
     other
 };
 
+// AN ATTRIBUTE HAS A NAMESPACE. DOM §4.9 says one is four things - a namespace,
+// a namespace prefix, a local name and a value - and this is two atoms and a
+// string, because the other two are DERIVABLE and a fourth field is not free.
+//
+// `name` is the QUALIFIED name: `prefix:local` when there is a prefix and
+// `local` when there is not. It stays first and stays the whole name because it
+// is what every existing reader compares - the style engine, the layout engine,
+// `getAttribute` - and that comparison must stay one integer compare.
+//
+// `ns` is the namespace URI, INTERNED. The empty atom is the null namespace,
+// which is what every attribute in an ordinary HTML document has: `xlink:href`
+// and `xmlns:xlink` inside `<svg>` are the only ones a parsed page normally
+// carries. It is an atom for the reason `node_ns` beside it is an enumerator
+// rather than a URI - a `std::string` here is 32 bytes on EVERY attribute of
+// EVERY element to describe a case that arises twice per document - and it is
+// an atom rather than a three-valued enum because `setAttributeNS` may be
+// handed any URI a page can spell.
+//
+// AND IT COSTS NOTHING AT ALL, which is the same trick and the same measurement
+// `node_ns` records: `attribute` was atom(4) + four bytes of padding +
+// std::string(32), so `ns` lands in padding that already existed and the
+// `small_vector<attribute, 2>` on every element is the size it always was. The
+// static_assert below is what stops a third atom being added without anybody
+// noticing that it is no longer free.
 struct attribute {
     atom name;
+    atom ns;
     std::string value; // "" for a boolean attribute, per HTML
+
+    attribute() = default;
+    // The null namespace, which is what the parser and `setAttribute` produce.
+    attribute(atom qualified, std::string v) : name(qualified), value(std::move(v)) {}
+    attribute(atom qualified, atom uri, std::string v)
+        : name(qualified), ns(uri), value(std::move(v)) {}
 };
+
+static_assert(sizeof(attribute) <= sizeof(std::string) + alignof(std::string),
+              "the namespace must be FREE: two atoms in the padding ahead of `value`");
+
+// THE LOCAL NAME AND THE PREFIX, DERIVED RATHER THAN STORED - and derived
+// exactly, not approximately.
+//
+// The rule that makes it exact is one line of DOM's "validate and extract": a
+// prefix with a null namespace is a NamespaceError. So an attribute has a
+// prefix ONLY IF it has a namespace, and:
+//
+//   ns empty     - the whole qualified name is the local name, colons and all.
+//                  `el.setAttribute("pre:fix", v)` really does have local name
+//                  "pre:fix" and no prefix, and `xml:lang` written on an HTML
+//                  element really is one unprefixed attribute called
+//                  "xml:lang" - `dom/nodes/Attr-prefix.html` asserts both.
+//   ns non-empty - everything before the FIRST colon is the prefix. `a:b:c` is
+//                  prefix `a` and local `b:c`, which is the DOM's split and not
+//                  the XML QName production's; the two disagree and the DOM is
+//                  what a page is measured against.
+//
+// The views point into the atom table's storage, which is a deque of stable
+// strings, so they outlive the call.
+[[nodiscard]] inline std::string_view attribute_local_name(const atom_table & atoms,
+                                                           const attribute & a) {
+    const std::string_view qualified = atoms.text(a.name);
+    if (!a.ns) { return qualified; }
+    const std::size_t colon = qualified.find(':');
+    return colon == std::string_view::npos ? qualified : qualified.substr(colon + 1);
+}
+[[nodiscard]] inline std::string_view attribute_prefix(const atom_table & atoms,
+                                                       const attribute & a) {
+    if (!a.ns) { return {}; }
+    const std::string_view qualified = atoms.text(a.name);
+    const std::size_t colon = qualified.find(':');
+    return colon == std::string_view::npos ? std::string_view{} : qualified.substr(0, colon);
+}
 
 // Immutable once published. Small-vector because the overwhelming majority of
 // elements have a handful of children and one or two attributes, and a heap
