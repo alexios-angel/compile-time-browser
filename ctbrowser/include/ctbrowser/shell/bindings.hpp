@@ -271,6 +271,12 @@ private:
         // listener on an ancestor sees the event BEFORE the target does, which
         // is how a page intercepts one.
         bool capture = false;
+        // `{ passive: true }` - a promise that this listener will not call
+        // preventDefault, which the DOM ENFORCES rather than trusts: the
+        // canceled flag is not set while a passive listener runs.
+        // `AddEventListenerOptions-passive.any.js` is three tests about exactly
+        // that and `passive-by-default.html` is a hundred more.
+        bool passive = false;
         // Set when a `once` listener has fired, so the pass that removes them
         // runs after the dispatch rather than mutating the list being walked.
         bool spent = false;

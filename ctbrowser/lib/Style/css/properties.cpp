@@ -114,7 +114,7 @@ constexpr property_syntax table[] = {
     {"clear", k::keyword_only, "none left right both inline-start inline-end", "none", false,
      false},
     {"visibility", k::keyword_only, "visible hidden collapse", "visible", true, false},
-    {"overflow", k::freeform, "", "visible", false, false},
+    {"overflow", k::freeform, "", "visible", false, false, true},
     {"overflow-x", k::keyword_only, "visible hidden clip scroll auto", "visible", false, false},
     {"overflow-y", k::keyword_only, "visible hidden clip scroll auto", "visible", false, false},
     {"box-sizing", k::keyword_only, "content-box border-box", "content-box", false, false},
@@ -136,12 +136,12 @@ constexpr property_syntax table[] = {
     {"block-size", k::length_percentage, "auto min-content max-content fit-content stretch", "auto",
      false, true},
 
-    {"margin", k::freeform, "", "0px", false, false},
+    {"margin", k::freeform, "", "0px", false, false, true},
     {"margin-top", k::length_percentage, "auto", "0px", false, false},
     {"margin-right", k::length_percentage, "auto", "0px", false, false},
     {"margin-bottom", k::length_percentage, "auto", "0px", false, false},
     {"margin-left", k::length_percentage, "auto", "0px", false, false},
-    {"padding", k::freeform, "", "0px", false, false},
+    {"padding", k::freeform, "", "0px", false, false, true},
     {"padding-top", k::length_percentage, "", "0px", false, true},
     {"padding-right", k::length_percentage, "", "0px", false, true},
     {"padding-bottom", k::length_percentage, "", "0px", false, true},
@@ -151,13 +151,13 @@ constexpr property_syntax table[] = {
     {"right", k::length_percentage, "auto", "auto", false, false},
     {"bottom", k::length_percentage, "auto", "auto", false, false},
     {"left", k::length_percentage, "auto", "auto", false, false},
-    {"inset", k::freeform, "", "auto", false, false},
+    {"inset", k::freeform, "", "auto", false, false, true},
 
     // --- borders ---------------------------------------------------------
-    {"border", k::freeform, "", "medium none currentcolor", false, false},
-    {"border-width", k::freeform, "", "medium", false, false},
-    {"border-style", k::freeform, "", "none", false, false},
-    {"border-color", k::freeform, "", "currentcolor", false, false},
+    {"border", k::freeform, "", "medium none currentcolor", false, false, true},
+    {"border-width", k::freeform, "", "medium", false, false, true},
+    {"border-style", k::freeform, "", "none", false, false, true},
+    {"border-color", k::freeform, "", "currentcolor", false, false, true},
     {"border-top-width", k::length, "thin medium thick", "medium", false, true},
     {"border-right-width", k::length, "thin medium thick", "medium", false, true},
     {"border-bottom-width", k::length, "thin medium thick", "medium", false, true},
@@ -174,14 +174,21 @@ constexpr property_syntax table[] = {
     {"border-right-color", k::freeform, "", "currentcolor", false, false},
     {"border-bottom-color", k::freeform, "", "currentcolor", false, false},
     {"border-left-color", k::freeform, "", "currentcolor", false, false},
-    {"border-radius", k::freeform, "", "0px", false, false},
+    {"border-radius", k::freeform, "", "0px", false, false, true},
+    // The four per-side shorthands. Named here rather than left out because
+    // `css/cssom/getComputedStyle-getter-v-properties` asks for all four by
+    // name, and a property CSSOM says exists must answer `in`.
+    {"border-top", k::freeform, "", "0px none currentcolor", false, false, true},
+    {"border-right", k::freeform, "", "0px none currentcolor", false, false, true},
+    {"border-bottom", k::freeform, "", "0px none currentcolor", false, false, true},
+    {"border-left", k::freeform, "", "0px none currentcolor", false, false, true},
     {"border-top-left-radius", k::freeform, "", "0px", false, false},
     {"border-top-right-radius", k::freeform, "", "0px", false, false},
     {"border-bottom-right-radius", k::freeform, "", "0px", false, false},
     {"border-bottom-left-radius", k::freeform, "", "0px", false, false},
     {"border-collapse", k::keyword_only, "separate collapse", "separate", true, false},
     {"border-spacing", k::freeform, "", "0px", true, false},
-    {"outline", k::freeform, "", "medium none currentcolor", false, false},
+    {"outline", k::freeform, "", "medium none currentcolor", false, false, true},
     {"outline-width", k::length, "thin medium thick", "medium", false, true},
     {"outline-style", k::keyword_only,
      "auto none hidden dotted dashed solid double groove ridge inset outset", "none", false, false},
@@ -190,7 +197,7 @@ constexpr property_syntax table[] = {
 
     // --- colour and background ------------------------------------------
     {"color", k::freeform, "", "rgb(0, 0, 0)", true, false},
-    {"background", k::freeform, "", "none", false, false},
+    {"background", k::freeform, "", "none", false, false, true},
     {"background-color", k::freeform, "", "rgba(0, 0, 0, 0)", false, false},
     {"background-image", k::freeform, "", "none", false, false},
     {"background-position", k::freeform, "", "0% 0%", false, false},
@@ -204,7 +211,7 @@ constexpr property_syntax table[] = {
     {"opacity", k::number_percentage, "", "1", false, false},
 
     // --- typography ------------------------------------------------------
-    {"font", k::freeform, "", "", true, false},
+    {"font", k::freeform, "", "", true, false, true},
     {"font-family", k::freeform, "", "sans-serif", true, false},
     {"font-size", k::length_percentage,
      "xx-small x-small small medium large x-large xx-large xxx-large larger smaller", "medium",
@@ -221,7 +228,7 @@ constexpr property_syntax table[] = {
     {"text-indent", k::length_percentage, "", "0px", true, false},
     {"text-transform", k::keyword_only,
      "none capitalize uppercase lowercase full-width full-size-kana", "none", true, false},
-    {"text-decoration", k::freeform, "", "none", false, false},
+    {"text-decoration", k::freeform, "", "none", false, false, true},
     {"text-decoration-line", k::freeform, "", "none", false, false},
     {"text-decoration-color", k::freeform, "", "currentcolor", false, false},
     {"text-decoration-style", k::keyword_only, "solid double dotted dashed wavy", "solid", false,
@@ -239,7 +246,7 @@ constexpr property_syntax table[] = {
      "baseline sub super text-top text-bottom middle top bottom", "baseline", false, false},
 
     // --- flex, grid and the layout numbers -------------------------------
-    {"flex", k::freeform, "", "0 1 auto", false, false},
+    {"flex", k::freeform, "", "0 1 auto", false, false, true},
     {"flex-grow", k::number, "", "0", false, true},
     {"flex-shrink", k::number, "", "1", false, true},
     {"flex-basis", k::length_percentage, "auto content min-content max-content fit-content", "auto",
@@ -247,7 +254,7 @@ constexpr property_syntax table[] = {
     {"flex-direction", k::keyword_only, "row row-reverse column column-reverse", "row", false,
      false},
     {"flex-wrap", k::keyword_only, "nowrap wrap wrap-reverse", "nowrap", false, false},
-    {"flex-flow", k::freeform, "", "row nowrap", false, false},
+    {"flex-flow", k::freeform, "", "row nowrap", false, false, true},
     {"justify-content", k::keyword_only,
      "normal stretch flex-start flex-end center space-between space-around space-evenly start end "
      "left right",
@@ -261,7 +268,7 @@ constexpr property_syntax table[] = {
     {"align-content", k::keyword_only,
      "normal stretch center start end flex-start flex-end space-between space-around space-evenly",
      "normal", false, false},
-    {"gap", k::freeform, "", "normal", false, false},
+    {"gap", k::freeform, "", "normal", false, false, true},
     {"row-gap", k::length_percentage, "normal", "normal", false, true},
     {"column-gap", k::length_percentage, "normal", "normal", false, true},
     {"order", k::integer, "", "0", false, false},
@@ -271,7 +278,7 @@ constexpr property_syntax table[] = {
     {"table-layout", k::keyword_only, "auto fixed", "auto", false, false},
     {"caption-side", k::keyword_only, "top bottom", "top", true, false},
     {"empty-cells", k::keyword_only, "show hide", "show", true, false},
-    {"list-style", k::freeform, "", "outside none disc", true, false},
+    {"list-style", k::freeform, "", "outside none disc", true, false, true},
     {"list-style-type", k::freeform, "", "disc", true, false},
     {"list-style-position", k::keyword_only, "inside outside", "outside", true, false},
     {"list-style-image", k::freeform, "", "none", true, false},
@@ -281,12 +288,12 @@ constexpr property_syntax table[] = {
     {"box-shadow", k::freeform, "", "none", false, false},
     {"transform", k::freeform, "", "none", false, false},
     {"transform-origin", k::freeform, "", "50% 50%", false, false},
-    {"transition", k::freeform, "", "all 0s ease 0s", false, false},
+    {"transition", k::freeform, "", "all 0s ease 0s", false, false, true},
     {"transition-duration", k::time, "", "0s", false, false},
     {"transition-delay", k::time, "", "0s", false, false},
     {"transition-property", k::freeform, "", "all", false, false},
     {"transition-timing-function", k::freeform, "", "ease", false, false},
-    {"animation", k::freeform, "", "none", false, false},
+    {"animation", k::freeform, "", "none", false, false, true},
     {"animation-duration", k::time, "", "0s", false, false},
     {"animation-delay", k::time, "", "0s", false, false},
     {"animation-name", k::freeform, "", "none", false, false},
@@ -463,8 +470,27 @@ std::span<const property_syntax> known_properties() {
     return std::span<const property_syntax>{table, std::size(table)};
 }
 
-value_check check_declaration(std::string_view property, std::string_view value) {
-    const std::string_view text = trim(value, html_whitespace);
+value_check check_declaration(std::string_view property, std::string_view value,
+                              bool allow_important) {
+    std::string_view text = trim(value, html_whitespace);
+    // `!important` COMES OFF FIRST, before a single token is looked at, because
+    // everything below treats a `!` as proof the value is not a value. Split it
+    // here and the rest of this function never has to know the difference.
+    //
+    // It is not optional for the caller to get right: a `style` attribute may
+    // carry one and CSS syntax says so, so refusing it there would DROP the
+    // declaration - a page whose inline `width: 100px !important` stopped
+    // applying at all, which is a great deal worse than mis-reporting its
+    // priority.
+    bool important = false;
+    if (allow_important) {
+        const std::size_t bang = text.rfind('!');
+        if (bang != std::string_view::npos &&
+            ascii_iequals(trim(text.substr(bang + 1), html_whitespace), "important")) {
+            important = true;
+            text = trim(text.substr(0, bang), html_whitespace);
+        }
+    }
     // An EMPTY value removes the declaration, which is how `test_invalid_value`
     // clears the property before setting it and how a page turns one off. It is
     // reported as invalid because the two callers want the same thing from it:
@@ -475,48 +501,50 @@ value_check check_declaration(std::string_view property, std::string_view value)
     const scan found = scan_tokens(ts);
     if (found.malformed || found.important || found.significant.empty()) { return {}; }
 
+    const auto yes = [important](std::string serialized) {
+        return value_check{true, std::move(serialized), important};
+    };
+
     // A CSS-WIDE KEYWORD is valid for every property, including one this table
     // has never heard of, and serialises lowercased.
     if (found.significant.size() == 1) {
         const css_token & only = ts.tokens[found.significant.front()];
         if (only.type == token_type::ident && in_list(wide_keywords, ts.text_of(only))) {
-            return {true, ascii_lower_copy(ts.text_of(only))};
+            return yes(ascii_lower_copy(ts.text_of(only)));
         }
     }
 
     // A CUSTOM PROPERTY takes anything that tokenises, by definition (CSS
     // Variables 1 §2): its value is a token stream, not a value.
-    if (property.starts_with("--")) {
-        return {true, std::string{text}};
-    }
+    if (property.starts_with("--")) { return yes(std::string{text}); }
 
     const property_syntax * p = find_property(property);
     // AN UNKNOWN PROPERTY IS STORED, NOT REFUSED. CSSOM says a page may set one
     // and read it back; refusing here would be a behaviour change for every
     // property this table has not reached yet, and the corpora write several.
-    if (p == nullptr) { return {true, serialize_tokens(ts)}; }
+    if (p == nullptr) { return yes(serialize_tokens(ts)); }
 
     // A value holding var()/env()/attr() is valid by construction - what it
     // means is not known until substitution.
-    if (found.substituted) { return {true, serialize_tokens(ts)}; }
+    if (found.substituted) { return yes(serialize_tokens(ts)); }
 
-    if (p->kind == k::freeform) { return {true, serialize_tokens(ts)}; }
+    if (p->kind == k::freeform) { return yes(serialize_tokens(ts)); }
 
     if (found.significant.size() == 1) {
         const css_token & only = ts.tokens[found.significant.front()];
         if (only.type == token_type::ident && has_keyword(p->keywords, ts.text_of(only))) {
-            return {true, ascii_lower_copy(ts.text_of(only))};
+            return yes(ascii_lower_copy(ts.text_of(only)));
         }
         std::string serialized;
         if (p->kind != k::keyword_only && match_typed(ts, only, *p, serialized)) {
-            return {true, std::move(serialized)};
+            return yes(std::move(serialized));
         }
     }
 
     // A math function over the whole value, kept as written: `calc.cpp` owns
     // the evaluation and has a third answer besides folded and invalid.
     if (p->kind != k::keyword_only && whole_value_is_math(ts, found)) {
-        return {true, serialize_tokens(ts)};
+        return yes(serialize_tokens(ts));
     }
     return {};
 }
@@ -572,14 +600,13 @@ namespace {
     }
     const std::size_t colon = body.find(':');
     if (colon == std::string_view::npos) { return false; }
-    std::string_view value = trim(body.substr(colon + 1), html_whitespace);
-    // `!important` is part of a <declaration> and does not change the answer.
-    const std::size_t bang = value.rfind('!');
-    if (bang != std::string_view::npos &&
-        ascii_iequals(trim(value.substr(bang + 1), html_whitespace), "important")) {
-        value = trim(value.substr(0, bang), html_whitespace);
-    }
-    return supports_declaration(trim(body.substr(0, colon), html_whitespace), value);
+    // `!important` is part of a <declaration> and does not change the answer, so
+    // this leaf is one of the two places it is allowed.
+    const std::string_view value = trim(body.substr(colon + 1), html_whitespace);
+    const std::string_view name = trim(body.substr(0, colon), html_whitespace);
+    if (name.starts_with("--")) { return !value.empty(); }
+    if (find_property(name) == nullptr) { return false; }
+    return check_declaration(name, value, true).valid;
 }
 
 bool condition(std::string_view text, int depth) {

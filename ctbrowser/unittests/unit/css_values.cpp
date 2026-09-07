@@ -125,9 +125,28 @@ void test_what_a_math_function_may_not_be() {
 
 void test_important_and_the_empty_value() {
     // `!important` is a DECLARATION's business, never a value's. CSSOM's
-    // setProperty takes the priority as its own argument.
+    // setProperty takes the priority as its own argument, and the IDL setter
+    // (`el.style.width = "1px !important"`) has to refuse it - which is what
+    // the default `allow_important = false` says.
     bad("color", "red !important");
     bad("width", "10px !important");
+    // ...but a `style` ATTRIBUTE may carry one, and there refusing it would
+    // DROP the declaration: an inline `width: 100px !important` that stops
+    // applying is far worse than a mis-reported priority.
+    {
+        const auto answer = check_declaration("width", "100px !important", true);
+        CHECK(answer.valid);
+        CHECK(answer.important);
+        CHECK_EQ(answer.serialized, std::string{"100px"});
+    }
+    {
+        const auto answer = check_declaration("width", "100px", true);
+        CHECK(answer.valid);
+        CHECK(!answer.important);
+    }
+    // The value is still validated with the priority removed, not before it.
+    CHECK(!check_declaration("width", "100 !important", true).valid);
+    CHECK(supports_condition("(width: 10px !important)"));
     // An empty value is reported invalid because both callers want the same
     // thing from it - store nothing - and `el.style.width = ""` is how a page
     // removes a declaration.
@@ -164,6 +183,13 @@ void test_the_property_table_itself() {
     CHECK(find_property("WIDTH") != nullptr); // property names fold
     CHECK(find_property("wdith") == nullptr);
     CHECK(known_properties().size() > 100);
+    // The shorthands are marked, because CSSOM enumerates the LONGHANDS and
+    // answers `in` for both. This used to be a second list in
+    // `computed_style.cpp`, which is one list too many.
+    CHECK(find_property("margin")->shorthand);
+    CHECK(find_property("border-top")->shorthand);
+    CHECK(!find_property("margin-top")->shorthand);
+    CHECK(!find_property("width")->shorthand);
     // Every entry has an initial value, because `getComputedStyle` answers it
     // for a property nothing declared - and an empty one there reads as
     // `undefined` to a page, which is the failure this table exists to end.

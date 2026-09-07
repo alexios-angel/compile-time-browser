@@ -70,6 +70,14 @@ struct property_syntax {
     // -1px` is invalid; `margin-left: -1px` is not, and the difference is per
     // property rather than per type.
     bool nonnegative = false;
+    // A SHORTHAND. CSSOM's indexed properties are the supported LONGHANDS -
+    // `'border' in getComputedStyle(e)` is true and `Array.from(...)` does not
+    // contain it - so `getComputedStyle` has to tell the two apart, and this
+    // table is the only place that knows. It was a duplicate list in
+    // `computed_style.cpp` until it was a field here, which meant a shorthand
+    // added to one and not the other got enumerated and then failed
+    // `serialize-all-longhands`.
+    bool shorthand = false;
 };
 
 // nullptr for a property this engine has never heard of - which is NOT the same
@@ -92,9 +100,19 @@ struct property_syntax {
 struct value_check {
     bool valid = false;
     std::string serialized;
+    // Whether the value carried a trailing `!important`. It is NOT part of
+    // `serialized`: importance is a property of the DECLARATION and CSSOM gives
+    // it its own argument (`setProperty(p, v, "important")`) and its own reader
+    // (`getPropertyPriority`).
+    bool important = false;
 };
 
-[[nodiscard]] value_check check_declaration(std::string_view property, std::string_view value);
+// `allow_important` is false for the two paths CSSOM says must refuse one - the
+// IDL setter (`el.style.width = "1px !important"`) and `setProperty`'s value
+// argument - and true for the one path CSS syntax allows it on, which is a
+// declaration parsed out of a `style` attribute or a stylesheet.
+[[nodiscard]] value_check check_declaration(std::string_view property, std::string_view value,
+                                            bool allow_important = false);
 
 // `CSS.supports(property, value)` - §5 of CSS Conditional 3, which is
 // `check_declaration` with the answer thrown away.

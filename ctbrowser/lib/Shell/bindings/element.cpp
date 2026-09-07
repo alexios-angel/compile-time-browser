@@ -297,9 +297,31 @@ std::string css_text_of(script::object_object & held, context & cx) {
 // value, and asserts the read is `""`. Refusing the write is the whole test.
 // Before this, `el.style` recorded whatever it was given and handed it back
 // unchanged - `expected "" but got "round()"`, ~600 subtests of `css-values`.
+// THE PRIORITY RIDES IN THE STORED STRING, and every read strips it. There is
+// nowhere else for it to go: the store IS the declaration list, a JS object of
+// name to value, and a parallel table keyed on the element would be a second
+// thing to keep in step with the first. `important_suffix` is what the two ends
+// agree on, `declared_value` takes it off and `declared_priority` reads it.
+//
+// It has to be kept at all. `style="width: 100px !important"` is ordinary CSS,
+// and refusing the value would DROP the declaration - the inline width simply
+// stops applying - which is a great deal worse than mis-reporting a priority.
+constexpr std::string_view important_suffix = " !important";
+
+[[nodiscard]] std::string_view declared_value(std::string_view stored) {
+    return stored.ends_with(important_suffix)
+               ? stored.substr(0, stored.size() - important_suffix.size())
+               : stored;
+}
+
+[[nodiscard]] std::string_view declared_priority(std::string_view stored) {
+    return stored.ends_with(important_suffix) ? std::string_view{"important"} : std::string_view{};
+}
+
 bool store_declaration(script::object_object & held, context & cx, const std::string & css_name,
-                       std::string_view text) {
-    const style::css::value_check checked = style::css::check_declaration(css_name, text);
+                       std::string_view text, bool allow_important, bool force_important) {
+    const style::css::value_check checked =
+        style::css::check_declaration(css_name, text, allow_important);
     if (!checked.valid) {
         // An empty value REMOVES the declaration; anything else that fails to
         // parse leaves the old one exactly where it was.
@@ -309,7 +331,9 @@ bool store_declaration(script::object_object & held, context & cx, const std::st
         }
         return false;
     }
-    held.set(css_name, cx.string(checked.serialized));
+    std::string stored = checked.serialized;
+    if (checked.important || force_important) { stored += important_suffix; }
+    held.set(css_name, cx.string(stored));
     return true;
 }
 
@@ -331,7 +355,7 @@ void seed_declarations(script::object_object & held, context & cx, std::string_v
         // reads back cannot disagree with the attribute it was built from - and
         // so an invalid declaration in the markup is dropped here rather than
         // surviving as a value no engine would compute.
-        if (!name.empty()) { store_declaration(held, cx, ascii_lower_copy(name), v); }
+        if (!name.empty()) { store_declaration(held, cx, ascii_lower_copy(name), v, true, false); }
         i = end + 1;
     }
 }
@@ -474,9 +498,16 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         }
         // The raw name first: that is where setProperty and getPropertyValue
         // live, and canonicalising them turns them into `set-property`.
-        if (const value * found = store->find(name)) { return *found; }
+        if (const value * found = store->find(name)) {
+            // A METHOD is handed back as it is; a DECLARATION loses its
+            // priority, because `el.style.width` is a value and never
+            // "100px !important".
+            if (found->is_callable()) { return *found; }
+            return c.string(std::string{declared_value(c.to_string(*found))});
+        }
         const value * found = store->find(css_name_of(name));
-        return found == nullptr ? value::undefined() : *found;
+        if (found == nullptr) { return value::undefined(); }
+        return c.string(std::string{declared_value(c.to_string(*found))});
     });
     trap("set", [this, id](context & c, std::span<value> args) {
         if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
@@ -497,7 +528,8 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
             // grammar. A refusal is silent - CSSOM says an unparseable value
             // leaves the declaration alone, and a throw here would break every
             // page that sets a property this engine has not implemented.
-            (void)store_declaration(*store, c, css_name_of(name), c.to_string(args[2]));
+            (void)store_declaration(*store, c, css_name_of(name), c.to_string(args[2]), false,
+                                    false);
         }
         (void)doc_->set_attribute(id, atoms_->intern("style"), style_attribute(*store, c));
         mutated();
@@ -520,8 +552,17 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
     };
     declaration_method(
         "setProperty", [this, id, held, asked_name](context & c, std::span<value> args) {
+            // "If priority is not the empty string and is not an ASCII
+            // case-insensitive match for 'important', return." - CSSOM 6.7.2.
+            // The VALUE may not carry one; the third argument is the only way
+            // a page can ask for it.
+            const std::string priority = args.size() > 2 ? c.to_string(args[2]) : std::string{};
+            if (!priority.empty() && !ascii_iequals(priority, "important")) {
+                return value::undefined();
+            }
             (void)store_declaration(*held, c, asked_name(c, args),
-                                    args.size() > 1 ? c.to_string(args[1]) : std::string{});
+                                    args.size() > 1 ? c.to_string(args[1]) : std::string{}, false,
+                                    !priority.empty());
             (void)doc_->set_attribute(id, atoms_->intern("style"), style_attribute(*held, c));
             mutated();
             return value::undefined();
@@ -532,7 +573,8 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         "removeProperty", [this, id, held, asked_name](context & c, std::span<value> args) {
             const std::string name = asked_name(c, args);
             const value * found = held->find(name);
-            const std::string was = found == nullptr ? std::string{} : c.to_string(*found);
+            const std::string was =
+                found == nullptr ? std::string{} : std::string{declared_value(c.to_string(*found))};
             held->erase(name);
             (void)doc_->set_attribute(id, atoms_->intern("style"), style_attribute(*held, c));
             mutated();
@@ -540,13 +582,15 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         });
     declaration_method("getPropertyValue", [held, asked_name](context & c, std::span<value> args) {
         const value * found = held->find(asked_name(c, args));
-        return found == nullptr ? c.string("") : c.string(c.to_string(*found));
+        if (found == nullptr) { return c.string(""); }
+        return c.string(std::string{declared_value(c.to_string(*found))});
     });
-    // Always empty: `!important` is refused by the value grammar, so nothing
-    // this object holds can have a priority. Present because `test_valid_value`
-    // and several cssom tests call it unconditionally.
     declaration_method("getPropertyPriority",
-                       [](context & c, std::span<value>) { return c.string(""); });
+                       [held, asked_name](context & c, std::span<value> args) {
+                           const value * found = held->find(asked_name(c, args));
+                           if (found == nullptr) { return c.string(""); }
+                           return c.string(std::string{declared_priority(c.to_string(*found))});
+                       });
     declaration_method("item", [held](context & c, std::span<value> args) {
         double want = args.empty() ? 0 : context::to_number(args[0]);
         if (!(want >= 0)) { return c.string(""); }
@@ -1524,8 +1568,23 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         const node_id id = receiver(c);
         const std::string type = arg_string(c, args, 0);
         const value callback = arg(args, 1);
+        // THE CAPTURE FLAG IS PART OF THE IDENTITY - (type, callback, capture)
+        // is what the DOM says a listener IS, and only `add_listener` enforced
+        // it. So `removeEventListener(t, f)` took a CAPTURING listener away and
+        // `removeEventListener(t, f, true)` failed to, which is both subtests of
+        // `EventListenerOptions-capture.html`. Reading the third argument is
+        // also how a page detects that the option is supported at all.
+        //
+        // ...and `l.on` was not checked either, so an element wrapper whose id
+        // failed to resolve matched `l.target == node_id{}` and could remove the
+        // DOCUMENT's and the WINDOW's listeners.
+        const value options = arg(args, 2);
+        const bool capture = options.is_object()
+                                 ? context::truthy(c.lookup_property(options, "capture"))
+                                 : context::truthy(options);
         std::erase_if(listeners_, [&](const listener & l) {
-            return l.target == id && l.type == type && l.callback.bits() == callback.bits();
+            return l.on == listen_on::node && l.target == id && l.type == type &&
+                   l.capture == capture && l.callback.bits() == callback.bits();
         });
         return value::undefined();
     });
