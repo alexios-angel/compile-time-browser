@@ -471,6 +471,11 @@ void dom_bindings::mutated() {
     // natives that change the document: this is the funnel they all already go
     // through. It costs one branch on a page that never made an observer.
     record_mutations();
+    // An `<iframe>` can only appear, change its `src` or leave through a
+    // mutation, so this is where the reconcile is told there is something to
+    // look at. The walk itself is not done here: it needs the script context
+    // and it must not run inside a native that is halfway through a tree edit.
+    frames_dirty_ = true;
     if (on_mutation_) { on_mutation_(); }
 }
 

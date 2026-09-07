@@ -375,6 +375,11 @@ std::size_t browser::tick(double elapsed_ms) {
     // and both are dispatched BEFORE this tick's timers, so a handler that
     // schedules `setTimeout(f, 0)` gets f on the very next tick rather than one
     // further out. testharness.js does exactly that.
+    // THE FRAMES FIRST, and this is the ordering the corpus turns on: a page's
+    // `load` handler is where WPT reads `frame.contentDocument`, so a frame
+    // whose document is built with the timers - after that event - is a frame
+    // that was never there when it was looked for. See bindings/frames.cpp.
+    bindings_->reconcile_frames();
     if (load_event_pending_) {
         load_event_pending_ = false;
         (void)bindings_->dispatch("DOMContentLoaded", node_id{});

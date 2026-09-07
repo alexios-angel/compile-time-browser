@@ -36,6 +36,19 @@ std::size_t dom_bindings::run_due_callbacks() {
             ++ran;
         }
     }
+    // FRAME LOADS, announced the way an image load is. `reconcile_frames` -
+    // which BUILT these documents - runs earlier in the tick, before the
+    // window's own `load` event, because that handler is where a page reads
+    // `frame.contentDocument`.
+    if (!frame_loads_.empty()) {
+        std::vector<pending_frame> due;
+        due.swap(frame_loads_);
+        for (const pending_frame & waiting : due) {
+            settle_frame(*cx_, waiting);
+            note_callback_fault("frame load");
+            ++ran;
+        }
+    }
     // IMAGE LOADS with them, and for the same reason: p5's loadImage awaits a
     // fetch and then awaits an image load, so a turn that ran one but not the
     // other would need two ticks per image instead of one.

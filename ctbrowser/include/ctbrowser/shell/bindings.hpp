@@ -194,6 +194,20 @@ public:
     // many ran, so an event loop can tell whether it needs another frame.
     std::size_t run_due_callbacks();
 
+    // --- NESTED BROWSING CONTEXTS (bindings/frames.cpp) --------------------
+    //
+    // Bring the `<iframe>`s in this document into step with the tree: load the
+    // ones that appeared, reload the ones whose `src` changed, forget the ones
+    // that went away. Called from the browser's tick BEFORE the window's `load`
+    // event, because a page's `load` handler is where WPT reads
+    // `frame.contentDocument` and it must already be there.
+    //
+    // A FRAME IS A SECOND DOCUMENT, which is a model this class already has -
+    // see `make_html_document`. What a frame adds to it is the bytes: the src
+    // is resolved through the asset registry, so a frame loads from wherever
+    // the page's other subresources load from and reaches no socket of its own.
+    void reconcile_frames();
+
     [[nodiscard]] std::size_t pending_timers() const noexcept { return timers_.size(); }
     // When the next callback is due, in milliseconds from now. Infinity when
     // there is none - which is what lets an idle application block rather than
@@ -980,6 +994,31 @@ private:
         value promise; // decode()'s promise; undefined for a plain src assignment
     };
     std::vector<pending_image> image_loads_;
+
+    // A FRAME WHOSE `load` HAS NOT BEEN ANNOUNCED YET. The document is built
+    // synchronously - the bytes are already on disk or in the registry - but
+    // the EVENT is not, for the same reason an image's is not: `document.body
+    // .appendChild(frame)` is followed by `frame.onload = f` often enough that
+    // firing from the insertion would fire at nothing.
+    struct pending_frame {
+        node_id id;
+        bool ok = false; // false when the src resolved to no bytes
+    };
+    std::vector<pending_frame> frame_loads_;
+    // Which frames are loaded, and from what. The `src` is kept as WRITTEN
+    // rather than resolved, because that is the string the next reconcile
+    // compares against - a page that assigns the same src twice must not
+    // reload, and one that assigns a different one must.
+    std::vector<std::pair<std::uint64_t, std::string>> frames_;
+    // Set by `mutated()` and by the first tick after a parse. Without it the
+    // reconcile walks the whole tree on every frame of an idle page, which is
+    // exactly what "a frame runs only what changed" forbids.
+    bool frames_dirty_ = true;
+    void load_frame(context & cx, node_id id, const std::string & src);
+    void settle_frame(context & cx, const pending_frame & waiting);
+    // The content type a path implies, since there is no server here to send
+    // one. Empty for a name this engine has no type for.
+    [[nodiscard]] static std::string_view mime_for_path(std::string_view path);
 
     // A FileReader's read, which finishes on a LATER TURN for the same reason an
     // image load does: a page assigns `onload` after calling readAsText, so a
