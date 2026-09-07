@@ -2819,9 +2819,16 @@ enum class reflect_type : std::uint8_t {
     // A NULLABLE DOMString: `null` when the attribute is absent rather than "",
     // and setting `null` or `undefined` REMOVES it rather than writing the four
     // or nine characters. It is the shape every `aria-*` property and `role`
-    // have, and it is the one thing `dom_string` above cannot say - which is
-    // why `crossOrigin` is recorded as deliberately absent from the table.
-    nullable_dom_string
+    // have, and it is the one thing `dom_string` above cannot say.
+    nullable_dom_string,
+    // 2.6.5 AND NULLABLE AT ONCE, which is `crossOrigin` and nothing else here:
+    // limited to known keywords, but the MISSING value default is `null` rather
+    // than a keyword, so `typeof img.crossOrigin` is "object" on an element
+    // that has no `crossorigin` attribute and a string on one that has. An
+    // INVALID value is still a keyword - `crossorigin=x` is "anonymous" - so
+    // the two defaults genuinely differ in type and neither `enumerated` nor
+    // `nullable_dom_string` can spell it.
+    nullable_enumerated
 };
 
 // ONE REFLECTED IDL ATTRIBUTE. The four columns the plan asked for - interface,
@@ -2848,9 +2855,11 @@ struct reflected_attribute {
     // space - the longest is `application/x-www-form-urlencoded` - so one
     // string_view holds the whole set and the table stays one line per row.
     //
-    // The empty-string keyword that `referrerPolicy` and `input.formMethod`
-    // have is NOT listed: a keyword of "" is indistinguishable from the missing
-    // value default, both answer "" here, so it costs nothing to leave out.
+    // The empty-string keyword `referrerPolicy` has is NOT listed, and does not
+    // need to be: its invalid value default is "" as well, so a value matching
+    // no keyword answers "" whether or not "" is one of them. That is only true
+    // where the two coincide - `input.formMethod` has "" for its MISSING value
+    // default and "get" for its invalid one, and `formmethod=""` is "get".
     std::string_view keywords;
     std::string_view missing; // the missing value default
     std::string_view invalid; // the invalid value default
@@ -2958,12 +2967,35 @@ constexpr reflected_attribute enum_attr(std::string_view iface, std::string_view
             missing,
             invalid};
 }
+// The nullable spelling of the same rule. There is no `missing` column because
+// the missing value default IS null - that is what makes the type - and the
+// invalid value default is always a keyword.
+constexpr reflected_attribute nullable_enum_attr(std::string_view iface, std::string_view idl,
+                                                 std::string_view keywords,
+                                                 std::string_view invalid,
+                                                 std::string_view content = {}) {
+    return {iface,
+            idl,
+            content.empty() ? idl : content,
+            reflect_type::nullable_enumerated,
+            0,
+            0,
+            0,
+            keywords,
+            {},
+            invalid};
+}
 
 // The keyword sets that appear on more than one interface, named once so the
 // table cannot spell one of them differently from the other.
 constexpr std::string_view referrer_keywords =
     "no-referrer no-referrer-when-downgrade same-origin origin strict-origin "
     "origin-when-cross-origin strict-origin-when-cross-origin unsafe-url";
+// CORS, which four interfaces share and which is the one non-tentative user of
+// the nullable enumerated type: absent is `null`, `anonymous` and
+// `use-credentials` are the keywords, and anything else - including the empty
+// string, which is what `<img crossorigin>` parses to - is `anonymous`.
+constexpr std::string_view cors_keywords = "anonymous use-credentials";
 constexpr std::string_view enctype_keywords =
     "application/x-www-form-urlencoded multipart/form-data text/plain";
 constexpr std::string_view default_enctype = "application/x-www-form-urlencoded";
@@ -2983,11 +3015,8 @@ constexpr std::string_view default_enctype = "application/x-www-form-urlencoded"
 //   * `relList`, `sandbox`, `output.htmlFor`, `link.sizes` - the token lists.
 //     `classList` exists as its own object; the rest need a real DOMTokenList,
 //     which is an object type rather than a table row.
-//   * `crossOrigin` and `document.dir`: the first is a NULLABLE enumerated
-//     attribute, whose default is `null` rather than "" and whose `typeof` is
-//     therefore "object", which this accessor shape cannot express without a
-//     fourth default; the second is on the document object rather than on an
-//     element interface.
+//   * `document.dir`, which is on the document object rather than on an element
+//     interface.
 //   * `meter`'s six doubles and `progress.max`: `limited double` is a type
 //     nothing else uses and the elements have no behaviour behind it here.
 constexpr reflected_attribute reflection_table[] = {
@@ -3125,6 +3154,7 @@ constexpr reflected_attribute reflection_table[] = {
     // --- metadata
     text_attr("HTMLBaseElement", "target"),
     url_attr("HTMLLinkElement", "href"),
+    nullable_enum_attr("HTMLLinkElement", "crossOrigin", cors_keywords, "anonymous", "crossorigin"),
     text_attr("HTMLLinkElement", "rel"),
     text_attr("HTMLLinkElement", "media"),
     text_attr("HTMLLinkElement", "integrity"),
@@ -3148,6 +3178,8 @@ constexpr reflected_attribute reflection_table[] = {
 
     // --- scripting, edits, interactive
     url_attr("HTMLScriptElement", "src"),
+    nullable_enum_attr("HTMLScriptElement", "crossOrigin", cors_keywords, "anonymous",
+                       "crossorigin"),
     text_attr("HTMLScriptElement", "type"),
     text_attr("HTMLScriptElement", "charset"),
     text_attr("HTMLScriptElement", "integrity"),
@@ -3163,6 +3195,8 @@ constexpr reflected_attribute reflection_table[] = {
 
     // --- embedded content
     text_attr("HTMLImageElement", "alt"),
+    nullable_enum_attr("HTMLImageElement", "crossOrigin", cors_keywords, "anonymous",
+                       "crossorigin"),
     text_attr("HTMLImageElement", "srcset"),
     text_attr("HTMLImageElement", "useMap", "usemap"),
     text_attr("HTMLImageElement", "name"),
@@ -3208,6 +3242,8 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLParamElement", "type"),
     text_attr("HTMLParamElement", "valueType", "valuetype"),
     url_attr("HTMLMediaElement", "src"),
+    nullable_enum_attr("HTMLMediaElement", "crossOrigin", cors_keywords, "anonymous",
+                       "crossorigin"),
     bool_attr("HTMLMediaElement", "autoplay"),
     bool_attr("HTMLMediaElement", "loop"),
     bool_attr("HTMLMediaElement", "controls"),
@@ -3700,13 +3736,24 @@ value dom_bindings::reflected_get(context & cx, const void * row_ptr) {
         const std::string resolved = resolve(location_href_, raw);
         return cx.string(resolved.empty() ? std::string{raw} : resolved);
     }
-    case reflect_type::enumerated: {
-        if (!present) { return cx.string(std::string{row.missing}); }
+    case reflect_type::enumerated:
+    case reflect_type::nullable_enumerated: {
+        const bool nullable = row.type == reflect_type::nullable_enumerated;
+        if (!present) { return nullable ? value::null() : cx.string(std::string{row.missing}); }
+        // ASCII-INSENSITIVE AND NOTHING WIDER, which is the whole of the
+        // corpus's interest in this line: `TRUE` is the keyword `true` and
+        // U+212A KELVIN SIGN is not the letter `k`. Every keyword in the table
+        // is lower case already, so the folded value IS the canonical spelling.
         const std::string folded = ascii_lower_copy(raw);
         if (lists_token(row.keywords, folded)) { return cx.string(folded); }
-        // "" is a keyword of several of these and is spelled as the absence of
-        // one here - see the note on reflected_attribute::keywords.
-        if (folded.empty()) { return cx.string(""); }
+        // AN EMPTY VALUE IS AN INVALID ONE. It reads as if it were a state of
+        // its own - `<input type="">` - and it is not: the rule is "if the
+        // value matches none of the keywords, the invalid value default", and
+        // an attribute that is present but empty matches none. Answering ""
+        // here made `<input type="">` report "" where "text" belongs, and
+        // `<track kind="">` "" where "metadata" does. The rows whose invalid
+        // value default is "" - `dir`, `referrerPolicy`, `scope` - are
+        // unaffected, which is why this looked right for so long.
         return cx.string(std::string{row.invalid});
     }
     default: break;
@@ -3764,10 +3811,15 @@ value dom_bindings::reflected_set(context & cx, const void * row_ptr, std::span<
         }
         return value::undefined();
     case reflect_type::nullable_dom_string:
+    case reflect_type::nullable_enumerated:
         // "If the given value is null, remove the content attribute" - so
         // `el.ariaLabel = null` is a removal and not the four characters
         // "null", which is what the ToString below would have written.
         // `undefined` is the same state, which `testNullable` checks by name.
+        //
+        // A nullable ENUMERATED attribute writes what it is given, exactly as
+        // the non-nullable one does: `img.crossOrigin = "ANONYMOUS"` stores
+        // those nine capitals and the GETTER is what folds them.
         if (args.empty() || args[0].is_nullish()) {
             (void)doc_->remove_attribute(id, name);
             mutated();

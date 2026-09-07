@@ -500,6 +500,102 @@ void test_aria_reflects_as_a_nullable_string() {
        "[null],[]");
 }
 
+// --- the enumerated types, which are two rules and not twenty attributes -----
+
+void test_an_enumerated_attribute_is_limited_to_its_keywords() {
+    // HTML 2.6.5, and the four answers a row of the table can give: the missing
+    // value default when the attribute is absent, the keyword when the value is
+    // an ASCII case-insensitive match for one, and the INVALID value default
+    // for everything else. `<input type=TEXT>` and `<input type=text>` are the
+    // same state, and `reflection.js` spells every keyword in upper case, in
+    // lower case and with a letter sliced off the front to say so.
+    is(R"JS((function () {
+        var e = document.createElement('input');
+        var absent = e.type;
+        e.setAttribute('type', 'CHECKBOX');
+        var upper = e.type;
+        e.setAttribute('type', 'xcheckbox');
+        var invalid = e.type;
+        return absent + ',' + upper + ',' + invalid;
+    })())JS",
+       "text,checkbox,text");
+    // AN ATTRIBUTE THAT IS PRESENT BUT EMPTY MATCHES NO KEYWORD, so it takes
+    // the invalid value default like any other unrecognised value. This read as
+    // "" for a long time, which is right only for the rows - `dir`, `scope`,
+    // `referrerPolicy` - whose invalid value default happens to be "".
+    is(R"JS((function () {
+        var input = document.createElement('input');
+        input.setAttribute('type', '');
+        var track = document.createElement('track');
+        track.setAttribute('kind', '');
+        var div = document.createElement('div');
+        div.setAttribute('dir', '');
+        return input.type + ',' + track.kind + ',[' + div.dir + ']';
+    })())JS",
+       "text,metadata,[]");
+    // ASCII-ONLY, on purpose: U+212A KELVIN SIGN case-folds to `k` under
+    // Unicode and must NOT match one here, or `<marquee behavior=slide>` would
+    // depend on the locale. `core/algorithms.hpp` says the same thing about
+    // every fold in the engine.
+    is(R"JS((function () {
+        var e = document.createElement('link');
+        e.setAttribute('as', 'trac\u212A');
+        var kelvin = e.as;
+        e.setAttribute('as', 'TRACK');
+        return '[' + kelvin + '],' + e.as;
+    })())JS",
+       "[],track");
+    // THE SETTER WRITES WHAT IT IS GIVEN. An enumerated attribute does not
+    // canonicalise on the way in - `getAttribute` reports the capitals the page
+    // wrote, and only the IDL getter folds them.
+    is(R"JS((function () {
+        var e = document.createElement('form');
+        e.method = 'POST';
+        return e.getAttribute('method') + ',' + e.method;
+    })())JS",
+       "POST,post");
+}
+
+void test_a_nullable_enumerated_attribute_defaults_to_null() {
+    // `crossOrigin` is 2.6.5 with a null MISSING value default and a keyword
+    // INVALID one, which is why it is a type of its own: `typeof` changes with
+    // the presence of the attribute, and neither the plain enumerated rule nor
+    // the nullable DOMString one can say that.
+    is(R"JS((function () {
+        var e = document.createElement('img');
+        var absent = e.crossOrigin;
+        e.setAttribute('crossorigin', 'USE-CREDENTIALS');
+        var upper = e.crossOrigin;
+        e.setAttribute('crossorigin', '');
+        var empty = e.crossOrigin;
+        e.setAttribute('crossorigin', 'nonsense');
+        return (absent === null) + ',' + (typeof absent) + ',' + upper + ',' + empty + ',' +
+               e.crossOrigin;
+    })())JS",
+       "true,object,use-credentials,anonymous,anonymous");
+    // Setting null or undefined REMOVES it, as it does for the nullable string
+    // above; anything else is written through unchanged.
+    is(R"JS((function () {
+        var e = document.createElement('link');
+        e.crossOrigin = 'Anonymous';
+        var written = e.getAttribute('crossorigin') + ',' + e.crossOrigin;
+        e.crossOrigin = null;
+        var cleared = e.hasAttribute('crossorigin') + ',' + e.crossOrigin;
+        e.crossOrigin = 'anonymous';
+        e.crossOrigin = undefined;
+        return written + ',' + cleared + ',' + e.hasAttribute('crossorigin');
+    })())JS",
+       "Anonymous,anonymous,false,null,false");
+    // ON THE FOUR INTERFACES THAT HAVE IT AND NOWHERE ELSE: a <div> has no
+    // `crossorigin` content attribute, so the property is not there to read.
+    is(R"JS((function () {
+        return (typeof document.createElement('video').crossOrigin) + ',' +
+               (typeof document.createElement('script').crossOrigin) + ',' +
+               (typeof document.createElement('div').crossOrigin);
+    })())JS",
+       "object,object,undefined");
+}
+
 } // namespace
 
 int main() {
@@ -513,5 +609,7 @@ int main() {
     test_an_element_searches_its_own_subtree_by_namespace();
     test_dataset_maps_data_attributes_both_ways();
     test_aria_reflects_as_a_nullable_string();
+    test_an_enumerated_attribute_is_limited_to_its_keywords();
+    test_a_nullable_enumerated_attribute_defaults_to_null();
     REPORT("element_attrs");
 }
