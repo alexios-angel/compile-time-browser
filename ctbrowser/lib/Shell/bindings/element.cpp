@@ -3705,12 +3705,23 @@ void dom_bindings::install_dom_interfaces(context & cx) {
             // stub, which is a regression rather than a feature.
             ctor_value = cx.global(name);
         } else {
-            // NOT CONSTRUCTIBLE. `new HTMLDivElement()` throws in a browser too,
-            // and saying so is better than handing back an object that is not an
-            // element - the same choice install_window made for
-            // HTMLCanvasElement.
-            auto * ctor =
-                cx.allocate<script::native_object>(name, [name](context & c, std::span<value>) {
+            // NOT CONSTRUCTIBLE - for all but three of them. `new
+            // HTMLDivElement()` throws in a browser too, and saying so is
+            // better than handing back an object that is not an element - the
+            // same choice install_window made for HTMLCanvasElement.
+            //
+            // THE THREE THAT ARE: `new Text("x")`, `new Comment("x")` and `new
+            // DocumentFragment()`. The DOM makes exactly those constructible
+            // and nothing else in this table, because they are the three nodes
+            // a page can build without naming a document to build them in -
+            // there is no `new HTMLDivElement`, there is `createElement`. Seven
+            // files in `dom/nodes` open with one of them and lose every subtest
+            // they have to the throw; see construct_node_interface.
+            const bool constructible =
+                name == "Text" || name == "Comment" || name == "DocumentFragment";
+            auto * ctor = cx.allocate<script::native_object>(
+                name, [this, name, constructible](context & c, std::span<value> args) {
+                    if (constructible) { return construct_node_interface(c, name, args); }
                     c.throw_error("TypeError", "Illegal constructor: " + name +
                                                    " cannot be constructed by a page");
                     return value::undefined();
@@ -3799,6 +3810,30 @@ void dom_bindings::install_dom_interfaces(context & cx) {
         }
     }
     interfaces_linked_ = event_target_prototype_.is_object();
+}
+
+// `new Text("x")`, `new Comment("x")`, `new DocumentFragment()`.
+//
+// THE NODE IS OWNED BY THIS DOCUMENT AND IS NOT IN ITS TREE, which is the whole
+// of what those three constructors do: `document.createTextNode` by another
+// name, reachable without naming the document. `Comment-Text-constructor.js`
+// asserts `object.ownerDocument === document` on every one of its fourteen
+// cases and asserts the prototype chain runs Text -> CharacterData -> Node,
+// which it does because `wrap` links a wrapper by the node's KIND and the chain
+// was already built by the time anything can call this.
+//
+// ONE ARGUMENT, CONVERTED ONCE. The IDL is `(DOMString data = "")`, so a missing
+// argument and an `undefined` one are both the empty string - and the second
+// argument is never looked at, which the corpus checks with a `toString` that
+// calls `assert_unreached`. `arg_string` would have made `undefined` the word
+// "undefined", which is right for `appendData` and wrong here for the same
+// reason a defaulted argument is not a passed one.
+value dom_bindings::construct_node_interface(context & cx, std::string_view interface,
+                                             std::span<value> args) {
+    if (interface == "DocumentFragment") { return wrap(cx, doc_->create_fragment()); }
+    const value given = arg(args, 0);
+    const std::string data = given.is_undefined() ? std::string{} : cx.to_string(given);
+    return wrap(cx, interface == "Comment" ? doc_->create_comment(data) : doc_->create_text(data));
 }
 
 // --- CharacterData, AND THE Text THAT IS ONE --------------------------------

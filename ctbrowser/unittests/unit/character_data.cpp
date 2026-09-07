@@ -278,6 +278,70 @@ void test_whole_text_stops_at_the_first_element() {
        "a,abc,abc,abc,ab,c");
 }
 
+// --- the three node interfaces a page may construct -------------------------
+
+void test_text_comment_and_fragment_are_constructible() {
+    // THE PROTOTYPE CHAIN IS WHAT THE FILE OPENS WITH, and it is a real chain
+    // rather than three names: Text -> CharacterData -> Node, each link the
+    // same object the global names.
+    for (const char * ctor : {"Text", "Comment"}) {
+        is("(function () { var o = new " + std::string{ctor} + "(); return " +
+               "(Object.getPrototypeOf(o) === " + ctor + ".prototype) + ',' + " +
+               "(Object.getPrototypeOf(Object.getPrototypeOf(o)) === CharacterData.prototype) + " +
+               "',' + (Object.getPrototypeOf(Object.getPrototypeOf(Object.getPrototypeOf(o))) " +
+               "=== Node.prototype); })()",
+           "true,true,true");
+        is("(function () { var o = new " + std::string{ctor} +
+               "(); return (o instanceof Node) + ',' + (o instanceof CharacterData) + ',' + " +
+               "(o instanceof " + ctor + "); })()",
+           "true,true,true");
+        // NO ARGUMENT IS THE EMPTY STRING and `undefined` is too - the IDL
+        // defaults the parameter, and a defaulted argument is not a passed one.
+        // The next line is the reason that distinction is written down: the
+        // very same coercion in `appendData` writes the WORD "undefined".
+        is("(function () { var o = new " + std::string{ctor} +
+               "(); return '[' + o.data + '],[' + o.nodeValue + '],' + " +
+               "(o.ownerDocument === document) + ',' + (o.parentNode === null); })()",
+           "[],[],true,true");
+        is("'[' + new " + std::string{ctor} + "(undefined).data + ']'", "[]");
+        is("new " + std::string{ctor} + "(null).data", "null");
+        is("new " + std::string{ctor} + "(42).data", "42");
+        is("new " + std::string{ctor} + "('<!--').data", "<!--");
+        // ONE ARGUMENT, CONVERTED ONCE. The second is never looked at, which
+        // `Comment-Text-constructor.js` checks with a toString that would fail
+        // the test if it ran.
+        is("(function () { var seen = []; var o = new " + std::string{ctor} +
+               "({ toString: function () { seen.push('first'); return 'text'; } }, " +
+               "{ toString: function () { seen.push('second'); return 'no'; } }); " +
+               "return o.data + ',' + seen.join('+'); })()",
+           "text,first");
+    }
+    // A CONSTRUCTED NODE IS A REAL ONE: it can be edited by the CharacterData
+    // methods and put into the tree.
+    is(R"JS((function () {
+        var t = new Text('hello');
+        t.appendData(' world');
+        document.body.appendChild(t);
+        return t.data + ',' + (t.parentNode === document.body);
+    })())JS",
+       "hello world,true");
+    // `new DocumentFragment()` takes no argument and is not a CharacterData.
+    is(R"JS((function () {
+        var f = new DocumentFragment();
+        var t = document.createTextNode('');
+        f.appendChild(t);
+        return f.nodeType + ',' + f.nodeName + ',' + (f.ownerDocument === document) + ',' +
+               (f.firstChild === t);
+    })())JS",
+       "11,#document-fragment,true,true");
+    // AND THE OTHER EIGHTY-EIGHT STILL THROW, which is the half that makes the
+    // three above a decision rather than an accident: a browser refuses
+    // `new HTMLDivElement()` too.
+    is("(function () { try { new HTMLDivElement(); } catch (e) { return e.name; } " +
+           std::string{"return 'did not throw'; })()"},
+       "TypeError");
+}
+
 } // namespace
 
 int main() {
@@ -287,5 +351,6 @@ int main() {
     test_the_five_methods_edit_one_string();
     test_split_text_keeps_the_head_and_hands_back_the_tail();
     test_whole_text_stops_at_the_first_element();
+    test_text_comment_and_fragment_are_constructible();
     REPORT("character_data");
 }
