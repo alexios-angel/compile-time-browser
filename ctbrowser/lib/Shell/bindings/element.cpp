@@ -375,6 +375,34 @@ std::vector<std::string> class_tokens(std::string_view text) {
     return out;
 }
 
+// THE XML `Name` PRODUCTION, as much of it as ASCII can decide.
+//
+// `setAttribute` must throw an InvalidCharacterError for a name that is not one
+// (DOM 4.9.1), and it threw nothing at all: `el.setAttribute("", "x")` and
+// `el.setAttribute("a b", "x")` both interned a name no markup could ever
+// produce and no serialisation could round-trip.
+//
+// ASCII-ONLY ON PURPOSE, and permissive above 0x7F rather than strict. The Name
+// production's start and continuation sets are a dozen Unicode ranges; deciding
+// them here would need a table `core/algorithms.hpp` deliberately does not carry
+// (it is ASCII-only so a render cannot depend on `LC_ALL`), and REFUSING every
+// non-ASCII name would break a perfectly valid accented one. Accepting them is
+// the error that costs a page nothing.
+[[nodiscard]] bool valid_attribute_name(std::string_view name) {
+    if (name.empty()) { return false; }
+    const auto ascii_start = [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == ':';
+    };
+    const auto ascii_rest = [&](char c) {
+        return ascii_start(c) || (c >= '0' && c <= '9') || c == '-' || c == '.';
+    };
+    for (std::size_t i = 0; i < name.size(); ++i) {
+        if (static_cast<unsigned char>(name[i]) >= 0x80) { continue; }
+        if (!(i == 0 ? ascii_start(name[i]) : ascii_rest(name[i]))) { return false; }
+    }
+    return true;
+}
+
 } // namespace
 
 // DOM 4.2.3, "ensure pre-insertion validity". Every one of these checks stands
@@ -1147,11 +1175,57 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
 
     method("setAttribute", [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);
+        const std::string name = arg_string(c, args, 0);
+        if (!valid_attribute_name(name)) {
+            throw_dom_exception(c, "InvalidCharacterError",
+                                "setAttribute: '" + name + "' is not a valid attribute name");
+            return value::undefined();
+        }
         if (!id) { return value::undefined(); }
-        (void)doc_->set_attribute(id, atoms_->intern_lower(arg_string(c, args, 0)),
-                                  arg_string(c, args, 1));
+        (void)doc_->set_attribute(id, atoms_->intern_lower(name), arg_string(c, args, 1));
         mutated();
         return value::undefined();
+    });
+    // `toggleAttribute(name, force)` - the boolean-attribute spelling, and it
+    // ANSWERS whether the attribute is present afterwards, which is what a page
+    // toggling one reads. Without it the only way to flip `disabled` was a
+    // hasAttribute/removeAttribute/setAttribute dance that reads the tree twice.
+    method("toggleAttribute", [this](context & c, std::span<value> args) {
+        const node_id id = receiver(c);
+        const std::string name = arg_string(c, args, 0);
+        if (!valid_attribute_name(name)) {
+            throw_dom_exception(c, "InvalidCharacterError",
+                                "toggleAttribute: '" + name + "' is not a valid attribute name");
+            return value::boolean(false);
+        }
+        if (!id) { return value::boolean(false); }
+        const atom key = atoms_->intern_lower(name);
+        const bool present = doc_->read().has_attribute(id, key);
+        // `force` is TRISTATE: absent means "flip", a present `false` means
+        // "remove whether or not it is there". `args.size()` is the only thing
+        // that can tell the first from the second.
+        const bool want = args.size() > 1 ? context::truthy(args[1]) : !present;
+        if (want == present) { return value::boolean(present); }
+        if (want) {
+            (void)doc_->set_attribute(id, key, "");
+        } else {
+            (void)doc_->remove_attribute(id, key);
+        }
+        mutated();
+        return value::boolean(want);
+    });
+    // `getAttributeNames()` - the ordered list, and the only way to enumerate an
+    // element's attributes without walking the `attributes` snapshot.
+    method("getAttributeNames", [this](context & c, std::span<value>) {
+        const node_id id = receiver(c);
+        value out = c.make_array();
+        auto * items = static_cast<script::array_object *>(out.as_heap());
+        if (!id) { return out; }
+        const auto txn = doc_->read();
+        for (const attribute & held : txn.attributes(id)) {
+            items->items.push_back(c.string(std::string{atoms_->text(held.name)}));
+        }
+        return out;
     });
     method("getAttribute", [this](context & c, std::span<value> args) {
         const node_id id = receiver(c);

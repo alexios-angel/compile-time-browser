@@ -358,18 +358,19 @@ int main() {
     js_expect("(function(){var f=Array.prototype.map;delete f.length;"
               "return Object.hasOwn(f,'length');})()",
               "false");
-    // ...AND `name` DOES NOT COME BACK CLEAN, which is asserted as it IS rather
-    // than as the specification has it. context::own_property STILL synthesises
-    // a native's `name` from the C++ object when the table has none
-    // (lib/Script/vm/objects.cpp), so deleting the own entry uncovers the
-    // synthesised one and `hasOwnProperty` stays true. That is the whole
-    // remaining reason test262's `name.js` files fail - verifyProperty's
-    // isConfigurable() deletes and then asks - and closing it is a change to
-    // the VM, not to the standard library. When it lands this line reads
-    // "false" and the assertion below it can go.
+    // ...AND `name` DOES NOT COME BACK EITHER. `context::own_property`
+    // synthesises a native's `name` from the C++ object when the table has none
+    // (lib/Script/vm/objects.cpp), so deleting the own entry USED TO uncover
+    // the synthesised one and `hasOwnProperty` stayed true - which was the
+    // whole remaining reason test262's `name.js` files failed, because
+    // verifyProperty's isConfigurable() deletes and then asks.
+    //
+    // `native_object::name_erased` closes it: the fallback still answers for
+    // the 400 natives `define_native` makes with no own entry, and stops
+    // answering the moment one is deleted.
     js_expect("(function(){var f=Array.prototype.map;delete f.name;"
               "return Object.hasOwn(f,'name');})()",
-              "true");
+              "false");
     // In CREATION ORDER, which 10.2.5 gives as length then name.
     js_expect("Object.getOwnPropertyNames(Math.floor).join(',')", "length,name");
     // Neither is enumerable, so neither reaches for-in, Object.keys or a
