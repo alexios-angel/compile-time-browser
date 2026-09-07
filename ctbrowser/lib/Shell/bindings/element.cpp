@@ -3962,12 +3962,16 @@ bool dom_bindings::nodes_are_equal(const read_txn & txn, node_id left, node_id r
 // calls `assert_unreached`. `arg_string` would have made `undefined` the word
 // "undefined", which is right for `appendData` and wrong here for the same
 // reason a defaulted argument is not a passed one.
-value dom_bindings::construct_node_interface(context & cx, std::string_view interface,
+// `which` rather than `interface`, which is a MACRO on Windows: the mingw SDK
+// headers define it as `struct`, and a parameter by that name is a build that
+// fails on one platform only - the exact shape of defect the devbox exists to
+// catch and the cross build finds later still.
+value dom_bindings::construct_node_interface(context & cx, std::string_view which,
                                              std::span<value> args) {
-    if (interface == "DocumentFragment") { return wrap(cx, doc_->create_fragment()); }
+    if (which == "DocumentFragment") { return wrap(cx, doc_->create_fragment()); }
     const value given = arg(args, 0);
     const std::string data = given.is_undefined() ? std::string{} : cx.to_string(given);
-    return wrap(cx, interface == "Comment" ? doc_->create_comment(data) : doc_->create_text(data));
+    return wrap(cx, which == "Comment" ? doc_->create_comment(data) : doc_->create_text(data));
 }
 
 // --- CharacterData, AND THE Text THAT IS ONE --------------------------------

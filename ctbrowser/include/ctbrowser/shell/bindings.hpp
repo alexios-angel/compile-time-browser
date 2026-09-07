@@ -543,7 +543,7 @@ private:
     // three node interfaces a page may construct. The other eighty-eight throw
     // "Illegal constructor", which is what a browser does too; these three make
     // a node owned by this document and NOT in its tree.
-    [[nodiscard]] value construct_node_interface(context & cx, std::string_view interface,
+    [[nodiscard]] value construct_node_interface(context & cx, std::string_view which,
                                                  std::span<value> args);
     // `Node.prototype.isEqualNode` - the DOM's structural comparison, in which
     // two elements' attributes are UNORDERED SETS compared by (namespace, local
