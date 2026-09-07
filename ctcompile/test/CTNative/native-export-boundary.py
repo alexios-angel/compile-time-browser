@@ -152,14 +152,14 @@ def main():
     if with_report != reasons:
         raise RuntimeError("scalar: report attributes supplied native ownership")
 
-    # The smallest method-table consumer does not need Map effects or capture
-    # ownership yet. Its ordinary property callee still lacks a complete proof.
+    # Complete host analysis now identifies the actual current uncaptured
+    # getter. Its per-call evidence alone does not supply native ownership.
     ir, _, _ = prepared["plain_table"]
     report, _, _ = host.analyze(args.opt, ir, host.manifest(args.opt, ir),
                                args.work / "plain-table-proof")
-    if (report["proved"] or report["reason"] != "unsupported provider behavior through `ctjs.call`"
-            or any(slot["proved_edges"] for slot in report["slots"])):
-        raise RuntimeError(f"plain_table: missing the ordinary callable boundary: {report}")
+    if (not report["proved"] or report["reason"]
+            or len(report["slots"]) != 1 or report["slots"][0]["proved_edges"] != 1):
+        raise RuntimeError(f"plain_table: missing the complete current getter proof: {report}")
 
     # This source has no remaining startup-prefix boundary. Its Map, closure
     # and publication still execute at runtime and do not yet have a native path.

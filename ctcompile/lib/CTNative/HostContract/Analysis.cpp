@@ -52,6 +52,17 @@ std::string analyzer::environmentProblem() {
             }
             return;
         }
+        if (llvm::isa<ctjs::CallOp>(operation) || (llvm::isa<ctjs::CallDirectOp>(operation) &&
+                                                   llvm::cast<ctjs::CallDirectOp>(operation)
+                                                       .getCalleeValue()
+                                                       .getDefiningOp<ctjs::GetPropertyOp>())) {
+            if (auto edge = propertyCall(operation)) {
+                checkedCalls.push_back(*edge);
+            } else {
+                reject("property call lacks a current uncaptured source getter proof");
+            }
+            return;
+        }
         if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) {
             if (!exactCall(call)) { reject("direct call lacks exact source callable identity"); }
             return;
@@ -156,6 +167,7 @@ HostContractAnalysis::HostContractAnalysis(mlir::ModuleOp module, const HostCont
             }
         }
     }
+    if (refusal.empty()) { checkedCalls = std::move(analysis.checkedCalls); }
 }
 
 const HostSlotEdge * HostContractAnalysis::property(ctjs::GetPropertyOp read) const {
@@ -164,6 +176,13 @@ const HostSlotEdge * HostContractAnalysis::property(ctjs::GetPropertyOp read) co
         for (const HostSlotEdge & edge : report.edges) {
             if (edge.read == read) { return &edge; }
         }
+    }
+    return nullptr;
+}
+
+const HostCallableEdge * HostContractAnalysis::callable(mlir::Operation * call) const {
+    for (const HostCallableEdge & edge : checkedCalls) {
+        if (edge.call == call) { return &edge; }
     }
     return nullptr;
 }

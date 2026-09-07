@@ -45,6 +45,14 @@ ctjs::FuncOp analyzer::target(ctjs::CallDirectOp call) const {
 ctjs::FuncOp analyzer::callable(mlir::Value value, unsigned depth) {
     if (!value || depth > 64 || !step() || ambiguousFunctions) { return {}; }
     if (auto made = value.getDefiningOp<ctjs::CreateClosureOp>()) {
+        // A numeric index names a function only inside the enclosing closure's
+        // source program. The importer supplies this activation's callee;
+        // arbitrary values cannot establish that program identity.
+        auto scope = made->getParentOfType<ctjs::FuncOp>();
+        if (!scope || scope.getBody().empty() || scope.getBody().front().getNumArguments() < 3 ||
+            made.getEnclosingClosure() != scope.getBody().front().getArgument(2)) {
+            return {};
+        }
         return made.getFunction() >= 0 ? functions.lookup(static_cast<unsigned>(made.getFunction()))
                                        : ctjs::FuncOp{};
     }
@@ -78,6 +86,109 @@ bool analyzer::exactCall(ctjs::CallDirectOp call) {
            closedCallableProblem(function, module).empty();
 }
 
+ctjs::SetPropertyOp analyzer::currentWrite(ctjs::GetPropertyOp read, unsigned depth) {
+    if (depth > 64 || !step()) { return {}; }
+    const auto owner = object(read.getObject(), depth + 1);
+    const auto key = keyOf(read.getKey());
+    if (!owner || !ordinaryKey(key)) { return {}; }
+    ctjs::SetPropertyOp latest;
+    bool uncertain = false;
+    module.walk([&](ctjs::SetPropertyOp write) {
+        if (!step() || keyOf(write.getKey()) != key ||
+            object(write.getObject(), depth + 1) != owner) {
+            return;
+        }
+        if (before(write, read)) {
+            if (!latest || before(latest, write)) {
+                latest = write;
+            } else if (!before(write, latest)) {
+                uncertain = true;
+            }
+        } else if (!before(read, write) && active(write)) {
+            uncertain = true;
+        }
+    });
+    return latest && !uncertain ? latest : ctjs::SetPropertyOp{};
+}
+
+std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operation) {
+    if (!step()) { return {}; }
+    mlir::Value callee, receiver;
+    auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
+    if (direct) {
+        if (!direct.getArgs().empty() ||
+            !llvm::isa_and_nonnull<ctjs::UndefinedAttr>(primitive(direct.getNewTarget()))) {
+            return {};
+        }
+        callee = direct.getCalleeValue();
+        receiver = direct.getReceiver();
+    } else if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation)) {
+        if (!call.getArgs().empty()) { return {}; }
+        callee = call.getCallee();
+        receiver = call.getReceiver();
+    } else {
+        return {};
+    }
+    auto read = callee.getDefiningOp<ctjs::GetPropertyOp>();
+    if (!read || !before(read, operation)) { return {}; }
+    auto write = currentWrite(read);
+    auto closure =
+        write ? write.getValue().getDefiningOp<ctjs::CreateClosureOp>() : ctjs::CreateClosureOp{};
+    auto function = closure ? callable(closure.getResult()) : ctjs::FuncOp{};
+    if (!function || function.getUpvalueCount() != 0 || !closure.getUpvalues().empty() ||
+        !llvm::hasSingleElement(function.getBody()) ||
+        function.getBody().front().getNumArguments() != 3 ||
+        (direct && target(direct) != function)) {
+        return {};
+    }
+    auto enclosingThis = closure.getEnclosingThis().getDefiningOp<ctjs::ConstantOp>();
+    if (!enclosingThis || !llvm::isa<ctjs::UndefinedAttr>(enclosingThis.getValue())) { return {}; }
+    const auto owner = object(read.getObject());
+    if (!owner || object(receiver) != owner) { return {}; }
+    // The first exported callable slice is an inert, literal-return getter.
+    // Do not infer a receiver convention, argument-window behavior or captured
+    // environment from a symbol or from a successful startup invocation.
+    for (mlir::BlockArgument argument : function.getBody().front().getArguments()) {
+        for (mlir::Operation * user : argument.getUsers()) {
+            if (!step() || !llvm::isa<ctjs::RootOp>(user)) { return {}; }
+        }
+    }
+    bool returned = false;
+    for (mlir::Operation & body : function.getBody().front()) {
+        if (!step()) { return {}; }
+        if (auto result = llvm::dyn_cast<ctjs::ReturnOp>(body)) {
+            auto constant = result.getValue().getDefiningOp<ctjs::ConstantOp>();
+            if (!constant || !llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
+                                        ctjs::NullAttr, ctjs::UndefinedAttr>(constant.getValue())) {
+                return {};
+            }
+            returned = true;
+        } else if (!llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp,
+                              ctjs::RootOp>(body)) {
+            return {};
+        }
+    }
+    if (!returned) { return {}; }
+    for (mlir::OpOperand & use : closure.getResult().getUses()) {
+        if (!step()) { return {}; }
+        if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+            (use.getOwner() == write.getOperation() && use.getOperandNumber() == 2)) {
+            continue;
+        }
+        return {};
+    }
+    for (mlir::OpOperand & use : read.getResult().getUses()) {
+        if (!step()) { return {}; }
+        if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+            (llvm::isa<ctjs::CallOp>(use.getOwner()) && use.getOperandNumber() == 0) ||
+            (llvm::isa<ctjs::CallDirectOp>(use.getOwner()) && use.getOperandNumber() == 2)) {
+            continue;
+        }
+        return {};
+    }
+    return HostCallableEdge{operation, read, write, closure, function};
+}
+
 bool analyzer::singleInvocation(ctjs::FuncOp function) {
     llvm::DenseSet<mlir::Operation *> visited;
     while (function && function != entry) {
@@ -107,27 +218,8 @@ ctjs::CreateObjectOp analyzer::object(mlir::Value value, unsigned depth) {
                                   : ctjs::CreateObjectOp{};
     }
     if (auto read = value.getDefiningOp<ctjs::GetPropertyOp>()) {
-        const auto owner = object(read.getObject(), depth + 1);
-        const auto key = keyOf(read.getKey());
-        if (!owner || !ordinaryKey(key)) { return {}; }
-        ctjs::SetPropertyOp latest;
-        bool uncertain = false;
-        module.walk([&](ctjs::SetPropertyOp write) {
-            if (!step() || keyOf(write.getKey()) != key ||
-                object(write.getObject(), depth + 1) != owner) {
-                return;
-            }
-            if (before(write, read)) {
-                if (!latest || before(latest, write)) {
-                    latest = write;
-                } else if (!before(write, latest)) {
-                    uncertain = true;
-                }
-            } else if (!before(read, write) && active(write)) {
-                uncertain = true;
-            }
-        });
-        return latest && !uncertain ? object(latest.getValue(), depth + 1) : ctjs::CreateObjectOp{};
+        auto write = currentWrite(read, depth + 1);
+        return write ? object(write.getValue(), depth + 1) : ctjs::CreateObjectOp{};
     }
     if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value)) {
         auto function = llvm::dyn_cast<ctjs::FuncOp>(argument.getOwner()->getParentOp());

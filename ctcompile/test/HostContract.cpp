@@ -38,6 +38,39 @@ module {
 }
 )MLIR";
 
+constexpr const char * callableFixture = R"MLIR(
+module {
+  ctjs.func @script$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %u = ctjs.constant #ctjs.undefined
+    %make = ctjs.create_closure %callee[1] this %u
+    %host = ctjs.create_object
+    ctjs.store_global "host", %host
+    %table = ctjs.call_direct @make$1(%u, %u, %make)
+    %slot = ctjs.constant #ctjs.string<"slot">
+    ctjs.set_property %host[%slot], %table
+    %alias = ctjs.load_global "host"
+    %owned = ctjs.get_property %alias[%slot]
+    %key = ctjs.constant #ctjs.string<"get">
+    %getter = ctjs.get_property %owned[%key]
+    %answer = ctjs.call %getter(%owned)
+    ctjs.store_global "trace", %answer
+    ctjs.return %u
+  }
+  ctjs.func private @make$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %u = ctjs.constant #ctjs.undefined
+    %getter = ctjs.create_closure %callee[2] this %u
+    %table = ctjs.create_object
+    %key = ctjs.constant #ctjs.string<"get">
+    ctjs.set_property %table[%key], %getter
+    ctjs.return %table
+  }
+  ctjs.func private @get$2(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %answer = ctjs.constant #ctjs.number<4631107791820423168>
+    ctjs.return %answer
+  }
+}
+)MLIR";
+
 int failures = 0;
 void check(bool value, const char * message) {
     if (value) { return; }
@@ -52,6 +85,119 @@ HostContract contractFor(mlir::ModuleOp module) {
     contract.roots = {{"host", {"slot"}}};
     contract.observations = {"trace"};
     return contract;
+}
+
+std::string replaced(std::string source, llvm::StringRef from, llvm::StringRef to) {
+    const auto offset = source.find(from.str());
+    if (offset == std::string::npos) { return {}; }
+    source.replace(offset, from.size(), to.str());
+    return source;
+}
+
+void checkCallables(mlir::MLIRContext & context) {
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(callableFixture, &context);
+    check(static_cast<bool>(module), "uncaptured exported getter fixture parses");
+    if (!module) { return; }
+    const auto contract = contractFor(*module);
+    ctjs::CallOp call;
+    ctjs::GetPropertyOp rootRead;
+    ctjs::CreateClosureOp closure;
+    module->walk([&](ctjs::CallOp operation) { call = operation; });
+    module->walk([&](ctjs::GetPropertyOp operation) {
+        if (operation.getObject().getDefiningOp<ctjs::LoadGlobalOp>()) { rootRead = operation; }
+    });
+    module->walk([&](ctjs::CreateClosureOp operation) {
+        if (operation.getFunction() == 2) { closure = operation; }
+    });
+    HostContractAnalysis query(*module, contract);
+    check(query.proved() && query.callables().size() == 1,
+          "complete environment proof includes the current exported getter call");
+    if (!query.proved()) { std::fprintf(stderr, "%s\n", query.reason().str().c_str()); }
+    const auto * edge = query.callable(call);
+    auto actualRead = edge ? edge->read : ctjs::GetPropertyOp{};
+    auto actualWrite = edge ? edge->write : ctjs::SetPropertyOp{};
+    check(edge && actualRead.getResult() == call.getCallee() && edge->closure == closure &&
+              actualWrite.getValue() == closure.getResult() &&
+              edge->function == module->lookupSymbol<ctjs::FuncOp>("get$2") &&
+              query.property(rootRead),
+          "call evidence retains the actual read, preceding write, closure and source body");
+    check(hostContractFingerprint(*module) == contract.moduleSha256,
+          "callee discovery leaves the fingerprinted source unchanged");
+    const unsigned steps = query.steps();
+    check(steps > 0 && steps < 10000, "callable proof charges a bounded traversal");
+    for (unsigned budget = 0; budget < steps; ++budget) {
+        HostContractAnalysis limited(*module, contract, budget);
+        check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                  limited.callables().empty() && !limited.callable(call) &&
+                  !limited.property(rootRead),
+              "every incomplete budget atomically withholds slot and callable evidence");
+    }
+    HostContractAnalysis exact(*module, contract, steps);
+    check(exact.proved() && exact.callable(call) && exact.steps() == steps,
+          "the exact charged completion budget reproduces the callable proof");
+    mlir::Builder builder(&context);
+    (*module)->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+    (*module)->setAttr("ctnative.host_callables", builder.getStringAttr("forged"));
+    HostContractAnalysis rerun(*module, contract);
+    check(rerun.proved() && rerun.callable(call) && rerun.callable(call)->closure == closure,
+          "forged callable reports are ignored and the current source closure is rederived");
+
+    auto getter = module->lookupSymbol<ctjs::FuncOp>("get$2");
+    auto returned = llvm::cast<ctjs::ReturnOp>(getter.getBody().front().getTerminator());
+    mlir::OpBuilder at(returned);
+    auto mutation =
+        ctjs::StoreGlobalOp::create(at, returned.getLoc(), "sideEffect", returned.getValue());
+    HostContractAnalysis stale(*module, contract);
+    check(!stale.proved() && stale.reason().contains("fingerprint") && stale.callables().empty() &&
+              !stale.callable(call),
+          "a late semantic mutation cannot reuse the earlier manifest");
+    HostContractAnalysis effectful(*module, contractFor(*module));
+    check(!effectful.proved() && !effectful.callable(call) && !effectful.property(rootRead),
+          "a fresh manifest and forged reports cannot authorize an effectful getter");
+    mutation.erase();
+
+    const auto checkVariant = [&](llvm::StringRef from, llvm::StringRef to, bool expected,
+                                  const char * message) {
+        auto variant =
+            mlir::parseSourceString<mlir::ModuleOp>(replaced(callableFixture, from, to), &context);
+        check(static_cast<bool>(variant), "callable variant parses");
+        if (!variant) { return; }
+        HostContractAnalysis result(*variant, contractFor(*variant));
+        check(result.proved() == expected &&
+                  (expected ? result.callables().size() == 1 : result.callables().empty()),
+              message);
+    };
+    checkVariant("ctjs.call %getter(%owned)", "ctjs.call_direct @get$2(%owned, %u, %getter)", true,
+                 "a direct property call requires the same exact current closure");
+    checkVariant("ctjs.call %getter(%owned)", "ctjs.call_direct @make$1(%owned, %u, %getter)",
+                 false, "a forged direct symbol cannot override the actual stored closure");
+    checkVariant("ctjs.call %getter(%owned)", "ctjs.call_direct @get$2(%owned, %owned, %getter)",
+                 false, "a property call cannot forge a constructor new-target");
+    checkVariant("ctjs.call %getter(%owned)", "ctjs.call %getter(%host)", false,
+                 "an unproved effective receiver does not get inferred from the target body");
+    checkVariant("ctjs.call %getter(%owned)", "ctjs.call %getter(%owned, %u)", false,
+                 "argument windows remain outside the first getter slice");
+    checkVariant("ctjs.set_property %table[%key], %getter", "ctjs.set_property %table[%key], %u",
+                 false, "a primitive field replacement cannot keep old callable evidence");
+    checkVariant("ctjs.return %answer", "ctjs.return %this", false,
+                 "a receiver observation cannot inherit the literal-getter proof");
+    checkVariant("%getter = ctjs.create_closure %callee[2]",
+                 "%getter = ctjs.create_closure %callee[9]", false,
+                 "an unknown numeric source identity refuses callable evidence");
+    checkVariant("%getter = ctjs.create_closure %callee[2] this %u",
+                 "%getter = ctjs.create_closure %callee[2] this %this", false,
+                 "a captured lexical receiver is outside the uncaptured getter slice");
+    checkVariant("%getter = ctjs.create_closure %callee[2] this %u",
+                 "%getter = ctjs.create_closure %u[2] this %u", false,
+                 "a numeric index cannot prove the source program of a forged enclosing closure");
+    checkVariant("%make = ctjs.create_closure %callee[1] this %u",
+                 "%make = ctjs.create_closure %u[1] this %u", false,
+                 "the factory also requires its creating activation's source program identity");
+    checkVariant("ctjs.set_property %table[%key], %getter",
+                 "ctjs.set_property %table[%key], %getter\n"
+                 "    ctjs.store_global \"escapedGetter\", %getter",
+                 false, "the stored closure cannot acquire an additional exported alias");
+    std::printf("host callable proof: %u charged steps and incomplete budgets checked\n", steps);
 }
 
 } // namespace
@@ -122,6 +268,7 @@ int main() {
     HostContractAnalysis missing(*module, contract);
     check(!missing.proved() && missing.reason().contains("observation"),
           "a missing declared output root refuses the contract");
+    checkCallables(context);
     if (failures == 0) { std::puts("host contract live proof queries passed"); }
     return failures == 0 ? 0 : 1;
 }

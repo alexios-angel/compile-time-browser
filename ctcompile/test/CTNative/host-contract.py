@@ -55,6 +55,10 @@ def main():
         "alias": "var host = {}; host.slot = 1; var alias = host; alias.slot = 42; var trace = host.slot;",
         "helper": "function publish(target) { target.slot = 42; } var host = {}; publish(host); var trace = host.slot;",
         "single_factory": "function make() { return {slot: 42}; } function once() { return make(); } var host = {}; host.slot = once().slot; var trace = host.slot;",
+        "getter": "var host = {}; function make() { return {get() { return 42; }}; } host.slot = make(); var trace = host.slot.get();",
+        "getter_alias": "var host = {}; function make() { return {get() { return 42; }}; } host.slot = make(); var alias = host; var trace = alias.slot.get();",
+        "getter_string": "var host = {}; function make() { return {get() { return 'owned'; }}; } host.slot = make(); var trace = host.slot.get();",
+        "getter_replaced": "var host = {}; function make() { return {get() { return 1; }}; } host.slot = make(); host.slot.get = function() { return 42; }; var trace = host.slot.get();",
         "before_write": "var host = {}; var trace = host.slot; host.slot = 42;",
         "replacement": "var host = {}; host.slot = 42; host = {}; var trace = host.slot;",
         "accessor": "var host = {get slot() { return 42; }}; var trace = host.slot;",
@@ -67,6 +71,16 @@ def main():
         "repeated_factory_escape": "function make() { return {}; } var host = {}; host.slot = 1; var a = make(); var b = make(); a.link = host; b.link.slot = 42; var trace = host.slot;",
         "repeated_factory": "function make() { return {}; } var host = {}; host.slot = 1; var a = make(); var b = make(); a.link = {slot: 42}; host.slot = b.link.slot; var trace = host.slot;",
         "repeated_wrapper": "function make() { return {}; } function again() { return make(); } var host = {}; host.slot = 1; var a = again(); var b = again(); a.link = {slot: 42}; host.slot = b.link.slot; var trace = host.slot;",
+        "getter_capture": "var host = {}; function make() { const value = 42; return {get() { return value; }}; } host.slot = make(); var trace = host.slot.get();",
+        "getter_this": "var host = {}; function make() { return {value: 42, get() { return this.value; }}; } host.slot = make(); var trace = host.slot.get();",
+        "getter_effect": "var side = 0; var host = {}; function make() { return {get() { side = 1; return 42; }}; } host.slot = make(); var trace = host.slot.get();",
+        "getter_arguments": "var host = {}; function make() { return {get() { return arguments.length; }}; } host.slot = make(); var trace = host.slot.get();",
+        "getter_nonfunction": "var host = {}; function make() { return {get: 42}; } host.slot = make(); var trace = host.slot.get();",
+        "getter_missing": "var host = {}; function make() { return {}; } host.slot = make(); var trace = host.slot.get();",
+        "getter_extra_arg": "var host = {}; function make() { return {get() { return 42; }}; } host.slot = make(); var trace = host.slot.get(17);",
+        "getter_detached": "var host = {}; function make() { return {get() { return 42; }}; } host.slot = make(); var detached = host.slot.get; var trace = detached();",
+        "getter_generator": "var host = {}; function make() { return {get: function*() { return 42; }}; } host.slot = make(); var trace = host.slot.get();",
+        "getter_async": "var host = {}; function make() { return {get: async function() { return 42; }}; } host.slot = make(); var trace = host.slot.get();",
     }
     prepared = {}
     for name, source in sources.items():
@@ -78,13 +92,13 @@ def main():
         run([args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(ir)])
         prepared[name] = ir
         contract = manifest(args.opt, ir, absent=("missing",) if name.startswith("absent_") else ())
-        positive = name in {"ordinary", "alias", "helper", "single_factory"}
+        positive = name in {"ordinary", "alias", "helper", "single_factory", "getter", "getter_alias", "getter_string", "getter_replaced"}
         report, _, _ = analyze(args.opt, ir, contract, args.work / f"{name}-check")
         if report["proved"] != positive:
             raise RuntimeError(f"{name}: wrong proof result: {report}")
         if positive:
             slot = report["slots"][0]
-            if slot["proved_edges"] != 1 or slot["source_writes"] != (2 if name == "alias" else 1):
+            if slot["proved_edges"] != (2 if name == "getter_replaced" else 1) or slot["source_writes"] != (2 if name == "alias" else 1):
                 raise RuntimeError(f"{name}: wrong publication flow: {slot}")
         elif any(slot["proved_edges"] for slot in report["slots"]):
             raise RuntimeError(f"{name}: a refusal exposed usable edges")
@@ -117,7 +131,7 @@ def main():
     exhausted, _, _ = analyze(args.opt, ir, contract, args.work / "budget", options="max-steps=0")
     if exhausted["proved"] or "budget" not in exhausted["reason"]:
         raise RuntimeError("budget exhaustion did not withhold proof")
-    print("host contract: 4 publication positives, 12 source refusals, stale/forged/provider/claim/budget controls passed")
+    print("host contract: 8 publication positives, 22 source refusals, stale/forged/provider/claim/budget controls passed")
 
 
 if __name__ == "__main__":

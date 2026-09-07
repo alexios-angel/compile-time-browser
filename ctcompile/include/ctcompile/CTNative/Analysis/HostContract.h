@@ -48,6 +48,17 @@ struct HostSlotEdge {
     ctjs::GetPropertyOp read;
 };
 
+// Evidence for this actual call, not a promise about future exported callers
+// or private visibility. The current own-data initializer stores this exact
+// uncaptured source closure. The original receiver and arguments remain live.
+struct HostCallableEdge {
+    mlir::Operation * call = nullptr;
+    ctjs::GetPropertyOp read;
+    ctjs::SetPropertyOp write;
+    ctjs::CreateClosureOp closure;
+    ctjs::FuncOp function;
+};
+
 struct HostSlotReport {
     std::string binding;
     std::string property;
@@ -75,11 +86,14 @@ public:
     [[nodiscard]] llvm::ArrayRef<HostSlotReport> slots() const { return reports; }
     [[nodiscard]] llvm::ArrayRef<ctjs::StoreGlobalOp> observations() const { return observed; }
     [[nodiscard]] const HostSlotEdge * property(ctjs::GetPropertyOp read) const;
+    [[nodiscard]] llvm::ArrayRef<HostCallableEdge> callables() const { return checkedCalls; }
+    [[nodiscard]] const HostCallableEdge * callable(mlir::Operation * call) const;
 
 private:
     std::string refusal;
     std::vector<HostSlotReport> reports;
     std::vector<ctjs::StoreGlobalOp> observed;
+    std::vector<HostCallableEdge> checkedCalls;
     unsigned workSteps = 0;
     bool budgetExhausted = false;
 };

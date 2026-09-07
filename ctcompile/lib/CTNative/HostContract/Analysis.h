@@ -23,11 +23,14 @@ struct analyzer {
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::ReturnOp>> returns;
     llvm::DenseMap<unsigned, ctjs::FuncOp> functions;
     llvm::DenseSet<mlir::Value> evaluating;
+    std::vector<HostCallableEdge> checkedCalls;
 
     analyzer(mlir::ModuleOp module, const HostContract & contract, unsigned steps);
     bool step();
     ctjs::FuncOp target(ctjs::CallDirectOp call) const;
     ctjs::FuncOp callable(mlir::Value value, unsigned depth = 0);
+    ctjs::SetPropertyOp currentWrite(ctjs::GetPropertyOp read, unsigned depth = 0);
+    std::optional<HostCallableEdge> propertyCall(mlir::Operation * call);
     ctjs::CreateObjectOp object(mlir::Value value, unsigned depth = 0);
     mlir::Attribute primitive(mlir::Value value, unsigned depth = 0);
     std::optional<bool> truth(mlir::Value value, unsigned depth = 0);
