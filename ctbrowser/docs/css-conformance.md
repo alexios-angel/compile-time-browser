@@ -43,7 +43,101 @@ wrong", which is what they always were.
 exactly (8 / 148 / 15 / 0 / 21 / 29), which is the check that the instrument
 itself did not move underneath the comparison.
 
-## 2. The baseline, 2026-09-03 — and where it stands now
+## 2. Where the two suites stand — 2026-09-07, evening
+
+Measured on the devbox against WPT `3f6b09ae`, four workers, engine at commit
+`636f1b3` on `ctbrowser-wpt`. §6 is the 2026-09-07 daytime re-measurement and
+the §2 heading below it is the 2026-09-03 baseline; all three are kept because
+the comparison is the instrument.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `css/cssom` | **54** | 115 | 6 | 0 | 17 | 29 | 221 |
+| `css/css-values` | **48** | 199 | 3 | 0 | 21 | 237 | 508 |
+
+Subtests: `css/cssom` **1,050 PASS** / 591 FAIL / 1 NOTRUN / 8 TIMEOUT;
+`css/css-values` **2,332 PASS** / 4,526 FAIL / 15 TIMEOUT.
+
+Zero crashes in either suite, as in every run since the first.
+
+| | 2026-09-03 | 2026-09-07 day | 2026-09-07 eve, `a790941` | 2026-09-07 eve, `636f1b3` |
+|---|---:|---:|---:|---:|
+| `css/cssom` files | 8 | 21 | 39 | **54** |
+| `css/cssom` subtests | 113 | 220 | 346 | **1,050** |
+| `css/css-values` files | 16 | 16 | 29 | **48** |
+| `css/css-values` subtests | 549 | 695 | 2,038 | **2,332** |
+
+**`css/cssom`'s passing subtests tripled in one step**, 346 to 1,050, and the
+single change behind most of it is not a CSS one: `el.style`'s declaration store
+was seeded once at wrapper construction, so `setAttribute("style", …)` — which
+writes the attribute directly and never touches the proxy — left every read
+answering with what the element had when it was wrapped.
+`cssom/serialize-values.html` is 697 subtests of exactly that shape.
+
+### What moved `css/cssom`, 39 -> 54 files
+
+* **`el.style` follows the attribute**, above, and a supported property that is
+  not set reads `""` rather than `undefined` — CSSOM 6.7.2's generated getters.
+* **A pseudo-element argument is not the element.** `getComputedStyle(el, "::x")`
+  took the second argument and threw it away. CSSOM splits it three ways and only
+  the first is "ignore it"; a colon-prefixed argument this engine does not style
+  reports an EMPTY declaration, which is 17 of `getComputedStyle-pseudo-with-
+  argument.html`'s 22 subtests and 6 of `-picker.html`'s 9. It costs one:
+  `::picker(select)` on a non-select expected `rgba(0, 0, 0, 0)` and now gets
+  `""`, which is the honest answer from an engine with no `::picker`.
+* **The automatic minimum size**, `min-width`/`min-height: auto`. Three things
+  preserve it and only one was implemented: a flex item did, a GRID item did not
+  (there is no grid box kind — `display: grid` lays out as a block, so the fact
+  is a declaration on the PARENT), and a specified `aspect-ratio` did not.
+  The rule also keyed on the text being empty, so it applied to the initial value
+  and not to an `auto` the author wrote — and that file asserts each element
+  twice, once each way.
+* **A computed `font-family` keeps its case.** `collapse_keyword` ASCII-lowercases,
+  which is right for `display: BLOCK` and wrong for every family name ever
+  written: `Twisty Tie` came back `twisty tie` on every element of every page
+  that names a font. That is a real difference in the css-parity dump, not only
+  in WPT.
+* **The CSSOM object model** — constructable sheets, `insertRule` on a grouping
+  rule, a MediaList that is a view of its text rather than a stored list, and an
+  adopted sheet reaching the author CSS in the order it was adopted in.
+
+### What moved `css/css-values`, 29 -> 48 files
+
+All of it is the value grammar and the serialization, and every row was verified
+against a scratch oracle replaying the suite's own assertions before it landed:
+
+* **A percentage with no calculation context is a syntax error**, not a value:
+  a percentage in an expression that answers with an angle, time, frequency or
+  resolution. All 12 of `percentage-without-context`.
+* **`rotate()`/`skew()`/`hue-rotate()` take an angle**, so a math function in one
+  of those positions that resolves to another type is invalid —
+  `rotate(min(0px))`, `rotate(tan(45deg))`. It was the LAST failing subtest in
+  three whole files.
+* **Canonical sum ordering**, CSS Values §10.13: percentage first, then the units
+  ASCII-sorted. `calc(10px + 1vmin + 10%)` serializes as
+  `calc(10% + 10px + 1vmin)`, which needed a second, symbolic evaluation basis
+  where `1em` and `1cqw` stay terms of their own.
+* **The property's half of the calculation context**: `border-left-width:
+  min(1px, 0%)` is invalid where `text-indent: min(1px, 0%)` is not.
+* **`progress()`, `ident()`, `inherit()`, `random-item()`** as real functions
+  with real argument grammars — three files had been passing VACUOUSLY, because
+  an unknown function failed the property grammar for the wrong reason.
+* **An unresolved comparison's arguments still simplify**:
+  `min(10% + 30px, 5em + 5%)` -> `min(10% + 30px, 5% + 5em)`.
+
+### What is still in front of `css/css-values`
+
+`attr()` is 243 subtests over two files and lives in
+`lib/Style/css/substitute.cpp`. `calc-size()` (52), `calc-mix()` (69),
+`random()` (62), `position()` (21) and the URL request modifiers (35) are
+unimplemented CSS Values 5 features and deliberate gaps. `calc-in-color-001`
+needs a `<color>` value model: `color` is `freeform` today and stored verbatim,
+so `rgba(calc(0%) calc(100%) calc(0%) / calc(10% * 10))` cannot compute to
+`rgb(0, 255, 0)`. The four-corner `/` shorthand serialization for
+`border-radius` and the two-component `background-position` are in
+`lib/Shell/bindings/computed_style.cpp`, not in the value code.
+
+## 2b. The baseline, 2026-09-03 — and where it stood then
 
 §6 is the 2026-09-07 re-measurement. In short: `css/cssom` 8 -> **21** files and
 113 -> **220** passing subtests; `css/css-values` stays at **16** files while its
