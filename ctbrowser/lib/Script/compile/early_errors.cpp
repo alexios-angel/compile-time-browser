@@ -70,7 +70,10 @@ inline constexpr list_kind nested = list_kind::block;
 // else - which is what makes them stop at a function boundary, as the
 // specification's parameterised grammar does.
 enum class frame_kind : std::uint8_t {
-    script,     // the top level: no return, no new.target, no super
+    // The top level: no `super`. `return` and `new.target` are the embedding
+    // contract's two deviations and are NOT refused here - see the notes on
+    // `nk::return_stmt` and `nk::new_target`.
+    script,
     function,   // function declaration or expression
     arrow,      // transparent to `new.target`, `super` and `this`
     method,     // a method, accessor or constructor: has a home object
@@ -1269,11 +1272,29 @@ private:
         case nk::num: check_number(idx); return;
 
         case nk::new_target:
-            // 16.1.1: a Script may not contain `new.target`; the grammar only
-            // admits it inside a function.
-            if (enclosing_non_arrow() == frame_kind::script) {
-                report("`new.target` outside a function", idx);
-            }
+            // NOT CHECKED, AND IT IS THE SAME DEVIATION AS TOP-LEVEL `return`
+            // ABOVE - the second half of one decision rather than a second one.
+            //
+            // 16.1.1 says a Script may not contain `new.target`: the grammar
+            // admits it only inside a function, exactly as it admits `return`
+            // only inside one. This engine's embedding contract is that the top
+            // level IS a function body - `run_result::returned` is what
+            // `return` at the top level hands back, and `unittests/js` compiles
+            // `return (expr);` for every expression it checks. Refusing
+            // `new.target` there while accepting `return` there refuses the
+            // engine's own calling convention halfway: `return String(new.target)`
+            // is a line in `unittests/js/vm_basics.cpp`, it is the shape a page's
+            // transpiled guard takes, and the VM answers it correctly with
+            // `undefined` - there is no constructor at the top level, which is
+            // what `undefined` means.
+            //
+            // The honest fix is the one the `return` note names: a `script_kind`
+            // that says "this source is a function body", passed by every
+            // embedder. Until there is one, these two agree.
+            //
+            // `super` below is NOT this case and stays refused. It needs a home
+            // object, which no top level has under any reading of the contract,
+            // and nothing in this engine's API hands one back.
             return;
 
         case nk::super_lit: {

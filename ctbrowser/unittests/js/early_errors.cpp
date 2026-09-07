@@ -242,10 +242,16 @@ int main() {
     accepted("do { continue; } while (0);");
     accepted("switch (0) { case 0: break; }");
     accepted("outer: while (0) { break outer; }");
-    accepted("outer: for (;;) { continue outer; }");
+    // COUNTED, AND NOT `for (;;)`. `accepted` COMPILES AND RUNS its source, so
+    // a body that always continues an endless loop does not come back - this
+    // pair was written `outer: for (;;) { continue outer; }` and hung the whole
+    // executable until ctest killed it at 1500 s. The counter is incremented in
+    // the BODY rather than the head, so the loop ends whether `continue` lands
+    // on the update or on the test.
+    accepted("var i = 0; outer: for (; i < 2; ) { ++i; continue outer; }");
     // A label on a labelled loop still names a loop, which is what makes this
     // legal - the label set is unwrapped rather than tested one deep.
-    accepted("a: b: for (;;) { continue a; }");
+    accepted("var j = 0; a: b: for (; j < 2; ) { ++j; continue a; }");
     accepted("block: { break block; }");
     // Two labels of one name in SEQUENCE are fine; only nesting is an error.
     accepted("a: ; a: ;");
@@ -254,8 +260,6 @@ int main() {
     // ================================================================
     // 7. `new.target` AND `super` OUTSIDE ANYTHING THAT HAS ONE
     // ================================================================
-    refused("new.target;");
-    refused("var f = () => new.target;");
     refused("super.x;");
     refused("super();");
     refused("function f() { super.x; }");
@@ -269,6 +273,16 @@ int main() {
     // contract, the way a compiled program hands a value back. See the note in
     // early_errors.cpp.
     answers("return 42;", "42");
+    // ...AND NEITHER IS `new.target`, for the same reason and in the same
+    // breath. 16.1.1 admits both only inside a function, this engine's top
+    // level IS a function body, and refusing one while accepting the other
+    // refuses the calling convention halfway - `return String(new.target)` is a
+    // line in unittests/js/vm_basics.cpp and it was a SyntaxError until this
+    // pair agreed. There is no constructor at the top level, which is exactly
+    // what `undefined` says.
+    answers("return String(new.target);", "undefined");
+    answers("var f = () => new.target; return String(f());", "undefined");
+    // `super` is NOT this case: it needs a home object, which no top level has.
 
     // ================================================================
     // 8. `delete` OF A PRIVATE MEMBER - 13.5.1.1

@@ -108,7 +108,22 @@ std::string context::to_string(value v) {
         }
         return out;
     }
-    if (v.is_callable()) { return "function"; }
+    // A FUNCTION CONVERTS THROUGH ITS `toString` LIKE ANYTHING ELSE, and this
+    // line said otherwise: `String(f)`, `'' + f` and `${f}` were all the bare
+    // word "function" whatever f was, so two different functions stringified
+    // ALIKE and a page could not tell them apart.
+    //
+    // `Function.prototype.toString` already hands back the real source text -
+    // `function_proto` carries the span and the program keeps its bytes - so
+    // the shortcut was not standing in for a missing answer, it was hiding one
+    // that was already there. It is what makes `f.toString()` and `String(f)`
+    // agree, which is what a library reading its own source relies on: p5's
+    // Friendly Error System, every `('' + fn).indexOf('native code')` feature
+    // probe, and the parameter-name scrapers that a DI container is built on
+    // all take the second spelling.
+    //
+    // A NATIVE still says `function () { [native code] }`, because that is what
+    // its `toString` returns and every engine says the same.
     // AN OBJECT CONVERTS THROUGH ITS OWN `toString`, then `valueOf`.
     //
     // That is ToPrimitive, and it is not a nicety: a class that defines
