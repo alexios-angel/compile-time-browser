@@ -41,6 +41,12 @@ PROGRAMS = {
     "boolean_catch_helper": (3, {"true42": 42, "false20": 20}),
     "string_catch_helper": (4, {"caught42": 42, "normal20": 20}),
     "protected_nothrow_callee": (3, {"caught42": 42, "normal20": 20}),
+    "protected_transitive_helper": (4, {"caught42": 42, "normal20": 20}),
+    "protected_boolean_helper": (3, {"caught42": 42, "normal20": 20}),
+    "protected_string_helper": (4, {"caught42": 42, "normal20": 20}),
+    "protected_effectful_helper": (3, {"caught42": 42, "counter": 1}),
+    "protected_mixed_callee": (4, {"caught42": 42, "caught40": 40}),
+    "protected_escaping_callee": (3, {"normal42": 42, "caught42": 42}),
     "effectful_catch_helper": (4, {"caught42": 42, "counter": 1}),
     "property_catch_helper": (3, {"caught42": 42}),
     "recursive_catch_helper": (3, {"caught42": 42}),
@@ -51,16 +57,25 @@ PROGRAMS = {
 POSITIVES = ("guarded", "two_sites", "continuation", "normal_return",
              "unconditional", "boolean_state", "finally_override", "boolean_payload",
              "string_payload", "boolean_value", "string_value", "string_sites", "numeric_bits",
-             "numeric_catch_helper", "boolean_catch_helper", "string_catch_helper")
+             "numeric_catch_helper", "boolean_catch_helper", "string_catch_helper",
+             "protected_nothrow_callee", "protected_transitive_helper",
+             "protected_boolean_helper", "protected_string_helper")
 TWO_THROW_SITES = ("two_sites", "finally_override", "boolean_value", "string_sites", "numeric_bits")
-STRING_LIFETIMES = ("string_value", "string_sites", "string_catch_helper")
-DEFAULT_OPTIMIZATIONS = ("guarded", "string_value", "numeric_catch_helper", "string_catch_helper")
+STRING_LIFETIMES = ("string_value", "string_sites", "string_catch_helper",
+                    "protected_string_helper")
+DEFAULT_OPTIMIZATIONS = ("guarded", "string_value", "numeric_catch_helper", "string_catch_helper",
+                         "protected_nothrow_callee", "protected_string_helper")
 CALLEE_EFFECT_REFUSALS = ("effectful_catch_helper", "property_catch_helper",
-                         "recursive_catch_helper", "helper_depth_limit", "helper_work_limit")
+                         "recursive_catch_helper", "helper_depth_limit", "helper_work_limit",
+                         "protected_effectful_helper")
 CPP_HELPER_CALLS = {
     "numeric_catch_helper": {"increment_1": 2, "addTwo_2": 1},
     "boolean_catch_helper": {"invert_1": 1},
     "string_catch_helper": {"decorate_1": 2},
+    "protected_nothrow_callee": {"incrementProtected_1": 1},
+    "protected_transitive_helper": {"incrementProtected_1": 2, "twiceProtected_2": 1},
+    "protected_boolean_helper": {"invertProtected_1": 1},
+    "protected_string_helper": {"decorateProtected_1": 2},
 }
 IMPORT_REFUSALS = ("catch_finally", "nested_catch")
 IMPORT_REASON = "more than one protected region in a function"
@@ -230,12 +245,12 @@ def budget_controls(args, prepared):
             raise RuntimeError(f"{name}: refusal did not exercise the exception work budget")
 
 
-def callee_mutation_controls(args, prepared):
-    # Start from the source-derived module that just admitted 4/4 functions.
+def callee_mutation_controls(args, prepared, name, helper_name, denominator):
+    # Start from a source-derived module that just admitted every function.
     # A late helper body change revokes the proof even while the resolver's
     # old report and a forged nonthrowing marker remain attached.
     text = prepared.read_text()
-    helper = re.search(r"ctjs\.func private @increment\$1\b[\s\S]*?"
+    helper = re.search(r"ctjs\.func private @" + re.escape(helper_name) + r"\$1\b[\s\S]*?"
                        r"(?P<returned>^\s*ctjs\.return (?P<value>%\w+))", text, re.M)
     if not helper:
         raise RuntimeError("callee mutation control lost its increment helper")
@@ -243,15 +258,101 @@ def callee_mutation_controls(args, prepared):
     text = text[:helper.start("returned")] + insertion + text[helper.start("returned"):]
     text = text.replace("upvalue_count = 0 : i32",
                         "ctnative.nothrow = true, upvalue_count = 0 : i32")
-    changed = args.work / "callee-mutated.prepared.mlir"
+    changed = args.work / f"{name}.callee-mutated.prepared.mlir"
     changed.write_text(text)
-    for name in ("callee-mutated", "callee-mutated-rerun"):
-        output = lower(args, changed, name)
-        refused(prepared, output, 4, name)
+    for label in (f"{name}.callee-mutated", f"{name}.callee-mutated-rerun"):
+        output = lower(args, changed, label)
+        refused(prepared, output, denominator, label)
         reason = "native try/catch cannot prove a nonthrowing operation: `ctjs.call_direct`"
         if reason not in output.read_text():
-            raise RuntimeError(f"{name}: late helper mutation retained a stale effect proof")
+            raise RuntimeError(f"{label}: late helper mutation retained a stale effect proof")
         changed = output
+
+
+def register_flow_controls(args):
+    # These small IR controls supplement the source programs with two edges
+    # from the same terminator to the same successor, and an exhausted bounded
+    # query. Keep the indirect call and change only its incoming value; stale
+    # resolver reports and forged effect markers cannot name the changed call.
+    prefix = '''module {
+  ctjs.func @_script_$0(%this: !ctjs.value, %target: !ctjs.value, %enclosing: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %undefined = ctjs.constant #ctjs.undefined
+    %closure = ctjs.create_closure %enclosing[1] this %undefined
+    ctjs.store_global "checkedHelper", %closure
+    %loaded = ctjs.load_global "checkedHelper"
+    %condition = ctjs.truthy %undefined
+'''
+    suffix = '''    %result = ctjs.call %forwarded(%undefined)
+    ctjs.return %result
+  }
+  ctjs.func @checkedHelper$1(%this: !ctjs.value, %target: !ctjs.value, %enclosing: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
+    %value = ctjs.constant #ctjs.number<4631107791820423168>
+    ctjs.return %value
+  }
+}
+'''
+    branch = ("    cf.cond_br %condition, ^join(%loaded : !ctjs.value), "
+              "^join(%loaded : !ctjs.value)\n"
+              "  ^join(%forwarded: !ctjs.value):\n")
+    source = args.work / "register-flow-same.mlir"
+    source.write_text(prefix + branch + suffix)
+    result = args.work / "register-flow-same.resolved.mlir"
+    run([args.opt, str(source), "--ctjs-resolve-globals", "-o", str(result)])
+    positive = result.read_text()
+    if (operation_count(positive, "call_direct") != 1 or operation_count(positive, "call") or
+            "ctjs.func private @checkedHelper$1" not in positive):
+        raise RuntimeError("same-successor register flow did not prove its common origin")
+    report = positive.splitlines()[0]
+    if not report.startswith("module attributes {ctjs.globals = "):
+        raise RuntimeError("register-flow control lost its resolver report")
+    changed = prefix + branch.replace("^join(%loaded", "^join(%undefined", 1) + suffix
+    changed = changed.replace("module {", report, 1).replace(
+        "upvalue_count = 0 : i32", "ctnative.nothrow = true, upvalue_count = 0 : i32")
+    for name in ("register-flow-mixed", "register-flow-mixed-rerun"):
+        source = args.work / f"{name}.mlir"
+        source.write_text(changed)
+        result = args.work / f"{name}.resolved.mlir"
+        run([args.opt, str(source), "--ctjs-resolve-globals", "-o", str(result)])
+        changed = result.read_text()
+        if (operation_count(changed, "call_direct") or operation_count(changed, "call") != 1 or
+                "ctjs.func private @checkedHelper$1" in changed or
+                "another or unproved incoming value" not in changed):
+            raise RuntimeError(f"{name}: mixed incoming register retained a callee proof")
+    chain = "    cf.br ^chain0(%loaded : !ctjs.value)\n"
+    for index in range(2100):
+        chain += (f"  ^chain{index}(%v{index}: !ctjs.value):\n"
+                  f"    cf.br ^chain{index + 1}(%v{index} : !ctjs.value)\n")
+    chain += "  ^chain2100(%forwarded: !ctjs.value):\n"
+    source = args.work / "register-flow-budget.mlir"
+    source.write_text(prefix + chain + suffix)
+    result = args.work / "register-flow-budget.resolved.mlir"
+    run([args.opt, str(source), "--ctjs-resolve-globals", "-o", str(result)])
+    text = result.read_text()
+    if (operation_count(text, "call_direct") or operation_count(text, "call") != 1 or
+            "ctjs.func private @checkedHelper$1" in text or
+            "register-flow work budget was exhausted" not in text):
+        raise RuntimeError("register-flow work exhaustion retained a partial callee proof")
+
+
+def checked_callee_source_flow(raw, prepared, name):
+    if not name.startswith("protected_"):
+        return
+    before, after = raw.read_text(), prepared.read_text()
+    if name in POSITIVES:
+        for operation in ("push_handler", "catch_land", "pop_handler", "check", "throw"):
+            if operation_count(before, operation) != operation_count(after, operation):
+                raise RuntimeError(f"{name}: resolving a checked callee changed ctjs.{operation}")
+        if operation_count(after, "call"):
+            raise RuntimeError(f"{name}: protected helper retained an unresolved call")
+    if name == "protected_mixed_callee":
+        if (not operation_count(after, "call") or
+                re.search(r"ctjs\.call_direct @(?:increment|decrement)Protected\$", after) or
+                "another or unproved incoming value" not in after):
+            raise RuntimeError("mixed protected callee was named from one incoming edge")
+    if name == "protected_escaping_callee":
+        if ("ctjs.func private @identityProtected$1" in after or
+                "the binding is used by ctjs.store_global" not in after):
+            raise RuntimeError("handler-only callee escape retained a closed helper")
 
 
 def generated_helper_limits(fixtures):
@@ -378,6 +479,7 @@ def main():
     if not args.translate or not args.opt:
         parser.error("--translate and --opt are required unless --oracle-only")
     reference, compilers, nm = execution_tools(args)
+    register_flow_controls(args)
     report = []
     for name, (denominator, expected) in PROGRAMS.items():
         source = args.fixtures / f"{name}.js"
@@ -387,6 +489,7 @@ def main():
         raw, imported = imported_program(args, source, name, denominator,
                                          skipped=name in IMPORT_REFUSALS)
         prepared = prepare(args, raw, name)
+        checked_callee_source_flow(raw, prepared, name)
         output = lower(args, prepared, name)
         if name in POSITIVES:
             # The overriding finally also leaves an unreachable synthetic
@@ -400,7 +503,9 @@ def main():
             if name == "guarded":
                 budget_controls(args, prepared)
             if name == "numeric_catch_helper":
-                callee_mutation_controls(args, prepared)
+                callee_mutation_controls(args, prepared, name, "increment", denominator)
+            if name == "protected_nothrow_callee":
+                callee_mutation_controls(args, prepared, name, "incrementProtected", denominator)
             if name in DEFAULT_OPTIMIZATIONS:
                 default_name = name + "-default"
                 defaults = lower(args, prepared, default_name, default_options=True)
@@ -427,7 +532,7 @@ def main():
     (args.work / "native.json").write_text(json.dumps(report, indent=2) + "\n")
     print(f"native exceptions: {len(POSITIVES)} complete native programs plus numeric/string defaults, "
           "throw-site state/two throws/catch continuation/normal return/unconditional "
-          "throw/boolean and owning string payloads/state/closed catch helpers/"
+          "throw/boolean and owning string payloads/state/closed catch and protected helpers/"
           "finally override/NaN/negative zero; "
           "Node and interpreter agree with GCC/Clang explicit/deduced, no VM; "
           f"owning string ASan/UBSan/lifetime checks; {len(PROGRAMS) - len(POSITIVES)} "

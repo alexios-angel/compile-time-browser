@@ -409,7 +409,8 @@ function protectedNothrow(flag) {
     var mark = 1;
     try {
         // The complete register CFG carries this global callee through a
-        // check. Resolving that flow remains a separate proof obligation.
+        // check. The resolver proves every incoming definition before naming
+        // this call; native admission proves the helper cannot throw.
         mark = incrementProtected(9);
         if (flag) { throw 32; }
         return mark + 10;
@@ -419,6 +420,110 @@ function protectedNothrow(flag) {
 }
 var caught42 = protectedNothrow(true);
 var normal20 = protectedNothrow(false);
+
+//--- protected_transitive_helper.js
+function incrementProtected(value) { return value + 1; }
+function twiceProtected(value) { return incrementProtected(incrementProtected(value)); }
+function protectedTransitive(flag) {
+    var mark = 1;
+    try {
+        mark = twiceProtected(8);
+        if (flag) { throw 32; }
+        return mark + 10;
+    } catch (value) {
+        return mark + value;
+    }
+}
+var caught42 = protectedTransitive(true);
+var normal20 = protectedTransitive(false);
+
+//--- protected_boolean_helper.js
+function invertProtected(value) { return !value; }
+function protectedBoolean(flag) {
+    var mark = true;
+    try {
+        mark = invertProtected(flag);
+        if (flag) { throw true; }
+        return mark ? 20 : -1;
+    } catch (value) {
+        return value && !mark ? 42 : -1;
+    }
+}
+var caught42 = protectedBoolean(true);
+var normal20 = protectedBoolean(false);
+
+//--- protected_string_helper.js
+function decorateProtected(value) { return "owned: " + value; }
+function protectedString(flag) {
+    var mark = "entry";
+    try {
+        mark = decorateProtected("payload beyond small string storage with embedded\u0000data");
+        if (flag) { throw mark; }
+        return "normal";
+    } catch (value) {
+        var saved = value;
+        value = decorateProtected("replacement after the independent catch copy");
+        return saved;
+    }
+}
+function inspectProtectedString(flag) {
+    var saved = protectedString(flag);
+    var churn = protectedString(!flag);
+    var expected = "owned: payload beyond small string storage with embedded\u0000data";
+    var caught = (saved === expected) * (churn === "normal");
+    var normal = (saved === "normal") * (churn === expected);
+    return flag * caught * 42 + (!flag) * normal * 20;
+}
+var caught42 = inspectProtectedString(true);
+var normal20 = inspectProtectedString(false);
+
+//--- protected_effectful_helper.js
+var counter = 0;
+function mutateProtected(value) { counter = counter + 1; return value; }
+function protectedEffectful() {
+    var mark = 0;
+    try {
+        mark = mutateProtected(10);
+        throw 32;
+    } catch (value) {
+        return mark + value;
+    }
+}
+var caught42 = protectedEffectful();
+
+//--- protected_mixed_callee.js
+function incrementProtected(value) { return value + 1; }
+function decrementProtected(value) { return value - 1; }
+function protectedMixed(flag) {
+    var mark = 10;
+    try {
+        var chosen = flag ? incrementProtected : decrementProtected;
+        mark = chosen(9);
+        throw 32;
+    } catch (value) {
+        return mark + value;
+    }
+}
+var caught42 = protectedMixed(true);
+var caught40 = protectedMixed(false);
+
+//--- protected_escaping_callee.js
+var escaped = 0;
+function identityProtected(value) { return value; }
+function protectedEscaping(flag) {
+    try {
+        var chosen = identityProtected;
+        if (flag) { throw 1; }
+        return chosen(42);
+    } catch (value) {
+        // The helper is live in a handler register snapshot and escapes only
+        // through this edge. Naming its normal call cannot close the helper.
+        escaped = chosen;
+        return 42;
+    }
+}
+var normal42 = protectedEscaping(false);
+var caught42 = protectedEscaping(true);
 
 //--- effectful_catch_helper.js
 var counter = 0;

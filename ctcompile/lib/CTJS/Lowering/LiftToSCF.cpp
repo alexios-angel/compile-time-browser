@@ -29,6 +29,7 @@
 // a public class implementing the seven CFGToSCFInterface methods against the
 // SCF dialect, and `mlir::transformCFGToSCF` is a public function. This pass is
 // the walk they are missing and nothing more.
+#include "Globals/RegisterFlow.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTJS/Transforms/Passes.h"
@@ -179,16 +180,16 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
                 mlir::Operation * handler = nullptr;
                 bool primitiveCandidate = true;
                 body.getFunctionBody().walk([&](mlir::Operation * operation) {
-                    // A resolved call in the catch has no importer status
-                    // edges around its callee load. Preserve that candidate
-                    // too; the native consumer still proves the live target
-                    // and every transitive operation unable to throw. An
-                    // unresolved protected call keeps the existing path.
+                    // A protected callee load travels through status vectors.
+                    // Preserve the complete vectors when all terminal uses are
+                    // resolved callees. Native admission still proves the live
+                    // target and every transitive operation unable to throw.
                     if (auto load = llvm::dyn_cast<LoadGlobalOp>(operation)) {
-                        if (!load.getResult().use_empty() &&
-                            llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
-                                return llvm::isa<CallDirectOp>(use.getOwner()) &&
-                                       use.getOperandNumber() == 2;
+                        auto uses = globals_detail::registerFlowUses(load.getResult());
+                        if (uses && !uses->empty() &&
+                            llvm::all_of(*uses, [](mlir::OpOperand * use) {
+                                return llvm::isa<CallDirectOp>(use->getOwner()) &&
+                                       use->getOperandNumber() == 2;
                             })) {
                             return mlir::WalkResult::advance();
                         }

@@ -4,8 +4,8 @@
 acyclic importer handler and emits real C++ `throw` and typed `catch`, with
 number, boolean or owning string payloads and catch state. Each handler must
 have one proved payload type; mixed, null, undefined and object payloads refuse.
-Catch bodies can call closed nonthrowing primitive helpers, including transitive
-calls and owning string arguments/results. Recovery is transactional;
+Protected and catch bodies can call closed nonthrowing primitive helpers,
+including transitive calls and owning string arguments/results. Recovery is transactional;
 type/effect admission must prove every other protected operation cannot throw a
 JavaScript value. Throwing callees, nested handlers and finally completions
 remain further work. This is separate from
@@ -107,7 +107,8 @@ annotation.
 1. `ctjs-lift-to-scf` preserves primitive handler candidates before ordinary
    simplification can erase register correspondence. The syntactic filter
    excludes unresolved calls, closures, properties, allocation, cells and global
-   effects. It preserves resolved direct calls and callee-only global loads;
+   effects. It preserves resolved direct calls and callee-only global loads,
+   including their forwarding through complete `ctjs.check` register vectors;
    other functions keep the existing simplification needed by closure lifting.
    This filter grants no type/effect proof. Native recovery in
    [Exceptions/Recovery.cpp](../lib/CTNative/Lowering/Exceptions/Recovery.cpp)
@@ -288,11 +289,59 @@ summarized Map mutation describes the path after normal return; it says nothing
 about a catch continuation after allocation, mutation or callback failure.
 Keep that distinction even after C++ exceptions are available.
 
+## Checked protected helper boundary, 2026-09-07
+
+Private nonthrowing primitive helpers loaded inside `try` now resolve through
+the importer's register vectors. The previously refused `protected_nothrow_callee`
+source admits **3/3 functions**, with caught 42 and normal 20. The resolver
+follows successor operands to block arguments, including both normal and
+handler snapshots, to find every terminal use of the loaded closure. Before
+naming a call, a separate backward query requires every incoming definition to
+be that exact load. Both queries have a 4096-step limit. Mixed incoming values,
+unknown origins and exhausted work retain the indirect call and open target.
+The query does not merge distinct loads merely because their binding names agree.
+
+The resolver preserves the call's actual callee SSA operand and every status
+edge. The structuring preservation filter follows the same register uses, so
+callee-only loads no longer cause it to simplify away complete register vectors.
+Recovery and the existing live transitive effect query still prove each protected
+operation unable to throw a JavaScript value before discarding any check.
+An unused handler scratch argument does not publish the closure; a closure
+returned or stored through that argument does keep its target open.
+
+The source gate passes **20 complete programs, 52/52 functions and 39
+observations** across Node, interpreter and standalone explicit/deduced GCC 13
+and Clang 18 output, with no VM symbols. The four newly admitted programs cover
+numeric and transitive numeric calls, boolean results, and owning string results
+that survive a later helper invocation and the catch's destruction. Protected
+numeric/string cases also pass default native optimizations. Both generated
+forms of the string case pass ASan/UBSan, use-after-scope, stack-use-after-return
+and leak checks.
+
+All **22 source refusals** retain their original exception operation counts and
+source denominators. New controls cover a protected global-mutating helper,
+different helpers joining into one callee register, and a closure escaping only
+through a handler snapshot. A late protected-helper body mutation is rechecked
+with its old resolver report and a forged `ctnative.nothrow` marker still present;
+lowering and rerunning lowering both refuse. The raw-IR controls cover both arms
+of a branch entering the same successor, a changed incoming value with a stale
+resolver report, reruns, and 2100 forwarding blocks that exceed the register-flow
+query budget. Existing helper depth/work, recovery-budget and executed
+wrong-state controls continue to pass.
+
+**Next:** a throwing callee still needs an exceptional call-region
+edge carrying its pre-call register snapshot and an owning payload type through
+the closed native component. Publish the assignment result only on normal
+return. The existing `try_exit` cannot represent unwinding before that
+completion. Uncaught entry points need an explicit adapter; general finally,
+nested handlers, mixed/object payloads and callback/provider effects remain
+separate work. No native Bootstrap coverage increase is claimed from this gate.
+
 ## Closed catch helper boundary, 2026-09-07
 
-The source importer exposes an earlier prerequisite than exception unwinding:
+At this checkpoint, the source importer exposed an earlier prerequisite than exception unwinding:
 a helper name loaded inside `try` flows through `ctjs.check` register vectors.
-`ctjs-resolve-globals` currently treats that use as open and leaves its call
+`ctjs-resolve-globals` treated that use as open and left its call
 indirect. Ordinary CFG simplification then erases correspondence needed for
 exception recovery. The preserved `protected_nothrow_callee` specimen records
 this boundary even though its helper performs only numeric addition.
@@ -324,7 +373,7 @@ All **20 source refusals**, mutation/rerun controls and finite query limits reta
 the original exception operations and source-function accounting. The existing
 recovery-budget and executed wrong-state controls still pass.
 
-**Next:** preserve and resolve the checked callee value flow before adding a
+**Next at that checkpoint:** preserve and resolve the checked callee value flow before adding a
 throwing protected call. That call then needs an exceptional region edge with
 the pre-call register snapshot, an owning payload type propagated through its
 closed native component and assignment publication only on normal return.

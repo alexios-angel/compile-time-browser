@@ -180,6 +180,7 @@
 // (CTJSOps.td, ctjs.call_direct); the pass declaration IS TableGen
 // (Passes.td); only the analysis is here.
 #include "Globals/Effects.h"
+#include "Globals/RegisterFlow.h"
 #include "ctcompile/CTJS/IR/CTJSAttrs.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
@@ -719,9 +720,17 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             }
             std::size_t rewritten = 0;
             for (LoadGlobalOp load : facts.loads) {
-                llvm::SmallVector<mlir::OpOperand *> uses;
-                for (mlir::OpOperand & use : load.getResult().getUses()) { uses.push_back(&use); }
-                for (mlir::OpOperand * use : uses) {
+                // Importer checks retain the complete register file. Follow
+                // both vectors to discover all escaping uses, then prove all
+                // incoming definitions before naming a forwarded call. A
+                // closure sharing a join with another value is not that value.
+                auto uses = registerFlowUses(load.getResult());
+                if (!uses) {
+                    if (!open) { open = "the binding's register-flow work budget was exhausted"; }
+                    continue;
+                }
+                llvm::SmallVector<CallOp> calls;
+                for (mlir::OpOperand * use : *uses) {
                     mlir::Operation * user = use->getOwner();
                     // Already resolved by an earlier run: the callee VALUE of a
                     // call_direct naming this very function.
@@ -733,6 +742,13 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                     auto call = mlir::dyn_cast<CallOp>(user);
                     if (!call || use->getOperandNumber() != 0) {
                         if (!open) { open = "the binding is used by " + describe(user); }
+                        continue;
+                    }
+                    if (!registerFlowHasOrigin(call.getCallee(), load.getResult())) {
+                        if (!open) {
+                            open = "the callee register has another or unproved incoming value (" +
+                                   describe(user) + ")";
+                        }
                         continue;
                     }
                     if (call.getArgs().size() > parameters) {
@@ -765,7 +781,11 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                         }
                         continue;
                     }
-
+                    calls.push_back(call);
+                }
+                // Do not erase a call while its other operand uses are still
+                // in the census above (f(f) is an escape as well as a call).
+                for (CallOp call : calls) {
                     mlir::OpBuilder at(call);
                     const auto value_type = ValueType::get(context);
                     const mlir::Value undefined = ConstantOp::create(at, call.getLoc(), value_type,
@@ -775,7 +795,7 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                     auto direct = CallDirectOp::create(
                         at, call.getLoc(), value_type,
                         mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()), call.getReceiver(),
-                        undefined, load.getResult(), arguments,
+                        undefined, call.getCallee(), arguments,
                         /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
                     call.getResult().replaceAllUsesWith(direct.getResult());
                     call.erase();

@@ -17,6 +17,7 @@ add_library(ctcompile-ctjs-lowering
   EmitCBlockArguments.cpp
   LiftToSCF.cpp
   ResolveGlobals.cpp
+  Globals/RegisterFlow.cpp
   Globals/Effects.cpp)
 ctcompile_target(ctcompile-ctjs-lowering)
 add_dependencies(ctcompile-ctjs-lowering MLIRCTJSOpsIncGen CTJSTransformsPassIncGen)
