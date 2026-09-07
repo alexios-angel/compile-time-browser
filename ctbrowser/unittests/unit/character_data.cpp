@@ -265,7 +265,7 @@ void test_the_five_methods_edit_one_string() {
     both("node.appendData(undefined); return node.data;", "testundefined");
     both("node.insertData(0, 'X'); return node.data;", "Xtest");
     both("node.insertData(4, 'X'); return node.data;", "testX");
-    both("node.deleteData(1, 2); return node.data;", "tst");
+    both("node.deleteData(1, 2); return node.data;", "tt");
     both("node.deleteData(0, 4); return node.data;", "");
     both("node.replaceData(1, 1, 'waddup'); node.replaceData(1, 1, 'yup'); return node.data;",
          "tyupaddupst");

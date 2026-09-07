@@ -371,6 +371,19 @@ void dom_bindings::install(context & cx) {
     install_timers(cx);
     install_resources(cx);
     install_navigation(cx);
+    // AND THE INTERFACE OBJECTS, LAST AND EAGERLY.
+    //
+    // `ensure_dom_interfaces` is a no-op until `event_target_prototype_` exists,
+    // which is why it cannot run earlier than this; everything else about it is
+    // lazy, and lazily is not good enough. The ninety interface objects are
+    // GLOBALS - `Text`, `Comment`, `HTMLDivElement`, `NodeList` - and they were
+    // defined on the first `wrap()`, so a page whose first statement was
+    // `new Text("x")` or `x instanceof HTMLDivElement` asked about a name that
+    // did not exist yet and got a TypeError or `false`. A page that had touched
+    // one element first got the right answer. That is the shape of defect that
+    // reads as flakiness, and it was the same one behind `createHTMLDocument`
+    // and `make_live_collection` earlier on this branch.
+    ensure_dom_interfaces(cx);
 }
 
 // THE HANDLE HAS TO BE ONE OF OURS, and that is what the second half of this
