@@ -68,7 +68,6 @@
 #include <vector>
 
 #include <ctbrowser/core/algorithms.hpp>
-#include <ctbrowser/style/css/media_fwd.hpp>
 #include <ctbrowser/style/css/parser.hpp>
 #include <ctbrowser/style/css/properties.hpp>
 #include <ctbrowser/style/css/value.hpp>
@@ -105,9 +104,26 @@ constexpr std::uint32_t media_rule = 4;
 constexpr std::uint32_t font_face_rule = 5;
 constexpr std::uint32_t page_rule = 6;
 constexpr std::uint32_t keyframes_rule = 7;
+constexpr std::uint32_t keyframe_rule = 8;
 constexpr std::uint32_t namespace_rule = 10;
 constexpr std::uint32_t counter_style_rule = 11;
 constexpr std::uint32_t supports_rule = 12;
+
+// WHAT AN AT-RULE'S BLOCK CONTAINS - the one thing the at-keyword decides that
+// nothing else can, and the reason a rule's contents can be modelled at all
+// rather than kept as the author's bytes. There are exactly three answers:
+// a list of RULES, a list of DECLARATIONS, or no block, and getting it wrong
+// means reporting `@page`'s margins as child rules or `@media`'s rules as
+// declarations. Anything not named here keeps its bytes and says nothing.
+[[nodiscard]] bool at_rule_holds_rules(std::string_view name) {
+    return name == "media" || name == "supports" || name == "container" || name == "keyframes" ||
+           name == "-webkit-keyframes" || name == "scope" || name == "starting-style";
+}
+
+[[nodiscard]] bool at_rule_holds_declarations(std::string_view name) {
+    return name == "font-face" || name == "page" || name == "counter-style" || name == "property" ||
+           name == "font-palette-values" || name == "view-transition";
+}
 
 // A SECOND COPY OF browser.cpp's rel test, and it has to be one: that function
 // is in an anonymous namespace in a file this rung does not own, and the CSSOM
@@ -138,16 +154,6 @@ constexpr std::uint32_t supports_rule = 12;
 // the author's ordering within a compound (`a.b#c` and `a#c.b` compile the
 // same), so this emits the canonical order the specification asks for: type,
 // then id, then classes, then attributes, then pseudo-classes.
-
-[[nodiscard]] std::string number_text(double v) {
-    // Shortest form, like every other number the CSSOM serialises: `768` rather
-    // than `768.000000`.
-    std::string out = std::to_string(v);
-    if (out.find('.') == std::string::npos) { return out; }
-    while (!out.empty() && out.back() == '0') { out.pop_back(); }
-    if (!out.empty() && out.back() == '.') { out.pop_back(); }
-    return out.empty() ? std::string{"0"} : out;
-}
 
 // A CSS string, quoted and escaped. An attribute selector's value is serialised
 // as a string whatever the author wrote it as - `[a=b]` comes back `[a="b"]`.
@@ -350,88 +356,23 @@ void append_compound(std::string & out, const style::compound & part, const atom
     if (out.size() == was) { out += '*'; }
 }
 
-// --- serialising a media query list ----------------------------------------
+// A `@media` PRELUDE IS THE AUTHOR'S BYTES, always.
 //
-// BEST EFFORT, and it is the one serialisation in this file that is not
-// reconstructible exactly. A `media_query` is an AST - a type, a negation and a
-// conjunction of features whose values are floats - so `(min-width: 48em)` comes
-// back in the unit the parser resolved it to. The STRUCTURE is exact, which is
-// what `cssRules` and the rule types depend on; only the condition TEXT is a
-// reconstruction, and it says so here rather than being discovered.
-
-[[nodiscard]] std::string_view media_feature_name(style::css::media_feature::name which) {
-    using name = style::css::media_feature::name;
-    switch (which) {
-    case name::width: return "width";
-    case name::height: return "height";
-    case name::orientation: return "orientation";
-    case name::prefers_color_scheme: return "prefers-color-scheme";
-    case name::prefers_reduced_motion: return "prefers-reduced-motion";
-    case name::resolution: return "resolution";
-    case name::hover: return "hover";
-    case name::any_hover: return "any-hover";
-    case name::pointer: return "pointer";
-    case name::any_pointer: return "any-pointer";
-    case name::monochrome: return "monochrome";
-    case name::color: return "color";
-    case name::unknown: break;
-    }
-    return "unknown";
-}
-
-[[nodiscard]] std::string serialize_media_feature(const style::css::media_feature & feature) {
-    using compare = style::css::media_feature::compare;
-    const std::string_view base = media_feature_name(feature.which);
-    if (feature.op == compare::boolean) { return std::string{base}; }
-    std::string out;
-    if (feature.op == compare::at_least) { out += "min-"; }
-    if (feature.op == compare::at_most) { out += "max-"; }
-    out += base;
-    out += ": ";
-    if (!feature.keyword.empty()) {
-        out += feature.keyword;
-        return out;
-    }
-    out += number_text(static_cast<double>(feature.value));
-    using name = style::css::media_feature::name;
-    if (feature.which == name::width || feature.which == name::height) { out += "px"; }
-    if (feature.which == name::resolution) { out += "dppx"; }
-    return out;
-}
-
-[[nodiscard]] std::string serialize_media_queries(
-    std::span<const style::css::media_query> queries) {
-    std::string out;
-    for (const style::css::media_query & query : queries) {
-        if (!out.empty()) { out += ", "; }
-        if (query.malformed) {
-            out += "not all";
-            continue;
-        }
-        std::string one;
-        const bool typed =
-            query.negated || query.type != style::css::media_type::all || query.features.empty();
-        if (query.negated) { one += "not "; }
-        if (typed) {
-            switch (query.type) {
-            case style::css::media_type::screen: one += "screen"; break;
-            case style::css::media_type::print: one += "print"; break;
-            case style::css::media_type::all: one += "all"; break;
-            }
-        }
-        for (const style::css::media_feature & feature : query.features) {
-            if (!one.empty()) { one += " and "; }
-            one += "(" + serialize_media_feature(feature) + ")";
-        }
-        out += one;
-    }
-    return out;
-}
+// There used to be a second serialiser here, over the compiled `media_query`
+// AST, for the one caller that had no source text: a `@media` recovered from
+// `style::css::parse_stylesheet`, which keeps a rule's condition as a compiled
+// index and no span back to the bytes. It was lossy and said so - `(min-width:
+// 48em)` came back in px, `speech` came back as `all`, and a feature the
+// cascade does not model came back as nothing - so a `@media` from a `<style>`
+// and the same one from `insertRule` serialised two different ways.
+//
+// `parse_sheet_rules` reads the source now, so that caller is gone and with it
+// the only reason to reconstruct a prelude from an AST at all.
 
 // --- a media query list, as CSSOM asks for it ------------------------------
 //
 // MEDIA QUERIES 4 §"serializing a media query list", over the query's TEXT
-// rather than over the `media_query` above. The AST is what the CASCADE needs
+// rather than over the compiled `media_query`. The AST is what the CASCADE needs
 // and it is deliberately narrow - three media types, twelve features, one float
 // per value - so it answers `all` for `speech`, `768px` for `48em` and nothing
 // at all for a feature this engine does not model. Every one of those is a
@@ -685,6 +626,108 @@ void append_compound(std::string & out, const style::compound & part, const atom
     return std::string_view::npos;
 }
 
+// --- the top level of a sheet, as source spans ------------------------------
+//
+// CSS Syntax 3 §5.4's "consume a list of rules", stopping at the SPAN of bytes
+// each rule occupies rather than parsing what is in it.
+//
+// It exists because the style front end's `css::stylesheet` has nowhere to put
+// most of them. It models qualified rules, `@media` and `@font-face` and
+// DISCARDS every other at-rule, so a CSSOM assembled from that structure does
+// not report an `@import`, an `@namespace`, a `@page` or a `@keyframes` at all -
+// and the damage is not the missing rule, it is that `cssRules[0]` is then the
+// wrong rule and every index after it is off by one. It also drops a qualified
+// rule with an EMPTY block, which is what `@media all { * {} }` is made of and
+// what every fixture in `css/cssom/CSSGroupingRule-*.html` builds.
+//
+// Splitting here and handing each span to `parse_one_rule` gives a sheet and
+// `insertRule` ONE answer to what a rule is - the same reason `insertRule` does
+// not have a parser of its own.
+//
+// COMMENT-, STRING- AND BRACKET-AWARE, which is the whole trick: `[title="{"]`
+// is a selector with a brace in it and `@media (a:1);` has a semicolon inside
+// parentheses. A scanner that knew about none of the three would cut a rule in
+// half at each, which is the same defect the CSS front end was written to fix
+// one level down.
+[[nodiscard]] std::vector<std::string_view> split_top_level_rules(std::string_view css) {
+    std::vector<std::string_view> out;
+    std::size_t at = 0;
+    while (at < css.size()) {
+        // Whitespace, comments, and the CDO/CDC pair `<!--` `-->`, which §5.4
+        // drops at the top level and which a `<style>` inside old HTML has.
+        if (html_whitespace.find(css[at]) != std::string_view::npos) {
+            ++at;
+            continue;
+        }
+        if (css.compare(at, 2, "/*") == 0) {
+            const std::size_t close = css.find("*/", at + 2);
+            at = close == std::string_view::npos ? css.size() : close + 2;
+            continue;
+        }
+        if (css.compare(at, 4, "<!--") == 0) {
+            at += 4;
+            continue;
+        }
+        if (css.compare(at, 3, "-->") == 0) {
+            at += 3;
+            continue;
+        }
+        const std::size_t start = at;
+        // ONLY AN AT-RULE ENDS AT A SEMICOLON. A `;` in a qualified rule's
+        // prelude is part of the prelude - the spec keeps consuming to the
+        // block - so treating one as a terminator would split `a;b { }` into two
+        // rules where the sheet parser sees one bad one.
+        const bool at_rule = css[start] == '@';
+        char quote = '\0';
+        std::size_t brackets = 0;
+        std::size_t braces = 0;
+        bool block = false;
+        std::size_t end = css.size();
+        for (std::size_t i = start; i < css.size(); ++i) {
+            const char c = css[i];
+            if (quote != '\0') {
+                if (c == '\\') {
+                    ++i;
+                } else if (c == quote) {
+                    quote = '\0';
+                }
+                continue;
+            }
+            if (c == '/' && i + 1 < css.size() && css[i + 1] == '*') {
+                const std::size_t close = css.find("*/", i + 2);
+                i = close == std::string_view::npos ? css.size() : close + 1;
+                continue;
+            }
+            if (c == '"' || c == '\'') {
+                quote = c;
+            } else if (c == '\\') {
+                ++i;
+            } else if (c == '(' || c == '[') {
+                ++brackets;
+            } else if ((c == ')' || c == ']') && brackets > 0) {
+                --brackets;
+            } else if (brackets > 0) {
+                continue;
+            } else if (c == '{') {
+                ++braces;
+                block = true;
+            } else if (c == '}') {
+                if (braces > 0) { --braces; }
+                if (braces == 0 && block) {
+                    end = i + 1;
+                    break;
+                }
+            } else if (c == ';' && at_rule && braces == 0) {
+                end = i + 1;
+                break;
+            }
+        }
+        out.push_back(trim(css.substr(start, end - start), html_whitespace));
+        at = end;
+    }
+    return out;
+}
+
 // --- the JS side, in general -----------------------------------------------
 
 [[nodiscard]] script::object_object * as_object(value v) {
@@ -838,20 +881,28 @@ std::string dom_bindings::serialize_css_identifier(std::string_view text) {
 // --- the record store -------------------------------------------------------
 
 std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
-    if (rule.type == style_rule) {
+    // A PRELUDE AND A DECLARATION BLOCK. A keyframe's prelude is its keyText and
+    // a style rule's is its selector; neither carries an at-keyword.
+    if (rule.type == style_rule || rule.type == keyframe_rule) {
         const std::string block = serialize_block(rule.declarations);
         if (block.empty()) { return rule.selector + " { }"; }
         return rule.selector + " { " + block + " }";
     }
-    if (rule.type == font_face_rule) {
-        const std::string block = serialize_block(rule.declarations);
-        return block.empty() ? std::string{"@font-face { }"} : "@font-face { " + block + " }";
-    }
-    // AN AT-RULE THIS ENGINE DOES NOT MODEL answers with the author's bytes.
-    // `@keyframes`, `@page` and `@supports` have their block consumed and
-    // discarded by the front end, so there is nothing to reconstruct and an
-    // `@keyframes anim { }` would be a claim about a rule nobody read.
+    // AN AT-RULE THIS ENGINE DOES NOT MODEL answers with the author's bytes: an
+    // `@layer a, b;` reconstructed from a prelude nobody parsed would be a claim
+    // about a rule nobody read. `verbatim` is cleared exactly when the block WAS
+    // read, so this is the test for which of the two a record is.
     if (!rule.verbatim.empty()) { return rule.verbatim; }
+    // AN AT-RULE WHOSE BLOCK IS DECLARATIONS - `@font-face`, `@page`,
+    // `@counter-style`. The prelude is `@page`'s page selector and empty for
+    // most of them, and CSSOM 6.4.5 puts a SPACE on each side of the block
+    // whether or not there is anything in it: `@page { }`, not `@page {}`.
+    if (at_rule_holds_declarations(rule.at_name)) {
+        std::string out = "@" + rule.at_name;
+        if (!rule.prelude.empty()) { out += " " + rule.prelude; }
+        const std::string block = serialize_block(rule.declarations);
+        return block.empty() ? out + " { }" : out + " { " + block + " }";
+    }
     // A GROUPING RULE IS THE ONE MULTI-LINE SERIALISATION IN THE CSSOM, and it
     // is not a style choice - CSSOM 6.4.1 spells it out for CSSMediaRule: the
     // at-keyword, a SPACE, the media query list, a SPACE, `{`, a newline, then
@@ -882,106 +933,33 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
     return out;
 }
 
+// THE SOURCE, RULE BY RULE, through the same entry point `insertRule` uses.
+//
+// It used to be built from `style::css::parse_stylesheet`'s output, which meant
+// the CSSOM could only report the three rule shapes the CASCADE needs: a
+// qualified rule, `@media` and `@font-face`. Everything else the author wrote -
+// `@import`, `@namespace`, `@page`, `@keyframes`, `@supports`,
+// `@counter-style` - was not a rule with less in it, it was not there, so
+// `cssRules[0]` was the wrong rule and every index after it was off by one.
+// `css/cssom/cssom-ruleTypeAndOrder.html` asserts exactly that indexing over
+// seven sheets. The front end also drops a qualified rule whose block is empty,
+// which is what `@media all { * {} }` is made of and what the setup of every
+// `css/cssom/CSSGroupingRule-*.html` fixture asserts before it tests anything.
+//
+// `split_top_level_rules` walks the bytes and `parse_one_rule` is asked about
+// each span, so a rule from a `<style>` and the same rule from `insertRule`
+// cannot be spelled - or typed, or counted - two different ways.
 void dom_bindings::parse_sheet_rules(std::size_t sheet, std::string_view css) {
     if (sheet >= css_sheets_.size()) { return; }
     css_sheets_[sheet]->rules.clear();
-    if (trim(css, html_whitespace).empty()) { return; }
-    const style::css::stylesheet parsed = style::css::parse_stylesheet(css, *atoms_);
-
-    // The rules and the @font-face blocks INTERLEAVED, by source order. Neither
-    // list records its position in the other, but every declaration carries an
-    // `order` counted across the whole sheet, so the first declaration of each
-    // is exactly the key that puts them back in the order they were written.
-    struct entry {
-        std::int32_t order = 0;
-        bool font_face = false;
-        std::size_t at = 0;
-    };
-    std::vector<entry> entries;
-    for (std::size_t i = 0; i < parsed.rules.size(); ++i) {
-        const style::css::raw_rule & r = parsed.rules[i];
-        if (r.first_declaration >= parsed.declarations.size()) { continue; }
-        entries.push_back(entry{parsed.declarations[r.first_declaration].order, false, i});
-    }
-    for (std::size_t i = 0; i < parsed.font_faces.size(); ++i) {
-        const style::css::font_face & f = parsed.font_faces[i];
-        if (f.first_declaration >= parsed.declarations.size()) { continue; }
-        entries.push_back(entry{parsed.declarations[f.first_declaration].order, true, i});
-    }
-    std::stable_sort(entries.begin(), entries.end(),
-                     [](const entry & a, const entry & b) { return a.order < b.order; });
-
-    const auto collect = [&](std::span<const style::css::raw_declaration> from) {
-        std::vector<css_declaration> block;
-        for (const style::css::raw_declaration & d : from) {
-            const std::string name{atoms_->text(d.property)};
-            // THROUGH THE SAME GRAMMAR the cascade and `el.style` use. A value
-            // it refuses is one the cascade drops, so publishing it here would
-            // advertise a declaration that does not apply.
-            const style::css::value_check checked =
-                check_declaration(name, parsed.text_of(d), false);
-            if (!checked.valid) { continue; }
-            block.push_back(css_declaration{name, checked.serialized, d.important});
-        }
-        return block;
-    };
-    const auto add_record = [&]() -> std::size_t {
-        css_rule_store_.push_back(std::make_unique<css_rule_record>());
-        css_rule_store_.back()->sheet = sheet;
-        return css_rule_store_.size() - 1;
-    };
-
-    // A `@media` block is FLATTENED by the front end - its rules come back at
-    // the top level carrying a condition index - so the group is rebuilt here.
-    // A run of rules sharing a condition becomes one CSSMediaRule; a nested
-    // `@media` has a condition of its own and therefore becomes a sibling group
-    // rather than a nested one, which is the one structural deviation in this
-    // file and is not worth a tree walk until something asks for it.
-    std::uint32_t group_condition = 0;
-    std::size_t group_rule = no_index;
-    for (const entry & each : entries) {
-        if (each.font_face) {
-            group_condition = 0;
-            group_rule = no_index;
-            const std::size_t at = add_record();
-            css_rule_store_[at]->type = font_face_rule;
-            css_rule_store_[at]->at_name = "font-face";
-            css_rule_store_[at]->declarations =
-                collect(parsed.declarations_of(parsed.font_faces[each.at]));
-            css_sheets_[sheet]->rules.push_back(at);
-            continue;
-        }
-        const style::css::raw_rule & r = parsed.rules[each.at];
-        if (r.condition != group_condition) {
-            group_condition = r.condition;
-            group_rule = no_index;
-            if (r.condition != 0 && r.condition < parsed.conditions.size()) {
-                const std::size_t at = add_record();
-                css_rule_store_[at]->type = media_rule;
-                css_rule_store_[at]->at_name = "media";
-                // THE ONE PLACE THE AST IS STILL THE SOURCE, and it is lossy:
-                // the front end keeps a `@media` prelude only as a compiled
-                // condition, with no span back to the bytes, so a sheet's own
-                // `(min-width: 48em)` comes back in px. The reconstruction still
-                // goes through the text serialiser above so that a rule from a
-                // `<style>` and one from `insertRule` cannot be spelled two
-                // different ways.
-                css_rule_store_[at]->media_queries = parse_media_query_list(
-                    serialize_media_queries(parsed.conditions[r.condition].queries));
-                css_sheets_[sheet]->rules.push_back(at);
-                group_rule = at;
-            }
-        }
-        const std::size_t at = add_record();
-        css_rule_store_[at]->type = style_rule;
-        css_rule_store_[at]->selector = serialize_selector_list(parsed.selectors_of(r), *atoms_);
-        css_rule_store_[at]->declarations = collect(parsed.declarations_of(r));
-        if (group_rule != no_index) {
-            css_rule_store_[at]->parent = group_rule;
-            css_rule_store_[group_rule]->children.push_back(at);
-        } else {
-            css_sheets_[sheet]->rules.push_back(at);
-        }
+    for (const std::string_view span : split_top_level_rules(css)) {
+        std::string error;
+        const std::size_t at = parse_one_rule(sheet, span, error);
+        // A SPAN THAT IS NOT A RULE IS DROPPED AND THE SHEET CONTINUES, which is
+        // §5.4's recovery and is the difference between a stylesheet with a
+        // mistake in it and a broken one.
+        if (at == no_index) { continue; }
+        css_sheets_[sheet]->rules.push_back(at);
     }
 }
 
@@ -997,13 +975,50 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
     css_rule_record & made = *css_rule_store_[at];
     made.sheet = sheet;
 
+    // THE DECLARATIONS OF A BLOCK, through the two entry points that exist for
+    // exactly this - `parse_declaration_list`, which a `style` attribute uses,
+    // and `check_declaration`, which `el.style` writes through. A value the
+    // grammar refuses is one the cascade drops, so publishing it would advertise
+    // a declaration that does not apply.
+    const auto collect_into = [this](css_rule_record & into, std::string_view body) {
+        const style::css::stylesheet parsed = style::css::parse_declaration_list(body, *atoms_);
+        for (const style::css::raw_declaration & d : parsed.declarations) {
+            const std::string property{atoms_->text(d.property)};
+            const style::css::value_check checked =
+                check_declaration(property, parsed.text_of(d), false);
+            if (!checked.valid) { continue; }
+            into.declarations.push_back(css_declaration{property, checked.serialized, d.important});
+        }
+    };
+
+    // ONE KEYFRAME. `0%, to { opacity: 0 }` is a qualified rule whose prelude is
+    // a `<keyframe-selector>#` and NOT a selector, so `parse_selector_text`
+    // refuses it and treating a `@keyframes` block as a list of ordinary rules
+    // would empty it. CSSOM 6.4.10's keyText is that list, comma-separated;
+    // `from` and `to` keep the spelling the author used.
+    const auto make_keyframe = [this, sheet, &collect_into](std::string_view span) -> std::size_t {
+        const std::string_view one = trim(span, html_whitespace);
+        const std::size_t brace = brace_at(one);
+        const std::size_t shut = brace == std::string_view::npos ? brace : block_end(one, brace);
+        if (brace == std::string_view::npos || shut == std::string_view::npos) { return no_index; }
+        css_rule_store_.push_back(std::make_unique<css_rule_record>());
+        css_rule_record & frame = *css_rule_store_.back();
+        frame.sheet = sheet;
+        frame.type = keyframe_rule;
+        for (const std::string_view part : split_on_commas(one.substr(0, brace))) {
+            if (!frame.selector.empty()) { frame.selector += ", "; }
+            frame.selector += collapse_whitespace(part);
+        }
+        collect_into(frame, one.substr(brace + 1, shut - brace - 1));
+        return css_rule_store_.size() - 1;
+    };
+
     if (trimmed.front() == '@') {
-        // AN AT-RULE, TAKEN VERBATIM. This front end keeps the CONTENTS of
-        // `@media` and `@font-face` and discards every other at-rule's block, so
-        // reporting a reconstruction would report an empty one. The name decides
-        // the type, which is what `instanceof CSSMediaRule` asks; the text is
-        // the author's, which is the honest answer to `cssText` for a rule
-        // nothing here has modelled.
+        // AN AT-RULE. The name decides the type, which is what `instanceof
+        // CSSMediaRule` asks; what happens to its BLOCK depends on which of the
+        // three shapes the rule is - a list of rules, a list of declarations, or
+        // neither, in which case the author's bytes are the honest answer to
+        // `cssText` for a rule nothing here has modelled.
         const std::size_t name_end = trimmed.find_first_of(std::string{html_whitespace} + "{;", 1);
         const std::string_view name =
             trimmed.substr(1, (name_end == std::string_view::npos ? trimmed.size() : name_end) - 1);
@@ -1038,35 +1053,44 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
         } else {
             made.type = 0;
         }
-        // A `@media` whose block this front end CAN read gets its children, so
-        // an inserted media rule is a real grouping rule rather than a string.
+
+        // The block, if there is one. `@import` and `@namespace` end at a `;`
+        // and have none at all.
+        const std::size_t open = brace_at(trimmed);
+        const std::size_t close = open == std::string_view::npos ? open : block_end(trimmed, open);
+        const std::string_view body =
+            open == std::string_view::npos || close == std::string_view::npos
+                ? std::string_view{}
+                : trimmed.substr(open + 1, close - open - 1);
+
         if (made.type == media_rule) {
             // THE AUTHOR'S BYTES, which is the whole reason a media rule made
             // here serialises exactly and one recovered from a sheet does not.
             made.media_queries = parse_media_query_list(made.prelude);
             made.prelude.clear();
-            const style::css::stylesheet parsed = style::css::parse_stylesheet(trimmed, *atoms_);
-            for (const style::css::raw_rule & r : parsed.rules) {
-                css_rule_store_.push_back(std::make_unique<css_rule_record>());
-                const std::size_t child = css_rule_store_.size() - 1;
-                css_rule_store_[child]->sheet = sheet;
-                css_rule_store_[child]->type = style_rule;
+        }
+        if (at_rule_holds_rules(made.at_name)) {
+            // RECURSIVELY, THROUGH THIS SAME FUNCTION, rather than through the
+            // sheet parser: the sheet parser drops a qualified rule with an
+            // empty block, and `@media all { * {} }` is nothing but one. The
+            // record store holds `unique_ptr`s, so the reference above stays
+            // valid however far the recursion pushes the vector about.
+            for (const std::string_view span : split_top_level_rules(body)) {
+                std::string ignored;
+                const std::size_t child = made.type == keyframes_rule
+                                              ? make_keyframe(span)
+                                              : parse_one_rule(sheet, span, ignored);
+                if (child == no_index) { continue; }
                 css_rule_store_[child]->parent = at;
-                css_rule_store_[child]->selector =
-                    serialize_selector_list(parsed.selectors_of(r), *atoms_);
-                for (const style::css::raw_declaration & d : parsed.declarations_of(r)) {
-                    const std::string property{atoms_->text(d.property)};
-                    const style::css::value_check checked =
-                        check_declaration(property, parsed.text_of(d), false);
-                    if (!checked.valid) { continue; }
-                    css_rule_store_[child]->declarations.push_back(
-                        css_declaration{property, checked.serialized, d.important});
-                }
-                css_rule_store_[at]->children.push_back(child);
+                made.children.push_back(child);
             }
             // Reconstructible from here on, so the author's bytes are dropped
             // and `cssText` serialises the group and its children.
-            css_rule_store_[at]->verbatim.clear();
+            made.verbatim.clear();
+        } else if (at_rule_holds_declarations(made.at_name) && open != std::string_view::npos &&
+                   close != std::string_view::npos) {
+            collect_into(made, body);
+            made.verbatim.clear();
         }
         return at;
     }
@@ -1110,15 +1134,7 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
     made.selector = representable(selectors.selectors)
                         ? serialize_selector_list(selectors.selectors, *atoms_)
                         : collapse_whitespace(prelude);
-    const style::css::stylesheet parsed =
-        style::css::parse_declaration_list(trimmed.substr(open + 1, close - open - 1), *atoms_);
-    for (const style::css::raw_declaration & d : parsed.declarations) {
-        const std::string property{atoms_->text(d.property)};
-        const style::css::value_check checked =
-            check_declaration(property, parsed.text_of(d), false);
-        if (!checked.valid) { continue; }
-        made.declarations.push_back(css_declaration{property, checked.serialized, d.important});
-    }
+    collect_into(made, trimmed.substr(open + 1, close - open - 1));
     return at;
 }
 
@@ -1507,6 +1523,8 @@ value dom_bindings::make_rule_object(context & cx, std::size_t rule) {
             interface = "CSSPageRule.prototype";
         } else if (record.type == keyframes_rule) {
             interface = "CSSKeyframesRule.prototype";
+        } else if (record.type == keyframe_rule) {
+            interface = "CSSKeyframeRule.prototype";
         } else if (record.type == namespace_rule) {
             interface = "CSSNamespaceRule.prototype";
         } else if (record.type == counter_style_rule) {

@@ -23,12 +23,11 @@
 //     `document.styleSheets` needs one in `dom_bindings::install`. Both are in
 //     files the CSSOM rung does not own; without them these cases fail with
 //     "undefined", which is the honest way for a missing wire to report.
-//   * a rule with an EMPTY declaration block is dropped by the CSS front end
-//     (`consume_qualified_rule` keeps a rule only when it has both a selector
-//     and a declaration), so `div {}` in a `<style>` is not in `cssRules`.
-//     `insertRule` splits the text at the brace itself and so keeps one;
-//     `parse_sheet_rules` has only the front end's answer to work from, and the
-//     deviation is asserted below rather than believed.
+//   * an at-rule whose block this engine does not model keeps the author's
+//     bytes. `@namespace` and `@import` have no block at all and nothing to
+//     reconstruct a prelude from, so `cssText` is the source text and says so.
+//     Every at-rule whose block IS rules or IS declarations serialises like any
+//     other rule; `test_every_rule_a_sheet_carries` asserts which is which.
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -737,6 +736,69 @@ void test_the_inline_style_follows_the_attribute() {
     CHECK_EQ(logged(page, "unset="), std::string{"unset=|true|true"});
 }
 
+// EVERY RULE THE AUTHOR WROTE, AND ITS TYPE.
+//
+// The CSSOM was built from `style::css::parse_stylesheet`, whose `stylesheet`
+// models the three shapes the CASCADE needs - a qualified rule, `@media`, a
+// `@font-face` - and discards every other at-rule outright. So an `@import`, an
+// `@namespace`, a `@page` or a `@keyframes` was not a rule with less in it, it
+// was absent, and the damage was not the missing rule: `cssRules[0]` was the
+// WRONG rule and every index after it was off by one.
+// `css/cssom/cssom-ruleTypeAndOrder.html` asserts exactly that indexing over
+// seven sheets, and `rule-restrictions.html` asserts two of the types by number.
+//
+// A qualified rule with an EMPTY block was dropped by the same front end, which
+// this file used to record as a deviation. It is not one any more: the sheet is
+// split into rules by a byte scanner and each span goes through the same
+// `parse_one_rule` that `insertRule` uses, and that function already split at
+// the brace for exactly this reason. `@media all { * {} }` is the setup of
+// every fixture in `css/cssom/CSSGroupingRule-*.html`.
+void test_every_rule_a_sheet_carries() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style>
+        @namespace svg "http://www.w3.org/2000/svg";
+        @import url("main.css");
+        @page :left { margin: 1px; }
+        div { }
+        @media print { * {} }
+        @keyframes spin { from { opacity: 0 } to { opacity: 1 } }
+    </style></head><body><script>
+        const rules = document.styleSheets[0].cssRules;
+        console.log('count=' + rules.length);
+        let types = [];
+        for (let i = 0; i < rules.length; i++) { types.push(rules[i].type); }
+        console.log('types=' + types.join(','));
+        console.log('ns=' + rules[0].cssText);
+        console.log('import=' + rules[1].cssText);
+        console.log('page=' + rules[2].cssText);
+        console.log('empty=' + rules[3].cssText);
+        console.log('media=' + rules[4].cssRules.length + '|' + rules[4].cssRules[0].cssText);
+        console.log('frames=' + rules[5].cssRules.length + '|' + rules[5].cssRules[0].cssText);
+        console.log('is=' + (rules[4] instanceof CSSMediaRule) + ',' +
+                    (rules[0] instanceof CSSNamespaceRule) + ',' +
+                    (rules[5].cssRules[0] instanceof CSSKeyframeRule));
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "count="), std::string{"count=6"});
+    // CSSRule.NAMESPACE_RULE, IMPORT_RULE, PAGE_RULE, STYLE_RULE, MEDIA_RULE
+    // and KEYFRAMES_RULE - in the order the author wrote them.
+    CHECK_EQ(logged(page, "types="), std::string{"types=10,3,6,1,4,7"});
+    // AN AT-RULE WITH NO BLOCK KEEPS THE AUTHOR'S BYTES, because there is
+    // nothing to reconstruct from and an invented prelude would be a claim
+    // about a rule nobody parsed.
+    CHECK_EQ(logged(page, "ns="), std::string{"ns=@namespace svg \"http://www.w3.org/2000/svg\";"});
+    CHECK_EQ(logged(page, "import="), std::string{"import=@import url(\"main.css\");"});
+    // `@page`'s block IS declarations, so it serialises like any other block,
+    // and its prelude is the page selector.
+    CHECK_EQ(logged(page, "page="), std::string{"page=@page :left { margin: 1px; }"});
+    CHECK_EQ(logged(page, "empty="), std::string{"empty=div { }"});
+    CHECK_EQ(logged(page, "media="), std::string{"media=1|* { }"});
+    // A `<keyframe-selector>` is not a selector, so a keyframe's prelude is its
+    // keyText and `from` keeps the spelling the author used.
+    CHECK_EQ(logged(page, "frames="), std::string{"frames=2|from { opacity: 0; }"});
+    CHECK_EQ(logged(page, "is="), std::string{"is=true,true,true"});
+}
+
 } // namespace
 
 int main() {
@@ -757,5 +819,6 @@ int main() {
     test_the_automatic_minimum_size();
     test_the_computed_font_family_keeps_its_case();
     test_the_inline_style_follows_the_attribute();
+    test_every_rule_a_sheet_carries();
     REPORT("cssom");
 }
