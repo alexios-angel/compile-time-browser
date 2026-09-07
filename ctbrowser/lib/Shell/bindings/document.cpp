@@ -2409,15 +2409,28 @@ style::engine & dom_bindings::selector_engine() {
     return *own_selector_engine_;
 }
 
+// "LIST OF ELEMENTS WITH QUALIFIED NAME qualifiedName", DOM 4.5 - and the rule
+// has TWO branches in an HTML document, which is the half that was missing.
+//
+// An HTML-namespace element matches the name ASCII-LOWERCASED; an element in
+// any other namespace matches it EXACTLY. That is not a nicety: the tokenizer
+// preserves case inside foreign content on purpose, so `<linearGradient>` in an
+// `<svg>` interns as written - and lowercasing the search made it unfindable by
+// either spelling. `document.getElementsByTagName("linearGradient")` has to
+// find it and `("lineargradient")` must not, which is exactly the six "Element
+// in non-HTML namespace" subtests of `Document-getElementsByTagName.html`.
 std::vector<node_id> dom_bindings::all_by_tag(std::string_view tag) {
     const auto txn = doc_->read();
     // "*" is every ELEMENT, which is how a page asks for the whole document.
     const bool every = tag == "*";
-    const atom want = every ? atom{} : atoms_->intern_lower(tag);
+    const atom folded = every ? atom{} : atoms_->intern_lower(tag);
     std::vector<node_id> found;
     const auto walk = [&](auto && self, node_id at) -> void {
-        if (const auto tagged = txn.tag(at); tagged && (every || *tagged == want)) {
-            found.push_back(at);
+        if (const auto tagged = txn.tag(at); tagged.has_value()) {
+            const bool matched =
+                every || (txn.element_ns(at) == node_ns::html ? *tagged == folded
+                                                              : atoms_->text(*tagged) == tag);
+            if (matched) { found.push_back(at); }
         }
         for (const node_id child : txn.children(at)) { self(self, child); }
     };
@@ -2726,6 +2739,21 @@ value dom_bindings::make_live_collection(context & cx,
                          return *at < found.size() ? wrap(c, found[*at]) : value::undefined();
                      }
                      return c.lookup_property(args[0], key);
+                 }));
+    // AN INDEX IS READ-ONLY. `collection[0] = x` must not stick - an
+    // HTMLCollection's indexed properties have no setter, so a non-strict
+    // assignment is silently ignored and a strict one throws. Without a `set`
+    // trap the proxy wrote straight through to the target, and the next read
+    // came back with whatever the page had assigned instead of the element the
+    // walk finds; `Document-getElementsByTagName.html` checks both modes.
+    handler->set("set", native("set", [](context & c, std::span<value> args) {
+                     if (args.size() < 3 || !args[0].is_object()) { return value::boolean(false); }
+                     const std::string key = c.to_string(args[1]);
+                     if (key == "length" || whole_index(key).has_value()) {
+                         return value::boolean(false);
+                     }
+                     c.store_property(args[0], key, args[2]);
+                     return value::boolean(true);
                  }));
     handler->set("has", native("has", [live](context & c, std::span<value> args) {
                      if (args.size() < 2) { return value::boolean(false); }

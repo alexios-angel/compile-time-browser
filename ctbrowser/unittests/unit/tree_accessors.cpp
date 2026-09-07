@@ -151,6 +151,33 @@ void test_the_collections_are_live() {
        "2->3");
 }
 
+void test_get_elements_by_tag_name_knows_about_namespaces() {
+    // AN HTML ELEMENT MATCHES CASE-INSENSITIVELY and a foreign one EXACTLY,
+    // which are the two branches DOM 4.5 gives for an HTML document. The
+    // tokenizer keeps foreign content's case, so `<linearGradient>` interns as
+    // written and lowercasing the search made it findable by neither spelling.
+    is("(function () {"
+       " document.body.innerHTML ="
+       "   '<svg><linearGradient id=g></linearGradient></svg>';"
+       " return document.getElementsByTagName('linearGradient').length + ',' +"
+       "        document.getElementsByTagName('lineargradient').length; })()",
+       "1,0");
+    is("document.getElementsByTagName('IMG').length + ',' +"
+       " document.getElementsByTagName('img').length",
+       "4,4");
+    // `instanceof HTMLCollection` is a subtest of its own in three files.
+    is("document.getElementsByTagName('img') instanceof HTMLCollection", "true");
+    is("document.images instanceof HTMLCollection", "true");
+    is("document.body.children instanceof HTMLCollection", "true");
+    // AN INDEX IS READ-ONLY: the assignment does not stick and the next read is
+    // still what the walk finds.
+    is("(function () {"
+       " var c = document.getElementsByTagName('img');"
+       " c[0] = 42;"
+       " return c[0].tagName; })()",
+       "IMG");
+}
+
 // --- named access on the Document ------------------------------------------
 
 void test_an_element_answers_to_its_name_and_its_id() {
@@ -262,6 +289,7 @@ int main() {
     test_the_title_element_is_found_wherever_it_is();
     test_the_collections_count_what_they_name();
     test_the_collections_are_live();
+    test_get_elements_by_tag_name_knows_about_namespaces();
     test_an_element_answers_to_its_name_and_its_id();
     test_the_id_route_needs_a_name_and_the_name_route_does_not();
     test_a_name_never_shadows_a_real_property();
