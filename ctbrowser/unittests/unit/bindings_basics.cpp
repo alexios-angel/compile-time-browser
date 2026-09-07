@@ -483,6 +483,239 @@ void test_a_standalone_event_target() {
     check(log[3] == "sub=9,true", "a subclass inherits the three methods: " + log[3]);
 }
 
+// THE EVENT INTERFACES, and the four things that have to be true of each one.
+//
+// There were two - `Event` and `CustomEvent` - and every other spelling was
+// undefined, so `new MouseEvent('click')` threw. That is not a corner: a
+// constructor is the ONLY way a page can synthesise an event, and a page that
+// wants to drive its own UI has nothing else to build one with.
+//
+// The subclass case at the bottom is the one that decides the shape of the
+// whole file: a constructor that allocates its own object leaves `super()`'s
+// caller holding an instance nothing was written to, so every property the
+// subclass inherits reads undefined. Every constructor here initialises its
+// RECEIVER instead, which is also what makes `new` and `super()` one path.
+void test_the_event_interface_hierarchy() {
+    browser page{browser_options{200, 150}};
+    page.load_html(R"(<html><body><script>
+        var m = new MouseEvent('click', {bubbles: true, clientX: 4, clientY: 5,
+                                         button: 2, shiftKey: true});
+        console.log('mouse=' + m.type + ',' + m.clientX + ',' + m.clientY + ',' + m.button +
+                    ',' + m.shiftKey + ',' + m.bubbles + ',' + m.detail);
+        // The whole chain, and every link in it is a real prototype rather than
+        // a marker object: a page tests `instanceof` to tell events apart.
+        console.log('chain=' + (m instanceof MouseEvent) + ',' + (m instanceof UIEvent) +
+                    ',' + (m instanceof Event) + ',' + (m.constructor === MouseEvent) +
+                    ',' + m.constructor.name);
+        // An absent dictionary gives the DEFAULTS the IDL names, not undefined.
+        var u = new UIEvent('x');
+        console.log('defaults=' + u.view + ',' + u.detail + ',' + u.bubbles + ',' +
+                    u.cancelable + ',' + u.isTrusted);
+        var k = new KeyboardEvent('keydown', {key: 'a', keyCode: 65, ctrlKey: true});
+        console.log('key=' + k.key + ',' + k.keyCode + ',' + k.which + ',' +
+                    k.getModifierState('Control') + ',' + k.getModifierState('Shift') +
+                    ',' + (k.initKeyEvent === undefined));
+        var w = new WheelEvent('wheel', {deltaY: 3.5, deltaMode: 1});
+        console.log('wheel=' + w.deltaY + ',' + w.deltaMode + ',' + (w instanceof MouseEvent));
+        // `null` and a missing dictionary are the same answer - WebIDL converts
+        // both to the dictionary with every member defaulted.
+        console.log('nullinit=' + new FocusEvent('focus', null).relatedTarget + ',' +
+                    new CompositionEvent('c').data.length);
+        // An interface object is not callable, the type is mandatory, and a
+        // nullable interface member is not "anything, or null".
+        var errs = '';
+        try { Event('x'); } catch (e) { errs += e.name; }
+        try { new Event(); } catch (e) { errs += ',' + e.name; }
+        try { new UIEvent('x', {view: 7}); } catch (e) { errs += ',' + e.name; }
+        console.log('throws=' + errs);
+        // `isTrusted` is [LegacyUnforgeable]: an OWN accessor of every instance,
+        // sharing ONE getter function. Both halves are observable.
+        var d1 = Object.getOwnPropertyDescriptor(new Event('a'), 'isTrusted');
+        var d2 = Object.getOwnPropertyDescriptor(new Event('b'), 'isTrusted');
+        console.log('trusted=' + (typeof d1.get) + ',' + (d1.get === d2.get));
+        // A page can EXTEND one, which is the whole reason a constructor
+        // initialises `this` rather than allocating.
+        class Mine extends MouseEvent {
+          constructor(type, init) { super(type, init); this.extra = 12; }
+        }
+        var mine = new Mine('click', {clientX: 3, cancelable: true});
+        console.log('extend=' + mine.extra + ',' + mine.clientX + ',' + mine.cancelable +
+                    ',' + (mine instanceof MouseEvent) + ',' + (mine instanceof Event));
+      </script></body></html>)");
+    check(page.script_error().empty(), "the interface script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() == 9, "every line was logged");
+    check(log[0] == "mouse=click,4,5,2,true,true,0", "MouseEventInit is read in full: " + log[0]);
+    check(log[1] == "chain=true,true,true,true,MouseEvent",
+          "the prototype chain is real all the way to Event: " + log[1]);
+    check(log[2] == "defaults=null,0,false,false,false",
+          "an absent dictionary means the IDL's defaults: " + log[2]);
+    check(log[3] == "key=a,65,65,true,false,true",
+          "KeyboardEvent carries its members and not initKeyEvent: " + log[3]);
+    check(log[4] == "wheel=3.5,1,true", "WheelEvent inherits MouseEvent: " + log[4]);
+    check(log[5] == "nullinit=null,0", "a null dictionary is an absent one: " + log[5]);
+    check(log[6] == "throws=TypeError,TypeError,TypeError",
+          "not callable, type mandatory, view type-checked: " + log[6]);
+    check(log[7] == "trusted=function,true",
+          "isTrusted is an own accessor with one shared getter: " + log[7]);
+    check(log[8] == "extend=12,3,true,true,true",
+          "a page can subclass an event interface: " + log[8]);
+}
+
+// WHAT dispatchEvent REFUSES, AND WHAT A LISTENER IS CALLED WITH.
+//
+// Three things a page can see, and all three were silently wrong.
+//
+// `dispatchEvent` used to accept anything: an event still travelling, an event
+// `document.createEvent` had never been given a type, `null`. Each is an
+// InvalidStateError or a TypeError in the specification and each was a quiet
+// success here, which is the worst answer - the page believes it dispatched.
+//
+// A listener used to be called with `this` UNDEFINED, so
+// `el.addEventListener('click', function () { this.classList.add('on') })` -
+// which is how a great deal of shipped code is written - went nowhere at all.
+// And an OBJECT with a `handleEvent` method is a listener too: EventListener is
+// a callback interface, and the method is looked up at DISPATCH time, so an
+// object that grows one after registering still works.
+void test_dispatch_refuses_and_binds_this() {
+    browser page{browser_options{200, 150}};
+    page.load_html(R"(<html><body><div id=t></div><script>
+        var t = document.getElementById('t');
+        var errs = '';
+        var fresh = document.createEvent('Event');
+        try { t.dispatchEvent(fresh); }
+        catch (e) { errs += e.name + ':' + e.code + ':' + (e.constructor === DOMException); }
+        fresh.initEvent('go', true, true);
+        t.addEventListener('go', function (e) {
+          try { t.dispatchEvent(e); } catch (err) { errs += '|' + err.name; }
+        });
+        t.dispatchEvent(fresh);
+        console.log('refuse=' + errs);
+
+        var seen = '';
+        var lookups = 0;
+        t.addEventListener('bound', function () { seen += (this === t) + ';'; });
+        t.addEventListener('bound', {
+          tag: 'obj',
+          get handleEvent() {
+            lookups++;
+            return function () { seen += this.tag + ';'; };
+          }
+        });
+        t.dispatchEvent(new Event('bound'));
+        t.dispatchEvent(new Event('bound'));
+        console.log('this=' + seen + 'lookups=' + lookups);
+
+        var during = null;
+        t.addEventListener('peek', function () { during = window.event; });
+        var peek = new Event('peek');
+        t.dispatchEvent(peek);
+        console.log('global=' + (during === peek) + ',' + (window.event === undefined) +
+                    ',' + ('event' in window));
+
+        var et = new EventTarget();
+        var fired = 0;
+        var ac = new AbortController();
+        ac.abort();
+        et.addEventListener('x', function () { fired++; }, {signal: ac.signal});
+        et.dispatchEvent(new Event('x'));
+        var bad = '';
+        try { et.addEventListener('y', function () {}, {signal: null}); }
+        catch (e) { bad = e.name; }
+        console.log('signal=' + fired + ',' + bad);
+      </script></body></html>)");
+    check(page.script_error().empty(), "the dispatch script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() == 4, "every line was logged");
+    // 11 is InvalidStateError's legacy code, and the constructor test is the
+    // one an ECMAScript Error cannot pass - see bindings/exceptions.cpp.
+    check(log[0] == "refuse=InvalidStateError:11:true|InvalidStateError",
+          "an uninitialised event and a re-entered one are both refused: " + log[0]);
+    check(log[1] == "this=true;obj;true;obj;lookups=2",
+          "`this` is the current target, and handleEvent is looked up every time: " + log[1]);
+    check(log[2] == "global=true,true,true",
+          "window.event is the travelling event and exists outside a dispatch: " + log[2]);
+    check(log[3] == "signal=0,TypeError",
+          "an aborted signal adds nothing and a null one throws: " + log[3]);
+}
+
+// `{passive: true}` IS ENFORCED, AND A THROWING LISTENER IS REPORTED.
+//
+// Passive is a promise not to call preventDefault, and the DOM does not take it
+// on trust: the canceled flag is not set while a passive listener runs. It is a
+// scrolling optimisation everywhere it is used - a compositor cannot start a
+// scroll until it knows the page will not refuse it - so an engine that lets a
+// passive listener cancel has removed the entire point of the option.
+//
+// The second half is the other end of a gap wpt.md already records at load
+// time: a listener that threw reached `callback_error()`, which is an EMBEDDER
+// channel, and the PAGE was told nothing - no `error` event, no `window.onerror`.
+// Worse, the VM's failure flag stayed up for the rest of the dispatch, so every
+// LATER listener for the same event was silently declined. One listener
+// throwing stopped all the others.
+void test_passive_listeners_and_a_throwing_one() {
+    browser page{browser_options{200, 150}};
+    page.load_html(R"(<html><body><script>
+        var seen = '';
+        function cancels(e) { e.preventDefault(); seen += e.defaultPrevented + ','; }
+        var et = new EventTarget();
+        et.addEventListener('p', cancels, {passive: true});
+        var a = et.dispatchEvent(new Event('p', {cancelable: true}));
+        // `passive` is NOT part of a listener's identity, so this removes it.
+        et.removeEventListener('p', cancels);
+        et.addEventListener('p', cancels);
+        var b = et.dispatchEvent(new Event('p', {cancelable: true}));
+        console.log('passive=' + seen + a + ',' + b);
+
+        // `returnValue = false` is preventDefault under another name and is
+        // refused the same way.
+        var et2 = new EventTarget();
+        var got = '';
+        et2.addEventListener('r', function (e) {
+          e.returnValue = false;
+          got += e.defaultPrevented;
+        }, {passive: true});
+        et2.dispatchEvent(new Event('r', {cancelable: true}));
+        console.log('return=' + got);
+
+        // The flag belongs to the LISTENER, not the event: a non-passive one
+        // later in the same dispatch can still cancel.
+        var et3 = new EventTarget();
+        et3.addEventListener('m', function () {}, {passive: true});
+        et3.addEventListener('m', function (e) { e.preventDefault(); });
+        console.log('mixed=' + et3.dispatchEvent(new Event('m', {cancelable: true})));
+
+        // A throwing listener reaches the page twice - as an `error` event and
+        // as window.onerror, which takes a STRING and not the event - and does
+        // not stop the listener after it.
+        var reports = '';
+        window.addEventListener('error', function (e) {
+          reports += 'evt:' + (typeof e.message) + ';';
+          e.preventDefault();
+        });
+        window.onerror = function (message) { reports += 'on:' + (typeof message) + ';'; };
+        var t = document.createElement('div');
+        var after = 0;
+        t.addEventListener('boom', function () { throw new Error('from the listener'); });
+        t.addEventListener('boom', function () { after++; });
+        t.dispatchEvent(new Event('boom'));
+        console.log('fault=' + reports + 'after=' + after);
+      </script></body></html>)");
+    // EMPTY because the page HANDLED it: preventDefault on an error event is
+    // how a page says so, and the embedder channel is the console, which a
+    // handled exception does not reach.
+    check(page.script_error().empty(),
+          "a handled fault stays off the embedder channel: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() == 4, "every line was logged");
+    check(log[0] == "passive=false,true,true,false",
+          "a passive listener cannot cancel and a plain one can: " + log[0]);
+    check(log[1] == "return=false", "returnValue is refused in a passive listener too: " + log[1]);
+    check(log[2] == "mixed=false", "the flag is cleared after each passive listener: " + log[2]);
+    check(log[3] == "fault=evt:string;on:string;after=1",
+          "a throwing listener is reported and does not stop the next one: " + log[3]);
+}
+
 // The rest of the constructible DOM: a comment, a fragment, the five insertion
 // methods that take any number of arguments, cloneNode and contains. A page
 // could make an element and a text node and nothing else before this.
@@ -2796,6 +3029,9 @@ int main() {
     test_element_collections_are_live();
     test_events_travel_the_whole_path();
     test_a_standalone_event_target();
+    test_the_event_interface_hierarchy();
+    test_dispatch_refuses_and_binds_this();
+    test_passive_listeners_and_a_throwing_one();
     test_the_constructible_dom();
     test_document_implementation();
     test_create_element_ns();
