@@ -118,6 +118,12 @@ ctbrowser_test(unit/element_attrs)
 # being ASCII, which is exactly the case the corpus tests and a suite of
 # English fixtures never would.
 ctbrowser_test(unit/character_data)
+# attachShadow and the shadow root. Its own file because half of what it asserts
+# is what a shadow tree is NOT: the host gains no children, `document.
+# querySelector` finds nothing in it, and the light DOM keeps the shape every
+# other test in this directory measures. A rung that makes a shadow tree render
+# has to keep those true.
+ctbrowser_test(unit/shadow_dom)
 
 # The language, against V8. The nine per-type suites were carved out of
 # vm_basics and share js_expect.hpp; number_format and obfuscated ask the
