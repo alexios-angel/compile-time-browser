@@ -1,6 +1,7 @@
 #include "Analysis.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "llvm/ADT/ScopeExit.h"
 
 namespace ctcompile::ctnative::host_detail {
 
@@ -116,6 +117,10 @@ HostContractAnalysis::HostContractAnalysis(mlir::ModuleOp module, const HostCont
         return;
     }
     host_detail::analyzer analysis(module, contract, maxSteps);
+    const llvm::scope_exit recordWork([&] {
+        workSteps = maxSteps - analysis.remaining;
+        budgetExhausted = analysis.exhausted;
+    });
     if (auto problem = host_detail::initialBindingProblem(module, contract); !problem.empty()) {
         refusal = problem;
         return;

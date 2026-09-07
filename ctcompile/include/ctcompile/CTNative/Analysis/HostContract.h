@@ -69,6 +69,9 @@ public:
 
     [[nodiscard]] bool proved() const { return refusal.empty(); }
     [[nodiscard]] llvm::StringRef reason() const { return refusal; }
+    // Bounded proof work, available to consumers sharing one analysis budget.
+    [[nodiscard]] unsigned steps() const { return workSteps; }
+    [[nodiscard]] bool exhausted() const { return budgetExhausted; }
     [[nodiscard]] llvm::ArrayRef<HostSlotReport> slots() const { return reports; }
     [[nodiscard]] llvm::ArrayRef<ctjs::StoreGlobalOp> observations() const { return observed; }
     [[nodiscard]] const HostSlotEdge * property(ctjs::GetPropertyOp read) const;
@@ -77,6 +80,8 @@ private:
     std::string refusal;
     std::vector<HostSlotReport> reports;
     std::vector<ctjs::StoreGlobalOp> observed;
+    unsigned workSteps = 0;
+    bool budgetExhausted = false;
 };
 
 } // namespace ctcompile::ctnative

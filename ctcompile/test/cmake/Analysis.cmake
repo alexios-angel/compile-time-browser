@@ -360,6 +360,10 @@ if(CTCOMPILE_ENABLE_MLIR)
   target_link_libraries(ctcompile-test-owned-method-table-slots PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-owned-method-table-slots)
   add_test(NAME ctcompile_owned_method_table_slots COMMAND ctcompile-test-owned-method-table-slots)
+  add_executable(ctcompile-test-owned-global-roots OwnedGlobalRoots.cpp)
+  target_link_libraries(ctcompile-test-owned-global-roots PRIVATE CTNativeAnalysis MLIRParser)
+  ctcompile_target(ctcompile-test-owned-global-roots)
+  add_test(NAME ctcompile_owned_global_roots COMMAND ctcompile-test-owned-global-roots)
 endif()
 
 # Private provider transactions preserve JS Map equality and withhold partial state.
