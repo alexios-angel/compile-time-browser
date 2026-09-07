@@ -688,6 +688,14 @@ public:
     // the CSSOM has since done to it.
     [[nodiscard]] std::string author_style_text();
 
+    // CSSOM §2.1, "serialize an identifier". `CSS.escape` IS this algorithm and
+    // so is every name in a serialised selector - a type, an id, a class and an
+    // attribute's name all go through it - so it is one function rather than
+    // two: escaping too little produces a selector that means something else and
+    // escaping too much produces one that matches nothing, and having the two
+    // callers disagree about which is which is the bug this shape prevents.
+    [[nodiscard]] static std::string serialize_css_identifier(std::string_view text);
+
 private:
     // The document's sheets, re-derived from the DOM. Cheap and idempotent: an
     // owner node that already has a record keeps it, which is what makes

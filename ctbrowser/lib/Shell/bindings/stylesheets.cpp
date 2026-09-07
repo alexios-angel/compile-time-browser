@@ -213,20 +213,56 @@ void append_compound(std::string & out, const style::compound & part, const atom
     return out;
 }
 
+// IS THE COMPILED FORM THE WHOLE OF WHAT THE AUTHOR WROTE?
+//
+// `never_matches` is how the selector compiler records a construct it can PARSE
+// and cannot MATCH: a pseudo-element, a namespace prefix, a pseudo-class it does
+// not model. Nothing of that compound survives into the compiled form, so
+// `append_compound` finds an empty compound and emits `*` for it - and that does
+// not merely look wrong. `author_style_text` hands these selectors back to the
+// cascade, so an inserted `::before { color: red }` serialised as `*` would
+// paint every element on the page red. Wherever the author's bytes are still to
+// hand they are the honest answer, and this is the question that decides.
+[[nodiscard]] bool representable(std::span<const style::compiled_selector> list) {
+    const auto compound_ok = [](auto && self, const style::compound & part) -> bool {
+        if (part.never_matches) { return false; }
+        for (const style::pseudo_ref & pseudo : part.pseudos) {
+            for (const style::compiled_selector & inner : pseudo.args) {
+                for (const style::compound & nested : inner.parts) {
+                    if (!self(self, nested)) { return false; }
+                }
+            }
+        }
+        return true;
+    };
+    for (const style::compiled_selector & sel : list) {
+        for (const style::compound & part : sel.parts) {
+            if (!compound_ok(compound_ok, part)) { return false; }
+        }
+    }
+    return !list.empty();
+}
+
 void append_compound(std::string & out, const style::compound & part, const atom_table & atoms) {
     const std::size_t was = out.size();
-    if (part.tag) { out += atoms.text(part.tag); }
+    // EVERY NAME IS AN IDENTIFIER, and CSSOM §6.7 says each is serialised by
+    // §2.1's "serialize an identifier" - the same algorithm `CSS.escape` is.
+    // The tokenizer DECODES escapes, so `[\30 zonk]` reaches the compiled form
+    // as the name `0zonk`; printing that back unescaped produces a selector that
+    // is not a selector, because an identifier may not begin with a digit.
+    const auto ident = &dom_bindings::serialize_css_identifier;
+    if (part.tag) { out += ident(atoms.text(part.tag)); }
     if (part.id) {
         out += '#';
-        out += atoms.text(part.id);
+        out += ident(atoms.text(part.id));
     }
     for (const atom cls : part.classes) {
         out += '.';
-        out += atoms.text(cls);
+        out += ident(atoms.text(cls));
     }
     for (const style::attribute_match & attribute : part.attributes) {
         out += '[';
-        out += atoms.text(attribute.name);
+        out += ident(atoms.text(attribute.name));
         switch (attribute.op) {
         case style::attr_op::present: break;
         case style::attr_op::exact: out += '='; break;
@@ -754,6 +790,51 @@ bool store_declaration(std::vector<dom_bindings::css_declaration> & block,
 
 } // namespace
 
+// CSSOM §2.1. Shared with `CSS.escape` in bindings/css.cpp, which is the same
+// algorithm asked for by a page rather than by a serialiser.
+std::string dom_bindings::serialize_css_identifier(std::string_view text) {
+    std::string out;
+    const auto hex_escape = [&out](unsigned char c) {
+        static constexpr char digits[] = "0123456789abcdef";
+        out += '\\';
+        if (c >= 16) { out += digits[c >> 4]; }
+        out += digits[c & 0xF];
+        out += ' ';
+    };
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const auto c = static_cast<unsigned char>(text[i]);
+        // NULL is not escaped, it is REPLACED - §2.1 step 3, the same U+FFFD
+        // substitution the CSS tokenizer does to its input.
+        if (c == 0) {
+            out += "\xEF\xBF\xBD";
+            continue;
+        }
+        if (c <= 0x1F || c == 0x7F) {
+            hex_escape(c);
+            continue;
+        }
+        // A LEADING DIGIT, or a digit after a leading `-`, would make the
+        // identifier a number: both are escaped numerically rather than with a
+        // backslash, because `\1` is not a valid identifier start either.
+        if (c >= '0' && c <= '9' && (i == 0 || (i == 1 && text[0] == '-'))) {
+            hex_escape(c);
+            continue;
+        }
+        if (c == '-' && text.size() == 1) {
+            out += "\\-";
+            continue;
+        }
+        if (c >= 0x80 || c == '-' || c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z')) {
+            out += static_cast<char>(c);
+            continue;
+        }
+        out += '\\';
+        out += static_cast<char>(c);
+    }
+    return out;
+}
+
 // --- the record store -------------------------------------------------------
 
 std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
@@ -1023,7 +1104,12 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
         return no_index;
     }
     made.type = style_rule;
-    made.selector = serialize_selector_list(selectors.selectors, *atoms_);
+    // The canonical serialisation when the compiled form IS the selector, and
+    // the author's bytes when it is not - see `representable`. Whitespace is
+    // collapsed either way, so `span  div  ` is `span div` in both.
+    made.selector = representable(selectors.selectors)
+                        ? serialize_selector_list(selectors.selectors, *atoms_)
+                        : collapse_whitespace(prelude);
     const style::css::stylesheet parsed =
         style::css::parse_declaration_list(trimmed.substr(open + 1, close - open - 1), *atoms_);
     for (const style::css::raw_declaration & d : parsed.declarations) {
@@ -1841,16 +1927,24 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         [this](context & c, std::span<value> a) {
             css_rule_record * rule = receiver_rule(c);
             if (rule == nullptr) { return value::undefined(); }
-            // Re-COMPILED and re-serialised rather than stored as written, so a
-            // selector the matcher cannot represent cannot be advertised. An
-            // unparseable one leaves the rule exactly as it was, which is what
-            // CSSOM says.
+            // "Parse the given value; if it returns failure, do nothing" -
+            // CSSOM 6.4.2, and the whole of that test is the difference between
+            // a selector that is WRONG and one this engine merely cannot match.
+            // `parse_selector_text` is the entry point that tells them apart,
+            // and it is the same one `querySelector` uses: its out parameter is
+            // a SYNTAX error, so `::gibberish` leaves the rule alone while
+            // `::before` replaces it and simply matches nothing. It replaced a
+            // probe that appended `{--ctbrowser-probe:1}` and ran the SHEET
+            // parser, which could not tell the two apart at all and which a `{`
+            // inside an attribute value could derail.
             const std::string text = arg_string(c, a, 0);
+            bool bad = false;
             const style::css::stylesheet parsed =
-                style::css::parse_stylesheet(text + "{--ctbrowser-probe:1}", *atoms_);
-            if (parsed.rules.size() != 1) { return value::undefined(); }
-            rule->selector =
-                serialize_selector_list(parsed.selectors_of(parsed.rules.front()), *atoms_);
+                style::css::parse_selector_text(text, *atoms_, bad);
+            if (bad || parsed.selectors.empty()) { return value::undefined(); }
+            rule->selector = representable(parsed.selectors)
+                                 ? serialize_selector_list(parsed.selectors, *atoms_)
+                                 : collapse_whitespace(text);
             style_sheets_changed();
             return value::undefined();
         });

@@ -212,6 +212,50 @@ void test_insert_and_delete() {
     CHECK_EQ(logged(page, "two="), std::string{"two=SyntaxError"});
 }
 
+// A SELECTOR IS PARSED, NOT PROBED. `css/cssom/CSSStyleRule-set-selectorText.html`
+// spends nineteen of its subtests on selectors that are not selectors, and the
+// rule for all of them is one line of CSSOM 6.4.2: if the parse fails, do
+// nothing. What that test also demands is the OTHER half - a selector this
+// engine cannot MATCH is not a failure, and it must come back spelled the way
+// the author wrote it rather than as the `*` an empty compound serialises to.
+void test_selector_text_is_parsed_and_escaped() {
+    browser page{browser_options{400, 200}};
+    page.load_html(R"(<html><head><style id=s>.style0 { color: red }</style></head><body><script>
+        const sheet = document.styleSheets[0];
+        const rule = sheet.cssRules[0];
+        const invalid = ['', ' ', '!!', '123', '-', '$', ':', '.', '#', '[]', '(', '{}'];
+        let kept = 0;
+        for (const bad of invalid) {
+            rule.selectorText = bad;
+            if (rule.selectorText === '.style0') { kept++; }
+        }
+        console.log('invalid=' + kept + '/' + invalid.length);
+        rule.selectorText = '  span   div  ';
+        console.log('spaces=' + rule.selectorText);
+        rule.selectorText = 'div:not(:active)';
+        console.log('not=' + rule.selectorText);
+        rule.selectorText = ':nth-child( 1n + 5 )';
+        console.log('nth=' + rule.selectorText);
+        // A pseudo-element compiles to a compound that matches nothing, and
+        // there is nothing left in it to serialise.
+        rule.selectorText = '::before';
+        console.log('pseudo=' + rule.selectorText);
+        sheet.insertRule('[\\30zonk] { color: red }', 0);
+        console.log('esc=' + sheet.cssRules[0].selectorText);
+    </script></body></html>)");
+    CHECK(page.script_error().empty());
+    CHECK_EQ(logged(page, "invalid="), std::string{"invalid=12/12"});
+    CHECK_EQ(logged(page, "spaces="), std::string{"spaces=span div"});
+    CHECK_EQ(logged(page, "not="), std::string{"not=div:not(:active)"});
+    CHECK_EQ(logged(page, "nth="), std::string{"nth=:nth-child(n+5)"});
+    CHECK_EQ(logged(page, "pseudo="), std::string{"pseudo=::before"});
+    // The tokenizer DECODES an escape, so the name that reaches the compiled
+    // selector is `0zonk` - and an identifier may not begin with a digit, so
+    // serialising it back without the escape produces a selector that is not
+    // one. CSSOM §2.1 escapes the digit numerically, trailing space and all.
+    CHECK_EQ(logged(page, "esc="), std::string{"esc=[\\30 zonk]"});
+}
+
 // insertRule/deleteRule ON A GROUP. The same pair of methods CSSStyleSheet has
 // and a different list - `css/cssom/serialize-media-rule.html` builds every one
 // of its fixtures this way, and `CSSGroupingRule-insertRule.html` asserts all
@@ -466,6 +510,7 @@ int main() {
     test_the_list_and_the_rules();
     test_a_style_rule();
     test_insert_and_delete();
+    test_selector_text_is_parsed_and_escaped();
     test_a_grouping_rule_inserts_and_deletes();
     test_media_rules_and_their_lists();
     test_the_media_list_of_a_sheet();
