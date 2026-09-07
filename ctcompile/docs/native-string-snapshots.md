@@ -104,5 +104,7 @@ Correction `c7a849c` passes the devbox build and all **162/162 lit cases**.
 Its ten-source regression checks raw reads, mutation, publication, repeated and
 delayed consumption under default/disabled optimization, partial evaluation,
 deforestation, reruns and forged markers. Immediate materialization remains
-native. The full generated-program CTest gate remains pending; the preceding
-measurements do not establish that result.
+native. The integrated full generated-program gate now passes **474/474
+CTests**, including **163/163 lit cases**. See [HANDOFF.md](HANDOFF.md) for
+its measured baseline; the preceding historical measurements are retained
+separately.

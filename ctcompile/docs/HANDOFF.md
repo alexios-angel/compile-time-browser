@@ -8,20 +8,23 @@ committing. There is no CI. Do not build on the small local machine.
 
 ## Current shared-Map checkpoint, 2026-09-07
 
-Five work commits are saved locally: **`c7a849c`** (recovered Map iterator
-correction), **`fec186e`** (iterator boundary documentation), **`296cf33`**
-(shared published Map methods), **`e41893a`** (direct-load evidence), and
-**`78c2b15`** (source invocation-state regression). All inherited compiler
-changes were reviewed; browser carryover was left untouched. No push was
-performed.
+Saved locally: **`c7a849c`** (recovered Map iterator correction), **`fec186e`**
+(iterator documentation), **`296cf33`** (shared published Map methods),
+**`e41893a`** (direct-load evidence), **`78c2b15`** (source invocation-state
+regression), **`881c434`** (boundary checkpoint), and **`f339fe1`** (JSON
+signed-zero inventory witness). All 28 inherited compiler changes were
+recovered and split by concern; browser carryover was left untouched. No push
+was performed.
 
-The next [published Map boundary](native-owned-global-maps.md) is implemented:
+The next [published Map boundary](native-owned-global-maps.md) is implemented
+with a fingerprinted host manifest and explicit standard Map identity:
 two zero-argument methods sharing one mutable Map advance **0/5 -> 5/5 native**;
 a three-method table admits **6/6**. Complete live proofs follow every captured
 closure, fixed publication field, primitive body and current call. They require
 one Map identity and the exact source function chain. Preparation validates all
 methods before lifting and unboxes the shared cell after every member. It uses
 existing typed owners and callables, with no interpreter/collector dependency.
+The shared specimen stays **0/5** without the manifest or Map identity.
 
 The integrated lit run passes the nineteen-program shared-Map gate:
 fourteen **4/4**, four **5/5** and one **6/6** programs match Node/interpreter
@@ -52,9 +55,40 @@ were rebuilt and rerun. Log: `/tmp/ctcompile-native-integrated-focused2.log`.
 All compiler files pass the formatter; the whole-tree check flags untouched
 browser `style/selector.hpp`, `DOM/document.cpp` and `Style/css/selector.cpp`.
 A stale header ABI in the first build was fixed by refreshing frozen compiler
-source/header timestamps so every dependent object rebuilt. The full generated
-build/CTest is queued in `/tmp/ctcompile-native-integrated-full-gate.log`;
-no full-suite success is claimed yet.
+source/header timestamps so every dependent object rebuilt. The full frozen
+build then passes **474/474 CTests** in **622.05 seconds**: **366 compiler** and
+**108 browser** tests, including **163/163 lit cases** in **70.01 seconds**.
+All fifteen previously failing Map/snapshot/partial-evaluation/deforestation
+execution checks pass. The browser baseline is committed `7a755dd` tree content;
+Claude's unmerged WPT work is excluded. Log:
+`/tmp/ctcompile-native-integrated-full-gate.log`.
+
+The measured first complete native admission budgets are **1031** (ordinary),
+**8516** (sixteen calls), **1132** (growing) and **1906** (shared growing), with
+**32/30/31/33 cutoffs** checked. Every specimen preserves its source through the
+sixteen budgets immediately below completion. No natural speculative-clone
+rollback interval is reached. Shared source/prepared owner units independently
+check every incomplete budget: **1582/1521** for two methods and **2367/2279**
+for three methods.
+
+The full-run load census covers **2946 Bootstrap property reads**, with **138
+candidate links across 48 reads**, zero linked stored-site edges and zero
+invalid links or unresolved bases. It classifies **486/588 functions complete**,
+with 102 partial; these are census markers, not contents or confinement proofs.
+The existing storage census remains **2611 writes / 400 site edges**. p5 has
+**3047 links / 754 linked reads**, Phaser **7425 / 571**. All four execution
+oracles report zero violations. Full native component admission remains
+**19/574 Bootstrap**, **39/4754 p5**, **45/7725 Phaser** in both optimization
+modes, with zero pruned functions. These are component counts, not whole native
+applications. Evidence: `/tmp/ctcompile-native-integrated-evidence.json`.
+
+The incoming runtime JSON parser correction makes the old malformed-input
+inventory witness agree with Boost. `f339fe1` uses `JSON.parse('-0')` instead:
+the VM preserves `8000000000000000`, while Boost's integer parsing produces
+`0000000000000000`. The separate devbox inventory check passes **1/1** in
+**0.01 seconds**, retaining **35 rows / 50 probes** (**29 agreements / 21
+expected divergences**). No runtime or native JSON admission changed. Log:
+`/tmp/ctcompile-native-json-inventory-gate.log`.
 
 **Exact next native boundary:** the shared setter takes one key parameter,
 `set(key) { state.set(key, 1); return state.size; }`, while the getter stays
@@ -151,9 +185,9 @@ publication, mutation, repeated consumption and consumption across effects
 refuse. The six execution fixtures now explicitly materialize their intended
 arrays without changing observations. Partial evaluation recognizes only the
 freshly proved builtin/copy environment; actual snapshot evaluation stays
-runtime work. The production correction compiles on the devbox. Its ten-case
-source regression, lit and final full gate are pending the shared build lock;
-see `/tmp/ctcompile-iterator-focused2.log`. No browser sources were edited.
+runtime work. That interrupted correction is now saved as `c7a849c`; the
+current checkpoint above records its ten-source regression and passing full
+generated gate. No browser sources were edited.
 
 `7a755dd` records the full-run direct-storage corpus census: Bootstrap has
 **2611 writes / 400 site edges**, with **29 multiple-store** and **17
@@ -162,8 +196,8 @@ oracles report zero violations. Both optimization modes still measure native
 **19/574 Bootstrap**, **39/4754 p5**, and **45/7725 Phaser**. These are component
 admission counts, not whole-program native compilation. Compiler formatting and
 whitespace pass; the whole-tree formatter flags only browser files left in the
-shared checkout. Historical full-suite counts below do not validate the pending
-iterator correction.
+shared checkout. Historical full-suite counts below predate the iterator
+correction; use the current checkpoint above for its validation.
 
 **Exact next native boundary:** two zero-argument published methods sharing the
 captured mutable Map. The retained setter/getter specimen measures **0/5

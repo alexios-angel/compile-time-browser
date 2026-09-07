@@ -26,6 +26,12 @@ property effects deliberately exclude it from the primitive preservation filter.
 The checker substitutes an unavailable result into a real direct call's unwind
 edge and requires its state checks to reject that corruption.
 
+The integrated devbox gate passes all four programs, **16 source functions**
+and **11 Node/interpreter observations**, with plain/default native refusals
+and reruns intact. The regression is one of **163/163 passing lit cases** in
+the **474/474 CTest** full gate. See [HANDOFF.md](HANDOFF.md) for the build
+baseline and `/tmp/ctcompile-native-integrated-full-gate.log` for the run.
+
 ## What the imported edges say
 
 The importer inserts a `ctjs.check` after each protected bytecode instruction.

@@ -59,7 +59,9 @@ iterator admission correction. The fixture now materializes its parent keys
 with `Array.from`, preserving the nine expected observations and function
 count. Correction `c7a849c` passes the devbox build and all **162/162 lit
 cases**, including the nested Map presence proof across materialization.
-The full generated-program CTest gate remains pending.
+The integrated full generated-program gate now passes **474/474 CTests**,
+including **163/163 lit cases**; see [HANDOFF.md](HANDOFF.md) for its measured
+baseline and corpus counts.
 
 `native-nested-map-fixture.js` compares nine numeric observations with the
 independent interpreter: shared aliases, replacement, child lifetime after

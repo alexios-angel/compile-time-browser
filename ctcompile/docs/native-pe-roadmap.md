@@ -18,7 +18,9 @@ through its environment check. Its evaluator still declines actual snapshot
 evaluation, so allowing that environment does not execute an iterator at
 compile time. Updated source fixtures explicitly materialize their snapshots;
 the devbox build and all **162/162 lit cases** pass for correction `c7a849c`.
-The full generated-program CTest gate remains pending.
+The integrated full generated-program gate now passes **474/474 CTests**,
+including **163/163 lit cases**; see [HANDOFF.md](HANDOFF.md) for its measured
+baseline and corpus counts.
 
 The initial work is divided into four independently implemented tracks. Each lands
 only with source observations and adversarial tests for its own proof boundary.

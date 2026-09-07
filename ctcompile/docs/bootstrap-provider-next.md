@@ -91,8 +91,9 @@ mutation/lifetime checks pass; see [the measured gate](native-owned-global-maps.
 
 ## Completed: one captured Map shared by published methods
 
-The fixed setter/getter specimen advances **0/5 -> 5/5 native**, retaining
-Node/interpreter `trace=1`. A three-method variant admits **6/6**. The complete
+With the same explicit manifest and Map identity, the fixed setter/getter
+specimen advances **0/5 -> 5/5 native**, retaining Node/interpreter `trace=1`.
+A three-method variant admits **6/6**. The complete
 live capture census now checks every sibling, its fixed field, primitive body
 and current calls. The owner query retains the exact source function chain and
 requires identical Map identity/family evidence across all calls. Preparation

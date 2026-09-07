@@ -8,6 +8,7 @@ remains **0/4**. The method may now mutate its Map with standard `set`, `get`,
 `has` and `delete` operations over primitive contents. A published setter and
 getter sharing that Map now advance **0/5 -> 5/5 native**, preserving `trace=1`.
 A three-method variant admits **6/6**. Full native Bootstrap Data is unfinished.
+The shared specimen stays **0/5** without the manifest or standard Map identity.
 
 ```js
 var host = {};
@@ -112,14 +113,14 @@ incomplete work budget, mixed capture stages, live sibling receiver/upvalue
 mutations and distinct Map identities. Both stale and freshly fingerprinted
 mutations must refuse; restoring the source restores the proof.
 
-The preceding single-method gate measured these budgets before the family proof
-was extended; they are historical, not current work limits:
+The integrated gate measures these current admission budgets:
 
 | Budget specimen | First complete admission | Cutoffs checked |
 |---|---:|---:|
-| Ordinary getter | 1012 | 31 |
-| Sixteen getter calls | 8257 | 31 |
-| Growing Map method | 1113 | 32 |
+| Ordinary getter | 1031 | 32 |
+| Sixteen getter calls | 8516 | 30 |
+| Growing Map method | 1132 | 31 |
+| Shared growing Map methods | 1906 | 33 |
 
 Each checks the sixteen budgets immediately below completion. None naturally
 reaches a cutoff where the original proof succeeds and the prepared clone's
@@ -127,12 +128,14 @@ proof exhausts. These are failed-attempt preservation checks, not a new
 Map-specific speculative rollback measurement. Existing scalar/table rollback
 controls remain.
 
-The preceding focused build and six ownership/host/type/escape CTests passed
-in **1.37 seconds**. That standalone gate passed all fourteen programs, three
-lifetime variants, thirty source refusals and three carrier refusals. Logs are
-`/tmp/ctcompile-map-effects-recovery-focused3.log`. The current nineteen-program
-gate passes within `ctcompile_lit`; see [HANDOFF.md](HANDOFF.md) for the
-integrated gate and corpus measurements.
+The source/prepared owner units also check every incomplete budget: **1582/1521**
+for two methods and **2367/2279** for three methods. The focused gate passes
+**8/8 CTests** in **79.86 seconds**. The full generated devbox build and gate
+pass **474/474 CTests** in **622.05 seconds**, including the nineteen-program
+gate among **163/163 lit cases**. Logs are
+`/tmp/ctcompile-native-integrated-focused2.log` and
+`/tmp/ctcompile-native-integrated-full-gate.log`. See [HANDOFF.md](HANDOFF.md)
+for the corpus measurements and frozen browser baseline.
 
 ## Next boundary
 

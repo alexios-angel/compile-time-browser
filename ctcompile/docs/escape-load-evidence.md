@@ -43,6 +43,29 @@ CTest gate checks every live property read is covered and each link refers to
 an ordered, valid write sharing a local site. Precision counts are diagnostic;
 the existing execution oracle continues to gate zero false confinement.
 
+## Measured gate, 2026-09-07
+
+All **200 unit rows** and the two live-base mutations pass. The full devbox
+gate passes **474/474 CTests**; the four corpus oracles report zero violations.
+The direct-load census covers every live top-level property read, with zero
+unresolved bases and zero invalid links in every corpus:
+
+| Corpus | Read records | Reads with links | Candidate links | Stored-site edges | Complete/total functions |
+|---|---:|---:|---:|---:|---:|
+| Fixture | 43 | 19 | 35 | 4 | 43/47 |
+| Bootstrap | 2946 | 48 | 138 | 0 | 486/588 |
+| p5 | 38300 | 754 | 3047 | 539 | 4058/4703 |
+| Phaser | 45873 | 571 | 7425 | 194 | 6657/7723 |
+
+Stored-site edges count the tracked allocation sites on candidate writes, not
+objects proved reachable through a load. Bootstrap's zero in that column means
+these direct links currently identify writes without tracked stored allocations;
+it is not evidence that property reads cannot expose allocated objects.
+Incomplete function counts are **4/102/645/1066** respectively. These numbers
+describe the census and do not authorize a change to any escape verdict.
+Evidence: `/tmp/ctcompile-native-integrated-evidence.json`; see
+[HANDOFF.md](HANDOFF.md) for the exact build baseline.
+
 The next step remains a complete contents/points-to proof through loads and
 indirect transfers, with every exposure followed after the first escape sink.
 External contents, accessors and unsupported retention paths must be refused

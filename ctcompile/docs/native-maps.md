@@ -176,7 +176,9 @@ The measurements in this section predate the 2026-09-07 iterator correction.
 The six affected execution fixtures and positive lowering cases now materialize
 arrays explicitly without changing functions or expected observations. The
 devbox build and all **162/162 lit cases** pass for correction `c7a849c`.
-The full generated-program CTest gate remains pending.
+The integrated full generated-program gate now passes **474/474 CTests**,
+including **163/163 lit cases**; see [HANDOFF.md](HANDOFF.md) for its measured
+baseline and corpus counts.
 
 The original confined-Map checkpoint `8286564` passed **283/283** devbox tests,
 including **94** lit tests. The validation below records that checkpoint;
