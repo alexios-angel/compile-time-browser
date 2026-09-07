@@ -120,6 +120,15 @@ public:
                                        llvm::ArrayRef<const TypeLattice *> operands,
                                        llvm::ArrayRef<TypeLattice *> results) override;
 
+    /// An invoke unwind's payload is produced by the call, not forwarded from
+    /// its unavailable normal result. Infer it from live throw operands in a
+    /// bounded direct-callee query. Other non-forwarded region arguments keep
+    /// the framework's conservative entry state. This is not native admission.
+    void visitNonControlFlowArguments(
+        mlir::Operation * op, const mlir::RegionSuccessor & successor,
+        mlir::ValueRange nonSuccessorInputs,
+        llvm::ArrayRef<TypeLattice *> nonSuccessorInputLattices) override;
+
     /// THE CLOSED WORLD FOR GLOBALS (part 24 Phase 62½-A). A whole-program
     /// compile sees every `ctjs.store_global` of a name, so a
     /// `ctjs.load_global` of that name is the join of everything ever stored

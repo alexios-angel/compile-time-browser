@@ -11,6 +11,9 @@ JavaScript value. Throwing callees, nested handlers and finally completions
 remain further source work. The target verifier now follows explicit throws
 through defined EmitC direct callees and checks their escaping payload against
 the active handler. This target prerequisite grants no source effect proof.
+Explicit CTJS invocation regions now separate normal results from pre-call
+unwind state and infer a payload from live direct callees. This is an IR and
+analysis prerequisite; source recovery and native lowering do not emit it yet.
 This is separate from
 [private provider mutation summaries](native-provider-mutations.md).
 
@@ -291,6 +294,66 @@ Exception edges invalidate normal-return-only provider facts. A successfully
 summarized Map mutation describes the path after normal return; it says nothing
 about a catch continuation after allocation, mutation or callback failure.
 Keep that distinction even after C++ exceptions are available.
+
+## Explicit invocation IR prerequisite, 2026-09-07
+
+`ctjs.invoke` describes one existing `ctjs.call_direct` and its normal and
+exceptional continuations. Its body contains exactly that call followed by
+`ctjs.invoke_exit`. The normal continuation receives the returned value; the
+unwind continuation receives an implicit thrown payload followed by the explicit
+pre-call register snapshot. Both continuations end in `ctjs.invoke_yield`,
+supplying the invocation's JavaScript-value results.
+
+```mlir
+%result = ctjs.invoke {
+  %called = ctjs.call_direct @helper(%receiver, %new_target, %callee)
+  ctjs.invoke_exit %called state(%before)
+} normal {
+^bb0(%returned: !ctjs.value):
+  ctjs.invoke_yield(%returned)
+} unwind {
+^bb0(%payload: !ctjs.value, %saved: !ctjs.value):
+  ctjs.invoke_yield(%saved)
+} : !ctjs.value
+```
+
+The verifier requires every state value to originate outside the invocation
+body and forbids every use of the call result except its normal dispatch.
+Nothing can be computed or published between the call and dispatch. An assignment
+of the returned value belongs in the normal continuation. SSA dominance and
+the region boundaries prevent that value from reaching the exceptional path.
+The completion dispatcher represents the call's unwind even when no normal
+result was produced; it does not evaluate that unavailable operand on failure.
+The continuations themselves are outside this invocation's protection.
+
+The standard `RegionBranch` interfaces forward normal results and unwind state
+separately. Sparse type inference handles the implicit payload through its
+non-forwarded region-argument hook. Each visit resolves the actual direct
+callees, with no retained proof or annotation permission, within 4096 operations
+and 32 active helper bodies. The query follows explicit calls, throws and
+returns, admitting other operations only when ODS declares them pure. Unknown
+effects, public or captured callees, recursion, exhausted bounds and nested
+regions yield `boxed`. All live thrown operands join through the existing type
+lattice and subscribe the unwind block to later widening. Different primitive
+payloads therefore remain different alternatives; this IR does not authorize a
+mixed native exception carrier.
+
+The [type inference unit](../test/TypeInference.cpp) covers numeric, negative-zero,
+boolean and string payloads, independent pre-call state, ordinary normal results,
+mixed live throws, transitive calls, depth/work bounds, unknown property effects
+and recursion. The [IR regression](../test/CTJS/IR/invoke.mlir) round-trips all
+three operations and rejects malformed call bodies, state/result misuse,
+continuation signatures and terminators.
+
+This does not change native source admission or its explicit-throw guard.
+Recovery still needs to construct these continuations from importer register
+vectors, preserve source assignment order and prove effects before discarding
+any status edge. Ordinary call-result inference also remains conservative when
+a callee has an unmodelled throwing exit; source admission must establish the
+normal-return flow as well as the payload. Native emission must then save live
+pre-call state before the C++ call and use the tested target owning-payload
+contract. No new source function, executable, lifetime or Bootstrap coverage is
+claimed from the IR prerequisite.
 
 ## Direct-callee target prerequisite, 2026-09-07
 

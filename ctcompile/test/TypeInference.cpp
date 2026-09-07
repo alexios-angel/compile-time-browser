@@ -52,6 +52,7 @@ struct row {
     const char * what;     // the JavaScript fact, for the failure message
     std::string body;      // the operations, inside a ctjs.func
     const char * expected; // the printed ctnative type
+    bool wholeModule = false;
 };
 
 // THE FUNCTION HEADER EVERY ROW SHARES. ctjs.func takes three implicit
@@ -78,7 +79,7 @@ std::string prologue() {
 }
 
 void check(mlir::MLIRContext & context, const row & r) {
-    std::string text = prologue() + r.body + "  ctjs.return %p\n}\n";
+    std::string text = r.wholeModule ? r.body : prologue() + r.body + "  ctjs.return %p\n}\n";
 
     mlir::OwningOpRef<mlir::ModuleOp> module =
         mlir::parseSourceString<mlir::ModuleOp>(text, &context);
@@ -131,6 +132,70 @@ void check(mlir::MLIRContext & context, const row & r) {
         std::printf("FAIL %s\n  expected %s\n  got      %s\n", r.what, r.expected, got.c_str());
         ++failures;
     }
+}
+
+std::string invokeModule(const std::string & helpers, llvm::StringRef observed = "%payload",
+                         bool observeNormal = false) {
+    const std::string observation = "    %observed = scf.execute_region -> !ctjs.value {\n"
+                                    "      scf.yield " +
+                                    observed.str() + " : !ctjs.value\n    } {check}\n";
+    return R"mlir(
+module {
+  ctjs.func @caller(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                    %callee: !ctjs.value, %condition: !ctjs.value) -> !ctjs.value
+      attributes {upvalue_count = 0 : i32} {
+    %nil = ctjs.constant #ctjs.undefined
+    %before = ctjs.constant #ctjs.string<"before call">
+    %argument = ctjs.constant #ctjs.number<4617315517961601024>
+    %result = ctjs.invoke {
+      %called = ctjs.call_direct @helper(%nil, %nil, %nil, %condition, %argument)
+      ctjs.invoke_exit %called state(%before)
+    } normal {
+    ^bb0(%returned: !ctjs.value):
+)mlir" + (observeNormal ? observation : "") +
+           R"mlir(
+      ctjs.invoke_yield(%before)
+    } unwind {
+    ^bb0(%payload: !ctjs.value, %saved: !ctjs.value):
+)mlir" + (!observeNormal ? observation : "") +
+           R"mlir(
+      ctjs.invoke_yield(%saved)
+    } : !ctjs.value
+    ctjs.return %result
+  }
+)mlir" + helpers +
+           "}\n";
+}
+
+std::string throwingHelper(llvm::StringRef payload, llvm::StringRef prefix = "") {
+    return R"mlir(
+  ctjs.func private @helper(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                            %callee: !ctjs.value, %condition: !ctjs.value,
+                            %argument: !ctjs.value) -> !ctjs.value
+      attributes {upvalue_count = 0 : i32} {
+)mlir" + prefix.str() +
+           "    %thrown = ctjs.constant " + payload.str() + "\n    ctjs.throw %thrown\n  }\n";
+}
+
+std::string helperChain(unsigned depth) {
+    std::string text;
+    for (unsigned index = 0; index < depth; ++index) {
+        const std::string name = index == 0 ? "helper" : "helper" + std::to_string(index);
+        text += "  ctjs.func private @" + name + R"mlir((%receiver: !ctjs.value,
+            %new_target: !ctjs.value, %callee: !ctjs.value,
+            %condition: !ctjs.value, %argument: !ctjs.value) -> !ctjs.value
+        attributes {upvalue_count = 0 : i32} {
+)mlir";
+        if (index + 1 == depth) {
+            text += "    ctjs.throw %argument\n";
+        } else {
+            text += "    %r = ctjs.call_direct @helper" + std::to_string(index + 1) +
+                    "(%receiver, %new_target, %callee, %condition, %argument)\n"
+                    "    ctjs.return %r\n";
+        }
+        text += "  }\n";
+    }
+    return text;
 }
 
 } // namespace
@@ -454,6 +519,70 @@ int main() {
     };
 
     for (const row & r : rows) { check(context, r); }
+
+    // The call result is not a thrown payload, and catch state is not a
+    // post-call assignment. Query the actual continuation argument, keeping
+    // unrelated normal-return typing out of the payload observations.
+    const std::string joined = R"mlir(
+  ctjs.func private @helper(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                            %callee: !ctjs.value, %condition: !ctjs.value,
+                            %argument: !ctjs.value) -> !ctjs.value
+      attributes {upvalue_count = 0 : i32, ctnative.nothrow} {
+    %bit = ctjs.truthy %condition
+    cf.cond_br %bit, ^left, ^right
+  ^left:
+    ctjs.throw %argument
+  ^right:
+    %other = ctjs.constant #ctjs.string<"other">
+    ctjs.throw %other
+  }
+)mlir";
+    const std::string returning = R"mlir(
+  ctjs.func private @helper(%receiver: !ctjs.value, %new_target: !ctjs.value,
+                            %callee: !ctjs.value, %condition: !ctjs.value,
+                            %argument: !ctjs.value) -> !ctjs.value
+      attributes {upvalue_count = 0 : i32} {
+    ctjs.return %argument
+  }
+)mlir";
+    std::string largeBody;
+    for (unsigned index = 0; index < 4096; ++index) {
+        largeBody += "    %unused" + std::to_string(index) + " = ctjs.constant #ctjs.undefined\n";
+    }
+    const std::vector<row> invocationRows = {
+        {"invoke obtains a numeric throw from the live callee", invokeModule(throwingHelper(kFive)),
+         "!ctnative.num<i32>", true},
+        {"invoke preserves negative-zero payload precision",
+         invokeModule(throwingHelper(kNegativeZero)), "!ctnative.num<f64>", true},
+        {"invoke carries a boolean payload", invokeModule(throwingHelper("#ctjs.boolean<true>")),
+         "!ctnative.bool", true},
+        {"invoke carries an owning string payload",
+         invokeModule(throwingHelper("#ctjs.string<\"payload\">")), "!ctnative.str<utf8>", true},
+        {"invoke keeps pre-call state independent of payload and unavailable result",
+         invokeModule(throwingHelper(kFive), "%saved"), "!ctnative.str<utf8>", true},
+        {"invoke forwards an ordinary call result only to its normal continuation",
+         invokeModule(returning, "%returned", true), "!ctnative.num<i32>", true},
+        {"invoke joins every live throw and ignores a forged nonthrowing marker",
+         invokeModule(joined), "!ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>>", true},
+        {"invoke follows transitive throwing helpers", invokeModule(helperChain(3)),
+         "!ctnative.num<i32>", true},
+        {"invoke accepts its finite helper-depth boundary", invokeModule(helperChain(32)),
+         "!ctnative.num<i32>", true},
+        {"invoke refuses a helper-depth proof beyond the bound", invokeModule(helperChain(33)),
+         "!ctnative.boxed", true},
+        {"invoke refuses an exhausted work proof", invokeModule(throwingHelper(kFive, largeBody)),
+         "!ctnative.boxed", true},
+        {"invoke does not infer an explicit-only payload across unknown property effects",
+         invokeModule(throwingHelper(kFive, "    %key = ctjs.constant #ctjs.string<\"x\">\n"
+                                            "    %read = ctjs.get_property %receiver[%key]\n")),
+         "!ctnative.boxed", true},
+        {"invoke refuses recursive escaping-payload inference",
+         invokeModule(throwingHelper(
+             kFive, "    %recursive = ctjs.call_direct "
+                    "@helper(%receiver, %new_target, %callee, %condition, %argument)\n")),
+         "!ctnative.boxed", true},
+    };
+    for (const row & r : invocationRows) { check(context, r); }
 
     // AND ONE MODULE THAT MUST NOT PARSE. `ctjs.binary_static sub` names a
     // kind context::binary_op_static has no arm for - it answers undefined -

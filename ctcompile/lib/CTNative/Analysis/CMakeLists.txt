@@ -34,6 +34,7 @@ add_mlir_library(CTNativeAnalysis
   BindingTime/Operations.cpp
   BindingTime/Flow.cpp
   BindingTime/Memory.cpp
+  Inference/Exceptions.cpp
   Inference/Shapes.cpp
   EscapeAnalysis.cpp
   NativeMap.cpp
