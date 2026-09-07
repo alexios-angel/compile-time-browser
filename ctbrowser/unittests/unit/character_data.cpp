@@ -56,6 +56,16 @@ void is(const std::string & expression, const std::string & expected) {
     if (got != expected) { std::printf("    %s\n", expression.c_str()); }
 }
 
+// The two node types the corpus runs its whole CharacterData battery against.
+// Both, every time, because a method installed on `Text.prototype` by accident
+// rather than on `CharacterData.prototype` passes half of it.
+void both(const std::string & body, const std::string & expected) {
+    for (const char * make :
+         {"document.createTextNode('test')", "document.createComment('test')"}) {
+        is("(function () { var node = " + std::string{make} + "; " + body + " })()", expected);
+    }
+}
+
 // --- a removed Attr keeps what it had ---------------------------------------
 
 void test_a_removed_attribute_keeps_its_value() {
@@ -116,9 +126,166 @@ void test_a_removed_attribute_keeps_its_value() {
        "x,false");
 }
 
+// --- the five methods that are one operation --------------------------------
+
+void test_the_data_is_measured_in_code_units() {
+    // `CharacterData-data.html`, first case: the length of "test" is 4 and it
+    // is not a byte count.
+    both("return node.data + ',' + node.length;", "test,4");
+    // NON-ASCII, WHICH IS WHERE A BYTE COUNT AND A CODE-UNIT COUNT PART. Seven
+    // CJK characters are 21 bytes and 7 code units; "test, append more " is 18
+    // of each. `CharacterData-appendData.html` asserts exactly 25.
+    both(R"(node.appendData(', append more 資料，測試資料');
+            return node.length;)",
+         "25");
+    // ...and one astral character is TWO code units for its four bytes, which
+    // is the only place the two counts diverge for a single character.
+    both(R"(node.data = '🌠 test 🌠 TEST'; return node.length;)", "15");
+    // `data = null` IS THE EMPTY STRING and `data = undefined` is the word:
+    // `data` is [LegacyNullToEmptyString], so this is a rule about null alone
+    // and ToString would have written four letters for it.
+    both("node.data = null; return node.data + ',' + node.length;", ",0");
+    both("node.data = undefined; return node.data + ',' + node.length;", "undefined,9");
+    both("node.data = 0; return node.data + ',' + node.length;", "0,1");
+}
+
+void test_an_offset_throws_where_a_count_clamps() {
+    // AN OFFSET PAST THE END IS AN IndexSizeError - a DOMException with the
+    // legacy code 1, which is what `assert_throws_dom("IndexSizeError", ...)`
+    // and its older spelling `"INDEX_SIZE_ERR"` both check for.
+    both("try { node.substringData(5, 0); } catch (e) { return e.name + ',' + e.code + ',' + "
+         "(e.constructor === DOMException); } return 'did not throw';",
+         "IndexSizeError,1,true");
+    // `-1` IS 4294967295, because the offset is a WebIDL `unsigned long` and
+    // ToUint32 wraps rather than clamping. So a negative offset throws...
+    both("try { node.substringData(-1, 0); } catch (e) { return e.name; } return 'did not throw';",
+         "IndexSizeError");
+    // ...unless it wraps back INTO range, which is the same rule read the other
+    // way and is a subtest of its own in three of these files.
+    both("return node.substringData(-0x100000000 + 2, 1);", "s");
+    both("node.insertData(-0x100000000 + 2, 'X'); return node.data;", "teXst");
+    // A very large offset wraps to a small one rather than throwing.
+    both("return node.substringData(0x100000000 + 1, 1);", "e");
+    // AND A NON-NUMBER IS ZERO: ToUint32(NaN) is 0, so `substringData("test", 3)`
+    // reads from the start.
+    both("return node.substringData('test', 3);", "tes");
+    // A COUNT CLAMPS instead. Negative is "to the end", and so is 20.
+    both("return node.substringData(0, -1) + ',' + node.substringData(2, 20);", "test,st");
+    both("node.replaceData(2, -1, 'yo'); return node.data;", "teyo");
+    // TOO FEW ARGUMENTS IS A LANGUAGE ERROR, not a DOMException: the argument
+    // is missing before any DOM algorithm can look at it.
+    both("try { node.substringData(0); } catch (e) { return e.name; } return 'did not throw';",
+         "TypeError");
+    both("try { node.appendData(); } catch (e) { return e.name; } return 'did not throw';",
+         "TypeError");
+    // A FAILED CALL CHANGES NOTHING, which is the half of "with invalid offset"
+    // that a throw in the wrong place would still pass.
+    both("try { node.replaceData(5, 1, 'x'); } catch (e) {} return node.data;", "test");
+}
+
+void test_the_five_methods_edit_one_string() {
+    both("node.appendData('bar'); return node.data;", "testbar");
+    // ToString, so null is the WORD here - appendData's argument is an ordinary
+    // DOMString and not the [LegacyNullToEmptyString] one `data` is.
+    both("node.appendData(null); return node.data;", "testnull");
+    both("node.appendData(undefined); return node.data;", "testundefined");
+    both("node.insertData(0, 'X'); return node.data;", "Xtest");
+    both("node.insertData(4, 'X'); return node.data;", "testX");
+    both("node.deleteData(1, 2); return node.data;", "tst");
+    both("node.deleteData(0, 4); return node.data;", "");
+    both("node.replaceData(1, 1, 'waddup'); node.replaceData(1, 1, 'yup'); return node.data;",
+         "tyupaddupst");
+    both("node.replaceData(4, 20, 'yo'); return node.data;", "testyo");
+    // EVERY ONE OF THEM IN CODE UNITS. This is the case that a byte offset
+    // passes every other line of this file and fails: 33 code units into a
+    // string with CJK in it is 33 characters and 47 bytes.
+    both(R"(node.data = 'This is the character data test, append ' +
+                        '資料，更多資料';
+            node.replaceData(33, 6, 'other');
+            node.replaceData(44, 2, '文字');
+            return node.data;)",
+         "This is the character data test, other 資料，更多文字");
+    both(R"(node.data = 'This is the character data test, other ' +
+                        '資料，更多文字';
+            return node.substringData(12, 4) + ',' + node.substringData(39, 2);)",
+         "char,資料");
+    // ...and an astral character counts TWO. Both boundaries here fall between
+    // whole characters; one that fell BETWEEN the halves of a surrogate pair
+    // cannot be represented in UTF-8 at all - see utf16_to_byte.
+    both(R"(node.data = '🌠 test 🌠 TEST';
+            return node.substringData(5, 8);)",
+         "st 🌠 TE");
+    both(R"(node.data = '🌠 test 🌠 TEST';
+            node.replaceData(5, 8, '--');
+            return node.data;)",
+         "🌠 te--ST");
+}
+
+// --- Text, which is CharacterData plus two ----------------------------------
+
+void test_split_text_keeps_the_head_and_hands_back_the_tail() {
+    is(R"JS((function () {
+        var text = document.createTextNode('camembert');
+        try { text.splitText(10); } catch (e) { return e.name; }
+        return 'did not throw';
+    })())JS",
+       "IndexSizeError");
+    // A DETACHED Text splits and the NEW node stays detached: "Split root"
+    // asserts `new_text.parentNode` is null, and that is the case a
+    // `parent.appendChild` in the wrong place would break.
+    is(R"JS((function () {
+        var text = document.createTextNode('comté');
+        var made = text.splitText(3);
+        return '[' + text.data + '],[' + made.data + '],' + (made.parentNode === null);
+    })())JS",
+       "[com],[té],true");
+    // AN OFFSET IN CODE UNITS here too: "comté" is 5 code units and 6 bytes, so
+    // splitting at 5 leaves the whole string behind and an empty tail.
+    is(R"JS((function () {
+        var text = document.createTextNode('comté');
+        var made = text.splitText(5);
+        return '[' + text.data + '],[' + made.data + ']';
+    })())JS",
+       "[comté],[]");
+    // ...and an ATTACHED one puts the tail straight after itself.
+    is(R"JS((function () {
+        var parent = document.createElement('div');
+        var text = document.createTextNode('bleu');
+        parent.appendChild(text);
+        var made = text.splitText(2);
+        return text.data + ',' + made.data + ',' + (text.nextSibling === made) + ',' +
+               (made.parentNode === parent) + ',' + parent.childNodes.length;
+    })())JS",
+       "bl,eu,true,true,2");
+}
+
+void test_whole_text_stops_at_the_first_element() {
+    is(R"JS((function () {
+        var parent = document.createElement('div');
+        var t1 = document.createTextNode('a');
+        var t2 = document.createTextNode('b');
+        var t3 = document.createTextNode('c');
+        var detached = t1.wholeText;
+        parent.appendChild(t1);
+        parent.appendChild(t2);
+        parent.appendChild(t3);
+        var run = t1.wholeText + ',' + t2.wholeText + ',' + t3.wholeText;
+        var a = document.createElement('a');
+        a.textContent = 'x';
+        parent.insertBefore(a, t3);
+        return detached + ',' + run + ',' + t1.wholeText + ',' + t3.wholeText;
+    })())JS",
+       "a,abc,abc,abc,ab,c");
+}
+
 } // namespace
 
 int main() {
     test_a_removed_attribute_keeps_its_value();
+    test_the_data_is_measured_in_code_units();
+    test_an_offset_throws_where_a_count_clamps();
+    test_the_five_methods_edit_one_string();
+    test_split_text_keeps_the_head_and_hands_back_the_tail();
+    test_whole_text_stops_at_the_first_element();
     REPORT("character_data");
 }
