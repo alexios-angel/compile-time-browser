@@ -8,6 +8,84 @@ committing. There is no CI. Do not build on the small local machine.
 
 ## Current native staging checkpoint, 2026-09-07
 
+Four more work commits are local on `ctcompile-v1`: **`c822d24`** (composed
+global escape regressions), **`98df646`** (live ordinary-global owner query),
+**`05b672a`** (closed primitive catch helpers), and **`91627e5`** (native owning
+scalar global storage). No push was performed.
+
+[Checked ordinary global owners](native-owned-globals.md) implement the scalar
+export gate: `var host = {}; host.slot = 42; var trace = host.slot;` advances
+**0/1 -> 1/1 native** with an explicit
+`--ctnative-lower-to-emitc="host-manifest=driver.json"`. The manifest fingerprints
+prepared IR and selects the root and observations. The live query requires a
+complete host proof, one straight-line script, one fresh ordinary allocation,
+one binding publication and one fixed numeric field initialization. It is
+rebuilt for final admission. Source allocation/publication order remains;
+generated global storage and loads own a `std::shared_ptr` to the concrete field
+class. Owner storage is separate from driver-selected scalar observations.
+`StoredGlobal` and external global-load escape semantics are unchanged.
+
+Six complete programs admit **1/1 each**, with six selected observations matching
+Node, interpreter and standalone explicit/deduced GCC 13/Clang 18 output.
+Both generated forms pass ASan/UBSan, use-after-scope, stack-use-after-return
+and leak checks. The harness retains the owner after entry returns and its
+global is reset, churns allocations, runs entry again, checks distinct live
+identities, then observes weak-owner expiry after release. Fifteen source
+refusals plus stale/forged/rerun and budget controls pass. The live-query unit
+completes at **162 charged steps**; all **162 incomplete budgets** refuse
+atomically. Fingerprinting retains the host analysis's existing whole-module
+hashing behavior. Explicit-manifest lowering preserves prepared source instead
+of running default rewrites that would invalidate the fingerprint; callers
+must prepare IR before creating the manifest. No report or type marker grants
+ownership. Without this option the scalar export stays **0/1**.
+
+[Native exceptions](native-exceptions.md#closed-catch-helper-boundary-2026-09-07)
+now admit private primitive nonthrowing helpers in catch bodies, including
+transitive calls and owning string arguments/results. The live effect query
+is bounded to 4096 helper operations and 32 active helpers. The source gate
+passes **16 programs, 38/38 functions and 31 observations** across Node,
+interpreter and explicit/deduced GCC/Clang; numeric/string defaults and string
+lifetime sanitizers pass. Twenty source refusals, late helper mutation,
+forged/rerun reports, depth/work limits and prior recovery/wrong-state controls
+pass. A helper loaded inside `try` still flows through `ctjs.check` register
+vectors and remains unresolved; actual throwing callees are not implemented.
+
+The escape audit found no production solver defect. Seven unit controls cover
+global aliases, mixed fresh/external phi and loop flow, containment, and an
+overwritten binding whose object remains globally retained through an alias.
+Five added oracle sites make seven objects: five retained through globals and
+two confined alternatives. The full oracle measures **91 observed sites,
+89 claims, zero violations and ten sound confined claims**.
+
+Final serialized devbox gate: **468/468 CTests**, including **156/156 lit
+cases**, in **544.10 seconds**. Tightened boolean/string field refusal controls
+also pass the full lit rerun (**36.79 seconds**). All **564 C++ files** pass
+formatting; whitespace checks pass. Default and disabled native coverage stays
+Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725**. Exact Data probes remain
+**0/7 native** in CommonJS/browser/realm-fallback modes; their existing provider
+progress remains 24 resolved calls, 23 completed summaries and 19/19/24 matching
+observations. Full native Bootstrap initialization is unfinished.
+
+**Next native boundary:** connect the exported fixed field to its actual owning
+table and current uncaptured getter, consuming live callable/environment proof
+in closed value flow, method-table analysis and final admission. The measured
+getter gate is still **1/3**; **3/3 is proposed**. Complete host analysis still
+refuses callable/provider paths, and explicit-manifest lowering skips closure
+lifting, so new preparation must preserve or reconstruct valid proof without
+silently rebinding a stale manifest. Then address the captured Map export
+(currently **0/4**) and future-call/typed-export contracts. See
+[the exact next boundary](bootstrap-provider-next.md).
+
+The parallel exception boundary is to preserve and resolve checked callee value
+flow, then add an exceptional call-region edge carrying the pre-call register
+snapshot and an owning payload type through the closed native component.
+Publish an assignment result only on normal return. The current `try_exit`
+cannot represent unwinding before that completion. An explicit uncaught-entry
+adapter, general finally/nested handlers and mixed/object payloads remain
+separate work; normal-return prefix facts do not authorize exception paths.
+
+## Preceding object-payload checkpoint, 2026-09-07
+
 Four work commits are local on `ctcompile-v1`: **`0a4a7c9`** (export-boundary
 evidence), **`c358c1b`** (owning primitive exceptions), **`454a886`** (provider
 object payloads), and **`6cab1a0`** (live owning-field query regressions).
