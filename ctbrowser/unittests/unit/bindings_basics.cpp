@@ -1929,6 +1929,52 @@ void test_insert_adjacent_html() {
     check(log[1] == "inner=in-first in-last", "afterbegin and beforeend place children: " + log[1]);
 }
 
+// THE OTHER TWO SPELLINGS OF THE SAME ALGORITHM. `insertAdjacentElement` and
+// `insertAdjacentText` take a node rather than markup and are otherwise
+// `insertAdjacentHTML` exactly, which is why all three go through one
+// "insert adjacent" now - and why `afterend` is the case worth a test: it used
+// to APPEND to the parent, so a node placed after an element with a later
+// sibling landed at the end of the list instead of beside it.
+void test_insert_adjacent_element_and_text() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body><div id=box><span id=a>a</span><span id=z>z</span></div>
+        <i id=moved>m</i><script>
+        const a = document.getElementById('a');
+        a.insertAdjacentElement('afterend', document.getElementById('moved'));
+        const box = document.getElementById('box');
+        let order = '';
+        for (const kid of box.children) { order += kid.id + ' '; }
+        console.log('order=' + order.trim());
+        const back = a.insertAdjacentElement('beforebegin', document.getElementById('moved'));
+        console.log('returned=' + back.id);
+        a.insertAdjacentText('afterbegin', 'T');
+        console.log('text=' + a.firstChild.nodeValue + ',' + a.textContent);
+        let threw = '';
+        try { a.insertAdjacentText('nowhere', 'x'); } catch (e) { threw = e.name; }
+        let rooted = '';
+        try {
+            document.documentElement.insertAdjacentText('beforebegin', 'x');
+        } catch (e) { rooted = e.name; }
+        console.log('threw=' + threw + ',' + rooted);
+        // An element with no parent has nowhere to put a sibling, and that is
+        // a null rather than a throw.
+        console.log('detached=' +
+                    (document.createElement('div')
+                         .insertAdjacentElement('afterend', document.createElement('b')) === null));
+    </script></body></html>)");
+    check(page.script_error().empty(), "the insert-adjacent script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() > 4, "every insert-adjacent case logged");
+    if (log.size() <= 4) { return; }
+    check(log[0] == "order=a moved z",
+          "afterend places the node BESIDE, not at the end: " + log[0]);
+    check(log[1] == "returned=moved", "insertAdjacentElement answers with the node: " + log[1]);
+    check(log[2] == "text=T,Ta", "insertAdjacentText makes a Text node: " + log[2]);
+    check(log[3] == "threw=SyntaxError,HierarchyRequestError",
+          "an unknown position and the document element's sibling both throw: " + log[3]);
+    check(log[4] == "detached=true", "an element with no parent answers null: " + log[4]);
+}
+
 void test_clip() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body><canvas id=c width=100 height=100></canvas><script>
@@ -3209,6 +3255,7 @@ int main() {
     test_control_value_is_live();
     test_canvas_as_image_source();
     test_insert_adjacent_html();
+    test_insert_adjacent_element_and_text();
     test_clip();
     test_inner_html();
     test_listener_options();

@@ -1639,8 +1639,8 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         mutated();
         return value::boolean(want);
     });
-    // `getAttributeNames()` - the ordered list, and the only way to enumerate an
-    // element's attributes without walking the `attributes` snapshot.
+    // `getAttributeNames()` - the QUALIFIED names, in order, which is the one
+    // answer `element.attributes` cannot give in a single string comparison.
     method("getAttributeNames", [this](context & c, std::span<value>) {
         const node_id id = receiver(c);
         value out = c.make_array();
@@ -1714,15 +1714,70 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         }
         return value::boolean(false);
     });
+    // "INSERT ADJACENT", DOM 4.9 - ONE ALGORITHM FOR THREE METHODS, which is
+    // the point of it. `insertAdjacentHTML` did this by hand and the other two
+    // did not exist, and doing it by hand got `afterend` wrong: it APPENDED to
+    // the parent rather than placing the node after this element, so a
+    // `beforebegin` and an `afterend` on the same element landed in the wrong
+    // order whenever the element had a later sibling.
+    //
+    // Answers (parent, before), or nothing. There are two kinds of nothing and
+    // the caller does not have to tell them apart: an unrecognised position is a
+    // SyntaxError and `beforebegin`/`afterend` on the DOCUMENT ELEMENT is a
+    // HierarchyRequestError, both already thrown by the time this returns; an
+    // element with no parent at all is the "return null" the specification
+    // gives, and throws nothing.
+    //
+    // THE DOCUMENT ELEMENT'S PARENT IS THE DOCUMENT in the DOM and is EMPTY
+    // here - this tree builder has no Document node, see install_document_as_node
+    // - so the one place the two models differ has to be named rather than
+    // inferred. A second element or a text node beside `<html>` would be a
+    // second child of the Document, which is what pre-insertion refuses.
+    const auto adjacent_place =
+        [this](context & c, node_id self,
+               const std::string & given) -> std::optional<std::pair<node_id, node_id>> {
+        std::string where = given;
+        ascii_lower_in_place(where);
+        const auto txn = doc_->read();
+        if (where == "afterbegin") {
+            const std::span<const node_id> kids = txn.children(self);
+            return std::pair{self, kids.empty() ? node_id{} : kids.front()};
+        }
+        if (where == "beforeend") { return std::pair{self, node_id{}}; }
+        const bool before = where == "beforebegin";
+        if (!before && where != "afterend") {
+            throw_dom_exception(c, "SyntaxError",
+                                "insertAdjacent: '" + given +
+                                    "' is not one of beforebegin, afterbegin, beforeend "
+                                    "or afterend");
+            return std::nullopt;
+        }
+        const node_id parent = txn.parent(self);
+        if (!parent) {
+            if (self == txn.root()) {
+                throw_dom_exception(c, "HierarchyRequestError",
+                                    "insertAdjacent: the document element cannot have a sibling");
+            }
+            return std::nullopt;
+        }
+        if (before) { return std::pair{parent, self}; }
+        const std::span<const node_id> siblings = txn.children(parent);
+        node_id next;
+        for (std::size_t i = 0; i + 1 < siblings.size(); ++i) {
+            if (siblings[i] == self) { next = siblings[i + 1]; }
+        }
+        return std::pair{parent, next};
+    };
     // `insertAdjacentHTML(position, markup)` - a fragment parse at one of four
     // places relative to this element. The parser and the copy are the same
     // ones innerHTML uses; only where the nodes land differs.
-    method("insertAdjacentHTML", [this](context & c, std::span<value> args) {
+    method("insertAdjacentHTML", [this, adjacent_place](context & c, std::span<value> args) {
         const node_id self = receiver(c);
         if (!self || atoms_ == nullptr) { return value::undefined(); }
-        std::string where = arg_string(c, args, 0);
-        ascii_lower_in_place(where);
+        const std::string where = arg_string(c, args, 0);
         const std::string markup = arg_string(c, args, 1);
+        const std::optional<std::pair<node_id, node_id>> place = adjacent_place(c, self, where);
+        if (!place) { return value::undefined(); }
 
         // Parsed into a scratch document, as innerHTML does and for the same
         // reason: tree_builder::parse replaces the root it is handed.
@@ -1739,30 +1794,41 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         find_body(find_body, from.root());
         if (!body) { return value::undefined(); }
 
-        const auto txn = doc_->read();
-        const node_id parent = txn.parent(self);
-        // `beforebegin` and `afterend` need a PARENT to be inserted into, and an
-        // element that has none simply ignores them - which is what a browser
-        // does rather than throwing.
+        // IN ORDER, because each node goes before the SAME reference rather
+        // than before the one just added. copy_subtree appends to the parent it
+        // is given, so the move is a no-op when the reference is empty.
         for (const node_id child : from.children(body)) {
-            if (where == "afterbegin") {
-                // Reversed, because each new node goes in front of the last -
-                // otherwise a two-node fragment arrives back to front.
-                const std::span<const node_id> existing = txn.children(self);
-                const node_id first = existing.empty() ? node_id{} : existing.front();
-                const node_id made = copy_subtree(from, child, self);
-                if (first) { (void)doc_->insert_before(self, made, first); }
-            } else if (where == "beforebegin" && parent) {
-                const node_id made = copy_subtree(from, child, parent);
-                (void)doc_->insert_before(parent, made, self);
-            } else if (where == "afterend" && parent) {
-                (void)copy_subtree(from, child, parent);
-            } else {
-                // beforeend, and the fallback: append inside.
-                (void)copy_subtree(from, child, self);
-            }
+            const node_id made = copy_subtree(from, child, place->first);
+            if (place->second) { (void)doc_->insert_before(place->first, made, place->second); }
         }
         mutated();
+        return value::undefined();
+    });
+    // ...and the two spellings that take a NODE rather than markup, both of
+    // which were missing. `insertAdjacentElement` ANSWERS with the element it
+    // inserted - or null, which is how a page learns the position was one the
+    // element has no room for.
+    method("insertAdjacentElement", [this, adjacent_place](context & c, std::span<value> args) {
+        const node_id self = receiver(c);
+        if (!self) { return value::null(); }
+        const std::optional<std::pair<node_id, node_id>> place =
+            adjacent_place(c, self, arg_string(c, args, 0));
+        if (!place) { return value::null(); }
+        const node_id child = handle_of(arg(args, 1));
+        if (!pre_insert_valid(c, place->first, child, arg(args, 1), value::null())) {
+            return value::null();
+        }
+        (void)insert_node(place->first, child, place->second);
+        return arg(args, 1);
+    });
+    method("insertAdjacentText", [this, adjacent_place](context & c, std::span<value> args) {
+        const node_id self = receiver(c);
+        if (!self) { return value::undefined(); }
+        const std::string text = arg_string(c, args, 1);
+        const std::optional<std::pair<node_id, node_id>> place =
+            adjacent_place(c, self, arg_string(c, args, 0));
+        if (!place) { return value::undefined(); }
+        (void)insert_node(place->first, doc_->create_text(text), place->second);
         return value::undefined();
     });
 
