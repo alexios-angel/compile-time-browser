@@ -31,11 +31,14 @@
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
+#include <cstdint>
 #include <iterator>
 #include <utility>
 
@@ -655,6 +658,154 @@ LoadProvenanceEvidence computeLoadProvenance(mlir::DataFlowSolver & solver, ctjs
         exposure.value = aliases(exposure.by->getOperand(exposure.position));
     }
     out.exposures = std::move(sinks);
+    return out;
+}
+
+namespace {
+
+// An own array element, not a property requiring conversion/prototype lookup.
+// -0 Number is index zero; the String "-0" is a different named property.
+// 2^32-1 is an ordinary property key, not an array element. Limiting strings
+// before parsing also bounds proof work independently of source key length.
+std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
+    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
+    if (!constant) { return std::nullopt; }
+    if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue())) {
+        const double index = number.getDouble();
+        if (std::isfinite(index) && index >= 0 && index < 4294967295.0 &&
+            std::floor(index) == index) {
+            return static_cast<std::size_t>(index);
+        }
+    } else if (auto string = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())) {
+        const llvm::StringRef text = string.getValue();
+        if (text.empty() || text.size() > 10 || (text.size() > 1 && text.front() == '0') ||
+            !llvm::all_of(text, [](char c) { return c >= '0' && c <= '9'; })) {
+            return std::nullopt;
+        }
+        std::uint64_t index = 0;
+        if (!text.getAsInteger(10, index) && index < 4294967295ULL) {
+            return static_cast<std::size_t>(index);
+        }
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
+ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t workLimit) {
+    ArrayContentsEvidence out;
+    const auto refuse = [&](ArrayContentsFailure reason, mlir::Operation * by) {
+        ArrayContentsEvidence failed;
+        failed.failure = reason;
+        failed.refusedBy = by;
+        failed.work = out.work;
+        return failed;
+    };
+    const auto spend = [&]() {
+        if (out.work == workLimit) { return false; }
+        ++out.work;
+        return true;
+    };
+    if (!function.getBody().hasOneBlock()) {
+        return refuse(ArrayContentsFailure::UnsupportedControlFlow, function);
+    }
+
+    // No uninitialized/external alternative is silently dropped: values enter
+    // this map only as exact constants, unique fresh instances or checked own
+    // reads. Reject all other producers, including unrelated effectful ones.
+    // This avoids assuming that a call without an explicit array operand is
+    // harmless, or that a late region cannot retain a raw frame register.
+    llvm::DenseMap<mlir::Value, mlir::Value> origins;
+    const auto origin = [&](mlir::Value value) { return origins.lookup(value); };
+    for (mlir::Operation & op : function.getBody().front()) {
+        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+        if (op.getNumRegions() != 0 || op.getNumSuccessors() != 0) {
+            return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
+        }
+        if (llvm::isa<ctjs::ConstantOp, ctjs::CreateObjectOp>(&op)) {
+            origins[op.getResult(0)] = op.getResult(0);
+            continue;
+        }
+        if (auto array = llvm::dyn_cast<ctjs::CreateArrayOp>(&op)) {
+            auto & elements = out.arrays[&op];
+            for (unsigned position = 0; position < array.getElements().size(); ++position) {
+                if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                const mlir::Value value = origin(array.getElements()[position]);
+                if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
+                elements.push_back(value);
+                out.writes.push_back({&op, position, &op, position, value});
+            }
+            origins[array.getResult()] = array.getResult();
+            continue;
+        }
+        if (llvm::isa<ctjs::AppendOp, ctjs::SetPropertyOp, ctjs::GetPropertyOp>(&op)) {
+            const mlir::Value base = origin(op.getOperand(0));
+            mlir::Operation * array = base ? base.getDefiningOp() : nullptr;
+            auto found = out.arrays.find(array);
+            if (found == out.arrays.end()) {
+                return refuse(ArrayContentsFailure::UnknownArray, &op);
+            }
+            auto & elements = found->second;
+            if (auto append = llvm::dyn_cast<ctjs::AppendOp>(&op)) {
+                const mlir::Value value = origin(append.getElement());
+                if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
+                if (elements.size() >= 4294967295ULL) {
+                    return refuse(ArrayContentsFailure::MissingElement, &op);
+                }
+                out.writes.push_back({&op, 1, array, elements.size(), value});
+                elements.push_back(value);
+                continue;
+            }
+            const mlir::Value key = origin(op.getOperand(1));
+            const auto index = key ? ownArrayIndex(key) : std::nullopt;
+            if (!index) { return refuse(ArrayContentsFailure::UnknownIndex, &op); }
+            // Overwrite only. Extending with set_property can leave holes or
+            // consult a prototype setter; literal append has neither behavior.
+            if (*index >= elements.size()) {
+                return refuse(ArrayContentsFailure::MissingElement, &op);
+            }
+            if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(&op)) {
+                const mlir::Value value = origin(store.getValue());
+                if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
+                elements[*index] = value;
+                out.writes.push_back({&op, 2, array, *index, value});
+            } else {
+                origins[op.getResult(0)] = elements[*index];
+                out.reads.push_back({&op, array, *index, elements[*index]});
+            }
+            continue;
+        }
+        if (llvm::isa<ctjs::ReturnOp>(&op)) {
+            const mlir::Value value = origin(op.getOperand(0));
+            if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
+            ArrayContentsExit exit;
+            exit.by = &op;
+            exit.value = value;
+            llvm::SmallVector<mlir::Value, 8> pending{value};
+            llvm::SmallPtrSet<mlir::Operation *, 8> visited;
+            while (!pending.empty()) {
+                if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                mlir::Operation * site = pending.pop_back_val().getDefiningOp();
+                if (!isTrackedSite(site) || !visited.insert(site).second) { continue; }
+                exit.reachableSites.push_back(site);
+                auto array = out.arrays.find(site);
+                if (array == out.arrays.end()) { continue; }
+                for (mlir::Value element : array->second) {
+                    if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                    pending.push_back(element);
+                }
+            }
+            out.exits.push_back(std::move(exit));
+            continue;
+        }
+        // Throw is intentionally outside the subset: uncaught diagnostic
+        // formatting may reenter JavaScript through toString/prototype hooks.
+        return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
+    }
+    if (out.exits.size() != 1) {
+        return refuse(ArrayContentsFailure::UnsupportedControlFlow, function);
+    }
+    out.complete = true;
     return out;
 }
 

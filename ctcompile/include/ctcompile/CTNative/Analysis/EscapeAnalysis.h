@@ -307,6 +307,75 @@ struct LoadProvenanceEvidence {
                                                            const EscapeVerdicts & verdicts,
                                                            std::size_t workLimit = 100000);
 
+/// Independent complete own-element evidence, not the candidate graph above.
+/// Values name their original constant or fresh allocation, following exact
+/// earlier reads. Each write keeps its actual operand position as a witness.
+struct ArrayElementWrite {
+    mlir::Operation * by = nullptr;
+    unsigned position = 0;
+    mlir::Operation * array = nullptr;
+    std::size_t index = 0;
+    mlir::Value value;
+};
+
+struct ArrayElementRead {
+    mlir::Operation * by = nullptr;
+    mlir::Operation * array = nullptr;
+    std::size_t index = 0;
+    mlir::Value value;
+};
+
+struct ArrayContentsExit {
+    mlir::Operation * by = nullptr; // return
+    mlir::Value value;
+    /// Every local object/array reachable from value at this exit, through
+    /// current own elements, once each. Includes the root when it is local.
+    /// Overwritten elements are absent unless another live path retains them.
+    llvm::SmallVector<mlir::Operation *, 4> reachableSites;
+};
+
+enum class ArrayContentsFailure {
+    None,
+    UnsupportedControlFlow,
+    UnsupportedOperation,
+    UnknownValue,
+    UnknownArray,
+    UnknownIndex,
+    MissingElement,
+    WorkLimit
+};
+
+struct ArrayContentsEvidence {
+    /// Final dense own elements, including empty arrays. Exact read and write
+    /// records below preserve earlier states and overwritten values.
+    llvm::MapVector<mlir::Operation *, llvm::SmallVector<mlir::Value, 4>> arrays;
+    llvm::SmallVector<ArrayElementWrite, 0> writes;
+    llvm::SmallVector<ArrayElementRead, 0> reads;
+    llvm::SmallVector<ArrayContentsExit, 1> exits;
+    /// Published only after the entire function and exit reachability pass.
+    /// Refusal/exhaustion returns NO arrays, writes, reads or exits.
+    bool complete = false;
+    ArrayContentsFailure failure = ArrayContentsFailure::None;
+    mlir::Operation * refusedBy = nullptr;
+    /// Operation, initializer-element and exit graph visits. Key parsing is
+    /// bounded to one number or at most ten canonical decimal digits.
+    std::size_t work = 0;
+};
+
+/// Recompute from the CURRENT verified IR; needs neither trusted annotations
+/// nor alias lattices. The initial subset has one block, constants, fresh
+/// property-free objects/arrays, literal append, initialized constant-index
+/// array reads/overwrites and return. Loaded array aliases share one
+/// contents state; cycles are visited once at exits. Unknown values/indices,
+/// holes, calls, throws, publication, regions, prototypes and accessors refuse.
+///
+/// This proves only the stated own contents and local exit reachability. It
+/// changes no legacy escape verdict, does not prove native element types or
+/// ownership/lifetime, and has no native-admission consumer. Any IR mutation
+/// invalidates all returned records, including successful ones.
+[[nodiscard]] ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function,
+                                                         std::size_t workLimit = 100000);
+
 /// The post-pass. Takes the solver by non-const reference only because
 /// DataFlowSolver::getProgramPointBefore(Block *) interns its anchor and is
 /// not const; nothing here changes a lattice.

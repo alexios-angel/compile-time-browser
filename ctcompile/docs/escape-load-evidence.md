@@ -142,9 +142,63 @@ Evidence: `/tmp/ctcompile-arguments-evidence.json`; logs:
 `/tmp/ctcompile-arguments-full-gate.log`. See [HANDOFF.md](HANDOFF.md) for the
 browser baseline.
 
-The next proof must establish complete contents under a checked set of data
-property, prototype, accessor and indirect-transfer restrictions, then use all
-exposures when considering a different escape verdict. External contents and
-unsupported retention paths must be refused before any `Stored` verdict
-changes. Native automatic storage also requires the plan's separate type,
-identity and frame-lifetime obligations.
+## Complete own elements for a bounded local subset
+
+`computeArrayContents` is a separate prerequisite that reads the current
+verified IR directly, without alias lattices, candidate links or trusted
+annotations. A successful result establishes exact dense own elements for
+fresh local arrays in one straight-line block. Constants and fresh property-free
+objects can be elements. Inline initializers, literal `ctjs.append`, initialized
+constant-index reads and overwrites are supported. A read resolves to the
+original constant or allocation; reading an array and writing through that alias
+updates the same array state.
+
+The result records every initializer/append/overwrite and its actual operand,
+every read's value at that point, the final slot contents, and every local
+allocation reachable from the return value. Earlier reads retain their original
+values after replacement. Return reachability follows current slots, visits each
+allocation once, and handles self and mutual cycles. This identifies identities
+and edges; it does not select an owner, make a cycle collectable, or change the
+legacy `Stored` verdict.
+
+The proof requires a known initialized own index. Number `-0` and canonical
+decimal String `"0"` refer to index zero; String `"-0"`, noncanonical spellings,
+fractions, NaN, infinity, negative numbers and `2^32-1` do not. Generic writes
+may overwrite existing elements only. Extending a generic property write, reading
+an absent slot, deleting elements, accessing named properties, changing prototypes
+or defining accessors refuses the entire result. Literal append uses the existing
+internal construction operation, not a call to a potentially modified `push`.
+
+Unknown values and bases, all calls and global accesses/publication, cells,
+unsupported carriers, multiple blocks, loops, nested regions, arguments/rest
+builders and suspension also refuse. Even a late unrelated call invalidates the
+proof. `ctjs.throw` is excluded because uncaught diagnostic formatting may call
+`toString` and reenter JavaScript. Return is the only supported exit.
+
+The default budget is 100,000 operation, initializer-element and exit graph
+visits. Key parsing examines one Number or at most ten String digits. Only a
+completed function scan and return graph publish `complete=true`. Unsupported
+operations or exhausted work return a named failure and witness operation with
+**no proof records**, including when all reads were already checked. Every IR
+mutation invalidates previous records; callers must recompute.
+
+Focused controls cover mutation order, saved reads, loaded bases/keys/values,
+empty arrays, primitive returns, cycles, all listed refusal classes, and canonical
+index boundaries. Seven live IR states change a replacement, key, base and late
+publication, including a forged completion attribute. Each case checks every
+budget below its actual completion/refusal point and the exact budget, while
+preserving legacy load lattices and escape verdicts. These are unit proof
+controls, not a new measured corpus precision result.
+
+The focused devbox gate passes **31 contents rows, 14 index controls and seven
+live mutation states**, alongside the unchanged **209 escape rows**. All four
+existing execution oracles pass with zero violations. The integrated seven-test
+gate, including host and ownership units, passes in **18.26 seconds**; log:
+`/tmp/ctcompile-map-presence-integrated.log`. The full generated gate follows
+integration; these measurements do not claim a corpus precision increase.
+
+No native admission consumes this query. Complete contents for control flow,
+external values and other containers remain unfinished. Any future escape
+consumer must account for every exposure and indirect retention route before
+changing a `Stored` verdict. Native automatic storage also requires the plan's
+separate type, identity, cycle ownership and frame-lifetime obligations.
