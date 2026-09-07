@@ -17,6 +17,7 @@ by their implementation files. Public APIs remain under `include/ctcompile/`.
 | Deforestation | `lib/CTNative/Deforestation/` | Snapshot producer/consumer constraints, effect barriers and scalar projection helpers |
 | Native pass | `lib/CTNative/Lowering/LowerToEmitC.cpp` | Default optimization policy, pass setup, inference, admission fixpoint and lowering order |
 | Closure lifting | `lib/CTNative/Lowering/ClosureLifting/` | Calls, callbacks, bindings, cells, captures, returned closures and method tables, constructors, diagnostics and rewriting |
+| Provider paths | `lib/CTNative/HostContract/Provider*` and `PrefixMutations.cpp` | Private Map transactions, ordered diagnostic snapshots, bounded primitive callback effects and atomic global post-state |
 | Native admission | `lib/CTNative/Lowering/Admission/` | Value, object, operation and function checks |
 | Native exceptions | `lib/CTNative/Lowering/Exceptions/` | Bounded handler recovery using LLVM CFG-to-SCF, numeric payload/effect admission, transactional rollback and catch-state storage |
 | Native emission | `lib/CTNative/Lowering/EmitC/` | Shapes, types, owning environments and method tables, Maps, expressions, operations, functions, module declarations and runtime helper text |

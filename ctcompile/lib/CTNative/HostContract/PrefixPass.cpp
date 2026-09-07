@@ -67,7 +67,8 @@ struct CTNativeSpecializeHostPrefixPass
             return;
         }
         HostEntryPrefixAnalysis analysis(module, *contract, maxSteps, followPublication,
-                                         followProviderReads, followProviderMutations);
+                                         followProviderReads, followProviderMutations,
+                                         followProviderDiagnostics, followProviderCallbacks);
         // Snapshot a checked plan before making the first semantic mutation.
         // No analysis query runs against partially rewritten IR.
         std::vector<HostPrefixBranch> branches(analysis.branches().begin(),
@@ -146,7 +147,8 @@ struct CTNativeSpecializeHostPrefixPass
                     {"reads", std::move(operations)}});
             }
             llvm::json::Array providerCalls;
-            std::int64_t mutationCount = 0, nestedCount = 0;
+            std::int64_t mutationCount = 0, nestedCount = 0, callbackCount = 0,
+                         globalWriteCount = 0;
             llvm::DenseMap<mlir::Operation *, std::int64_t> ordinals;
             if (!analysis.providerCalls().empty()) {
                 module.walk([&](mlir::Operation * operation) {
@@ -183,6 +185,24 @@ struct CTNativeSpecializeHostPrefixPass
                         ++readCount;
                     }
                 }
+                llvm::json::Array callbacks;
+                for (const auto & callback : proof.callbacks) {
+                    llvm::json::Array writes;
+                    for (const auto & write : callback.writes) {
+                        writes.push_back(
+                            llvm::json::Object{{"operation", ordinals.lookup(write.operation)},
+                                               {"binding", write.binding},
+                                               {"value", providerResult(write.value)}});
+                        ++globalWriteCount;
+                    }
+                    auto target = callback.target;
+                    callbacks.push_back(
+                        llvm::json::Object{{"target", target.getSymName().str()},
+                                           {"call_operation", ordinals.lookup(callback.operation)},
+                                           {"result", providerResult(callback.result)},
+                                           {"writes", std::move(writes)}});
+                    ++callbackCount;
+                }
                 providerCalls.push_back(llvm::json::Object{
                     {"target", proof.target.getSymName().str()},
                     {"call_operation", ordinals.lookup(proof.operation)},
@@ -190,7 +210,8 @@ struct CTNativeSpecializeHostPrefixPass
                      static_cast<std::int64_t>(factory - analysis.factories().begin())},
                     {"result", providerResult(proof.result)},
                     {"allocations", std::move(allocations)},
-                    {"operations", std::move(operations)}});
+                    {"operations", std::move(operations)},
+                    {"callbacks", std::move(callbacks)}});
             }
             llvm::json::Object document{
                 {"valid", analysis.valid()},
@@ -214,6 +235,8 @@ struct CTNativeSpecializeHostPrefixPass
                 {"provider_reads", std::move(providerReads)},
                 {"runtime_provider_mutations", mutationCount},
                 {"runtime_nested_provider_allocations", nestedCount},
+                {"runtime_provider_callbacks", callbackCount},
+                {"runtime_provider_global_writes", globalWriteCount},
                 {"provider_calls", std::move(providerCalls)},
                 {"full_host_contract_claimed", false}};
             stream << llvm::formatv("{0:2}\n", llvm::json::Value(std::move(document)));

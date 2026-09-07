@@ -1,0 +1,1 @@
+# RUN: python3 %S/host-provider-diagnostics.py --translate ctjs-translate --opt ctjs-opt --work %t

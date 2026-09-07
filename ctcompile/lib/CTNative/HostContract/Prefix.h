@@ -15,6 +15,10 @@ struct prefixValue {
         resource,
         resourceMethod,
         mapConstructor,
+        arrayConstructor,
+        arrayFrom,
+        mapKeysIterator,
+        keySnapshot,
         closure,
         absent
     } kind = Kind::unknown;
@@ -34,6 +38,8 @@ struct prefixAnalysis {
     bool followPublication;
     bool followProviderReads;
     bool followProviderMutations;
+    bool followProviderDiagnostics;
+    bool followProviderCallbacks;
     unsigned operationCount = 0;
     bool exhausted = false;
     bool reflective = false;
@@ -72,7 +78,8 @@ struct prefixAnalysis {
     };
 
     prefixAnalysis(mlir::ModuleOp module, const HostContract & contract, unsigned maxSteps,
-                   bool followPublication, bool followProviderReads, bool followProviderMutations);
+                   bool followPublication, bool followProviderReads, bool followProviderMutations,
+                   bool followProviderDiagnostics, bool followProviderCallbacks);
     bool step();
     bool spend(unsigned count);
     prefixValue stop(mlir::Operation * operation, llvm::StringRef reason);

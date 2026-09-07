@@ -217,4 +217,18 @@ bool providerState::size(unsigned mapId, unsigned & outSize, Spend spend) const 
     return true;
 }
 
+bool providerState::keys(unsigned mapId, llvm::SmallVectorImpl<providerValue> & outKeys,
+                         Spend spend) const {
+    const auto * map = get(mapId);
+    if (!spend(1) || !map || !spend(static_cast<unsigned>(map->entries.size()))) { return false; }
+    // Precharge the entire traversal/copy before allocating its storage. Zero
+    // inline capacity makes publication a storage transfer, without another
+    // uncharged key copy, even when the caller's vector has inline storage.
+    llvm::SmallVector<providerValue, 0> snapshot;
+    snapshot.reserve(map->entries.size());
+    for (const auto & entry : map->entries) { snapshot.push_back(entry.key); }
+    outKeys = std::move(snapshot);
+    return true;
+}
+
 } // namespace ctcompile::ctnative::host_detail

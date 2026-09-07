@@ -51,6 +51,8 @@ def CTNativeSpecializeHostPrefix : Pass<"ctnative-specialize-host-prefix", "mlir
     Option<"followPublication", "follow-publication", "bool", "false", "Follow checked runtime factory allocation and publication">,
     Option<"followProviderReads", "follow-provider-reads", "bool", "false", "Follow private empty-Map read paths without rewriting method bodies">,
     Option<"followProviderMutations", "follow-provider-mutations", "bool", "false", "Track transactional private Map mutations while retaining runtime effects">,
+    Option<"followProviderDiagnostics", "follow-provider-diagnostics", "bool", "false", "Follow checked private key snapshots and diagnostic arguments">,
+    Option<"followProviderCallbacks", "follow-provider-callbacks", "bool", "false", "Track proved primitive callback global writes within provider transactions">,
     Option<"report", "report", "bool", "false", "Report selected branches and resolved calls">
   ];
   let dependentDialects = ["::ctcompile::ctjs::CTJSDialect", "::mlir::scf::SCFDialect",

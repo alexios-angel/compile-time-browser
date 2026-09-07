@@ -8,6 +8,20 @@ committing. There is no CI. Do not build on the small local machine.
 
 ## Current native staging checkpoint, 2026-09-07
 
+[Provider diagnostics and callback effects](native-provider-diagnostics.md)
+now extend the optional mutation prefix through checked Map.keys/Array.from
+snapshots, string messages and the actual source recorder's scalar global writes.
+Enable `follow-provider-diagnostics=true` and `follow-provider-callbacks=true`
+alongside publication/read/mutation following. Both new options default off.
+The exact CommonJS/browser/realm-fallback programs advance **13 to 20 resolved
+calls** and **11 to 18 completed summaries**, with 52 reads, five sets, three
+deletes, one callback and two global writes. All 62 Node/interpreter/boxed
+observations agree, including GC stress. Provider Maps, callback globals and
+reports commit together only after normal return; runtime bodies and effects
+remain unchanged. Native admission stays **0/7** in each mode. The
+[next provider boundary](bootstrap-provider-next.md) is an ordinary object
+payload, followed by native ownership and call proofs for exported users.
+
 [Native JavaScript exceptions](native-exceptions.md) now recover one acyclic
 handler and emit real typed C++ throw/catch. The recovery preserves throw-site
 register state, uses LLVM CFG-to-SCF without a fork, and requires numeric
@@ -23,9 +37,7 @@ The guarded specimen also passes default optimizations. Eleven refusals,
 zero/tight work limits, seventeen malformed-IR controls and an executed
 wrong-state control pass. One refusal records the existing null-property
 interpreter/Node discrepancy separately; it is never admitted as native.
-This is separate from console callback effects, whose
-[next provider proof](bootstrap-provider-next.md) is designed in two stages:
-checked diagnostic snapshots, then the actual recorder's global write effects.
+Exception support remains separate from callback effects and exported ownership.
 
 [Private Map mutation summaries](native-provider-mutations.md) now extend the
 host prefix under `follow-provider-mutations=true`, requiring both publication
@@ -35,8 +47,8 @@ The exact CommonJS/browser/realm-fallback probes advance **4 → 13 resolved
 calls**, with eleven completed method summaries, 31 reads, five sets and one
 unsuccessful delete. Two distinct nested Maps retain allocation/invocation
 provenance. Method bodies, observer branches and runtime effects remain intact.
-The next boundary is the conflict arm's `load_global "console"`; native
-admission remains **0/7** in each mode. All 62 Node/interpreter/boxed observations
+Without diagnostic following, the boundary remains the conflict arm's
+`load_global "console"`; native admission remains **0/7** in each mode. All 62 Node/interpreter/boxed observations
 agree, including GC stress. Thirty-eight focused cases and finite work-limit
 controls check identities, rollback and refusal behavior. The option is off by
 default and never falls back to the old empty-Map model after a mutation.
@@ -109,8 +121,8 @@ The three new differentials pass 62 observations under Node, the interpreter
 and boxed script/wrapper execution, including GC stress. The focused suite
 checks 23 source cases plus stale/forged contracts and work limits.
 
-Final devbox gate: **461/461 CTests**, **151/151 lit cases**, **539.89 seconds**;
-all **553 C++ files** pass formatting; `git diff --check` passes. Owning table fields pass
+Final devbox gate: **464/464 CTests**, **152/152 lit cases**, **547.27 seconds**;
+all **557 C++ files** pass formatting; `git diff --check` passes. Owning table fields pass
 ASan/UBSan, stack-use-after-return and leak checks in explicit and deduced forms.
 Existing closure and string-snapshot sanitizer regressions remain green.
 Default native coverage stays

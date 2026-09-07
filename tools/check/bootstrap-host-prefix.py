@@ -45,21 +45,27 @@ def number_attribute(value):
     return f"#ctjs.number<{struct.unpack('<Q', struct.pack('<d', value))[0]}>"
 
 
-def check_provider_mutations(report):
+PROVIDER_MUTATION_RESULTS = [
+    "#ctjs.null", "#ctjs.undefined", "#ctjs.undefined", "#ctjs.undefined",
+    number_attribute(42), number_attribute(21), "#ctjs.undefined", number_attribute(43),
+    "#ctjs.null", "#ctjs.undefined", number_attribute(43),
+]
+
+PROVIDER_CALLBACK_TARGETS = [
+    *PROVIDER_MUTATION_TARGETS, "fn$4", "fn$5", "fn$5", "fn$6", "fn$5", "fn$5", "fn$6",
+]
+
+
+def check_provider_mutations(report, boundary="unsupported provider path at `ctjs.load_global` (console)"):
     summaries = report["provider_calls"]
     if (report["summarized_provider_calls"], report["runtime_provider_mutations"],
         report["runtime_nested_provider_allocations"]) != (11, 6, 2) or report["provider_reads"]:
         raise RuntimeError(f"private Map mutation summaries did not reach the conflict call: {report}")
-    if report["provider_boundary"] != "unsupported provider path at `ctjs.load_global` (console)":
+    if report["provider_boundary"] != boundary:
         raise RuntimeError(f"provider mutation traversal did not stop at the console boundary: {report}")
-    expected_results = [
-        "#ctjs.null", "#ctjs.undefined", "#ctjs.undefined", "#ctjs.undefined",
-        number_attribute(42), number_attribute(21), "#ctjs.undefined", number_attribute(43),
-        "#ctjs.null", "#ctjs.undefined", number_attribute(43),
-    ]
     if ([entry["target"] for entry in summaries] != PROVIDER_MUTATION_TARGETS or
         [entry["factory_index"] for entry in summaries] != [0] * 11 or
-        [entry["result"] for entry in summaries] != expected_results):
+        [entry["result"] for entry in summaries] != PROVIDER_MUTATION_RESULTS):
         raise RuntimeError("provider mutation summaries lost call order, captured factory or result identity")
     calls = [entry["call_operation"] for entry in summaries]
     if any(type(call) is not int or call < 0 for call in calls) or len(set(calls)) != 11:
@@ -100,6 +106,91 @@ def check_provider_mutations(report):
         raise RuntimeError("unsuccessful Map.delete was counted as successful removal")
     if deletes[0]["map_id"] != first["map_id"]:
         raise RuntimeError("wrong-key deletion lost the original element's nested Map")
+
+
+def check_provider_callbacks(report):
+    # These initial expectations follow the source's complete primitive prefix.
+    # The compiler must measure them; source hashes and runtime observations are
+    # independent gates, not evidence supplied by this forecast.
+    summaries = report["provider_calls"]
+    expected_results = [
+        *PROVIDER_MUTATION_RESULTS, "#ctjs.undefined", "#ctjs.null", number_attribute(43),
+        "#ctjs.undefined", "#ctjs.null", number_attribute(21), "#ctjs.undefined",
+    ]
+    if (report["summarized_provider_calls"], report["runtime_provider_reads"],
+        report["runtime_provider_mutations"], report["runtime_nested_provider_allocations"],
+        report["runtime_provider_callbacks"], report["runtime_provider_global_writes"]) != (18, 52, 8, 2, 1, 2):
+        raise RuntimeError(f"provider callback proof did not reach the ordinary object payload: {report}")
+    if report["provider_reads"] or report["provider_boundary"] != "unsupported provider path at `ctjs.call`":
+        raise RuntimeError(f"provider callback traversal crossed its object-payload boundary: {report}")
+    if ([entry["target"] for entry in summaries] != PROVIDER_CALLBACK_TARGETS or
+        [entry["factory_index"] for entry in summaries] != [0] * 18 or
+        [entry["result"] for entry in summaries] != expected_results):
+        raise RuntimeError("provider callback summaries lost their invocation order, factory or results")
+    calls = [entry["call_operation"] for entry in summaries]
+    if any(type(call) is not int or call < 0 for call in calls) or len(set(calls)) != 18:
+        raise RuntimeError("provider callback summaries lost their actual entry-call identities")
+    if [len(entry["allocations"]) for entry in summaries] != [0, 0, 1, 1] + [0] * 14:
+        raise RuntimeError("failed ordinary object insertion published a tentative Map allocation")
+    allocations = [allocation for entry in summaries for allocation in entry["allocations"]]
+    first, second = allocations
+    if (first["map_id"] == second["map_id"] or
+        first["allocation_operation"] != second["allocation_operation"] or
+        [entry["invocation_operation"] for entry in allocations] != [calls[2], calls[3]]):
+        raise RuntimeError("callback traversal conflated the two retained inner Maps")
+    provenance = {}
+    operations = []
+    for entry in summaries:
+        operations.extend(entry["operations"])
+        for operation in [*entry["allocations"], *entry["operations"]]:
+            map_id = operation["map_id"]
+            origin = (operation["allocation_operation"], operation["invocation_operation"])
+            if (type(map_id) is not int or map_id <= 0 or
+                any(type(ordinal) is not int or ordinal < 0 for ordinal in origin) or
+                map_id in provenance and provenance[map_id] != origin):
+                raise RuntimeError("callback traversal lost a Map's source allocation identity")
+            provenance[map_id] = origin
+    if len(provenance) != 3:
+        raise RuntimeError("callback traversal did not retain one outer and two inner Maps")
+    allowed = {"has", "get", "size", "set", "delete", "keys", "Array.from", "snapshot[index]"}
+    if any(operation["member"] not in allowed for operation in operations):
+        raise RuntimeError("provider callback mode summarized an unsupported builtin")
+    sets = [operation for operation in operations if operation["member"] == "set"]
+    deletes = [operation for operation in operations if operation["member"] == "delete"]
+    reads = [operation for operation in operations if operation["member"] not in {"set", "delete"}]
+    if (len(reads), len(sets), len(deletes)) != (52, 5, 3):
+        raise RuntimeError("provider callback counts disagree with their per-invocation reports")
+    if any(operation["result"] is not None or operation["result_map_id"] != operation["map_id"] for operation in sets):
+        raise RuntimeError("callback traversal lost Map.set's receiver-valued normal result")
+    if ([operation["result"] for operation in deletes] !=
+            ["#ctjs.boolean<false>", "#ctjs.boolean<true>", "#ctjs.boolean<true>"] or
+        any(operation["result_map_id"] != 0 for operation in deletes) or
+        deletes[0]["map_id"] != first["map_id"] or deletes[1]["map_id"] != first["map_id"]):
+        raise RuntimeError("callback traversal lost failed deletion and later successful removals")
+    diagnostic_members = {"keys", "Array.from", "snapshot[index]"}
+    snapshots = [operation for operation in operations if operation["member"] in diagnostic_members]
+    conflict_snapshots = [operation for operation in summaries[11]["operations"]
+                          if operation["member"] in diagnostic_members]
+    if ([operation["member"] for operation in snapshots] != ["keys", "Array.from", "snapshot[index]"] or
+        snapshots != conflict_snapshots or
+        [operation["result"] for operation in snapshots] != [None, None, '#ctjs.string<"bs.alert">'] or
+        any(operation["map_id"] != first["map_id"] or operation["result_map_id"] != 0 for operation in snapshots)):
+        raise RuntimeError("diagnostic snapshot lost evaluation order, key value or source Map identity")
+    if [len(entry["callbacks"]) for entry in summaries] != [0] * 11 + [1] + [0] * 6:
+        raise RuntimeError("the actual conflict invocation did not own its recorder callback")
+    callback = summaries[11]["callbacks"][0]
+    callback_call = callback["call_operation"]
+    if (callback["target"] != "fn$1" or callback["result"] != "#ctjs.undefined" or
+        type(callback_call) is not int or callback_call < 0 or callback_call in calls):
+        raise RuntimeError("callback proof lost its actual source closure and internal call identity")
+    writes = callback["writes"]
+    if ([write["binding"] for write in writes] != ["traceErrorCount", "traceErrorMessage"] or
+        [write["value"] for write in writes] != [number_attribute(1)] * 2):
+        raise RuntimeError("callback proof did not commit the exact recorder's two scalar writes")
+    write_operations = [write["operation"] for write in writes]
+    if (any(type(operation) is not int or operation < 0 for operation in write_operations) or
+        len(set(write_operations)) != 2 or callback_call in write_operations):
+        raise RuntimeError("callback writes lost their distinct source operation identities")
 
 
 def fallback_program(probe, fragment):
@@ -175,6 +266,8 @@ def main():
     parser.add_argument("--follow-publication", action="store_true")
     parser.add_argument("--follow-provider-reads", action="store_true")
     parser.add_argument("--follow-provider-mutations", action="store_true")
+    parser.add_argument("--follow-provider-diagnostics", action="store_true")
+    parser.add_argument("--follow-provider-callbacks", action="store_true")
     parser.add_argument("--replace", choices=("method", "table"), help="replace the published callable/table before observation")
     parser.add_argument("--mode", choices=("commonjs", "browser", "browser_this_fallback", "global_reentry", "self_reentry", "resource_instances"), required=True)
     parser.add_argument("--work", type=Path, required=True)
@@ -192,6 +285,10 @@ def main():
         parser.error("--follow-provider-reads requires an unchanged exact publication mode")
     if args.follow_provider_mutations and (not args.follow_provider_reads or not args.follow_publication):
         parser.error("--follow-provider-mutations requires --follow-provider-reads and --follow-publication")
+    if args.follow_provider_diagnostics and not args.follow_provider_mutations:
+        parser.error("--follow-provider-diagnostics requires --follow-provider-mutations")
+    if args.follow_provider_callbacks and not args.follow_provider_diagnostics:
+        parser.error("--follow-provider-callbacks requires --follow-provider-diagnostics")
     args.work.mkdir(parents=True, exist_ok=True)
     spec = importlib.util.spec_from_file_location("bootstrap_probe", Path(__file__).with_name("bootstrap-data-probe.py"))
     probe = importlib.util.module_from_spec(spec)
@@ -246,6 +343,8 @@ var traceDistinct = first !== host.slot ? 1 : 0;
                        "follow_publication": args.follow_publication, "replacement": args.replace,
                        "follow_provider_reads": args.follow_provider_reads,
                        "follow_provider_mutations": args.follow_provider_mutations,
+                       "follow_provider_diagnostics": args.follow_provider_diagnostics,
+                       "follow_provider_callbacks": args.follow_provider_callbacks,
                        "native_execution_claimed": False})
     if args.node:
         provenance["node_oracle"] = node_oracle(args.node, args.work, js, expected, realm_properties)
@@ -300,7 +399,7 @@ var traceDistinct = first !== host.slot ? 1 : 0;
         contract["entry_receiver"] = {"kind": "classic-script-realm", "own_data_properties": realm_properties}
     manifest.write_text(json.dumps(contract, indent=2) + "\n")
     result = run([args.opt, str(prepared),
-                  f"--ctnative-specialize-host-prefix=manifest={manifest} output={report_file} report=true follow-publication={str(args.follow_publication).lower()} follow-provider-reads={str(args.follow_provider_reads).lower()} follow-provider-mutations={str(args.follow_provider_mutations).lower()}",
+                  f"--ctnative-specialize-host-prefix=manifest={manifest} output={report_file} report=true follow-publication={str(args.follow_publication).lower()} follow-provider-reads={str(args.follow_provider_reads).lower()} follow-provider-mutations={str(args.follow_provider_mutations).lower()} follow-provider-diagnostics={str(args.follow_provider_diagnostics).lower()} follow-provider-callbacks={str(args.follow_provider_callbacks).lower()}",
                   "-o", str(specialized)])
     (args.work / "prefix.log").write_text(result.stderr)
     report = json.loads(report_file.read_text())
@@ -313,6 +412,8 @@ var traceDistinct = first !== host.slot ? 1 : 0;
         expected_targets.extend(["fn$6", "fn$4"])
     if args.follow_provider_mutations:
         expected_targets = ["fn$3", *PROVIDER_MUTATION_TARGETS, "fn$4"]
+    if args.follow_provider_callbacks:
+        expected_targets = ["fn$3", *PROVIDER_CALLBACK_TARGETS, "fn$4"]
     if not report["valid"] or report["selected_branches"] != expected_branches or report["targets"] != expected_targets:
         raise RuntimeError(f"exact wrapper proof did not advance as expected: {report}")
     if report["resolved_calls"] != len(expected_targets) or report["full_host_contract_claimed"]:
@@ -342,7 +443,11 @@ var traceDistinct = first !== host.slot ? 1 : 0;
         if not script or not re.search(r"ctjs.call_direct @" + last + r"\(", script[0]):
             raise RuntimeError("published target was not resolved in the script entry")
     if args.follow_provider_reads:
-        if args.follow_provider_mutations:
+        if args.follow_provider_callbacks:
+            check_provider_callbacks(report)
+        elif args.follow_provider_diagnostics:
+            check_provider_mutations(report, "unsupported provider path at `ctjs.call`")
+        elif args.follow_provider_mutations:
             check_provider_mutations(report)
         else:
             if (report["summarized_provider_calls"], report["runtime_provider_reads"]) != (2, 2):
@@ -365,6 +470,14 @@ var traceDistinct = first !== host.slot ? 1 : 0;
     if not args.follow_provider_mutations and (report["provider_calls"] or
             report["runtime_provider_mutations"] or report["runtime_nested_provider_allocations"]):
         raise RuntimeError("provider mutation traversal became implicit")
+    if not args.follow_provider_callbacks and (report["runtime_provider_callbacks"] or
+            report["runtime_provider_global_writes"] or
+            any(entry["callbacks"] for entry in report["provider_calls"])):
+        raise RuntimeError("provider callback traversal became implicit")
+    if not args.follow_provider_diagnostics and any(
+            operation["member"] in {"keys", "Array.from", "snapshot[index]"}
+            for entry in report["provider_calls"] for operation in entry["operations"]):
+        raise RuntimeError("provider diagnostic traversal became implicit")
 
     # Native accounting remains an independent four-bucket census. Keep the
     # imported denominator even if ordinary default pruning becomes applicable.

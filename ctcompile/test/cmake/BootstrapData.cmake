@@ -25,11 +25,17 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
       commonjs_publication browser_publication browser_this_fallback_publication
       commonjs_provider_reads browser_provider_reads browser_this_fallback_provider_reads
       commonjs_provider_mutations browser_provider_mutations browser_this_fallback_provider_mutations
+      commonjs_provider_callbacks browser_provider_callbacks browser_this_fallback_provider_callbacks
       browser_method_replacement browser_table_replacement resource_instances)
     set(_prefix_source_mode "${_mode}")
     set(_prefix_options)
     set(_prefix_script FALSE)
-    if(_mode MATCHES "_provider_mutations$")
+    if(_mode MATCHES "_provider_callbacks$")
+      string(REGEX REPLACE "_provider_callbacks$" "" _prefix_source_mode "${_mode}")
+      set(_prefix_options --follow-provider-callbacks --follow-provider-diagnostics
+        --follow-provider-mutations --follow-provider-reads --node "${CTCOMPILE_BOOTSTRAP_NODE}")
+      set(_prefix_script TRUE)
+    elseif(_mode MATCHES "_provider_mutations$")
       string(REGEX REPLACE "_provider_mutations$" "" _prefix_source_mode "${_mode}")
       set(_prefix_options --follow-provider-mutations --follow-provider-reads
         --node "${CTCOMPILE_BOOTSTRAP_NODE}")

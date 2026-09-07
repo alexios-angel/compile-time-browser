@@ -64,6 +64,13 @@ public:
     bool erase(unsigned mapId, providerValue key, bool & outRemoved, Spend spend);
     bool size(unsigned mapId, unsigned & outSize, Spend spend) const;
 
+    // Replace outKeys with an independently owned, insertion-ordered snapshot.
+    // Charge every copied key before allocating; failure leaves outKeys intact.
+    // This is not a live Map iterator: the caller separately proves when and
+    // how iteration is consumed. Interned literals and object tokens retain
+    // their identity and the caller's existing context/heap lifetime rules.
+    bool keys(unsigned mapId, llvm::SmallVectorImpl<providerValue> & outKeys, Spend spend) const;
+
     // Read-only views expose provenance and insertion order for separately
     // bounded retention checks/reporting. Mutation may invalidate them; they
     // authorize no provider operation.

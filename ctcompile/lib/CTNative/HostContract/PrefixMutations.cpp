@@ -1,5 +1,7 @@
 #include "ProviderPaths.h"
 
+#include "ProviderDiagnostics.h"
+
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "llvm/ADT/bit.h"
 
@@ -13,6 +15,7 @@ struct mapPathReader {
     ctjs::FuncOp function;
     providerState state;
     HostPrefixProviderSummary proof;
+    providerDiagnosticState diagnostics{prefix, state, proof};
     using environment = prefixAnalysis::environment;
 
     providerValue known(prefixValue value) const {
@@ -92,7 +95,7 @@ struct mapPathReader {
                 llvm::is_contained(prefix.contract.initialIntrinsics, "Map")) {
                 return {prefixValue::Kind::mapConstructor, {}, {}, 0};
             }
-            return {};
+            return diagnostics.operation(operation, values);
         }
         if (auto construct = llvm::dyn_cast<ctjs::ConstructOp>(operation)) {
             auto load = construct.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
@@ -106,13 +109,14 @@ struct mapPathReader {
                 return {};
             }
             proof.allocations.push_back({construct, proof.operation, id});
+            diagnostics.mutated();
             return {prefixValue::Kind::resource, {}, {}, id};
         }
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
             const auto owner = values.lookup(read.getObject());
             const auto key = keyOf(read.getKey());
             if (owner.kind != prefixValue::Kind::resource || !state.get(owner.object)) {
-                return {};
+                return diagnostics.operation(operation, values);
             }
             if (key == "size") {
                 unsigned size = 0;
@@ -127,7 +131,7 @@ struct mapPathReader {
                         {},
                         owner.object};
             }
-            return {};
+            return diagnostics.operation(operation, values);
         }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(operation)) {
             const auto method = values.lookup(call.getCallee());
@@ -135,9 +139,12 @@ struct mapPathReader {
             if (method.kind != prefixValue::Kind::resourceMethod ||
                 receiver.kind != prefixValue::Kind::resource || method.object != receiver.object ||
                 !state.get(receiver.object) || prefix.pendingNewTarget.contains(function)) {
-                return {};
+                return diagnostics.operation(operation, values);
             }
             const auto member = llvm::cast<ctjs::StringAttr>(method.literal).getValue();
+            if (member != "has" && member != "get" && member != "set" && member != "delete") {
+                return diagnostics.operation(operation, values);
+            }
             if (call.getArgs().size() != (member == "set" ? 2u : 1u)) { return {}; }
             const auto key = known(values.lookup(call.getArgs()[0]));
             prefixValue result;
@@ -147,10 +154,12 @@ struct mapPathReader {
                     return {};
                 }
                 result = receiver;
+                diagnostics.mutated();
             } else if (member == "delete") {
                 bool removed = false;
                 if (!state.erase(receiver.object, key, removed, charge)) { return {}; }
                 result = prefixValue::constant(ctjs::BooleanAttr::get(context, removed));
+                diagnostics.mutated();
             } else {
                 bool found = false;
                 providerValue value;
@@ -163,11 +172,18 @@ struct mapPathReader {
             return record(call, receiver.object, member, result) ? result : prefixValue{};
         }
         if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
-            return prefixUnary(unary.getKind(), values.lookup(unary.getOperand()), context);
+            const auto operand = values.lookup(unary.getOperand());
+            if (operand.kind == prefixValue::Kind::resourceMethod) { return {}; }
+            return prefixUnary(unary.getKind(), operand, context);
         }
         if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
-            return prefixCompare(compare.getKind(), values.lookup(compare.getLhs()),
-                                 values.lookup(compare.getRhs()), context);
+            const auto left = values.lookup(compare.getLhs()),
+                       right = values.lookup(compare.getRhs());
+            if (left.kind != prefixValue::Kind::primitive ||
+                right.kind != prefixValue::Kind::primitive) {
+                return {};
+            }
+            return prefixCompare(compare.getKind(), left, right, context);
         }
         if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(operation)) {
             auto bit = prefixTruth(values.lookup(truth.getValue()));
@@ -179,7 +195,7 @@ struct mapPathReader {
             return bit ? prefixValue::constant(ctjs::BooleanAttr::get(context, *bit))
                        : prefixValue{};
         }
-        return {};
+        return diagnostics.operation(operation, values);
     }
 
     bool retained() {
@@ -230,9 +246,10 @@ prefixValue prefixAnalysis::providerMutation(ctjs::CallOp call, ctjs::FuncOp fun
     }
     if (!captured) { return {}; }
     mapPathReader reader{*this,    owner, closure,
-                         function, {},    {call, function, owner.operation, {}, {}, {}}};
+                         function, {},    {call, function, owner.operation, {}, {}, {}, {}}};
     const auto charge = [&](unsigned count) { return spend(count); };
     if (!providers.cloneTo(reader.state, charge)) { return {}; }
+    if (followProviderDiagnostics && !reader.diagnostics.initialize()) { return {}; }
     environment values;
     for (auto [argument, value] :
          llvm::zip(function.getBody().front().getArguments().drop_front(3), call.getArgs())) {
@@ -255,6 +272,7 @@ prefixValue prefixAnalysis::providerMutation(ctjs::CallOp call, ctjs::FuncOp fun
     }
     reader.proof.result = returned.values.front().literal;
     providers = std::move(reader.state);
+    if (followProviderDiagnostics) { globals = std::move(reader.diagnostics.globals); }
     providerCalls.push_back(std::move(reader.proof));
     discoveryOnly.insert(call->getParentOfType<ctjs::FuncOp>());
     return returned.values.front();

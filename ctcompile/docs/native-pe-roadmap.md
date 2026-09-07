@@ -324,19 +324,20 @@ For Bootstrap, the [entry-prefix proof](native-host-prefix.md) now follows the
 factory's retained resource/cell captures and published method table. Optional
 [transactional Map mutation summaries](native-provider-mutations.md) advance
 the exact probes from four to thirteen resolved calls, completing eleven
-methods before the conflict arm's console lookup. Their 31 reads, five sets,
-one unsuccessful delete and two nested allocations remain runtime operations;
-all method bodies and observer branches remain. Native admission stays 0/7.
+methods before the conflict arm's console lookup. Optional
+[diagnostic and callback proofs](native-provider-diagnostics.md) now extend
+that path to twenty resolved calls and eighteen completed methods, preserving
+the actual diagnostic callback and its two scalar global writes. All method
+bodies and observer branches remain. Native admission stays 0/7.
 The native local-storage prerequisite is implemented in
 [owning method-table fields on confined objects](native-owned-method-table-slots.md):
 one fresh local object's proved store-to-load edge preserves the existing
 owning table carrier, while ordinary capture/type admission establishes the
 callables. Its fixture advances 0/6 to 6/6 with standalone execution and lifetime
-checks. This does not close global/realm export uses. The next provider increment
-is designed in [the next provider proof](bootstrap-provider-next.md): checked
-conflict-path snapshots followed by a live proof of the actual recorder's
-global effects. Keep runtime effects and refuse unknown
-callbacks. Connect normal-return retention facts to native ownership and call analysis
+checks. This does not close global/realm export uses. The
+[next provider increment](bootstrap-provider-next.md) needs ordinary object
+payload identity and current field facts across Map storage. Keep runtime
+effects and refuse unknown callbacks. Connect normal-return retention facts to native ownership and call analysis
 for exported callables. Extend
 [checked host slots](native-host-slots.md) with supported intrinsic/error effects,
 preserving current method/table replacements. Initial provider identity alone
@@ -346,7 +347,8 @@ incomplete. Unchecked mixed-result field accesses
 also need path-sensitive receiver/presence evidence or a supported exception boundary.
 The [string-key snapshot and Array.from prerequisite](native-string-snapshots.md)
 is implemented for confined proved Maps, including absent and empty keys.
-Error reporting and typed export publication remain open. The host audit's
+The exact recorder path is proved; general error reporting and typed export
+publication remain open. The host audit's
 script receiver and callee/accessor evaluation-order differences are fixed.
 Native receiver admission remains a separate proof obligation. Callback lifting
 now bridges exact pre-resolved direct calls in closed wrappers; it does not

@@ -73,6 +73,19 @@ struct HostPrefixProviderOperation {
     unsigned resultMapId = 0;
 };
 
+struct HostPrefixProviderGlobalWrite {
+    ctjs::StoreGlobalOp operation;
+    std::string binding;
+    mlir::Attribute value;
+};
+
+struct HostPrefixProviderCallback {
+    ctjs::CallOp operation;
+    ctjs::FuncOp target;
+    mlir::Attribute result;
+    std::vector<HostPrefixProviderGlobalWrite> writes;
+};
+
 struct HostPrefixProviderSummary {
     ctjs::CallOp operation;
     ctjs::FuncOp target;
@@ -80,6 +93,7 @@ struct HostPrefixProviderSummary {
     mlir::Attribute result;
     std::vector<HostPrefixProviderAllocation> allocations;
     std::vector<HostPrefixProviderOperation> operations;
+    std::vector<HostPrefixProviderCallback> callbacks;
 };
 
 // A narrower proof than HostContractAnalysis: only the executed prefix before
@@ -90,7 +104,9 @@ class HostEntryPrefixAnalysis {
 public:
     HostEntryPrefixAnalysis(mlir::ModuleOp module, const HostContract & contract,
                             unsigned maxSteps = 100000, bool followPublication = false,
-                            bool followProviderReads = false, bool followProviderMutations = false);
+                            bool followProviderReads = false, bool followProviderMutations = false,
+                            bool followProviderDiagnostics = false,
+                            bool followProviderCallbacks = false);
 
     [[nodiscard]] bool valid() const { return refusal.empty(); }
     [[nodiscard]] llvm::StringRef reason() const { return refusal; }

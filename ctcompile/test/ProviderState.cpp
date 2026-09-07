@@ -38,6 +38,14 @@ bool same(providerValue a, providerValue b) {
     return a.kind == b.kind && a.id == b.id && a.literal == b.literal;
 }
 
+bool same(llvm::ArrayRef<providerValue> a, llvm::ArrayRef<providerValue> b) {
+    if (a.size() != b.size()) { return false; }
+    for (unsigned index = 0; index != a.size(); ++index) {
+        if (!same(a[index], b[index])) { return false; }
+    }
+    return true;
+}
+
 bool same(const providerState & a, const providerState & b) {
     if (a.maps().size() != b.maps().size()) { return false; }
     for (unsigned index = 0; index != a.maps().size(); ++index) {
@@ -183,6 +191,57 @@ void keysAndOrder(mlir::MLIRContext & context, providerMapProvenance provenance)
           "literal equality does not depend on MLIR attribute identity");
 }
 
+void keySnapshots(mlir::MLIRContext & context, providerMapProvenance provenance) {
+    providerState state;
+    const unsigned map = create(state, provenance);
+    const auto a = string(context, "a"), b = string(context, "b"), c = string(context, "c");
+    const auto one = number(context, 1.0), two = number(context, 2.0);
+    const auto zero = number(context, 0.0), negativeZero = number(context, -0.0);
+    const auto nanA = bits(context, UINT64_C(0x7ff8000000000001));
+    const auto nanB = bits(context, UINT64_C(0xfff0000000000002));
+    const auto firstObject = providerValue::object(0), secondObject = providerValue::object(1);
+
+    llvm::SmallVector<providerValue, 2> empty{one, two};
+    check(state.keys(map, empty, unlimited) && empty.empty(),
+          "empty Map snapshot replaces the previous output with an empty sequence");
+    const providerValue keep[] = {one, secondObject};
+    llvm::SmallVector<providerValue, 2> invalid{one, secondObject};
+    check(!state.keys(0, invalid, unlimited) && same(invalid, keep) &&
+              !state.keys(999, invalid, unlimited) && same(invalid, keep),
+          "invalid MapIds cannot replace the previous snapshot output");
+    const auto noWork = [](unsigned) { return false; };
+    check(!state.keys(map, invalid, noWork) && same(invalid, keep),
+          "even an empty snapshot requires a successful budget check");
+
+    const providerValue inserted[] = {a, b, c, firstObject, secondObject, negativeZero, nanA};
+    for (auto key : inserted) {
+        check(state.set(map, key, one, unlimited), "snapshot fixture key insertion succeeds");
+    }
+    check(state.set(map, b, two, unlimited) && state.set(map, firstObject, two, unlimited) &&
+              state.set(map, zero, two, unlimited) && state.set(map, nanB, two, unlimited),
+          "replacement and SameValueZero aliases preserve the snapshot's key positions");
+    const providerValue before[] = {a, b, c, firstObject, secondObject, zero, nanA};
+    llvm::SmallVector<providerValue, 0> snapshot;
+    check(state.keys(map, snapshot, unlimited) && same(snapshot, before),
+          "snapshot preserves insertion order, object identities, NaN identity and positive zero");
+    llvm::SmallVector<providerValue, 8> another;
+    check(state.keys(map, another, unlimited) && same(another, before) &&
+              another.data() != snapshot.data(),
+          "repeated snapshots own distinct key storage regardless of inline capacity");
+
+    bool removed = false;
+    check(state.erase(map, b, removed, unlimited) && removed && state.set(map, b, one, unlimited),
+          "Map deletion and reinsertion after snapshot creation succeed");
+    const providerValue after[] = {a, c, firstObject, secondObject, zero, nanA, b};
+    llvm::SmallVector<providerValue, 0> updated;
+    check(state.keys(map, updated, unlimited) && same(updated, after) && same(snapshot, before) &&
+              same(another, before),
+          "later mutation updates fresh snapshots without changing existing snapshots");
+    another.front() = c;
+    check(same(snapshot, before) && same(read(state, map, a), one),
+          "changing a snapshot's key records cannot mutate another snapshot or the source Map");
+}
+
 void graphAndRefusals(mlir::MLIRContext & context, providerMapProvenance provenance) {
     providerState state;
     const unsigned first = create(state, provenance), second = create(state, provenance);
@@ -263,6 +322,26 @@ void budgets(mlir::MLIRContext & context, providerMapProvenance provenance) {
     check(initial.lookup(first, c, countedFound, countedValue, countWork) && countedFound &&
               charged >= 3,
           "lookup charges every compared key before the last entry");
+    charged = 0;
+    llvm::SmallVector<providerValue, 0> countedKeys;
+    check(initial.keys(first, countedKeys, countWork) && countedKeys.size() == 3 && charged >= 3,
+          "snapshot charges every copied key before publishing the complete sequence");
+    cutoffs(
+        initial,
+        [&](providerState & state, providerState::Spend spend) {
+            const providerValue before[] = {two, providerValue::object(99)};
+            const providerValue after[] = {a, b, c};
+            llvm::SmallVector<providerValue, 2> output{two, providerValue::object(99)};
+            const auto * storage = output.data();
+            const auto capacity = output.capacity();
+            const bool success = state.keys(first, output, spend);
+            check(success ? same(output, after)
+                          : same(output, before) && output.data() == storage &&
+                                output.capacity() == capacity,
+                  "exhausted snapshots preserve every prior output key and its storage");
+            return success;
+        },
+        "complete key snapshots have a finite completion budget");
     cutoffs(
         initial,
         [&](providerState & state, providerState::Spend spend) {
@@ -346,6 +425,7 @@ int main() {
     module->walk([&](ctjs::ConstructOp allocation) { provenance.allocation = allocation; });
     module->walk([&](ctjs::CallOp invocation) { provenance.invocation = invocation; });
     keysAndOrder(context, provenance);
+    keySnapshots(context, provenance);
     graphAndRefusals(context, provenance);
     budgets(context, provenance);
     if (failures == 0) { std::puts("private provider Map state queries passed"); }
