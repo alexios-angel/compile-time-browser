@@ -105,50 +105,93 @@ void install_array(context & cx) {
         for (; k < end; k += 1.0) { detail::put_element(c, self, k, filler); }
         return self;
     });
+    // 23.1.3.13, GENERIC, and its depth goes through ToIntegerOrInfinity.
+    //
+    // `flat(undefined)` is the DEFAULT depth of 1 and `flat('TestString')`,
+    // `flat({})` and `flat(-Infinity)` are all depth 0. The old spelling tested
+    // the argument COUNT for the default - so an explicit undefined flattened
+    // nothing - and then coerced with the STATIC to_number, which answers NaN
+    // for an object and compares false against every bound.
     method(cx, array_proto, "flat", 0, [](context & c, std::span<value> a) {
-        // depth defaults to 1, which is what every use in p5 wants
-        const double depth = a.empty() ? 1.0 : num_at(a, 0);
-        auto * self = detail::this_array(c);
+        const value self = c.current_this();
         value out = c.make_array();
-        if (self == nullptr) { return out; }
+        if (!detail::coercible_this(c, self, "flat")) { return out; }
+        const double depth = has_index(a, 0) ? integer_arg(c, a, 0) : 1.0;
+        const double len = detail::array_like_length(c, self);
+        if (!detail::generic_walk_ok(c, len)) { return out; }
+        const context::rooted keep(c, out);
         auto * result = static_cast<array_object *>(out.as_heap());
         // An explicit worklist rather than recursion: `flat(Infinity)` on a
         // deep structure must not be bounded by the C++ stack.
-        std::vector<std::pair<value, double>> pending;
-        for (std::size_t i = self->items.size(); i-- > 0;) {
-            pending.emplace_back(self->items[i], depth);
+        //
+        // THE WORKLIST LIVES IN A ROOTED ARRAY, which is what reading through
+        // [[Get]] costs. A getter allocates, an allocation can collect, and a
+        // value sitting only in a std::vector<value> is in none of the
+        // collector's roots - the hazard `map` and `sort` document at length.
+        // `scratch` holds the pending VALUES and is rooted; the depths beside
+        // them are plain doubles with nothing to trace.
+        value scratch = c.make_array();
+        const context::rooted keep_scratch(c, scratch);
+        auto & pending = static_cast<array_object *>(scratch.as_heap())->items;
+        std::vector<double> depths;
+        for (double k = len; k-- > 0;) {
+            if (!detail::has_element(c, self, k)) { continue; }
+            pending.push_back(detail::element_at(c, self, k));
+            depths.push_back(depth);
         }
         while (!pending.empty()) {
-            const auto [item, left] = pending.back();
+            const value item = pending.back();
+            const double left = depths.back();
             pending.pop_back();
-            if (item.is_array() && left > 0) {
-                const auto & inner = static_cast<array_object *>(item.as_heap())->items;
-                for (std::size_t i = inner.size(); i-- > 0;) {
-                    pending.emplace_back(inner[i], left - 1);
-                }
-            } else {
+            depths.pop_back();
+            // ONLY A REAL Array IS FLATTENED - IsArray (7.2.2) and nothing
+            // else, so an array-LIKE element is one element however many
+            // indices it claims to have.
+            if (!item.is_array() || left <= 0) {
                 result->items.push_back(item);
+                continue;
+            }
+            const double inner = detail::array_like_length(c, item);
+            if (!detail::generic_walk_ok(c, inner)) { return out; }
+            for (double k = inner; k-- > 0;) {
+                if (!detail::has_element(c, item, k)) { continue; }
+                pending.push_back(detail::element_at(c, item, k));
+                depths.push_back(left - 1);
             }
         }
         return out;
     });
+    // 23.1.3.14, whose depth is ALWAYS 1. Generic, it takes its `thisArg` - the
+    // second argument, accepted and dropped before, while the receiver was
+    // passed as the callback's `this` instead - and a mapper that is absent or
+    // not callable is a TypeError rather than an empty result.
     method(cx, array_proto, "flatMap", 1, [](context & c, std::span<value> a) {
-        auto * self = detail::this_array(c);
+        const value self = c.current_this();
         value out = c.make_array();
-        if (self == nullptr || a.empty() || !a[0].is_callable()) { return out; }
+        if (!detail::coercible_this(c, self, "flatMap")) { return out; }
+        const value callback = arg_at(a, 0);
+        if (!detail::callable_arg(c, callback, "callback")) { return out; }
+        const value this_arg = arg_at(a, 1);
+        const double len = detail::array_like_length(c, self);
+        if (!detail::generic_walk_ok(c, len)) { return out; }
         const context::rooted keep(c, out); // as `map` - see the note there
         auto * result = static_cast<array_object *>(out.as_heap());
-        const std::size_t n = self->items.size();
-        for (std::size_t i = 0; i < n && i < self->items.size(); ++i) {
-            const value args[3] = {self->items[i], value::number(static_cast<double>(i)),
-                                   c.current_this()};
-            const value mapped = c.call(a[0], args);
-            if (mapped.is_array()) {
-                for (const value & item : static_cast<array_object *>(mapped.as_heap())->items) {
-                    result->items.push_back(item);
-                }
-            } else {
+        for (double k = 0; k < len; k += 1.0) {
+            if (!detail::has_element(c, self, k)) { continue; }
+            const value args[3] = {detail::element_at(c, self, k), value::number(k), self};
+            value mapped = c.call(callback, args, this_arg);
+            if (!mapped.is_array()) {
                 result->items.push_back(mapped);
+                continue;
+            }
+            // THE MAPPED ARRAY IS A C++ LOCAL and, once the callback's frame
+            // has gone, the only reference to it there is - and reading it can
+            // run a getter, which can collect.
+            const context::rooted keep_mapped(c, mapped);
+            const double inner = detail::array_like_length(c, mapped);
+            if (!detail::generic_walk_ok(c, inner)) { return out; }
+            for (double j = 0; j < inner; j += 1.0) {
+                result->items.push_back(detail::element_at(c, mapped, j));
             }
         }
         return out;
@@ -178,31 +221,165 @@ void install_array(context & cx) {
         }
         return value::number(-1);
     });
+    // --- THE FOUR THAT MUTATE AT AN END ------------------------------------
+    //
+    // push, pop, shift and unshift are as generic as the eighteen that read
+    // (see detail::array_like_length): `this` is ToObject'd, `length` is read
+    // through [[Get]] and ToLength, every element moves through [[Set]] or
+    // [[Delete]], and the algorithm ENDS with Set(O, "length", n, true).
+    // Writing the length back is the half a read-only method never had, and it
+    // is what `Array.prototype.push.call(obj, x)` needs to be worth calling.
+    //
+    // EACH OPENS WITH A BRANCH, not with a second algorithm. A real, ordinary
+    // Array is its own std::vector and does the vector operation; anything else
+    // - an array-like, a Proxy, `arguments` from another realm - takes the
+    // specified walk. detail::dense_array_this is that branch.
+    //
+    // 2^53-1 IS A TypeError, NOT A CLAMP (23.1.3.23 step 5, 23.1.3.32 step 4a).
+    // `length` itself clamps there through ToLength, so `push()` with no
+    // arguments on `{length: Infinity}` writes back 2^53-1 and succeeds while
+    // `push(null)` on the same object throws.
     method(cx, array_proto, "push", 1, [](context & c, std::span<value> a) {
-        array_object * self = detail::this_array(c);
-        if (self == nullptr) { return value::number(0); }
-        for (std::size_t i = 0; i < a.size(); ++i) { self->items.push_back(a[i]); }
-        return value::number(static_cast<double>(self->items.size()));
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, "push")) { return value::number(0); }
+        if (array_object * dense = detail::dense_array_this(self)) {
+            // FROZEN MEANS FROZEN, and it is a THROW here rather than a silent
+            // drop: the Sets in 23.1.3.23 carry Throw=true, so this is a
+            // TypeError in sloppy mode too - unlike a bare `a[0] = 1`, which
+            // context::store_index discards (TODO(strict) there).
+            if (!dense->extensible && (!a.empty() || !dense->elements_writable)) {
+                c.throw_error("TypeError", "Cannot add a property to a non-extensible array");
+                return value::number(static_cast<double>(dense->items.size()));
+            }
+            dense->items.insert(dense->items.end(), a.begin(), a.end());
+            return value::number(static_cast<double>(dense->items.size()));
+        }
+        if (!detail::mutable_receiver(c, self, "push")) { return value::number(0); }
+        double len = detail::array_like_length(c, self);
+        if (len + static_cast<double>(a.size()) > max_safe_integer) {
+            c.throw_error("TypeError", "Invalid array length");
+            return value::number(len);
+        }
+        for (const value & item : a) {
+            detail::put_element(c, self, len, item);
+            len += 1.0;
+        }
+        detail::put_length(c, self, len);
+        return value::number(len);
     });
+    // 23.1.3.22. An EMPTY receiver still writes `length` back - that is step
+    // 3a, and it is what turns `{length: NaN}` into `{length: 0}`.
     method(cx, array_proto, "pop", 0, [](context & c, std::span<value>) {
-        array_object * self = detail::this_array(c);
-        if (self == nullptr || self->items.empty()) { return value::undefined(); }
-        const value out = self->items.back();
-        self->items.pop_back();
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, "pop")) { return value::undefined(); }
+        if (array_object * dense = detail::dense_array_this(self)) {
+            if (dense->items.empty()) {
+                if (!dense->elements_writable) {
+                    c.throw_error("TypeError", "Cannot set length of a frozen array");
+                }
+                return value::undefined();
+            }
+            if (!dense->elements_configurable) {
+                c.throw_error("TypeError", "Cannot delete an element of a sealed array");
+                return value::undefined();
+            }
+            const value out = dense->items.back();
+            dense->items.pop_back();
+            return out;
+        }
+        if (!detail::mutable_receiver(c, self, "pop")) { return value::undefined(); }
+        const double len = detail::array_like_length(c, self);
+        if (len == 0) {
+            detail::put_length(c, self, 0);
+            return value::undefined();
+        }
+        const value out = detail::element_at(c, self, len - 1);
+        // ROOTED ACROSS THE DELETE AND THE LENGTH WRITE. Both can run user
+        // code - a Proxy trap, a `length` setter - and the value being returned
+        // is by then held only by this C++ local.
+        const context::rooted keep(c, out);
+        detail::delete_element(c, self, len - 1);
+        detail::put_length(c, self, len - 1);
         return out;
     });
+    // 23.1.3.25. Every element moves DOWN one, a hole moving down deletes what
+    // it lands on rather than filling it with undefined, and the vacated slot
+    // at the top is deleted before `length` is written.
     method(cx, array_proto, "shift", 0, [](context & c, std::span<value>) {
-        array_object * self = detail::this_array(c);
-        if (self == nullptr || self->items.empty()) { return value::undefined(); }
-        const value out = self->items.front();
-        self->items.erase(self->items.begin());
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, "shift")) { return value::undefined(); }
+        if (array_object * dense = detail::dense_array_this(self)) {
+            if (dense->items.empty()) {
+                if (!dense->elements_writable) {
+                    c.throw_error("TypeError", "Cannot set length of a frozen array");
+                }
+                return value::undefined();
+            }
+            if (!dense->elements_configurable) {
+                c.throw_error("TypeError", "Cannot delete an element of a sealed array");
+                return value::undefined();
+            }
+            const value out = dense->items.front();
+            dense->items.erase(dense->items.begin());
+            return out;
+        }
+        if (!detail::mutable_receiver(c, self, "shift")) { return value::undefined(); }
+        const double len = detail::array_like_length(c, self);
+        if (len == 0) {
+            detail::put_length(c, self, 0);
+            return value::undefined();
+        }
+        if (!detail::generic_walk_ok(c, len)) { return value::undefined(); }
+        const value out = detail::element_at(c, self, 0);
+        const context::rooted keep(c, out);
+        for (double k = 1; k < len; k += 1.0) {
+            if (detail::has_element(c, self, k)) {
+                detail::put_element(c, self, k - 1, detail::element_at(c, self, k));
+            } else {
+                detail::delete_element(c, self, k - 1);
+            }
+        }
+        detail::delete_element(c, self, len - 1);
+        detail::put_length(c, self, len - 1);
         return out;
     });
+    // 23.1.3.32. The tail moves UP, walked from the top down so that an
+    // overlapping move never overwrites a source before it is read.
     method(cx, array_proto, "unshift", 1, [](context & c, std::span<value> a) {
-        array_object * self = detail::this_array(c);
-        if (self == nullptr) { return value::number(0); }
-        self->items.insert(self->items.begin(), a.begin(), a.end());
-        return value::number(static_cast<double>(self->items.size()));
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, "unshift")) { return value::number(0); }
+        if (array_object * dense = detail::dense_array_this(self)) {
+            if (!dense->extensible && (!a.empty() || !dense->elements_writable)) {
+                c.throw_error("TypeError", "Cannot add a property to a non-extensible array");
+                return value::number(static_cast<double>(dense->items.size()));
+            }
+            dense->items.insert(dense->items.begin(), a.begin(), a.end());
+            return value::number(static_cast<double>(dense->items.size()));
+        }
+        if (!detail::mutable_receiver(c, self, "unshift")) { return value::number(0); }
+        const double len = detail::array_like_length(c, self);
+        const auto count = static_cast<double>(a.size());
+        if (count > 0) {
+            if (len + count > max_safe_integer) {
+                c.throw_error("TypeError", "Invalid array length");
+                return value::number(len);
+            }
+            if (!detail::generic_walk_ok(c, len)) { return value::number(len); }
+            for (double k = len; k > 0; k -= 1.0) {
+                const double from = k - 1;
+                const double to = k + count - 1;
+                if (detail::has_element(c, self, from)) {
+                    detail::put_element(c, self, to, detail::element_at(c, self, from));
+                } else {
+                    detail::delete_element(c, self, to);
+                }
+            }
+            for (std::size_t i = 0; i < a.size(); ++i) {
+                detail::put_element(c, self, static_cast<double>(i), a[i]);
+            }
+        }
+        detail::put_length(c, self, len + count);
+        return value::number(len + count);
     });
     method(cx, array_proto, "slice", 2, [](context & c, std::span<value> a) {
         const value self = c.current_this();
@@ -221,28 +398,100 @@ void install_array(context & cx) {
         for (; k < to; k += 1.0) { result->items.push_back(detail::element_at(c, self, k)); }
         return out;
     });
+    // 23.1.3.29, THE WHOLE OF IT, and the ORDER is the point: the deleted range
+    // is copied out first, then the tail is shifted - left through ascending
+    // indices and right through descending ones, so an overlap never overwrites
+    // a source before it is read - then the inserted items are written, and
+    // `length` last.
+    //
+    // THREE CASES FOR THE COUNT, not two. `splice()` with no argument at all
+    // deletes NOTHING (step 6); only `splice(i)` deletes to the end (step 7).
+    // The old spelling tested `a.size() > 1` for both and so read the
+    // no-argument call as "delete everything from index 0".
     method(cx, array_proto, "splice", 2, [](context & c, std::span<value> a) {
-        array_object * self = detail::this_array(c);
+        const value self = c.current_this();
         value removed = c.make_array();
-        if (self == nullptr) { return removed; }
-        const std::size_t n = self->items.size();
-        const std::size_t from = clamp_index(num_at(a, 0), n);
-        // CLAMPED AS A DOUBLE, THEN CAST. `splice(i, Infinity)` is an ordinary
-        // way to say "to the end" and infinity does not convert to an integer -
-        // that is undefined behaviour, not a large number, and UBSan caught it
-        // going through here silently.
-        const double wanted = std::max(0.0, num_at(a, 1));
-        const std::size_t count =
-            a.size() > 1 ? static_cast<std::size_t>(std::min(wanted, static_cast<double>(n - from)))
-                         : n - from;
-        auto * out = static_cast<array_object *>(removed.as_heap());
-        for (std::size_t i = 0; i < count; ++i) { out->items.push_back(self->items[from + i]); }
-        self->items.erase(self->items.begin() + static_cast<std::ptrdiff_t>(from),
-                          self->items.begin() + static_cast<std::ptrdiff_t>(from + count));
-        if (a.size() > 2) {
-            self->items.insert(self->items.begin() + static_cast<std::ptrdiff_t>(from),
-                               a.begin() + 2, a.end());
+        if (!detail::coercible_this(c, self, "splice")) { return removed; }
+        array_object * dense = detail::dense_array_this(self);
+        const double len = dense != nullptr ? static_cast<double>(dense->items.size())
+                                            : detail::array_like_length(c, self);
+        // ToIntegerOrInfinity, NOT the static coercion, and BEFORE anything
+        // moves: `splice({valueOf: f})` is ordinary and `splice(i, Infinity)`
+        // is the ordinary way to say "to the end". Infinity does not convert to
+        // an integer at all - that is undefined behaviour rather than a large
+        // number, which UBSan caught going through the old cast silently - so
+        // every bound here is clamped as a DOUBLE and cast afterwards.
+        const double raw_start = integer_arg(c, a, 0);
+        const double start =
+            raw_start < 0 ? std::max(len + raw_start, 0.0) : std::min(raw_start, len);
+        double skipped = 0;
+        if (a.size() == 1) {
+            skipped = len - start;
+        } else if (a.size() > 1) {
+            skipped = std::min(std::max(integer_arg(c, a, 1), 0.0), len - start);
         }
+        const double inserted = a.size() > 2 ? static_cast<double>(a.size() - 2) : 0.0;
+        if (len + inserted - skipped > max_safe_integer) {
+            c.throw_error("TypeError", "Invalid array length");
+            return removed;
+        }
+        const context::rooted keep(c, removed);
+        auto * out = static_cast<array_object *>(removed.as_heap());
+        if (dense != nullptr) {
+            const auto from = static_cast<std::size_t>(start);
+            const auto count = static_cast<std::size_t>(skipped);
+            const auto first = dense->items.begin() + static_cast<std::ptrdiff_t>(from);
+            out->items.assign(first, first + static_cast<std::ptrdiff_t>(count));
+            dense->items.erase(first, first + static_cast<std::ptrdiff_t>(count));
+            if (a.size() > 2) {
+                dense->items.insert(dense->items.begin() + static_cast<std::ptrdiff_t>(from),
+                                    a.begin() + 2, a.end());
+            }
+            return removed;
+        }
+        if (!detail::mutable_receiver(c, self, "splice")) { return removed; }
+        // BOUNDED BY THE WORK, not by `length`. Step 15's shift runs from
+        // actualStart to len-actualDeleteCount, so splicing one element out of
+        // `{length: 4294967296}` at the very end is two operations and not four
+        // billion - which is what S15.4.4.12_A3_T1 asks for.
+        if (!detail::generic_walk_ok(c, skipped) || !detail::generic_walk_ok(c, len - start)) {
+            return removed;
+        }
+        for (double k = 0; k < skipped; k += 1.0) {
+            // A HOLE STAYS A HOLE IN LENGTH ONLY. CreateDataProperty is skipped
+            // for an absent index and `A.length` is set to the count anyway
+            // (step 14), and an array here cannot hold a hole - so the span is
+            // preserved with an undefined, exactly as `slice` documents.
+            out->items.push_back(detail::has_element(c, self, start + k)
+                                     ? detail::element_at(c, self, start + k)
+                                     : value::undefined());
+        }
+        if (inserted < skipped) {
+            for (double k = start; k < len - skipped; k += 1.0) {
+                if (detail::has_element(c, self, k + skipped)) {
+                    detail::put_element(c, self, k + inserted,
+                                        detail::element_at(c, self, k + skipped));
+                } else {
+                    detail::delete_element(c, self, k + inserted);
+                }
+            }
+            for (double k = len; k > len - skipped + inserted; k -= 1.0) {
+                detail::delete_element(c, self, k - 1);
+            }
+        } else if (inserted > skipped) {
+            for (double k = len - skipped; k > start; k -= 1.0) {
+                if (detail::has_element(c, self, k + skipped - 1)) {
+                    detail::put_element(c, self, k + inserted - 1,
+                                        detail::element_at(c, self, k + skipped - 1));
+                } else {
+                    detail::delete_element(c, self, k + inserted - 1);
+                }
+            }
+        }
+        for (std::size_t i = 2; i < a.size(); ++i) {
+            detail::put_element(c, self, start + static_cast<double>(i - 2), a[i]);
+        }
+        detail::put_length(c, self, len - skipped + inserted);
         return removed;
     });
     // `fromIndex`, WHICH BOTH SEARCHES ACCEPTED AND NEITHER READ. `xs.indexOf(v,
@@ -345,25 +594,87 @@ void install_array(context & cx) {
         }
         return c.string(out);
     });
+    // 23.1.3.1. Generic - and for `concat` that means something specific: the
+    // RECEIVER is spread only when IsArray says it is an array, so
+    // `Array.prototype.concat.call({length: 2, 0: \'a\'}, 4)` is `[obj, 4]` and
+    // not `[\'a\', undefined, 4]`. The old spelling read the receiver with
+    // this_array() and dropped a non-array one entirely.
+    //
+    // NOTHING EXOTIC, deliberately. There is no `Symbol.isConcatSpreadable`
+    // here and no ArraySpeciesCreate: the result is always an ordinary Array
+    // and only a real Array spreads. Honouring the symbol halfway - a truthy
+    // one but not a false one, say - would be worse than not having it, because
+    // a page that sets it would get an answer wrong in a NEW way rather than in
+    // the documented one.
     method(cx, array_proto, "concat", 1, [](context & c, std::span<value> a) {
-        array_object * self = detail::this_array(c);
+        const value self = c.current_this();
         value out = c.make_array();
+        if (!detail::coercible_this(c, self, "concat")) { return out; }
+        const context::rooted keep(c, out);
         auto * result = static_cast<array_object *>(out.as_heap());
-        if (self != nullptr) { result->items = self->items; }
-        for (std::size_t i = 0; i < a.size(); ++i) {
-            if (a[i].is_array()) {
-                const auto & other = static_cast<array_object *>(a[i].as_heap())->items;
-                result->items.insert(result->items.end(), other.begin(), other.end());
-            } else {
-                result->items.push_back(a[i]);
+        // One element, or one spread. False means a throw is already in flight
+        // and the caller must stop.
+        const auto append = [&](value item) {
+            if (!item.is_array()) {
+                result->items.push_back(item);
+                return true;
             }
+            if (array_object * dense = detail::dense_array_this(item)) {
+                result->items.insert(result->items.end(), dense->items.begin(), dense->items.end());
+                return true;
+            }
+            const double len = detail::array_like_length(c, item);
+            if (!detail::generic_walk_ok(c, len)) { return false; }
+            for (double k = 0; k < len; k += 1.0) {
+                result->items.push_back(detail::element_at(c, item, k));
+            }
+            return true;
+        };
+        if (!append(self)) { return out; }
+        for (const value & item : a) {
+            if (!append(item)) { return out; }
         }
         return out;
     });
+    // 23.1.3.26, in place and generic. The swap is HasProperty-then-Get on BOTH
+    // ends: a hole opposite an element DELETES the far side rather than filling
+    // it with undefined, which is the only thing that distinguishes reverse
+    // from "read it all and write it back".
     method(cx, array_proto, "reverse", 0, [](context & c, std::span<value>) {
-        array_object * self = detail::this_array(c);
-        if (self != nullptr) { std::ranges::reverse(self->items); }
-        return c.current_this();
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, "reverse")) { return self; }
+        if (array_object * dense = detail::dense_array_this(self)) {
+            std::ranges::reverse(dense->items);
+            return self;
+        }
+        if (!detail::mutable_receiver(c, self, "reverse")) { return self; }
+        const double len = detail::array_like_length(c, self);
+        if (!detail::generic_walk_ok(c, len)) { return self; }
+        const double middle = std::floor(len / 2);
+        for (double lower = 0; lower < middle; lower += 1.0) {
+            const double upper = len - lower - 1;
+            const bool lower_there = detail::has_element(c, self, lower);
+            const value lower_value =
+                lower_there ? detail::element_at(c, self, lower) : value::undefined();
+            // ROOTED ACROSS THE SECOND READ. A getter on the far end allocates,
+            // an allocation can collect, and what the near end just answered is
+            // by then held only by this C++ local.
+            const context::rooted keep(c, lower_value);
+            const bool upper_there = detail::has_element(c, self, upper);
+            const value upper_value =
+                upper_there ? detail::element_at(c, self, upper) : value::undefined();
+            if (lower_there && upper_there) {
+                detail::put_element(c, self, lower, upper_value);
+                detail::put_element(c, self, upper, lower_value);
+            } else if (upper_there) {
+                detail::put_element(c, self, lower, upper_value);
+                detail::delete_element(c, self, upper);
+            } else if (lower_there) {
+                detail::delete_element(c, self, lower);
+                detail::put_element(c, self, upper, lower_value);
+            }
+        }
+        return self;
     });
     // The iteration methods call back INTO the VM, which is what
     // context::call() exists for. Each snapshots the item first, because the
@@ -652,22 +963,48 @@ void install_array(context & cx) {
                           "The comparison function must be either a function or undefined");
             return c.current_this();
         }
-        array_object * self = detail::this_array(c);
-        if (self == nullptr) { return c.current_this(); }
-        // ON A SNAPSHOT, which is a robustness fix rather than a speed one. The
-        // old loop indexed `self->items` while calling out to the comparator,
-        // so a comparator that shortened the array - `a.sort(() => { a.length =
-        // 0; return 0; })` - left it indexing past the end. Sorting a copy and
-        // writing it back cannot: the comparator may do what it likes to the
-        // array meanwhile.
-        std::vector<value> work = self->items;
+        const value self = c.current_this();
+        if (!detail::coercible_this(c, self, "sort")) { return self; }
+        if (array_object * dense = detail::dense_array_this(self)) {
+            // ON A SNAPSHOT, which is a robustness fix rather than a speed one.
+            // The old loop indexed `items` while calling out to the comparator,
+            // so a comparator that shortened the array - `a.sort(() => {
+            // a.length = 0; return 0; })` - left it indexing past the end.
+            // Sorting a copy and writing it back cannot: the comparator may do
+            // what it likes to the array meanwhile.
+            std::vector<value> work = dense->items;
+            sort_values(c, work, comparator);
+            // ASSIGNED, not written slot by slot, so both arms agree about what
+            // the array holds afterwards. Where nothing mutated during the sort
+            // the two spellings are identical; where something did, this is
+            // defined and the old one was not.
+            dense->items = std::move(work);
+            return self;
+        }
+        if (!detail::mutable_receiver(c, self, "sort")) { return self; }
+        const double len = detail::array_like_length(c, self);
+        if (!detail::generic_walk_ok(c, len)) { return self; }
+        // SortIndexedProperties, 23.1.3.30.1, with holes SKIPPED: the present
+        // elements are read out, sorted, written back over 0..n-1, and every
+        // index the holes used to occupy is deleted - which is what moves them
+        // all to the end.
+        //
+        // INTO A ROOTED ARRAY rather than a bare std::vector<value>, for the
+        // reason `toSorted` gives: a getter can collect and a value held only
+        // by a C++ vector is in none of the collector's roots.
+        value holder = c.make_array();
+        const context::rooted keep(c, holder);
+        auto & work = static_cast<array_object *>(holder.as_heap())->items;
+        for (double k = 0; k < len; k += 1.0) {
+            if (detail::has_element(c, self, k)) { work.push_back(detail::element_at(c, self, k)); }
+        }
         sort_values(c, work, comparator);
-        // ASSIGNED, not written slot by slot, so both arms agree about what the
-        // array holds afterwards. Where nothing mutated during the sort the two
-        // spellings are identical; where something did, this is defined and the
-        // old one was not.
-        self->items = std::move(work);
-        return c.current_this();
+        const auto kept = static_cast<double>(work.size());
+        for (double k = 0; k < kept; k += 1.0) {
+            detail::put_element(c, self, k, work[static_cast<std::size_t>(k)]);
+        }
+        for (double k = kept; k < len; k += 1.0) { detail::delete_element(c, self, k); }
+        return self;
     });
     detail::constant(array_ctor, "prototype", value::object(array_proto));
     // `Array.prototype.toString` IS join(','). The C++ conversion always knew

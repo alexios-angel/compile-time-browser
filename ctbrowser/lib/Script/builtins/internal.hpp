@@ -247,6 +247,84 @@ inline void put_element(context & cx, value self, double i, value v) {
     return cx.has_property(self, value::number(i));
 }
 
+// DeletePropertyOrThrow over an index (7.3.9), and Set(O, "length", n, true).
+// The two writes the MUTATING methods are built out of, named so that push,
+// pop, shift, unshift, splice and reverse read like their clauses in 23.1.3
+// rather than like calls on the context.
+inline void delete_element(context & cx, value self, double i) {
+    cx.delete_index(self, value::number(i));
+}
+inline void put_length(context & cx, value self, double len) {
+    cx.store_property(self, "length", value::number(len));
+}
+
+// THE FAST PATH'S RECEIVER: a real, ORDINARY Array, whose elements are its own
+// std::vector and can therefore be pushed, erased and reversed in place.
+//
+// A mutating method is one algorithm with two spellings of the storage, not
+// two algorithms - this is the branch at the top of each that keeps ordinary
+// array code at the speed it was while `this` being anything else takes the
+// specified [[Get]]/[[Set]]/[[Delete]] walk.
+//
+// A TYPED array is NOT one: a view's elements are bytes in somebody else's
+// ArrayBuffer and `items` is empty by construction (see array_object::viewed),
+// so vector surgery on one would silently do nothing. It goes the generic way,
+// where store_index coerces and refuses to grow it, which is what a typed
+// array is for.
+[[nodiscard]] inline array_object * dense_array_this(value self) {
+    if (!self.is_array()) { return nullptr; }
+    auto * arr = static_cast<array_object *>(self.as_heap());
+    return arr->is_view() || arr->elements != element_kind::none ? nullptr : arr;
+}
+
+// A STRING RECEIVER CANNOT BE MUTATED, and the mutating methods have to say so.
+//
+// Every Set and DeletePropertyOrThrow in 23.1.3's mutating algorithms carries
+// Throw=true, so a write that does not land is a TypeError EVEN IN SLOPPY MODE
+// - which is the one place these differ from a bare `s[0] = 'x'`. ToObject of a
+// string is a String exotic object whose indices and whose `length` are all
+// non-writable, so every write in push, pop, shift, unshift, splice, reverse
+// and sort fails on one. This engine has no wrapper objects and
+// context::store_property drops a write to a primitive silently, so the
+// refusal is spelled out here instead.
+//
+// The other primitives are NOT refused: ToObject(true) is a fresh Boolean
+// object with an ordinary, writable `length`, which is why
+// `Array.prototype.push.call(true)` is specified to answer 0 rather than throw.
+[[nodiscard]] inline bool mutable_receiver(context & cx, value self, const char * method) {
+    if (!self.is_string()) { return true; }
+    cx.throw_error("TypeError",
+                   std::string{"Array.prototype."} + method + " cannot modify a String");
+    return false;
+}
+
+// THE CEILING ON A GENERIC INDEX WALK, and why a mutating method needs one at
+// all.
+//
+// `length` on an array-LIKE is whatever the object says it is, up to 2^53-1,
+// and 23.1.3's algorithms walk every index below it: `reverse` swaps len/2
+// pairs, `shift` and `unshift` move len-1 elements, `sort` reads len. On a real
+// Array that is bounded by the elements that exist. On `{length: 2**53-1}` it
+// is bounded by nothing.
+//
+// The specification's own answer is that the first getter to throw ends the
+// walk - which is exactly what test262's `*-near-integer-limit` files assert.
+// THIS ENGINE CANNOT DO THAT: a JavaScript throw unwinds the INTERPRETER's
+// frames (context::unwind_to_handler) and a native's C++ loop keeps running, so
+// there is no signal a loop here could read. The remaining choice is between a
+// hang and an error, and a ceiling that THROWS is the honest form of the same
+// protection `max_string_length` above is written on.
+//
+// THE FAST PATH IS UNTOUCHED: a real Array reverses, shifts and sorts through
+// its std::vector and never reaches here, so `new Array(1e8).reverse()` still
+// works. Only a non-Array receiver claiming a length past 2^24 is refused.
+inline constexpr double max_generic_walk = 16777216.0; // 2^24
+[[nodiscard]] inline bool generic_walk_ok(context & cx, double len) {
+    if (len <= max_generic_walk) { return true; }
+    cx.throw_error("RangeError", "the array-like's length is too large to walk");
+    return false;
+}
+
 // RequireObjectCoercible on `this`, which every Array.prototype method begins
 // with (as ToObject, 7.1.18, whose step 1 is the same refusal). The methods
 // answered a default instead, so `Array.prototype.forEach.call(null, f)` did

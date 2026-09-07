@@ -247,5 +247,256 @@ int main() {
               "RangeError");
     js_expect("String.fromCodePoint(65, 66)", "AB");
 
+    // ================================================================
+    // 9. THE METHODS THAT MUTATE, OVER A RECEIVER THAT IS NOT AN ARRAY
+    // ================================================================
+    // push, pop, shift, unshift, splice, concat, reverse, sort, flat and
+    // flatMap are specified exactly as generic as the eighteen that read, and
+    // every one of them opened with `detail::this_array` too. The difference is
+    // that these WRITE: the algorithm is a sequence of [[Set]] and [[Delete]]
+    // calls in a fixed order, ending with Set(O, "length", n, true), and it is
+    // the length write-back and the deleted slot that a test can see.
+    //
+    // Expected values are node's.
+
+    // --- push (23.1.3.23): the elements land, and `length` is written back ---
+    js_expect("(function () { var o = {length: 2, 0: 'a', 1: 'b'};"
+              " var n = Array.prototype.push.call(o, 'c');"
+              " return n + ':' + o.length + ':' + o[2]; })()",
+              "3:3:c");
+    // AN ABSENT `length` IS ZERO, not "not an array-like": ToLength(undefined)
+    // is 0, so the first push lands at index 0 and defines `length` as 1.
+    js_expect("(function () { var o = {}; var n = Array.prototype.push.call(o, -1);"
+              " return n + ':' + o.length + ':' + o[0]; })()",
+              "1:1:-1");
+    js_expect("(function () { var o = {length: null}; Array.prototype.push.call(o, -7);"
+              " return o.length + ':' + o[0]; })()",
+              "1:-7");
+    // 2^53-1 IS A TypeError AND `length` ITSELF IS A CLAMP. Both are step 5 of
+    // 23.1.3.23 and they disagree on purpose: pushing nothing onto a receiver
+    // claiming an impossible length succeeds and repairs the length.
+    js_expect("(function () { var o = {length: Infinity}; Array.prototype.push.call(o);"
+              " return o.length; })()",
+              "9007199254740991");
+    js_expect("(function () { var o = {length: 9007199254740991};"
+              " try { Array.prototype.push.call(o, 1); return 'no'; }"
+              " catch (e) { return e.name; } })()",
+              "TypeError");
+
+    // --- pop (23.1.3.22): the slot is DELETED, not left holding its value ---
+    js_expect("(function () { var o = {length: 2, 0: 'a', 1: 'b'};"
+              " var v = Array.prototype.pop.call(o);"
+              " return v + ':' + o.length + ':' + (1 in o); })()",
+              "b:1:false");
+    // An empty receiver still writes `length` back - step 3a - which is what
+    // turns a `length` of NaN into 0.
+    js_expect("(function () { var o = {length: NaN};"
+              " var v = Array.prototype.pop.call(o);"
+              " return (v === undefined) + ':' + o.length; })()",
+              "true:0");
+
+    // --- shift (23.1.3.25): everything moves DOWN and the top is deleted -----
+    js_expect("(function () { var o = {length: 3, 0: 'a', 1: 'b', 2: 'c'};"
+              " var v = Array.prototype.shift.call(o);"
+              " return v + ':' + o.length + ':' + o[0] + o[1] + ':' + (2 in o); })()",
+              "a:2:bc:false");
+    // A HOLE MOVING DOWN DELETES WHAT IT LANDS ON rather than filling it with
+    // undefined, which is the whole of step 6c.ii of the algorithm.
+    js_expect("(function () { var o = {length: 3, 0: 'a', 2: 'c'};"
+              " Array.prototype.shift.call(o); return (0 in o) + ':' + o[1]; })()",
+              "false:c");
+
+    // --- unshift (23.1.3.32): everything moves UP, from the top down ---------
+    js_expect("(function () { var o = {length: 2, 0: 'a', 1: 'b'};"
+              " var n = Array.prototype.unshift.call(o, 'z');"
+              " return n + ':' + o.length + ':' + o[0] + o[1] + o[2]; })()",
+              "3:3:zab");
+    js_expect("(function () { var o = {length: 9007199254740991};"
+              " try { Array.prototype.unshift.call(o, 1); return 'no'; }"
+              " catch (e) { return e.name; } })()",
+              "TypeError");
+
+    // --- splice (23.1.3.29) -------------------------------------------------
+    js_expect("(function () { var o = {length: 3, 0: 'a', 1: 'b', 2: 'c'};"
+              " var r = Array.prototype.splice.call(o, 1, 1);"
+              " return r.join('') + ':' + o.length + ':' + o[0] + o[1] + ':' + (2 in o); })()",
+              "b:2:ac:false");
+    // GROWING WALKS THE TAIL BACKWARDS, so an overlapping move never overwrites
+    // a source before it has been read.
+    js_expect("(function () { var o = {length: 2, 0: 'a', 1: 'b'};"
+              " Array.prototype.splice.call(o, 1, 0, 'x', 'y');"
+              " return o.length + ':' + o[0] + o[1] + o[2] + o[3]; })()",
+              "4:axyb");
+    // `splice()` WITH NO ARGUMENT AT ALL DELETES NOTHING - step 6 - and only
+    // `splice(i)` deletes to the end. Testing the argument count for both read
+    // the no-argument call as "delete everything from index 0".
+    js_expect("[1, 2, 3].splice().length", "0");
+    js_expect("(function () { var a = [1, 2, 3]; a.splice(); return a.join(','); })()", "1,2,3");
+    js_expect("[1, 2, 3].splice(1).join(',')", "2,3");
+    js_expect("(function () { var a = [1, 2, 3]; a.splice(1); return a.join(','); })()", "1");
+    js_expect("(function () { var a = [1, 2, 3]; a.splice(1, Infinity); return a.join(','); })()",
+              "1");
+
+    // --- concat (23.1.3.1): the RECEIVER spreads only if it IS an array ------
+    // There is no Symbol.isConcatSpreadable here, so `IsArray` is the whole
+    // test: an array-like receiver is ONE element of the result.
+    js_expect("(function () { var o = {length: 2, 0: 'a', 1: 'b'};"
+              " var r = Array.prototype.concat.call(o, 1, [2, 3]);"
+              " return r.length + ':' + (r[0] === o) + ':' + r[1] + r[2] + r[3]; })()",
+              "4:true:123");
+    js_expect("[1].concat([2, 3], {length: 2, 0: 'x'}).length", "4");
+    js_expect("[1].concat([2, 3]).join(',')", "1,2,3");
+
+    // --- reverse (23.1.3.26) ------------------------------------------------
+    js_expect("(function () { var o = {length: 3, 0: 'a', 1: 'b', 2: 'c'};"
+              " Array.prototype.reverse.call(o); return o[0] + o[1] + o[2]; })()",
+              "cba");
+    // A HOLE OPPOSITE AN ELEMENT DELETES THE FAR SIDE rather than filling it,
+    // which is the only thing separating reverse from read-all-write-back.
+    js_expect("(function () { var o = {length: 2, 1: 'b'};"
+              " Array.prototype.reverse.call(o); return o[0] + ':' + (1 in o); })()",
+              "b:false");
+    js_expect("(function () { var a = [1, 2, 3]; a.reverse(); return a.join(','); })()", "3,2,1");
+
+    // --- sort (23.1.3.30) ---------------------------------------------------
+    js_expect("(function () { var o = {length: 3, 0: 3, 1: 1, 2: 2};"
+              " Array.prototype.sort.call(o, function (x, y) { return x - y; });"
+              " return o[0] + ',' + o[1] + ',' + o[2]; })()",
+              "1,2,3");
+    // SortIndexedProperties SKIPS THE HOLES and the vacated tail is deleted, so
+    // a hole ends up after everything - including after an undefined.
+    js_expect("(function () { var o = {length: 3, 0: 'b', 2: 'a'};"
+              " Array.prototype.sort.call(o); return o[0] + o[1] + ':' + (2 in o); })()",
+              "ab:false");
+
+    // --- flat and flatMap ---------------------------------------------------
+    js_expect("Array.prototype.flat.call({length: 1, 0: [1]}).join(',')", "1");
+    js_expect("Array.prototype.flat.call({length: undefined, 0: [1]}).length", "0");
+    // The depth goes through ToIntegerOrInfinity: an explicit `undefined` is
+    // the DEFAULT of 1, a string or an object is 0.
+    js_expect("[1, [2]].flat(undefined).join(',')", "1,2");
+    js_expect("[1, [2]].flat('TestString').length", "2");
+    js_expect("[1, [2]].flat(0).length", "2");
+    js_expect("[1, [2, [3]]].flat(Infinity).join(',')", "1,2,3");
+    // Only a real Array flattens - an array-LIKE element is one element.
+    js_expect("[1, {length: 1, 0: 2}].flat().length", "2");
+    js_expect("[1, 2].flatMap(function (x) { return [x, x * this.n]; }, {n: 10}).join(',')",
+              "1,10,2,20");
+    js_expect("Array.prototype.flatMap.call({length: 2, 0: 1, 1: 2},"
+              " function (x) { return x; }).join(',')",
+              "1,2");
+    js_expect(
+        "(function () { try { [1].flatMap(7); return 'no'; } catch (e) { return e.name; } })()",
+        "TypeError");
+
+    // --- A NULLISH RECEIVER IS A TypeError, not a silent default ------------
+    js_expect("(function () { try { Array.prototype.push.call(null, 1); return 'no'; }"
+              " catch (e) { return e.name; } })()",
+              "TypeError");
+    js_expect("(function () { try { Array.prototype.pop.call(undefined); return 'no'; }"
+              " catch (e) { return e.name; } })()",
+              "TypeError");
+    js_expect("(function () { try { Array.prototype.shift.call(null); return 'no'; }"
+              " catch (e) { return e.name; } })()",
+              "TypeError");
+    js_expect("(function () { try { Array.prototype.unshift.call(undefined, 1); return 'no'; }"
+              " catch (e) { return e.name; } })()",
+              "TypeError");
+    js_expect("(function () { try { Array.prototype.splice.call(null, 0); return 'no'; }"
+              " catch (e) { return e.name; } })()",
+              "TypeError");
+    js_expect("(function () { try { Array.prototype.concat.call(null); return 'no'; }"
+              " catch (e) { return e.name; } })()",
+              "TypeError");
+    js_expect("(function () { try { Array.prototype.reverse.call(undefined); return 'no'; }"
+              " catch (e) { return e.name; } })()",
+              "TypeError");
+    js_expect("(function () { try { Array.prototype.sort.call(null); return 'no'; }"
+              " catch (e) { return e.name; } })()",
+              "TypeError");
+    js_expect("(function () { try { Array.prototype.flat.call(null); return 'no'; }"
+              " catch (e) { return e.name; } })()",
+              "TypeError");
+    js_expect("(function () { try { Array.prototype.flatMap.call(null, function () {});"
+              " return 'no'; } catch (e) { return e.name; } })()",
+              "TypeError");
+
+    // A STRING RECEIVER CANNOT BE MUTATED. Every Set in these algorithms
+    // carries Throw=true, so this is a TypeError in sloppy mode as well -
+    // unlike a bare `s[0] = 'x'`, which is silently discarded.
+    js_expect("(function () { try { Array.prototype.push.call('abc', 1); return 'no'; }"
+              " catch (e) { return e.name; } })()",
+              "TypeError");
+    js_expect("(function () { try { Array.prototype.shift.call(''); return 'no'; }"
+              " catch (e) { return e.name; } })()",
+              "TypeError");
+    // ...and a FROZEN array cannot either, for the same reason.
+    js_expect("(function () { var a = []; Object.freeze(a);"
+              " try { a.push(); return 'no'; } catch (e) { return e.name; } })()",
+              "TypeError");
+    js_expect("(function () { var a = [1]; Object.freeze(a);"
+              " try { a.push(2); return 'no'; } catch (e) { return e.name; } })()",
+              "TypeError");
+    js_expect("(function () { var a = [1]; Object.freeze(a);"
+              " try { a.pop(); return 'no'; } catch (e) { return e.name; } })()",
+              "TypeError");
+
+    // --- ORDER OF OPERATIONS, which is what a Proxy or an accessor counts ---
+    // `length` is read ONCE, before anything is written, and written ONCE,
+    // after everything is. A method that re-read it per iteration would see a
+    // second `get` here, and one that wrote each element through `length`
+    // would see a second `set`.
+    js_expect("(function () { var log = [];"
+              " var o = {0: 'a', 1: 'b',"
+              "   get length() { log.push('get'); return 2; },"
+              "   set length(v) { log.push('set ' + v); } };"
+              " Array.prototype.push.call(o, 'c'); return log.join('|'); })()",
+              "get|set 3");
+    // `splice` with no arguments still reads `length` once and writes it once
+    // (steps 2 and 24), and the value written is ToLength of what it read.
+    js_expect("(function () { var log = [];"
+              " var o = { get length() { log.push('get'); return '0'; },"
+              "   set length(v) { log.push('set ' + v); } };"
+              " Array.prototype.splice.call(o); return log.join('|'); })()",
+              "get|set 0");
+    // The element is READ BEFORE THE SLOT IS DELETED, and the length written
+    // after both - 23.1.3.22 steps 4c, 4d, 4e in that order.
+    js_expect("(function () { var log = [];"
+              " var o = {0: 'a',"
+              "   get length() { log.push('get length'); return 1; },"
+              "   set length(v) { log.push('set length ' + v); } };"
+              " var v = Array.prototype.pop.call(o);"
+              " return v + ':' + log.join('|') + ':' + (0 in o); })()",
+              "a:get length|set length 0:false");
+
+    // --- THE FAST PATH IS STILL THE FAST PATH -------------------------------
+    // A real Array takes the vector operation, and the generic walk must not
+    // have changed a single answer on one.
+    js_expect("(function () { var a = [1, 2, 3]; a.push(4); a.unshift(0); return a.join(','); })()",
+              "0,1,2,3,4");
+    js_expect("(function () { var a = [1, 2, 3];"
+              " return a.pop() + ':' + a.shift() + ':' + a.join(','); })()",
+              "3:1:2");
+    js_expect("[].pop() === undefined", "true");
+    js_expect("[].shift() === undefined", "true");
+    js_expect("[1, 2, 3].splice(-1).join(',')", "3");
+    js_expect("(function () { var a = [1, 2, 3]; a.splice(1, 1, 'x', 'y');"
+              " return a.join(','); })()",
+              "1,x,y,3");
+
+    // --- THE OWN `length` AND `name` OF EACH OF THEM ------------------------
+    // Clause 17 and 10.2.5: the specified arity as `length`, the property key
+    // as `name`, both { writable: false, enumerable: false, configurable: true }.
+    js_expect("[].push.length + ',' + [].pop.length + ',' + [].shift.length + ','"
+              " + [].unshift.length + ',' + [].splice.length + ',' + [].concat.length + ','"
+              " + [].reverse.length + ',' + [].fill.length + ',' + [].flat.length + ','"
+              " + [].flatMap.length + ',' + [].sort.length",
+              "1,0,0,1,2,1,0,1,0,1,1");
+    js_expect("[].push.name + ',' + [].flatMap.name + ',' + [].splice.name", "push,flatMap,splice");
+    js_expect("Object.getOwnPropertyDescriptor([].push, 'length').writable + ','"
+              " + Object.getOwnPropertyDescriptor([].push, 'length').enumerable + ','"
+              " + Object.getOwnPropertyDescriptor([].push, 'length').configurable",
+              "false,false,true");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }
