@@ -26,7 +26,7 @@ void checker::run() {
 
 using early::checker;
 
-std::optional<early_error> find_early_error(const vp::ast & tree, std::string_view source) {
+std::optional<early_error> find_early_error(const ctjs::vp::ast & tree, std::string_view source) {
     if (!tree.ok || tree.root < 0) { return std::nullopt; }
     checker walk{tree, source};
     walk.run();
