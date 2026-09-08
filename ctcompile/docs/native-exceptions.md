@@ -243,7 +243,7 @@ does not implement this rule: a source return/loop exit must change the pending
 completion, and throwing from a destructor during unwinding can terminate C++.
 
 Keep the bytecode compiler's explicit completion design from
-[statements.cpp](../../ctbrowser/lib/Script/compile/statements.cpp):
+[statements/try_finally.cpp](../../ctbrowser/lib/Script/compile/statements/try_finally.cpp):
 
 | Pending completion | State carried through finally |
 |---|---|

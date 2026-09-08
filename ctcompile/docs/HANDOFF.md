@@ -1662,7 +1662,7 @@ interpreter is 1.4%. Phases 7–12A are the rest and are not started.
 * **OLD, KEPT FOR THE REASONING:** the 65,535 proto ceiling was at 49% on a
   corpus that already existed. Three
   of four `op::closure` emitters cast the function index to `uint16` before the
-  32-bit `with_bx` (`statements.cpp:613`, `expressions.cpp:95`,
+  32-bit `with_bx` (`compile_function_decl` in `statements/functions.cpp`, `expressions.cpp:95`,
   `classes.cpp:156`; `classes.cpp:109` does not). Above 65,535 protos the
   COMPILER builds the wrong closure. Babylon is 31,905. The image writer refuses
   such a program rather than freezing the bug into a file.

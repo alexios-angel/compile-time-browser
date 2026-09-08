@@ -116,6 +116,10 @@ its header, and the header did not change:
   linkage in `detail::early`; its AST accessors (`at()`, `kids()`) stay inline
   there for the reason measured below. `early_errors.hpp` still declares one
   function.
+- `ctbrowser/lib/Script/compile/statements/` — four, from 1,017 (2026-09-08):
+  the dispatch, loops and labels, `try`/`finally`, and the function body. All
+  members of `compiler_impl`, so nothing needed declaring; the header is
+  untouched.
 
 ### What splitting the compiler cost, measured
 

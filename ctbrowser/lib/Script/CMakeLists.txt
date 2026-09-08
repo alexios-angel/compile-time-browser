@@ -37,7 +37,12 @@ target_sources(ctbrowser-script
     compile/entry.cpp
     compile/helpers.cpp
     compile/destructuring.cpp
-    compile/statements.cpp
+    # Statements, by concern: the dispatch, loops and labels, try/finally, and
+    # the function body that holds every other statement.
+    compile/statements/dispatch.cpp
+    compile/statements/loops.cpp
+    compile/statements/try_finally.cpp
+    compile/statements/functions.cpp
     compile/expressions.cpp
     compile/classes.cpp
     compile/frames.cpp

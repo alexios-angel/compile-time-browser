@@ -335,7 +335,8 @@ CT_AOT_COVERS(/* helper */ ct_aot_handler_push, /* opcode */ push_handler)
  * call_frame::handler_base, so a mis-balanced emission silently drops a
  * CALLER's catch and nothing reports it. Balance is a compiler invariant
  * only - compile_break and compile_continue each emit one pop per open try
- * when leaving the block (statements.cpp:282-284, 294-296) - and Phase 10
+ * when leaving the block (statements/loops.cpp's compile_break and
+ * compile_continue) - and Phase 10
  * inherits that obligation on every non-local exit path. `fr` is carried
  * purely so a debug build can assert handlers_.back().frame == this frame's
  * depth, turning a silent bug class into a loud one. It is NOT the frame-
@@ -463,7 +464,8 @@ CT_AOT_COVERS(/* helper */ ct_aot_new_target, /* opcode */ load_new_target)
 
 /* Emitted only for a named function expression's self-binding, and
  * immediately followed by new_cell when the name is captured
- * (statements.cpp:737-738), so its result feeds ct_aot_cell_new on the very
+ * (statements/functions.cpp's compile_function_body), so its result feeds
+ * ct_aot_cell_new on the very
  * next instruction. frame_closure is GC root 5, so this is a read of an
  * existing root rather than a new one.
  * DELEGATES TO: call_frame::closure (vm.hpp:851) - run_loop.cpp:1103-1104,
@@ -1061,7 +1063,8 @@ CT_AOT_COVERS(/* helper */ ct_aot_binary_op, /* opcode */ concat)
  * compile_binary sends `==`/`!=` to loose_equal/loose_not_equal
  * (expressions.cpp:265-268) and only `===`/`!==` here
  * (expressions.cpp:257-260), so one family helper for all four would attach
- * a throw edge and a safepoint to `switch`, which statements.cpp:523 lowers
+ * a throw edge and a safepoint to `switch`, which statements/loops.cpp's
+ * compile_switch lowers
  * to a chain of op::equal.
  * DELEGATES TO: value::strict_equals (declared value.hpp:146, defined
  *   inline at value.hpp:271-287; the ABI shim gives it one out-of-line
@@ -1408,7 +1411,7 @@ CT_AOT_HELPER(/* name */ ct_aot_delete_index, /* ret */ int32_t,
 CT_AOT_COVERS(/* helper */ ct_aot_delete_index, /* opcode */ delete_index)
 
 /* Both structural arguments hold. The aliasing point is real -
- * statements.cpp:440 emits `{own_keys, source, source}` and the handler is
+ * statements/loops.cpp's compile_for_of emits `{own_keys, source, source}` and the handler is
  * safe only because make_array runs first and reg(in.a) is written last -
  * and by-value-in/result-out removes the ordering constraint entirely. TWO
  * ADDITIONS. (1) THE ARRAY ARM: an array source yields "0".."n-1" as heap
@@ -1437,7 +1440,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_own_keys, /* opcode */ own_keys)
  * `ct_aot_iterable` because it matches the delegate's name so a grep finds
  * both ends, and because a bare `ct_aot_iterable` reads as a predicate. It
  * sits with own_keys - for-in and for-of are the same shape - and it is not
- * rare: statements.cpp:445 emits it for EVERY for-of and
+ * rare: statements/loops.cpp's compile_for_of emits it for EVERY for-of and
  * expressions.cpp:940 for EVERY spread, so a Phaser corpus without it
  * compiles nothing. Cannot be split or open-coded: every branch
  * structurally inspects a heap_object, which constraint 1 forbids. THE
@@ -1813,8 +1816,9 @@ CT_AOT_COVERS(/* helper */ ct_aot_return_value, /* opcode */ ret_undef)
 /* IMPLEMENTED. It had REAL tier-1 callers before it had a body and now it
  * has both: an async function with no await contains wrap_promise and no
  * await_value, so it is fully AOT-eligible, and the emission is
- * unconditional on every async return path (statements.cpp:227, 713, 792,
- * 983). The test must live inside the helper because it reads an own
+ * unconditional on every async return path (statements/dispatch.cpp's compile_stmt for `return`,
+ * try_finally.cpp's emit_finally_dispatch, and functions.cpp's emit_implicit_return and
+ * compile_function_body). The test must live inside the helper because it reads an own
  * '__value' off an object_object (constraint 1). THREE facts the lowering
  * must keep: the test is is_object() EXACTLY, so an array, function or
  * proxy returned from an async function is ALWAYS re-wrapped; with no
@@ -1894,7 +1898,8 @@ CT_AOT_COVERS(/* helper */ ct_aot_await_settled, /* opcode */ await_value)
  * coverage - Phase 13 checks 93 opcodes against the helper table, so an
  * opcode with no row is a hole whichever way it was reasoned about. This
  * particular hole is where the eligibility predicate sits: function_proto
- * carries is_generator (statements.cpp:751) but the compiler's is_async
+ * carries is_generator (statements/functions.cpp's compile_function_body) but the
+ * compiler's is_async
  * (compiler_impl.hpp:119) is never copied to the proto and is absent from
  * engine_contract::proto_header (EngineContract.hpp:86-93), so Phase 3's
  * dispatch and ctcompile must each derive the predicate and CANNOT derive

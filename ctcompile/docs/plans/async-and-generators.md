@@ -26,8 +26,9 @@ it is recorded here as a finding rather than quietly worked around.
   `op::dyn_import` gets. Two of the three will never get a case, so the
   sentence was wrong about them in a way that reads as a work item.
 * **`function_proto` does not carry `is_async`.** `compiler_impl::is_async`
-  exists and gates every `wrap_promise` emission (`statements.cpp:227, 713,
-  792, 983`), and `compile_function_decl` copies only
+  exists and gates every `wrap_promise` emission (`statements/dispatch.cpp`'s
+  `compile_stmt` for `return`, `try_finally.cpp`'s `emit_finally_dispatch`, and
+  `functions.cpp`'s `emit_implicit_return` and `compile_function_body`), and `compile_function_decl` copies only
   `proto().is_generator = fn().is_generator`. `EngineContract.hpp`'s
   `proto_header` does not carry it either. **So nothing at dispatch time can
   tell an async function from an ordinary one**, and an async function reaches
@@ -115,8 +116,9 @@ repaired, and what it used to say is inside it.
 /* IMPLEMENTED. It had REAL tier-1 callers before it had a body and now it
  * has both: an async function with no await contains wrap_promise and no
  * await_value, so it is fully AOT-eligible, and the emission is
- * unconditional on every async return path (statements.cpp:227, 713, 792,
- * 983). The test must live inside the helper because it reads an own
+ * unconditional on every async return path (statements/dispatch.cpp's compile_stmt for `return`,
+ * try_finally.cpp's emit_finally_dispatch, and functions.cpp's emit_implicit_return and
+ * compile_function_body). The test must live inside the helper because it reads an own
  * '__value' off an object_object (constraint 1). THREE facts the lowering
  * must keep: the test is is_object() EXACTLY, so an array, function or
  * proxy returned from an async function is ALWAYS re-wrapped; with no
@@ -190,7 +192,8 @@ CT_AOT_COVERS(/* helper */ ct_aot_await_settled, /* opcode */ await_value)
  * coverage - Phase 13 checks 93 opcodes against the helper table, so an
  * opcode with no row is a hole whichever way it was reasoned about. This
  * particular hole is where the eligibility predicate sits: function_proto
- * carries is_generator (statements.cpp:751) but the compiler's is_async
+ * carries is_generator (statements/functions.cpp's compile_function_body) but the
+ * compiler's is_async
  * (compiler_impl.hpp:119) is never copied to the proto and is absent from
  * engine_contract::proto_header (EngineContract.hpp:86-93), so Phase 3's
  * dispatch and ctcompile must each derive the predicate and CANNOT derive

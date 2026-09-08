@@ -211,7 +211,7 @@ CT_OPCODE(/* name */ set_upvalue, /* a_kind */ count, /* b_kind */ reg, /* c_kin
 /* NAME/COLUMN DISAGREEMENT (three). (1) op::add is not source `+`:
  * compile_binary maps `+` to add_generic (expressions.cpp:245-246); op::add
  * comes only from ++ (expressions.cpp:514) and three internal counters
- * (expressions.cpp:954, statements.cpp:490, destructuring.cpp:215). Beware
+ * (expressions.cpp:954, statements/loops.cpp's compile_for_of, destructuring.cpp:215). Beware
  * compound_op returning op::add at expressions.cpp:442 - that is the
  * ok=false arm and compile_assign refuses before emitting
  * (expressions.cpp:487-493), so no `+=` reaches it. (2) It is the ONE
@@ -369,7 +369,7 @@ CT_OPCODE(/* name */ logical_not, /* a_kind */ reg, /* b_kind */ reg, /* c_kind 
           /* allocates */ 0, /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0,
           /* may_suspend */ 0, /* resumable */ 1, /* impl */ "vm/coerce.cpp:truthy")
 
-/* Also the SWITCH dispatcher: statements.cpp:523 emits `equal matched,
+/* Also the SWITCH dispatcher: statements/loops.cpp's compile_switch emits `equal matched,
  * subject, candidate` per case, so `switch` is a chain of effect-free `===`
  * and is the one comparison an AOT backend can lower with no safepoint, no
  * exception edge and no call. */
@@ -404,7 +404,7 @@ CT_OPCODE(/* name */ loose_not_equal, /* a_kind */ reg, /* b_kind */ reg, /* c_k
 
 /* Three of its four emission sites are COMPILER-INTERNAL loop bounds -
  * `less test, index, length` for spread (expressions.cpp:950), array
- * destructuring (destructuring.cpp:211) and for-of (statements.cpp:473) -
+ * destructuring (destructuring.cpp:211) and for-of (statements/loops.cpp's compile_for_of) -
  * where both operands are engine-produced numbers; those are statically
  * safe, and only the compile_binary site (expressions.cpp:285) is a genuine
  * call site. */
@@ -671,7 +671,7 @@ CT_OPCODE(/* name */ new_array, /* a_kind */ reg, /* b_kind */ unused, /* c_kind
 /* REFUTING THE PREVIOUS NOTE: it warned that the destination store executes
  * after a getter throws and writes through a stale `base`, implying an AOT
  * backend could clobber the caught exception. The write is real but
- * provably harmless under this front end - statements.cpp:561 allocates the
+ * provably harmless under this front end - statements/try_finally.cpp's compile_try allocates the
  * catch register BEFORE compiling the try body, so every temporary in the
  * body (including this dst) sits strictly above the catch slot, and a
  * getter is entered through context::call (call.cpp:69), whose new_base ==
@@ -858,7 +858,7 @@ CT_OPCODE(/* name */ delete_index, /* a_kind */ reg, /* b_kind */ reg, /* c_kind
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0, /* impl */ "inline + vm/coerce.cpp:to_string")
 
-/* Emitted as `{op::own_keys, source, source}` (statements.cpp:440), so a
+/* Emitted as `{op::own_keys, source, source}` (statements/loops.cpp's compile_for_of), so a
  * and b ALIAS - safe only because make_array() runs first (1229) and
  * reg(in.a) is written last (1246); an AOT backend must preserve that
  * order. Deviations: OWN keys only (no prototype walk), no proxy ownKeys
@@ -874,7 +874,7 @@ CT_OPCODE(/* name */ own_keys, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ 
           /* may_suspend */ 0, /* resumable */ 0, /* impl */ "inline")
 
 /* Still one of the largest user-JS re-entry points (for-of at
- * compile/statements.cpp:445, every spread at expressions.cpp:940), but for
+ * compile/statements/loops.cpp's compile_for_of, every spread at expressions.cpp:940), but for
  * a narrower reason than the name or the prior evidence suggests: only a
  * generator body or an accessor on an INDEX key runs. Three surprises for
  * an AOT backend: it MATERIALIZES (an infinite generator hangs); [...proxy]
@@ -982,8 +982,8 @@ CT_OPCODE(/* name */ ret, /* a_kind */ reg, /* b_kind */ unused, /* c_kind */ un
           /* may_suspend */ 0, /* resumable */ 0, /* impl */ "inline")
 
 /* All three operands are genuinely dead - the compiler emits a bare
- * instruction{op::ret_undef} with a=b=c=0 (statements.cpp:599,
- * entry.cpp:65, classes.cpp:54). Its one non-obvious effect is the shared
+ * instruction{op::ret_undef} with a=b=c=0 (statements/functions.cpp's
+ * emit_implicit_return, entry.cpp:65, classes.cpp:54). Its one non-obvious effect is the shared
  * constructing-frame substitution at :1141, which is what makes a class
  * constructor with no explicit return evaluate to the instance rather than
  * to undefined - so an AOT backend that lowers this to `return undefined`
@@ -1103,7 +1103,8 @@ CT_OPCODE(/* name */ load_namespace, /* a_kind */ reg, /* b_kind */ nidx, /* c_k
 /* Despite the name it does not build a function object; the closure already
  * exists and is already a GC root through the frame (objects.cpp:452).
  * Emitted only for a named function expression's self-binding, immediately
- * followed by new_cell when the name is captured (statements.cpp:737-738).
+ * followed by new_cell when the name is captured (statements/functions.cpp's
+ * compile_function_body).
  * Yields undefined in the top-level script frame, which has no closure. The
  * resumable=true here rests on the generator-start path, not on following
  * an await - downgrade it only if you define resumable as 'after a
@@ -1146,7 +1147,7 @@ CT_OPCODE(/* name */ push_handler, /* a_kind */ reg, /* b_kind */ jump, /* c_kin
  * vm_frame->handler_base, so a mis-balanced emission silently drops a
  * CALLER's catch; balance is a compiler invariant only
  * (compile_break/compile_continue emit one per open try when leaving the
- * block, statements.cpp:281-283, 294-296). */
+ * block - statements/loops.cpp's compile_break and compile_continue). */
 CT_OPCODE(/* name */ pop_handler, /* a_kind */ unused, /* b_kind */ unused, /* c_kind */ unused,
           /* writes_a */ 0, /* allocates */ 0, /* may_throw */ 0, /* may_reenter */ 0,
           /* is_safepoint */ 0, /* may_suspend */ 0, /* resumable */ 0, /* impl */ "inline")

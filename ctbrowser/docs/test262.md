@@ -481,7 +481,8 @@ would otherwise be reporting them as progress:
   `f.hasOwnProperty` was undefined on every function, which is the gap numbers,
   booleans and strings had until they were fixed and functions were left out of.
 * **A labelled `break` could cross a function boundary in the COMPILER.**
-  `lib/Script/compile/statements.cpp` kept one `loops_` stack for the whole
+  `compile_function_body` (now `lib/Script/compile/statements/functions.cpp`) kept
+  one `loops_` stack for the whole
   compilation, and its own comment said the invariant was worth checking rather
   than inheriting. It was checked and it was wrong: `L: do { (function(){ break
   L; })(); } while(0)` pushed a jump site onto the enclosing function's break

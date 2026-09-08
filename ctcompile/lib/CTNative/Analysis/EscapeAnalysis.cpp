@@ -469,7 +469,8 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
     // R1's GUARD: the per-site `arguments` refusal is sound only because the
     // arguments array holds what the parameter registers held in the
     // PROLOGUE - make_arguments is emitted after the parameters are declared
-    // and before any body statement (compile/statements.cpp), gather_rest has
+    // and before any body statement (compile_function_body in
+    // compile/statements/functions.cpp), gather_rest has
     // exactly one emitter, the parameter prologue. That placement is CHECKED
     // here, not believed: every builder must be in the entry block and
     // precede every site there (a site in any other block is after the entry
