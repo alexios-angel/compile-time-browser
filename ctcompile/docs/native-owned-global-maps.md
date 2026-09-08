@@ -328,14 +328,45 @@ devbox build passes **475/475 CTests** in **652.00 seconds**, including
 **163/163 lit cases** in **91.45 seconds**; log:
 `/tmp/ctcompile-arguments-full-gate.log`.
 
-## Next boundary
+## Nonempty size snapshots, 2026-09-08
 
 The retained `seeded_dynamic_delete` uses `state.delete(state.size)` before
-the producer's `return state.get(0)`. It remains **0/5 native**, with every
-source call intact and no owner proof. A possibly aliasing delete requires
-independent presence evidence and cannot inherit a set's type-join rule. The unseeded
-`get() { return state.get(0); }` remains refused. Neither an earlier observed
-invocation nor an incomplete family establishes the result.
+the producer's `return state.get(0)`. It advances **0/5 -> 5/5 native**,
+retaining Node/interpreter `trace=1` and every runtime seed, size read, delete
+and lookup. Both the host result proof and native presence analysis independently
+establish `size >= 1` from a definite entry in the exact runtime Map. That
+immutable numeric snapshot is distinct from zero, negative/subunit literals and
+NaN. Later mutation cannot change the saved number. Different positive keys or
+different size SSA values alone do not establish disjointness.
+
+The gate passes **58 complete programs**, including three new size cases and
+three size-key refusals with discriminating observations. Node/interpreter and
+explicit/deduced GCC/Clang agree; all six existing sanitizer lifetime variants
+pass. Saved-size execution returns 2, whereas replacing the saved number with
+the current size returns 3. Zero-size, equal-positive-key and equal-snapshot
+refusals preserve every call under fresh/stale forged markers and reruns.
+Existing incompatible-overwrite tests now seed key 1 so they still exercise
+actual possible aliasing. Source/prepared host proofs complete at **2212/2299**
+steps and withhold the entire family at every smaller budget. Native completion
+is **5753** for dynamic delete and **8607** for the saved snapshot, with **31/29**
+checked cutoffs. No natural speculative rollback interval was observed.
+
+The new independent native-presence lit test passes its three positive and
+seven refusal programs, covering `has` branches, saved reads, initial/emptied
+Maps, different runtime instances and recursive clearing. The focused host/owner
+CTests pass. Logs: `/tmp/ctcompile-size-focused.log`,
+`/tmp/ctcompile-size-native.log`, `/tmp/ctcompile-size-lit.log`.
+The full combined gate is recorded in [HANDOFF.md](HANDOFF.md).
+
+## Next boundary
+
+After `state.set(0, 1); state.set(1, 2)`, deleting `state.size` should preserve
+`state.get(1)`. The current nonempty bound cannot establish that size is at
+least two. This needs a bounded cardinality lower bound from independently
+distinct definite keys; the number of facts is not a cardinality proof because
+different SSA keys can alias. The unseeded `get() { return state.get(0); }`
+remains refused. Neither an earlier observed invocation nor an incomplete
+family establishes the result.
 
 String, boolean and mixed Map payload carriers remain separate **0/6**
 boundaries even after complete host proofs. Current-call proofs cannot authorize

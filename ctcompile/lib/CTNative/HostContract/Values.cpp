@@ -661,15 +661,19 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
         std::optional<mlir::TypeID> tag;
     };
     llvm::SmallVector<entry_fact> entries;
+    llvm::DenseSet<mlir::Value> nonemptySizes;
     const auto primitiveTag = [&](mlir::Value key) -> std::optional<mlir::TypeID> {
         auto tag = tags.find(key);
         return tag == tags.end() ? std::nullopt : std::optional<mlir::TypeID>(tag->second);
+    };
+    const auto keyEvidence = [&](mlir::Value key) {
+        return PrimitiveMapKeyEvidence{primitiveTag(key), nonemptySizes.contains(key)};
     };
     const auto mutate = [&](mlir::Value key, bool erase, std::optional<mlir::TypeID> tag = {}) {
         for (auto it = entries.begin(); it != entries.end();) {
             if (!step()) { return false; }
             const auto relation =
-                comparePrimitiveMapKeys(it->key, key, primitiveTag(it->key), primitiveTag(key));
+                comparePrimitiveMapKeys(it->key, key, keyEvidence(it->key), keyEvidence(key));
             if (relation == PrimitiveMapKeyRelation::Distinct) {
                 ++it;
             } else if (erase || relation == PrimitiveMapKeyRelation::Same) {
@@ -726,6 +730,10 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
             if (key == "size") {
                 primitives.insert(read.getResult());
                 tags.try_emplace(read.getResult(), mlir::TypeID::get<ctjs::NumberAttr>());
+                // One definite entry proves size >= 1. The entry keys may
+                // alias, so their count is not a cardinality lower bound.
+                // Later mutation cannot change this already-read SSA number.
+                if (!entries.empty()) { nonemptySizes.insert(read.getResult()); }
             }
         } else if (auto invoke = llvm::dyn_cast<ctjs::CallOp>(operation)) {
             auto read = invoke.getCallee().getDefiningOp<ctjs::GetPropertyOp>();

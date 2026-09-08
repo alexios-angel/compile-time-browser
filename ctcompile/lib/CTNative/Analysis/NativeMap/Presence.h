@@ -16,6 +16,7 @@ namespace ctcompile::ctnative::map_detail {
 // Required reads must all be present. Optional primitive reads retain their
 // nullable result unless this same independent analysis proves presence.
 std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> calls,
+                          llvm::ArrayRef<ctjs::GetPropertyOp> sizes,
                           llvm::ArrayRef<ctjs::CallOp> reads,
                           llvm::ArrayRef<ctjs::CallOp> optionalReads,
                           const llvm::DenseSet<mlir::Operation *> & snapshotCopies,

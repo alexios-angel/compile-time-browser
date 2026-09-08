@@ -12,7 +12,7 @@ from .sources import (
     methods, owned, boundary, host, SOURCE, SHARED, parameter_sources, result_sources,
     seeded_result_sources, key_fact_sources, joined_result_sources, seeded_carrier_refusals,
     RESULT_SIGNATURES, refusal_sources, parameter_refusals, result_refusals,
-    seeded_result_refusals,
+    seeded_result_refusals, size_result_sources, size_result_refusals,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
@@ -78,6 +78,7 @@ def main():
         **seeded_result_sources(),
         **key_fact_sources(),
         **joined_result_sources(),
+        **size_result_sources(),
     }
     saved = {}
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
@@ -85,6 +86,11 @@ def main():
     blind.write_text(overwrite_source.replace("return state.get(1);", "return 1;"))
     if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == f"trace={overwrite_value}\n":
         raise RuntimeError("dynamic overwrite witness cannot distinguish retaining the old payload")
+    saved_source, _, saved_value = positives["seeded_size_saved"]
+    blind = args.work / "seeded-size-saved-blinded.js"
+    blind.write_text(saved_source.replace("state.delete(saved)", "state.delete(state.size)"))
+    if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == f"trace={saved_value}\n":
+        raise RuntimeError("saved size witness cannot distinguish a later current-size read")
     for name, (source, binding, value) in positives.items():
         js, ir, count = boundary.prepare(args, name, source)
         functions = (RESULT_SIGNATURES[name][2] if name in RESULT_SIGNATURES
@@ -151,7 +157,7 @@ def main():
     result_ir, result_config, result_output = saved["parameter_call_result"]
     rollback += check_budgets(args, result_ir, result_config, "parameter_call_result", functions=5)
     for name in ("seeded_earlier_key", "seeded_other_delete", "seeded_dynamic_write",
-                 "seeded_dynamic_formal"):
+                 "seeded_dynamic_formal", "seeded_dynamic_delete", "seeded_size_saved"):
         key_ir, key_config, _ = saved[name]
         rollback += check_budgets(args, key_ir, key_config, name,
                                   functions=RESULT_SIGNATURES[name][2])
@@ -222,13 +228,41 @@ def main():
         fresh = contract(args, rejected, name)
         failed = methods.refused(args, rejected, name, fresh, admitted=0)
         check_call_preservation(rejected.read_text(), failed.read_text(), name)
-        if name in {"seeded_deleted", "seeded_dynamic_bool_join", "seeded_dynamic_delete"}:
+        if name in {"seeded_deleted", "seeded_dynamic_bool_join"}:
             forged_name = name + "-forged"
             forged = args.work / f"{forged_name}.mlir"
             forged.write_text(forge_map_presence(rejected.read_text()))
             forged_config = contract(args, forged, forged_name)
             failed = methods.refused(args, forged, forged_name, forged_config, admitted=0)
             check_call_preservation(forged.read_text(), failed.read_text(), forged_name)
+    for name, (source, value) in size_result_refusals().items():
+        js, rejected, count = boundary.prepare(args, name, source)
+        if count != 5:
+            raise RuntimeError(f"{name}: changed size-refusal source denominator")
+        expected = f"trace={value}\n"
+        if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != expected
+                or host.run([str(reference), str(js)]).stdout != expected):
+            raise RuntimeError(f"{name}: Node/interpreter observation mismatch")
+        blind = args.work / f"{name}-blinded.js"
+        blind.write_text(source.replace("state.delete(", "state.has("))
+        if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == expected:
+            raise RuntimeError(f"{name}: size-key refusal cannot distinguish a real deletion")
+        fresh = contract(args, rejected, name)
+        failed = methods.refused(args, rejected, name, fresh, admitted=0)
+        check_call_preservation(rejected.read_text(), failed.read_text(), name)
+        forged_name = name + "-forged"
+        forged = args.work / f"{forged_name}.mlir"
+        forged.write_text(forge_map_presence(rejected.read_text()))
+        failed = methods.refused(args, forged, forged_name + "-stale", fresh,
+                                 reason="fingerprint mismatch", admitted=0)
+        check_call_preservation(forged.read_text(), failed.read_text(), forged_name + "-stale")
+        forged_config = contract(args, forged, forged_name)
+        failed = methods.refused(args, forged, forged_name, forged_config, admitted=0)
+        if "fingerprint mismatch" in failed.read_text():
+            raise RuntimeError(f"{forged_name}: fresh forgery skipped live size reanalysis")
+        check_call_preservation(forged.read_text(), failed.read_text(), forged_name)
+        rerun = methods.refused(args, failed, forged_name + "-rerun", forged_config, admitted=0)
+        check_call_preservation(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
     # A definite local get tag is separate from an implemented native Map
     # payload carrier. Keep the observation numeric and retain every prepared
     # call so bool/string/mixed contents cannot acquire numeric authority.
@@ -346,6 +380,8 @@ def main():
           f"{len(seeded_result_sources())} seeded result programs and growing lifetime pass; "
           f"{len(key_fact_sources())} per-key result programs; "
           f"{len(joined_result_sources())} type-joined result programs; "
+          f"{len(size_result_sources())} nonempty-size programs and "
+          f"{len(size_result_refusals())} size-key refusals with discriminating observations; "
           f"{len(seeded_result_refusals())} seeded proof and "
           f"{len(seeded_carrier_refusals())} seeded carrier refusals; "
           f"{len(rollback)} speculative rollback cutoffs")

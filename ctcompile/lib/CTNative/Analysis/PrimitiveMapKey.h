@@ -13,13 +13,20 @@ enum class PrimitiveMapKeyRelation {
     Distinct
 };
 
-// Only live literal/SSA identity and independently proved primitive tags are
-// evidence. Different SSA names alone never prove different runtime keys.
+struct PrimitiveMapKeyEvidence {
+    std::optional<mlir::TypeID> tag;
+    // Derived at the actual size read from definite presence in that runtime
+    // instance. It describes the immutable numeric snapshot, not later contents.
+    bool nonemptySizeSnapshot = false;
+};
+
+// Only live literal/SSA identity and independently proved facts are evidence.
+// Different SSA names alone never prove different runtime keys.
 // Both values belong to the same IR context, so string attributes are interned
 // and comparing them requires no unbounded scan of their bytes.
 inline PrimitiveMapKeyRelation comparePrimitiveMapKeys(mlir::Value left, mlir::Value right,
-                                                       std::optional<mlir::TypeID> leftTag = {},
-                                                       std::optional<mlir::TypeID> rightTag = {}) {
+                                                       PrimitiveMapKeyEvidence leftEvidence = {},
+                                                       PrimitiveMapKeyEvidence rightEvidence = {}) {
     if (left == right) { return PrimitiveMapKeyRelation::Same; }
     const auto literal = [](mlir::Value value) -> mlir::Attribute {
         auto constant = value.getDefiningOp<ctjs::ConstantOp>();
@@ -30,9 +37,20 @@ inline PrimitiveMapKeyRelation comparePrimitiveMapKeys(mlir::Value left, mlir::V
         return constant.getValue();
     };
     auto lhs = literal(left), rhs = literal(right);
+    auto leftTag = leftEvidence.tag, rightTag = rightEvidence.tag;
     if (lhs) { leftTag = lhs.getTypeID(); }
     if (rhs) { rightTag = rhs.getTypeID(); }
     if (leftTag && rightTag && leftTag != rightTag) { return PrimitiveMapKeyRelation::Distinct; }
+    const auto outsideNonemptySize = [](mlir::Attribute value) {
+        auto number = llvm::dyn_cast_if_present<ctjs::NumberAttr>(value);
+        if (!number) { return false; }
+        const double key = number.getDouble();
+        return key < 1 || std::isnan(key);
+    };
+    if ((leftEvidence.nonemptySizeSnapshot && outsideNonemptySize(rhs)) ||
+        (rightEvidence.nonemptySizeSnapshot && outsideNonemptySize(lhs))) {
+        return PrimitiveMapKeyRelation::Distinct;
+    }
     if (!lhs || !rhs) { return PrimitiveMapKeyRelation::Unknown; }
     bool same = lhs == rhs;
     if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(lhs)) {

@@ -35,6 +35,9 @@ struct state {
     // A has result is a snapshot. Erasure invalidates its implication even
     // though its SSA boolean remains available to later conditions.
     llvm::DenseSet<mlir::Operation *> observations;
+    // Bounds on already-read SSA numbers survive known mutations. They are
+    // acquired only from a checked size read with exact-instance presence.
+    llvm::DenseSet<mlir::Value> nonemptySizes;
 
     bool contains(fact value) const {
         return llvm::any_of(present, [&](const fact & old) { return old.matches(value); });
@@ -46,6 +49,9 @@ struct state {
         llvm::erase_if(present, [&](const fact & value) { return !other.contains(value); });
         for (mlir::Operation * op : llvm::make_early_inc_range(observations)) {
             if (!other.observations.contains(op)) { observations.erase(op); }
+        }
+        for (mlir::Value value : llvm::make_early_inc_range(nonemptySizes)) {
+            if (!other.nonemptySizes.contains(value)) { nonemptySizes.erase(value); }
         }
     }
 };
@@ -66,6 +72,7 @@ struct presenceAnalysis {
     llvm::DenseMap<mlir::Operation *, llvm::StringRef> actions;
     llvm::DenseMap<mlir::Operation *, effects> summaries;
     llvm::DenseSet<mlir::Operation *> proved;
+    llvm::DenseSet<mlir::Operation *> sizes;
     llvm::function_ref<mlir::Value(mlir::Value)> familyOf;
     const llvm::DenseSet<mlir::Operation *> & snapshotCopies;
 
@@ -165,7 +172,9 @@ struct presenceAnalysis {
             // A schema family may contain several runtime instances. Without
             // an independent disjointness proof, any of them may be this Map.
             return familyOf(value.instance) == familyOf(affected.instance) &&
-                   comparePrimitiveMapKeys(value.key, affected.key) !=
+                   comparePrimitiveMapKeys(value.key, affected.key,
+                                           {{}, current.nonemptySizes.contains(value.key)},
+                                           {{}, current.nonemptySizes.contains(affected.key)}) !=
                        PrimitiveMapKeyRelation::Distinct;
         };
         llvm::erase_if(current.present, mayErase);
@@ -184,6 +193,15 @@ struct presenceAnalysis {
     }
 
     void operation(mlir::Operation * op, state & current) {
+        if (sizes.contains(op)) {
+            auto read = llvm::cast<ctjs::GetPropertyOp>(op);
+            const auto instance = instanceOf(read.getObject());
+            if (llvm::any_of(current.present,
+                             [&](const fact & value) { return value.instance == instance; })) {
+                current.nonemptySizes.insert(read.getResult());
+            }
+            return;
+        }
         if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
             state thenState = current;
             state elseState = current;
@@ -259,12 +277,14 @@ struct presenceAnalysis {
 } // namespace
 
 std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> calls,
+                          llvm::ArrayRef<ctjs::GetPropertyOp> sizes,
                           llvm::ArrayRef<ctjs::CallOp> reads,
                           llvm::ArrayRef<ctjs::CallOp> optionalReads,
                           const llvm::DenseSet<mlir::Operation *> & snapshotCopies,
                           llvm::function_ref<mlir::Value(mlir::Value)> familyOf) {
     if (reads.empty() && optionalReads.empty()) { return {}; }
     presenceAnalysis analysis(familyOf, snapshotCopies);
+    for (ctjs::GetPropertyOp size : sizes) { analysis.sizes.insert(size); }
     for (ctjs::CallOp call : calls) { analysis.actions[call] = actionOf(call); }
     analysis.buildSummaries(module);
     module.walk([&](ctjs::FuncOp fn) {

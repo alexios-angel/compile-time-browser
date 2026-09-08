@@ -11,7 +11,7 @@ import subprocess
 
 from .sources import (
     methods, owned, boundary, host, parameter_sources, seeded_result_sources, key_fact_sources,
-    joined_result_sources, RESULT_SIGNATURES,
+    joined_result_sources, size_result_sources, RESULT_SIGNATURES,
 )
 
 
@@ -57,14 +57,20 @@ def check_result_calls(cpp, name, mode):
         "result_seeded_formal": ["get", "set", "get", "set", "size"],
         **{name: ["get", "set", "get"] for name in key_fact_sources()},
         **{name: ["get", "set", "get"] for name in joined_result_sources()},
+        **{name: ["get", "set", "get"] for name in size_result_sources()},
         "seeded_dynamic_overwrite": ["get", "set", "get", "set"],
         "seeded_dynamic_repeated": ["get", "set", "get", "set", "get"],
         "seeded_dynamic_formal": ["get", "set", "get", "set", "size"],
+        "seeded_size_saved": ["get", "set", "get", "set"],
     }[name]
     if sequence != expected or "ctnative::map_set(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: lost runtime getter/mutation/final observation calls")
-    if name in {**seeded_result_sources(), **key_fact_sources(), **joined_result_sources()} and not re.search(r"ctnative::map_get(?:_\w+)?\(", cpp):
+    seeded = {**seeded_result_sources(), **key_fact_sources(), **joined_result_sources(),
+              **size_result_sources()}
+    if name in seeded and not re.search(r"ctnative::map_get(?:_\w+)?\(", cpp):
         raise RuntimeError(f"{name}/{mode}: replaced the live seeded Map lookup with a summary")
+    if name in size_result_sources() and "ctnative::map_delete(" not in cpp:
+        raise RuntimeError(f"{name}/{mode}: dropped the live size-keyed deletion")
 
 
 def source_calls(text):

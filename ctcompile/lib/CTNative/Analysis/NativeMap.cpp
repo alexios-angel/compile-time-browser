@@ -330,6 +330,7 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
     llvm::SmallVector<ctjs::CallOp> calls;
     llvm::SmallVector<ctjs::CallOp> reads;
     llvm::SmallVector<ctjs::CallOp> optionalReads;
+    llvm::SmallVector<ctjs::GetPropertyOp> sizes;
     llvm::DenseSet<mlir::Operation *> publishedCalls;
     if (globals && globals->proved()) {
         for (const auto & root : globals->roots()) {
@@ -341,6 +342,7 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
     }
     for (auto [index, candidate] : llvm::enumerate(plans)) {
         llvm::append_range(calls, candidate.calls);
+        llvm::append_range(sizes, candidate.sizes);
         for (ctjs::CallOp read : candidate.calls) {
             auto method = read.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
             if (keyOf(method.getKey()) != "get") { continue; }
@@ -354,7 +356,7 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
             }
         }
     }
-    return map_detail::provePresence(module, calls, reads, optionalReads, snapshotCopies,
+    return map_detail::provePresence(module, calls, sizes, reads, optionalReads, snapshotCopies,
                                      [&](mlir::Value value) { return graph.find(value); });
 }
 

@@ -178,6 +178,45 @@ def joined_result_sources():
     }
 
 
+def size_result_sources():
+    saved = SEEDED_RESULT.replace("state.set(0, 1); return state.get(0);",
+        "const alias = state; alias.set(0, 1); const saved = alias.size; "
+        "alias.set(saved, 2); state.delete(saved); return state.get(0);")
+    saved = saved.replace("var trace = host.slot.get();",
+                          "var trace = host.slot.set(host.slot.get());")
+    return {
+        "seeded_dynamic_delete": (SEEDED_RESULT.replace("return state.get(0);",
+            "state.delete(state.size); return state.get(0);"), "host", 1),
+        # The alias reads one immutable size before growing the Map. Re-reading
+        # the current size at delete misses the saved key and leaves trace=3.
+        "seeded_size_saved": (saved, "host", 2),
+        # Removing all known entries cannot revoke a previous nonempty snapshot.
+        "seeded_size_saved_empty": (SEEDED_RESULT.replace("return state.get(0);",
+            "const saved = state.size; state.delete(0); state.set(0, 3); "
+            "state.delete(saved); return state.get(0);"), "host", 3),
+    }
+
+
+def size_result_refusals():
+    observed_size = SEEDED_RESULT.replace("var trace = host.slot.get();",
+        "var trace = host.slot.set(host.slot.get());")
+    return {
+        # Reading size before the seed can produce zero, deleting that seed.
+        "seeded_size_zero": (observed_size.replace("state.set(0, 1); return state.get(0);",
+            "const saved = state.size; state.set(0, 1); state.delete(saved); "
+            "return state.get(0);"), 3),
+        # A nonempty size can equal a positive literal key.
+        "seeded_size_equal_positive": (observed_size.replace(
+            "state.set(0, 1); return state.get(0);",
+            "state.set(1, 1); state.delete(state.size); return state.get(1);"), 2),
+        # Separate nonempty reads can still be the same SameValueZero key.
+        "seeded_size_equal_snapshots": (observed_size.replace(
+            "state.set(0, 1); return state.get(0);",
+            "state.set(0, 1); const first = state.size; const second = state.size; "
+            "state.set(first, 2); state.delete(second); return state.get(first);"), 2),
+    }
+
+
 def seeded_carrier_refusals():
     observed_size = SEEDED_RESULT.replace("get() {",
         "size() { return state.size; }, get() {").replace("var trace = host.slot.get();",
@@ -214,6 +253,7 @@ RESULT_SIGNATURES = {
     **{name: ("js_num", "js_num", 5) for name in key_fact_sources()},
     **{name: ("js_num", "js_num", 6 if name == "seeded_dynamic_formal" else 5)
        for name in joined_result_sources()},
+    **{name: ("js_num", "js_num", 5) for name in size_result_sources()},
 }
 
 
@@ -290,22 +330,24 @@ def result_refusals():
 
 
 def seeded_result_refusals():
+    # A nonempty size is distinct from key zero. Seed key one so these writes
+    # really can overwrite the queried entry with an incompatible payload.
+    aliasing = SEEDED_RESULT.replace("state.set(0, 1)", "state.set(1, 1)")
+    aliasing = aliasing.replace("state.get(0)", "state.get(1)")
     return {
         "seeded_missing_key": SEEDED_RESULT.replace("return state.get(0);", "return state.get(1);"),
         "seeded_cleared": SEEDED_RESULT.replace("return state.get(0);",
             "state.clear(); return state.get(0);"),
         "seeded_deleted": SEEDED_RESULT.replace("return state.get(0);",
             "state.delete(0); return state.get(0);"),
-        "seeded_dynamic_delete": SEEDED_RESULT.replace("return state.get(0);",
-            "state.delete(state.size); return state.get(0);"),
-        "seeded_dynamic_bool_join": SEEDED_RESULT.replace("return state.get(0);",
-            "state.set(state.size, true); return state.get(0);"),
-        "seeded_dynamic_string_join": SEEDED_RESULT.replace("return state.get(0);",
-            "state.set(state.size, 'other'); return state.get(0);"),
-        "seeded_dynamic_unknown_join": SEEDED_RESULT.replace("return state.get(0);",
-            "state.set(state.size, state.get(9)); return state.get(0);"),
-        "seeded_dynamic_later_join": SEEDED_RESULT.replace("return state.get(0);",
-            "state.set(state.size, true); state.set(state.size, 2); return state.get(0);"),
+        "seeded_dynamic_bool_join": aliasing.replace("return state.get(1);",
+            "state.set(state.size, true); return state.get(1);"),
+        "seeded_dynamic_string_join": aliasing.replace("return state.get(1);",
+            "state.set(state.size, 'other'); return state.get(1);"),
+        "seeded_dynamic_unknown_join": aliasing.replace("return state.get(1);",
+            "state.set(state.size, state.get(9)); return state.get(1);"),
+        "seeded_dynamic_later_join": aliasing.replace("return state.get(1);",
+            "state.set(state.size, true); state.set(state.size, 2); return state.get(1);"),
         "seeded_dynamic_unseeded": SEEDED_RESULT.replace("state.set(0, 1);",
             "state.set(state.size, 2);"),
         "seeded_overwritten_unknown": SEEDED_RESULT.replace("return state.get(0);",

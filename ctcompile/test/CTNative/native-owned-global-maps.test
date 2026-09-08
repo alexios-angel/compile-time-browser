@@ -13,3 +13,8 @@
 # actuals retain runtime lookups, result operands and the shared Map lifetime.
 # Missing, deleted, cleared and incompatibly joined facts refuse. An exact-key
 # reseed restores its own tag without authorizing unsupported payload carriers.
+# A size read from a proved nonempty Map is distinct from zero. Saved size reads
+# retain that bound after later mutations and alias reads preserve the snapshot.
+# Zero-size and equal positive keys/snapshots can alias and must refuse without
+# changing any call. Blinded executions distinguish saved/current size and real
+# deletion; fresh/stale forged presence, reruns and budget cutoffs stay bounded.
