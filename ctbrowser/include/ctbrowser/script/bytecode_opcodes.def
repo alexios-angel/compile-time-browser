@@ -84,9 +84,10 @@ CT_OPCODE(/* name */ load_const, /* a_kind */ reg, /* b_kind */ kidx, /* c_kind 
  * intern(strings[bx])` names the right table but the operand is an sidx.
  * CORRECTION to the previous answer's 'once PER SITE' claim: the memo is
  * only per RUN - context::execute clears string_cache_ and bigint_cache_ on
- * every top-level program (call.cpp:229-231), so a second <script> or a
+ * every top-level program (context::execute, vm/call/run.cpp), so a second <script> or a
  * devtools eval re-allocates every literal. Within one run the identity is
- * stable and collect() roots the cache (objects.cpp:482-484). is_safepoint
+ * stable and collect() roots the cache (each_root, walked by vm/objects/gc.cpp's
+ * mark_roots). is_safepoint
  * is the stated allocates||may_reenter derivation only; see new_cell for
  * why no GC can actually run inside a handler. */
 CT_OPCODE(/* name */ load_string, /* a_kind */ reg, /* b_kind */ sidx, /* c_kind */ bx_hi, /* writes_a */ 1,
@@ -96,7 +97,7 @@ CT_OPCODE(/* name */ load_string, /* a_kind */ reg, /* b_kind */ sidx, /* c_kind
 /* A literal the lexer accepted but that is not an integer (`1.5n`) does NOT
  * throw - `parsed.value_or(bigint{0})` substitutes 0n (run_loop.cpp:276).
  * Same cache-lifetime correction as load_string: bigint_cache_ is cleared
- * by context::execute (call.cpp:231), so 'parsed once per site' holds
+ * by context::execute (vm/call/run.cpp), so 'parsed once per site' holds
  * within one run, not for the life of the context. */
 CT_OPCODE(/* name */ load_bigint, /* a_kind */ reg, /* b_kind */ sidx, /* c_kind */ bx_hi, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1,
@@ -128,8 +129,8 @@ CT_OPCODE(/* name */ load_false, /* a_kind */ reg, /* b_kind */ unused, /* c_kin
 
 /* This is the commonest resume target in the whole instruction set. On
  * entry to it the awaited value has already been written into the
- * SUSPENDING instruction's register a by call.cpp:702 (`registers_[base +
- * saved->await_reg] = with`) or call.cpp:639 for a generator - so the AOT
+ * SUSPENDING instruction's register a by context::resume in vm/call/coroutines.cpp (`registers_[base +
+ * saved->await_reg] = with`) or generator_resume for a generator - so the AOT
  * entry label must be placed before the move and must assume its source
  * register was filled by the runtime, not by the previous native
  * instruction. */
@@ -158,7 +159,8 @@ CT_OPCODE(/* name */ set_global, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind 
 
 /* a is read AND written - the only in-out register operand in this set - so
  * an AOT backend cannot treat it as a pure def, and on the resume path the
- * value it boxes was written by the runtime (call.cpp:702), not by the
+ * value it boxes was written by the runtime (context::resume,
+ * vm/call/coroutines.cpp), not by the
  * preceding native instruction. may_throw is only the allocation ceiling,
  * and raise() sets failed_ instead of entering unwind_to_handler
  * (vm.hpp:932-936), so it is NOT catchable by JS try/catch. is_safepoint is
@@ -183,7 +185,7 @@ CT_OPCODE(/* name */ cell_get, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ 
 /* writes_a is FALSE despite a being the first operand: a holds the cell and
  * is only read. If a is not a cell the store is silently dropped - an
  * assignment that does nothing at all. No write barrier exists or is
- * needed: collect() (objects.cpp:434-490) is a full mark from precise
+ * needed: collect() (vm/objects/gc.cpp) is a full mark from precise
  * roots, not incremental. */
 CT_OPCODE(/* name */ cell_set, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ unused, /* writes_a */ 0,
           /* allocates */ 0, /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0,
@@ -242,7 +244,8 @@ CT_OPCODE(/* name */ add, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ reg, 
  * effecting toStrings cannot race here. What DOES survive is worse and
  * unmentioned: reg() returns `value&` into registers_ (run_loop.cpp:245)
  * and context::call does registers_.resize(new_base+window+8) at
- * call.cpp:73, which reallocates - the two calls being indeterminately
+ * context::invoke (vm/call/invoke.cpp), which reallocates - the two calls
+ * being indeterminately
  * sequenced means a conforming compiler may materialise reg(in.b)'s
  * reference, run to_string(reg(in.c)) into user JS, then read through the
  * now-dangling reference. Emitted only by template literals; source `+`
@@ -264,7 +267,8 @@ CT_OPCODE(/* name */ concat, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ re
  * the coverage-critical member of the family, not op::add. LATENT GC HAZARD
  * confirmed: context::collect roots globals_, registers_, current_this_,
  * pending_new_target_, frames_, microtasks_, modules_, thrown_, prototypes_
- * and the two literal caches (objects.cpp:434-495) - never a handler's C++
+ * and the two literal caches (each_root in vm.hpp, walked by
+ * vm/objects/gc.cpp's mark_roots) - never a handler's C++
  * temporaries - so `l` and `r` are unrooted and this is safe only because
  * allocate() never triggers collect(). */
 CT_OPCODE(/* name */ add_generic, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ reg, /* writes_a */ 1,
@@ -276,7 +280,8 @@ CT_OPCODE(/* name */ add_generic, /* a_kind */ reg, /* b_kind */ reg, /* c_kind 
  * - to_number_value(reg(in.c))` are operands of a built-in `-`, so they are
  * indeterminately sequenced (spec requires left first) - but reg() hands
  * back a `value&` into registers_ (run_loop.cpp:245) and context::call
- * resizes registers_ at call.cpp:73, so a legal ordering (evaluate
+ * resizes registers_ in context::invoke (vm/call/invoke.cpp), so a legal
+ * ordering (evaluate
  * reg(in.c) -> run to_number_value(reg(in.b))'s body -> read the parameter
  * copy for call 2) reads through a DANGLING reference. add_generic avoids
  * both by using separate const locals; sub/mul/div/mod/pow and concat do
@@ -291,7 +296,8 @@ CT_OPCODE(/* name */ sub, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ reg, 
 /* Same dangling-reg-reference and indeterminate-sequencing hazard as sub
  * (the two to_number_value calls are operands of built-in `*` at
  * run_loop.cpp:382, and context::call reallocates registers_ at
- * call.cpp:73). Also emitted for `*=` (expressions.cpp:427). */
+ * context::invoke in vm/call/invoke.cpp). Also emitted for `*=`
+ * (expressions.cpp:427). */
 CT_OPCODE(/* name */ mul, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ reg, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 1,
@@ -330,7 +336,8 @@ CT_OPCODE(/* name */ pow, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ reg, 
  * whose valueOf RETURNS a bigint is skipped by the `produced.is_heap() &&
  * !produced.is_string()` continue (coerce.cpp:165) - so the reachable
  * faults are a user valueOf/toString throwing, the 512-frame `raise("call
- * stack exhausted")` (call.cpp:77-79, which sets failed_ and is NOT
+ * stack exhausted")` (context::invoke in vm/call/invoke.cpp, which sets
+ * failed_ and is NOT
  * catchable by a JS try) and the allocation ceiling (vm.hpp:224-227). The
  * long `+x IS A CONVERSION` comment inside this VM_CASE
  * (run_loop.cpp:479-483) documents op::to_number, not negate. */
@@ -443,7 +450,8 @@ CT_OPCODE(/* name */ greater_equal, /* a_kind */ reg, /* b_kind */ reg, /* c_kin
           /* impl */ "vm/coerce.cpp:context::compare_relational")
 
 /* Two columns fight the name. It MUTATES its right operand - the first `x
- * instanceof F` creates and installs F.prototype (call.cpp:304-309) - and
+ * instanceof F` creates and installs F.prototype (context::ensure_prototype,
+ * vm/call/construct.cpp) - and
  * it never throws where the spec demands: `x instanceof 5`, a non-callable
  * RHS and `x instanceof someProxy` (proxy fails is_object() at
  * run_loop.cpp:543) are all silently false, there is no Symbol.hasInstance,
@@ -451,7 +459,7 @@ CT_OPCODE(/* name */ greater_equal, /* a_kind */ reg, /* b_kind */ reg, /* c_kin
 CT_OPCODE(/* name */ instance_of, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ reg, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 1,
-          /* impl */ "inline; vm/call.cpp:context::ensure_prototype, vm.hpp:context::implicit_prototypes")
+          /* impl */ "inline; vm/call/construct.cpp:context::ensure_prototype, vm.hpp:context::implicit_prototypes")
 
 /* b is the KEY and c is the TARGET. Beyond own-data-only lookup: a NATIVE
  * right-hand side answers false for everything (`'PI' in Math` is false -
@@ -462,7 +470,7 @@ CT_OPCODE(/* name */ instance_of, /* a_kind */ reg, /* b_kind */ reg, /* c_kind 
 CT_OPCODE(/* name */ has_property, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ reg, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 1,
-          /* impl */ "inline; vm/call.cpp:context::proxy_trap + context::call, vm/objects.cpp:context::lookup_property, vm/coerce.cpp:context::to_string")
+          /* impl */ "inline; vm/call/invoke.cpp:context::proxy_trap + context::call, vm/objects/lookup.cpp:context::lookup_property, vm/coerce.cpp:context::to_string")
 
 /* NAME/COLUMN DISAGREEMENT for the whole bitwise group: in a real engine a
  * bitwise operator CAN re-enter because ToNumeric does ToPrimitive; here it
@@ -573,8 +581,9 @@ CT_OPCODE(/* name */ jump_if_not_nullish, /* a_kind */ reg, /* b_kind */ jump, /
 /* resumable is a property of CODE LAYOUT, not of the opcode. A resume
  * restores frame.ip from coroutine_object::ip, which was captured AFTER the
  * dispatch increment (run_loop.cpp:1287, 1347) and is reinstalled at
- * call.cpp:617/685 with the sent value dropped into await_reg
- * (call.cpp:639/702) - so the AOT backend must mark every instruction that
+ * generator_resume/resume (vm/call/coroutines.cpp) with the sent value
+ * dropped into await_reg there - so the AOT backend must mark every
+ * instruction that
  * follows an await_value/yield_value as an entry label rather than trusting
  * this column. */
 CT_OPCODE(/* name */ jump_if_defined, /* a_kind */ reg, /* b_kind */ jump, /* c_kind */ bx_hi, /* writes_a */ 0,
@@ -599,7 +608,8 @@ CT_OPCODE(/* name */ gather_rest, /* a_kind */ reg, /* b_kind */ count, /* c_kin
  * control' is wrong here. Second surprise: a CALLABLE PROXY silently
  * evaluates to undefined - is_callable() (value.hpp:300-305) lets it past
  * the check at :870, then context::call falls through
- * !callable.is_kind(function) and returns undefined (call.cpp:53-55), where
+ * !callable.is_kind(function) and returns undefined (context::invoke,
+ * vm/call/invoke.cpp), where
  * op::call would have raised a catchable TypeError. Third: may_suspend is
  * false by the letter of the definition (this frame is never lifted; the
  * promise just lands in reg(a)), but the instruction can still set the VM-
@@ -607,25 +617,26 @@ CT_OPCODE(/* name */ gather_rest, /* a_kind */ reg, /* b_kind */ count, /* c_kin
  * suspend' is not the same as 'suspension-neutral'. */
 CT_OPCODE(/* name */ apply, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ reg, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
-          /* may_suspend */ 0, /* resumable */ 0, /* impl */ "vm/call.cpp:call")
+          /* may_suspend */ 0, /* resumable */ 0, /* impl */ "vm/call/invoke.cpp:call")
 
 /* Like apply, the constructor body runs to completion inside the
  * instruction. Its failure mode differs from op::construct's: a non-
  * constructor here hits raise("attempted to construct a non-function") at
- * call.cpp:444 - an UNCATCHABLE VM fault that unwinds nothing - while
+ * context::construct (vm/call/construct.cpp) - an UNCATCHABLE VM fault that
+ * unwinds nothing - while
  * op::construct's equivalent at run_loop.cpp:1568 is a catchable TypeError.
  * Same source construct, two different observable behaviours depending only
  * on whether a spread was written. */
 CT_OPCODE(/* name */ construct_apply, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ unused, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
-          /* may_suspend */ 0, /* resumable */ 0, /* impl */ "vm/call.cpp:construct")
+          /* may_suspend */ 0, /* resumable */ 0, /* impl */ "vm/call/construct.cpp:construct")
 
 /* writes_a is FALSE - a is the object being defined on. The two target
  * paths differ and the closure one is buggy: object_object::define_accessor
  * calls erase() first (value.hpp:564) so the data property is replaced, but
  * closure_object::define_accessor (vm.hpp:138) does not - and
- * lookup_property checks closure->find(name) at objects.cpp:387 BEFORE
- * find_accessor at objects.cpp:403, so a `static get x()` on a class that
+ * lookup_property checks closure->find(name) BEFORE find_accessor (the
+ * closure arm in vm/objects/lookup.cpp), so a `static get x()` on a class that
  * already has a static data property `x` never runs. Note also that the
  * unused half is passed as undefined and accessor_table::define
  * (value.hpp:515-518) skips undefined halves, which is what merges a
@@ -674,7 +685,8 @@ CT_OPCODE(/* name */ new_array, /* a_kind */ reg, /* b_kind */ unused, /* c_kind
  * provably harmless under this front end - statements/try_finally.cpp's compile_try allocates the
  * catch register BEFORE compiling the try body, so every temporary in the
  * body (including this dst) sits strictly above the catch slot, and a
- * getter is entered through context::call (call.cpp:69), whose new_base ==
+ * getter is entered through context::call (context::invoke in
+ * vm/call/invoke.cpp), whose new_base ==
  * registers_.size() puts it above every live frame. The genuine hazards
  * that remain: (1) the bytecode comment calls this 'the inline-cache site'
  * and there is NO cache - it is an unconditional call into lookup_property;
@@ -683,31 +695,33 @@ CT_OPCODE(/* name */ new_array, /* a_kind */ reg, /* b_kind */ unused, /* c_kind
  * reference survives registers_ reallocation during the nested call - an
  * AOT backend MUST re-derive the frame pointer after any reentrant call;
  * (4) lookup_property's chain walk follows only object_object prototypes
- * (objects.cpp:254-256), so a proxy on the prototype chain silently
+ * (the object arm of lookup_property, vm/objects/lookup.cpp), so a proxy on
+ * the prototype chain silently
  * terminates the walk. */
 CT_OPCODE(/* name */ get_prop, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ nidx, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
-          /* may_suspend */ 0, /* resumable */ 0, /* impl */ "vm/objects.cpp:lookup_property")
+          /* may_suspend */ 0, /* resumable */ 0, /* impl */ "vm/objects/lookup.cpp:lookup_property")
 
 /* writes_a is FALSE despite a being the first operand - a names the target
  * object, so an AOT backend must not treat it as clobbered. Confirmed
- * deviations: objects.cpp:159 honours only `length` on an array target and
+ * deviations: store_property's array arm (vm/objects/store.cpp) honours only
+ * `length` on an array target and
  * DROPS every other named write (`arr.foo = 1` is silently lost), and
- * objects.cpp:190 drops a write to a number/string/boolean/undefined.
+ * its tail drops a write to a number/string/boolean/undefined.
  * Whether this opcode re-enters is decided by the RUNTIME TYPE of the
  * target, not by the instruction. */
 CT_OPCODE(/* name */ set_prop, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ reg, /* writes_a */ 0,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
-          /* may_suspend */ 0, /* resumable */ 0, /* impl */ "vm/objects.cpp:store_property")
+          /* may_suspend */ 0, /* resumable */ 0, /* impl */ "vm/objects/store.cpp:store_property")
 
 /* The surprise is the KEY, not the property: `o[k]` runs user code for the
  * key's coercion as well as for any getter or proxy trap on the result.
  * Only array-with-number and string-with-number are re-entry-free, and the
  * string fast path still allocates one heap string per read AND indexes
- * BYTES (`text[i]`, objects.cpp:123), not code points. */
+ * BYTES (`text[i]`, lookup_index in vm/objects/lookup.cpp), not code points. */
 CT_OPCODE(/* name */ get_index, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ reg, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
-          /* may_suspend */ 0, /* resumable */ 0, /* impl */ "vm/objects.cpp:lookup_index")
+          /* may_suspend */ 0, /* resumable */ 0, /* impl */ "vm/objects/lookup.cpp:lookup_index")
 
 /* writes_a is FALSE - a is the target object. Spec deviation confirmed in
  * code: the typed-array/element path calls the NON-coercing to_number
@@ -719,7 +733,7 @@ CT_OPCODE(/* name */ get_index, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */
 CT_OPCODE(/* name */ set_index, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ reg, /* writes_a */ 0,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0,
-          /* impl */ "inline + vm/objects.cpp:store_property")
+          /* impl */ "inline + vm/objects/store.cpp:store_property")
 
 /* The comment says `a.push(b)` but this is NOT Array.prototype.push: it
  * neither reads nor writes `length` as a property, never consults a
@@ -766,7 +780,7 @@ CT_OPCODE(/* name */ closure, /* a_kind */ reg, /* b_kind */ fidx, /* c_kind */ 
 CT_OPCODE(/* name */ call, /* a_kind */ reg, /* b_kind */ count, /* c_kind */ unused, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0,
-          /* impl */ "inline (frame push); vm/call.cpp:make_generator for a generator callee; vm/call.cpp:describe_callee + vm/call.cpp:callee_origin and vm.hpp:throw_error -> vm.hpp:unwind_to_handler on the TypeError path")
+          /* impl */ "inline (frame push); vm/call/coroutines.cpp:make_generator for a generator callee; vm/call/invoke.cpp:describe_callee + vm/call/invoke.cpp:callee_origin and vm.hpp:throw_error -> vm.hpp:unwind_to_handler on the TypeError path")
 
 /* The bytecode.hpp comment reads `a = call(a[k[c]], ...)` but c is a NAME-
  * TABLE index, not a constant-pool index - the same mislabel get_prop's
@@ -778,7 +792,7 @@ CT_OPCODE(/* name */ call, /* a_kind */ reg, /* b_kind */ count, /* c_kind */ un
 CT_OPCODE(/* name */ call_method, /* a_kind */ reg, /* b_kind */ count, /* c_kind */ nidx, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0,
-          /* impl */ "vm/objects.cpp:lookup_property for the callee, then the shared op::call body (inline frame push / native fn / vm/call.cpp:make_generator)")
+          /* impl */ "vm/objects/lookup.cpp:lookup_property for the callee, then the shared op::call body (inline frame push / native fn / vm/call/coroutines.cpp:make_generator)")
 
 /* Up to three user-JS entries in one instruction, in this order: the key's
  * ToString, the property lookup's getter or proxy trap, and a native callee
@@ -789,7 +803,7 @@ CT_OPCODE(/* name */ call_method, /* a_kind */ reg, /* b_kind */ count, /* c_kin
 CT_OPCODE(/* name */ call_computed, /* a_kind */ reg, /* b_kind */ count, /* c_kind */ reg, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0,
-          /* impl */ "vm/objects.cpp:lookup_index (-> vm/coerce.cpp:to_string, vm/objects.cpp:lookup_property) for the callee, then the shared op::call body")
+          /* impl */ "vm/objects/lookup.cpp:lookup_index (-> vm/coerce.cpp:to_string, vm/objects/lookup.cpp:lookup_property) for the callee, then the shared op::call body")
 
 /* `new C()` RE-ENTERS USER JAVASCRIPT BEFORE C'S BODY STARTS, via class
  * field initialisers run at :1564 in a nested interpreter loop - the column
@@ -803,7 +817,7 @@ CT_OPCODE(/* name */ call_computed, /* a_kind */ reg, /* b_kind */ count, /* c_k
 CT_OPCODE(/* name */ construct, /* a_kind */ reg, /* b_kind */ count, /* c_kind */ unused, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0,
-          /* impl */ "inline; vm/call.cpp:construct for proxy and native callees; vm/call.cpp:ensure_prototype and vm/call.cpp:run_field_initialisers on the closure path")
+          /* impl */ "inline; vm/call/construct.cpp:construct for proxy and native callees; vm/call/construct.cpp:ensure_prototype and vm/call/construct.cpp:run_field_initialisers on the closure path")
 
 /* The only call opcode that does no property lookup, so a getter cannot
  * fire during callee resolution - but the error path can still run user
@@ -811,12 +825,13 @@ CT_OPCODE(/* name */ construct, /* a_kind */ reg, /* b_kind */ count, /* c_kind 
  * spread `super(...)` uses, which makes it (with op::apply) one of the two
  * consumers of pending_new_target_; a native or generator callee returns at
  * :1067/:1112 without consuming it, leaving it set for the next frame
- * pushed. The comment at call.cpp:87 saying super() 'compiles to op::apply'
+ * pushed. The comment in context::invoke (vm/call/invoke.cpp) saying super()
+ * 'compiles to op::apply'
  * is only true of the spread form. */
 CT_OPCODE(/* name */ call_receiver, /* a_kind */ reg, /* b_kind */ count, /* c_kind */ reg, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0,
-          /* impl */ "inline (frame push); vm/call.cpp:make_generator for a generator callee; vm/call.cpp:describe_callee on the TypeError path")
+          /* impl */ "inline (frame push); vm/call/coroutines.cpp:make_generator for a generator callee; vm/call/invoke.cpp:describe_callee on the TypeError path")
 
 /* Biggest name/behaviour gap in the set: `{...o}` is specified to READ each
  * own enumerable property and therefore to run source getters, but
@@ -864,11 +879,11 @@ CT_OPCODE(/* name */ delete_index, /* a_kind */ reg, /* b_kind */ reg, /* c_kind
  * order. Deviations: OWN keys only (no prototype walk), no proxy ownKeys
  * trap, and a proxy/native/string/closure operand yields an EMPTY array. GC
  * HAZARD FOR AN AOT BACKEND: `out` lives only in a C++ local across N
- * allocations and context::collect (objects.cpp:434-...) does not root C++
+ * allocations and context::collect (vm/objects/gc.cpp) does not root C++
  * locals - inserting a real allocation-triggered safepoint here, as the
  * is_safepoint column would license, would free the array being built. The
  * same shape appears at run_loop.cpp:1190-1202 (make_arguments), 881-905
- * (gather_rest) and objects.cpp:279-285. */
+ * (gather_rest) and own_keys in vm/objects/chain.cpp. */
 CT_OPCODE(/* name */ own_keys, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ unused, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0, /* impl */ "inline")
@@ -878,20 +893,20 @@ CT_OPCODE(/* name */ own_keys, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ 
  * a narrower reason than the name or the prior evidence suggests: only a
  * generator body or an accessor on an INDEX key runs. Three surprises for
  * an AOT backend: it MATERIALIZES (an infinite generator hangs); [...proxy]
- * is silently empty (call.cpp:372); and the is_array() fast path at
- * call.cpp:361 returns THE SAME array, so `for (x of arr)` aliases rather
+ * is silently empty (iterable_values, vm/call/invoke.cpp); and its is_array()
+ * fast path returns THE SAME array, so `for (x of arr)` aliases rather
  * than copies, while every other input is a fresh array. Also: because re-
  * entry can throw, unwind_to_handler may redirect this very frame's ip
  * before `reg(in.a) = ...` executes at 1219. */
 CT_OPCODE(/* name */ iterable, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ unused, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0,
-          /* impl */ "vm/call.cpp:context::iterable_values")
+          /* impl */ "vm/call/invoke.cpp:context::iterable_values")
 
 /* writes_a is FALSE even though a is written in the JS sense - it MUTATES
  * the object in register a rather than storing into the register. No cycle
- * check, which is exactly why lookup_property (objects.cpp:242) and
- * assign_through_accessor (objects.cpp:196) both carry a depth-64 cap.
+ * check, which is exactly why lookup_property (vm/objects/lookup.cpp) and
+ * assign_through_accessor (vm/objects/store.cpp) both carry a depth-64 cap.
  * Silently a no-op when a is a closure/array/proxy/native - and it
  * therefore cannot do what Object.setPrototypeOf does for a closure
  * (builtins/objects.cpp:225-231 also writes closure_object::proto_link). */
@@ -942,7 +957,7 @@ CT_OPCODE(/* name */ load_home, /* a_kind */ reg, /* b_kind */ unused, /* c_kind
 CT_OPCODE(/* name */ await_value, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ unused, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1,
           /* may_suspend */ 1, /* resumable */ 1,
-          /* impl */ "inline (suspend path calls vm.hpp:context::attach_resume + the installed pending_promise_factory_; resumed by vm/call.cpp:context::resume)")
+          /* impl */ "inline (suspend path calls vm.hpp:context::attach_resume + the installed pending_promise_factory_; resumed by vm/call/coroutines.cpp:context::resume)")
 
 /* writes_a is FALSE even though a is the destination of `var x = yield y`.
  * Like await_value this is a FRAME EXIT - 1363 frames_.pop_back(), 1365
@@ -954,7 +969,7 @@ CT_OPCODE(/* name */ await_value, /* a_kind */ reg, /* b_kind */ reg, /* c_kind 
 CT_OPCODE(/* name */ yield_value, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ unused, /* writes_a */ 0,
           /* allocates */ 0, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 0,
           /* may_suspend */ 1, /* resumable */ 1,
-          /* impl */ "inline (resumed by vm/call.cpp:context::generator_resume)")
+          /* impl */ "inline (resumed by vm/call/coroutines.cpp:context::generator_resume)")
 
 /* The "already a promise" test is is_object() && own __value, so any plain
  * object carrying an own __value is left unwrapped, and because is_object()
@@ -974,8 +989,9 @@ CT_OPCODE(/* name */ wrap_promise, /* a_kind */ reg, /* b_kind */ unused, /* c_k
  * AOT backend must still model: a constructor frame's `return <primitive>`
  * is silently rewritten to `this` (:1141-1143), and when frames_.size() <=
  * stop_depth this RETURNS OUT OF run_loop entirely (:1151), which is how
- * context::call (call.cpp:93), generator_resume (call.cpp:660) and resume
- * (call.cpp:722) collect their result. is_safepoint = false matches the
+ * context::invoke (vm/call/invoke.cpp), generator_resume and resume
+ * (vm/call/coroutines.cpp) collect their result. is_safepoint = false matches
+ * the
  * allocates||may_reenter rule exactly. */
 CT_OPCODE(/* name */ ret, /* a_kind */ reg, /* b_kind */ unused, /* c_kind */ unused, /* writes_a */ 0,
           /* allocates */ 0, /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0,
@@ -1019,7 +1035,8 @@ CT_OPCODE(/* name */ load_this, /* a_kind */ reg, /* b_kind */ unused, /* c_kind
  * and the misplaced comment at run_loop.cpp:1169-1182 describe an OLDER
  * implementation that derived new.target from constructing+closure. Fix
  * them in the .def. A REAL BUG for an AOT backend to know: context::resume
- * rebuilds the frame without copying new_target (call.cpp:673-692 sets prot
+ * rebuilds the frame without copying new_target (vm/call/coroutines.cpp's
+ * resume sets prot
  * o/ip/base/argc/closure/receiver/constructing/handler_base/async_promise
  * but never new_target), so `new.target` reads undefined after an await
  * inside a constructor-invoked function. */
@@ -1030,9 +1047,11 @@ CT_OPCODE(/* name */ load_new_target, /* a_kind */ reg, /* b_kind */ unused, /* 
 /* A ZERO-OPERAND opcode, welded to the call that follows. NEW HAZARD the
  * previous answer understated: the pending value is cleared in only two
  * places, both of which are a JS-closure frame push (run_loop.cpp:1129,
- * call.cpp:91). The inline call path RETURNS EARLY for a native callee
+ * context::invoke in vm/call/invoke.cpp). The inline call path RETURNS EARLY
+ * for a native callee
  * (run_loop.cpp:1052-1067) and for a generator (1107-1112), context::call
- * does the same (call.cpp:44-52, 64), and op::construct sets
+ * does the same (the native and generator arms of context::invoke), and
+ * op::construct sets
  * `fresh.new_target = callee` without clearing it (run_loop.cpp:1587-1590).
  * So `class X extends Array { constructor(){ super(); } }` leaves
  * pending_new_target_ = X set indefinitely, and the next ordinary JS call
@@ -1054,7 +1073,7 @@ CT_OPCODE(/* name */ pass_new_target, /* a_kind */ unused, /* b_kind */ unused, 
 CT_OPCODE(/* name */ load_import, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ nidx, /* writes_a */ 1,
           /* allocates */ 0, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 0,
           /* may_suspend */ 0, /* resumable */ 0,
-          /* impl */ "vm/call.cpp:context::module_import_cell")
+          /* impl */ "vm/call/modules.cpp:context::module_import_cell")
 
 /* Name and the bytecode.hpp comment ("Publish the cell in register a as
  * this module's export") run BACKWARDS to the code: the handler ADOPTS the
@@ -1070,7 +1089,7 @@ CT_OPCODE(/* name */ load_import, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind
 CT_OPCODE(/* name */ bind_export, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ bx_hi, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0,
-          /* impl */ "vm/call.cpp:context::module_export_cell")
+          /* impl */ "vm/call/modules.cpp:context::module_export_cell")
 
 /* TWO independent user-JS re-entries before it returns (the specifier's
  * toString, then the imported graph), and the referrer comes from
@@ -1086,7 +1105,7 @@ CT_OPCODE(/* name */ bind_export, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind
 CT_OPCODE(/* name */ dyn_import, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ unused, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0,
-          /* impl */ "vm/call.cpp:context::dynamic_import (calls the embedder's module_loader_; ctbrowser installs one in Shell/browser.cpp)")
+          /* impl */ "vm/call/modules.cpp:context::dynamic_import (calls the embedder's module_loader_; ctbrowser installs one in Shell/browser.cpp)")
 
 /* Encoding asymmetry an AOT backend must reproduce exactly: bind_export
  * uses the bx pair while load_namespace and load_import read a plain 16-bit
@@ -1098,10 +1117,10 @@ CT_OPCODE(/* name */ dyn_import, /* a_kind */ reg, /* b_kind */ reg, /* c_kind *
 CT_OPCODE(/* name */ load_namespace, /* a_kind */ reg, /* b_kind */ nidx, /* c_kind */ unused, /* writes_a */ 1,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 0, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0,
-          /* impl */ "vm/call.cpp:context::module_namespace_for")
+          /* impl */ "vm/call/modules.cpp:context::module_namespace_for")
 
 /* Despite the name it does not build a function object; the closure already
- * exists and is already a GC root through the frame (objects.cpp:452).
+ * exists and is already a GC root through the frame (each_root in vm.hpp).
  * Emitted only for a named function expression's self-binding, immediately
  * followed by new_cell when the name is captured (statements/functions.cpp's
  * compile_function_body).
@@ -1115,8 +1134,8 @@ CT_OPCODE(/* name */ load_callee, /* a_kind */ reg, /* b_kind */ unused, /* c_ki
 
 /* REAL MISCOMPILE ALREADY IN THE VM, found by following that resume path:
  * make_generator keeps the full count (`saved->argc = args.size()`,
- * call.cpp:537) but TRUNCATES the register window
- * (`saved->window.resize(closure->proto->frame_size)`, call.cpp:546), so on
+ * vm/call/coroutines.cpp) but TRUNCATES the register window
+ * (`saved->window.resize(closure->proto->frame_size)`, same function), so on
  * the first resume the loop at run_loop.cpp:1197-1199 reads reg(i) past the
  * restored window - `function* g(){ return arguments; }` called as g(1,2,3)
  * yields [1,2,undefined], and with more than frame_size+8 arguments it
@@ -1138,7 +1157,7 @@ CT_OPCODE(/* name */ make_arguments, /* a_kind */ reg, /* b_kind */ unused, /* c
  * high-water ABSOLUTELY (handler::reg_top = registers_.size()), which
  * await_value and yield_value must rebase to frame-relative when a frame
  * suspends (run_loop.cpp:1299-1303, 1356-1361) and
- * context::resume/generator_resume rebase back (call.cpp:697-700, 634-637). */
+ * context::resume/generator_resume rebase back (vm/call/coroutines.cpp). */
 CT_OPCODE(/* name */ push_handler, /* a_kind */ reg, /* b_kind */ jump, /* c_kind */ bx_hi, /* writes_a */ 0,
           /* allocates */ 0, /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0,
           /* may_suspend */ 0, /* resumable */ 0, /* impl */ "inline")
@@ -1165,15 +1184,15 @@ CT_OPCODE(/* name */ pop_handler, /* a_kind */ unused, /* b_kind */ unused, /* c
 CT_OPCODE(/* name */ throw_value, /* a_kind */ reg, /* b_kind */ unused, /* c_kind */ unused, /* writes_a */ 0,
           /* allocates */ 1, /* may_throw */ 1, /* may_reenter */ 1, /* is_safepoint */ 1,
           /* may_suspend */ 0, /* resumable */ 0,
-          /* impl */ "inline (vm.hpp:context::unwind_to_handler, vm/call.cpp:context::describe_thrown)")
+          /* impl */ "inline (vm.hpp:context::unwind_to_handler, vm/call/invoke.cpp:context::describe_thrown)")
 
 /* Dead by construction: the compiler never emits halt, so its only
  * reachable form is a zero-initialised instruction (bytecode.hpp:243 makes
  * op::halt the default for instruction::code, i.e. an all-zero 64-bit word
  * decodes as halt). Its handler returns out of run_loop WITHOUT popping the
- * frame, so were it ever reached from a nested loop (context::call at
- * call.cpp:93, generator_resume at 659, resume at 724, run_reentrant at
- * 193) the caller would resume with a stale frame left on frames_ - a
+ * frame, so were it ever reached from a nested loop (context::invoke in
+ * vm/call/invoke.cpp, generator_resume and resume in vm/call/coroutines.cpp,
+ * run_reentrant in vm/call/run.cpp) the caller would resume with a stale frame left on frames_ - a
  * genuine difference from ret that an AOT backend must not paper over by
  * treating halt as "return". */
 CT_OPCODE(/* name */ halt, /* a_kind */ unused, /* b_kind */ unused, /* c_kind */ unused, /* writes_a */ 0,

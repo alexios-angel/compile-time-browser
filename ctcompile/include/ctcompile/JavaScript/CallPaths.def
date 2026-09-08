@@ -17,7 +17,8 @@
  *   clears_failure     resets the failure flag, which belongs to the TURN.
  *   drains_microtasks  runs the promise queue at the end, likewise the turn's.
  *
- * VERIFIED against ctbrowser/lib/Script/vm/call.cpp and vm.hpp at 9521928: the
+ * VERIFIED against ctbrowser/lib/Script/vm/call.cpp (vm/call/ since 2026-09-08)
+ * and vm.hpp at 9521928: the
  * five functions that reach run_loop() are call, run_reentrant, execute,
  * generator_resume and resume, and everything else here is a wrapper over one
  * of them.

@@ -502,7 +502,7 @@ would otherwise be reporting them as progress:
   SILENT here. That is correct sloppy behaviour and it is what
   `unittests/js/property_attributes.cpp` asserts; the three `return`s where a
   strict mode throws instead are marked `TODO(strict)` in
-  `lib/Script/vm/objects.cpp`.
+  `lib/Script/vm/objects/store.cpp` and `descriptors.cpp`.
 * **Per-element attributes on an array.** `array_object` holds its elements in a
   `std::vector<value>` with nowhere to put three bits each, so it carries
   `extensible`, `elements_writable` and `elements_configurable` instead - enough

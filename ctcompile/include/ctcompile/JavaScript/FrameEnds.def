@@ -56,7 +56,7 @@ CT_FRAME_END(/* name */ yield,
              /* hooked */ 0,
              /* note */ "the window is copied into the generator's coroutine_object; same as await")
 CT_FRAME_END(/* name */ execute_clear,
-             /* where */ "call.cpp context::execute: frames_.clear() (call.cpp:381)",
+             /* where */ "call/run.cpp context::execute: frames_.clear()",
              /* hooked */ 0,
              /* note */
              "a new top level clears whatever a raise() left on the stack; those frames' "
@@ -64,14 +64,14 @@ CT_FRAME_END(/* name */ execute_clear,
 CT_FRAME_END(
     /* name */ gen_abandon,
     /* where */
-    "call.cpp context::generator_resume: while (frames_.size() > stop) pop_back (call.cpp:1042)",
+    "call/coroutines.cpp context::generator_resume: while (frames_.size() > stop) pop_back",
     /* hooked */ 0,
     /* note */
     "a generator resumed with .throw() whose body caught nothing; the unwinder "
     "already ran and found no handler")
 CT_FRAME_END(
     /* name */ resume_abandon,
-    /* where */ "call.cpp context::resume: while (frames_.size() > stop) pop_back (call.cpp:1106)",
+    /* where */ "call/coroutines.cpp context::resume: while (frames_.size() > stop) pop_back",
     /* hooked */ 0,
     /* note */ "a rejected await nothing caught; the async function's own promise rejects")
 CT_FRAME_END(/* name */ aot_leave,

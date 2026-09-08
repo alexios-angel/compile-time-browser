@@ -22,7 +22,8 @@
 // a rewrite rather than a lowering.
 //
 // WHAT IS NOT HERE, DELIBERATELY: any prototype at all. The VM gives every
-// instance one (`make_instance` -> `ensure_prototype`, vm/call.cpp) and Phase
+// instance one (`make_instance` -> `ensure_prototype`, vm/call/construct.cpp)
+// and Phase
 // 60 owns turning that into C++ inheritance, so a program that touches a
 // constructor's `prototype` is refused BY NAME rather than compiled to
 // something with no chain. So is a constructor that RETURNS an object, which

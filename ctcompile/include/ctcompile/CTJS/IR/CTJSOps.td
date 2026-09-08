@@ -32,7 +32,7 @@
 // 93, bytecode_opcodes.def) has at least one SINK operand, or a comment
 // naming the re-entering arm and why no object/array site of the enclosing
 // function reaches it. The NEITHER rows are valid for those two tracked kinds
-// ONLY - a closure base breaks them (objects.cpp:590 -> call.cpp:502) - which
+// ONLY - a closure base breaks them (lookup_property -> ensure_prototype) - which
 // is why ctjs.create_closure is not a tracked site.
 //
 //===----------------------------------------------------------------------===//

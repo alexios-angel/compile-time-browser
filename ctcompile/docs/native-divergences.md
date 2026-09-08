@@ -189,7 +189,7 @@ that pin, the same executable:
   freed whole, and `keep = null; collect()` returns to baseline (gate 4(b));
 * pins what "under stress" means in this interpreter, which the design's
   sketch got wrong: the only safepoint is `context::invoke`'s entry
-  (`vm/call.cpp`) - every C++ entry into JavaScript - and an interpreted
+  (`vm/call/invoke.cpp`) - every C++ entry into JavaScript - and an interpreted
   JS-to-JS call is not one. So the fixture's `churn(1000)` collects exactly
   once, returns with 4,000 dead nodes, and one collection frees them all; the
   driver's `churnVia`, which enters `ringLocal` through
@@ -230,7 +230,7 @@ followed by `({}).x` answers **42**: an object literal's `[[Prototype]]` is
 `Object.prototype`, and property lookup calls the accessor it finds there.
 
 Here `({}).x` is **undefined**. `context::lookup_property`
-(`ctbrowser/lib/Script/vm/objects.cpp`) walks the object's chain calling any
+(`ctbrowser/lib/Script/vm/objects/lookup.cpp`) walks the object's chain calling any
 accessor it finds — but a fresh literal's `prototype` field is `null`, so the
 walk is one level long, and the shared `Object.prototype` table is consulted
 **afterwards** with `find`, which sees data properties only. The same getter

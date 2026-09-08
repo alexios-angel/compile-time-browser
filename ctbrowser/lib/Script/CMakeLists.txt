@@ -75,7 +75,13 @@ target_sources(ctbrowser-script
     vm/objects/store.cpp
     vm/objects/chain.cpp
     vm/objects/descriptors.cpp
-    vm/call.cpp
+    # Calls, construction, modules, running a program, closures and
+    # coroutines - vm/call.cpp until 2026-09-08.
+    vm/call/invoke.cpp
+    vm/call/construct.cpp
+    vm/call/modules.cpp
+    vm/call/run.cpp
+    vm/call/coroutines.cpp
     vm/run_loop.cpp
   PUBLIC
     FILE_SET HEADERS

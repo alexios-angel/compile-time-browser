@@ -144,7 +144,8 @@ struct aot_bridge {
     // ct_aot_enter. The row: push a call_frame carrying the image's real
     // function_proto, reserve reg_count slots in context::registers_ (GC root
     // 2), count the frame against the 512 guard, and consume-and-clear
-    // pending_new_target_ exactly as call.cpp does. Returns NULL on the depth
+    // pending_new_target_ exactly as context::invoke (vm/call/invoke.cpp) does.
+    // Returns NULL on the depth
     // raise, and the caller returns FAILED without leaving.
     static aot::ct_aot_frame * enter(aot::ct_aot_ctx * c, const aot::ct_aot_site * site,
                                      std::uint32_t reg_count, std::uint64_t receiver,
@@ -172,7 +173,8 @@ struct aot_bridge {
         // insists on for a reason it states: vm.hpp writes
         // registers_[base + slot] UNCONDITIONALLY for a winning handler, so the
         // span has to exist before the first handler could fire. The `+ 8` is
-        // the interpreter's own margin (call.cpp), copied rather than reasoned
+        // the interpreter's own margin (context::invoke), copied rather than
+        // reasoned
         // about again.
         cx.registers_.resize(held->register_base + reg_count + 8u, value::undefined());
 
@@ -182,8 +184,9 @@ struct aot_bridge {
         entered.proto = proto;
         entered.base = held->register_base;
         entered.handler_base = held->handler_base;
-        // THE RECEIVER IS A ROOT AND THIS IS WHERE IT BECOMES ONE. objects.cpp
-        // marks call_frame::receiver for every live frame; a compiled body's
+        // THE RECEIVER IS A ROOT AND THIS IS WHERE IT BECOMES ONE. each_root
+        // (vm.hpp) marks call_frame::receiver for every live frame; a compiled
+        // body's
         // `this` was in no frame field and therefore in no root. For `new` that
         // was not survivable by accident: op::construct's fresh instance is a
         // C++ local until the body returns.

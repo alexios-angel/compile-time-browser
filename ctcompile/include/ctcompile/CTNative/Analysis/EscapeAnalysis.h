@@ -77,7 +77,7 @@ namespace ctcompile::ctnative {
 //
 // A SITE IS A ctjs.create_object OR A ctjs.create_array AND NOTHING ELSE. The
 // NEITHER rows on the property operations are proved for those two kinds only
-// - a closure base breaks them (objects.cpp:590 -> call.cpp:502, the
+// - a closure base breaks them (lookup_property -> ensure_prototype, the
 // `constructor` back-edge) - so the constructor asserts it, onlyTrackedSites
 // re-checks it, and the unit test has rows for every other allocating
 // operation showing its result enters no alias set.

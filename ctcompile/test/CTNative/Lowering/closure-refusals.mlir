@@ -267,7 +267,8 @@
 //
 // A lifted call passes the CALL's receiver as %arg0. For an arrow that is not
 // what the interpreter reads - `context::effective_this` answers the
-// captured_this recorded where the arrow was WRITTEN (call.cpp:924) - so an
+// captured_this recorded where the arrow was WRITTEN (make_closure,
+// vm/call/coroutines.cpp) - so an
 // arrow may be lifted only when it never looks. native-closure-fixture.js has
 // one that does not and it lifts like any other function.
 //

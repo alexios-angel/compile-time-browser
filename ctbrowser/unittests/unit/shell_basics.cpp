@@ -506,7 +506,8 @@ void test_nothing_leaks_from_one_script_into_the_next() {
     // A DEAD SCRIPT'S MICROTASKS DO NOT RUN INSIDE THE NEXT SCRIPT'S TURN.
     // drain_microtasks stops on failure, so a script that threw used to leave
     // its queued handlers behind - and the next script's checkpoint ran them,
-    // after that script's own code. See call.cpp for why they are dropped
+    // after that script's own code. See context::run in vm/call/run.cpp for why
+    // they are dropped
     // rather than run, and where that differs from Chrome.
     {
         browser page{browser_options{200, 100}};

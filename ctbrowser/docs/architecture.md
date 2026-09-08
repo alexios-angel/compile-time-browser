@@ -104,9 +104,14 @@ its header, and the header did not change:
 
 - `ctbrowser/lib/Script/builtins/` — five files, from one of 4,118 lines. `builtins.hpp`
   still declares exactly `install_builtins()`.
-- `ctbrowser/lib/Script/vm/` — four, from 3,232. `run_loop.cpp` stays whole at 1,466 lines
+- `ctbrowser/lib/Script/vm/` — four, from 3,232. `run_loop.cpp` stays whole at 1,315 lines
   of one function: splitting it means splitting dispatch, which is what
-  `docs/history/computed-goto.md` is about.
+  `docs/history/computed-goto.md` is about. Two of the other three outgrew a
+  file in turn (2026-09-08): `vm/objects/` is six files from 1,396
+  (construction, the collector, lookup, store, the prototype chain,
+  descriptors) and `vm/call/` five from 1,171 (invoke, construct, modules,
+  run, coroutines). All are members of `context`, so nothing needed declaring
+  and `vm.hpp` is untouched; `bench_script` was measured before and after.
 - `ctbrowser/lib/Shell/bindings/` — seven, from 3,926 plus a stray 1,431 filed elsewhere.
 - `ctbrowser/lib/Script/compile/` — eleven, from 3,845, with the class declared in
   `compiler_impl.hpp` beside them. See below; it was the hardest of the four.

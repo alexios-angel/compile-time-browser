@@ -158,10 +158,11 @@ def CTJS_InstanceOfOp
     raw predicate is what lets `if (x instanceof C)` branch without boxing at
     all.
 
-    PHASE 55: both operands NEITHER. objects.cpp:282-323 walks `prototype`
+    PHASE 55: both operands NEITHER. instance_of (vm/objects/chain.cpp) walks
+    `prototype`
     fields and runs no call(); the bytecode row is may_reenter 0
-    (bytecode_opcodes.def:451-452). Line 285's ensure_prototype(ctor) stores a
-    fresh object ON THE CONSTRUCTOR (self-reachable only, call.cpp:495-505),
+    (bytecode_opcodes.def:451-452). Its ensure_prototype(ctor) stores a
+    fresh object ON THE CONSTRUCTOR (self-reachable only, vm/call/construct.cpp),
     never the $object.
   }];
   let arguments = (ins CTJS_ValueType:$object, CTJS_ValueType:$constructor);

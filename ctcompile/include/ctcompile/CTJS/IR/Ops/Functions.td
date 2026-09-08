@@ -38,7 +38,8 @@ def CTJS_FuncOp : CTJS_Op<"func", [
 def CTJS_ReturnOp : CTJS_Op<"return", [Terminator, ReturnLike, HasParent<"FuncOp">]> {
   let summary = "Return a value from a JavaScript function";
   // PHASE 55: SINK(returned) - run_loop.cpp:755 writes the caller's register,
-  // 754 hands it to a C++ caller (call.cpp:136). Its own reason because 55B
+  // 754 hands it to a C++ caller (context::invoke, vm/call/invoke.cpp). Its own
+  // reason because 55B
   // reads it: a site that escapes ONLY by return is the std::unique_ptr
   // candidate. NOTE this is a ReturnLike terminator with no result: the
   // analysis applies sinks in a post-fixpoint walk precisely because the
@@ -57,9 +58,9 @@ def CTJS_ThrowOp
     JavaScript runs in the middle of a fatal error.
   }];
   // PHASE 55 (may_reenter 1: throw_value): SINK(thrown) - thrown_ is a root
-  // (objects.cpp:705; run_loop.cpp:1196), the value lands in the catching
+  // (each_root in vm.hpp; run_loop.cpp:1196), the value lands in the catching
   // frame's register (vm.hpp:1488), and describe_thrown runs getters with it
-  // as `this` (call.cpp:526-543).
+  // as `this` (vm/call/invoke.cpp).
   let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkThrown]>:$value);
   let assemblyFormat = "$value attr-dict";
 }

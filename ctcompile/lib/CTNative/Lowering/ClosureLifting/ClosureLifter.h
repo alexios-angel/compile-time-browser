@@ -369,7 +369,8 @@ struct closureLifter {
     // is no constructor, only a literal and a call that takes its address.
     //
     // WHAT THIS DELIBERATELY DOES NOT BUILD IS THE PROTOTYPE CHAIN. The VM
-    // gives every instance one (call.cpp, `make_instance` -> `ensure_prototype`)
+    // gives every instance one (vm/call/construct.cpp, `make_instance` ->
+    // `ensure_prototype`)
     // and Phase 60 owns turning that into C++ inheritance, so any program that
     // touches a constructor's `prototype` is refused by name here rather than
     // compiled to something with no chain at all.

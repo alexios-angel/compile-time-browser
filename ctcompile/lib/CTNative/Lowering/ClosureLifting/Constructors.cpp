@@ -34,7 +34,7 @@ void closureLifter::constructorCensus() {
 //
 // THE QUESTION `new` ASKS OF A RETURN, and the reason it has to be asked.
 // `context::construct` ends `return produced.is_object_like() ? produced :
-// self` (vm/call.cpp:695, and :685 for a native), so a constructor that
+// self` (vm/call/construct.cpp, and the same for a native), so a constructor that
 // returns an object REPLACES the instance and `new X()` is not the struct
 // this rewrite built at all. `is_object_like()` is
 // `is_object() || is_array() || is_callable() || is_kind(proxy)`

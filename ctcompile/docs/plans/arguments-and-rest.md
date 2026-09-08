@@ -240,7 +240,7 @@ add a row that traces an index.
 
 *Failure mode 1.* `registers_` shrinking below `argv_base` while the compiled
 frame is live. Every shrink site was enumerated: `aot_bridge`'s `leave`
-truncates to that frame's own `register_base`; `call.cpp` truncates to `new_base`
+truncates to that frame's own `register_base`; `vm/call/` truncates to `new_base`
 in three places; `run_loop.cpp` truncates to `base` on an interpreted frame's
 return and on a suspend. Every one of those bases is at or above ours, because
 bases only grow down the stack. An unwind past our frame ends the compiled body
@@ -370,7 +370,7 @@ members.** First, so the two tiers cannot drift — the move
 `ctbrowser/lib/Script/dispatch.cpp`: `enter_compiled_body` gains
 `std::size_t argv_base`.** Five `enter_compiled` call sites, every one of which
 already has the number: `context::call`, the module-evaluation path and
-`context::run` in `call.cpp`, and `op::call`'s and `op::construct`'s compiled
+`context::run` in `vm/call/run.cpp`, and `op::call`'s and `op::construct`'s compiled
 arms in `run_loop.cpp`. `context::run` passes 0 with `argc` 0.
 
 **4 — `ctbrowser/lib/Script/aot_bridge.cpp`: `aot_bridge::enter` consumes them.**
@@ -593,7 +593,7 @@ end-of-file; all four of these land inside a file that has since grown.
   `run_loop.cpp:1197-1199` (now `VM_CASE(pop_handler)`) and `vm.hpp:883` for
   `arguments_object` (now a comment about static accessors), and a nearby row
   cites `run_loop.cpp:1190-1202` and `881-905` for these two handlers and
-  `objects.cpp:279-285` for a third — the first is inside `op::push_handler`'s
+  `own_keys` (`vm/objects/chain.cpp`) for a third — the first is inside `op::push_handler`'s
   construction, the second inside `op::await_value`'s settled-promise read, the
   third inside `context::instance_of`. **Six citations, all landing on unrelated
   code, all silently passing.** Repair them by name in the same commit; that is
@@ -634,7 +634,7 @@ the subsequent call accepts without a cast, are both plausible and unchecked.
 
 **The working tree moved underneath this reading, twice.** `git status` was clean
 at the start; partway through it carried `own_keys` and `delete_prop` landing
-across `run_loop.cpp`, `vm.hpp`, `aot_bridge.cpp`, `objects.cpp`, `CTJSOps.td`,
+across `run_loop.cpp`, `vm.hpp`, `aot_bridge.cpp`, `objects.cpp` (now `vm/objects/`), `CTJSOps.td`,
 `BytecodeImport.cpp`, `CTJSToEmitC.cpp`, `Differential.cpp`, `differential.js`,
 `ImporterCoverage.cpp` and `test/CMakeLists.txt`, and by the end it carried a
 different set with `aot_helpers.def` in it — `load_bigint`, which is the third

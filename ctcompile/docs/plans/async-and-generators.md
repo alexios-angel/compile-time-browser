@@ -35,7 +35,7 @@ it is recorded here as a finding rather than quietly worked around.
   `enter_compiled` exactly like any other. The importer's refusal is the only
   thing standing between a compiled body and an `await` it cannot execute.
 * **A generator, by contrast, is guarded twice and never dispatched.** Both
-  `context::call` (`call.cpp:80`) and `VM_CASE(call)` test
+  `context::invoke` (`vm/call/invoke.cpp`) and `VM_CASE(call)` test
   `target.is_generator` and build a coroutine BEFORE asking `enter_compiled`,
   and `unittests/unit/aot_dispatch` asserts that boundary by name.
 * **`ct_aot_wrap_promise` had no body anywhere.** Neither did

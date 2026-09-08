@@ -17,7 +17,8 @@
  * SAME inventory with the ending frame's dead register window and per-frame
  * roots excluded - no new root, no second list. Each row's `name` below is the
  * `root_label` the walk hands its visitor, and the label an escaped object is
- * reported `via`. The comment in objects.cpp still says it plainly: "Precise
+ * reported `via`. The comment in vm/objects/gc.cpp's collect() still says it
+ * plainly: "Precise
  * roots: everything reachable is reachable from exactly these."
  */
 
