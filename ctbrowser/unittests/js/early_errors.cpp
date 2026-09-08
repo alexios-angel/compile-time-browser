@@ -4,8 +4,8 @@
 // `negative parse/SyntaxError: got runtime` was the single largest failure
 // cause in test262 - 2,812 tests asserting that source text is a SyntaxError
 // while this engine parsed it, ran it, and reported whatever happened next.
-// lib/Script/compile/early_errors.cpp is the pass that answers them and its
-// header says which families are deliberately absent.
+// lib/Script/compile/early_errors/ is the pass that answers them and its
+// header, compile/early_errors.hpp, says which families are deliberately absent.
 //
 // EVERY REFUSAL HERE IS PAIRED. The `refused` line proves the rule fires; the
 // `accepted` line beside it proves the rule stops where it should, and it is
@@ -215,7 +215,8 @@ int main() {
     accepted("var a; ({ a } = { a: 1 });");
     accepted("var o = { p: 0 }; [o.p] = [1];");
     accepted("var i = 0; i++; ++i; i += 1;");
-    // A CALL is refused here, and the note in early_errors.cpp says why it is
+    // A CALL is refused here, and the note on check_assignment in
+    // early_errors/expressions.cpp says why it is
     // the second-best answer: a browser may make `f() = 1` a runtime
     // ReferenceError instead, and this engine's compiler refuses a call target
     // outright either way - so the only thing being chosen is which KIND of
@@ -270,8 +271,8 @@ int main() {
     accepted("class C { constructor() { this.x = 1; } } new C();");
     accepted("var o = { m() { return super.toString; } };");
     // `return` at the top level is NOT refused: it is this engine's embedding
-    // contract, the way a compiled program hands a value back. See the note in
-    // early_errors.cpp.
+    // contract, the way a compiled program hands a value back. See the note on
+    // `nk::return_stmt` in early_errors/statements.cpp.
     answers("return 42;", "42");
     // ...AND NEITHER IS `new.target`, for the same reason and in the same
     // breath. 16.1.1 admits both only inside a function, this engine's top

@@ -110,6 +110,12 @@ its header, and the header did not change:
 - `ctbrowser/lib/Shell/bindings/` — seven, from 3,926 plus a stray 1,431 filed elsewhere.
 - `ctbrowser/lib/Script/compile/` — eleven, from 3,845, with the class declared in
   `compiler_impl.hpp` beside them. See below; it was the hardest of the four.
+- `ctbrowser/lib/Script/compile/early_errors/` — six, from 1,476 (2026-09-08). The
+  same shape as the compiler: one class, every member inline, in an anonymous
+  namespace. The checker is declared in `early_errors/checker.hpp` with external
+  linkage in `detail::early`; its AST accessors (`at()`, `kids()`) stay inline
+  there for the reason measured below. `early_errors.hpp` still declares one
+  function.
 
 ### What splitting the compiler cost, measured
 

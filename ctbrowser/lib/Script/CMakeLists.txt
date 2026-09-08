@@ -23,8 +23,15 @@ target_sources(ctbrowser-script
     compile.cpp
     # The static semantics: the source text a conforming implementation must
     # REFUSE. It runs before the compiler and shares nothing with it but the
-    # AST, which is why it is a file rather than a pass inside one.
-    compile/early_errors.cpp
+    # AST, which is why it is a directory rather than a pass inside one. The
+    # checker is declared in compile/early_errors/checker.hpp, private to these
+    # six files; compile/early_errors.hpp still declares one function.
+    compile/early_errors/entry.cpp
+    compile/early_errors/scopes.cpp
+    compile/early_errors/statements.cpp
+    compile/early_errors/functions.cpp
+    compile/early_errors/expressions.cpp
+    compile/early_errors/patterns.cpp
     compile/ast.cpp
     compile/limits.cpp
     compile/entry.cpp
