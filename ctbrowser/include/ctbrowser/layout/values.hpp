@@ -166,7 +166,7 @@ struct length {
     // every calc it can into a single px value, so anything still spelled calc()
     // here carries a percentage: it had no answer at computed-value time because it
     // needed a containing block, which is a used-value question and this is where
-    // the answer lives. style/css/calc.cpp serialises exactly this two-term shape,
+    // the answer lives. style/css/calc/serialize.cpp serialises exactly this two-term shape,
     // percentage first, so there is one form to read rather than an expression
     // grammar in two places.
     if (text.starts_with("calc(") && text.ends_with(')')) {
