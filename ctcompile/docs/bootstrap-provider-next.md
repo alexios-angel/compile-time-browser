@@ -1,36 +1,31 @@
 # Next Bootstrap native boundary
 
-## Current continuation: comparison-only fresh identities, 2026-09-08
+## Current continuation: definite post-delete absence, 2026-09-08
 
-`aac9fd27` closes the native own-field presence boundary from `e385f885`.
-`507fe153` gates all seven unchanged raw field-return programs at **5/5 native**
-in both modes, with Node/interpreter and explicit/deduced GCC/Clang agreement,
-no VM symbols, and raw saved-callable ASan/UBSan/leak lifetime checks. The live
-per-read query retains exact saved object origins across Map overwrite/delete
-and later field writes. Only implicit absence disappears; every explicit schema
-value type remains. Fourteen focused CTests pass. The full warning-free 246-step
-build finishes at **512/517 CTests**, all **372 compiler tests** and **165 lit
-cases** passing, including **170 published programs/21 lifetime families**;
-only five established browser failures remain. Fresh native Bootstrap stays
-**19/574**, exact Data **0/7 browser/CommonJS and 0/8 AMD**.
+`2593acd7` and `316818b2` close the comparison-only fresh identity boundary from
+`bf2fd02e`. The exact local six-call and historical eight-call sources advance
+**0/5 -> 5/5 native**, preserving trace=0; both saved-identity repairs remain **5/5**,
+trace=1. Four programs agree across Node, the interpreter and standalone
+explicit/deduced GCC/Clang, with fresh allocations, field writes and runtime
+comparisons intact and no Script/VM symbols. Four lifetime families pass future
+calls, reentry, Map/owner release and distinct retained-leaf ASan/UBSan/leak checks.
+The focused CTest gate is **15/15**. Full CTest/lit and fresh corpus counts are
+pending after a warning-free 245-step build.
 
-The next independently measured controls are comparison-only fresh objects:
-`local_identity_distinct_fresh` (**5 functions/6 calls/trace=0**) and
-`historical_object_distinct_identity` (**5/8/0**) have complete owners but remain
-**0/5 native** in both modes. Their unchanged saved-identity repairs (**5/6/1**
-and **5/8/1**) remain **5/5**. `prepareNativeObjectIdentities` currently skips
-families without Map key/payload use. Prove complete strict-comparison uses of
-fresh allocations independently; keep real distinct identities and scalar
-field writes. A comparison must not unify its operands into one runtime object.
+The unchanged local/historical fresh post-delete controls (**five functions,
+seven/nine calls, trace=0**) still stay unowned **0/5**, with all calls intact.
+The host method proof needs exact-key **definite absence**. Its current
+`present=false` also covers maybe absent, so it cannot prove Undefined.
+A later implementation must preserve definite absence across exact deletes and
+known disjoint writes, invalidate it after potentially aliasing writes, and
+intersect it at branch joins. Saved reads retain their earlier object independently
+of later Map mutations. Thirty-one queued probes distinguish this from clear
+support, later reseeding and native representation boundaries; their measurements
+will follow the full gate.
 
-The local/historical fresh post-delete controls (**5/7/0**, **5/9/0**) stay
-unowned **0/5**, with source calls intact. Their separate host proof needs
-exact-key definite absence; current `present=false` also means maybe absent.
-Do not infer Undefined from it. Entry numeric addition, String/object field
-carriers, full Bootstrap Data and native browser API integration remain open.
-No full-bundle admission gain is claimed. See [HANDOFF.md](HANDOFF.md) for the
-six-case measurements and `/tmp/ctcompile-field-presence-next.json` sources.
-
+Entry numeric addition, String/object field carriers, exact Data, full native
+Bootstrap initialization and direct browser API integration remain open.
+No full-bundle coverage gain is claimed. See [HANDOFF.md](HANDOFF.md).
 
 The [diagnostic and callback increment](native-provider-diagnostics.md) and
 [ordinary object payloads](native-provider-objects.md) are implemented behind

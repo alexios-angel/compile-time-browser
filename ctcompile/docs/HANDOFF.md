@@ -6,6 +6,87 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Strict fresh object comparisons and primitive Add/Concat, 2026-09-08
+
+Committed locally on `ctcompile-v1`: **`2593acd7`** recognizes comparison-only
+fresh object identities, **`316818b2`** gates distinct/saved execution and
+lifetimes, and **`267545cd`** proves primitive Add/Concat escape origins.
+This resumes the exact continuation in **`bf2fd02e`** and the **22:48:00
+synchronization journal**. The starting tree/index was clean; interrupted
+`codex-wip-20260907` was already recovered and merged. Three agents handled
+identity tests, execution/lifetimes and escape proofs. No browser/runtime
+source changed, no history was rewritten and nothing was pushed.
+
+The two unchanged comparison-only sources advance **0/5 -> 5/5 native** in
+both modes: local **six calls/trace=0**, historical **eight calls/trace=0**.
+Their exact saved-object repairs remain **5/5**, with **six/eight calls** and
+**trace=1**. Node, the interpreter and standalone explicit/deduced GCC/Clang
+agree. The emitted comparisons consume the actual saved Map read and fresh
+allocation, preserving all two/three distinct objects and historical numeric
+field writes. Comparing operands never joins their schemas or runtime identities.
+All **295 historical helper rows**, all **297 current rows** and the six exact
+prior continuation sources preserve their bytes.
+
+New candidate families require a complete strict-comparison use census.
+Closed calls, immutable captures and supported SCF forwarding retain their
+existing independent source proofs; unknown producers and outgoing ownership
+edges refuse. A field-bearing comparison family separately checks the live
+ordinary-property environment, exact Map method spelling/receiver/arity,
+constructor source, known direct calls and every operand's source dominance.
+The optional freshly checked global owner permits only its ordinary source
+roots. Host/native report annotations supply no such authority. Unknown effects,
+coercing observations, dynamic/prototype/accessor fields and untracked region
+yields refuse. Type/field admission remains separate. No new runtime carrier
+or platform implementation was introduced.
+
+The focused gate passes **15/15 CTests in 18.85 seconds**, including **36 identity
+rows**, **37 live/fresh mutation states**, all eight escape tests and type oracles.
+The four exact native programs pass **four sanitizer lifetime families** across
+128 future calls, owner/table release, Map mutation, reentry and final Map/leaf
+release. Test observers independently retain every fresh leaf, check pairwise
+distinct addresses and numeric fields after Map release, then release the leaves.
+Both post-delete sources stay unowned **0/5**, retaining all **seven/nine calls**;
+exact repairs and stale/forged reports pass. Native budget sweeps finish at
+**3790/4542**, testing **32/29 cutoffs**, with no speculative rollback interval.
+
+Add/Concat require both original operands to be independently primitive and
+non-BigInt. This proves whole-frame retention only; it establishes no concrete
+Number/String tag, constant/key, normal-completion or no-throw contract.
+Each of seven dynamic binary kinds passes **84 rows, 49 live states and 4127
+retention cutoffs**; Eq/Lt/Le/Gt/Ge each pass **84/34/3527**, with the existing
+**64-work** snapshot. Four escape oracles report zero violations; fixture
+precision is **52/78**, adding coverage to 49/72. Seven new source functions
+measure **28 sites, 56 instances and 44 retained**; historical sources/counts
+remain unchanged. Corpus precision stays **0/64, 0/16, 0/20**, p5 partial=1.
+The independent Node/VM semantic probe agrees at **trace=4095**.
+
+The initial unit gate passed but fixture claims came from an executable omitted
+from the target list. Relinking it restored the source oracle without changing
+sources or expectations. Independent review found unsupported region yields and
+unrelated malformed field operands missing from the new census; both were fixed
+and regression-tested before committing. Formatter **22.1.8 passes all 745 files**;
+`tools/format.sh --check` with bundled development 23 retains the nine existing
+unrelated differences. All **thirteen code/test hashes** match frozen gate input.
+The full **245-step generated build passes with zero warnings**. Full CTest is
+running, with only the same five browser failures so far; complete lit and fresh
+corpus counts remain pending. Configured publication coverage is **172 programs
+and 25 lifetime families** until that full run completes.
+
+**Next boundary: exact-key definite absence in the host method proof.** The
+unchanged local/historical post-delete comparisons still remain unowned **0/5**.
+`present=false` means possible absence as well as absence, so it cannot authorize
+Undefined. Track known absence separately across exact-key deletion, potentially
+aliasing writes and branch joins; saved earlier reads must keep their old values.
+Thirty-one independent source probes are queued after the full gate to separate
+this from clear support and representation boundaries. Entry numeric addition,
+String/object carriers, exact Bootstrap Data, full native Bootstrap initialization
+and direct browser API integration remain unfinished. No full-bundle coverage
+gain is claimed.
+
+Evidence: `/tmp/ctcompile-comparison-identity-{build4,focused2,execution3,full}.log`,
+`-root-hashes.json` and `-format22-final.log`. The full-detail, next-probe and final
+source-hash evidence will be appended after the serialized gate completes.
+
 ## Initialized own-field results and arithmetic escape gates, 2026-09-08
 
 Committed locally on `ctcompile-v1`: **`aac9fd27`** adds live per-read field

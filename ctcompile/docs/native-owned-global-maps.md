@@ -1,5 +1,33 @@
 # Native captured Maps across global publication
 
+## Strict fresh object comparisons, 2026-09-08
+
+`2593acd7` admits comparison-only fresh allocations after a complete independent
+strict-use census. The unchanged local six-call and historical eight-call
+programs advance **0/5 -> 5/5 native**, both with trace=0; exact saved-object
+repairs remain **5/5**, trace=1. `316818b2` gates all four under explicit/deduced
+GCC/Clang, matching Node and the interpreter, without Script/VM symbols.
+
+Comparison operands retain distinct schema groups and real allocations. Scalar
+field families prove their own closed property environment, including live Map
+spelling/receiver/arity, known source calls and operand dominance. Unknown effects,
+coercing observations, dynamic/prototype/accessor fields, outgoing ownership edges
+and untracked SCF yields refuse. A freshly checked source owner can authorize its
+ordinary roots; report attributes cannot. Existing Map families retain their census.
+
+The focused gate passes **15/15 CTests**; identity tests cover **36 rows and 37
+live/fresh states**. Four lifetime families check 128 future calls, owner/table
+release, replacement/deletion, reentry, distinct retained leaves and final release
+under ASan/UBSan/leak checks. Budget sweeps finish at **3790/4542**, with **32/29
+cutoffs**. All 297 current helper sources and six previous continuation sources
+preserve bytes. The full warning-free 245-step build has completed; CTest/lit and
+configured **172 programs/25 lifetime families** remain pending.
+
+Next, the exact seven/nine-call post-delete controls still remain unowned **0/5**.
+They require definite absence independently of possible absence; `present=false`
+is insufficient. Saved reads must retain their pre-delete value. Full Bootstrap
+Data and browser API integration remain open. See [HANDOFF.md](HANDOFF.md).
+
 ## Initialized local fields, 2026-09-08
 
 `aac9fd27` removes implicit absence from a field read only after a fresh bounded
