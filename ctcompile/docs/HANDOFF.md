@@ -65,15 +65,24 @@ while Bootstrap/p5/Phaser remain **0/64, 0/16, 0/20**. Combined focused CTest pa
 **12/12 in 30.19 seconds**. Log: `/tmp/ctcompile-guard-copy.log`.
 Homebrew clang-format **22.1.8** passes **743 files** and whitespace checks pass.
 
-The full generated devbox build succeeds and the **517-test CTest gate is
-running**, so there is no new completed full-suite total yet. Log:
-`/tmp/ctcompile-guard-full.log`. The prior completed baseline was **512/517**,
-with all **372 compiler tests** passing and only `selectors`, `frames`,
-`element_attrs`, `vm_async` and `early_errors` failing. Fresh complete corpus
-numbers await this gate; the preceding measured native components were
-Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725**, and exact Data remained
+The full **243-step generated devbox build succeeds**. Final CTest is
+**512/517 in 918.68 seconds**: **372/372 compiler** and **140/145 browser** tests.
+Only the recorded `selectors`, `frames`, `element_attrs`, `vm_async` and
+`early_errors` failures remain. All **165/165 lit cases** pass (`ctcompile_lit`,
+**317.48 seconds**), and exception recovery passes in **1.23 seconds**. All four
+execution oracles again report zero violations; precision stays **29/41, 0/64,
+0/16, 0/20**. Corpus observations remain limited by their existing environments
+and execution coverage. Fresh native components remain **Bootstrap 19/574,
+p5 39/4754, Phaser 45/7725** in both modes with zero pruned. Exact Data remains
 **0/7 browser, 0/7 CommonJS, 0/8 AMD**. Complete native Bootstrap initialization
-is unfinished. The checkpoint does not claim the running full gate passed.
+is unfinished. Final evidence: `/tmp/ctcompile-guard-full.log` and
+`/tmp/ctcompile-guard-evidence.json`.
+
+All **fourteen changed code/test paths** match committed HEAD, frozen gate input
+and the final devbox source. The inspected String output retains its live guard,
+branch, reads, writes and owning saved result without Script symbols or an
+interpreter context. Checkpoint docs were saved as `015189d`; this update records
+the completed full gate. No browser source or runtime semantics changed.
 
 **Exact next boundary:** replace the accepted guarded ternary with
 `(state.has('other') && state.get('other')) || state.get('')`. Keep the seed,
