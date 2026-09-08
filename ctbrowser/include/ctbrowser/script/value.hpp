@@ -729,7 +729,7 @@ struct object_object final : heap_object {
     // vector does not reach rather than indexing it.
     //
     // ONE PLACE IN THE ENGINE MUTATES `props` DIRECTLY past this class:
-    // lib/Shell/bindings/window.cpp clears a localStorage table. `normalise()`
+    // lib/Shell/bindings/window/window.cpp clears a localStorage table. `normalise()`
     // below is what makes that safe - every mutator calls it, so a vector left
     // longer than the table it describes is trimmed before it can answer for
     // the wrong property.

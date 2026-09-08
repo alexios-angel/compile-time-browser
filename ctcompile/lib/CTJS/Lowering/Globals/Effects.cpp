@@ -32,8 +32,8 @@ std::optional<std::uint32_t> function_index_of(FuncOp function) {
 
 // THE NAMES THE SHELL BINDS THE WINDOW OBJECT TO, AND `self` IS ONE OF THEM.
 //
-// lib/Shell/bindings/window.cpp:934-948 is three define_global calls of the
-// same proxy - `window`, `globalThis` AND `self` - and this list held two.
+// the end of install_window in lib/Shell/bindings/window/window.cpp is three define_global calls of
+// the same proxy - `window`, `globalThis` AND `self` - and this list held two.
 // hands_back_the_global_object() below already lists `self` among the reads
 // that alias, and its own comment names all three, so the omission was a
 // soundness hole rather than a policy: `self.x = 1` reaches the proxy's `set`
@@ -181,8 +181,8 @@ bool prototype_replaced(mlir::ModuleOp module) {
 // PointerEvent, DOMParser) and calls or returns every one of them; not one is
 // the window.
 //
-// THE ALIAS SET IS THE HOST'S AND IT IS CLOSED. lib/Shell/bindings/window.cpp
-// binds `window`, `globalThis` and `self` to the proxy as GLOBALS (934-948)
+// THE ALIAS SET IS THE HOST'S AND IT IS CLOSED. lib/Shell/bindings/window/window.cpp
+// binds `window`, `globalThis` and `self` to the proxy as GLOBALS (install_window)
 // and sets `parent` and `top` on the target to the same proxy (975-976);
 // `frames` is listed because it is the standard fifth and costs nothing.
 // Reading any other name off the window yields whatever global has that name,

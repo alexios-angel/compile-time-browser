@@ -739,7 +739,7 @@ void dom_bindings::install_mutation_observer(context & cx) {
             const value self = c.current_this();
             // AN INTERFACE OBJECT IS NOT CALLABLE. `new` and `super()` arrive
             // with an object receiver; a plain call arrives with none - the
-            // same test bindings/events.cpp makes for every Event interface.
+            // same test bindings/events/interfaces.cpp makes for every Event interface.
             if (!self.is_object()) {
                 c.throw_error("TypeError", "Failed to construct 'MutationObserver': please use the "
                                            "'new' operator.");

@@ -252,7 +252,7 @@ in the evening run above.
 | **interface objects for node types** | `lib/Shell/bindings/element/interfaces.cpp` | `HTMLBodyElement`, `Window`, `Document`, `NodeList`, `HTMLCollection` as globals with prototypes the wrappers chain to. It is what `assert_class_string`, `e instanceof HTMLBodyElement` and `eventTarget.constructor.name` all ask, and one defect stands behind `Body-FrameSet-Event-Handlers.html`, `passive-by-default.html`, `document.links` and `document.scripts` |
 | **shadow DOM** | the tree model | `attachShadow`: 14 files plus five harness errors across three suites. Not a bindings change |
 | **attribute namespaces** | `include/ctbrowser/dom/node.hpp` | `setAttributeNS`/`getAttributeNS`: `struct attribute` is `(atom name, std::string value)` with nowhere to put a namespace, so this is a DOM-layer change rather than a binding. 80 subtests and two harness errors in `dom/nodes` |
-| **named access on the Window** | `lib/Shell/bindings/window.cpp` | `window[id]` for an element with an `id`. One harness error in `dom/events` found it; it is a documented HTML feature that pages use widely |
+| **named access on the Window** | `lib/Shell/bindings/window/window.cpp` | `window[id]` for an element with an `id`. One harness error in `dom/events` found it; it is a documented HTML feature that pages use widely |
 
 ## Skips, all 542 of them
 
@@ -314,9 +314,9 @@ finding.
 | `resources/` | testharness.js itself. Not optional |
 | `common/` | the fixtures the suites import |
 | `dom/nodes/` | the tree: `Node`, `Element`, `Attr`, `Document`. The engine has its own WHATWG tokenizer and tree builder, so this is the closest thing to a direct measurement of it |
-| `dom/events/` | `EventTarget`, dispatch, capture/bubble, listener options — all of which `lib/Shell/bindings/events.cpp` implements |
+| `dom/events/` | `EventTarget`, dispatch, capture/bubble, listener options — all of which `lib/Shell/bindings/events/` implements |
 | `html/dom/` | reflection: does `el.id = "x"` change the attribute, and back |
-| `css/cssom/` | `getComputedStyle` and the style declaration objects, which `lib/Shell/bindings/computed_style.cpp` answers and `tools/check/css-parity.py` already measures against Chrome a different way |
+| `css/cssom/` | `getComputedStyle` and the style declaration objects, which `lib/Shell/bindings/computed_style/` answers and `tools/check/css-parity.py` already measures against Chrome a different way |
 | `css/css-values/` | value parsing and computation — `calc()`, lengths, units — against the CSS Syntax Level 3 front end in `lib/Style/css/` |
 | `css/support/` | the helpers the two `css/` suites import. **Not optional either**: `test_valid_value`, `test_computed_value`, `test_math_used`, `test_interpolation` and `test_specified_serialization` all live here, and a test that cannot load one reports HARNESS_ERROR without running a subtest. Adding it on 2026-09-03 converted 87 harness errors into real measurements |
 

@@ -213,7 +213,7 @@ needs a `<color>` value model: `color` is `freeform` today and stored verbatim,
 so `rgba(calc(0%) calc(100%) calc(0%) / calc(10% * 10))` cannot compute to
 `rgb(0, 255, 0)`. The four-corner `/` shorthand serialization for
 `border-radius` and the two-component `background-position` are in
-`lib/Shell/bindings/computed_style.cpp`, not in the value code.
+`lib/Shell/bindings/computed_style/entries.cpp`, not in the value code.
 
 ## 2b. The baseline, 2026-09-03 — and where it stood then
 
@@ -275,7 +275,7 @@ and the ranked causes over both suites are dominated by two Shell-side gaps:
 
 | count | cause | where it lives |
 |---:|---|---|
-| 1,034 (`cssom`) | `getComputedStyle(el).someProperty` is `undefined` | `lib/Shell/bindings/computed_style.cpp` |
+| 1,034 (`cssom`) | `getComputedStyle(el).someProperty` is `undefined` | `lib/Shell/bindings/computed_style/` |
 | ~1,000 (`css-values`) | `e.style[prop] = v` then read back is the raw text | `lib/Shell/bindings/element/views.cpp` |
 
 Two specific things gate most of both suites:

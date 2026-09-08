@@ -51,7 +51,12 @@ target_sources(ctbrowser-shell
     bindings/element/interfaces.cpp
     bindings/element/character_data.cpp
     bindings/element/shadow.cpp
-    bindings/events.cpp
+    # events: what the engine pushes in, the dispatch algorithm, and the Event
+    # interfaces - one 1,647-line file until 2026-09-08, three now, with the
+    # helpers more than one of them needs declared in events/internal.hpp.
+    bindings/events/input.cpp
+    bindings/events/dispatch.cpp
+    bindings/events/interfaces.cpp
     # DOMException: the platform's error type, which is not an ECMAScript
     # Error and cannot be built by context::throw_error. Its own file because
     # every binding throws through it and none of them owns it.
@@ -68,9 +73,12 @@ target_sources(ctbrowser-shell
     # the `CSS` namespace object: CSS.supports gates every computed-value test
     # in css/css-values, and it is a binding over style/css/properties.hpp
     bindings/css.cpp
-    # getComputedStyle: its own file because it is property dispatch over three
-    # sources, and element.cpp was already 1,100 lines when this was written.
-    bindings/computed_style.cpp
+    # getComputedStyle: its own directory because it is property dispatch over
+    # three sources - one 1,326-line file until 2026-09-08, three now: how a
+    # value is written down, every property of one element, and the live object.
+    bindings/computed_style/serialize.cpp
+    bindings/computed_style/entries.cpp
+    bindings/computed_style/object.cpp
     # the CSSOM object model: document.styleSheets and everything under it. Its
     # own file because it is a SECOND parse of the author's sheets - the cascade
     # keeps no stylesheet - and because CSSStyleSheet, CSSRuleList, CSSRule and
@@ -83,10 +91,19 @@ target_sources(ctbrowser-shell
     bindings/stylesheets/sheets.cpp
     bindings/stylesheets/objects.cpp
     bindings/stylesheets/prototypes.cpp
-    bindings/window.cpp
+    # window, console, timers and the callback queue - one 1,106-line file until
+    # 2026-09-08, two now; install_window stays whole at 885 lines.
+    bindings/window/callbacks.cpp
+    bindings/window/window.cpp
     bindings/canvas.cpp
     bindings/resources.cpp
-    bindings/webgl.cpp
+    # WebGL: the context and its wrapper, the constant table, and the methods in
+    # two halves - one 1,431-line file until 2026-09-08, four now, with the
+    # argument helpers every one of them needs in webgl/internal.hpp.
+    bindings/webgl/context.cpp
+    bindings/webgl/constants.cpp
+    bindings/webgl/objects.cpp
+    bindings/webgl/drawing.cpp
     embedded_fonts.cpp
     # resources: where bytes come from. net.cpp was net_curl.cpp until
     # 2026-08-09; the suffix implied a choice of transport, and the Asio one has

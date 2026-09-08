@@ -154,6 +154,24 @@ its header, and the header did not change:
   under the same `#if`, and the stub is `stub.cpp` under `#if !`. Both
   definitions of `device::impl` sit in `internal.hpp` under that guard, because
   every file reaches through it. `gl.hpp` did not change.
+- `ctbrowser/lib/Shell/bindings/events/` — three, from 1,647 (2026-09-08): what the
+  engine pushes in, the dispatch algorithm, and the Event interfaces. The
+  property-name constants and the two helpers both dispatch and the
+  constructors need are in `internal.hpp` beside them, in `shell::detail`.
+- `ctbrowser/lib/Shell/bindings/webgl/` — four, from 1,431 (2026-09-08).
+  `webgl_context_object` was ONE 1,213-line function; it is three private
+  member functions now (the constant table, the methods up to textures, the
+  methods that draw and read back), split at seams no local crosses and called
+  in the order the surface was always installed. Three tiny helper lambdas are
+  re-created verbatim in the halves that use them; the argument helpers are
+  inline in `internal.hpp`.
+- `ctbrowser/lib/Shell/bindings/computed_style/` — three, from 1,326 (2026-09-08):
+  how a value is serialised, every property of one element, and the live
+  object. The serialisers are declared in `internal.hpp` in `shell::detail`,
+  which also carries the note on where a computed value comes from.
+- `ctbrowser/lib/Shell/bindings/window/` — two, from 1,106 (2026-09-08): the
+  callback queue, console and timers in one, `install_window` whole at 885
+  lines in the other. Nothing is shared; `internal.hpp` carries the includes.
 
 ### What splitting the compiler cost, measured
 

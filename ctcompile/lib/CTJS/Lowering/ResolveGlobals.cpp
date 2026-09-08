@@ -49,7 +49,7 @@
 //     window_view and "do NOT alias it", so the rule was "kept anyway,
 //     conservatively... and the cost is nothing on the programs this MVP
 //     targets". Both halves were wrong, and the line it cited is the proof of
-//     the first: lib/Shell/bindings/window.cpp:911-923 is the PROXY's `set`
+//     the first: the "set" window_trap in lib/Shell/bindings/window/window.cpp is the PROXY's `set`
 //     trap, and its else-arm is `c.define_global(name, args[2])`, which is
 //     `globals_[name] = v` (script/vm.hpp:257). A write through the window
 //     that does not hit an own property of the window target is a global
@@ -368,7 +368,7 @@ bool padding_hides_arguments(FuncOp target, std::size_t supplied, unsigned param
 // finitely many values and the walk visits each at most once.
 //
 // AND A NAMED WRITE THROUGH THE OBJECT BINDS ONE NAME, NOT THE MODULE. The
-// proxy's `set` trap (lib/Shell/bindings/window.cpp:880-892) is a two-armed
+// proxy's `set` trap (the "set" window_trap in lib/Shell/bindings/window/window.cpp) is a two-armed
 // if: an own property of the window target gets store_property, everything
 // else gets `define_global(name, args[2])`. Both arms touch exactly the name
 // written, so `globalThis.x = 1` rebinds `x` and says nothing whatever about
