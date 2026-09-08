@@ -1275,7 +1275,7 @@ match committed HEAD, frozen input and final devbox sources. Both actual emitted
 leaf programs contain no Script/VM symbols. Evidence:
 `/tmp/ctcompile-leaf-object-postgate.log` and `-final-hashes.json`.
 
-## Primitive relational origins, 2026-09-08 (focused gate passed)
+## Primitive relational origins, 2026-09-08
 
 This continues the exact relational boundary left by **`5e2cb6b2`** and the
 **`5d2d843a`** handoff. `computeArrayContents` now accepts Lt, Le, Gt and Ge
@@ -1301,14 +1301,20 @@ accessor reached by uncaught-error description. The unwind oracle excludes the
 ending frame's register window (`unwind_to_handler`/`each_root`). This justifies
 retention on an early exit, **not normal completion or an effect/no-throw
 contract**. C++ String parsing may allocate; allocation success is unproved.
+A further source-level audit found no publication counterexample. `make_error`
+uses direct own-data writes, with no `cause`/options processing or Error
+constructor call. `current_stack` serializes only function-proto names, indices
+and instruction offsets into a String; it captures no frame values. The
+importer preserves closure, cell and upvalue operations explicitly, and this
+query rejects them, so a hidden closure cannot retain these fresh locals.
 No dynamic deep-stack measurement is claimed. Native lifetime/effect consumers
 still require their own proof. No runtime/browser source changed.
 
 The independent unit table now runs for Eq and each of the four relational
 kinds. Each passes **75 rows**, **34 live mutation states**, an exact
 **64-work-unit** wide snapshot increment, and **3,300 incomplete retention
-budget cutoffs**, alongside the exhaustive incomplete contents budgets. Controls cover both operands, original array/field
-reads across replacement/deletion, every structural arm, retained aliases,
+budget cutoffs**, alongside the exhaustive incomplete contents budgets.
+Controls cover both operands, original array/field reads across replacement/deletion, every structural arm, retained aliases,
 opaque/BigInt/object exclusions, invalid result keys, fresh/stale completion
 markers, and actual publication before/after the comparison, retaining calls,
 explicit throws and local exception handlers. The latter keep the exceptional
@@ -1327,7 +1333,7 @@ CTests in 83.03 seconds**, including **all eight escape CTests**. All five
 comparison kinds repeat the exact unit counts above, and historical array
 contents/retention families pass. Evidence:
 `/tmp/ctcompile-leaf-readback-focused.log`, `-focused2.log` and
-`-focused2-detail.log`. The generated full-build/CTest gate remains pending.
+`-focused2-detail.log`. The completed full gate is recorded below.
 
 The historical `objectFrameLooseEqualityRelational` function and both calls
 retain their exact source bytes. Its numeric/String results already ran in
@@ -1336,16 +1342,16 @@ now independently checked against both observed instances. This is a precision
 improvement on existing input, not new source coverage. The historical
 loose-equality family keeps its **24 sites, 44 instances and 33 retained**;
 all other historical family expectations pass unchanged. Five separate new
-functions measure **20 sites, 40 instances, 32 retained**: saved String origins after a BigInt field overwrite
-and deletion; unordered Undefined/invalid numeric String results; opaque
+functions measure **20 sites, 40 instances, 32 retained**: saved String origins
+after a BigInt field overwrite and deletion; unordered Undefined/invalid numeric String results; opaque
 formal and literal BigInt refusal controls; and an independently saved child
 still returned after both container fields are deleted. Four execution oracles
 report **zero soundness violations**. Expanded-fixture precision is **47/68**,
 with zero partial/pending claims. Relative to **44/64**, one already observed
 child gains confinement; the new family contributes two proved-confined and
 four observed-confined sites. Bootstrap/p5/Phaser remain **0/64, 0/16, 0/20**,
-including p5's existing single partial observation. These are focused escape
-measurements, not a native corpus or full-suite gain.
+including p5's existing single partial observation. These escape measurements
+do not increase native corpus admission.
 
 Local Node execution passes **55 combined fixture calls**, preserving every
 historical function and call. Independent assertions check lexical versus
@@ -1356,9 +1362,34 @@ mutations** discriminate. Additional opaque-object probes observe four
 `valueOf` calls and a thrown conversion value after one call; these justify
 retaining the object/opaque refusal and do not replace the current-IR proof.
 Evidence: `/tmp/ctcompile-escape-relational-node.{py,js,json}`. Homebrew
-clang-format **22.1.8** and changed-path whitespace checks pass. The focused
-devbox compiler and execution-oracle gates pass as recorded above; the full
-suite remains parent-owned and pending.
+clang-format **22.1.8** and changed-path whitespace checks pass.
+
+The relational increment is saved in **`b98efac0`**. The final **244-step
+generated devbox build completes with zero warnings**. Full CTest finishes
+**512/517 in 1257.06 seconds**: all **372 compiler tests** and **140/145 browser
+tests** pass. The five established browser failures remain `selectors`,
+`frames`, `element_attrs`, `vm_async` and `early_errors`. All **165 lit cases
+pass in 606.48 seconds** (CTest **606.54 seconds**), including the integrated
+published Map driver. Its source census contains **163 programs and twenty
+lifetime families**; those counts follow from the passing complete driver,
+not an additional execution run. Exception recovery passes in **1.17 seconds**.
+
+All eight escape CTests repeat successfully in this full run. Each comparison
+kind repeats **75 rows, 34 live states and 3,300 retention cutoffs**; all four
+execution oracles again report **zero soundness violations**. Fixture precision
+stays **47/68**, zero partial/pending, with the exact **20/40/32** relational
+and **24/44/33** historical equality family observations. Bootstrap/p5/Phaser
+remain **0/64, 0/16, 0/20**, including p5's existing single partial observation.
+Native corpus counts remain Bootstrap **19/574**, p5 **39/4754** and Phaser
+**45/7725** in both modes, zero pruned; exact Data stays **0/7 browser/CommonJS
+and 0/8 AMD**.
+
+All **seventeen code/test paths** match committed HEAD, frozen input and final
+devbox sources. Both actual emitted identity/lifetime C++ files retain owning
+`map_get_present_identity` results across later mutations and contain no
+Script/VM context symbols. Evidence:
+`/tmp/ctcompile-leaf-readback-{full.log,full-detail.log,evidence.json,postgate.log}`,
+`-root-hashes.json`, `-final-identity.cpp` and `-final-lifetime.cpp`.
 
 Remaining boundaries include independently proved primitive conversions and
 dynamic arithmetic, BigInt comparison categories, loops, callee summaries and

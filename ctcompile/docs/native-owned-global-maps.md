@@ -14,8 +14,10 @@ focused execution gate passes **17 programs** with both native modes,
 explicit/deduced GCC/Clang, no VM symbols and saved-callable lifetime sanitizers.
 Nine exact programs now have complete owners but retain native carrier/result
 refusals; eleven unsafe source families retain host refusals and exact repairs.
-All old source bytes remain. See [HANDOFF.md](HANDOFF.md) for measured budgets,
-full-gate status and the precise next boundary.
+All old source bytes remain. Full devbox CTest passes **512/517**, including all
+**372 compiler tests** and **165 lit cases**; five existing browser failures
+remain. The complete Map driver checks **163 programs/twenty lifetime families**.
+See [HANDOFF.md](HANDOFF.md) for measured budgets and the precise next boundary.
 
 Raw scalar field returns still include Undefined in native type inference.
 A separate live per-read initialization proof must narrow that possibility;

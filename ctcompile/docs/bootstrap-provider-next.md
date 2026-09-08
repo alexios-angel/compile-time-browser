@@ -20,8 +20,11 @@ Comparison-only fresh allocation identity (historical eight-call distinct
 control), fresh post-delete values (nine-call control), String/object field
 carriers, full Bootstrap Data and native browser API integration remain open.
 The repeated-key trace=3 entry additionally needs numeric addition admission.
-See [HANDOFF.md](HANDOFF.md) for current measured gates; the full-suite run is
-pending at this checkpoint.
+Full devbox gate: **512/517 CTests**, all **372 compiler tests** and **165 lit
+cases** pass; only five existing browser failures remain. The complete published
+Map driver covers **163 programs and twenty lifetime families**. Fresh native
+Bootstrap coverage remains **19/574**, exact Data **0/7 browser/CommonJS and
+0/8 AMD**. See [HANDOFF.md](HANDOFF.md) for measured budgets and source hashes.
 
 
 The [diagnostic and callback increment](native-provider-diagnostics.md) and

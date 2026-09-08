@@ -6,7 +6,7 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Saved leaf readback and relational escape checkpoint, 2026-09-08
+## Saved leaf readback and relational escape gates, 2026-09-08
 
 Committed locally on `ctcompile-v1`: **`5599ae86`** proves method-local
 object readback and **`b98efac0`** proves primitive relational escape origins.
@@ -15,7 +15,10 @@ This resumes the exact next boundary in **`5d2d843a`** and the **20:26:24
 synchronization journal**. The initial tree/index was clean; interrupted
 `codex-wip-20260907` was already recovered, gated and merged. Three agents
 handled host tests, native execution/lifetimes and escape proofs. No browser
-or runtime source changed, history was rewritten or push performed.
+or runtime source changed. No history was rewritten and nothing was pushed.
+The unmerged September 4 lens witnesses concern the closure-depth defect
+already fixed separately in `6520fcf2`; its code and regression fixture remain
+in the current tree.
 
 The historical **eight-call saved-identity source advances 0/5 -> 5/5 native**
 in both modes with Node/interpreter/native trace=1. A local Map.get now retains
@@ -23,7 +26,7 @@ its independently proved allocation origin. Map overwrite/deletion changes
 membership but cannot retarget that saved alias. Fixed scalar own-field reads
 require definite local initialization; writes through either alias update the
 same allocation's field facts. Both branch arms must preserve those facts.
-Every object use must dominate its consumer, including live malformed-source
+Every object value must dominate its consumer, including live malformed-source
 queries. Exact field-read operations join the host/environment/owner census.
 Object-valued public arguments/results, unknown incoming object origins,
 accessors, dynamic fields, String fields and retaining object graphs still refuse.
@@ -66,12 +69,24 @@ owner/table release, independent reentry and final Map release. Weak witnesses
 check both fresh leaves die at each call; an independently retained original
 leaf survives to its own last release and contains the later scalar write.
 
-The full generated build and CTest gate is running in
-`/tmp/ctcompile-leaf-readback-full.log`; final full-suite/lit/corpus counts are
-**pending**, not inferred from the focused run. Formatter **22.1.8** passes all
-**745 files**. The bundled 23-development formatter reports existing differences
-in nine unrelated files; no such file was edited. All seventeen code/test paths
-are frozen in `/tmp/ctcompile-leaf-readback-root-hashes.json`.
+The final **244-step generated devbox build passes warning-free**. Full CTest
+is **512/517 in 1257.06 seconds**: all **372 compiler tests** and **140/145
+browser tests** pass. Only the five established browser failures remain:
+`selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`.
+All **165/165 lit cases pass in 606.48 seconds** (CTest **606.54 seconds**),
+including **163 published programs and twenty lifetime families**.
+ExceptionRecovery passes in **1.17 seconds**. All eight escape CTests pass
+again; four source-oracle runs retain zero violations and fixture **47/68**.
+
+Fresh native corpus counts remain Bootstrap **19/574**, p5 **39/4754** and
+Phaser **45/7725** in both modes, with zero pruned. Exact Bootstrap Data remains
+**0/7 browser/CommonJS and 0/8 AMD**. Formatter **22.1.8** passes all **745
+files**; the bundled 23-development formatter reports existing differences in
+nine unrelated files, which were not edited. All **seventeen code/test paths**
+byte-match committed HEAD, frozen gate input and final devbox sources. Actual
+emitted saved-identity and lifetime C++ retain fresh allocations, owning read
+copies, runtime Map/field operations and strict comparisons, without Script/VM
+context or value symbols.
 
 **Exact next boundary: independently proved own-field presence in native type
 inference.** The unchanged direct/get/guarded/saved field-return sources now
@@ -80,8 +95,16 @@ always starts with Undefined, so a Number field result is nullable and cannot
 be the numeric global `trace`. `TypeInference.cpp` deliberately seeds every
 `nativeObjectFieldGroup` read with `absentType`; a store on another allocation
 must never remove that seed. Introduce a separate live per-read origin and
-initialization proof before narrowing it. Explicit numeric field comparisons
-already execute natively; the exact raw field-return controls remain intact.
+initialization proof before narrowing it. Reuse `fieldIsAssignedBefore` for
+exact direct receivers and the existing `NativeObject/Fields` and
+`NativeMap/Presence` analysis seams for Map-loaded aliases. Keep the schema's
+full value-type join; only remove implicit absence when this read proves it.
+An explicit Undefined write must remain. `NativeObject/ValueFlow` groups
+schemas, never runtime instances. Initially refuse cross-call/loop-carried
+origins and retain conservative facts on any proof-budget exhaustion. Existing
+field emission already converts nullable storage into the inferred scalar.
+Explicit numeric field comparisons already execute natively; the exact raw
+field-return controls remain intact.
 Comparison-only fresh objects (including the historical eight-call distinct
 source) separately remain owner-complete **0/5**. A fresh post-delete read
 (the historical nine-call control) remains unowned **0/5**. The repeated-key
@@ -90,9 +113,11 @@ Data, full-bundle native initialization and direct browser API integration are
 still unfinished; this slice makes no full-bundle coverage claim.
 
 Evidence: `/tmp/ctcompile-leaf-readback-{initial,build,build2,build3,focused,
-focused2,focused2-detail,probe,probe2,execution,full}.log`, the original sixteen
+focused2,focused2-detail,probe,probe2,execution,full,full-detail,postgate}.log`,
+the original sixteen
 sources in `/tmp/ctcompile-leaf-object-next.json`, and
-`/tmp/ctcompile-leaf-readback-{candidates,root-hashes}.json`.
+`/tmp/ctcompile-leaf-readback-{candidates,boundary,root-hashes,evidence}.json`.
+The inspected emitted files are `-final-identity.cpp` and `-final-lifetime.cpp`.
 
 ## Method-local leaf object ownership and equality gates, 2026-09-08
 
