@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTNative/Analysis/PrimitiveAlternatives.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Support/TypeID.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -50,20 +51,20 @@ struct HostSlotEdge {
     ctjs::GetPropertyOp read;
 };
 
-// The tag is the existing CTJS primitive constant attribute's TypeID. It
-// describes the value category, never the value of an earlier invocation.
+// Finite primitive categories proved over the complete current call census.
+// They describe possible values, never the value of an earlier invocation.
 struct HostMethodParameters {
     ctjs::FuncOp function;
-    std::vector<mlir::TypeID> primitiveTags;
+    std::vector<PrimitiveAlternatives> alternatives;
     bool operator==(const HostMethodParameters & other) const {
-        return function == other.function && primitiveTags == other.primitiveTags;
+        return function == other.function && alternatives == other.alternatives;
     }
 };
 
 struct HostPrimitiveArgument {
     mlir::BlockArgument parameter;
     mlir::Value actual;
-    mlir::TypeID primitiveTag;
+    PrimitiveAlternatives alternatives;
 };
 
 // One immutable environment slot owns this exact standard Map, constructed

@@ -304,13 +304,13 @@ std::optional<HostCallableEdge> analyzer::propertyCall(mlir::Operation * operati
             capture->parameters, [&](const auto & member) { return member.function == function; });
         const unsigned offset = capture->argument ? 1u : 0u;
         if (parameters == capture->parameters.end() ||
-            arguments.size() != parameters->primitiveTags.size() + offset) {
+            arguments.size() != parameters->alternatives.size() + offset) {
             return {};
         }
-        for (unsigned index = 0; index < parameters->primitiveTags.size(); ++index) {
+        for (unsigned index = 0; index < parameters->alternatives.size(); ++index) {
             if (!step()) { return {}; }
             edge.arguments.push_back({function.getBody().front().getArgument(3 + offset + index),
-                                      arguments[offset + index], parameters->primitiveTags[index]});
+                                      arguments[offset + index], parameters->alternatives[index]});
         }
     }
     return edge;
@@ -521,11 +521,11 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         }
         result.parameters.push_back({member, {}});
     }
-    // Only a completed body/effect proof may publish a primitive result tag.
+    // Only a completed body/effect proof may publish finite result alternatives.
     // This is a dependency worklist, not an optimistic recursive type join:
     // an unseeded cycle cannot authorize itself. No result value is evaluated
     // or substituted, and every getter and mutation remains in runtime order.
-    llvm::DenseMap<mlir::Value, mlir::TypeID> completedResults;
+    llvm::DenseMap<mlir::Value, PrimitiveAlternatives> completedResults;
     llvm::DenseSet<mlir::Operation *> completed;
     while (completed.size() != result.parameters.size()) {
         bool progress = false;
@@ -537,14 +537,14 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                                        completedResults, parameters)) {
                 continue;
             }
-            std::optional<mlir::TypeID> tag;
-            if (!capturedMapBody(parameters.function, prepared, parameters, result, tag)) {
+            PrimitiveAlternatives alternatives;
+            if (!capturedMapBody(parameters.function, prepared, parameters, result, alternatives)) {
                 return {};
             }
-            if (tag) {
+            if (alternatives.known && (alternatives.truthy | alternatives.falsy)) {
                 for (mlir::Operation * invocation : familyCalls[index]) {
                     if (!step()) { return {}; }
-                    completedResults.try_emplace(invocation->getResult(0), *tag);
+                    completedResults.try_emplace(invocation->getResult(0), alternatives);
                 }
             }
             completed.insert(parameters.function);
@@ -601,36 +601,59 @@ bool analyzer::capturedMapCalls(ctjs::FuncOp function, ctjs::SetPropertyOp publi
     return !census.wasInterrupted() && !exhausted;
 }
 
-bool analyzer::capturedMapParameters(ctjs::FuncOp function, bool prepared,
-                                     llvm::ArrayRef<mlir::Operation *> calls,
-                                     const llvm::DenseMap<mlir::Value, mlir::TypeID> & results,
-                                     HostMethodParameters & result) {
+bool analyzer::capturedMapParameters(
+    ctjs::FuncOp function, bool prepared, llvm::ArrayRef<mlir::Operation *> calls,
+    const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
+    HostMethodParameters & result) {
     const unsigned count = function.getBody().front().getNumArguments() - (prepared ? 4u : 3u);
-    std::optional<std::vector<mlir::TypeID>> found;
+    std::optional<std::vector<PrimitiveAlternatives>> found;
     for (mlir::Operation * operation : calls) {
         if (!step()) { return false; }
         auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation);
         const auto args = direct ? direct.getArgs() : llvm::cast<ctjs::CallOp>(operation).getArgs();
-        std::vector<mlir::TypeID> tags;
+        std::vector<PrimitiveAlternatives> tags;
         for (mlir::Value actual : args.drop_front(prepared ? 1u : 0u)) {
             if (!step()) { return false; }
             auto value = primitive(actual);
             if (llvm::isa_and_nonnull<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
                                       ctjs::NullAttr, ctjs::UndefinedAttr>(value)) {
-                tags.push_back(value.getTypeID());
+                tags.push_back(PrimitiveAlternatives::forTag(value.getTypeID()));
             } else if (auto known = results.find(actual); known != results.end()) {
-                tags.push_back(known->second);
+                tags.push_back(known->second.categories());
             } else {
                 return false;
             }
         }
-        if (found && *found != tags) { return false; }
+        if (found) {
+            if (found->size() != tags.size()) { return false; }
+            for (unsigned index = 0; index < tags.size(); ++index) {
+                if (!step()) { return false; }
+                tags[index] = tags[index].joined((*found)[index]);
+            }
+        }
         found = std::move(tags);
     }
     // An uncalled zero-argument sibling can still have its effects checked;
     // the owning plan separately requires current calls for the full family.
     if (exhausted || (!found && count != 0)) { return false; }
-    result.primitiveTags = found ? std::move(*found) : std::vector<mlir::TypeID>{};
+    if (found) {
+        for (const auto & alternatives : *found) {
+            if (!step()) { return false; }
+            const auto mask = alternatives.truthy | alternatives.falsy;
+            // Extend the established exact primitive boundary only to the
+            // existing nullable String family. Unknown/empty sets and other
+            // heterogeneous parameters still lack a supported proof here.
+            constexpr unsigned nullableString = PrimitiveAlternatives::String |
+                                                PrimitiveAlternatives::Null |
+                                                PrimitiveAlternatives::Undefined;
+            if (!alternatives.known || !mask ||
+                (!alternatives.tag() &&
+                 (!(mask & PrimitiveAlternatives::String) || (mask & ~nullableString)))) {
+                return false;
+            }
+        }
+    }
+    result.alternatives = found ? std::move(*found) : std::vector<PrimitiveAlternatives>{};
     return true;
 }
 

@@ -200,13 +200,15 @@ void checkCapturedParameters(mlir::MLIRContext & context, const std::string & sh
             check(edge.capturedMap && edge.capturedMap->parameters.size() == 2,
                   "every call retains the complete per-method primitive parameter family");
             if (!edge.capturedMap || edge.capturedMap->parameters.size() != 2) { continue; }
-            check(static_cast<bool>(edge.capturedMap->argument) == prepared &&
-                      edge.capturedMap->parameters.front().function == getter &&
-                      edge.capturedMap->parameters.front().primitiveTags.empty() &&
-                      edge.capturedMap->parameters.back().function == setter &&
-                      edge.capturedMap->parameters.back().primitiveTags ==
-                          std::vector{stringTag, numberTag},
-                  "the getter remains zero-argument and setter tags retain formal order");
+            check(
+                static_cast<bool>(edge.capturedMap->argument) == prepared &&
+                    edge.capturedMap->parameters.front().function == getter &&
+                    edge.capturedMap->parameters.front().alternatives.empty() &&
+                    edge.capturedMap->parameters.back().function == setter &&
+                    edge.capturedMap->parameters.back().alternatives ==
+                        std::vector{ctcompile::ctnative::PrimitiveAlternatives::forTag(stringTag),
+                                    ctcompile::ctnative::PrimitiveAlternatives::forTag(numberTag)},
+                "the getter remains zero-argument and setter tags retain formal order");
             if (edge.function == getter) {
                 check(edge.arguments.empty(), "the Map environment is not a getter parameter");
                 continue;
@@ -220,8 +222,8 @@ void checkCapturedParameters(mlir::MLIRContext & context, const std::string & sh
                       edge.arguments[1].parameter == body.getArgument(prepared ? 5 : 4) &&
                       edge.arguments[0].actual == edge.call->getOperand(prepared ? 4 : 2) &&
                       edge.arguments[1].actual == edge.call->getOperand(prepared ? 5 : 3) &&
-                      edge.arguments[0].primitiveTag == stringTag &&
-                      edge.arguments[1].primitiveTag == numberTag &&
+                      edge.arguments[0].alternatives.tag() == stringTag &&
+                      edge.arguments[1].alternatives.tag() == numberTag &&
                       edge.arguments[0].actual != previousKey &&
                       edge.arguments[1].actual != previousValue,
                   "each call keeps its own key and payload SSA values after the capture offset");

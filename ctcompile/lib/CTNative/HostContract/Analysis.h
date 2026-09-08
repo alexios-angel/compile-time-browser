@@ -40,11 +40,11 @@ struct analyzer {
                           llvm::SmallVectorImpl<mlir::Operation *> & calls);
     bool capturedMapParameters(ctjs::FuncOp function, bool prepared,
                                llvm::ArrayRef<mlir::Operation *> calls,
-                               const llvm::DenseMap<mlir::Value, mlir::TypeID> & results,
+                               const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
                                HostMethodParameters & result);
     bool capturedMapBody(ctjs::FuncOp function, bool prepared,
                          const HostMethodParameters & parameters, HostCapturedMap & result,
-                         std::optional<mlir::TypeID> & returnTag);
+                         PrimitiveAlternatives & returnAlternatives);
     ctjs::CreateObjectOp object(mlir::Value value, unsigned depth = 0);
     mlir::Attribute primitive(mlir::Value value, unsigned depth = 0);
     std::optional<bool> truth(mlir::Value value, unsigned depth = 0);

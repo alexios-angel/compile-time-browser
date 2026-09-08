@@ -11,7 +11,7 @@ namespace ctcompile::ctnative::host_detail {
 
 bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                                const HostMethodParameters & parameters, HostCapturedMap & result,
-                               std::optional<mlir::TypeID> & returnTag) {
+                               PrimitiveAlternatives & returnAlternatives) {
     // This is an effects and ownership proof, not an evaluation of the first
     // invocation. The immutable slot always denotes this Map; its contents
     // may change at every call. A complete body census closes all writes over
@@ -107,15 +107,14 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
     if (prepared) { maps.insert(body.getArgument(3)); }
     const unsigned offset = prepared ? 4u : 3u;
     if (parameters.function != function ||
-        parameters.primitiveTags.size() != body.getNumArguments() - offset) {
+        parameters.alternatives.size() != body.getNumArguments() - offset) {
         return false;
     }
     for (mlir::BlockArgument parameter : body.getArguments().drop_front(offset)) {
         if (!step()) { return false; }
         primitives.insert(parameter);
         alternatives.try_emplace(parameter,
-                                 PrimitiveAlternatives::forTag(
-                                     parameters.primitiveTags[parameter.getArgNumber() - offset]));
+                                 parameters.alternatives[parameter.getArgNumber() - offset]);
     }
     ctjs::ReturnOp returned;
     // SSA scalar facts and the complete use census are immutable across paths.
@@ -387,9 +386,9 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
         }
     }
     // Unproved Map.get results remain potentially nullable/mixed. Even a
-    // local definite tag still needs the independent native Map schema and
+    // local finite result still needs the independent native Map schema and
     // presence analyses before a consuming formal can acquire a C++ carrier.
-    returnTag = primitiveTag(returned.getValue());
+    returnAlternatives = alternatives.lookup(returned.getValue());
     return true;
 }
 

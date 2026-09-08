@@ -271,10 +271,11 @@ void checkSharedMap(mlir::MLIRContext & context) {
                   edge.arguments.front().parameter ==
                       setter.getBody().front().getArgument(lifted ? 4 : 3) &&
                   edge.arguments.front().actual == edge.call->getOperand(lifted ? 4 : 2) &&
-                  edge.arguments.front().primitiveTag == tag &&
+                  edge.arguments.front().alternatives.tag() == tag &&
                   table.calls.back().arguments.empty() &&
                   table.capturedMap->parameters.back().function == setter &&
-                  table.capturedMap->parameters.back().primitiveTags == std::vector{tag},
+                  table.capturedMap->parameters.back().alternatives ==
+                      std::vector{ctcompile::ctnative::PrimitiveAlternatives::forTag(tag)},
               "formal/actual SSA evidence separates the Map environment from the explicit key");
         const auto actual = edge.arguments.front().actual;
         const unsigned operand = lifted ? 4u : 2u;
@@ -327,9 +328,10 @@ void checkSharedMap(mlir::MLIRContext & context) {
     refuse(replaced(parameterized, "    %putResult = ctjs.call %putter(%owned, %actual)", ""),
            "an uncalled parameterized sibling has no independently proved parameter tags");
     refuse(replaced(parameterized, "    %answer = ctjs.call %getter(%owned)",
-                    "    %second = ctjs.call %putter(%owned, %u)\n"
+                    "    %incompatible = ctjs.constant #ctjs.boolean<false>\n"
+                    "    %second = ctjs.call %putter(%owned, %incompatible)\n"
                     "    %answer = ctjs.call %getter(%owned)"),
-           "all current actuals must agree on each parameter's primitive tag");
+           "a Boolean actual cannot join the String parameter family");
     auto fromResult = replaced(parameterized, "    %putResult = ctjs.call %putter(%owned, %actual)",
                                "    %priorGetter = ctjs.get_property %owned[%key]\n"
                                "    %prior = ctjs.call %priorGetter(%owned)\n"
@@ -385,7 +387,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
             const auto & calls = query.roots().front().methodTable->calls;
             check(calls.size() == 3 && calls[1].arguments.size() == 1 &&
                       calls[1].arguments.front().actual == calls[0].call->getResult(0) &&
-                      calls[1].arguments.front().primitiveTag ==
+                      calls[1].arguments.front().alternatives.tag() ==
                           mlir::TypeID::get<ctjs::NumberAttr>() &&
                       calls[0].call->isBeforeInBlock(calls[1].call) &&
                       calls[1].call->isBeforeInBlock(calls[2].call),
@@ -415,11 +417,13 @@ void checkSharedMap(mlir::MLIRContext & context) {
                       empty(*module, stale),
                   "a producing return mutation invalidates the supplied fingerprint");
             OwnedGlobalRoots changed(*module, requested(*module));
-            check(
-                changed.proved() &&
-                    changed.roots().front().methodTable->calls[1].arguments.front().primitiveTag ==
-                        mlir::TypeID::get<ctjs::BooleanAttr>(),
-                "a fresh proof rederives the producer's changed tag for the consuming formal");
+            check(changed.proved() &&
+                      changed.roots()
+                              .front()
+                              .methodTable->calls[1]
+                              .arguments.front()
+                              .alternatives.tag() == mlir::TypeID::get<ctjs::BooleanAttr>(),
+                  "a fresh proof rederives the producer's changed tag for the consuming formal");
             returned->setOperand(0, getter.getBody().front().getArgument(0));
             OwnedGlobalRoots external(*module, requested(*module));
             check(!external.proved() && empty(*module, external),
