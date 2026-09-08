@@ -129,4 +129,11 @@ if(CTCOMPILE_ENABLE_MLIR)
   target_link_libraries(ctcompile-test-host-contract PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-host-contract)
   add_test(NAME ctcompile_host_contract COMMAND ctcompile-test-host-contract)
+  # checkSeededMapResults - the seeded/per-key/joined Map result proofs over the
+  # shared two-method fixture - has been its own executable since 2026-09-08,
+  # when HostContract.cpp reached 1,068 lines. Same fixtures (HostContractFixtures.h).
+  add_executable(ctcompile-test-host-contract-seeded-maps HostContractSeededMaps.cpp)
+  target_link_libraries(ctcompile-test-host-contract-seeded-maps PRIVATE CTNativeAnalysis MLIRParser)
+  ctcompile_target(ctcompile-test-host-contract-seeded-maps)
+  add_test(NAME ctcompile_host_contract_seeded_maps COMMAND ctcompile-test-host-contract-seeded-maps)
 endif()
