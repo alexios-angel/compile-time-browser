@@ -694,8 +694,14 @@ snapshot refusals, and budgets **17225/29477/20285/12808**, with **29/31/31/32**
 cutoffs and no natural speculative rollback interval. Local tests pass **59
 observations and 28 refusals** across both storage layouts, plus a standalone
 numeric-payload helper test. Four host/owner CTests pass in **26.38 seconds**;
-seven targeted lit tests pass in **29.72 seconds**. The final generated build
-and complete CTest gate are still running; see `HANDOFF.md` for final results.
+seven targeted lit tests pass in **29.72 seconds**. The final warning-free
+**247-step generated build succeeds**; CTest passes **512/517 in 1024.81 seconds**,
+including **372/372 compiler tests**. Only the five recorded browser failures
+remain. All **165/165 lit cases pass in 419.57 seconds**, including the complete
+118-program driver after its provenance correction. Formatter **22.1.8** passes
+all **745 files**; all **nineteen code/test paths** match committed HEAD, frozen
+input and final devbox source. Corpus and exact Data counts remain unchanged;
+see [HANDOFF.md](HANDOFF.md) for the measurements and logs.
 
 ## Next boundary
 

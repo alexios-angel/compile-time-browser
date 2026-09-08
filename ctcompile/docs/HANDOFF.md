@@ -30,8 +30,8 @@ The **eleven-call** homogeneous and **eighteen-call** original witnesses advance
 **thirteen-call** String/Null/Undefined/empty String identity case admits **6/6**
 with **trace=4**, versus **trace=2** for normalization. Boolean composition and
 the **nineteen-call** second-use case also admit **6/6**. All source calls remain.
-All **118 positive programs** and **fourteen lifetime families** pass explicit/
-deduced GCC/Clang, identity and sanitizer checks. The new saved setter owns its
+All **118 positive programs** pass explicit/deduced GCC/Clang and identity checks;
+the **fourteen lifetime families** pass sanitizers. The new saved setter owns its
 keys through caller-buffer mutation, deletion/reinsertion, independent reentry
 and final Map release. Fifteen nullable identity observers and **46 identity
 mutations** include 25 new mutations; nine new structural mutations discriminate.
@@ -44,9 +44,16 @@ budgets **17225/29477/20285/12808** pass, with **29/31/31/32** cutoffs and no na
 speculative rollback interval. Four host/owner CTests pass in **26.38 seconds**;
 seven targeted lit cases pass in **29.72 seconds**. The local gate passes **59
 observations and 28 refusals** under both layouts, plus the isolated numeric
-payload test. Formatter **22.1.8** passes all **745 files**. The warning-free
-**247-step generated build succeeds**; the complete CTest gate is still running.
-Final full-suite and corpus counts will replace this checkpoint when complete.
+payload test. Formatter **22.1.8** passes all **745 files**. The final warning-free
+**247-step generated build succeeds**. CTest passes **512/517 in 1024.81 seconds**:
+**372/372 compiler** and **140/145 browser** tests. Only the recorded `selectors`,
+`frames`, `element_attrs`, `vm_async` and `early_errors` failures remain. All
+**165/165 lit cases pass in 419.57 seconds**, including the complete published
+driver after the provenance correction; exception recovery passes in
+**1.17 seconds**. All **nineteen code/test paths** match committed HEAD, frozen
+gate input and final devbox source. Inspected nullable-key output copies owned
+Strings into tag-aware storage and preserves Null/Undefined, with no Script
+symbol or VM context.
 
 Escape contents admit only noncapturing `StrictEq` and `ToBoolean` producers.
 Every structural edge remains checked; coercing comparisons/conversions and
@@ -60,6 +67,11 @@ adds coverage relative to **35/47**; corpus precision remains **0/64, 0/16, 0/20
 This is not a corpus precision gain. Other primitive selector producers and
 loops still need complete proofs.
 
+Fresh native components remain **Bootstrap 19/574, p5 39/4754, Phaser 45/7725**
+in both modes, zero pruned. Exact Data remains **0/7 browser, 0/7 CommonJS,
+0/8 AMD**, zero pruned. The new key support advances the focused published
+Map programs; it does not yet increase whole-Bootstrap native coverage.
+
 **Exact next boundary: nullable payload storage.** Change only the small
 accepted setter from `state.set(key, true)` to `state.set(key, key)`. The
 **eleven-call**, **trace=2** program retains complete host ownership but stays
@@ -72,12 +84,14 @@ has no host owner proof and remains **0/6**; object identity/fields are a
 separate Bootstrap obligation. Full native Bootstrap Data, browser integration,
 general exports and native throwing-call admission remain unfinished.
 
-Evidence: `/tmp/ctcompile-nullable-keys-focused.log`, `-escape.log`, `-native.log`,
-`-controls.log`, `-full.log` and `-boundary.json`. The full native driver is rerun
-by CTest after the provenance correction. Frozen input is recorded in
-`/tmp/ctcompile-nullable-keys-snapshot.txt`; fourteen native and five escape
-code/test files match their frozen input. Complete next sources are in
-`native-owned-global-maps.md` and devbox `/tmp/ctcompile-nullable-keys-next/`.
+Evidence: `/tmp/ctcompile-nullable-keys-focused.log`, `-escape.log`, `-controls.log`,
+`-full.log`, `-evidence.json`, `-boundary.json` and `-postgate.log`. The initial
+published-driver failure remains in `-native.log`; the complete driver passes
+in the final full gate. Frozen input is recorded in
+`/tmp/ctcompile-nullable-keys-snapshot.txt`; generated output is saved in
+`/tmp/ctcompile-nullable-keys-string.cpp` and `-mixed.cpp`. Complete next sources
+are in `native-owned-global-maps.md` and devbox
+`/tmp/ctcompile-nullable-keys-next/`.
 
 ## Nullable Map methods and opaque-register checkpoint, 2026-09-08
 
