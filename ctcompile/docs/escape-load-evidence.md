@@ -497,7 +497,11 @@ object, conditional and frame cases still pass. All four execution oracles
 report zero violations; fixture precision remains **22/33** and Bootstrap,
 p5 and Phaser remain **0/64, 0/16 and 0/20**. Log:
 `/tmp/ctcompile-saved-checkpoint.log`. Homebrew clang-format 22.1.8 passes all
-742 files; whitespace checks pass. The complete generated gate is pending.
+742 files; whitespace checks pass. The full 243-step generated build succeeds;
+CTest passes **372/372 compiler tests**, including **165/165 lit cases**, and
+**140/145 browser tests**. Overall **512/517 in 864.73 seconds** leaves only
+the five recorded browser failures. Final log: `/tmp/ctcompile-saved-full.log`;
+evidence: `/tmp/ctcompile-saved-evidence.json`.
 Source fixtures, runtime behavior and native ownership admission are unchanged.
 Loops, external contents, additional selector producers and native lifetime
 consumers remain separate work.

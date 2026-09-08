@@ -56,10 +56,24 @@ report zero violations. Precision stays **22/33** for the fixture and **0/64,
 loops, external contents and native lifetime consumers remain separate work.
 
 Homebrew clang-format **22.1.8** passes **742 files** and whitespace checks pass.
-The full **243-step generated devbox build succeeds**; the complete **517-test
-CTest gate is running** at `/tmp/ctcompile-saved-full.log`. The previous full
-compiler gate passed 372/372; the five browser failures remain the recorded
-baseline. Final combined totals and fresh corpus counts are not yet measured.
+The full **243-step generated devbox build succeeds**. CTest finishes
+**512/517 in 864.73 seconds**, comprising **372/372 compiler** and **140/145
+browser**. Only the recorded `selectors`, `frames`, `element_attrs`, `vm_async`
+and `early_errors` failures remain. All **165/165 lit cases** pass in **264.08
+seconds**; source exception recovery passes in **1.16 seconds**.
+Log: `/tmp/ctcompile-saved-full.log`; evidence:
+`/tmp/ctcompile-saved-evidence.json`. All eleven changed code/test paths
+byte-match the final devbox input and committed source; all thirteen frozen
+code/test/document paths matched the implementation checkpoint.
+
+Fresh component coverage remains **19/574 Bootstrap**, **39/4754 p5** and
+**45/7725 Phaser** in both optimization modes, with zero pruned functions.
+Exact Data remains **0/7 browser**, **0/7 CommonJS**, **0/8 AMD**. These are
+compile-admission counts, not complete native initialization or execution.
+The inspected `/tmp/ctcompile-saved-string.cpp` makes two owning `std::string`
+copies, retaining each across its source entry's overwrite and deletion.
+The second copy returns by value to the live setter. No Script symbols,
+interpreter context or collector occur in the emitted program.
 
 **Exact next native boundary:** selecting a saved value with
 `flag ? state.get('other') : state.get('')` remains **0/6 native** in both modes,
@@ -70,7 +84,11 @@ run the existing write/read/delete chain. Call `set(get(false))` and
 Replacing the selection with `state.get('')` yields **2** and admits **6/6**.
 The next proof must handle live control-flow joins in the host method body as
 well as native scalar facts; an observed startup branch cannot authorize future
-calls. Evidence: `/tmp/ctcompile-saved-boundary.json`; exact sources:
+calls. `HostContract/Values.cpp` currently requires a single-block method
+and does not admit truthy/branch/yield operations in that body. Keep the two
+calls as standalone statements: placing their results in a weighted numeric
+observer also loses ownership for the straight-line control. Final evidence:
+`/tmp/ctcompile-saved-boundary-final.json`; exact sources:
 `/tmp/ctcompile-saved-next/saved_join.js` and `saved_join_always_empty.js` on the
 devbox. Exact Bootstrap Data and complete native initialization remain unfinished.
 

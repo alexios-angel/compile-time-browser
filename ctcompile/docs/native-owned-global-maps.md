@@ -481,8 +481,10 @@ read/overwrite/delete before return and final Map release. Native budget probes
 complete at **8150/8340/8334/8871**, with **30/32/32/32** cutoffs checked.
 Log: `/tmp/ctcompile-saved-gate2.log`. The local mixed gate passes **21
 observations and ten refusals**, and seven targeted lit cases pass. Combined
-focused CTest passes **12/12 in 29.05 seconds**; final full-gate evidence is in
-[HANDOFF.md](HANDOFF.md).
+focused CTest passes **12/12 in 29.05 seconds**. The full generated build
+succeeds, with **372/372 compiler CTests** and **165/165 lit cases** passing;
+overall **512/517** leaves only five existing browser failures. Final full-gate
+evidence is in [HANDOFF.md](HANDOFF.md).
 
 ## Next boundary
 
@@ -494,7 +496,7 @@ chain. Calling `set(get(false))` and `set(get(true))` yields Node/interpreter
 retained** and no host owner proof. Replacing the selection with `state.get('')`
 yields **2** and admits **6/6**. The host method body's live control-flow join
 needs proof before native scalar propagation can complete this case.
-Evidence: `/tmp/ctcompile-saved-boundary.json`; sources on the devbox:
+Evidence: `/tmp/ctcompile-saved-boundary-final.json`; sources on the devbox:
 `/tmp/ctcompile-saved-next/saved_join.js` and `saved_join_always_empty.js`.
 The unseeded `get() { return state.get(0); }` also remains refused: neither an
 earlier observed invocation nor an incomplete family establishes its result.

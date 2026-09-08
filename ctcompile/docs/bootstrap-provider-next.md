@@ -239,7 +239,7 @@ admits **6/6**. Extend the live host method-body proof across that join before
 feeding independent scalar result facts into native preparation. Preserve all
 paths, operations, aliases, missing results and work-budget rollback; startup
 observations cannot authorize later callers.
-Evidence: `/tmp/ctcompile-saved-boundary.json`; exact sources are recorded in
+Evidence: `/tmp/ctcompile-saved-boundary-final.json`; exact sources are recorded in
 [the Map checkpoint](native-owned-global-maps.md#next-boundary).
 
 Exact Bootstrap Data, general realm owners and future-call contracts remain
