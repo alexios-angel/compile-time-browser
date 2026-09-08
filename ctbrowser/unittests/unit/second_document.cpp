@@ -3,7 +3,7 @@
 // Its own file because what it pins down is a MODEL rather than a method: a
 // second Document here is a second `dom_bindings` over its own tree, sharing
 // the realm, the atom table and the interface objects with the page's own. The
-// block above `adopt_interfaces_of` in lib/Shell/bindings/document.cpp is the
+// block above `adopt_interfaces_of` in lib/Shell/bindings/document/second_document.cpp is the
 // decision; these cases are the parts of it that would otherwise drift.
 //
 // TWO OF THEM ASSERT THAT SOMETHING DOES NOT WORK, and those are the important

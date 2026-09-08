@@ -8,7 +8,7 @@ namespace ctbrowser {
 namespace {
 
 // The three namespaces "adjust foreign attributes" can put an attribute in.
-// Spelled out rather than derived, for the reason bindings/document.cpp spells
+// Spelled out rather than derived, for the reason bindings/document/internal.hpp spells
 // its four out: one wrong character makes the lookup miss on the valid case and
 // nothing about the failure says so.
 constexpr std::string_view xlink_namespace = "http://www.w3.org/1999/xlink";

@@ -84,7 +84,7 @@ CT_GC_ROOT(/* name */ bigint_cache, /* owner */ "context::bigint_cache_",
  *
  * AND IT IS A SINGLE SLOT: `set_external_roots` ASSIGNS a std::function, so a
  * second caller silently replaces the first. Today the one caller is
- * dom_bindings::register_roots (ctbrowser/lib/Shell/bindings/document.cpp:71).
+ * dom_bindings::register_roots (ctbrowser/lib/Shell/bindings/document/entry.cpp).
  * Phase 4 is told to route AOT frames through this mechanism rather than
  * inventing a parallel one - and doing that naively would UNREGISTER THE DOM,
  * whose failure mode is a page's listeners being collected while the page is

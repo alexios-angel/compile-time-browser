@@ -14,7 +14,17 @@ target_sources(ctbrowser-shell
     # The web platform bound to the VM. bindings.cpp was 3,926 lines and
     # webgl_bindings.cpp another 1,431, filed under page/ although it is the
     # same job as its five siblings here.
-    bindings/document.cpp
+    # The document. document.cpp reached 3,071 lines and was split on 2026-09-08
+    # into a directory of eight, one concern each, sharing
+    # bindings/document/internal.hpp.
+    bindings/document/entry.cpp
+    bindings/document/install.cpp
+    bindings/document/second_document.cpp
+    bindings/document/named_access.cpp
+    bindings/document/tree_accessors.cpp
+    bindings/document/as_node.cpp
+    bindings/document/tree_ops.cpp
+    bindings/document/collections.cpp
     # The element wrapper. element.cpp reached 5,442 lines and was split on
     # 2026-09-08 into a directory of twelve, one concern each, sharing
     # bindings/element/internal.hpp.
@@ -37,7 +47,7 @@ target_sources(ctbrowser-shell
     bindings/exceptions.cpp
     # <iframe>: a nested browsing context, which here is a SECOND dom_bindings
     # over its own tree - the model createHTMLDocument already uses - plus the
-    # bytes and the load event. Its own file because neither document.cpp nor
+    # bytes and the load event. Its own file because neither document/ nor
     # element/ owns "a document inside a document".
     bindings/frames.cpp
     # MutationObserver: its own file because it is not a binding over the DOM so

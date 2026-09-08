@@ -113,6 +113,11 @@ its header, and the header did not change:
   file needs. Two ~900-line single functions were left whole; the 1,036-line
   `install_element_methods` was split at three seams that shared nothing but a
   three-line lambda, which each new function re-creates.
+- `ctbrowser/lib/Shell/bindings/document/` — eight, from a 3,071-line `document.cpp`
+  (2026-09-08), with `internal.hpp` beside them holding the name productions
+  (namespace URIs, qualified names, the element/doctype/attribute/XML Name
+  rules) every file needs, inline. No function was split and the public header
+  did not change.
 - `ctbrowser/lib/Script/compile/` — eleven, from 3,845, with the class declared in
   `compiler_impl.hpp` beside them. See below; it was the hardest of the four.
 
