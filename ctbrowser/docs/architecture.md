@@ -110,6 +110,11 @@ its header, and the header did not change:
 - `ctbrowser/lib/Shell/bindings/` — seven, from 3,926 plus a stray 1,431 filed elsewhere.
 - `ctbrowser/lib/Script/compile/` — eleven, from 3,845, with the class declared in
   `compiler_impl.hpp` beside them. See below; it was the hardest of the four.
+- `ctbrowser/lib/Shell/browser/` — ten, from 2,871, on 2026-09-08. `browser.hpp` did
+  not change: the files are the class's method bodies by concern (lifecycle,
+  frame, styles, scripts, resources, chrome, selection, input, focus, actions),
+  and `internal.hpp` beside them holds only the includes browser.cpp had. The
+  three anonymous-namespace helpers each had one caller and stayed with it.
 
 ### What splitting the compiler cost, measured
 

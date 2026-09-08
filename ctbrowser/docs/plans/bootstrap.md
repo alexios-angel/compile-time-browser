@@ -908,7 +908,7 @@ picture is better - 58 → 55 screen cells - and the mechanism is right.
 
 1. **`clientWidth` disagrees with the width layout actually used.**
    `browser::run_layout` re-runs layout at `width - scrollbar_width` when a page
-   overflows (`ctbrowser/lib/Shell/browser.cpp`), but `documentElement.clientWidth` still
+   overflows (`ctbrowser/lib/Shell/browser/frame.cpp`), but `documentElement.clientWidth` still
    reports the full viewport (`ctbrowser/lib/Shell/bindings/element.cpp`). So the harness's
    viewport cross-check passes — both engines say 1024 — while every `@x` and
    `@w` carries a 15px error. One of the two is wrong and they cannot both stay.
@@ -1177,7 +1177,7 @@ that wall clock here varies ±10% and that a change once looked like 10% and was
 | declaration bag | **≤ 20 bytes/entry** (36 + a heap allocation today) |
 
 A hover currently re-resolves the whole document
-(`ctbrowser/lib/Shell/browser.cpp`). Record per sheet whether any selector has a state
+(`ctbrowser/lib/Shell/browser/chrome.cpp`, `set_state`). Record per sheet whether any selector has a state
 requirement on a *non-subject* compound; for Bootstrap that is false, so a hover
 can re-resolve only that element and its descendants.
 

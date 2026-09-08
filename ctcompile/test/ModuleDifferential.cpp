@@ -11,7 +11,7 @@
 //   `modules_` is empty. There is no fixture shape that reaches three of these
 //   four opcodes from that harness at all.
 //
-// So this builds a THREE-MODULE GRAPH the way browser.cpp does - register the
+// So this builds a THREE-MODULE GRAPH the way browser/scripts.cpp does - register the
 // records, fill `resolved`, instantiate every module, then evaluate in
 // dependency order - and installs a compiled entry on ONE of them.
 //
@@ -232,7 +232,7 @@ struct graph {
                     return inner.make_promise(inner.string("dep-namespace"), false);
                 }
                 // A MISSING MODULE IS AN ALREADY-REJECTED SETTLED PROMISE AND
-                // NOT A FAILURE, which is what browser.cpp's own loader
+                // NOT A FAILURE, which is what browser/scripts.cpp's own loader
                 // answers. A lowering that treated it as a control-flow event
                 // would return out of the body and the second half of the
                 // answer would vanish.
