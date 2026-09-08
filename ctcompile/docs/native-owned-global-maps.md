@@ -1,28 +1,33 @@
 # Native captured Maps across global publication
 
-## Saved local leaf reads, 2026-09-08
+## Initialized local fields, 2026-09-08
 
-Commit `5599ae86` preserves independently proved method-local object origins
-through same-key Map.get. Saved aliases survive replacement and deletion;
-definitely initialized fixed scalar fields can be read and updated through
-those aliases. The complete host/owner census records exact field reads and
-rejects cross-branch invalid SSA even under forged reports. Native present
-identity reads copy their shared owner from the existing finite Map payload.
+`aac9fd27` removes implicit absence from a field read only after a fresh bounded
+allocation/initialization proof. `507fe153` gates all seven unchanged raw direct,
+Map-loaded and saved-alias field results: **5/5 native** in both modes with
+Node/interpreter and explicit/deduced GCC/Clang agreement. The raw saved setter
+passes future numeric arguments and ASan/UBSan/leak lifetime checks. No runtime
+carrier or browser source changed.
 
-The exact eight-call saved-identity source now admits **5/5**, trace=1. The
-focused execution gate passes **17 programs** with both native modes,
-explicit/deduced GCC/Clang, no VM symbols and saved-callable lifetime sanitizers.
-Nine exact programs now have complete owners but retain native carrier/result
-refusals; eleven unsafe source families retain host refusals and exact repairs.
-All old source bytes remain. Full devbox CTest passes **512/517**, including all
-**372 compiler tests** and **165 lit cases**; five existing browser failures
-remain. The complete Map driver checks **163 programs/twenty lifetime families**.
-See [HANDOFF.md](HANDOFF.md) for measured budgets and the precise next boundary.
+Exact allocation origins remain independent of schema families and current Map
+entries. Saved reads survive overwrite/delete and see later scalar alias writes.
+Both branches must preserve initialization. Unknown effects also invalidate
+later fresh allocations; calls/loop-carried origins, accessors, stale constructor
+or method source and cross-scope values withhold the proof. Full schema type
+joins retain explicit Undefined/Boolean stores on any allocation. Two exact
+complete-owner carrier refusals and their one-edit repairs gate that distinction.
 
-Raw scalar field returns still include Undefined in native type inference.
-A separate live per-read initialization proof must narrow that possibility;
-another allocation's same-named field cannot supply it. Comparison-only fresh
-objects and fresh post-delete reads remain distinct proof boundaries.
+The final focused gate passes **14/14 CTests in 17.08 seconds**, seven native
+programs and the raw lifetime family. Inference budgets are **89/89/30/112**;
+native budgets **3464/3957/4555**, with **31/33/29 cutoffs**. All 295 historical
+helper source rows and sixteen prior probes preserve bytes. The integrated
+170-program/21-lifetime full gate is pending. See [HANDOFF.md](HANDOFF.md).
+
+The next measured gap is comparison-only fresh identity recognition: exact
+six/eight-call programs have complete owners but remain **0/5**. Their saved
+identity repairs remain **5/5**. Exact seven/nine-call post-delete sources remain
+unowned **0/5** and need a separate definite-absence proof; `present=false` is
+not sufficient. Full Bootstrap Data and browser API integration remain open.
 
 
 The [publication specimen](../test/CTNative/native-export-boundary.js)

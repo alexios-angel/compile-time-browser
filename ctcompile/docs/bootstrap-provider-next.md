@@ -1,30 +1,31 @@
 # Next Bootstrap native boundary
 
-## Current continuation: native own-field presence, 2026-09-08
+## Current continuation: comparison-only fresh identities, 2026-09-08
 
-`5599ae86` closes the historical eight-call saved local object identity case:
-**5/5 native** in both modes, trace=1, through overwrite/delete. Host proofs now
-also close local own-field reads and alias writes; the focused gate executes
-seventeen scalar-observation programs with standalone ownership/lifetime checks.
+`aac9fd27` closes the native own-field presence boundary from `e385f885`.
+`507fe153` gates all seven unchanged raw field-return programs at **5/5 native**
+in both modes, with Node/interpreter and explicit/deduced GCC/Clang agreement,
+no VM symbols, and raw saved-callable ASan/UBSan/leak lifetime checks. The live
+per-read query retains exact saved object origins across Map overwrite/delete
+and later field writes. Only implicit absence disappears; every explicit schema
+value type remains. Fourteen focused CTests pass; the full gate is pending.
 
-The unchanged direct/get/guarded/saved field-return programs now have complete
-owners but remain **0/5 native**. The identity-field schema intentionally starts
-with Undefined (`TypeInference.cpp`, `nativeObjectFieldGroup` read rule).
-A new per-read initialization proof must keep saved allocation origins separate
-from current Map entries and other allocations before removing that seed.
-Do not transfer startup provider tokens or host result reports as authority.
-Keep exact raw sources; numeric-comparison variants already execute their field
-reads and writes and do not replace those controls.
+The next independently measured controls are comparison-only fresh objects:
+`local_identity_distinct_fresh` (**5 functions/6 calls/trace=0**) and
+`historical_object_distinct_identity` (**5/8/0**) have complete owners but remain
+**0/5 native** in both modes. Their unchanged saved-identity repairs (**5/6/1**
+and **5/8/1**) remain **5/5**. `prepareNativeObjectIdentities` currently skips
+families without Map key/payload use. Prove complete strict-comparison uses of
+fresh allocations independently; keep real distinct identities and scalar
+field writes. A comparison must not unify its operands into one runtime object.
 
-Comparison-only fresh allocation identity (historical eight-call distinct
-control), fresh post-delete values (nine-call control), String/object field
+The local/historical fresh post-delete controls (**5/7/0**, **5/9/0**) stay
+unowned **0/5**, with source calls intact. Their separate host proof needs
+exact-key definite absence; current `present=false` also means maybe absent.
+Do not infer Undefined from it. Entry numeric addition, String/object field
 carriers, full Bootstrap Data and native browser API integration remain open.
-The repeated-key trace=3 entry additionally needs numeric addition admission.
-Full devbox gate: **512/517 CTests**, all **372 compiler tests** and **165 lit
-cases** pass; only five existing browser failures remain. The complete published
-Map driver covers **163 programs and twenty lifetime families**. Fresh native
-Bootstrap coverage remains **19/574**, exact Data **0/7 browser/CommonJS and
-0/8 AMD**. See [HANDOFF.md](HANDOFF.md) for measured budgets and source hashes.
+No full-bundle admission gain is claimed. See [HANDOFF.md](HANDOFF.md) for the
+six-case measurements and `/tmp/ctcompile-field-presence-next.json` sources.
 
 
 The [diagnostic and callback increment](native-provider-diagnostics.md) and

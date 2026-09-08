@@ -6,6 +6,108 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Initialized own-field results and arithmetic escape gates, 2026-09-08
+
+Committed locally on `ctcompile-v1`: **`aac9fd27`** adds live per-read field
+initialization, **`56569199`** adds primitive arithmetic escape origins, and
+**`507fe153`** gates raw field results and saved lifetimes. This resumes the
+exact next boundary in **`e385f885`** and the **21:32:43 synchronization
+journal**. The starting tree/index was clean; `codex-wip-20260907` was already
+recovered, gated and merged. Three agents handled inference regressions,
+execution/lifetimes and escape proofs. No browser/runtime files changed,
+no history was rewritten and nothing was pushed.
+
+All **seven unchanged raw field-return sources advance 0/5 -> 5/5 native** in
+both modes: direct, Map.get, guarded get, saved overwrite, saved delete, saved
+alias write and the future-argument lifetime program. Their source call counts
+remain **5/6/6/7/7/6/8** and traces **1/1/1/1/1/2/2**, agreeing across Node,
+the interpreter and standalone explicit/deduced GCC/Clang, without VM symbols.
+All **295 historical helper source rows** and sixteen prior boundary probes
+preserve their bytes. The raw saved setter passes ASan/UBSan, stack lifetime
+and leak checks across 128 future numeric calls, owner/table release, Map
+replacement/deletion, reentry and final Map/leaf release. Both independently
+retained leaves and later alias field writes are observed.
+
+The new bounded query lives in `NativeObject/Fields`. Standard Map recognition
+remains an upstream prerequisite; schema groups, Map presence/type annotations
+and host/provider reports supply no allocation or initialization authority.
+Live same-function allocation origins follow exact-instance/key Map writes and
+reads. Saved aliases survive Map mutation. Branches intersect origin and field
+facts; cross-call and loop-carried origins refuse. Unknown effects permanently
+invalidate that path's field environment, including for later allocations.
+Live constructor/method keys, receiver/arity, source dominance, prototype and
+accessor checks reject stale annotations. Imported frame/root bookkeeping and
+machine constants have no source property effects and are handled explicitly.
+
+`fieldIsAssignedBefore` consumes fresh cached per-read facts for owning
+identities; existing direct closed-object dominance remains. Inference removes
+only implicit absence, preserving **every explicit stored type**, even an
+Undefined or Boolean on another allocation in the same schema. A pending value
+join stays pending until its stores are inferred. Existing field emission
+already converts nullable storage into the proved scalar; no new runtime
+carrier or browser implementation was needed.
+
+Final focused gate: **14/14 CTests in 17.08 seconds**, including type inference,
+all eight escape analysis/claims tests and four type oracles, all with zero
+soundness violations. Inference checks **37 table rows**, live/fresh mutations,
+cross-scope sources, unknown-before-allocation effects, and exhaustive budgets
+**89/89/30/112**. Seven-program execution repeats pass with two full-schema
+carrier refusals and exact repairs, three forged-report families and prepared
+reruns. Native budgets finish at **3464/3957/4555**, checking **31/33/29 cutoffs**,
+with no natural speculative rollback interval.
+
+The escape increment accepts Sub/Mul/Div/Mod/Pow only from two independently
+proved primitive non-BigInt original operands. Each kind passes **80 rows,
+49 live states and 3941 retention cutoffs**; Eq/Lt/Le/Gt/Ge each pass **80 rows,
+34 states and 3425 cutoffs**, plus the exact **64-work** wide snapshot. Four
+escape oracles report zero violations. New sources measure **20 sites,
+40 instances, 32 retained**; historical source bytes/counts are unchanged.
+Fixture precision is **49/72**, adding coverage to 47/68; corpus precision stays
+**0/64, 0/16, 0/20** (p5 partial=1). Primitive conversion guards may throw an
+unrelated RangeError: this is whole-frame retention evidence, not a no-throw,
+normal-completion or native effect contract.
+
+The initial build exposed LLVM container API use and four missing dependent
+`template` keywords in the escape tests; both were corrected. Independent review
+caught continuing entry intersection work after budget exhaustion and unknown
+effects before fresh allocations. Both were fixed before native commits. Sticky
+invalidation first conservatively refused imported frame/machine constants;
+explicit bookkeeping handling restored all seven exact execution sources. The
+source programs and the unknown-effect refusal rule were preserved.
+
+Formatter **22.1.8 passes all 745 files**; `tools/format.sh --check` with the
+bundled development 23 still reports the same nine unrelated existing diffs.
+All **fourteen code/test paths** match committed HEAD, frozen gate input and
+the devbox. The full `tools/remote-build.sh` gate is running; its final CTest,
+lit, corpus and exact Bootstrap Data results are **pending**, not inferred
+from the focused gate. The integrated driver now contains 170 programs and
+21 lifetime families, awaiting that full execution.
+
+**Exact next boundary: comparison-only fresh object identity recognition.**
+Fresh six-case measurements preserve original source/calls and Node/interpreter
+agreement in both modes. `local_identity_distinct_fresh` (**5 functions,
+6 calls, trace=0**) and `historical_object_distinct_identity` (**5/8/0**) have
+complete owners but remain **0/5 native**. `prepareNativeObjectIdentities`
+skips families with neither Map-key nor Map-payload use; their comparison-only
+fresh RHS allocations therefore lack ObjectIdentityType. The exact saved-object
+repairs (**5/6/1** and **5/8/1**) remain **5/5**. Extend fresh identity recognition
+with a complete independent strict-comparison use census, preserving actual
+allocations and scalar field writes. Never merge comparison operands into one
+runtime identity or infer object origin from a schema family.
+
+Post-delete reads are a separate host boundary: the unchanged local **5/7/0**
+and historical **5/9/0** controls remain unowned **0/5**, with every original
+call preserved. `present=false` currently includes possible absence, so it
+cannot prove Undefined. A later slice needs definite exact-key absence across
+mutations and branch joins. Entry numeric addition, String/object carriers,
+exact Bootstrap Data, full-bundle native initialization and direct browser API
+integration remain unfinished. No full-bundle coverage gain is claimed here.
+
+Evidence: `/tmp/ctcompile-field-presence-{initial,build,build2,build3,focused,
+focused-detail,execution,final-focused,final-focused2,final-focused3,next,full}.log`,
+`-root-hashes.json`, `-next.json` and `-format22-final.log`. The temporary
+`-next.py` probe names and preserves the six exact next-boundary sources.
+
 ## Saved leaf readback and relational escape gates, 2026-09-08
 
 Committed locally on `ctcompile-v1`: **`5599ae86`** proves method-local
