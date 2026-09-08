@@ -248,6 +248,8 @@ write/read/delete chain. Node/interpreter give **`trace=2`** after the standalon
 `set(get(false))`, `set(get(true))` calls and `size()`. Both native modes remain
 **0/6**, with all **eighteen calls retained** and no host owner proof. Replacing
 the conditional deletion with `state.has('other')` gives **3** and admits **6/6**.
+Keeping the deletion but replacing the entire ternary with `state.get('')`
+gives **1** and admits **6/6**, with **sixteen calls retained**.
 
 Prove membership on the live `has` arm together with a payload tag valid whenever
 the key is present, including across the preceding deletion join. Membership

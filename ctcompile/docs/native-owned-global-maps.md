@@ -555,8 +555,10 @@ var trace = host.slot.size();
 
 Node/interpreter agree on **`trace=2`**. Both native modes remain **0/6** with
 **eighteen calls retained** and no host owner proof. Replacing the conditional
-deletion with `state.has('other')` gives **3** and admits **6/6**. Replacing only
-the ternary predicate with `false` gives **1** and still refuses: both arms must
+deletion with `state.has('other')` gives **3** and admits **6/6**. Keeping the
+deletion but replacing the entire ternary with `state.get('')` gives **1** and
+admits **6/6**, with **sixteen calls retained**. Replacing only the ternary
+predicate with `false` gives **1** and still refuses: both arms must
 be proved, and the unused arm reads an entry that may have been deleted.
 Evidence: `/tmp/ctcompile-conditional-boundary.json`; source on the devbox:
 `/tmp/ctcompile-conditional-next/guarded_saved_read.js`.

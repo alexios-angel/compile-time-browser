@@ -62,12 +62,25 @@ Bootstrap/p5/Phaser remain **0/64, 0/16, 0/20**. Combined focused CTest passes
 **12/12 in 29.32 seconds**. This changes no native ownership admission.
 
 Homebrew clang-format **22.1.8** passes **743 files** and whitespace checks pass.
-The full generated devbox build succeeds; the **517-test full gate is running**
-at `/tmp/ctcompile-conditional-full.log`. Its browser phase has only the five
-recorded `selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`
-failures. Final compiler totals and fresh corpus counts are still pending at
-this checkpoint; the previous component counts were 19/574 Bootstrap, 39/4754 p5
-and 45/7725 Phaser. Complete native Bootstrap initialization remains unfinished.
+The full **243-step generated devbox build succeeds**. Final CTest is
+**512/517 in 887.20 seconds**: **372/372 compiler** and **140/145 browser** tests.
+Only the recorded `selectors`, `frames`, `element_attrs`, `vm_async` and
+`early_errors` failures remain. Lit passes **165/165 in 290.02 seconds**;
+exception recovery passes in **1.18 seconds**. All four execution oracles again
+report zero violations, with precision **24/36, 0/64, 0/16, 0/20**. Corpus
+observations remain bounded by their existing environment and execution limits.
+Fresh native components remain **Bootstrap 19/574, p5 39/4754, Phaser 45/7725**
+in both modes with zero pruned. Exact Data remains **0/7 browser, 0/7 CommonJS,
+0/8 AMD**. Complete native Bootstrap initialization remains unfinished.
+Evidence: `/tmp/ctcompile-conditional-full.log` and
+`/tmp/ctcompile-conditional-evidence.json`.
+
+All **eighteen changed code/test paths** match committed HEAD, frozen gate input
+and final devbox source. Inspected `/tmp/ctcompile-conditional-string.cpp`: the
+getter selects into an owning `std::string`, retains a separate saved copy and
+returns another owning read after entry overwrite/deletion; there are no Script
+symbols or interpreter contexts. Checkpoint docs were committed as `e0060af`;
+this final update records the completed full gate.
 
 **Exact next boundary:** after seeding `'' -> ''` and `'other' -> 'future'`, run
 `if (flag) state.delete('other');`, then select the saved value with
@@ -76,8 +89,11 @@ write/read/delete chain. The two standalone `set(get(false))`, `set(get(true))`
 calls followed by `size()` give Node/interpreter **2**, but native remains **0/6**
 in both modes with **all eighteen calls retained** and no host owner proof.
 Replacing the conditional deletion with `state.has('other')` gives **3** and
-admits **6/6**. Source: `/tmp/ctcompile-conditional-next/guarded_saved_read.js`
-on the devbox. A constant-false ternary still checks its missing arm and is also
+admits **6/6**. Keeping the conditional deletion but replacing the entire
+ternary with `state.get('')` gives **1** and admits **6/6**, retaining **sixteen
+calls**. Source: `/tmp/ctcompile-conditional-next/guarded_saved_read.js` on the
+devbox; the complete source is in `native-owned-global-maps.md` under "Next
+boundary". A constant-false ternary still checks its missing arm and is also
 refused; it is not a straight-line getter control. The next proof needs live
 `has`-guard membership plus a payload tag valid whenever that key is present,
 retained across deletion joins. Membership alone cannot establish that tag.
