@@ -53,7 +53,14 @@ target_sources(ctbrowser-script
     builtins/collections/keyed.cpp
     builtins/collections/typed_arrays.cpp
     builtins/text.cpp
-    builtins/objects.cpp
+    # Object, the errors, Proxy/Reflect and Function - five files, from one of
+    # 1,429 lines (2026-09-08); builtins/objects/internal.hpp declares the four
+    # abstract operations Object and Reflect share.
+    builtins/objects/operations.cpp
+    builtins/objects/object.cpp
+    builtins/objects/errors.cpp
+    builtins/objects/proxy.cpp
+    builtins/objects/function.cpp
     builtins/async.cpp
     bigint.cpp
     number_format.cpp
