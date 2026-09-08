@@ -265,7 +265,7 @@ static_assert(opcode_count == static_cast<std::size_t>(op::halt) + 1,
 
 // AND IN THE SAME ORDER, which the count above cannot see. Two lists of 93 names
 // can agree on the length and disagree on every position, and nothing here would
-// have said so: `shapes[]` in program_image.cpp is built from the .def and
+// have said so: `shapes[]` in program_image/read.cpp is built from the .def and
 // INDEXED BY THE ENUM, so a table whose rows had drifted would bounds-check
 // every operand against some other opcode's pool - a validator quietly checking
 // the wrong thing, which is worse than no validator. Verified by swapping two

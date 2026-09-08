@@ -52,12 +52,12 @@ if(CTBROWSER_BOOST_INCLUDE_DIR)
   endif()
   # THE CROSS PATH HAS NO VERSION TO CHECK, so it checks for the header that
   # moved the floor instead. Without this a sysroot Boost older than 1.88 fails
-  # inside program_image.cpp with "boost/hash2/xxhash.hpp: No such file", which
+  # inside program_image/write.cpp with "boost/hash2/xxhash.hpp: No such file", which
   # names a file rather than a version and sends the reader to the wrong place.
   if(NOT EXISTS "${CTBROWSER_BOOST_INCLUDE_DIR}/boost/hash2/xxhash.hpp")
     message(FATAL_ERROR
       "ctbrowser: this Boost has no Boost.Hash2 (added in 1.88). The script image's source "
-      "hash is boost::hash2::xxhash_64 - see ctbrowser/lib/Script/program_image.cpp for why "
+      "hash is boost::hash2::xxhash_64 - see ctbrowser/lib/Script/program_image/write.cpp for why "
       "it is not written out by hand. Point CTBROWSER_BOOST_INCLUDE_DIR at 1.88 or newer.")
   endif()
   message(STATUS "ctbrowser: Boost headers ${CTBROWSER_BOOST_INCLUDE_DIR}, "

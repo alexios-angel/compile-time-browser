@@ -16,7 +16,10 @@ target_sources(ctbrowser-script
     aot_bridge.cpp
     dispatch.cpp
     aot_contract.cpp
-    program_image.cpp
+    # The program image: the writer and the reader, from one file of 1,156 lines
+    # (2026-09-08); program_image/internal.hpp holds what both must agree on.
+    program_image/write.cpp
+    program_image/read.cpp
     # The compiler. compile.cpp is `compiler::compile()` alone; the class is
     # declared in compile/compiler_impl.hpp and its bodies live beside it.
     # compile.hpp still declares exactly one function.
