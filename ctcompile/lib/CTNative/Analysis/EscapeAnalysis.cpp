@@ -801,14 +801,19 @@ mlir::StringAttr ownObjectKey(mlir::Value value) {
 // not the operation immediately defining a forwarded or loaded SSA value.
 // Keep the list explicit: an unknown origin can be BigInt, and binary_static
 // reaches catchable TypeError/RangeError paths before its static conversions.
-bool nonBigIntOrigin(mlir::Value origin) {
+bool primitiveNonBigIntOrigin(mlir::Value origin) {
     mlir::Operation * definition = origin.getDefiningOp();
     if (auto constant = llvm::dyn_cast_or_null<ctjs::ConstantOp>(definition)) {
         return llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr, ctjs::NumberAttr,
                          ctjs::StringAttr>(constant.getValue());
     }
-    return llvm::isa_and_nonnull<ctjs::CreateObjectOp, ctjs::CreateArrayOp, ctjs::CompareOp,
-                                 ctjs::ConvertOp, ctjs::UnaryOp, ctjs::BinaryStaticOp>(definition);
+    return llvm::isa_and_nonnull<ctjs::CompareOp, ctjs::ConvertOp, ctjs::UnaryOp,
+                                 ctjs::BinaryStaticOp>(definition);
+}
+
+bool nonBigIntOrigin(mlir::Value origin) {
+    return primitiveNonBigIntOrigin(origin) ||
+           llvm::isa_and_nonnull<ctjs::CreateObjectOp, ctjs::CreateArrayOp>(origin.getDefiningOp());
 }
 
 } // namespace
@@ -1017,7 +1022,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 continue;
             }
             if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(&op)) {
-                // These three kinds never invoke user code or retain their
+                // Not/TypeOf/Void never invoke user code or retain their
                 // already-evaluated operand (Operators.td, VM coerce.cpp).
                 // Not yields a Boolean; TypeOf yields a String; Void yields
                 // Undefined. TypeOf's VM String allocation may hit the fatal
@@ -1029,6 +1034,21 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 case ctjs::UnaryKind::Not:
                 case ctjs::UnaryKind::TypeOf:
                 case ctjs::UnaryKind::Void: break;
+                case ctjs::UnaryKind::Neg:
+                case ctjs::UnaryKind::Plus:
+                case ctjs::UnaryKind::BitNot: {
+                    const mlir::Value input = origin(unary.getOperand());
+                    if (!input || !primitiveNonBigIntOrigin(input)) {
+                        return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
+                    }
+                    // Known primitive non-BigInt inputs cannot invoke object
+                    // conversion or reach Plus's catchable BigInt TypeError.
+                    // All three return an independent Number. BitNot uses the
+                    // VM's static conversion, but objects stay outside this
+                    // common source-compatible proof. String parsing may
+                    // allocate C++ temporaries; allocation success is unproved.
+                    break;
+                }
                 default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
                 state.origins[unary.getResult()] = unary.getResult();

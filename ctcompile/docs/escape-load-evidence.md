@@ -1049,3 +1049,81 @@ Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725** in both modes, with
 zero pruned; exact Data stays **0/7 browser/CommonJS and 0/8 AMD**. Evidence:
 `/tmp/ctcompile-nullable-host-results-evidence.json` and
 `/tmp/ctcompile-nullable-host-results-lit-final-detail.log`.
+
+## Arithmetic unary results from proved primitive inputs
+
+This continues the producer thread in **`ac3d0d43`**, the **`a8da7c27`**
+handoff and the **17:53:27** synchronization journal. Catchable BigInt binary
+outcomes still lack a completion-path proof. The bounded increment instead
+admits `ctjs.unary neg`, `plus` and `bitnot` only when the current structural
+path independently supplies a primitive non-BigInt operand origin. The
+whitelist contains Undefined, Null, Boolean, Number and String constants and
+previously admitted primitive producers. Saved reads and forwarded values use
+their original origin, including after a source field acquires a BigInt.
+Neither native type facts, alias lattices nor completion annotations establish
+this primitive proof. The legacy unary operand-role table is unchanged.
+
+`Operators.td`, `Bytecode/OperatorTables.h`, `bytecode_opcodes.def` and
+`vm/coerce.cpp` connect source minus/plus/complement to these operations.
+`to_number_value` calls static `to_number` directly for the five admitted
+primitive categories. It cannot invoke object `valueOf`/`toString` there, and
+the BigInt TypeError path is excluded independently. Negation and complement
+likewise return Number for these inputs. BitNot uses static conversion in the
+VM, which deviates from source JavaScript on object inputs; all fresh objects
+and arrays remain refused by this common primitive proof. An opaque input
+also remains refused, even when every recorded call supplied a Number.
+
+The result has its own primitive Number origin, with no operand alias,
+numeric value, property key, array index or branch-liveness inference.
+String parsing may allocate an ordinary C++ temporary for a trailing decimal
+point. No absence or success of allocation, or absence of fatal/foreign
+failure, is proved. Successful literal BigInt negation/complement are separate
+result categories and remain refused; Plus's catchable BigInt TypeError also
+remains outside this proof. Unknown producers, calls, publications and effects
+continue to refuse the entire contents transaction.
+
+The devbox unit family passes **34 rows per kind**, **nineteen live mutation
+states** under forged completion/confinement markers, and a wide snapshot
+requiring exactly **64 additional work units** for 32 extra origins. It checks
+both incoming structural arms, object/array/opaque/BigInt refusals, all prior
+primitive producer categories, original saved reads across tag overwrites,
+retained child identities, forbidden result keys and preserved unsupported
+effects. Every row and live state sweeps all incomplete contents/retention
+budgets and the exact endpoint, including **1,779 incomplete retention budget
+cutoffs per kind**. All historical contents/retention families pass unchanged.
+
+Four new source functions separately exercise all three Number operators,
+saved String/Boolean inputs before a BigInt field overwrite, opaque input
+refusal and successful literal BigInt refusal. Null checks signed zero;
+`"4294967297."` checks String conversion and 32-bit truncation. Returned graphs
+retain distinct original/copied containers after child deletion, and the two
+positive functions also return the selected alias. The source-coordinate
+checker measures **sixteen sites, 28 instances and 21 retained instances**.
+Earlier source families and their exact claim expectations are unchanged.
+
+All **eight escape CTests pass** in the focused gate, and all four execution
+oracles report **zero soundness violations**. Expanded-fixture precision is
+**42/58**, with zero partial/pending claims, versus the preceding **40/54**.
+The new family contributes two proved-confined and four observed-confined
+sites; this adds coverage rather than measuring a precision improvement on
+the historical fixture. Bootstrap/p5/Phaser precision remains **0/64, 0/16,
+0/20**, including p5's existing single partial observation. The complete
+focused gate passes **12/12 CTests in 61.47 seconds**. Evidence:
+`/tmp/ctcompile-nested-method-focused.log`. These measurements do not claim a
+completed full-suite gate or a native corpus gain.
+
+Local Node syntax and execution pass **34 combined fixture calls** and their
+numeric, tag, field and identity assertions. All **31 new observation
+mutations** discriminate changed operators, lost signed zero/conversion,
+wrong selected aliases, changed saved-field state, omitted deletion and
+copied-container aliasing; all **69 historical mutations** still discriminate.
+Additional opaque probes observe a BigInt TypeError, three source object
+conversion calls and a thrown conversion value with one call. These object
+probes explain the refusal and do not assert that the VM's static BitNot object
+behavior agrees. Evidence: `/tmp/ctcompile-escape-arithmetic-unary-node.js`
+and its `.py` generator. Homebrew clang-format **22.1.8** and whitespace checks
+pass the changed C++ files. No runtime behavior or native admission changed.
+
+The next BigInt boundary still requires completion-path evidence, rather than
+successful literal observations. Loops and native lifetime consumers remain
+separate work. The full generated build/CTest gate remains pending.

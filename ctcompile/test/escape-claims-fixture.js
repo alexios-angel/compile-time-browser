@@ -334,6 +334,66 @@ function objectFrameStaticBinaryBigInt() {
 }
 H.push(objectFrameStaticBinaryBigInt());
 
+// --- ARITHMETIC UNARY PRIMITIVE PRODUCERS ----------------------------------
+// Both structural inputs independently exclude objects and BigInt. A trailing
+// decimal String, null and the high bit distinguish conversion, signed zero
+// and ToInt32 truncation without relying on observed formal argument tags.
+function objectFrameArithmeticUnaryReleased(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var input = choice ? "4294967297." : null;
+    var negated = -input, numeric = +input, inverted = ~input;
+    var selected = inverted === -2 ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target,
+             negated: negated, numeric: numeric, inverted: inverted };
+}
+H.push(objectFrameArithmeticUnaryReleased(false));
+H.push(objectFrameArithmeticUnaryReleased(true));
+
+// The input is the old primitive even though its source field now holds a
+// BigInt. A fresh contents query must follow the saved SSA read's own origin.
+function objectFrameArithmeticUnarySaved(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    source.operand = choice ? "17." : false;
+    var saved = source.operand;
+    source.operand = 1n;
+    var negated = -saved, numeric = +saved, inverted = ~saved;
+    var selected = numeric === 17 ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target,
+             negated: negated, numeric: numeric, inverted: inverted };
+}
+H.push(objectFrameArithmeticUnarySaved(false));
+H.push(objectFrameArithmeticUnarySaved(true));
+
+// Numeric observations do not prove this formal excludes user conversion or
+// BigInt. Successful literal BigInt negation/complement also remain outside
+// the independent Number-result proof. Both controls keep Stored claims.
+function objectFrameArithmeticUnaryOpaque(input) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var negated = -input, numeric = +input, inverted = ~input;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target,
+             negated: negated, numeric: numeric, inverted: inverted };
+}
+H.push(objectFrameArithmeticUnaryOpaque(0));
+H.push(objectFrameArithmeticUnaryOpaque("4294967297."));
+function objectFrameArithmeticUnaryBigInt() {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var negated = -1n, inverted = ~1n;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target, negated: negated, inverted: inverted };
+}
+H.push(objectFrameArithmeticUnaryBigInt());
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());

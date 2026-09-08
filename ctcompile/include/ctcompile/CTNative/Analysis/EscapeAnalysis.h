@@ -435,7 +435,8 @@ struct ArrayContentsEvidence {
 /// constants, fresh objects/arrays, literal append, constant-Number-index array
 /// reads/overwrites, own String-property object writes/reads/deletes/copies,
 /// strict equality, ToBoolean, logical negation, typeof, void, supported static
-/// binary operations on independently non-BigInt origins, truthy and return.
+/// binary operations on independently non-BigInt origins, arithmetic unary
+/// operations on independently primitive non-BigInt origins, truthy and return.
 /// Object reads require an earlier own write; keys longer than 256 bytes and
 /// __proto__ refuse. Named/computed object deletions erase only the current own
 /// property; absent deletion is a no-op, absent reads still refuse. All earlier
@@ -463,7 +464,12 @@ struct ArrayContentsEvidence {
 /// from source JS). Results infer no Number value, index or branch liveness.
 /// String conversion can allocate C++ temporaries; absence of allocation and
 /// its success are not proved.
-/// Coercing comparison, conversion and unary kinds refuse. Joins keep exact
+/// Neg/Plus/BitNot yield Number only for independently primitive non-BigInt
+/// origins. Fresh objects/arrays and opaque inputs remain refused: excluding
+/// BigInt alone does not exclude object conversion. Saved reads use their
+/// original primitive identity, never a slot's newer contents. BigInt results
+/// and Plus's catchable BigInt TypeError remain outside this Number proof.
+/// Other coercing comparison/conversion kinds refuse. Joins keep exact
 /// separate states rather than unioning overwrite targets. Truthy
 /// accepts an external value only as a noncapturing predicate, never an element.
 /// Exact entry !ctjs.value identities may travel through unused register arguments
