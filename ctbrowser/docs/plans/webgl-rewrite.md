@@ -109,7 +109,7 @@ only to feed a software rasteriser that is also going.
 
 ## What stays, and why
 
-- **`ctbrowser/lib/Shell/bindings/webgl.cpp`** - the JavaScript surface. It is the
+- **`ctbrowser/lib/Shell/bindings/webgl/`** (one `webgl.cpp` until 2026-09-08) - the JavaScript surface. It is the
   SPECIFICATION of what a page can call and it is not the broken part. It gets
   rewired to the new context, and every call it makes that the context does not
   have becomes a compile error, which is the point.

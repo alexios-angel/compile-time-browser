@@ -114,6 +114,13 @@ its header, and the header did not change:
   engine pushes in, the dispatch algorithm, and the Event interfaces. The
   property-name constants and the two helpers both dispatch and the
   constructors need are in `internal.hpp` beside them, in `shell::detail`.
+- `ctbrowser/lib/Shell/bindings/webgl/` — four, from 1,431 (2026-09-08).
+  `webgl_context_object` was ONE 1,213-line function; it is three private
+  member functions now (the constant table, the methods up to textures, the
+  methods that draw and read back), split at seams no local crosses and called
+  in the order the surface was always installed. Three tiny helper lambdas are
+  re-created verbatim in the halves that use them; the argument helpers are
+  inline in `internal.hpp`.
 
 ### What splitting the compiler cost, measured
 

@@ -887,6 +887,15 @@ private:
     // seventy-nine methods and a constant table would bury the DOM in this one -
     // and the state machine it drives is in shell/page/webgl.hpp.
     [[nodiscard]] value webgl_context_object(context & cx, node_id id, int version);
+    // ITS THREE HALVES. webgl_context_object was one 1,213-line function until
+    // 2026-09-08; these are the seams it was split at, chosen because no local
+    // crosses them, and called in the order the surface was always installed:
+    // the constant table, then every method. See lib/Shell/bindings/webgl/.
+    void install_webgl_constants(script::object_object * obj, bool webgl2);
+    void install_webgl_methods(context & cx, script::object_object * obj, webgl_context * gl,
+                               canvas_context * surface);
+    void install_webgl_draw_methods(context & cx, script::object_object * obj, webgl_context * gl,
+                                    canvas_context * surface, int width, int height, bool webgl2);
 
     // SETTING canvas.width RESIZES THE DRAWING BUFFER, and for a WebGL canvas
     // that is not cosmetic: canvas_context::resize REALLOCATES the bitmap, so a

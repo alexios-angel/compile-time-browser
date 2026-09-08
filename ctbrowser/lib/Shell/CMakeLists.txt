@@ -49,7 +49,13 @@ target_sources(ctbrowser-shell
     bindings/window.cpp
     bindings/canvas.cpp
     bindings/resources.cpp
-    bindings/webgl.cpp
+    # WebGL: the context and its wrapper, the constant table, and the methods in
+    # two halves - one 1,431-line file until 2026-09-08, four now, with the
+    # argument helpers every one of them needs in webgl/internal.hpp.
+    bindings/webgl/context.cpp
+    bindings/webgl/constants.cpp
+    bindings/webgl/objects.cpp
+    bindings/webgl/drawing.cpp
     embedded_fonts.cpp
     # resources: where bytes come from. net.cpp was net_curl.cpp until
     # 2026-08-09; the suffix implied a choice of transport, and the Asio one has
