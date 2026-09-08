@@ -272,18 +272,37 @@ forged edits and reruns pass. Empty String, false and zero still select the
 fallback, and saved future Strings survive final Map release. See
 [the Map checkpoint](native-owned-global-maps.md#scalar-short-circuit-results-2026-09-08).
 
-## Next: a nullable result contract
+## Completed proof: a finite nullable result contract
 
-Add `return result || null` to that accepted getter without changing its Map
-writes. This isolates a String/Null result from the separate nullable stored
-payload and key schemas. Node/interpreter give **3**, but both native modes
-remain **0/6**, with all eighteen calls retained and no host owner proof.
-Normalizing the consumer key
-still gives **0/6**. Both scalar controls remain **6/6** with trace **2**. The
-first missing proof is finite String/Null result and parameter transport in the
-host dependency worklist. Reuse the existing owning `nullable_string` carrier;
-stored-callable signatures and nullable Map keys are subsequent boundaries. The
-complete source and measured evidence are in
+Commit `fa29d49` preserves String/Null/Undefined alternatives through the complete
+host body dependency worklist and actual/formal census. Startup truthiness is
+widened within every category; unseeded cycles and unknown producers still
+refuse. The **82 earlier plus 32 nullable host rows** pass in source/prepared
+form, with exhaustive budget cutoffs and live mutation controls.
+
+The normalized nullable setter `state.set(key || 'missing', true)` now admits
+**6/6 native** in both modes, retaining all **eighteen source calls** and
+Node/interpreter **trace=3**. Stored callable signatures use owning
+`nullable_string`. A current per-operation key proof keeps the storage String
+without narrowing the nullable SSA value elsewhere. Commit `8d80629` passes **110 complete published programs**,
+including seven nullable cases and thirteen lifetime sanitizer families. Both
+C++ compilers, identity observations, forgeries, reruns and budgets pass; all
+**165 lit cases** pass. Final CTest is **512/517**, all **372 compiler tests**,
+with only the five recorded browser failures. See
+[the nullable checkpoint](native-owned-global-maps.md#finite-nullable-published-results-2026-09-08).
+
+## Next: nullable Map-key storage
+
+The original setter still stores a real null key. Its eighteen-call program now
+has complete host ownership, but remains **0/6** in both modes with **trace=3**
+and `Opt<Variant<Bool, Str>>` keys. A smaller **eleven-call**, **trace=2** witness
+isolates `Opt<Str>` keys; adding a temporary Boolean key gives **thirteen calls**
+and the mixed schema. Both have proved ownership and remain **0/6**. A thirteen-call
+Null/Undefined/empty String identity witness gives **trace=4**, versus **trace=2**
+and **6/6** with a normalized setter. Implement
+owning, tag-aware nullable String keys first, preserving Null/Undefined/empty
+String identity in both storage layouts. Nullable payloads and mixed snapshots
+require separate proofs. The exact source and evidence are in
 [the Map boundary](native-owned-global-maps.md#next-boundary).
 
 The exact Bootstrap getter at vendor line 17 also needs nested/object payloads.

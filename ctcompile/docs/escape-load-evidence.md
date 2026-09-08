@@ -730,10 +730,17 @@ Commit **`6f13212`** records the implementation and witnesses. All **eight escap
 CTests pass** in `/tmp/ctcompile-nullable-escape.log` (**8.07 seconds**).
 After correcting two new host fixtures, the combined focused CTest gate passes
 **12/12 in 34.43 seconds**, log `/tmp/ctcompile-nullable-native-focused.log`.
-The full generated CTest gate is still pending.
+The final **252-step generated build** succeeds without warnings. Full CTest
+passes **512/517 in 969.20 seconds**, all **372 compiler tests**, with only the
+five recorded browser failures. All **165 lit cases** pass. The four execution
+oracles retain the precision counts above and report zero violations in the
+final run. Evidence: `/tmp/ctcompile-nullable-full.log` and
+`/tmp/ctcompile-nullable-evidence.json`.
 Homebrew clang-format **22.1.8** passes all **745 files** in the frozen input.
 Node syntax, the eight-call copy-path observations, four identity assertions,
 eight discriminating mutations and whitespace checks also pass. The parent
-session owns the remaining serialized gates. No runtime behavior
-or native ownership admission changes. Comparison/Boolean selector producers
-for real source switches remain the next bounded escape proof.
+session committed the change and verified all 28 session code/test paths
+against committed HEAD, frozen input and final devbox source. This escape
+increment changes neither runtime behavior nor native ownership admission.
+Comparison/Boolean selector producers for real source switches remain the next
+bounded escape proof.

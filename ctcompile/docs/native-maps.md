@@ -149,6 +149,25 @@ Bool/String function signatures, arbitrary union returns, captures, fields,
 arithmetic and coercions remain outside this increment. Existing numeric
 optional carriers handle Bool/Number intermediates.
 
+The corresponding key proof publishes `ctnative.map_key_type`, also cleared
+and independently rederived on every preparation. A complete host actual/formal
+census supplies finite primitive categories to the structured analysis. It
+forgets startup truthiness, so future permitted arguments retain both arms.
+For `key || 'missing'`, this proves a String at the Map operation even when the
+SCF value still has a nullable String type. Schema inference uses that exact
+per-operation fact; the original SSA lattice and every other use stay unchanged.
+Number key evidence preserves separately inferred integer widths.
+Lowering copies the selected String before homogeneous storage or mixed-key
+wrapping. A second unnormalized write of the same formal keeps its nullable
+key schema and refuses. Input key annotations never authorize extraction.
+
+Published methods can carry finite String/Null/Undefined results and parameters
+using the existing owning `nullable_string` type. This does not implement
+nullable Map-key or payload storage: real null and undefined keys remain a
+separate representation boundary. The complete host dependency worklist must
+finish before these parameter facts are available; an unseeded cycle, unknown
+result or unsupported effect still withholds the proof.
+
 The local mixed gate covers **49 observations and 21 refusals** across both
 storage implementations, including inverted falsy refinement and a local
 Bool/String temporary without a Map. Guarded and short-circuit saved String,

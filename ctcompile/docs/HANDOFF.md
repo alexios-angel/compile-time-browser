@@ -6,63 +6,96 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Nullable host results and opaque-register checkpoint, 2026-09-08
+## Nullable Map methods and opaque-register checkpoint, 2026-09-08
 
-Commits **`6f13212`** and **`fa29d49`** resume the nullable-result and opaque
-entry-register threads left in flight in the **11:17:14 synchronization journal**
-and abandoned at **11:17:55**. The starting tree was clean. The old
-`codex-wip-20260907` CallDirectOp recovery was already gated in `5307abf` and
-its branch is an ancestor; no rebase or merge was needed. Three agents handled
-host controls, native execution tests and escape analysis while the root
-implemented the native/Bootstrap boundary. No browser or runtime source changed.
+Commits **`6f13212`** (opaque entry transport), **`fa29d49`** (finite host
+alternatives) and **`8d80629`** (native nullable methods) resume the threads left
+in flight in the **11:17:14 synchronization journal**, abandoned at **11:17:55**.
+The starting tree was clean. The old `codex-wip-20260907` recovery was already
+gated in `5307abf` and its branch is an ancestor. Three agents handled host
+controls, native execution tests and escape analysis while the root implemented
+the native/Bootstrap boundary. No history was rewritten, browser or runtime
+source changed, or push performed. `7edb8a8` makes primitive-alternative equality
+compatible with LLVM's C++17 analysis target without extension warnings.
 
-The host worklist now retains finite primitive alternatives through completed
-producer results and the complete actual/formal census. Parameter facts widen
-truthiness within each category, preserving future branch behavior. It admits
-String with Null/Undefined only after the whole census; unknown producers,
-unsupported mixtures and unseeded dependency cycles still refuse. Host units
-pass the earlier **82 rows plus 32 nullable rows**, each in source/prepared form,
-every **3848/4001** nullable and **5150/5368** census budget cutoff, endpoints
-and live mutations. Focused CTest passes **12/12 in 34.43 seconds**.
+The host dependency worklist retains finite primitive alternatives through
+completed producer results and the entire actual/formal census. It joins all
+actuals before admitting String with Null/Undefined; an early Null/Undefined
+pair cannot reject a later String. Unknown producers, unsupported mixtures and
+unseeded cycles still refuse. Parameter facts widen truthiness within each
+category, preserving future branches. Host units pass **82 earlier plus 32
+nullable rows**, each in source/prepared form, every **3848/4001** nullable and
+**5150/5368** census budget cutoff, exact endpoints and live mutations.
 
-The escape proof transports exact opaque entry `!ctjs.value` register identities
-separately from known local origins through acyclic successor vectors. Opaque
-values cannot become keys, stored contents, roots, returned values or copy
-endpoints. Every entry visit and opaque snapshot spends budget. All eight
-escape CTests pass, including **19 rows, eight live mutations, 664 retention
-cutoffs** and the wide snapshot control. Four execution oracles report zero
-violations. Unchanged-fixture precision improves **34/47 -> 35/47**; corpus
-precision remains **0/64, 0/16, 0/20**. Source switches still need a separate
-comparison/Boolean-producer proof.
+Native callable signatures reuse owning `nullable_string`. An independently
+rederived **per-operation** Map-key fact keeps `key || 'missing'` String storage
+precise without narrowing the original SSA value or a second unnormalized use.
+Extraction copies the selected String before homogeneous storage or mixed-key
+wrapping. Number key proofs preserve independently inferred integer widths.
+The normalized nullable and ternary programs advance **0/6 -> 6/6 native** in
+both modes, retaining all **eighteen source calls** and Node/interpreter
+**trace=3**. `void 0` supplies the Undefined literal; bare `undefined` remains
+an unproved host global under this contract.
 
-**In flight:** native callable signatures use the existing owning
-`nullable_string`; independently rederived per-operation Map-key facts keep
-`key || 'missing'` String storage precise without narrowing the original SSA
-value or a second unnormalized use. The normalized eighteen-call nullable and
-ternary programs now admit **6/6 in both modes**, Node/interpreter **trace=3**,
-and pass explicit/deduced GCC/Clang execution. All seven nullable programs pass
-a quick admission check. Use `void 0` for the Undefined literal; bare `undefined`
-is an unproved global read under this contract. Their complete execution,
-forgery and lifetime gate is still pending in the full CTest run.
+The published gate passes **110 complete programs**, including seven nullable
+cases, five new proof refusals and two nullable-key carrier refusals. Both modes,
+explicit/deduced GCC/Clang, exact identity observations, fresh/stale key/read/write
+forgeries, reruns and budget cutoffs pass. The **thirteen lifetime sanitizer
+families** include a saved nullable getter that sees only false during startup,
+then both future flags. Its Strings survive overwrite/deletion, caller-buffer
+mutation, independent reentry and destruction of both Maps. **Twenty-one** new
+source mutations distinguish String, Null, Undefined and empty String behavior.
+The three-way getter retains four `if`s plus a live Null/Undefined `?:` selection;
+its native identity observer checks both tags. No Script symbols or VM context
+appear in the inspected owning String output.
 
-The full generated gate is running from the frozen input recorded in
-`/tmp/ctcompile-nullable-native-snapshot.txt`, log
-`/tmp/ctcompile-nullable-full.log`. Refresh changed source timestamps when
-switching frozen inputs: the first native run reused older objects because
-restored source mtimes preceded them. An 83-step rebuild fixed that. The public
-alternatives header's explicit equality also avoids a C++20-extension warning
-in LLVM's C++17 analysis target. Formatter 22.1.8 and final full-gate counts are
-pending. Native implementation/tests are not yet committed at this checkpoint.
+The escape proof transports exact opaque entry `!ctjs.value` identities through
+acyclic successor vectors, separately from known local origins. Opaque values
+cannot become keys, stored contents, roots, returned values or copy endpoints.
+Every entry visit and opaque snapshot spends budget. Eight escape CTests pass,
+including **19 rows, eight live mutations, 664 retention cutoffs** and the wide
+snapshot control. Four execution oracles report zero violations. The unchanged
+fixture improves **34/47 -> 35/47**, retaining **21 sites, 39 instances and 23
+retained instances** in the copied-path family. Corpus precision stays **0/64,
+0/16, 0/20**. Comparison/Boolean producers for source switches remain the next
+bounded escape proof.
 
-**Exact next boundary:** the original nullable eighteen-call program now has a
-complete host owner proof but stays **0/6** in both modes, with all calls retained
-and **trace=3**. Its key type is `Opt<Variant<Bool, Str>>`. A smaller **eleven-call**
-String-key witness also stays **0/6**, with proved ownership, `Opt<Str>` keys and
-**trace=2**. Adding one temporary Boolean key gives **thirteen calls** and the
-mixed nullable key schema, still **0/6**, **trace=2**. This isolates key storage
-from nullable method signatures and payload storage. Evidence so far:
-`/tmp/ctcompile-nullable-boundary.json`; the null/undefined/empty String witness
-is being corrected to use the Undefined literal before its final measurement.
+Validation: focused CTest **12/12 in 34.43 seconds**, seven final targeted lit
+cases **7/7 in 27.64 seconds**, and formatter **22.1.8**, **745 files**. The final
+**252-step generated build succeeds without warnings**. Final CTest passes
+**512/517 in 969.20 seconds**: **372/372 compiler** and **140/145 browser** tests.
+Only the recorded `selectors`, `frames`, `element_attrs`, `vm_async` and
+`early_errors` failures remain. All **165/165 lit cases pass in 375.26 seconds**;
+exception recovery passes in **1.14 seconds**. The first full run was **511/517**:
+the integer-width and textual-branch lit failures were corrected before this
+final gate. All **28 code/test paths** match committed HEAD, frozen input and
+the final devbox source. Inspected `/tmp/ctcompile-nullable-string.cpp` retains
+owning saved Strings through subsequent writes/deletes and final nullable return,
+with no Script symbol or interpreter context.
+
+Fresh native components remain **Bootstrap 19/574, p5 39/4754, Phaser 45/7725**
+in both modes, zero pruned. Exact Data remains **0/7 browser, 0/7 CommonJS,
+0/8 AMD**. Corpus escape precision stays **0/64, 0/16, 0/20** within the existing
+execution/environment limits; p5 retains one partial observation. Evidence:
+`/tmp/ctcompile-nullable-full.log`, `/tmp/ctcompile-nullable-evidence.json` and
+`/tmp/ctcompile-nullable-postgate.log`. Frozen input is recorded in
+`/tmp/ctcompile-nullable-native-snapshot.txt`. Refresh source mtimes when swapping
+frozen inputs so Ninja does not reuse objects newer than restored changed sources.
+
+**Exact next boundary: nullable Map-key storage.** The original eighteen-call
+program now has complete host ownership, but stays **0/6** in both modes with
+**trace=3** and `Opt<Variant<Bool, Str>>` keys. A smaller **eleven-call** witness
+isolates `Opt<Str>` keys: complete ownership, **0/6**, **trace=2**. Adding one
+temporary Boolean key gives **thirteen calls**, the mixed nullable key schema,
+the same trace and refusal. A **thirteen-call** String/Null/Undefined/empty
+String witness gives **trace=4**, complete ownership and **0/6**; normalizing
+its keys gives **trace=2** and **6/6**. Implement owning tag-aware nullable String
+keys in both storage layouts before composing Boolean with them. Null, Undefined
+and empty String must stay distinct; do not coerce real null keys through
+`string_text` or implicitly admit nullable payloads and mixed snapshots.
+Complete sources and measured evidence are in `native-owned-global-maps.md`
+and `/tmp/ctcompile-nullable-boundary.json`. Complete Bootstrap Data and general
+native Bootstrap initialization remain unfinished.
 
 ## Short-circuit Map and executed copy-path checkpoint, 2026-09-08
 

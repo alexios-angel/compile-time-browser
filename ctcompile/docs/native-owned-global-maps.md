@@ -42,14 +42,18 @@ observation execute at runtime. No previous invocation supplies a later result.
 
 Before checking any family body, the query discovers and validates every current
 method call. A bounded dependency worklist classifies actuals from primitive
-source expressions or already completed producer proofs. Every formal must
-receive the same primitive tag at every call; the proof retains each live SSA
-operand, formal and tag. Distinct strings or numbers need not have the same value.
+source expressions or already completed producer proofs. Every formal receives
+the complete union of its actual categories. The current
+boundary permits one primitive category or a finite String/Null/Undefined set;
+other mixed parameters remain refused. The proof retains each live SSA operand,
+formal and alternative set. It widens truthiness within each category, so an
+observed startup flag never selects a future branch. Distinct strings or numbers
+need not have the same value.
 The body may treat a formal as primitive only after this evidence succeeds.
 Source and prepared functions retain exact arities, receiver/callee identity,
 and the prepared Map environment before the explicit arguments. Only a complete
-body/effect/use census publishes a result tag: `size` is numeric, `has`/`delete`
-are boolean, and literal or typed-formal returns retain their category. A
+body/effect/use census publishes finite result alternatives: `size` is numeric,
+`has`/`delete` are boolean, and literal or typed-formal returns retain their category. A
 consumer declared before its producer waits for a later worklist pass. No
 optimistic tag seeds a circular dependency, and no recursive `propertyCall`
 query supplies authority. A `Map.get` can retain a local `set`'s independent
@@ -65,7 +69,7 @@ coercion; different SSA names of the same primitive type may alias. Both zero
 encodings and every NaN payload denote the same Map key. Each set also records
 its own key and payload independently of any earlier join. Every fact comparison
 spends work budget.
-Only the complete method body and use census publishes its result tag.
+Only the complete method body and use census publishes its result alternatives.
 Unique initialized global actuals are checked against the full initialization proof.
 
 Native Map preparation separately rederives presence for these live published
@@ -605,11 +609,58 @@ The full 252-step generated build succeeds, with **372/372 compiler CTests**
 and **165/165 lit cases** passing; overall **512/517** leaves only the five
 recorded browser failures. Final results are in [HANDOFF.md](HANDOFF.md).
 
+## Finite nullable published results, 2026-09-08
+
+Commit `fa29d49` carries finite String/Null/Undefined alternatives through the
+completed-body dependency worklist and the complete actual/formal census.
+The host query no longer reduces a proved nullable result to one absent tag.
+It joins all actuals before validating the supported parameter set, including
+an initial Null/Undefined pair followed by String. Unknown producers and
+unseeded cycles still withhold all evidence. Each parameter retains categories
+with both permitted truthiness outcomes, so startup arguments never specialize
+future method branches. The earlier **82 host rows plus 32 nullable rows** pass
+in source/prepared form, along with every **3848/4001** nullable and
+**5150/5368** census budget cutoff, exact endpoints and live mutation controls.
+
+Commit `8d80629` reuses the existing owning `nullable_string` carrier for stored
+callable signatures.
+A normalized setter, `state.set(key || 'missing', true)`, independently proves
+that its actual Map key is String. Native preparation seeds the structured
+analysis only from current complete host parameter facts. It records
+`ctnative.map_key_type` at each Map operation, separately from membership,
+payloads and the original SSA lattice. Schema inference uses that fact for only
+that operation. Lowering copies the proved scalar before homogeneous storage
+or mixed-key wrapping. A second unnormalized use of the same nullable formal
+still contributes its full type and refuses. All key annotations are cleared
+and rederived, including valid-looking forged tags and reruns.
+
+The normalized nullable and ternary eighteen-call programs advance **0/6 ->
+6/6 native** in both modes, retaining Node/interpreter **trace=3** and the real
+producer/consumer calls. Seven nullable fixtures cover Null, Undefined, empty
+String, three-way String/Null/Undefined, homogeneous String keys and a long
+owning result. Spell an Undefined literal as `void 0`: bare `undefined` remains
+an unproved host global under this contract. Separate identity observers
+compare exact tags and bytes, since Map size alone cannot distinguish the
+nullish alternatives. The new lifetime family keeps saved getter/setter/size
+callables through owner release, both future flags, caller-buffer mutation,
+independent entry execution and final Map destruction. Twenty-one blinded
+source mutations distinguish the tested observations. The gate passes **110
+complete programs**, including all seven new cases, and **thirteen lifetime
+sanitizer families**. Explicit/deduced GCC/Clang execution, native identity
+observations, five new host-proof refusals, two nullable-key carrier refusals,
+fresh/stale forgeries, reruns and budget cutoffs all pass. The seven focused lit
+cases pass in **27.64 seconds**; the full **165/165 lit suite** passes in
+**375.26 seconds**. The final **252-step generated build** is warning-free;
+CTest passes **512/517 in 969.20 seconds**, all **372 compiler tests**, with only
+the five recorded browser failures. All 28 code/test paths match committed HEAD,
+frozen input and final devbox source. Logs and unchanged corpus counts are in
+[HANDOFF.md](HANDOFF.md).
+
 ## Next boundary
 
-Bootstrap's exact getter uses `(has && get) || null`. The short-circuit shape
-is now proved for scalar results. Add only `|| null` to the accepted getter's
-return to isolate its result contract from nullable stored payloads:
+Bootstrap's exact getter uses `(has && get) || null`. The finite nullable
+result contract and normalized consumer are now supported. Keep the original
+unnormalized setter to isolate the remaining Map-key storage obligation:
 
 ```js
 var host = {};
@@ -638,27 +689,43 @@ host.slot.set(host.slot.get(true));
 var trace = host.slot.size();
 ```
 
-Node/interpreter agree on **`trace=3`**, but both native modes remain **0/6**,
-with all **eighteen calls retained** and no host owner proof. Removing only
-`|| null` restores **6/6**, eighteen source calls and trace **2**; the ternary
-control also remains **6/6** with trace **2**. A nullable ternary, normalized
-`key || 'missing'` setter and ordinary object payloads each remain **0/6**,
-eighteen calls and trace **3**. Directly storing `(has && get) || null` retains
-**seventeen calls** with the same trace and refusal. These measurements use the
-new short-circuit specimens, separately from the preceding guarded-ternary
-witnesses. Evidence: `/tmp/ctcompile-shortcircuit-boundary.json`; devbox source:
-`/tmp/ctcompile-shortcircuit-next/nullable_or.js`.
+Node/interpreter agree on **`trace=3`**. Both native modes still report **0/6**
+with all **eighteen calls retained**, but now have a complete host owner proof.
+The diagnostic identifies the key schema `Opt<Variant<Bool, Str>>`; payload
+storage remains the already supported `Variant<Bool, Str>`. Normalizing only
+the setter key restores **6/6** with the same trace and source-call count. The
+nullable ternary control also admits **6/6**. Evidence:
+`/tmp/ctcompile-nullable-boundary.json`; devbox source:
+`/tmp/ctcompile-nullable-next/nullable_or.js`.
 
-The first host boundary is the final reduction of known String/Null alternatives
-to one optional tag in `HostContract/CapturedMapBody.cpp`. Without a result tag,
-the completed-body worklist in `HostContract/Values.cpp` cannot prove the
-consuming setter's parameter. Extend finite result/parameter evidence without
-allowing an unseeded dependency cycle to prove itself. The existing owning
-`nullable_string` carrier already represents String/Null, but stored-callable
-admission and `EmitC/MethodTables.cpp` lack its signature support. The original
-setter also stores a real null key; the normalized consumer separates that
-schema obligation from the result contract. Nullable stored payloads, object
-identity and general exports remain further work.
+A smaller witness replaces the getter body with:
+
+```js
+state.set('seed', 'future');
+const result = flag ? '' : state.get('seed');
+state.delete('seed');
+return result || null;
+```
+
+With the same original setter and two `set(get(flag))` calls, this has **eleven
+source calls**, **trace=2**, complete ownership and **0/6 native** in both modes.
+It isolates `Opt<Str>` keys. Adding `state.set(false, true); state.delete(false);`
+after the seed deletion gives **thirteen calls**, the mixed nullable key schema,
+the same trace and refusal. Appending `host.slot.set(void 0); host.slot.set('');`
+before the final size observation gives **thirteen calls**, **trace=4**,
+complete ownership and **0/6 native**. It distinguishes the String, Null,
+Undefined and empty String keys. Its normalized-setter control gives **trace=2**
+and **6/6 native** in both modes. These are executed Node/interpreter and native
+admission measurements, not a claim that nullable key storage is implemented.
+
+The next bounded implementation can reuse `nullable_string` for optional
+String keys, then compose it with Boolean for the mixed nullable key schema.
+Both Map storage implementations need tag-aware equality and ordering plus
+owning conversion. Null, Undefined and empty String must remain distinct keys;
+converting a real null key through `string_text` would be wrong. Key support
+must not implicitly admit nullable stored payloads or mixed snapshots. The
+lattice already represents both schemas, so a new general value type is not
+needed. Object identity and general exports remain separate work.
 
 Current-call proofs cannot authorize arbitrary future external arguments or
 establish an export ABI. Future external callers, mutable publication slots,
