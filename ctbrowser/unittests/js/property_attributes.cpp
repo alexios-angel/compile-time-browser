@@ -16,7 +16,7 @@
 // are each SILENT in sloppy mode and a TypeError under "use strict". This
 // engine has no strict mode at all - see docs/test262.md, which counts the 678
 // onlyStrict tests it silently runs sloppy - so every case below asserts the
-// silent answer. The TODO(strict) comments in lib/Script/vm/objects.cpp mark
+// silent answer. The TODO(strict) comments in lib/Script/vm/objects/store.cpp mark
 // the three `return`s where the throw belongs when a strict mode arrives.
 
 #include "js_expect.hpp"
@@ -363,7 +363,8 @@ int main() {
               "false");
     // ...AND `name` DOES NOT COME BACK EITHER. `context::own_property`
     // synthesises a native's `name` from the C++ object when the table has none
-    // (lib/Script/vm/objects.cpp), so deleting the own entry USED TO uncover
+    // (own_property, lib/Script/vm/objects/descriptors.cpp), so deleting the own
+    // entry USED TO uncover
     // the synthesised one and `hasOwnProperty` stayed true - which was the
     // whole remaining reason test262's `name.js` files failed, because
     // verifyProperty's isConfigurable() deletes and then asks.

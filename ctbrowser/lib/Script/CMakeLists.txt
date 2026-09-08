@@ -23,14 +23,26 @@ target_sources(ctbrowser-script
     compile.cpp
     # The static semantics: the source text a conforming implementation must
     # REFUSE. It runs before the compiler and shares nothing with it but the
-    # AST, which is why it is a file rather than a pass inside one.
-    compile/early_errors.cpp
+    # AST, which is why it is a directory rather than a pass inside one. The
+    # checker is declared in compile/early_errors/checker.hpp, private to these
+    # six files; compile/early_errors.hpp still declares one function.
+    compile/early_errors/entry.cpp
+    compile/early_errors/scopes.cpp
+    compile/early_errors/statements.cpp
+    compile/early_errors/functions.cpp
+    compile/early_errors/expressions.cpp
+    compile/early_errors/patterns.cpp
     compile/ast.cpp
     compile/limits.cpp
     compile/entry.cpp
     compile/helpers.cpp
     compile/destructuring.cpp
-    compile/statements.cpp
+    # Statements, by concern: the dispatch, loops and labels, try/finally, and
+    # the function body that holds every other statement.
+    compile/statements/dispatch.cpp
+    compile/statements/loops.cpp
+    compile/statements/try_finally.cpp
+    compile/statements/functions.cpp
     compile/expressions.cpp
     compile/classes.cpp
     compile/frames.cpp
@@ -55,8 +67,21 @@ target_sources(ctbrowser-script
     # The interpreter. run_loop.cpp is the dispatch loop and stays whole: it is
     # ONE function, and the thing docs/history/computed-goto.md is about.
     vm/coerce.cpp
-    vm/objects.cpp
-    vm/call.cpp
+    # Property lookup, storage and descriptors, the prototype chain, and the
+    # collector - vm/objects.cpp until 2026-09-08.
+    vm/objects/context.cpp
+    vm/objects/gc.cpp
+    vm/objects/lookup.cpp
+    vm/objects/store.cpp
+    vm/objects/chain.cpp
+    vm/objects/descriptors.cpp
+    # Calls, construction, modules, running a program, closures and
+    # coroutines - vm/call.cpp until 2026-09-08.
+    vm/call/invoke.cpp
+    vm/call/construct.cpp
+    vm/call/modules.cpp
+    vm/call/run.cpp
+    vm/call/coroutines.cpp
     vm/run_loop.cpp
   PUBLIC
     FILE_SET HEADERS

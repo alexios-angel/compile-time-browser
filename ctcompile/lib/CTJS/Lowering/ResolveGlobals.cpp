@@ -154,7 +154,8 @@
 // new.target is a fresh `ctjs.constant #ctjs.undefined`, which is what the VM
 // gives a plain call: VM_CASE(call) pushes `entered.new_target =
 // pending_new_target_` and that root is undefined unless a pass_new_target or
-// a construct set it (run_loop.cpp; context::call in call.cpp does the same
+// a construct set it (run_loop.cpp; context::invoke in vm/call/invoke.cpp does
+// the same
 // two lines). A function containing ctjs.pass_new_target therefore has none
 // of its calls rewritten - adjacency is an invariant nothing checks, and the
 // pending flag could be live at any call in it.

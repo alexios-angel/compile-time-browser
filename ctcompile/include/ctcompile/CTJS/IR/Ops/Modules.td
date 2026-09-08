@@ -87,9 +87,10 @@ def CTJS_ModuleExportCellOp
     for every module with fewer than 65,536 names, so an importer reading b
     alone exports name 0 under this name - silently.
   }];
-  // PHASE 55: $current SINK(stored). Alias-returning: call.cpp:240 returns
-  // `current` itself outside a module, and 251-255 adopts a record cell that
-  // the module's export table roots (objects.cpp:700-703).
+  // PHASE 55: $current SINK(stored). Alias-returning: module_export_cell
+  // (vm/call/modules.cpp) returns `current` itself outside a module, and
+  // otherwise adopts a record cell that the module's export table roots
+  // (each_root, vm.hpp).
   let arguments = (ins StrAttr:$name, Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$current);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "$name `adopting` $current attr-dict";

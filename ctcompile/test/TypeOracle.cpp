@@ -106,7 +106,8 @@ template <typename T> void check_eq(T got, T want, const char * what) {
 // Every number this test asserts is derivable from these fourteen lines without
 // knowing anything about the register allocator, which is the point: the
 // assertions are about PARAMETER registers and about entry counts, and
-// parameters land in r0.. by the calling convention (vm/call.cpp fills
+// parameters land in r0.. by the calling convention (context::invoke in
+// vm/call/invoke.cpp fills
 // registers[base + i] from the argument span before the first instruction
 // runs). Nothing here depends on where the compiler happened to put a
 // temporary, so a change to the allocator cannot silently rewrite the expected

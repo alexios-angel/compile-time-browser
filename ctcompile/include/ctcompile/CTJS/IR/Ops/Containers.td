@@ -14,7 +14,8 @@ def CTJS_CreateCellOp
     same binding hold the same cell, so one writing it is the other reading it.
   }];
   // PHASE 55: $initial SINK(stored) - run_loop.cpp:1205 boxes it and the
-  // slot is traced (objects.cpp:59). The result is a boxed site, reason
+  // slot is traced (trace_object, vm/objects/gc.cpp). The result is a boxed
+  // site, reason
   // phase59: cells are Phase 59's, not a tracked kind here.
   let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$initial);
   let results = (outs Res<CTJS_ValueType, "", [CTJS_BoxedPhase59]>:$result);
@@ -36,7 +37,7 @@ def CTJS_CellGetOp : CTJS_RuntimeOp<"cell_get", "ct_aot_cell_get", [CTJS_NoEscap
 def CTJS_CellSetOp : CTJS_RuntimeOp<"cell_set", "ct_aot_cell_set"> {
   let summary = "Write a cell's slot";
   // PHASE 55: $cell NEITHER; $value SINK(stored) - the slot is traced
-  // (objects.cpp:59).
+  // (trace_object, vm/objects/gc.cpp).
   let arguments = (ins CTJS_ValueType:$cell, Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$value);
   let assemblyFormat = "$cell `,` $value attr-dict";
 }
@@ -56,7 +57,7 @@ def CTJS_CreateArrayOp
     : CTJS_RuntimeOp<"create_array", "ct_aot_new_array", [CTJS_MayThrow, CTJS_Safepoint]> {
   let summary = "A fresh array, optionally with its elements";
   // PHASE 55: A TRACKED SITE, the other of the two. Each element
-  // SINK(stored): items are traced (objects.cpp:42).
+  // SINK(stored): items are traced (trace_object, vm/objects/gc.cpp).
   let arguments = (ins Arg<Variadic<CTJS_ValueType>, "", [CTJS_SinkStored]>:$elements);
   let results = (outs CTJS_ValueType:$result);
   let assemblyFormat = "`[` ($elements^)? `]` attr-dict";
@@ -70,8 +71,8 @@ def CTJS_AppendOp : CTJS_RuntimeOp<"append", "ct_aot_append", [CTJS_MayThrow, CT
     importing it as an empty array.
   }];
   // PHASE 55: $array NEITHER - context::array_append is a push_back and
-  // nothing else (objects.cpp:161-163); $element SINK(stored) - traced
-  // (objects.cpp:42).
+  // nothing else (vm/objects/store.cpp); $element SINK(stored) - traced
+  // (trace_object, vm/objects/gc.cpp).
   let arguments = (ins CTJS_ValueType:$array, Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$element);
   let assemblyFormat = "$element `to` $array attr-dict";
 }

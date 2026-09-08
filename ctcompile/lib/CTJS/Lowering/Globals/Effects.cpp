@@ -78,7 +78,8 @@ llvm::StringRef constant_key(mlir::Value key) {
 // THE QUESTION THE `.constructor` CLAUSE FORGOT TO ASK. `o.constructor` is
 // `Function` only when `o` is one: `constructor` is an own property of every
 // `X.prototype` table and holds the function that owns that table (compile/
-// classes.cpp writes it for a class, vm/call.cpp:502 for an ordinary function,
+// classes.cpp writes it for a class, ensure_prototype in vm/call/construct.cpp
+// for an ordinary function,
 // builtins/internal.hpp:635 for the natives), and `Function.prototype`'s copy
 // is the one holding `Function`. Every function object reaches that table,
 // which is why `(function(){}).constructor` IS the compiler; a plain object

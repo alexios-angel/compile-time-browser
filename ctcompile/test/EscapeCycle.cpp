@@ -212,7 +212,8 @@ arena_outcome ring_local_arena(int n) {
 // from C++ instead has `context::invoke` resize the window away on return.
 //
 // `.call` IS THE SAFEPOINT. This interpreter collects under stress at exactly
-// one place, `context::invoke`'s entry (vm/call.cpp, the `safepoint()` below
+// one place, `context::invoke`'s entry (vm/call/invoke.cpp, the `safepoint()`
+// below
 // the argument copy) - every C++ entry into JavaScript, which
 // `Function.prototype.call` is (builtins/objects.cpp: `c.call(self, rest,
 // ...)`). An interpreted JS-to-JS call pushes its frame in the run loop and is
@@ -541,7 +542,8 @@ int main() {
     // ND-3: a getter on Object.prototype does not fire for a plain object.
     // =======================================================================
     //
-    // lookup_property (vm/objects.cpp) walks the chain calling accessors, but a
+    // lookup_property (vm/objects/lookup.cpp) walks the chain calling accessors,
+    // but a
     // plain literal's chain is null, and the shared Object.prototype table is
     // consulted afterwards with `find` - data properties only. The same getter
     // DOES fire when the table is on an explicit chain, which is what makes

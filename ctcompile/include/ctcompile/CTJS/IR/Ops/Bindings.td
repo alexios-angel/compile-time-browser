@@ -40,7 +40,7 @@ def CTJS_StoreGlobalOp : CTJS_RuntimeOp<"store_global", "ct_aot_global_set", CTJ
   let summary = "Write a global binding by name";
   // PHASE 55: SINK(stored_global). op::set_global writes globals_
   // (run_loop.cpp:252-255), the first root the collector walks
-  // (objects.cpp:667).
+  // (each_root in vm.hpp, walked by vm/objects/gc.cpp).
   let arguments = (ins StrAttr:$name, Arg<CTJS_ValueType, "", [CTJS_SinkStoredGlobal]>:$value);
   let assemblyFormat = "$name `,` $value attr-dict";
 }
@@ -91,7 +91,7 @@ def CTJS_StoreUpvalueOp : CTJS_Op<"store_upvalue"> {
   }];
   // PHASE 55: $closure NEITHER (run_loop.cpp:1240-1249 writes a cell slot
   // and stores nothing else); $value SINK(stored) - the slot is traced from
-  // the cell (objects.cpp:59) through the closure's upvalues (objects.cpp:64).
+  // the cell through the closure's upvalues (trace_object, vm/objects/gc.cpp).
   let arguments = (ins CTJS_ValueType:$closure, I32Attr:$index,
                        Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$value);
   let assemblyFormat = "$closure `[` $index `]` `,` $value attr-dict";
@@ -139,7 +139,8 @@ def CTJS_CreateClosureOp
 
     THE INDEX NAMES A CELL AND THE LIFT READS A VALUE, and that is not a
     contradiction. context::make_closure copies `enclosing->upvalues[up.index]`
-    - the CELL - into the new closure's slot (call.cpp:920), and every read of
+    - the CELL - into the new closure's slot (make_closure,
+    vm/call/coroutines.cpp), and every read of
     that slot goes through ctjs.load_upvalue, which yields `cell->slot`, the
     VALUE (run_loop.cpp, VM_CASE(get_upvalue)). So the lift never wants the box:
     once the enclosing function is lifted, its upvalue `up.index` IS its capture
@@ -195,10 +196,11 @@ def CTJS_CreateClosureOp
   // (fr, closure, index, upvalues, count, this) - and the lowering maps
   // between them, which is what a lowering is for.
   // PHASE 55: $enclosing_closure NEITHER - context::make_closure reads its
-  // `owner` (call.cpp:881) and its `upvalues` (910-911) and stores the closure
-  // itself nowhere; $enclosing_this SINK(captured) - written to captured_this
-  // (919), traced (objects.cpp:73); $upvalues SINK(captured) - written (909),
-  // traced (objects.cpp:64). The RESULT is a boxed site, reason phase59: a
+  // `owner` and its `upvalues` (make_closure, vm/call/coroutines.cpp) and
+  // stores the closure itself nowhere; $enclosing_this SINK(captured) - written
+  // to captured_this (make_closure), traced (trace_object, vm/objects/gc.cpp);
+  // $upvalues SINK(captured) - written (make_closure), traced (trace_object).
+  // The RESULT is a boxed site, reason phase59: a
   // closure is not a tracked site (see the file header) and Phase 59 owns it.
   let arguments = (ins CTJS_ValueType:$enclosing_closure,
                        Arg<CTJS_ValueType, "", [CTJS_SinkCaptured]>:$enclosing_this,

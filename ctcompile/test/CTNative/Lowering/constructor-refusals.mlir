@@ -38,7 +38,7 @@
 // --- GUARD 3: THE CONSTRUCTOR RETURNS AN OBJECT ------------------------------
 //
 // AND THE VM REPLACES THE INSTANCE WHEN IT DOES. `context::construct` ends
-// `return produced.is_object_like() ? produced : self` (Script/vm/call.cpp,
+// `return produced.is_object_like() ? produced : self` (Script/vm/call/construct.cpp,
 // and the same line for a native), and `is_object_like()` is
 // `is_object() || is_array() || is_callable() || is_kind(proxy)`
 // (Script/value.hpp). So `new Sneaky()` here evaluates to `{v: 9}` and NOT to
@@ -93,7 +93,7 @@
 //
 // AN INSTANCE INHERITS `constructor`, AND IT IS A FUNCTION. `ensure_prototype`
 // gives every instance a table whose `constructor` is the function that owns it
-// (vm/call.cpp), so `p.constructor` is truthy in the interpreter and would be
+// (vm/call/construct.cpp), so `p.constructor` is truthy in the interpreter and would be
 // undefined on a struct with no chain - `3` where the interpreter says `4`.
 //
 // THE CLAUSE THAT CATCHES IT IS ADMISSION'S OWN AND PREDATES THIS SLICE, which

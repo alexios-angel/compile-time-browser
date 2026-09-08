@@ -130,9 +130,9 @@ CT_AOT_COVERS(/* helper */ ct_aot_module_import_cell, /* opcode */ load_import)
  * question, since the helper is DEFINED in ctbrowser under Principle 11.
  * DELEGATES TO: run_loop.cpp:1270-1292 inline:
  *   current_module_->exports[name], creating a cell_object when absent
- *   (:1287). instantiate_module (call.cpp:110-119) normally created them
+ *   (:1287). instantiate_module (vm/call/modules.cpp) normally created them
  *   all, but browser::instantiate_module is what calls it (browser.cpp:975)
- *   - context::run_module (call.cpp:151-162) does NOT, so a host running a
+ *   - context::run_module (vm/call/modules.cpp) does NOT, so a host running a
  *   module without instantiating it first reaches the fallback and the
  *   allocation is live.
  * FAILURE: CT_AOT_OK with *out = the record's cell; CT_AOT_NO_WRITE when
@@ -156,7 +156,8 @@ CT_AOT_COVERS(/* helper */ ct_aot_module_export_cell, /* opcode */ bind_export)
  * downstream lowering - a cell every read must funnel through
  * ct_aot_cell_get, versus an ordinary object whose reads are get_prop and
  * therefore accessor RE-ENTRIES, since module_namespace installs a native
- * GETTER per export (call.cpp:137-146). One helper with a nullable name
+ * GETTER per export (module_namespace, vm/call/modules.cpp). One helper with a
+ * nullable name
  * would turn a static property of the lowering into a run-time one. The
  * tempting third option - factoring the shared resolve+lookup into a helper
  * returning module_record* - is UNSAFE: flat_map is
@@ -167,7 +168,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_module_export_cell, /* opcode */ bind_export)
  * helper dangles, so the lookup stays inside each helper. The allocation
  * here is safe under a real collector because the half-built object is
  * stored into of.namespace_object BEFORE the accessor loop
- * (call.cpp:134-135) and that field is GC root 12 - the exact
+ * (module_namespace) and that field is GC root 12 - the exact
  * counterexample to ct_aot_iterable_values's unrooted C++ local.
  * DELEGATES TO: the same resolved/modules_ lookup as load_import -
  *   run_loop.cpp's VM_CASE(load_import) - then context::module_namespace.
@@ -198,7 +199,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_module_namespace, /* opcode */ load_namespace)
  * proto ANYWAY for current_stack. The heaviest safepoint in the area: TWO
  * user-JS re-entries before it returns (to_primitive_string's
  * lookup_property then call, coerce.cpp:172-177; then a whole module graph
- * through run_reentrant, call.cpp:169-200), and the loader INSERTS into
+ * through run_reentrant, vm/call/run.cpp), and the loader INSERTS into
  * modules_, which is the reference-invalidation hazard above. It may also
  * set suspended_ via the imported module's top-level frame, a flag AOT must
  * not read.

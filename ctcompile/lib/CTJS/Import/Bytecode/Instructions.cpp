@@ -95,7 +95,7 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         // `up.index` where the placeholder stands, -1 where the operand
         // is the cell. The VM copies `enclosing->upvalues[up.index]` -
         // the CELL - into the slot (context::make_closure,
-        // call.cpp:920), and every read of the slot goes through
+        // vm/call/coroutines.cpp), and every read of the slot goes through
         // op::get_upvalue, which yields `cell->slot`, the VALUE
         // (run_loop.cpp). ct_aot_make_closure reads neither the
         // placeholder nor the attribute, because it walks the same
@@ -153,7 +153,8 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         if (!reachable) { break; }
         // `this` ONLY WHEN THE TARGET IS AN ARROW, and that is a
         // correction with a measured cost. The VM reads
-        // $enclosing_this at exactly one line - call.cpp:924,
+        // $enclosing_this at exactly one line - make_closure in
+        // vm/call/coroutines.cpp,
         // `if (target.is_arrow) { made->captured_this = ... }` - so
         // for every ordinary function this operand was DEAD, and a
         // dead operand is still a USE. The receiver arrives as %arg0,

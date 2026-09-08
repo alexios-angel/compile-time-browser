@@ -15,10 +15,11 @@ def CTJS_CallOp
   }];
   // PHASE 55 (may_reenter 1: call, call_method, call_computed,
   // call_receiver). ALL SINK(passed): invoke copies every argument into the
-  // callee's register window (call.cpp:82-92; a root, objects.cpp:668) and
-  // the receiver into call_frame::receiver (call.cpp:127-129; root
-  // objects.cpp:683) or current_this_ for a native (call.cpp:58-60; root
-  // objects.cpp:672); a native gets a std::vector copy (run_loop.cpp:648-650)
+  // callee's register window (context::invoke, vm/call/invoke.cpp; a root
+  // through each_root) and the receiver into call_frame::receiver (invoke; a
+  // root through each_root) or current_this_ for a native (invoke's native
+  // arm; a root through each_root); a native gets a std::vector copy
+  // (run_loop.cpp:648-650)
   // and may retain anything - Map.set, Promise.then, addEventListener. The
   // MVP has no callee summaries, so `a.push(i)` is NOT proved confined.
   let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$callee,
@@ -32,8 +33,9 @@ def CTJS_ConstructOp
     : CTJS_RuntimeOp<"construct", "ct_aot_construct", CTJS_GenericEffects # [CTJS_MaySuspend]> {
   let summary = "`new callee(...)`";
   // PHASE 55 (may_reenter 1: construct). ALL SINK(passed): new_target is a
-  // root (objects.cpp:686), the arguments go through invoke. The instance is
-  // made at run_loop.cpp:1099 / call.cpp:507-517 under this operation's pc -
+  // root (through each_root), the arguments go through invoke. The instance is
+  // made at run_loop.cpp:1099 / make_instance in vm/call/construct.cpp under
+  // this operation's pc -
   // an UNCLAIMED site by design, not a boxed-site claim.
   let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$callee,
                        Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$new_target,
@@ -75,8 +77,8 @@ def CTJS_CallDirectOp
     that constant rather than leaving the operand implicit: op::call pushes
     its frame with `entered.new_target = pending_new_target_` and that root is
     undefined unless a pass_new_target or a construct set it (run_loop.cpp,
-    VM_CASE(call), just before `frames_.push_back(entered)`; call.cpp,
-    context::call, the same two lines). A ctjs.call preceded by
+    VM_CASE(call), just before `frames_.push_back(entered)`; vm/call/invoke.cpp,
+    context::invoke, the same two lines). A ctjs.call preceded by
     ctjs.pass_new_target is therefore NOT resolved.
 
     NOT A CTJS_RuntimeOp, THOUGH ctjs.call IS ONE, and the reason is the ABI
@@ -86,7 +88,7 @@ def CTJS_CallDirectOp
     form keeps the trait honest; the boxed lowering names ct_aot_call itself.
   }];
   // PHASE 55: the same row as ctjs.call - ALL SINK(passed), for ctjs.call's
-  // reasons (call.cpp:82-92 copies every argument into the callee window, the
+  // reasons (context::invoke copies every argument into the callee window, the
   // receiver is call_frame::receiver, a root). Knowing the callee does not
   // change where its arguments go; a callee summary is a later phase's.
   let arguments = (ins FlatSymbolRefAttr:$callee,

@@ -1775,7 +1775,7 @@ private:
         // TRAILING, WITH A DEFAULT, AND IT MUST STAY THAT WAY. Five sites
         // build a call_frame with a positional aggregate initializer that
         // lists the first eight members (run_loop.cpp's VM_CASE(call) and
-        // VM_CASE(construct); call.cpp's invoke, run_module and execute);
+        // VM_CASE(construct); vm/call/'s invoke, run_module and execute);
         // a member added anywhere but the end shifts every one of them and
         // compiles cleanly. This codebase has been broken that way twice.
         std::uint64_t serial = 0;
@@ -2035,7 +2035,7 @@ private:
             external_roots_([&](value v) { visit(root_label::external, v); });
         }
     }
-    // collect(), in its three parts - objects.cpp. `mark_roots` marks through
+    // collect(), in its three parts - vm/objects/gc.cpp. `mark_roots` marks through
     // each_root; `sweep` frees the unmarked and clears the marked; `unmark_all`
     // clears every mark and frees NOTHING, which is the escape oracle's exit.
     void mark_roots(std::size_t register_limit);

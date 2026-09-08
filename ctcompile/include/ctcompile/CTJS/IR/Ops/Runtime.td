@@ -25,7 +25,8 @@ def CTJS_PassNewTargetOp
   let assemblyFormat = "attr-dict";
 }
 
-// PHASE 55: NEITHER - a field read (objects.cpp:245-248); the result is an
+// PHASE 55: NEITHER - a field read (get_prototype, vm/objects/chain.cpp); the
+// result is an
 // external object (a site's prototype is null).
 def CTJS_GetProtoOp : CTJS_RuntimeOp<"get_proto", "ct_aot_get_proto", [CTJS_NoEscapeEffects]> {
   let summary = "The prototype link of an object, or undefined";
@@ -52,11 +53,12 @@ def CTJS_SetProtoOp : CTJS_RuntimeOp<"set_proto", "ct_aot_set_proto"> {
     What `class D extends B` writes, and a silent no-op on anything that is not
     an object - which is the interpreter's behaviour, not an oversight.
   }];
-  // PHASE 55: $object SINK(proto_mutated) - after objects.cpp:250-252 stores
-  // the link, every later load (445-461) and store (400-417) walks the new
+  // PHASE 55: $object SINK(proto_mutated) - after set_prototype
+  // (vm/objects/chain.cpp) stores the link, every later load (lookup_property)
+  // and store (store_property) walks the new
   // chain and can reach a getter or setter with the object as `this`, which
   // is exactly what the star proof on the property operations rules out.
-  // $proto SINK(stored): the link is traced (objects.cpp:56).
+  // $proto SINK(stored): the link is traced (trace_object, vm/objects/gc.cpp).
   let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkProtoMutated]>:$object,
                        Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$proto);
   let assemblyFormat = "$proto `on` $object attr-dict";
@@ -180,8 +182,9 @@ def CTJS_MakeArgumentsOp
   }];
   // PHASE 55 (R1): a boxed site, reason `arguments`, and the function is
   // flagged captures_all_arguments. make_arguments_object copies the RAW
-  // register window slots[0..argc) (call.cpp:783-790) - values the IR has no
-  // SSA name for - into a fresh array rooted per frame (794; objects.cpp:684).
+  // register window slots[0..argc) (make_arguments_object, vm/call/invoke.cpp)
+  // - values the IR has no SSA name for - into a fresh array rooted per frame
+  // (fr.arguments_object, a root through each_root).
   // Not a whole-function refusal for object/array sites: the array holds
   // only what the parameter registers held in the prologue, and the analysis
   // CHECKS that placement (entry block, before every site) rather than
@@ -208,14 +211,15 @@ def CTJS_GatherRestOp
     this without ctjs.make_arguments leaves that path dead in the compiled tier.
   }];
   // PHASE 55 (R1): a boxed site, reason `arguments`, guarded like
-  // make_arguments (gather_rest_values, call.cpp:799-813, reads the frame's
-  // arguments array back at 806-808).
+  // make_arguments (gather_rest_values, vm/call/invoke.cpp, reads the frame's
+  // arguments array back).
   let arguments = (ins UI32Attr:$from);
   let results = (outs Res<CTJS_ValueType, "", [CTJS_BoxedArguments]>:$result);
   let assemblyFormat = "`from` $from attr-dict";
 }
 
-// PHASE 55: NEITHER - objects.cpp:200-202 erases a name from the own table.
+// PHASE 55: NEITHER - delete_named (vm/objects/descriptors.cpp) erases a name
+// from the own table.
 def CTJS_DeleteNamedOp : CTJS_Op<"delete_named", [CTJS_Safepoint, CTJS_NoEscapeEffects]> {
   let summary = "`delete o.k` - the NAMED form";
   let description = [{
@@ -255,7 +259,8 @@ def CTJS_OwnKeysOp : CTJS_RuntimeOp<"own_keys", "ct_aot_own_keys", CTJS_GenericE
     the value is meaningless and a caller polls ct_aot_failed at a back edge. It
     allocates, so it is a safepoint even though it cannot run user code.
   }];
-  // PHASE 55: $source NEITHER - objects.cpp:204-219 reads keys and makes
+  // PHASE 55: $source NEITHER - own_keys (vm/objects/chain.cpp) reads keys and
+  // makes
   // strings (an untracked kind), no call(). The result is a boxed site,
   // reason runtime_array: an array the runtime made, not a literal.
   let arguments = (ins CTJS_ValueType:$source);
@@ -288,10 +293,11 @@ def CTJS_DefineAccessorOp : CTJS_Op<"define_accessor", [CTJS_Safepoint]> {
     STORES the function and never invokes it, which is why the helper's own row
     is all zeros.
   }];
-  // PHASE 55: $target SINK(accessor_defined) - objects.cpp:221-228 installs
-  // the pair, and 452-457 / 404-414 then run user code with the target as
+  // PHASE 55: $target SINK(accessor_defined) - define_accessor
+  // (vm/objects/chain.cpp) installs the pair, and lookup_property /
+  // store_property then run user code with the target as
   // `this` on every later load or store, breaking the star proof for it.
-  // $getter and $setter SINK(stored): traced (objects.cpp:52-55).
+  // $getter and $setter SINK(stored): traced (trace_object, vm/objects/gc.cpp).
   let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkAccessorDefined]>:$target,
                        StrAttr:$name,
                        Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$getter,
@@ -299,7 +305,8 @@ def CTJS_DefineAccessorOp : CTJS_Op<"define_accessor", [CTJS_Safepoint]> {
   let assemblyFormat = "$name `on` $target `get` $getter `set` $setter attr-dict";
 }
 
-// PHASE 55: both NEITHER - objects.cpp:230-243 is a raw `set` of the copied
+// PHASE 55: both NEITHER - copy_own_properties (vm/objects/chain.cpp) is a raw
+// `set` of the copied
 // entries, no accessor and no call(); everything ever stored into $source was
 // already sunk at its own store. (Phase 56's "spread means not closed" is a
 // SHAPE fact, not an escape fact.)
@@ -348,7 +355,7 @@ def CTJS_CallSpreadOp
     nothing.
   }];
   // PHASE 55 (may_reenter 1: apply). $callee and $receiver SINK(passed);
-  // $args NEITHER: spread_arguments COPIES the items (call.cpp:711-717) and
+  // $args NEITHER: spread_arguments COPIES the items (vm/call/invoke.cpp) and
   // the array itself is stored nowhere - its elements were sunk at
   // create_array/append. The re-entering arm is the call, and no site
   // reaches it except through an element, already sunk.
@@ -376,7 +383,8 @@ def CTJS_ConstructSpreadOp
     before/after test.
   }];
   // PHASE 55 (may_reenter 1: construct_apply). $callee SINK(passed); $args
-  // NEITHER for call_spread's reason (call.cpp:734-741 -> spread_arguments).
+  // NEITHER for call_spread's reason (construct_spread, vm/call/construct.cpp
+  // -> spread_arguments).
   let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$callee,
                        CTJS_ValueType:$args);
   let results = (outs CTJS_ValueType:$result);
@@ -401,13 +409,15 @@ def CTJS_IterableOp
     Both are the interpreter's semantics, reproduced rather than repaired.
   }];
   // PHASE 55 (may_reenter 1: iterable). $source CARRY, the one carrier: the
-  // array arm returns THE SAME ARRAY (call.cpp:555), so the result aliases
+  // array arm returns THE SAME ARRAY (iterable_values, vm/call/invoke.cpp), so
+  // the result aliases
   // the source. Every other arm builds a fresh array (559, 579, 595, 603,
   // 611) - the result's boxed-site claim, reason runtime_array - and reads
   // the source with `find` (578, 594, 602, 610) or lookup_property (615),
   // which for an object site is data-only by the star proof on get_property.
   // The re-entering arm resumes a generator (582): generator_resume reads
-  // the source once, at call.cpp:957 (`find("__co")`), stores it nowhere and
+  // the source once, in generator_resume (vm/call/coroutines.cpp,
+  // `find("__co")`), stores it nowhere and
   // resumes with the coroutine's own saved receiver - no site of this
   // function is handed to the body.
   let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_Carry]>:$source);

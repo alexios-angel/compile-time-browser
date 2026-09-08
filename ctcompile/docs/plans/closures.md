@@ -23,11 +23,12 @@ top level declares anything is skipped whole.
   frame has one the collector traces it with no further work.
 * **`pending_new_target_` is the pattern to copy** — GC root 3, set by a caller,
   consumed and cleared by `ct_aot_enter` (`aot_bridge.cpp:176-184`) and by
-  `context::call` (`call.cpp:133-134`). Its comment already documents the exact
+  `context::invoke` (`vm/call/invoke.cpp`). Its comment already documents the exact
   ordering hazard: push the frame *before* clearing the root, or the value is
   reachable from nothing in the gap.
 * **Every caller of `enter_compiled` has the closure in scope.** `context::call`
-  computes `fnobj` at `call.cpp:72` and calls `enter_compiled` at `:108` without
+  computes `fnobj` and calls `enter_compiled` (`context::invoke`,
+  `vm/call/invoke.cpp`) without
   it. It is an internal C++ signature, not the ABI.
 * **`function_proto::aot_entry` already exists**, so a nested function's proto
   can carry a compiled entry. The row's warning that "AOT stops at the first
@@ -42,8 +43,9 @@ The only stage that unblocks anything; the rest are ordinary helper work.
   between being set and being consumed.
 * `enter_compiled_body` gains a `closure` parameter and sets
   `ctx.pending_closure_` before calling `target.aot_entry`. Its five call sites
-  (`call.cpp:112`, `:239`, `:324`, `run_loop.cpp:907`, `:1390`) pass what they
-  already hold; the two in `call.cpp:239`/`:324` are entry points with no
+  (`invoke`, `run_reentrant` and `execute` in `vm/call/`, `run_loop.cpp:907`,
+  `:1390`) pass what they already hold; the two in `run_reentrant`/`execute` are
+  entry points with no
   closure and pass `undefined`.
 * `ct_aot_enter` consumes it into `entered.closure`, **pushing the frame before
   clearing the root**, exactly as it does for `new_target`.

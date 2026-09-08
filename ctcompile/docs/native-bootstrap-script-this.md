@@ -27,7 +27,7 @@ VM services. A future native method can use a C++ class receiver when its
 typed instance and call convention are proved. Script entry still needs an
 explicit realm value, and arrows still inherit their lexical receiver.
 
-[`execute` and `run_reentrant`](../../ctbrowser/lib/Script/vm/call.cpp) select
+[`execute` and `run_reentrant`](../../ctbrowser/lib/Script/vm/call/run.cpp) select
 the receiver from the program's recorded script kind:
 
 | Entry | Receiver |

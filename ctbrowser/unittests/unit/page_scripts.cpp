@@ -141,8 +141,9 @@ int main() {
     must_compile_source("Object.defineProperty({}, 'x', { get() { return 1; } });");
     // A labelled BLOCK is not a loop, and `break lbl` out of one is legal.
     must_compile_source("outer: { if (1) { break outer; } }");
-    // AND THE EARLY-ERROR PASS ANSWERS IT FIRST NOW. `lib/Script/compile/
-    // statements.cpp` still says "names a block, not a loop", but nothing
+    // AND THE EARLY-ERROR PASS ANSWERS IT FIRST NOW. `compile_labeled` in
+    // `lib/Script/compile/statements/loops.cpp` still says "names a block, not a
+    // loop", but nothing
     // reaches it: `compiler::compile` runs the early-error walk before
     // `compiler_impl`, and ECMAScript's rule - continue to a label that is not
     // on an IterationStatement - is one of the ones it raises. Its wording is

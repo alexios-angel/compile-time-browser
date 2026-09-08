@@ -104,9 +104,14 @@ its header, and the header did not change:
 
 - `ctbrowser/lib/Script/builtins/` — five files, from one of 4,118 lines. `builtins.hpp`
   still declares exactly `install_builtins()`.
-- `ctbrowser/lib/Script/vm/` — four, from 3,232. `run_loop.cpp` stays whole at 1,466 lines
+- `ctbrowser/lib/Script/vm/` — four, from 3,232. `run_loop.cpp` stays whole at 1,315 lines
   of one function: splitting it means splitting dispatch, which is what
-  `docs/history/computed-goto.md` is about.
+  `docs/history/computed-goto.md` is about. Two of the other three outgrew a
+  file in turn (2026-09-08): `vm/objects/` is six files from 1,396
+  (construction, the collector, lookup, store, the prototype chain,
+  descriptors) and `vm/call/` five from 1,171 (invoke, construct, modules,
+  run, coroutines). All are members of `context`, so nothing needed declaring
+  and `vm.hpp` is untouched; `bench_script` was measured before and after.
 - `ctbrowser/lib/Shell/bindings/` — seven, from 3,926 plus a stray 1,431 filed elsewhere.
 - `ctbrowser/lib/Shell/bindings/element/` — twelve, from a 5,442-line `element.cpp`
   (2026-09-08), with `internal.hpp` beside them declaring the helpers more than one
@@ -172,6 +177,16 @@ its header, and the header did not change:
 - `ctbrowser/lib/Shell/bindings/window/` — two, from 1,106 (2026-09-08): the
   callback queue, console and timers in one, `install_window` whole at 885
   lines in the other. Nothing is shared; `internal.hpp` carries the includes.
+- `ctbrowser/lib/Script/compile/early_errors/` — six, from 1,476 (2026-09-08). The
+  same shape as the compiler: one class, every member inline, in an anonymous
+  namespace. The checker is declared in `early_errors/checker.hpp` with external
+  linkage in `detail::early`; its AST accessors (`at()`, `kids()`) stay inline
+  there for the reason measured below. `early_errors.hpp` still declares one
+  function.
+- `ctbrowser/lib/Script/compile/statements/` — four, from 1,017 (2026-09-08):
+  the dispatch, loops and labels, `try`/`finally`, and the function body. All
+  members of `compiler_impl`, so nothing needed declaring; the header is
+  untouched.
 
 ### What splitting the compiler cost, measured
 

@@ -182,7 +182,7 @@ endif()
 # produces a module that verifies and compiles clean under -Werror and prints
 # a different number: a constructor whose body returned an object REPLACES the
 # instance in the VM (`produced.is_object_like() ? produced : self`,
-# vm/call.cpp), so admitting one would print the instance where the
+# vm/call/construct.cpp), so admitting one would print the instance where the
 # interpreter prints the returned object. Only the interpreter can say so.
 #
 # WHAT IS NOT ADMITTED, AND IT IS THE COMMONEST SHAPE IN REAL CODE: a top-level

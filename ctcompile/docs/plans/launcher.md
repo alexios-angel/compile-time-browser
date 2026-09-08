@@ -159,7 +159,7 @@ cannot all be called the same thing.
 
 **Installation happens before anything runs, and it must.** `context::execute`
 asks `enter_compiled` for the top level *before* it pushes a frame
-(`ctbrowser/lib/Script/vm/call.cpp`, the block whose comment reads "A COMPILED
+(`ctbrowser/lib/Script/vm/call/run.cpp`, the block whose comment reads "A COMPILED
 TOP LEVEL, IF THIS PROGRAM HAS ONE, and for ctcompile that is the ordinary case
 rather than an exotic one"). That single call is why `C++ -> AOT` is 1 and
 `C++ -> VM` is 0: a program whose top level compiled is entered once from C++

@@ -30,13 +30,15 @@ def CTJS_GetPropertyOp : CTJS_RuntimeOp<"get_property", "ct_aot_get_index", CTJS
   // PHASE 55 (may_reenter 1: get_prop/get_index). $object NEITHER, THE STAR
   // PROOF for a confined base: a fresh object's prototype is null
   // (value.hpp:569) and its accessor table empty, lookup_property walks the
-  // own chain (objects.cpp:445-461) - a getter runs only if found on THAT
+  // own chain (lookup_property, vm/objects/lookup.cpp) - a getter runs only if
+  // found on THAT
   // chain - and then consults the shared table with data-only `find`
   // (462-464; value.hpp:575-580); the proxy arm (425-433) is unreachable for
   // a site and the array arm (467-511) runs no call(). The two operations
   // that could give a confined base an accessor, set_proto and
   // define_accessor, sink the base itself. $key SINK(converted): to_string
-  // (objects.cpp:154) -> to_primitive_string (coerce.cpp:171-179) calls the
+  // (lookup_index, vm/objects/lookup.cpp) -> to_primitive_string
+  // (coerce.cpp:171-179) calls the
   // key's own toString/valueOf with the key as receiver.
   let arguments = (ins CTJS_ValueType:$object,
                        Arg<CTJS_ValueType, "", [CTJS_SinkConverted]>:$key);
@@ -47,13 +49,14 @@ def CTJS_GetPropertyOp : CTJS_RuntimeOp<"get_property", "ct_aot_get_index", CTJS
 def CTJS_SetPropertyOp : CTJS_RuntimeOp<"set_property", "ct_aot_set_index", CTJS_GenericEffects> {
   let summary = "Generic property write with full ECMAScript semantics";
   // PHASE 55 (may_reenter 1: set_prop/set_index). $object NEITHER by the
-  // star proof: the object arm (objects.cpp:345-349) goes through
-  // assign_through_accessor (397-419), which walks ONLY obj->prototype - null
+  // star proof: the object arm (store_property, vm/objects/store.cpp) goes
+  // through assign_through_accessor, which walks ONLY obj->prototype - null
   // for a site - and the array arm (361-378) resizes on `length` only; the
-  // proxy arm (334-344) is unreachable for a site. $key SINK(converted):
-  // to_string (objects.cpp:193) runs the key's own toString. $value
+  // proxy arm is unreachable for a site. $key SINK(converted):
+  // to_string (store_index, vm/objects/store.cpp) runs the key's own toString.
+  // $value
   // SINK(stored): object_object::set (value.hpp:632-639) / store_index
-  // (objects.cpp:189), traced (objects.cpp:51 / 42).
+  // (vm/objects/store.cpp), traced (trace_object, vm/objects/gc.cpp).
   let arguments = (ins CTJS_ValueType:$object,
                        Arg<CTJS_ValueType, "", [CTJS_SinkConverted]>:$key,
                        Arg<CTJS_ValueType, "", [CTJS_SinkStored]>:$value);
@@ -75,7 +78,8 @@ def CTJS_DeletePropertyOp
     the value materialises it; the call does not carry one.
   }];
   // PHASE 55 (may_reenter 1: delete_index). $object NEITHER: delete_index is
-  // an `erase` (objects.cpp:325-329). $key SINK(converted): to_string (327).
+  // an `erase` (delete_index -> delete_own_property, vm/objects/descriptors.cpp).
+  // $key SINK(converted): to_string.
   let arguments = (ins CTJS_ValueType:$object,
                        Arg<CTJS_ValueType, "", [CTJS_SinkConverted]>:$key);
   let assemblyFormat = "$object `[` $key `]` attr-dict";
@@ -85,8 +89,8 @@ def CTJS_HasPropertyOp
     : CTJS_RuntimeOp<"has_property", "ct_aot_has_property", CTJS_GenericEffects> {
   let summary = "`key in obj`";
   // PHASE 55 (may_reenter 1: has_property). $object NEITHER: the proxy arm
-  // (objects.cpp:256-264) is unreachable for a site and 266-278 makes no
-  // call. $key SINK(converted): to_string (263/265). The result is a
+  // (has_property, vm/objects/chain.cpp) is unreachable for a site and the
+  // chain walk makes no call. $key SINK(converted): to_string. The result is a
   // boolean, not an object.
   let arguments = (ins CTJS_ValueType:$object,
                        Arg<CTJS_ValueType, "", [CTJS_SinkConverted]>:$key);

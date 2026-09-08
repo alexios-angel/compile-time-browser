@@ -56,7 +56,8 @@ def CTJS_SuspendOp
   // PHASE 55: $value SINK(stored), AND A WHOLE-FUNCTION REFUSAL (R4,
   // `suspended`) in EscapeAnalysis.cpp: the entire register window is copied
   // into a coroutine_object (run_loop.cpp:866-867 await, 922-923 yield;
-  // vm.hpp:1160-1192) and traced from the heap (objects.cpp:86-97), so every
+  // vm.hpp:1160-1192) and traced from the heap (trace_object's coroutine arm,
+  // vm/objects/gc.cpp), so every
   // site of the function outlives its frame. The importer already refuses
   // every suspension point (BytecodeImport.cpp); the analysis's line is for
   // hand-written IR.
