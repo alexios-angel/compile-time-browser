@@ -30,7 +30,7 @@ bool lowering::replaceMap(mlir::Operation * o) {
         auto map = llvm::cast<MapType>(typeOf(made.getResult()));
         const std::string callee =
             (llvm::isa<MapType, BoolType, StrType>(map.getValueType()) ||
-             isObjectValueType(map.getValueType()))
+             isObjectValueType(map.getValueType()) || !mixedMapSpelling(map.getValueType()).empty())
                 ? ("ctnative::make_map<" + mapKeySpelling(map.getKeyType()) + ", " +
                    mapValueSpelling(map.getValueType()) + ">")
                       .str()
@@ -51,19 +51,37 @@ bool lowering::replaceMap(mlir::Operation * o) {
         } else {
             args.push_back(llvm::cast<GetPropertyOp>(o).getObject());
         }
+        const auto map = mapSchemas.lookup(o);
+        const auto convertAlternative = [&](mlir::Value value, mlir::Type type) {
+            const auto spelling = mixedMapSpelling(type);
+            return callWithConstValueOperands(
+                       b, where, mlir::TypeRange{ec::OpaqueType::get(context, spelling)},
+                       b.getStringAttr(spelling), mlir::ValueRange{value})
+                .getResult(0);
+        };
+        if (map && !mixedMapSpelling(map.getKeyType()).empty() && args.size() >= 2) {
+            args[1] = convertAlternative(args[1], map.getKeyType());
+        }
         if (action == "set") {
             auto call = llvm::cast<CallOp>(o);
             // set returns the same Map schema. Its result still has a solver
             // fact here; the receiver may already be a replacement EmitC SSA
             // value, which deliberately has no entry in that analysis.
-            const auto map = llvm::cast<MapType>(typeOf(call.getResult()));
-            if (isObjectValueType(map.getValueType())) {
+            const auto storedMap = llvm::cast<MapType>(typeOf(call.getResult()));
+            if (!mixedMapSpelling(storedMap.getValueType()).empty()) {
+                args[2] = convertAlternative(args[2], storedMap.getValueType());
+            } else if (isObjectValueType(storedMap.getValueType())) {
                 args[2] =
                     convertScalar(b, where, args[2], carrierType(context, carrier::objectValue));
             }
         }
         const auto helper = o->hasAttr(kNativeMapPresent) ? "get_present" : action;
-        const auto name = b.getStringAttr(("ctnative::map_" + helper).str());
+        std::string helperName = ("ctnative::map_" + helper).str();
+        if (action == "get" && map && !mixedMapSpelling(map.getValueType()).empty()) {
+            helperName =
+                "ctnative::map_get_present_as<" + mapValueSpelling(typeOf(o->getResult(0))) + ">";
+        }
+        const auto name = b.getStringAttr(helperName);
         if (action == "clear") {
             callWithConstValueOperands(b, where, mlir::TypeRange{}, name, args);
             swap(absentConstant(b, where));

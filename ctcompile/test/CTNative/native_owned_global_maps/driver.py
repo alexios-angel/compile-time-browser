@@ -13,7 +13,7 @@ from .sources import (
     seeded_result_sources, key_fact_sources, joined_result_sources, seeded_carrier_refusals,
     RESULT_SIGNATURES, refusal_sources, parameter_refusals, result_refusals,
     seeded_result_refusals, size_result_sources, size_result_refusals,
-    payload_result_sources, payload_result_refusals,
+    payload_result_sources, payload_result_refusals, mixed_result_sources, mixed_result_refusals,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
@@ -81,6 +81,7 @@ def main():
         **joined_result_sources(),
         **size_result_sources(),
         **payload_result_sources(),
+        **mixed_result_sources(),
     }
     saved = {}
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
@@ -106,6 +107,12 @@ def main():
         ("result_seeded_false_overwrite", "return state.get(false);", ("return true;",)),
         ("result_seeded_string_saved", "return saved;",
          ("return state.get('seed');", "return 'changed';")),
+        ("result_seeded_mixed_false_zero", "state.set(false, 1);", ("state.set(0, 1);",)),
+        ("result_seeded_mixed_false", "return state.get(true);",
+         ("return 0;", "return undefined;")),
+        ("result_seeded_mixed_empty_key", "state.set(false, false);", ("state.set('', false);",)),
+        ("result_seeded_mixed_string_saved", "return saved;",
+         ("return state.get('seed');", "return false;")),
     ):
         live_source, _, live_value = positives[name]
         if live_source.count(old) != 1:
@@ -183,7 +190,9 @@ def main():
     for name in ("seeded_earlier_key", "seeded_other_delete", "seeded_dynamic_write",
                  "seeded_dynamic_formal", "seeded_dynamic_delete", "seeded_size_saved",
                  "seeded_size_two_entries", "seeded_size_two_saved_empty",
-                 "result_seeded_bool", "result_seeded_string", "result_seeded_string_saved"):
+                 "result_seeded_bool", "result_seeded_string", "result_seeded_string_saved",
+                 "result_seeded_mixed_contents", "result_seeded_join_reseed",
+                 "result_seeded_bool_string_contents", "result_seeded_mixed_string_saved"):
         key_ir, key_config, _ = saved[name]
         rollback += check_budgets(args, key_ir, key_config, name,
                                   functions=RESULT_SIGNATURES[name][2])
@@ -294,7 +303,9 @@ def main():
         check_call_preservation(forged.read_text(), failed.read_text(), forged_name)
         rerun = methods.refused(args, failed, forged_name + "-rerun", forged_config, admitted=0)
         check_call_preservation(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
-    for name, (source, value) in payload_result_refusals().items():
+    for name, (source, value) in {
+        **payload_result_refusals(), **mixed_result_refusals(),
+    }.items():
         js, rejected, count = boundary.prepare(args, name, source)
         if count != 6:
             raise RuntimeError(f"{name}: changed missing-payload source denominator")
@@ -305,7 +316,7 @@ def main():
         blind = args.work / f"{name}-blinded.js"
         blind.write_text(source.replace("state.delete(", "state.has("))
         if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == expected:
-            raise RuntimeError(f"{name}: missing payload cannot be distinguished from false/empty")
+            raise RuntimeError(f"{name}: missing payload cannot be distinguished from its live value")
         fresh = contract(args, rejected, name)
         failed = methods.refused(args, rejected, name, fresh, admitted=0)
         check_call_preservation(rejected.read_text(), failed.read_text(), name)
@@ -322,8 +333,8 @@ def main():
         check_call_preservation(forged.read_text(), failed.read_text(), forged_name)
         rerun = methods.refused(args, failed, forged_name + "-rerun", forged_config, admitted=0)
         check_call_preservation(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
-    # A definite get tag does not prove homogeneous Map storage. Each mixed
-    # carrier refusal keeps its complete owner proof and prepared runtime edge.
+    # A definite get tag does not narrow the whole Map's storage schema. The
+    # Number/String refusal keeps its complete owner proof and runtime edge.
     for name, (source, value) in seeded_carrier_refusals().items():
         js, rejected, count = boundary.prepare(args, name, source)
         if count != 6:
@@ -435,7 +446,9 @@ def main():
     if "ctnative.host_owner_proved = false" not in text or "fingerprint mismatch" not in text:
         raise RuntimeError("seeded-rerun: prepared presence reused the original source authority")
     for name in ("seeded_size_two_entries", "seeded_size_two_saved_empty",
-                 "result_seeded_bool", "result_seeded_string", "result_seeded_string_saved"):
+                 "result_seeded_bool", "result_seeded_string", "result_seeded_string_saved",
+                 "result_seeded_mixed_contents", "result_seeded_join_reseed",
+                 "result_seeded_bool_string_contents", "result_seeded_mixed_string_saved"):
         _, config, output = saved[name]
         functions = RESULT_SIGNATURES[name][2]
         rerun = owned.lower(args, output, name + "-rerun", config,
@@ -458,6 +471,8 @@ def main():
           f"{len(size_result_refusals())} size-key refusals with discriminating observations; "
           f"{len(payload_result_sources())} Bool/String payload programs and saved-string lifetime; "
           f"{len(payload_result_refusals())} missing-payload refusals distinguish false/empty; "
+          f"{len(mixed_result_sources())} closed mixed Map programs and saved-string lifetime; "
+          f"{len(mixed_result_refusals())} mixed deleted-result refusals preserve calls; "
           f"{len(seeded_result_refusals())} seeded proof and "
           f"{len(seeded_carrier_refusals())} seeded carrier refusals; "
           f"{len(rollback)} speculative rollback cutoffs")

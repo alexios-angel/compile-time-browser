@@ -129,6 +129,7 @@ struct lowering {
     bool needsString = false;
     bool needsNullableString = false;
     bool needsStringVector = false;
+    llvm::DenseMap<mlir::Operation *, MapType> mapSchemas;
     bool needsMap = false;
     bool needsMapOrder = false;
     bool needsObjectIdentity = false;

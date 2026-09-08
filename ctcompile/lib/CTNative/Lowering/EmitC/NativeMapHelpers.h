@@ -17,6 +17,13 @@ template <class K> bool map_key_equal(const K & a, const K & b) {
 inline bool map_key_equal(js_num a, js_num b) {
     return a == b || (std::isnan(a) && std::isnan(b));
 }
+template <class... T> bool map_key_equal(const std::variant<T...> & a, const std::variant<T...> & b) {
+    return std::visit([](const auto & left, const auto & right) {
+        if constexpr (std::is_same_v<std::decay_t<decltype(left)>, std::decay_t<decltype(right)>>) {
+            return map_key_equal(left, right);
+        } else { return false; }
+    }, a, b);
+}
 template <class K, class V> struct map_storage {
     std::vector<std::pair<K, V>> entries;
     auto find(const K & key) {
@@ -57,6 +64,17 @@ template <> struct map_key_less<js_num> {
         return !std::isnan(b) && a < b;
     }
 };
+template <class... T> struct map_key_less<std::variant<T...>> {
+    bool operator()(const std::variant<T...> & a, const std::variant<T...> & b) const {
+        if (a.index() != b.index()) { return a.index() < b.index(); }
+        return std::visit([](const auto & left, const auto & right) {
+            using L = std::decay_t<decltype(left)>;
+            if constexpr (std::is_same_v<L, std::decay_t<decltype(right)>>) {
+                return map_key_less<L>{}(left, right);
+            } else { return false; }
+        }, a, b);
+    }
+};
 template <class K, class V> using map_storage = std::map<K, V, map_key_less<K>>;
 } // namespace ctnative
 )cpp";
@@ -95,6 +113,17 @@ template <class K, class V> V map_get_present(
     if (found != map->end()) { return found->second; }
     // Reaching this point contradicts the compiler's dominance/identity proof.
     std::terminate();
+}
+// T is selected only by a rederived present, exact-payload proof. Return
+// by value so an owning string survives overwrite, deletion and Map lifetime.
+template <class T, class K, class... V> T map_get_present_as(
+    const std::shared_ptr<map_storage<K, std::variant<V...>>> & map, const K & key) {
+    const auto found = map->find(key);
+    if (found == map->end()) { std::terminate(); }
+    return std::visit([](const auto & value) -> T {
+        if constexpr (std::is_same_v<T, std::decay_t<decltype(value)>>) { return value; }
+        else { std::terminate(); }
+    }, found->second);
 }
 template <class K, class V> std::shared_ptr<map_storage<K, V>> map_set(
     const std::shared_ptr<map_storage<K, V>> & map, const K & key, const V & value) {

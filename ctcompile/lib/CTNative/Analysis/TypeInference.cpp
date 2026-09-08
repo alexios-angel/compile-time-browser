@@ -584,6 +584,13 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                 mapAnswer = call->hasAttr(kNativeMapPresent)
                                 ? map.getValueType()
                                 : meet(absentType(c), map.getValueType());
+                // This literal result is independent of the family schema,
+                // including unvisited writes that depend on this same read.
+                // Seed it immediately: widening first cannot be undone by a
+                // later iteration of the monotone solver.
+                if (auto readType = call->getAttrOfType<mlir::TypeAttr>(kNativeMapReadType)) {
+                    mapAnswer = readType.getValue();
+                }
             } else if (action == "clear") {
                 mapAnswer = absentType(c);
             } else if (action == "keys" || action == "values") {

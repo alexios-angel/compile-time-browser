@@ -56,7 +56,7 @@
 // NESTED: emitc.func @probe_1
 // NESTED: call_opaque "ctnative::make_map<std::string, std::shared_ptr<ctnative::number_map<double>>>"
 // MIXED: ctjs.func private @probe$1
-// MIXED-SAME: ctnative.not_native = "native Map needs supported keys and homogeneous numeric, boolean, owning-string, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.variant<
+// MIXED-SAME: ctnative.not_native = "native Map needs supported keys and numeric, boolean, closed mixed, owning-string, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.variant<
 // OBJECT: emitc.func @probe_1
 // STRING-LABEL: emitc.func @probe_1() -> f64
 // STRING: [[STRING_MAP:%[^ ]+]] = call_opaque "ctnative::make_map<std::string, std::string>"
@@ -65,7 +65,7 @@
 // STRING: [[STRING_SIZE:%[^ ]+]] = call_opaque "ctnative::map_size"([[STRING_MAP]])
 // STRING: return [[STRING_SIZE]] : f64
 // OPTIONAL: ctjs.func private @probe$1
-// OPTIONAL-SAME: ctnative.not_native = "native Map needs supported keys and homogeneous numeric, boolean, owning-string, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.num<i32>, !ctnative.opt<!ctnative.num<i32>>>"
+// OPTIONAL-SAME: ctnative.not_native = "native Map needs supported keys and numeric, boolean, closed mixed, owning-string, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.num<i32>, !ctnative.opt<!ctnative.num<i32>>>"
 // EQUALITY: emitc.func @probe_1() -> i1
 // EQUALITY: call_opaque "ctnative::scalar_strict_equal"
 // EQUALITY-NOT: ctnative.not_native

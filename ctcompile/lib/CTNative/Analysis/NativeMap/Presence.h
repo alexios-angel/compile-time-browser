@@ -19,6 +19,7 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
                           llvm::ArrayRef<ctjs::GetPropertyOp> sizes,
                           llvm::ArrayRef<ctjs::CallOp> reads,
                           llvm::ArrayRef<ctjs::CallOp> optionalReads,
+                          llvm::ArrayRef<ctjs::CallOp> typedReads,
                           const llvm::DenseSet<mlir::Operation *> & snapshotCopies,
                           llvm::function_ref<mlir::Value(mlir::Value)> familyOf);
 

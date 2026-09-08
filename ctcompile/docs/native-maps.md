@@ -1,8 +1,8 @@
 # Native Maps toward Bootstrap Data
 
 The native backend can lower standard `Map` instances with primitive or proved
-identity-only object keys and homogeneous number, boolean, owning-string or
-finite acyclic Map values, including
+identity-only object keys and number, boolean, owning-string, closed
+Bool/Number or Bool/String alternatives, or finite acyclic Map values, including
 closed function parameters, returns and lifted captures. A returned handle
 owns its storage after the factory frame ends. Monomorphic
 [returned closures](native-returned-closures.md) can also own
@@ -28,6 +28,13 @@ This is the numeric-leaf representation. Boolean and UTF-8 string payloads use
 `map_storage<K, V>` with an owning child handle as `V`; a separate containment proof rejects
 all schema cycles. Every instance use is proved. Generated programs link
 neither the interpreter nor its collector.
+
+Closed mixed key and payload schemas use exactly `std::variant<bool, double>`
+or `std::variant<bool, std::string>` in that same owning storage. Each call
+operand must have one proved scalar alternative. Key comparison first compares
+the alternative, then applies its ordinary scalar equality: false and zero are
+distinct keys, while numeric NaNs and signed zeros still use SameValueZero.
+The final read's type never narrows the storage schema or removes other writes.
 
 When no admitted native Map operation observes iteration order, the module
 uses `std::map<K, V, map_key_less<K>>`. Lookup helpers call `map->find(key)`;
@@ -66,7 +73,7 @@ for its numeric payload, whose underlying type remains `double`.
 |---|---|
 | `new Map()` | Empty owning allocation; constructor arguments are refused |
 | `set(key, value)` | Replace in place or append; return the same Map identity |
-| `get(key)` | Number, boolean or owning string value or absent; an owning child Map requires proved presence |
+| `get(key)` | Homogeneous scalar value or absent; a child Map requires presence; a mixed payload requires independent presence and an exact scalar type |
 | `has(key)` | Boolean membership test |
 | `delete(key)` | Remove the entry and report whether it existed |
 | `clear()` | Remove all entries and return absent |
@@ -107,10 +114,23 @@ a saved result. String value snapshots also copy every element and retain
 insertion order independently of later Map mutation. Boolean value snapshots
 still refuse because this tier has no boolean-vector carrier.
 
-Stored primitive values must be definite and homogeneous: numbers, including
-NaN, booleans, or UTF-8 strings. Optional values, mixed primitive payloads,
-mixed key types and general object keys remain refused. See
+Stored primitive values must be definite: numbers, including NaN, booleans,
+UTF-8 strings, or the two closed mixed schemas above. Optional stored values,
+Number/String or larger unions, mixed snapshots and general object keys remain
+refused. A mixed `get` is admitted only when the live structured must-analysis
+independently proves both membership and the payload type from the last literal
+write on every reaching path. `has` adds no payload evidence. Possible aliasing
+writes, callee effects, deletion and loops invalidate facts conservatively.
+The read returns its exact scalar by value, preserving saved string ownership.
+Nonliteral write payloads currently clear the type evidence even if an earlier
+read had a known tag. All input annotations are cleared and rederived. See
 the nested-Map document for its additional presence and containment proofs.
+
+`native-map-mixed.mlir` checks nine observations across associative and
+insertion-ordered modules with Node/interpreter, GCC/Clang, explicit/deduced
+output and ASan/UBSan. Seven negative programs cover branch tags, possible alias
+writes, direct callee writes, `has`, deletion and nonliteral payloads, including
+forged presence/type facts and reruns. Neither mode emits Script symbols.
 
 ## Proof boundary
 

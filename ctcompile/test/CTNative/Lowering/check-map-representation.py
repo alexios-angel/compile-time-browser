@@ -60,10 +60,11 @@ def main():
         ("payloads", False, "booleanResult=63\nnestedResult=1\nstringResult=63\n"),
         ("string-values", False, "keyResult=3\nsnapshotResult=3427\n"),
         ("string-values", True, "keyResult=3\nsnapshotResult=3427\n"),
+        ("mixed-values", False, "result=2\n"),
     ]
     for fixture, deforest, expected in cases:
         name = fixture + ("-deforested" if deforest else "")
-        if fixture in {"payloads", "string-values"}:
+        if fixture in {"payloads", "string-values", "mixed-values"}:
             js = args.fixtures / (fixture + ".js")
             assert run([node, "-e", NODE_GLOBALS, str(js)]) == expected
             assert run([str(reference), str(js)]) == expected
@@ -98,7 +99,7 @@ def main():
                 assert "ctnative::make_string_to_number_map()" in cpp
             assert "map->find(key)" in cpp
             assert "ctbrowser::script::" not in cpp
-            if fixture in {"associative", "payloads"}:
+            if fixture in {"associative", "payloads", "mixed-values"}:
                 assert "using map_storage = std::map<K, V, map_key_less<K>>;" in cpp
                 assert "#include <map>" in cpp
                 assert "map->entries" not in cpp and "struct map_storage" not in cpp
@@ -112,6 +113,10 @@ def main():
                 assert "ctnative::make_map<std::string, std::string>()" in cpp
                 assert "ctnative::make_map<bool, std::string>()" in cpp
                 assert "nullable_string map_get(" in cpp
+            if fixture == "mixed-values":
+                assert "ctnative::make_map<double, std::variant<bool, std::string>>()" in cpp
+                assert len(re.findall(r"\bctnative::map_set\(", cpp)) == 2
+                assert "ctnative::map_size(" in cpp
             if fixture == "string-values":
                 assert "std::vector<std::string> map_values(" in cpp
                 # String values stay owning snapshots even while a separate
@@ -135,7 +140,7 @@ def main():
                      "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
                      str(source), "-o", str(binary)])
                 assert run([str(binary)], environment=environment) == expected
-    for fixture in ["boolean-values", "mixed-values"]:
+    for fixture in ["boolean-values"]:
         source = (args.fixtures / (fixture + ".js")).read_text()
         _, prepared, count = boundary.prepare(args, fixture, source)
         output, _ = boundary.native(args, prepared, fixture, count)
@@ -144,9 +149,9 @@ def main():
             return [call.strip() for call in re.findall(
                 r"^\s*(?:%[-\w.$]+ = )?ctjs\.(call(?:_direct)? [^\n{]+)", text, re.M)]
         assert calls(before) == calls(after), fixture
-    print("native Maps: 13 observations, associative/ordered/deforested, GCC/Clang, "
+    print("native Maps: 14 observations, associative/ordered/deforested, GCC/Clang, "
           "plain/deduced, ASan/UBSan; Bool/string payloads and owning string snapshots "
-          "agree with Node/interpreter; two payload/snapshot refusals")
+          "and literal mixed storage agree with Node/interpreter; boolean snapshot refusal")
 
 
 if __name__ == "__main__":

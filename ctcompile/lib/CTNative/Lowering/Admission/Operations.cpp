@@ -64,7 +64,7 @@ bool admission::op(mlir::Operation * o) {
     if (auto made = llvm::dyn_cast<ConstructOp>(o)) {
         if (o->hasAttr(kNativeMapSite)) {
             return carrierOf(typeOf(made.getResult())) == carrier::map ||
-                   refuse("native Map needs supported keys and homogeneous numeric, boolean, "
+                   refuse("native Map needs supported keys and numeric, boolean, closed mixed, "
                           "owning-string, object-identity union or acyclic Map values; inferred " +
                           printed(typeOf(made.getResult())));
         }
@@ -80,6 +80,29 @@ bool admission::op(mlir::Operation * o) {
         auto call = llvm::cast<CallOp>(o);
         if (carrierOf(typeOf(call.getReceiver())) != carrier::map) {
             return refuse("native Map receiver has no supported key/value carrier");
+        }
+        const auto map = llvm::cast<MapType>(typeOf(call.getReceiver()));
+        const auto scalarAlternative = [&](mlir::Type schema, mlir::Value operand) {
+            const auto value = typeOf(operand);
+            auto alternatives = llvm::cast<VariantType>(schema).getAlternatives();
+            return llvm::any_of(alternatives, [&](mlir::Type alternative) {
+                return value == alternative ||
+                       (llvm::isa_and_nonnull<NumType>(value) && llvm::isa<NumType>(alternative));
+            });
+        };
+        if (!mixedMapSpelling(map.getKeyType()).empty() && !call.getArgs().empty() &&
+            !scalarAlternative(map.getKeyType(), call.getArgs()[0])) {
+            return refuse("mixed native Map key needs one proved scalar alternative");
+        }
+        if (!mixedMapSpelling(map.getValueType()).empty()) {
+            if (action == "set" && !scalarAlternative(map.getValueType(), call.getArgs()[1])) {
+                return refuse("mixed native Map write needs one proved scalar alternative");
+            }
+            if (action == "get" && (!o->hasAttr(kNativeMapReadType) ||
+                                    !scalarAlternative(map.getValueType(), call.getResult()))) {
+                return refuse(
+                    "mixed native Map read needs independent present payload type evidence");
+            }
         }
         if (action == "keys" || action == "values") {
             return (isVectorSite(call.getResult()) &&

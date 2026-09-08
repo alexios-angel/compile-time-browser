@@ -24,5 +24,6 @@
 # and empty string overwrite present keys while missing values stay refused;
 # blinded observations distinguish each from undefined. A saved owning string
 # survives payload overwrite/deletion, caller-buffer mutation, entry reexecution
-# and final Map destruction under ASan/UBSan. Mixed payloads keep their prepared
-# result edge and refuse even with freshly fingerprinted presence forgeries.
+# and final Map destruction under ASan/UBSan. Closed Bool/Number and Bool/String Map storage preserves each key tag
+# and exact live read result. Missing/mismatched payloads and Number/String storage
+# retain their calls and refuse fresh/stale forged presence and read-type facts.

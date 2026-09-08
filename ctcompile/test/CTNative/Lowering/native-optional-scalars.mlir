@@ -25,7 +25,7 @@
 // MIXED: ctjs.func private @choose$1
 // MIXED-SAME: ctnative.not_native = "a value of type !ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>> from `scf.if`"
 // PAYLOAD: ctjs.func private @probe$1
-// PAYLOAD-SAME: ctnative.not_native = "native Map needs supported keys and homogeneous numeric, boolean, owning-string, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.str<utf8>, !ctnative.opt<!ctnative.num<i32>>>"
+// PAYLOAD-SAME: ctnative.not_native = "native Map needs supported keys and numeric, boolean, closed mixed, owning-string, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.str<utf8>, !ctnative.opt<!ctnative.num<i32>>>"
 // MAP: ctjs.func private @choose$1
 // MAP-SAME: ctnative.not_native = "native Map instance escapes or is mutated through `scf.yield`"
 // ARRAY: ctjs.func private @probe$1

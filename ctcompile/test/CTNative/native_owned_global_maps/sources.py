@@ -323,18 +323,72 @@ def payload_result_refusals():
     }
 
 
-def seeded_carrier_refusals():
+def mixed_result_sources():
     observed_size = SEEDED_RESULT.replace("get() {",
         "size() { return state.size; }, get() {").replace("var trace = host.slot.get();",
                                                          "var trace = host.slot.size();")
+    false_value = observed_size.replace("state.set(0, 1); return state.get(0);",
+        "state.set(1, 0); state.set(true, false); return state.get(true);")
+    false_value = false_value.replace("state.set(key, 1)",
+        "state.set(false, 1); state.set(key, 1)")
+    saved_string = payload_result_sources()["result_seeded_string_saved"][0]
+    saved_string = saved_string.replace(f"state.set('seed', '{STRING_RESULT}');",
+        f"state.set(false, false); state.set('seed', '{STRING_RESULT}');")
+    saved_string = saved_string.replace("state.set('seed', 'changed')",
+        "state.set('seed', false)").replace("return saved;", "state.delete(false); return saved;")
     return {
         "result_seeded_mixed_contents": (observed_size.replace("state.set(0, 1);",
-            "state.set(0, true); state.set(0, 1);"), 2),
+            "state.set(0, true); state.set(0, 1);"), "host", 2),
         "result_seeded_join_reseed": (observed_size.replace("return state.get(0);",
-            "state.set(state.size, true); state.set(0, 3); return state.get(0);"), 3),
+            "state.set(state.size, true); state.set(0, 3); return state.get(0);"), "host", 3),
         "result_seeded_bool_string_contents": (payload_result_sources()["result_seeded_bool"][0]
-            .replace("state.set(false, true);", "state.set(false, 'old'); state.set(false, true);"), 2),
+            .replace("state.set(false, true);", "state.set(false, 'old'); state.set(false, true);"),
+            "host", 2),
+        # SameValueZero compares within a tag: false and numeric zero occupy
+        # separate entries, and the produced true key creates a third entry.
+        "result_seeded_mixed_false_zero": (observed_size.replace(
+            "state.set(0, 1); return state.get(0);",
+            "state.set(false, 1); state.set(0, true); return state.get(0);"), "host", 3),
+        # Returning false overwrites the setter's false key. Returning zero
+        # or missing instead creates a fourth entry in the same mixed Map.
+        "result_seeded_mixed_false": (false_value, "host", 3),
+        "result_seeded_mixed_empty_key": (observed_size.replace(
+            "state.set(0, 1); return state.get(0);",
+            "state.set(false, false); state.set('', 'key'); return state.get('');")
+            .replace("state.set(key, 1)", "state.set(key, 'stored')"), "host", 3),
+        # The saved string owns its bytes after a Boolean replacement, removal
+        # of both source entries, and eventually destruction of the entire Map.
+        "result_seeded_mixed_string_saved": (saved_string, "host", 1),
     }
+
+
+def mixed_result_refusals():
+    positives = mixed_result_sources()
+    return {
+        "result_seeded_mixed_false_deleted": (positives["result_seeded_mixed_false_zero"][0]
+            .replace("return state.get(0);", "state.delete(0); return state.get(0);"), 2),
+        "result_seeded_mixed_string_deleted": (positives["result_seeded_mixed_empty_key"][0]
+            .replace("return state.get('');", "state.delete(''); return state.get('');"), 2),
+    }
+
+
+def seeded_carrier_refusals():
+    return {
+        "result_seeded_number_string_contents": (mixed_result_sources()[
+            "result_seeded_mixed_contents"][0].replace("state.set(0, true)",
+                                                       "state.set(0, 'old')"), 2),
+    }
+
+
+MIXED_RESULT_TYPES = {
+    "result_seeded_mixed_contents": ("js_num", "double"),
+    "result_seeded_join_reseed": ("js_num", "double"),
+    "result_seeded_bool_string_contents": ("bool", "std::string"),
+    "result_seeded_mixed_false_zero": ("bool", "double"),
+    "result_seeded_mixed_false": ("bool", "double"),
+    "result_seeded_mixed_empty_key": ("std::string", "std::string"),
+    "result_seeded_mixed_string_saved": ("std::string", "std::string"),
+}
 
 
 RESULT_SIGNATURES = {
@@ -359,6 +413,7 @@ RESULT_SIGNATURES = {
     **{name: (("std::string" if "string" in name else "bool"),
               ("std::string" if "string" in name else "bool"), 6)
        for name in payload_result_sources()},
+    **{name: (result, result, 6) for name, (result, _) in MIXED_RESULT_TYPES.items()},
 }
 
 

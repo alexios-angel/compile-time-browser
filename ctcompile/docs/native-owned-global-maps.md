@@ -428,16 +428,53 @@ attempt failed only a refusal harness's annotation comparison; the published
 gate itself completed successfully). The current full gate and final local
 Map results are recorded in [HANDOFF.md](HANDOFF.md).
 
+## Closed mixed Map storage, 2026-09-08
+
+The preceding `result_seeded_mixed_contents`, `result_seeded_join_reseed` and
+`result_seeded_bool_string_contents` boundary advances **0/6 -> 6/6 native**.
+Node/interpreter traces remain **2/3/2**, and the generated programs retain all
+**9/10/9 calls**. Complete host owner/result proofs remain independent of the
+native storage proof. Exact Bool/Number and Bool/String schemas now use
+`std::variant<bool, double>` or `std::variant<bool, std::string>` for keys or
+payloads. False and numeric zero remain distinct; each numeric alternative
+preserves SameValueZero. A read's exact result never erases another stored type.
+
+The must-analysis derives each mixed read's payload type from definite literal
+writes, separately from membership. A same-tag branch join preserves the type;
+differing tags, possible overwrites and callee writes invalidate it. `has`
+establishes presence only. The type is seeded before monotone inference can
+widen dependent keys or results. Emission constructs the exact alternative and
+copies a proved read's scalar result; saved strings keep their owning bytes.
+
+The published gate passes **76 complete programs**, seven mixed programs and
+all **eight sanitizer lifetime variants** in explicit/deduced forms. Both
+compilers agree with Node/interpreter and emit no Script symbols. Mixed
+false/zero keys, empty strings, false results and saved strings have distinct
+blinded controls. Two deleted-result refusals retain all calls under forged
+presence/type facts and reruns. Number/String storage stays refused.
+
+Native admission first completes at **7658/7910/7658** steps for the preceding
+three specimens and **8367** for the mixed saved-string specimen, checking
+**30/30/30/31** cutoffs. No natural speculative rollback interval was observed.
+Log: `/tmp/ctcompile-mixed-native2.log`. The separate local representation gate
+passes nine observations under both storage implementations and seven mixed-read
+refusals. Full gate results are recorded in [HANDOFF.md](HANDOFF.md).
+
 ## Next boundary
 
-Mixed keys and stored payloads remain separate **0/6** boundaries despite
-complete host ownership/result proofs. Fresh `result_seeded_mixed_contents`,
-`result_seeded_join_reseed` and `result_seeded_bool_string_contents` probes
-retain all **9/10/9 source calls**, with Node/interpreter traces **2/3/2**.
-Evidence: `/tmp/ctcompile-payloads-boundary.json`. Closed finite key comparison,
-storage, set conversion and each read/result need type facts together; a proved
-final get tag cannot narrow the entire Map schema. Preserve SameValueZero and
-the distinction between boolean and numeric keys.
+Mixed payload tags currently originate only at literal writes. A scalar saved
+from a proved read and then written into another key loses its tag at that
+second write. Propagating independently proved scalar payload facts through
+this read/write chain is the next boundary; it must retain alias, branch,
+deletion and incomplete-proof refusals.
+The fresh `saved_read_write` probe seeds an empty string, saves its read,
+overwrites a Boolean key with that value, saves the second read, deletes that
+key and returns the saved result. It remains **0/6 native** in both optimization
+modes with a complete host owner proof, **all 12 calls retained** and
+Node/interpreter **`trace=1`**. Replacing the saved write with `true` yields
+**`trace=2`**, while reading after deletion also yields **2** and loses the host
+result proof. Evidence: `/tmp/ctcompile-mixed-boundary.json`; reproducible source:
+`/tmp/ctcompile-mixed-next/saved_read_write.js` on the devbox.
 The unseeded `get() { return state.get(0); }` also remains refused: neither an
 earlier observed invocation nor an incomplete family establishes its result.
 Raising the intentional size-witness cap does not address these barriers.

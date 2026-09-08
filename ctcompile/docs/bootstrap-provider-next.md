@@ -201,20 +201,32 @@ The published gate passes **69 complete programs** with all seven lifetime
 variants, including saved strings after overwrite, deletion and Map destruction.
 Ordinary missing reads keep false/empty-string distinctions through existing
 nullable carriers; string value snapshots own their elements. Boolean snapshots
-and mixed stored payloads remain refused.
+remain refused.
 
-## Next: closed mixed key/payload storage and exact read types
+## Completed: closed mixed key/payload storage and exact read types
 
-The existing mixed-payload published programs still have complete host owner
-and result proofs, but their mixed native key and payload schemas have no carrier.
-The fresh `result_seeded_mixed_contents`, `result_seeded_join_reseed` and
-`result_seeded_bool_string_contents` probes remain **0/6**, with Node/interpreter
-traces **2/3/2** and all **9/10/9** source calls retained. Evidence:
-`/tmp/ctcompile-payloads-boundary.json`. Extend key comparison, storage, set
-conversion, reads and returned values together using proved finite unions;
-never let one exact final get tag erase another stored type. Preserve unknown
-or incomplete type refusals, SameValueZero keys, actual payload effects, saved
-owning strings and the independent missing/presence proof. Unseeded published
+`result_seeded_mixed_contents`, `result_seeded_join_reseed` and
+`result_seeded_bool_string_contents` now admit **6/6 native**, with
+Node/interpreter traces **2/3/2** and all **9/10/9** calls retained. Exact
+Bool/Number or Bool/String schemas use finite `std::variant` alternatives in
+the existing owning storage. Separate literal-write evidence proves each read's
+presence and scalar result without narrowing the full Map schema. Key comparison
+preserves SameValueZero and false versus zero. The published gate passes **76
+programs** and all **eight lifetime variants**; the local mixed gate tests both
+associative and ordered storage. See [the Map checkpoint](native-owned-global-maps.md#closed-mixed-map-storage-2026-09-08).
+
+## Next: mixed payload evidence through a saved read and write
+
+The native payload proof currently clears the type at every nonliteral write.
+Propagate independent exact scalar facts when a proved get result is saved,
+written to another entry and read again, preserving every live operation and
+owning string lifetime. Possible aliases, unknown values, branch disagreements
+and missing entries must continue to refuse. The fresh `saved_read_write`
+probe remains **0/6 native** in both modes with complete host ownership, all
+**12 calls retained** and Node/interpreter **`trace=1`**. Wrong-tag and
+deleted-result controls yield **2**. Evidence:
+`/tmp/ctcompile-mixed-boundary.json`; the exact source is recorded in
+[the Map checkpoint](native-owned-global-maps.md#next-boundary). Unseeded published
 reads still require result evidence across the complete call family; a recorded
 startup invocation cannot authorize later callers.
 

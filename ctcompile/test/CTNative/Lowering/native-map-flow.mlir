@@ -19,7 +19,7 @@
 // MIXED: ctjs.func private @probe$2
 // MIXED-SAME: ctnative.not_native = "native Map flow contains a non-Map producer `ctjs.constant`"
 // SCHEMA: ctjs.func private @probe$2
-// SCHEMA-SAME: ctnative.not_native = "native Map needs supported keys and homogeneous numeric, boolean, owning-string, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.variant<
+// SCHEMA-SAME: ctnative.not_native = "native Map needs supported keys and numeric, boolean, closed mixed, owning-string, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.variant<
 // OPTIONAL: ctjs.func private @maybe$1
 // OPTIONAL-SAME: ctnative.not_native = "native Map instance escapes or is mutated through `scf.yield`"
 // PHI: ctjs.func private @probe$1

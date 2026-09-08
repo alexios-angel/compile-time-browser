@@ -330,6 +330,7 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
     llvm::SmallVector<ctjs::CallOp> calls;
     llvm::SmallVector<ctjs::CallOp> reads;
     llvm::SmallVector<ctjs::CallOp> optionalReads;
+    llvm::SmallVector<ctjs::CallOp> typedReads;
     llvm::SmallVector<ctjs::GetPropertyOp> sizes;
     llvm::DenseSet<mlir::Operation *> publishedCalls;
     if (globals && globals->proved()) {
@@ -343,9 +344,31 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
     for (auto [index, candidate] : llvm::enumerate(plans)) {
         llvm::append_range(calls, candidate.calls);
         llvm::append_range(sizes, candidate.sizes);
+        // Recognize a closed primitive mixed family before the monotone
+        // solver starts. Otherwise an early broad/optional result would
+        // permanently pollute a read whose last literal write is exact.
+        // Nonliteral published writes already have an independent primitive
+        // body/actual proof; arbitrary local parameters do not.
+        bool primitive = true, boolean = false, number = false, string = false;
+        for (ctjs::CallOp call : candidate.calls) {
+            auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (keyOf(method.getKey()) != "set") { continue; }
+            auto constant = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
+            if (!constant) {
+                primitive &= publishedCalls.contains(call);
+                continue;
+            }
+            auto value = constant.getValue();
+            boolean |= llvm::isa<ctjs::BooleanAttr>(value);
+            number |= llvm::isa<ctjs::NumberAttr>(value);
+            string |= llvm::isa<ctjs::StringAttr>(value);
+            primitive &= llvm::isa<ctjs::BooleanAttr, ctjs::NumberAttr, ctjs::StringAttr>(value);
+        }
+        const bool mixed = primitive && boolean && (number != string);
         for (ctjs::CallOp read : candidate.calls) {
             auto method = read.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
             if (keyOf(method.getKey()) != "get") { continue; }
+            if (mixed) { typedReads.push_back(read); }
             if (!children[index].empty()) {
                 reads.push_back(read);
             } else if (publishedCalls.contains(read)) {
@@ -356,7 +379,8 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
             }
         }
     }
-    return map_detail::provePresence(module, calls, sizes, reads, optionalReads, snapshotCopies,
+    return map_detail::provePresence(module, calls, sizes, reads, optionalReads, typedReads,
+                                     snapshotCopies,
                                      [&](mlir::Value value) { return graph.find(value); });
 }
 
@@ -368,7 +392,7 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
         for (llvm::StringRef name :
              {kNativeMapSite, kNativeMapAction, kNativeMapMethod, kNativeMapConstructor,
               kNativeMapReason, kNativeMapGroup, kNativeMapArgGroups, kNativeMapPresent,
-              kNativeMapSnapshotCopy, kNativeMapSnapshotBuiltin}) {
+              kNativeMapReadType, kNativeMapSnapshotCopy, kNativeMapSnapshotBuiltin}) {
             op->removeAttr(name);
         }
     });

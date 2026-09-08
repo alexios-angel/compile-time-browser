@@ -64,12 +64,12 @@ carrier carrierOf(mlir::Type type) {
         const auto string = llvm::dyn_cast<StrType>(key);
         const bool supportedKey =
             llvm::isa<BottomType, NumType, BoolType, ObjectIdentityType>(key) ||
-            (string && string.getEncoding() == StrEncoding::UTF8);
+            (string && string.getEncoding() == StrEncoding::UTF8) || !mixedMapSpelling(key).empty();
         const auto value = map.getValueType();
         const bool ownedValue =
             llvm::isa<BottomType, NumType, BoolType>(value) ||
             (llvm::isa<StrType>(value) && carrierOf(value) == carrier::string) ||
-            isObjectValueType(value) ||
+            isObjectValueType(value) || !mixedMapSpelling(value).empty() ||
             (llvm::isa<MapType>(value) && carrierOf(value) == carrier::map);
         return supportedKey && ownedValue ? carrier::map : carrier::none;
     }
@@ -107,7 +107,24 @@ mlir::Type vectorCarrierType(mlir::MLIRContext * c, bool strings) {
     return ec::LValueType::get(ec::OpaqueType::get(c, strings ? kStringVectorType : kVectorType));
 }
 
+// These are exact closed storage alternatives, not a general JS value.
+// Scalar call operands and independently typed reads remain separate gates.
+llvm::StringRef mixedMapSpelling(mlir::Type type) {
+    auto variant = llvm::dyn_cast<VariantType>(type);
+    if (!variant || variant.getAlternatives().size() != 2) { return {}; }
+    bool boolean = false, number = false, string = false;
+    for (mlir::Type alternative : variant.getAlternatives()) {
+        boolean |= llvm::isa<BoolType>(alternative);
+        number |= llvm::isa<NumType>(alternative);
+        string |= carrierOf(alternative) == carrier::string;
+    }
+    if (boolean && number) { return "std::variant<bool, double>"; }
+    if (boolean && string) { return "std::variant<bool, std::string>"; }
+    return {};
+}
+
 llvm::StringRef mapKeySpelling(mlir::Type type) {
+    if (auto mixed = mixedMapSpelling(type); !mixed.empty()) { return mixed; }
     if (llvm::isa<BottomType, NumType>(type)) { return "double"; }
     if (llvm::isa<BoolType>(type)) { return "bool"; }
     if (llvm::isa<StrType>(type)) { return "std::string"; }
@@ -116,6 +133,7 @@ llvm::StringRef mapKeySpelling(mlir::Type type) {
 }
 
 std::string mapValueSpelling(mlir::Type type) {
+    if (auto mixed = mixedMapSpelling(type); !mixed.empty()) { return mixed.str(); }
     if (isObjectValueType(type)) { return kObjectValueType.str(); }
     if (llvm::isa<BottomType, NumType>(type)) { return "double"; }
     if (llvm::isa<BoolType>(type)) { return "bool"; }
@@ -136,7 +154,8 @@ mlir::Type mapCarrierType(MapType type) {
     const auto key = mapKeySpelling(type.getKeyType());
     const auto value = type.getValueType();
     const std::string body =
-        (llvm::isa<MapType, BoolType, StrType>(value) || isObjectValueType(value))
+        (llvm::isa<MapType, BoolType, StrType>(value) || isObjectValueType(value) ||
+         !mixedMapSpelling(value).empty())
             ? ("ctnative::map_storage<" + key + ", " + mapValueSpelling(value) + ">").str()
         : llvm::isa<StrType>(type.getKeyType()) ? std::string{"ctnative::string_to_number_map"}
                                                 : ("ctnative::number_map<" + key + ">").str();

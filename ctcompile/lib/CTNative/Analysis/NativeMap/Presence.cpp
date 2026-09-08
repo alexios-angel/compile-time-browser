@@ -3,6 +3,7 @@
 
 #include "../PrimitiveMapKey.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
+#include "ctcompile/CTNative/IR/CTNativeTypes.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
@@ -26,6 +27,7 @@ llvm::StringRef actionOf(ctjs::CallOp call) {
 struct fact {
     mlir::Value instance;
     mlir::Value key;
+    mlir::Type payload;
     bool matches(const fact & other) const {
         return instance == other.instance &&
                comparePrimitiveMapKeys(key, other.key) == PrimitiveMapKeyRelation::Same;
@@ -49,6 +51,11 @@ struct state {
     }
     void intersect(const state & other) {
         llvm::erase_if(present, [&](const fact & value) { return !other.contains(value); });
+        for (fact & value : present) {
+            const auto found = llvm::find_if(
+                other.present, [&](const fact & candidate) { return value.matches(candidate); });
+            if (value.payload != found->payload) { value.payload = {}; }
+        }
         for (mlir::Operation * op : llvm::make_early_inc_range(observations)) {
             if (!other.observations.contains(op)) { observations.erase(op); }
         }
@@ -66,11 +73,13 @@ struct state {
 struct effects {
     bool unknown = false;
     llvm::DenseSet<mlir::Value> erased;
+    llvm::DenseSet<mlir::Value> written;
 
     bool merge(const effects & other) {
         bool changed = !unknown && other.unknown;
         unknown |= other.unknown;
         for (mlir::Value family : other.erased) { changed |= erased.insert(family).second; }
+        for (mlir::Value family : other.written) { changed |= written.insert(family).second; }
         return changed;
     }
 };
@@ -79,6 +88,7 @@ struct presenceAnalysis {
     llvm::DenseMap<mlir::Operation *, llvm::StringRef> actions;
     llvm::DenseMap<mlir::Operation *, effects> summaries;
     llvm::DenseSet<mlir::Operation *> proved;
+    llvm::DenseMap<mlir::Operation *, mlir::Type> payloads;
     llvm::DenseSet<mlir::Operation *> sizes;
     llvm::function_ref<mlir::Value(mlir::Value)> familyOf;
     const llvm::DenseSet<mlir::Operation *> & snapshotCopies;
@@ -97,7 +107,7 @@ struct presenceAnalysis {
         return value;
     }
     fact entry(ctjs::CallOp call) const {
-        return {instanceOf(call.getReceiver()), call.getArgs()[0]};
+        return {instanceOf(call.getReceiver()), call.getArgs()[0], {}};
     }
 
     void buildSummaries(mlir::ModuleOp module) {
@@ -110,6 +120,8 @@ struct presenceAnalysis {
                     const auto action = actions.lookup(op);
                     if (action == "delete" || action == "clear") {
                         out.erased.insert(familyOf(call.getReceiver()));
+                    } else if (action == "set") {
+                        out.written.insert(familyOf(call.getReceiver()));
                     } else if (action.empty()) {
                         out.unknown = true;
                     }
@@ -145,6 +157,9 @@ struct presenceAnalysis {
         llvm::erase_if(current.present, [&](const fact & value) {
             return effect.erased.contains(familyOf(value.instance));
         });
+        for (fact & value : current.present) {
+            if (effect.written.contains(familyOf(value.instance))) { value.payload = {}; }
+        }
         for (mlir::Operation * op : llvm::make_early_inc_range(current.observations)) {
             auto call = llvm::cast<ctjs::CallOp>(op);
             if (effect.erased.contains(familyOf(call.getReceiver()))) {
@@ -188,6 +203,36 @@ struct presenceAnalysis {
         for (mlir::Operation * op : llvm::make_early_inc_range(current.observations)) {
             if (mayErase(entry(llvm::cast<ctjs::CallOp>(op)))) { current.observations.erase(op); }
         }
+    }
+
+    // Literal payload tags do not depend on Map schema inference or prior
+    // invocations. A nonliteral write still proves presence, but clears type
+    // evidence wherever it may overwrite an entry. has never supplies a tag.
+    void write(state & current, ctjs::CallOp call) const {
+        fact added = entry(call);
+        if (auto constant = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>()) {
+            auto * context = call.getContext();
+            if (llvm::isa<ctjs::BooleanAttr>(constant.getValue())) {
+                added.payload = BoolType::get(context);
+            } else if (llvm::isa<ctjs::NumberAttr>(constant.getValue())) {
+                added.payload = NumType::getDouble(context);
+            } else if (llvm::isa<ctjs::StringAttr>(constant.getValue())) {
+                added.payload = StrType::get(context, StrEncoding::UTF8);
+            }
+        }
+        for (fact & previous : current.present) {
+            if (familyOf(previous.instance) != familyOf(added.instance)) { continue; }
+            const auto relation = comparePrimitiveMapKeys(
+                previous.key, added.key, {{}, current.sizeBounds.lookup(previous.key)},
+                {{}, current.sizeBounds.lookup(added.key)});
+            if (relation == PrimitiveMapKeyRelation::Distinct) { continue; }
+            if (previous.instance == added.instance && relation == PrimitiveMapKeyRelation::Same) {
+                previous.payload = added.payload;
+            } else if (previous.payload != added.payload) {
+                previous.payload = {};
+            }
+        }
+        current.add(added);
     }
 
     void region(mlir::Region & body, state & current) {
@@ -265,11 +310,16 @@ struct presenceAnalysis {
             if (snapshotCopies.contains(op)) { return; }
             const auto action = actions.lookup(op);
             if (action == "set") {
-                current.add(entry(call));
+                write(current, call);
             } else if (action == "has") {
                 current.observations.insert(op);
             } else if (action == "get") {
-                if (current.contains(entry(call))) { proved.insert(op); }
+                const auto wanted = entry(call);
+                for (const fact & value : current.present) {
+                    if (!value.matches(wanted)) { continue; }
+                    proved.insert(op);
+                    if (value.payload) { payloads[op] = value.payload; }
+                }
             } else if (action == "delete") {
                 eraseKey(current, call);
             } else if (action == "clear") {
@@ -298,9 +348,10 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
                           llvm::ArrayRef<ctjs::GetPropertyOp> sizes,
                           llvm::ArrayRef<ctjs::CallOp> reads,
                           llvm::ArrayRef<ctjs::CallOp> optionalReads,
+                          llvm::ArrayRef<ctjs::CallOp> typedReads,
                           const llvm::DenseSet<mlir::Operation *> & snapshotCopies,
                           llvm::function_ref<mlir::Value(mlir::Value)> familyOf) {
-    if (reads.empty() && optionalReads.empty()) { return {}; }
+    if (calls.empty()) { return {}; }
     presenceAnalysis analysis(familyOf, snapshotCopies);
     for (ctjs::GetPropertyOp size : sizes) { analysis.sizes.insert(size); }
     for (ctjs::CallOp call : calls) { analysis.actions[call] = actionOf(call); }
@@ -317,6 +368,14 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
     }
     for (ctjs::CallOp read : reads) {
         read->setAttr(kNativeMapPresent, mlir::UnitAttr::get(read.getContext()));
+    }
+    for (ctjs::CallOp read : typedReads) {
+        if (auto type = analysis.payloads.lookup(read)) {
+            read->setAttr(kNativeMapReadType, mlir::TypeAttr::get(type));
+            // Dead-code inference may remove an alternative from the final
+            // schema. Its homogeneous read still has definite membership.
+            read->setAttr(kNativeMapPresent, mlir::UnitAttr::get(read.getContext()));
+        }
     }
     for (ctjs::CallOp read : optionalReads) {
         if (analysis.proved.contains(read)) {

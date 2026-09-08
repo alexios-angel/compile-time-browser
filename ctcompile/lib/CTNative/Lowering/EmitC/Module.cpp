@@ -163,7 +163,8 @@ void lowering::declareGlobals() {
                              call.getCallee() == "ctnative::map_values" ||
                              call.getCallee().starts_with("ctnative::map_snapshot_at<");
         });
-        for (llvm::StringRef header : {"exception", "memory", "utility"}) {
+        for (llvm::StringRef header :
+             {"exception", "memory", "utility", "variant", "type_traits"}) {
             ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
         }
         if (needsMapOrder) {

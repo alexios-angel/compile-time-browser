@@ -7,6 +7,13 @@ namespace ctcompile::ctnative::lowering_detail {
 // Retype every JavaScript value in the function from the lattice. Done
 // BEFORE any operation is replaced, so the replacements see carriers.
 void lowering::retype(ctjs::FuncOp fn) {
+    // Preserve complete receiver schemas before replacements erase solver
+    // identities. Read result facts must never choose the storage schema.
+    fn.getBody().walk([&](ctjs::CallOp call) {
+        if (nativeMapAction(call).empty()) { return; }
+        auto map = llvm::dyn_cast_or_null<MapType>(typeOf(call.getReceiver()));
+        if (map) { mapSchemas[call] = map; }
+    });
     const auto retypeValue = [&](mlir::Value v) {
         needsNullable |= carrierOf(typeOf(v)) == carrier::nullable;
         needsObjectValue |= carrierOf(typeOf(v)) == carrier::objectValue;
