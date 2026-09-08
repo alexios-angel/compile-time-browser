@@ -6,6 +6,74 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved Map read/write and switch-retention checkpoint, 2026-09-08
+
+Saved locally on `ctcompile-v1`: **`d9a4b04`**, independent scalar Map read/write
+facts, and **`d370807`**, bounded switch contents and retention. This resumes
+`saved_read_write` from **`11803bd`** and the **07:37:42 synchronization journal**.
+The starting tree was clean. The earlier interrupted CallDirectOp recovery was
+already landed in `5307abf`; the old WIP branch is an ancestor. No history was
+rewritten, browser source changed or push performed. Disjoint agents supplied
+the published execution gate, switch proof and read-only audit.
+
+The exact saved-read/write specimen advances **0/6 -> 6/6 native** in both
+optimization modes, with Node/interpreter **`trace=1`** and all **twelve source
+calls preserved** in emitted code. A proved-present scalar read keeps its own
+Boolean, Number or String tag after known source-entry mutations. A later write
+uses that independent fact without narrowing the complete Map storage schema.
+Entry membership, possible aliases and callee effects still invalidate mutable
+contents. Branches intersect saved SSA facts. Unknown/missing reads, arbitrary
+local parameters and input annotations supply no scalar evidence.
+
+The published gate passes **83 complete programs**, including seven saved-chain
+programs in both modes and all **nine lifetime sanitizer variants**. Saved
+strings survive source overwrite/deletion, a second write/read, final Map
+release, caller-buffer mutation and independent reentry. Three new missing or
+deleted-read controls retain every call under fresh/stale Bool/String forgeries
+and reruns. Wrong-tag and later-overwrite programs retain their real Boolean
+result (**2**); saved String/Boolean/Number witnesses return **1**.
+Native admission first completes at **8150/8340/8334/8871** steps for the four
+new budget probes, with **30/32/32/32** cutoffs checked and no natural speculative
+rollback interval. Log: `/tmp/ctcompile-saved-gate2.log`.
+
+The local mixed-Map gate passes **21 observations** across associative and
+ordered storage, with Node/interpreter, GCC/Clang, explicit/deduced output and
+ASan/UBSan. Ten live refusal controls pass. The new missing-read writeback is
+rejected at optional storage admission, before the mixed-read diagnostic; its
+test now checks that precise refusal. All **seven targeted lit cases** pass in
+**28.28 seconds**, including CTJS-only binding-time and partial-evaluation paths.
+The combined focused CTest gate passes **12/12 in 29.05 seconds**.
+Log: `/tmp/ctcompile-saved-checkpoint.log`. No native program contains Script
+symbols or an interpreter context.
+
+Switch contents enumerate default and every case with exact independent
+origin/container/frame states and successor operands. Unsupported paths, loops,
+external values, cycles and incomplete budgets retain original verdicts. The
+gate passes **21 switch rows, six live states, four malformed controls, 1526
+retention cutoffs and five path-explosion cutoffs**. All four execution oracles
+report zero violations. Precision stays **22/33** for the fixture and **0/64,
+0/16, 0/20** for Bootstrap/p5/Phaser. This adds no native ownership admission;
+loops, external contents and native lifetime consumers remain separate work.
+
+Homebrew clang-format **22.1.8** passes **742 files** and whitespace checks pass.
+The full **243-step generated devbox build succeeds**; the complete **517-test
+CTest gate is running** at `/tmp/ctcompile-saved-full.log`. The previous full
+compiler gate passed 372/372; the five browser failures remain the recorded
+baseline. Final combined totals and fresh corpus counts are not yet measured.
+
+**Exact next native boundary:** selecting a saved value with
+`flag ? state.get('other') : state.get('')` remains **0/6 native** in both modes,
+with **all sixteen calls retained** and **no host owner proof**. Seed `''` with
+`''` and `'other'` with `'future'`, select the saved value in `get(flag)`, then
+run the existing write/read/delete chain. Call `set(get(false))` and
+`set(get(true))`, then observe `size()`: Node/interpreter agree on **3**.
+Replacing the selection with `state.get('')` yields **2** and admits **6/6**.
+The next proof must handle live control-flow joins in the host method body as
+well as native scalar facts; an observed startup branch cannot authorize future
+calls. Evidence: `/tmp/ctcompile-saved-boundary.json`; exact sources:
+`/tmp/ctcompile-saved-next/saved_join.js` and `saved_join_always_empty.js` on the
+devbox. Exact Bootstrap Data and complete native initialization remain unfinished.
+
 ## Current mixed-Map and object-contents checkpoint, 2026-09-08
 
 Saved locally on `ctcompile-v1`: **`6e68d3f`**, closed mixed Map keys/payloads

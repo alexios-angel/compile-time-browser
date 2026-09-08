@@ -215,20 +215,32 @@ preserves SameValueZero and false versus zero. The published gate passes **76
 programs** and all **eight lifetime variants**; the local mixed gate tests both
 associative and ordered storage. See [the Map checkpoint](native-owned-global-maps.md#closed-mixed-map-storage-2026-09-08).
 
-## Next: mixed payload evidence through a saved read and write
+## Completed: saved scalar Map reads through writes
 
-The native payload proof currently clears the type at every nonliteral write.
-Propagate independent exact scalar facts when a proved get result is saved,
-written to another entry and read again, preserving every live operation and
-owning string lifetime. Possible aliases, unknown values, branch disagreements
-and missing entries must continue to refuse. The fresh `saved_read_write`
-probe remains **0/6 native** in both modes with complete host ownership, all
-**12 calls retained** and Node/interpreter **`trace=1`**. Wrong-tag and
-deleted-result controls yield **2**. Evidence:
-`/tmp/ctcompile-mixed-boundary-final.json`; the exact source is recorded in
-[the Map checkpoint](native-owned-global-maps.md#next-boundary). Unseeded published
-reads still require result evidence across the complete call family; a recorded
-startup invocation cannot authorize later callers.
+Commit `d9a4b04` advances `saved_read_write` from **0/6 to 6/6 native** in both
+modes, retaining Node/interpreter **`trace=1`** and all **twelve calls**. Saved
+Boolean, Number and String tags survive known source-entry mutations separately
+from current contents. A later write consumes that independent scalar fact;
+missing reads, possible aliases and differing branch facts remain conservative.
+The gate passes **83 complete programs**, including seven saved-chain programs,
+three missing/deleted refusals and all nine lifetime sanitizer variants.
+The local mixed gate passes 21 observations and ten refusals across both
+storage implementations. See [the Map checkpoint](native-owned-global-maps.md#saved-scalar-reads-through-writes-2026-09-08).
+
+## Next: a saved scalar selected across control flow
+
+Seed two String entries, select a saved read with
+`flag ? state.get('other') : state.get('')`, then perform the proved
+write/read/delete chain. The fresh `saved_join` probe remains **0/6 native** in
+both modes, with all **sixteen calls retained** and no host owner proof.
+Node/interpreter agree on **`trace=3`** after `set(get(false))`, `set(get(true))`
+and `size()`. Replacing the selection with `state.get('')` yields **2** and
+admits **6/6**. Extend the live host method-body proof across that join before
+feeding independent scalar result facts into native preparation. Preserve all
+paths, operations, aliases, missing results and work-budget rollback; startup
+observations cannot authorize later callers.
+Evidence: `/tmp/ctcompile-saved-boundary.json`; exact sources are recorded in
+[the Map checkpoint](native-owned-global-maps.md#next-boundary).
 
 Exact Bootstrap Data, general realm owners and future-call contracts remain
 unfinished; the latest measured boundaries, corpus counts and full gate are in

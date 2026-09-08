@@ -460,21 +460,42 @@ Log: `/tmp/ctcompile-mixed-native2.log`. The separate local representation gate
 passes nine observations under both storage implementations and seven mixed-read
 refusals. Full gate results are recorded in [HANDOFF.md](HANDOFF.md).
 
+## Saved scalar reads through writes, 2026-09-08
+
+Commit `d9a4b04` advances the preceding `saved_read_write` from **0/6 to 6/6
+native** in both optimization modes, with Node/interpreter **`trace=1`** and
+all **twelve calls preserved**. The independent native must-analysis retains
+scalar read results separately from current Map contents. Overwriting or
+removing the source entry does not change a saved Boolean, Number or owning
+String. Writing that scalar to another entry establishes its exact payload
+without removing any stored alternative from the schema. Possible aliasing
+writes and callee effects still invalidate mutable entry facts; branch joins
+intersect the saved SSA facts. Input annotations supply neither fact.
+
+The published gate passes **83 complete programs**, including seven new saved
+chains and all **nine sanitizer lifetime variants**. Missing first or second
+reads and deleted results refuse in both modes under valid Bool/String forged
+markers, stale manifests and reruns, preserving every source call. The saved
+String chain survives overwrite/delete before the second write, another
+read/overwrite/delete before return and final Map release. Native budget probes
+complete at **8150/8340/8334/8871**, with **30/32/32/32** cutoffs checked.
+Log: `/tmp/ctcompile-saved-gate2.log`. The local mixed gate passes **21
+observations and ten refusals**, and seven targeted lit cases pass. Combined
+focused CTest passes **12/12 in 29.05 seconds**; final full-gate evidence is in
+[HANDOFF.md](HANDOFF.md).
+
 ## Next boundary
 
-Mixed payload tags currently originate only at literal writes. A scalar saved
-from a proved read and then written into another key loses its tag at that
-second write. Propagating independently proved scalar payload facts through
-this read/write chain is the next boundary; it must retain alias, branch,
-deletion and incomplete-proof refusals.
-The fresh `saved_read_write` probe seeds an empty string, saves its read,
-overwrites a Boolean key with that value, saves the second read, deletes that
-key and returns the saved result. It remains **0/6 native** in both optimization
-modes with a complete host owner proof, **all 12 calls retained** and
-Node/interpreter **`trace=1`**. Replacing the saved write with `true` yields
-**`trace=2`**, while reading after deletion also yields **2** and loses the host
-result proof. Final evidence: `/tmp/ctcompile-mixed-boundary-final.json`; reproducible source:
-`/tmp/ctcompile-mixed-next/saved_read_write.js` on the devbox.
+The next saved read crosses a conditional result: seed `''` with `''` and
+`'other'` with `'future'`, then select
+`flag ? state.get('other') : state.get('')` before the existing write/read/delete
+chain. Calling `set(get(false))` and `set(get(true))` yields Node/interpreter
+**`trace=3`**. It remains **0/6 native** in both modes with all **sixteen calls
+retained** and no host owner proof. Replacing the selection with `state.get('')`
+yields **2** and admits **6/6**. The host method body's live control-flow join
+needs proof before native scalar propagation can complete this case.
+Evidence: `/tmp/ctcompile-saved-boundary.json`; sources on the devbox:
+`/tmp/ctcompile-saved-next/saved_join.js` and `saved_join_always_empty.js`.
 The unseeded `get() { return state.get(0); }` also remains refused: neither an
 earlier observed invocation nor an incomplete family establishes its result.
 Raising the intentional size-witness cap does not address these barriers.
