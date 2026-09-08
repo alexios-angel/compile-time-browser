@@ -277,7 +277,7 @@ int main() {
     // breath. 16.1.1 admits both only inside a function, this engine's top
     // level IS a function body, and refusing one while accepting the other
     // refuses the calling convention halfway - `return String(new.target)` is a
-    // line in unittests/js/vm_basics.cpp and it was a SyntaxError until this
+    // line in unittests/js/vm_objects.cpp and it was a SyntaxError until this
     // pair agreed. There is no constructor at the top level, which is exactly
     // what `undefined` says.
     answers("return String(new.target);", "undefined");

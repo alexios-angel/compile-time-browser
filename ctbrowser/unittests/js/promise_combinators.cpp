@@ -32,7 +32,7 @@
 namespace {
 
 // Run a program, drain the turn, and report the global `result` - the same
-// shape `vm_basics` uses for every promise case it has.
+// shape `vm_async` uses for every promise case it has (vm_expect.hpp).
 void expect_after_turn(std::string_view source, std::string_view want) {
     using namespace ctbrowser::script;
     const program prog = compiler::compile(std::string{source});

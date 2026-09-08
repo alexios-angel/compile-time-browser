@@ -2,7 +2,7 @@
 #
 # `ctbrowser_test(<bucket>/<name>)` comes from cmake/modules/CTTest.cmake, and
 # the argument is a PATH whose BASENAME is everything derived from it - the
-# target, and more importantly the ctest name. `ctest -R vm_basics` has to keep
+# target, and more importantly the ctest name. `ctest -R vm_` has to keep
 # working: it is in docs/build.md's command blocks and in what the ratchet tools
 # pass through. The suite gained directories on 2026-08-09 and a project
 # directory in the monorepo split, and the test names have not changed once.
@@ -130,12 +130,41 @@ ctbrowser_test(unit/shadow_dom)
 # The language, against V8. The nine per-type suites were carved out of
 # vm_basics and share js_expect.hpp; number_format and obfuscated ask the
 # same question of real minifier output.
-ctbrowser_test(js/vm_basics)
+#
+# THE VM SUITE ITSELF IS SIX FILES. vm_basics was 3,047 lines and 117 tests
+# when it was split by topic on 2026-09-08; the six share vm_expect.hpp, the
+# whole-program assertion js_expect.hpp cannot express (a class body, a
+# labelled loop, a statement). `ctest -R vm_` runs the family.
+#
+# Expressions: operators, coercion, literals, and what a value says it is. It
+# is also the one file that still runs ctjs - `diff_vs_v1` sends an expression
+# through the previous engine's interpreter as well - so the include
+# directories below belong to this target alone.
+ctbrowser_test(js/vm_operators)
 # The differential half runs the same expressions through ctjs's old
 # interpreter, whose public header also reaches its nested ctc dependency.
-target_include_directories(ctbrowser-test-vm_basics PRIVATE
+target_include_directories(ctbrowser-test-vm_operators PRIVATE
   "${CTBROWSER_CTJS}/include"
   "${CTBROWSER_CTC}/include")
+# Functions: parameters, `this`, `arguments`, closures and the scopes they
+# capture, and the function object itself.
+ctbrowser_test(js/vm_functions)
+# Objects and classes: fields, accessors, descriptors, prototypes,
+# `new.target`, and the class-expression scoping that broke p5.js.
+ctbrowser_test(js/vm_objects)
+# Statements - loops, labels, switch, try/catch/finally, what an exception
+# carries - and the handful of cases that drive the VM from C++ (the
+# collector, a native binding, an error report), which need a `context` of
+# their own rather than a program.
+ctbrowser_test(js/vm_control_flow)
+# The standard library: Math, Array, String, RegExp, JSON, Date, the
+# collections, typed arrays over a shared ArrayBuffer, btoa/atob and
+# structuredClone.
+ctbrowser_test(js/vm_stdlib)
+# Pending promises, `await`, the microtask queue and generators - everything
+# that suspends and resumes. Every promise case reads its answer AFTER THE
+# TURN, because a handler runs when the queue drains, not when it is attached.
+ctbrowser_test(js/vm_async)
 ctbrowser_test(js/number_format)
 ctbrowser_test(js/math_basics)
 ctbrowser_test(js/string_basics)

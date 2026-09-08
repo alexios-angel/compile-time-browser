@@ -65,7 +65,8 @@ those ARE capturable, which is what makes `for (const x of xs) fns.push(() => x)
 close over each element at the top level.
 
 `ctbrowser/unittests/unit/page_scripts` compiles the real example pages and asserts what each
-one does; `ctbrowser/unittests/js/vm_basics` has a test per language feature.
+one does; `ctbrowser/unittests/js/vm_*.cpp` - six files, split by topic - have a
+test per language feature.
 
 ## WHAT p5.js NEEDED (2026-07-29)
 
@@ -615,7 +616,7 @@ Three things worth knowing:
   writing the magnitude as `m * 2^e` with `m` odd, `m * 10^f` is a half-integer
   precisely when `e + f == -1`.
 * **`Math.cbrt` was an ulp out and nothing noticed**, because six-decimal
-  printing rendered 3.0000000000000004 as "3" and `vm_basics` asserted the
+  printing rendered 3.0000000000000004 as "3" and `vm_stdlib` asserted the
   string. It asks with `===` now. Full-precision printing makes libm
   discrepancies visible in general - see `docs/performance.md`.
 

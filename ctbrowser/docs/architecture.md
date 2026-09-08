@@ -174,7 +174,7 @@ Two submodules under `external/`, but only one is an engine dependency:
   - which also ends the skew of a consumer with its own ctcss having two. It stays
   checked out only because `benchmarks/bench_style.cpp` measures the engine
   against it as a second implementation.
-- `third-party/compile-time-javascript` — ctjs, the JS parser (`ctbrowser/unittests/js/vm_basics`
+- `third-party/compile-time-javascript` — ctjs, the JS parser (`ctbrowser/unittests/js/vm_operators`
   also differentially tests the VM against ctjs's own interpreter)
 
 `compile-time-containers` sits under ctjs, nested. **cthtml is gone** — the DOM

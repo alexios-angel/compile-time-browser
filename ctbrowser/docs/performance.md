@@ -980,11 +980,11 @@ attributable to the two lines above.
 
 ### And it exposed a bug in `Math.cbrt`
 
-`ctbrowser/unittests/js/vm_basics` asserted `Math.cbrt(27)` printed "3" and had been passing
+`ctbrowser/unittests/js/vm_stdlib` asserted `Math.cbrt(27)` printed "3" and had been passing
 against **3.0000000000000004** for as long as it existed, because six-decimal
 formatting printed "3" either way. glibc's `cbrt` is up to an ulp out on a
 perfect cube; V8 returns the exact root. Corrected for the exact case only - a
-Newton step fixes 27 and 216 and makes `cbrt(0.001)` worse - and `vm_basics` now
+Newton step fixes 27 and 216 and makes `cbrt(0.001)` worse - and `vm_stdlib` now
 asks with `===` instead of a string.
 
 **Full-precision printing makes every libm discrepancy visible.** That is a

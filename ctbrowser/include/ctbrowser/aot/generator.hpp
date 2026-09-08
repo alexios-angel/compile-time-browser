@@ -91,7 +91,7 @@ template <class T> using generator = std::generator<T>;
 // A LAZY, MOVE-ONLY, SINGLE-PASS GENERATOR.
 //
 // Lazy because a JS generator runs nothing until the first `.next()` - a
-// property `ctbrowser/unittests/js/vm_basics.cpp` pins by name - which is
+// property `ctbrowser/unittests/js/vm_async.cpp` pins by name - which is
 // `initial_suspend` returning `suspend_always`.
 template <class T> class generator {
 public:
