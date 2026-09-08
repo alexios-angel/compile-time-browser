@@ -382,9 +382,12 @@ The old four-function empty-object refusal advances to 4/4, trace=1.
 All four host/owner CTests pass. Commit **`2efcbbe2`** passes eight new and one
 historical program in both modes, explicit/deduced GCC/Clang, independent
 identity/field observers, saved-callable sanitizer lifetime, thirteen
-refusal/repair families and three budget sweeps. The full generated CTest gate
-is running with 146 programs and nineteen lifetime families; see
-[HANDOFF.md](HANDOFF.md) for measured results and preserved test failures.
+refusal/repair families and three budget sweeps. The complete 146-program/
+nineteen-lifetime driver and all 165 lit cases pass. The warning-free 244-step
+build finishes with CTest 512/517 in 1199.12 seconds: all 372 compiler tests and
+140/145 browser tests, leaving the five established browser failures. All
+nineteen code/test paths match HEAD, frozen input and final devbox sources;
+[HANDOFF.md](HANDOFF.md) records the measurements and preserved test failures.
 
 ## Next: method-local object readback and identity
 
@@ -394,7 +397,15 @@ Node/interpreter trace=1 and remains unowned **0/5 native** in both modes.
 The distinct equal-field eight-call control and fresh-read-after-delete nine-call
 control give trace=0 and retain the same refusal. Prove the local object origin,
 presence and identity without treating a public object result as already owned.
-The next own-field read also needs explicit body proof. Complete sources are in
+Final probes isolate a direct fixed own-field read at five calls, trace=1,
+and saved same-key identity, Map.get field-read and guarded-read controls at
+six calls, trace=1. All remain unowned 0/5 in both modes. The two-stored-object
+distinct control is seven calls, trace=0; the comparison-only fresh-object
+control is six calls, trace=0 and adds a separate native family limitation.
+Saved references must retain their original object after replacement/deletion
+and observe later writes through aliases. All sixteen measured sources,
+including the unchanged historical 8/8/9-call cases, are in
+`/tmp/ctcompile-leaf-object-next.json`. The source and proof obligations are in
 [the Map boundary](native-owned-global-maps.md#next-boundary).
 
 String fields and Object/String Map payload carriers remain separate. The

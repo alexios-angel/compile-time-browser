@@ -6,11 +6,12 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Method-local leaf object ownership and equality checkpoint, 2026-09-08
+## Method-local leaf object ownership and equality gates, 2026-09-08
 
 Saved locally on `ctcompile-v1`: **`e9f8e33c`**, method-local leaf object
 ownership in published Maps, and **`5e2cb6b2`**, primitive loose-equality escape
-origins; **`2efcbbe2`** adds published leaf execution and lifetime gates. This resumes the exact seven-call object boundary in **`e533a865`**
+origins; **`2efcbbe2`** adds published leaf execution and lifetime gates. This
+resumes the exact seven-call object boundary in **`e533a865`**
 and the **18:56:37 synchronization journal**. The initial tree/index was clean;
 `codex-wip-20260907` was already recovered, gated and merged. Three agents
 handled independent host tests, execution/lifetimes and escape proofs. No
@@ -80,10 +81,23 @@ assertion. No compiler or source fix was needed. The corrected sync then lost
 SSH; `server.sh start` and `allow-ip` restored access before the complete focused
 execution gate passed. The initial failure and interrupted sync logs remain.
 
+The final **244-step generated devbox build passes warning-free**. CTest is
+**512/517 in 1199.12 seconds**, with all **372 compiler tests** and **140/145
+browser tests** passing. Only the five established browser failures remain:
+`selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`.
+All **165/165 lit cases pass in 551.23 seconds** (CTest **551.43 seconds**),
+including **146 published programs and nineteen lifetime families**.
+ExceptionRecovery passes in **1.18 seconds**. All eight escape CTests pass
+in this full run, with zero oracle violations and fixture **44/64**.
+
+Native corpus counts remain Bootstrap **19/574**, p5 **39/4754** and Phaser
+**45/7725** in both modes, with zero pruned. Exact Bootstrap Data remains
+**0/7 browser/CommonJS and 0/8 AMD**. This increment advances the isolated
+published-object boundary; it does not increase full-bundle coverage.
 Formatter **22.1.8** passes all **745 files**. All nineteen code/test paths
-match committed HEAD and the frozen gate input. The full generated devbox gate
-is running with **146 published programs and nineteen lifetime families**;
-its final results are pending at this checkpoint.
+byte-match committed HEAD, frozen gate input and final devbox sources. The
+actual emitted field and lifetime programs contain fresh owning leaf
+allocations, runtime Map mutations and no Script/VM context or value symbols.
 
 **Exact next boundary: method-local object readback and identity.** The
 unchanged eight-call saved-read source stores `{value: 1}`, reads it back,
@@ -92,7 +106,25 @@ object. Node/interpreter give trace=1, but both modes remain unowned **0/5**.
 A distinct equal-field comparison is trace=0 with eight calls; a fresh read
 after deletion is trace=0 with nine calls. These require independently proved
 object result origins, presence and identity without authorizing object-valued
-public arguments/returns. Fixed own-field reads remain a separate small gap.
+public arguments/returns.
+
+A final sixteen-case devbox probe isolates smaller steps. All cases have five
+functions, agree in Node/interpreter, preserve every source call and remain
+unowned **0/5** in both modes. Raw/prepared host analysis gives the same
+`property call lacks a current source getter proof` refusal. Direct own-field
+read is **five calls, trace=1**. A saved same-key Map.get identity comparison,
+a get/field read and its strict-identity guarded variant are each **six calls,
+trace=1**. Two Map-stored objects compare distinct in **seven calls, trace=0**;
+a comparison-only fresh object is **six calls, trace=0** and separately lacks
+native object-family admission. Saved reads after replacement/deletion stay
+trace=1; a later scalar write through the original alias gives trace=2;
+three future calls over repeated/distinct keys give trace=3. These are
+measured refusals, not native execution gains. Resume the exact historical
+8/8/9-call controls with these smaller source proofs, preserving saved aliases
+independently of the current Map entry. Full sources, host reports and both
+native modes are in `/tmp/ctcompile-leaf-object-next.json`; the source audit
+is in `-next-proposals.json`.
+
 The old nested leaf-writing sibling now has complete ownership but remains
 **0/6 native** at its mixed Object/String Map carrier. String fields, the
 original eleven-call object/String witness, exact Bootstrap Data, browser API
@@ -100,7 +132,9 @@ integration, general exports and native throwing-call admission remain unfinishe
 
 Evidence: `/tmp/ctcompile-leaf-object-{compile,host,host2,native-prep,focused,
 escape-rerun,smoke,execution,execution2,execution3,full}.log`, `-boundary.json`, `-saved.cpp`,
-`-root-hashes.json`, `-snapshot.txt` and `-format.log`.
+`-root-hashes.json`, `-snapshot.txt`, `-format-final.log`, `-full-detail.log`,
+`-evidence.json`, `-postgate.log`, `-final-hashes.json`, `-final-field.cpp` and
+`-final-lifetime.cpp`.
 
 ## Nested published Map results and arithmetic unary checkpoint, 2026-09-08
 

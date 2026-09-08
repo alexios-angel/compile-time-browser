@@ -1213,7 +1213,7 @@ coverage, rather than measuring a precision improvement on historical input.
 All **eight escape CTests pass across the initial gate and corrected rerun**.
 Every original source function, invocation and historical family expectation
 is preserved. Evidence: `/tmp/ctcompile-leaf-object-escape-rerun.log`.
-The full generated build/CTest gate remains **pending**; no native corpus gain
+The final generated build/CTest gate is recorded below; no native corpus gain
 is claimed.
 
 Local Node syntax/execution passes **45 combined fixture calls**, with explicit
@@ -1250,3 +1250,27 @@ unconditionally call `to_primitive`, including its depth guard for primitive
 operands, so they need their own completion/retention argument and controls.
 BigInt comparison categories, loops and native lifetime consumers also remain
 separate work.
+
+
+The Eq increment is saved in **`5e2cb6b2`**. The final **244-step generated
+devbox build passes warning-free**. Full CTest finishes **512/517 in 1199.12
+seconds**, with all **372 compiler tests** and **140/145 browser tests** passing.
+Only the five established browser failures remain: `selectors`, `frames`,
+`element_attrs`, `vm_async` and `early_errors`. All **165 lit cases pass in
+551.23 seconds**, CTest **551.43 seconds**; exception recovery passes in
+**1.18 seconds**. No corrective rerun was needed for this full gate.
+
+All eight escape CTests pass again. The Eq unit family repeats **70 rows,
+34 live states and 3,017 retention cutoffs**, and all historical unit families
+pass unchanged. Four execution oracles again report **zero soundness
+violations**. Expanded-fixture precision remains **44/64**, with zero
+partial/pending claims and the exact **24-site/44-instance/33-retained** source
+family. Bootstrap/p5/Phaser precision stays **0/64, 0/16, 0/20**, including
+p5's existing single partial observation. Native corpus counts stay Bootstrap
+**19/574**, p5 **39/4754** and Phaser **45/7725** in both modes, with zero
+pruned; exact Data stays **0/7 browser/CommonJS and 0/8 AMD**. Final evidence:
+`/tmp/ctcompile-leaf-object-full.log`, `-full-detail.log` and `-evidence.json`.
+The completed postgate checks confirm that all **nineteen code/test paths**
+match committed HEAD, frozen input and final devbox sources. Both actual emitted
+leaf programs contain no Script/VM symbols. Evidence:
+`/tmp/ctcompile-leaf-object-postgate.log` and `-final-hashes.json`.

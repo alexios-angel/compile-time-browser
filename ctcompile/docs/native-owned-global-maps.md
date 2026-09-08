@@ -927,11 +927,67 @@ families and positive fresh/stale proofs pass. Three budget sweeps finish at
 8550/10134/19225 with 32/33/31 cutoffs. The historical mixed Object/String
 sibling retains its complete owner, native refusal and prepared result edges.
 The corrected lifetime observer ends temporary strong references before testing
-expiry; source and compiler behavior remain unchanged. The full generated gate
-is running with 146 programs and nineteen lifetime families; final measurements
-will be recorded in [HANDOFF.md](HANDOFF.md).
+expiry; source and compiler behavior remain unchanged. The complete
+146-program/nineteen-lifetime driver and all 165 lit cases pass in 551.23 seconds
+(CTest 551.43 seconds). The 244-step build is warning-free; CTest is 512/517 in
+1199.12 seconds, all 372 compiler tests and 140/145 browser tests. Only the five
+established browser failures remain. All nineteen code/test paths match HEAD,
+frozen input and final devbox sources; [HANDOFF.md](HANDOFF.md) records the
+corpus counts and evidence.
 
 ## Next boundary
+
+The final sixteen-case devbox probe measures the smaller readback steps below.
+Every case has **five functions**, agrees in Node/interpreter, and remains
+**0/5 native and unowned in both modes**, with every source call preserved.
+Raw/prepared host analysis reports
+`property call lacks a current source getter proof`.
+
+| Source control | Calls | Trace |
+| --- | ---: | ---: |
+| Direct fixed own-field read after Map.set | 5 | 1 |
+| Saved same-key Map.get equals the original object | 6 | 1 |
+| Fixed own-field read through same-key Map.get | 6 | 1 |
+| Same read under an exact saved-identity guard | 6 | 1 |
+| Saved object versus distinct replacement stored in Map | 7 | 0 |
+| Saved object versus comparison-only fresh object | 6 | 0 |
+
+The smallest saved-identity source is:
+
+```js
+var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        set(key) {
+            const item = {};
+            state.set(key, item);
+            const saved = state.get(key);
+            return saved === item ? 1 : 0;
+        }
+    };
+});
+host.slot.size(); var trace = host.slot.set('x');
+```
+
+Further measured controls keep the saved identity/field after replacement and
+deletion (trace=1), observe a later scalar write through the original alias
+(trace=2), and call the same allocation site with repeated/distinct future
+keys (eight calls, trace=3). The same source object and a later Map entry must
+remain separate facts: overwriting/deleting the entry cannot retroactively
+change a saved object owner, while scalar writes through an alias update its
+live fields. Presence or schema membership alone supplies no exact object
+origin. Keep complete sibling/result census and the primitive public ABI.
+
+Existing native Presence, owning identity fields and exact-SSA strict-identity
+guards are candidates for reuse after the host proof admits these observations.
+A fresh object used only in a comparison is a separate native boundary:
+`NativeObjectIdentity` currently requires Map key/payload participation and
+`CompareOp` does not join the compared families. The two-stored-object control
+separates that limitation from ordinary distinct identity. This is a source
+audit, not an admission promise. Sources and measured diagnostics:
+`/tmp/ctcompile-leaf-object-next.json`; audit: `-next-proposals.json`.
 
 A separate identity continuation stores `{value: 1}`, saves `state.get(key)`,
 overwrites with a distinct `{value: 1}`, deletes the key and returns
