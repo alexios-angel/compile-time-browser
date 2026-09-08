@@ -110,6 +110,27 @@ its header, and the header did not change:
 - `ctbrowser/lib/Shell/bindings/` — seven, from 3,926 plus a stray 1,431 filed elsewhere.
 - `ctbrowser/lib/Script/compile/` — eleven, from 3,845, with the class declared in
   `compiler_impl.hpp` beside them. See below; it was the hardest of the four.
+- `ctbrowser/lib/Script/builtins/collections/` — four, from 1,824 (2026-09-08).
+  `install_array` was 1,212 lines of ONE function; it is split at the seam
+  before the callback-taking methods, the halves share only the constructor and
+  the prototype passed across it, and every property lands in the order it did.
+  `list_iterator` gained external linkage in `ctbrowser::script::detail` so Map
+  and Set can share it; the directory's own `internal.hpp` declares both.
+- `ctbrowser/lib/Script/builtins/objects/` — five, from 1,429. The four abstract
+  operations Object and Reflect both answer through (OwnPropertyKeys,
+  [[GetPrototypeOf]], FromPropertyDescriptor, the descriptor refusals) are
+  `operations.cpp`, declared in the directory's `internal.hpp`.
+- `ctbrowser/lib/Script/builtins/text/` — four, from 1,333, sharing nothing but
+  `../internal.hpp`.
+- `ctbrowser/lib/Script/program_image/` — two, from 1,156: the writer and the
+  reader, with the magic, the format version and the one refusal both make in
+  an `internal.hpp` so the two files cannot drift.
+- `ctbrowser/lib/Script/aot_bridge/` — four, from 1,586. `struct aot_bridge`
+  had every static member defined in-class; it is declared in `internal.hpp`
+  now and each body lives in the file that also holds the `extern "C"` row
+  calling it, so a wrapper and its member stay one translation unit and the
+  call still inlines. The four members every file calls - `ctx_of`, `frame_of`,
+  `frame_record`, `check` - stay in-class, for the reason `at()` did below.
 
 ### What splitting the compiler cost, measured
 
