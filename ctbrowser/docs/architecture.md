@@ -110,6 +110,10 @@ its header, and the header did not change:
 - `ctbrowser/lib/Shell/bindings/` — seven, from 3,926 plus a stray 1,431 filed elsewhere.
 - `ctbrowser/lib/Script/compile/` — eleven, from 3,845, with the class declared in
   `compiler_impl.hpp` beside them. See below; it was the hardest of the four.
+- `ctbrowser/lib/Shell/bindings/events/` — three, from 1,647 (2026-09-08): what the
+  engine pushes in, the dispatch algorithm, and the Event interfaces. The
+  property-name constants and the two helpers both dispatch and the
+  constructors need are in `internal.hpp` beside them, in `shell::detail`.
 
 ### What splitting the compiler cost, measured
 

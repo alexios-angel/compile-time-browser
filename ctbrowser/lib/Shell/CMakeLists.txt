@@ -16,7 +16,12 @@ target_sources(ctbrowser-shell
     # same job as its five siblings here.
     bindings/document.cpp
     bindings/element.cpp
-    bindings/events.cpp
+    # events: what the engine pushes in, the dispatch algorithm, and the Event
+    # interfaces - one 1,647-line file until 2026-09-08, three now, with the
+    # helpers more than one of them needs declared in events/internal.hpp.
+    bindings/events/input.cpp
+    bindings/events/dispatch.cpp
+    bindings/events/interfaces.cpp
     # DOMException: the platform's error type, which is not an ECMAScript
     # Error and cannot be built by context::throw_error. Its own file because
     # every binding throws through it and none of them owns it.

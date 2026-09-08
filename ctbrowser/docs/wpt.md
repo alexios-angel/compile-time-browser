@@ -314,7 +314,7 @@ finding.
 | `resources/` | testharness.js itself. Not optional |
 | `common/` | the fixtures the suites import |
 | `dom/nodes/` | the tree: `Node`, `Element`, `Attr`, `Document`. The engine has its own WHATWG tokenizer and tree builder, so this is the closest thing to a direct measurement of it |
-| `dom/events/` | `EventTarget`, dispatch, capture/bubble, listener options — all of which `lib/Shell/bindings/events.cpp` implements |
+| `dom/events/` | `EventTarget`, dispatch, capture/bubble, listener options — all of which `lib/Shell/bindings/events/` implements |
 | `html/dom/` | reflection: does `el.id = "x"` change the attribute, and back |
 | `css/cssom/` | `getComputedStyle` and the style declaration objects, which `lib/Shell/bindings/computed_style.cpp` answers and `tools/check/css-parity.py` already measures against Chrome a different way |
 | `css/css-values/` | value parsing and computation — `calc()`, lengths, units — against the CSS Syntax Level 3 front end in `lib/Style/css/` |
