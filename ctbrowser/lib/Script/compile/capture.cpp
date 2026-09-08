@@ -77,7 +77,7 @@ void compiler_impl::tour(std::int32_t idx, std::int32_t enclosing, std::int32_t 
     // initialiser's boundary IS the node itself - `class A { val = v; }`
     // makes `v` the whole initialiser - so skipping the opener loses the
     // only mention there is, and the enclosing local never gets boxed.
-    // vm_basics caught exactly that: `function build(v) { class A { val =
+    // vm_objects caught exactly that: `function build(v) { class A { val =
     // v; } ... }` read undefined. A real function node is never an ident,
     // so this costs it nothing.
     if (n.kind == vp::nk::ident) { mentions_[std::string{n.text}].push_back(inner); }

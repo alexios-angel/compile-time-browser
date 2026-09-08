@@ -2,7 +2,7 @@
 #
 # `ctbrowser_test(<bucket>/<name>)` comes from cmake/modules/CTTest.cmake, and
 # the argument is a PATH whose BASENAME is everything derived from it - the
-# target, and more importantly the ctest name. `ctest -R vm_basics` has to keep
+# target, and more importantly the ctest name. `ctest -R vm_` has to keep
 # working: it is in docs/build.md's command blocks and in what the ratchet tools
 # pass through. The suite gained directories on 2026-08-09 and a project
 # directory in the monorepo split, and the test names have not changed once.
@@ -43,7 +43,30 @@ ctbrowser_test(unit/net_basics)
 ctbrowser_test(unit/data_url)
 ctbrowser_test(unit/url_basics)
 ctbrowser_test(unit/image_basics)
-ctbrowser_test(unit/style_basics)
+# THE STYLE SUITE IS SIX FILES. style_basics was 2,155 lines and 40 tests when
+# it was split by topic on 2026-09-08; they share style_fixture.hpp, the
+# document-and-resolve fixture, and `ctest -R style_` runs the family.
+#
+# Shorthands: a shorthand IS its longhands, expanded at record time so the
+# cascade sees four declarations carrying the shorthand's source order.
+ctbrowser_test(unit/style_shorthands)
+# Selectors: matching, the buckets, the combinators, and what a rule compiles to.
+ctbrowser_test(unit/style_selectors)
+# Pseudo-classes: the structural ones, :nth-child() and its arithmetic, the
+# functional ones and the element-state ones. Their own file rather than more
+# of style_selectors because nth_child and functional_pseudos alone are as
+# long as the rest of the matcher's cases together.
+ctbrowser_test(unit/style_pseudo_classes)
+# The cascade: specificity and source order, the origins, the style attribute
+# and !important, inheritance, the explicit defaulting keywords, @media and
+# @font-face.
+ctbrowser_test(unit/style_cascade)
+# Custom properties: var() substitution and `initial` on a custom property
+# being the guaranteed-invalid value - the whole of Bootstrap 5.3's theming.
+ctbrowser_test(unit/style_custom_properties)
+# calc() and the math functions: what they resolve to, when the answer is a
+# <number>, min()/max()/clamp(), and calc() inside the cascade.
+ctbrowser_test(unit/style_calc)
 # The CSS tokenizer, against the cases the submodule it replaced got wrong.
 ctbrowser_test(unit/css_syntax)
 ctbrowser_test(unit/css_values)
@@ -80,9 +103,26 @@ ctbrowser_test(unit/xml_parse)
 # contentType and compatMode, a <script> in a marked section that RUNS, and a
 # tag whose case survives to `tagName`.
 ctbrowser_test(unit/xml_document)
-ctbrowser_test(unit/layout_basics)
-# The flex formatting context. Its own file rather than more of layout_basics:
-# S9.7's freeze loop has more cases than the other three contexts together.
+# THE LAYOUT SUITE IS FOUR FILES. layout_basics was 1,364 lines and 41 tests
+# when it was split by topic on 2026-09-08; they share layout_fixture.hpp - the
+# document-to-box-tree fixture and the prose assertions - and `ctest -R layout_`
+# runs the family.
+#
+# Block layout: the box tree is not the DOM tree, and a block's geometry -
+# widths, lengths, min/max clamps, auto margins, and what a fragment does not
+# carry back to the DOM.
+ctbrowser_test(unit/layout_blocks)
+# Margin collapsing: siblings, an empty block collapsing through, parent and
+# child edges, and the four things that stop it.
+ctbrowser_test(unit/layout_margins)
+# Inline layout: text wrapping, line boxes, inline-block, replaced elements,
+# baselines, text-align and line-height.
+ctbrowser_test(unit/layout_inline)
+# PARALLEL LAYOUT IS IDENTICAL TO SEQUENTIAL, fragment for fragment, to the
+# float - the load-bearing claim of the whole stage.
+ctbrowser_test(unit/layout_parallel)
+# The flex formatting context. Its own file rather than more of the layout_*
+# files: S9.7's freeze loop has more cases than the other three contexts together.
 ctbrowser_test(unit/flex_basics)
 # <iframe>: a second document inside the first. See lib/Shell/bindings/frames.cpp.
 ctbrowser_test(unit/frames)
@@ -130,12 +170,41 @@ ctbrowser_test(unit/shadow_dom)
 # The language, against V8. The nine per-type suites were carved out of
 # vm_basics and share js_expect.hpp; number_format and obfuscated ask the
 # same question of real minifier output.
-ctbrowser_test(js/vm_basics)
+#
+# THE VM SUITE ITSELF IS SIX FILES. vm_basics was 3,047 lines and 117 tests
+# when it was split by topic on 2026-09-08; the six share vm_expect.hpp, the
+# whole-program assertion js_expect.hpp cannot express (a class body, a
+# labelled loop, a statement). `ctest -R vm_` runs the family.
+#
+# Expressions: operators, coercion, literals, and what a value says it is. It
+# is also the one file that still runs ctjs - `diff_vs_v1` sends an expression
+# through the previous engine's interpreter as well - so the include
+# directories below belong to this target alone.
+ctbrowser_test(js/vm_operators)
 # The differential half runs the same expressions through ctjs's old
 # interpreter, whose public header also reaches its nested ctc dependency.
-target_include_directories(ctbrowser-test-vm_basics PRIVATE
+target_include_directories(ctbrowser-test-vm_operators PRIVATE
   "${CTBROWSER_CTJS}/include"
   "${CTBROWSER_CTC}/include")
+# Functions: parameters, `this`, `arguments`, closures and the scopes they
+# capture, and the function object itself.
+ctbrowser_test(js/vm_functions)
+# Objects and classes: fields, accessors, descriptors, prototypes,
+# `new.target`, and the class-expression scoping that broke p5.js.
+ctbrowser_test(js/vm_objects)
+# Statements - loops, labels, switch, try/catch/finally, what an exception
+# carries - and the handful of cases that drive the VM from C++ (the
+# collector, a native binding, an error report), which need a `context` of
+# their own rather than a program.
+ctbrowser_test(js/vm_control_flow)
+# The standard library: Math, Array, String, RegExp, JSON, Date, the
+# collections, typed arrays over a shared ArrayBuffer, btoa/atob and
+# structuredClone.
+ctbrowser_test(js/vm_stdlib)
+# Pending promises, `await`, the microtask queue and generators - everything
+# that suspends and resumes. Every promise case reads its answer AFTER THE
+# TURN, because a handler runs when the queue drains, not when it is attached.
+ctbrowser_test(js/vm_async)
 ctbrowser_test(js/number_format)
 ctbrowser_test(js/math_basics)
 ctbrowser_test(js/string_basics)

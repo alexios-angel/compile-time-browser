@@ -185,7 +185,7 @@ set(CTBROWSER_WARNING_OPTIONS
 # Two compile-time bricks are still submodules, for different reasons: ctjs is
 # the script compiler's runtime parser; ctcss is only the comparison oracle for
 # benchmarks/bench_style.cpp. cthtml is NOT one - the DOM has its own WHATWG
-# tokenizer and tree builder. The full ctjs interpreter used by vm_basics also
+# tokenizer and tree builder. The full ctjs interpreter used by vm_operators also
 # needs ctc (compile-time-containers), resolved through ctjs's nested copy.
 set(CTBROWSER_CTJS "${CTBROWSER_MONOREPO_ROOT}/third-party/compile-time-javascript")
 if(NOT EXISTS "${CTBROWSER_CTJS}/include/ctjs/vparse.hpp")

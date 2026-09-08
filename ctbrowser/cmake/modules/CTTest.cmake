@@ -58,7 +58,7 @@ endif()
 
 # `ctbrowser_test(<bucket>/<name>)`. The argument is a PATH and everything
 # derived from it is the BASENAME - the target, and more importantly the ctest
-# name. `ctest -R vm_basics` has to keep working: it is in docs/build.md's
+# name. `ctest -R vm_` has to keep working: it is in docs/build.md's
 # command blocks and in what the ratchet tools pass through. So the suite gained
 # directories on 2026-08-09 and the test names did not change at all.
 # Where check.hpp, dom_probe.hpp, js_expect.hpp and the sanitizer suppression

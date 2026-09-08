@@ -147,7 +147,7 @@ int main() {
     // url does not contain, so `src: url(f.ttf)` registered no font at all and
     // this case compared no fonts against no fonts and passed while proving
     // nothing. That is the failure the negative-case discipline exists to
-    // catch; the engine fix and its regression cases are in style_basics.
+    // catch; the engine fix and its regression cases are in style_cascade.
     must_notice("a changed @font-face source",
                 "p { color: red; margin: 0 }"
                 ".lead { font-size: 20px !important }"

@@ -279,7 +279,7 @@ declaration is text again: `url("f.ttf")` keeps its `url(` and `url(f.ttf)`
 comes back as bare `f.ttf`. Every unquoted src therefore produced an empty
 source and the face was dropped, silently, for the spelling most stylesheets
 use. It now reads the tokens instead, which makes the two forms one case, and
-`style_basics` pins all seven spellings including `format()`, a `local()` first
+`style_cascade` pins all seven spellings including `format()`, a `local()` first
 in the list, and whitespace inside the parens.
 
 The immediate lesson is smaller and sharper: the case had been comparing *no

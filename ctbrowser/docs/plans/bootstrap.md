@@ -1183,7 +1183,7 @@ can re-resolve only that element and its descendants.
 
 ## The assertions that must change, and why they were wrong
 
-- **`ctbrowser/unittests/unit/style_basics.cpp` `test_unmatched_element_gets_empty_style`**
+- **`ctbrowser/unittests/unit/style_selectors.cpp` `test_unmatched_element_gets_empty_style`**
   becomes wrong at S3: with real inheritance an `<em>` inherits `color` from the
   UA sheet's `body`. That assertion encoded *the absence of inheritance* as
   though it were a rule. Rewrite it to: an empty **own** half, and an inherited

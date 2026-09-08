@@ -119,6 +119,6 @@ static_assert(script::value::from_bits(0ull).bits() == 0ull &&
 // engine's own constructors - `value::undefined()` and its siblings are not
 // constexpr - so a change that made `number(1.0).bits()` disagree with the
 // NaN-boxing the table assumes would pass here. That belongs in a test rather
-// than an assertion, and vm_basics already exercises every constructor.
+// than an assertion, and the js/vm_*.cpp suites already exercise every constructor.
 
 } // namespace ctbrowser::aot

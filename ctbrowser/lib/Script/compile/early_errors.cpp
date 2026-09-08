@@ -1283,7 +1283,7 @@ private:
             // `return (expr);` for every expression it checks. Refusing
             // `new.target` there while accepting `return` there refuses the
             // engine's own calling convention halfway: `return String(new.target)`
-            // is a line in `unittests/js/vm_basics.cpp`, it is the shape a page's
+            // is a line in `unittests/js/vm_objects.cpp`, it is the shape a page's
             // transpiled guard takes, and the VM answers it correctly with
             // `undefined` - there is no constructor at the top level, which is
             // what `undefined` means.

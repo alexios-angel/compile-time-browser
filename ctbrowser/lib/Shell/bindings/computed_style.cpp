@@ -5,7 +5,7 @@
 // WHY THIS NEEDS THREE SOURCES. `style::computed_style` is not a computed style
 // despite the name: engine::resolve produces only the declarations that MATCHED,
 // still as text, with no inheritance and no initial values
-// (include/ctbrowser/style/computed.hpp, and unittests/unit/style_basics.cpp asserts
+// (include/ctbrowser/style/computed.hpp, and unittests/unit/style_selectors.cpp asserts
 // that an unmatched element "resolves to nothing"). So:
 //
 //   the style map   every keyword-valued property - display, position, ...
