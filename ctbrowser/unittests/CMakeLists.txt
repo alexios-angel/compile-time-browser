@@ -43,7 +43,30 @@ ctbrowser_test(unit/net_basics)
 ctbrowser_test(unit/data_url)
 ctbrowser_test(unit/url_basics)
 ctbrowser_test(unit/image_basics)
-ctbrowser_test(unit/style_basics)
+# THE STYLE SUITE IS SIX FILES. style_basics was 2,155 lines and 40 tests when
+# it was split by topic on 2026-09-08; they share style_fixture.hpp, the
+# document-and-resolve fixture, and `ctest -R style_` runs the family.
+#
+# Shorthands: a shorthand IS its longhands, expanded at record time so the
+# cascade sees four declarations carrying the shorthand's source order.
+ctbrowser_test(unit/style_shorthands)
+# Selectors: matching, the buckets, the combinators, and what a rule compiles to.
+ctbrowser_test(unit/style_selectors)
+# Pseudo-classes: the structural ones, :nth-child() and its arithmetic, the
+# functional ones and the element-state ones. Their own file rather than more
+# of style_selectors because nth_child and functional_pseudos alone are as
+# long as the rest of the matcher's cases together.
+ctbrowser_test(unit/style_pseudo_classes)
+# The cascade: specificity and source order, the origins, the style attribute
+# and !important, inheritance, the explicit defaulting keywords, @media and
+# @font-face.
+ctbrowser_test(unit/style_cascade)
+# Custom properties: var() substitution and `initial` on a custom property
+# being the guaranteed-invalid value - the whole of Bootstrap 5.3's theming.
+ctbrowser_test(unit/style_custom_properties)
+# calc() and the math functions: what they resolve to, when the answer is a
+# <number>, min()/max()/clamp(), and calc() inside the cascade.
+ctbrowser_test(unit/style_calc)
 # The CSS tokenizer, against the cases the submodule it replaced got wrong.
 ctbrowser_test(unit/css_syntax)
 ctbrowser_test(unit/css_values)

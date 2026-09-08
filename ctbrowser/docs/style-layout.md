@@ -16,7 +16,7 @@ specificity above every selector, which puts it in the cascade at
 so `engine::resolve` SPLICES the attribute's normal declarations in at the
 importance boundary rather than appending them at the end. Appending is the
 easy mistake and it is invisible until a page uses `!important` to override a
-widget's inline style; `unittests/unit/style_basics` has a test per step, verified by
+widget's inline style; `unittests/unit/style_cascade` has a test per step, verified by
 planting the mistake and watching exactly those two fail.
 
 Parsed as a declaration list by `style/css/`. It used to go through the SHEET
