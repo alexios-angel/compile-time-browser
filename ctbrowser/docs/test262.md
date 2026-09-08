@@ -212,7 +212,7 @@ itself, per directory, under every table):
 
 **Modules work.** `--module` runs `ct262`'s own two-pass loader — instantiate
 the whole graph, create every export cell, then evaluate post-order — over the
-filesystem, which is the shape `lib/Shell/browser.cpp` uses for a page. test262's
+filesystem, which is the shape `lib/Shell/browser/scripts.cpp` uses for a page. test262's
 specifiers are all `./name.js` beside the importer, so resolution is
 `std::filesystem` and nothing else. `_FIXTURE` files are dependencies, never
 tests, exactly as INTERPRETING.md requires. Measured: `test/language/module-code`

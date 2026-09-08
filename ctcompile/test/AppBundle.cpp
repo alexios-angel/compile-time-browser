@@ -252,7 +252,7 @@ int main(int argc, char ** argv) {
     {
         // THE TEXT COMES FROM THE ENGINE, and getting this wrong is the whole
         // trap. A script's source is NOT the bytes between its tags: the walk
-        // in browser.cpp appends a newline to each one, so that a trailing `//`
+        // in browser/scripts.cpp appends a newline to each one, so that a trailing `//`
         // comment terminates and so that a <script src> and the inline text
         // after it are two lines rather than one. An image built from the text
         // an author typed hashes differently and is never looked up - and the

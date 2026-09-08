@@ -124,7 +124,9 @@ int main() {
     // the repository became a monorepo.
     const std::set<std::string> allowed = {
         "include/ctbrowser/app/app.hpp",         // the window, the event loop, audio, image decode
-        "lib/App/app.cpp",                       //   and its implementation
+        "lib/App/app/internal.hpp",              //   and its implementation: the includes
+        "lib/App/app/hosts.cpp",                 //   and the host interface, the hosts,
+        "lib/App/app/run.cpp",                   //   and the loop that drives one
         "include/ctbrowser/raster/text/ttf.hpp", // real fonts, through SDL3_ttf - see its header
         "lib/Raster/text/ttf.cpp",               //   and its implementation
         "include/ctbrowser/gpu/device.hpp",      // the SDL_GPUDevice backend

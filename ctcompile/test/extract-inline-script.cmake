@@ -6,7 +6,7 @@
 # or the two programs number their functions differently and the generated
 # bodies belong to a different program.
 #
-# WHAT run_scripts ASSEMBLES, from ctbrowser/lib/Shell/browser.cpp: for a
+# WHAT run_scripts ASSEMBLES, from ctbrowser/lib/Shell/browser/scripts.cpp: for a
 # `<script>` with no `src`, the element's child text nodes concatenated, then
 # ONE newline. That trailing newline is not decoration - it is in the string the
 # browser hashes and compiles, and a copy without it is a different program.

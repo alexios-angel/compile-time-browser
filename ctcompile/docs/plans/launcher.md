@@ -395,7 +395,7 @@ somebody will want to know why it is shaped this way.**
 `browser::load_html` compiles each classic `<script>` into its own
 `script::program` inside `run_scripts` and nothing outside can reach it —
 `classic_programs_` is private and only its `size()` is published. The insertion
-point is exact: `ctbrowser/lib/Shell/browser.cpp`, between
+point is exact: `ctbrowser/lib/Shell/browser/scripts.cpp`, between
 
 ```cpp
         const script::program & running = *compiled;

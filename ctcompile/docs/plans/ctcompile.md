@@ -1018,7 +1018,7 @@ and untested and that is said rather than implied.
 ### The newline nobody would think to look for
 
 `ctcompile_app_bundle` pins one thing that is not about bundles at all. The walk
-in `browser.cpp` appends a `\n` to every classic script's source — so a
+in `browser/scripts.cpp` appends a `\n` to every classic script's source — so a
 `<script src>` and the inline text after it are two lines, and so a trailing
 `//` comment terminates. It follows that a script's source is NOT the bytes
 between its tags, and an image built from the text an author typed hashes

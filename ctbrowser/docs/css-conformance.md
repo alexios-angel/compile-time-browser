@@ -103,7 +103,7 @@ accessor with a forwarding setter and is the template. **How many of the 1,339
 then PASS is not measured** — behind the block is the math serialization, which
 is a separate question.
 
-**2. `set_author_styles_hook` is never installed.** `browser.cpp`'s
+**2. `set_author_styles_hook` is never installed.** `browser/styles.cpp`'s
 `refresh_author_styles` rebuilds the cascade from the DOM's text rather than
 from `dom_bindings::author_style_text()`, because CSSOM's selector
 serialization is lossy — and so no `insertRule`, no `selectorText =`, no

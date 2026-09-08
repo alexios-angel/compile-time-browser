@@ -266,7 +266,7 @@ The context itself needs no window: EGL pbuffer or surfaceless plus an FBO.
 
 ### 4. The SDL-free rule, which is enforced
 
-`ctbrowser/test/lint/api_surface` lints that only `app/app.cpp` knows SDL exists, and that
+`ctbrowser/test/lint/api_surface` lints that only `lib/App/app/` knows SDL exists, and that
 no third-party header appears in a public header. ANGLE brings EGL and GLES
 headers, and they would have to be confined the same way — one `.cpp` owning
 them behind a two-function header, which is the pattern `core/cpu_time.hpp` and

@@ -440,7 +440,7 @@ reached the declaration of. With every cell created up front B gets a real box
 that is merely empty, and A's later write is a write B reads.
 
 **Exactly one caller in the tree**: `browser::instantiate_module`
-(`ctbrowser/lib/Shell/browser.cpp`), which stamps `fn.module = specifier` on
+(`ctbrowser/lib/Shell/browser/scripts.cpp`), which stamps `fn.module = specifier` on
 every proto, calls it, records `resolved`, and recurses over the dependencies.
 `context::run_module` does **not** call it, and neither does anything in
 `unittests/` or `ctcompile/`. So `bind_export`'s creating fallback is reachable
@@ -730,7 +730,7 @@ The harness could not be `Differential.cpp`, for the reason at the top of this
 file: it compiles ONE classic script and runs it with `cx.run`. Three of the
 four opcodes cannot appear in a classic script at all. So
 `ctcompile/test/ModuleDifferential.cpp` is a new binary that builds a
-THREE-MODULE GRAPH the way `browser.cpp` does — register the records, fill
+THREE-MODULE GRAPH the way `browser/scripts.cpp` does — register the records, fill
 `resolved`, instantiate every module, then evaluate in dependency order — and
 installs a compiled entry on the importing module's TOP LEVEL. That is the
 first time the backend has been run over `functions[0]` rather than over a

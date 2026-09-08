@@ -132,7 +132,7 @@ is for.
 
 The engine decodes **BMP** on its own. Everything else arrives through the
 optional **SDL3_image**, installed by `install_image_decoder` in
-`ctbrowser/lib/App/app.cpp` — the one place in the tree where SDL and image decoding
+`ctbrowser/lib/App/app/run.cpp` — the one place in the tree where SDL and image decoding
 meet, because the shell must not learn that SDL exists. `IMG_Load_IO` handles
 PNG and JPEG (and whatever else that build of SDL3_image was compiled with);
 the surface is converted to ARGB8888 and copied into a `paint::bitmap`.

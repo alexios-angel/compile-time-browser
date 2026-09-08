@@ -291,7 +291,7 @@ endif()
 # op::load_import, op::bind_export and op::load_namespace are emitted by
 # compile_program's module arm and by nowhere else, so a classic script cannot
 # contain one and that harness cannot reach three of the four ES-module opcodes
-# at all. This builds a three-module graph the way browser.cpp does and installs
+# at all. This builds a three-module graph the way browser/scripts.cpp does and installs
 # a compiled entry on the IMPORTING module's TOP LEVEL - the first time the
 # backend is run over functions[0] rather than over a named function.
 #

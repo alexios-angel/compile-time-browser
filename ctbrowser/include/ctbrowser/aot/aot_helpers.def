@@ -569,7 +569,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_gather_rest, /* opcode */ gather_rest)
  * VALUE->VALUE removes the register from the ABI so Phase 4 can change the
  * frame layout without touching this file. `init` must be in a GC-visible
  * slot before the call - allocate() does not collect today
- * (collect_if_due's sole caller is Shell/browser.cpp:307, 'between
+ * (collect_if_due's sole caller is Shell/browser/frame.cpp's browser::tick, 'between
  * callbacks'), but the interpreter is safe here only because its argument
  * came out of registers_, and this helper's argument is reachable from none
  * of the 17 roots.
@@ -2010,7 +2010,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_module_export_cell, /* opcode */ bind_export)
  * returning module_record* - is UNSAFE: flat_map is
  * boost::unordered_flat_map (core/containers.hpp), open-addressing with NO
  * pointer or reference stability, and the installed loader INSERTS into it -
- * which is why browser.cpp's set_module_loader lambda itself re-does find()
+ * which is why browser/scripts.cpp's set_module_loader lambda itself re-does find()
  * after loading. Any module_record* held across a module-loading
  * helper dangles, so the lookup stays inside each helper. The allocation
  * here is safe under a real collector because the half-built object is
@@ -2040,7 +2040,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_module_namespace, /* opcode */ load_namespace)
  * compiler cannot do this: a specifier is the loader's name for a file.' It
  * is also absent from engine_contract::proto_header, so Phase 15 does not
  * serialize it today. Baking a literal would make the image's referrer the
- * compiler's GUESS at what the loader will call the file, and browser.cpp's
+ * compiler's GUESS at what the loader will call the file, and browser/scripts.cpp's
  * resolve_specifier rewrites only './' and '../' - so a wrong referrer
  * leaves bare and absolute specifiers working and breaks exactly the
  * relative ones, silently, the worst possible failure distribution. Reading
@@ -2055,7 +2055,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_module_namespace, /* opcode */ load_namespace)
  * DELEGATES TO: context::dynamic_import (vm/call.cpp), which is now the
  *   whole of run_loop.cpp's VM_CASE(dyn_import): context::to_string(spec)
  *   (vm/coerce.cpp, then to_primitive_string for an object), then the
- *   embedder's module_loader_ (ctbrowser installs one in Shell/browser.cpp's
+ *   embedder's module_loader_ (ctbrowser installs one in Shell/browser/scripts.cpp's
  *   set_module_loader call), which reaches the VM through run_reentrant.
  *   THE CONVERSION IS INSIDE THE SHARED MEMBER, so the two tiers cannot run
  *   a page's toString differently. The REFERRER is read by the helper from
@@ -2067,7 +2067,7 @@ CT_AOT_COVERS(/* helper */ ct_aot_module_namespace, /* opcode */ load_namespace)
  *   meaning 'completed, keep going, do not write' would make AOT code
  *   execute past an uncatchable engine fault. A MISSING MODULE, by
  *   contrast, is CT_AOT_OK carrying an already-REJECTED settled promise -
- *   browser.cpp's loader answers make_promise(make_error(...), true) for a
+ *   browser/scripts.cpp's loader answers make_promise(make_error(...), true) for a
  *   specifier no asset matches - so the lowering must not treat 'the module
  *   was not found' as a control-flow event. */
 CT_AOT_HELPER(/* name */ ct_aot_dynamic_import, /* ret */ int32_t,

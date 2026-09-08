@@ -244,7 +244,7 @@ void install_262(context & cx) {
 // --- modules -------------------------------------------------------------
 
 // The two-pass module loader, over the FILESYSTEM rather than an asset
-// registry. It is the shape `lib/Shell/browser.cpp` uses and for the same
+// registry. It is the shape `lib/Shell/browser/scripts.cpp` uses and for the same
 // reason: every binding in the graph has to exist before any of the graph runs,
 // or a cycle hands the importer a name whose exporter has not started.
 //

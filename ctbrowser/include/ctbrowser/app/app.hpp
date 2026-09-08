@@ -40,7 +40,7 @@
 // fragment is serialized into its BMI, so <SDL3/SDL.h> here cost every
 // translation unit that imported the application API 26 MB of AST to
 // deserialize - for a header whose types this module deliberately never
-// exposes. It is included by app.cpp, once.
+// exposes. It is included by lib/App/app/internal.hpp, and by nothing else.
 
 namespace ctbrowser {
 

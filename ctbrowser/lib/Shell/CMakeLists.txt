@@ -9,8 +9,19 @@ add_library(ctbrowser-shell)
 target_sources(ctbrowser-shell
   PRIVATE
     app_bundle.cpp
-    # the assembly itself
-    browser.cpp
+    # the assembly itself. browser.cpp was 2,871 lines of one class's method
+    # bodies; it is ten files by concern now, with the includes it had in
+    # browser/internal.hpp so every file sees exactly what it saw.
+    browser/lifecycle.cpp
+    browser/frame.cpp
+    browser/styles.cpp
+    browser/scripts.cpp
+    browser/resources.cpp
+    browser/chrome.cpp
+    browser/selection.cpp
+    browser/input.cpp
+    browser/focus.cpp
+    browser/actions.cpp
     # The web platform bound to the VM. bindings.cpp was 3,926 lines and
     # webgl_bindings.cpp another 1,431, filed under page/ although it is the
     # same job as its five siblings here.
