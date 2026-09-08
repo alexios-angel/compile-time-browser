@@ -224,7 +224,7 @@ including **163/163 lit cases**. See [HANDOFF.md](HANDOFF.md) for the exact base
 
 ## Remaining native recovery integration
 
-Use [Exceptions/Recovery.cpp](../lib/CTNative/Lowering/Exceptions/Recovery.cpp),
+Use [Exceptions/Recovery/](../lib/CTNative/Lowering/Exceptions/Recovery/),
 which already clones, bounds and structures an acyclic handler CFG. Do not add
 a parallel exception-recovery pass. Its `cloneTail` converts non-call `check`s
 into normal edges. The structural-only mode requires later native admission
