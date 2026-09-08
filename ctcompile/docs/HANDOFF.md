@@ -6,7 +6,86 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Current seeded-Map, contents and source-binding checkpoint, 2026-09-07
+## Current per-key Map, array retention and transitive-call checkpoint, 2026-09-07
+
+Saved locally on `ctcompile-v1`: **`ec2dc20`** (bounded array retention
+consumer), **`327a3c5`** (disjoint per-key Map facts), and **`fd90ea9`**
+(transitive source invocation completions). Main native work and two independent
+agent implementations are integrated. No browser source changed; no push occurred.
+
+The [published Map boundary](native-owned-global-maps.md) now accepts
+`get() { state.set(0, 1); state.set(1, 2); return state.get(0); }` as the
+producer in `host.slot.set(host.slot.get())`, advancing **0/5 -> 5/5 native**
+with Node/interpreter `trace=1`. Bounded per-key facts preserve earlier payloads
+across independently disjoint writes/deletes. SameValueZero treats both zero
+encodings and every NaN payload as equal. Possibly aliasing mutations discard
+old facts before a set installs its own independently proved payload tag.
+The separate native presence analysis invalidates cached `has` observations
+consistently; transitive call summaries remain conservative. No call or lookup
+is evaluated away, and each invocation begins with unknown contents.
+
+The native gate passes **47 complete programs**: fifteen **4/4**, twenty-six
+**5/5**, six **6/6**, matching Node/interpreter and explicit/deduced GCC/Clang
+execution with no linked interpreter symbols. Seven new programs cover disjoint
+writes/deletes, overwritten earlier keys, reseeding, nine live keys and
+string/boolean keys. All six existing Map/table/callable lifetime variants pass
+ASan/UBSan, use-after-scope/return and leak checks. Nine seeded proof refusals
+retain every source call; string/boolean/mixed payload carriers remain separate.
+
+The combined Map/escape gate passes **7/7 CTests in 22.54 seconds**;
+log: `/tmp/ctcompile-map-keyfacts-units.log`. Per-key source/prepared host proofs
+complete at **2145/2230** steps; owner proofs at **5072/4962**. Disjoint-delete
+owner proofs complete at **5116/5007**. Every smaller budget withholds the entire
+proof. First source native completion is **5721** for the earlier key and
+**5700** for the disjoint delete, with **30/31** checked cutoffs and no natural
+speculative rollback interval. These are work limits, not speedup claims.
+Native execution log: `/tmp/ctcompile-map-keyfacts-focused2.log`.
+
+The [array retention consumer](escape-load-evidence.md) independently recomputes
+complete local contents, all-write acyclicity and return reachability before
+changing an unretained `Stored` site to `Confined`. Returned children keep their
+original storage witness, including saved reads and loaded aliases. Cycles,
+transient cycles, unknown effects, missing lattices and incomplete budgets
+preserve the original verdicts. **18 retention rows, seven live states and 454
+budget cutoffs** pass alongside the **31 contents rows, 14 key controls and 209
+sink-table rows**. All four execution oracles report zero violations; corpus
+precision is unchanged. Native admission does not consume these verdicts.
+
+The [source invocation prerequisite](native-source-invocations.md) follows a
+complete acyclic source call family with exact stacked formal/actual contexts.
+Normal returns belong to the selected callee; descendant throws can supply its
+unwind. Unknown effects, recursion, depth above 32 and incomplete work refuse
+without changing the original function. Four transitive cases recover
+**1/2/1/2 invokes** with **7/10/9/12 original checks** available for rollback,
+at **3737/6601/5106/9031** steps. All **5106** transitive-budget prefixes,
+**3534** source-binding prefixes, **937** effect prefixes and nine new refusal
+controls pass. Recovery CTest passes in **1.19 seconds**, then the complete lit
+CTest in **159.07 seconds**; log: `/tmp/ctcompile-map-keyfacts-invocations.log`.
+Ordinary native throwing-call admission and payload/state emission remain
+unfinished.
+
+The full frozen generated devbox gate is running at
+`/tmp/ctcompile-map-keyfacts-full.log`. Its compiler bytes match the three
+committed implementations. Browser bytes are the committed `3494d44` baseline
+(unchanged since `7a755dd`), excluding Claude's unmerged WPT branch and ten browser
+carryover paths. Compiler formatting and whitespace checks pass; the whole-tree
+formatter flags only untouched browser `style/selector.hpp`, `DOM/document.cpp`
+and `Style/css/selector.cpp`. Fresh full-corpus/native counts remain pending;
+the preceding checkpoint below records the last completed full gate.
+
+**Exact next native boundary:** `seeded_dynamic_write` replaces the disjoint
+write with `state.set(state.size, 2)` before `return state.get(0)`. It remains
+**0/5 native** with no owner proof and every source call intact. Its runtime
+key may alias key 0, so the proof discards the earlier payload fact despite both
+payloads being numeric. Next prove a complete type join across possible
+same-key overwrites independently of presence; a possibly aliasing delete
+still needs its own presence proof. Unseeded gets, unsupported payload carriers,
+full Bootstrap Data, realm ownership and future external callers remain open.
+Source invocation integration still needs complete native component admission
+and owning payload/state emission. Broader array contents and native ownership
+consumers remain unfinished.
+
+## Preceding seeded-Map, contents and source-binding checkpoint, 2026-09-07
 
 Saved locally on `ctcompile-v1`: **`6986611`** (complete bounded local array
 contents), **`b2466a0`** (seeded Map.get results across published calls), and
