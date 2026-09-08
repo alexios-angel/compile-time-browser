@@ -1,6 +1,7 @@
 //===- Presence.cpp - structured must-analysis for nested Map reads -------===//
 #include "Presence.h"
 
+#include "../PrimitiveMapKey.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
@@ -20,22 +21,12 @@ llvm::StringRef actionOf(ctjs::CallOp call) {
     return text ? text.getValue() : llvm::StringRef{};
 }
 
-bool sameKey(mlir::Value left, mlir::Value right) {
-    if (left == right) { return true; }
-    auto lhs = left.getDefiningOp<ctjs::ConstantOp>();
-    auto rhs = right.getDefiningOp<ctjs::ConstantOp>();
-    if (!lhs || !rhs) { return false; }
-    // This can decline equivalent encodings of zero or NaN, never claim two
-    // different keys equal. Nonprimitive keys require exact SSA identity.
-    return lhs.getValue() == rhs.getValue() &&
-           llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr>(lhs.getValue());
-}
-
 struct fact {
     mlir::Value instance;
     mlir::Value key;
     bool matches(const fact & other) const {
-        return instance == other.instance && sameKey(key, other.key);
+        return instance == other.instance &&
+               comparePrimitiveMapKeys(key, other.key) == PrimitiveMapKeyRelation::Same;
     }
 };
 
@@ -168,6 +159,21 @@ struct presenceAnalysis {
         }
     }
 
+    void eraseKey(state & current, ctjs::CallOp call) const {
+        const auto affected = entry(call);
+        const auto mayErase = [&](fact value) {
+            // A schema family may contain several runtime instances. Without
+            // an independent disjointness proof, any of them may be this Map.
+            return familyOf(value.instance) == familyOf(affected.instance) &&
+                   comparePrimitiveMapKeys(value.key, affected.key) !=
+                       PrimitiveMapKeyRelation::Distinct;
+        };
+        llvm::erase_if(current.present, mayErase);
+        for (mlir::Operation * op : llvm::make_early_inc_range(current.observations)) {
+            if (mayErase(entry(llvm::cast<ctjs::CallOp>(op)))) { current.observations.erase(op); }
+        }
+    }
+
     void region(mlir::Region & body, state & current) {
         if (body.empty()) { return; }
         if (!body.hasOneBlock()) {
@@ -228,7 +234,9 @@ struct presenceAnalysis {
                 current.observations.insert(op);
             } else if (action == "get") {
                 if (current.contains(entry(call))) { proved.insert(op); }
-            } else if (action == "delete" || action == "clear") {
+            } else if (action == "delete") {
+                eraseKey(current, call);
+            } else if (action == "clear") {
                 effects erase;
                 erase.erased.insert(familyOf(call.getReceiver()));
                 invalidate(current, erase);

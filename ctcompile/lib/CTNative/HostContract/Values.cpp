@@ -1,5 +1,6 @@
 #include "Analysis.h"
 
+#include "../Analysis/PrimitiveMapKey.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -19,15 +20,6 @@ mlir::Value explicitArgument(mlir::Operation * operation, unsigned index) {
     return index - 3 < args.size() ? args[index - 3] : mlir::Value{};
 }
 
-bool samePrimitiveKey(mlir::Value left, mlir::Value right) {
-    if (left == right) { return true; }
-    auto lhs = left.getDefiningOp<ctjs::ConstantOp>();
-    auto rhs = right.getDefiningOp<ctjs::ConstantOp>();
-    // Exact encodings are sufficient for SameValueZero equality. Declining
-    // different encodings of zero or NaN loses precision, never soundness.
-    return lhs && rhs && lhs.getValue() == rhs.getValue() &&
-           llvm::isa<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr>(lhs.getValue());
-}
 } // namespace
 
 analyzer::analyzer(mlir::ModuleOp input, const HostContract & request, unsigned steps)
@@ -657,11 +649,28 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
     llvm::DenseSet<mlir::Value> maps, primitives;
     llvm::DenseMap<mlir::Value, mlir::TypeID> tags;
     // All checked capture loads/fluent returns denote this one runtime Map.
-    // Each invocation starts with unknown contents. Retain only its last
-    // set: a later write may alias that key even with a different SSA name.
+    // Each invocation starts with unknown contents. A later mutation retains
+    // only entries with independently disjoint keys; equal or possibly aliasing
+    // keys lose their old payload fact before a new set installs its own.
     // This local contents fact is independent of the family's return worklist
     // and publishes a tag only after the entire body/use proof completes.
-    std::optional<std::pair<mlir::Value, mlir::TypeID>> lastEntry;
+    llvm::SmallVector<std::pair<mlir::Value, mlir::TypeID>> entries;
+    const auto keyTag = [&](mlir::Value key) -> std::optional<mlir::TypeID> {
+        auto tag = tags.find(key);
+        return tag == tags.end() ? std::nullopt : std::optional<mlir::TypeID>(tag->second);
+    };
+    const auto invalidate = [&](mlir::Value key) {
+        for (auto it = entries.begin(); it != entries.end();) {
+            if (!step()) { return false; }
+            if (comparePrimitiveMapKeys(it->first, key, keyTag(it->first), keyTag(key)) ==
+                PrimitiveMapKeyRelation::Distinct) {
+                ++it;
+            } else {
+                it = entries.erase(it);
+            }
+        }
+        return true;
+    };
     llvm::DenseSet<mlir::Operation *> reads, calls, upvalues;
     if (prepared) { maps.insert(body.getArgument(3)); }
     const unsigned offset = prepared ? 4u : 3u;
@@ -720,18 +729,24 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
             calls.insert(invoke);
             if (key == "set") {
                 maps.insert(invoke.getResult());
-                lastEntry.reset();
+                if (!invalidate(invoke.getArgs()[0])) { return false; }
                 if (auto valueTag = tags.find(invoke.getArgs()[1]); valueTag != tags.end()) {
-                    lastEntry.emplace(invoke.getArgs()[0], valueTag->second);
+                    entries.emplace_back(invoke.getArgs()[0], valueTag->second);
                 }
             } else {
                 primitives.insert(invoke.getResult());
                 if (key == "has" || key == "delete") {
                     tags.try_emplace(invoke.getResult(), mlir::TypeID::get<ctjs::BooleanAttr>());
-                    if (key == "delete") { lastEntry.reset(); }
-                } else if (key == "get" && lastEntry &&
-                           samePrimitiveKey(lastEntry->first, invoke.getArgs()[0])) {
-                    tags.try_emplace(invoke.getResult(), lastEntry->second);
+                    if (key == "delete" && !invalidate(invoke.getArgs()[0])) { return false; }
+                } else if (key == "get") {
+                    for (const auto & entry : entries) {
+                        if (!step()) { return false; }
+                        if (comparePrimitiveMapKeys(entry.first, invoke.getArgs()[0]) ==
+                            PrimitiveMapKeyRelation::Same) {
+                            tags.try_emplace(invoke.getResult(), entry.second);
+                            break;
+                        }
+                    }
                 }
             }
         } else if (auto ret = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {

@@ -407,138 +407,224 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
         });
         return withheld;
     };
-    for (const bool prepared : {false, true}) {
-        auto module =
-            mlir::parseSourceString<mlir::ModuleOp>(prepared ? prepare(source) : source, &context);
-        check(static_cast<bool>(module), "source/prepared seeded Map result fixture parses");
-        if (!module) { continue; }
-        auto contract = requested(*module);
-        HostContractAnalysis query(*module, contract);
-        check(query.proved(), "the last local set independently types a same-key get result");
-        if (!query.proved()) {
-            std::fprintf(stderr, "seeded host: %s\n", query.reason().str().c_str());
-            continue;
+    const auto singleKeySource = source;
+    for (const bool multiple : {false, true}) {
+        source = singleKeySource;
+        if (multiple) {
+            source = replaced(source, "    %getKey = ctjs.constant",
+                              "    %otherKey = ctjs.constant #ctjs.number<4611686018427387904>\n"
+                              "    %otherSeed = ctjs.call %mapSetter(%state, %otherKey, %payload)\n"
+                              "    %getKey = ctjs.constant");
         }
-        const auto calls = query.callables();
-        check(calls.size() == 3 && calls[1].arguments.size() == 1,
-              "seeded producer, consuming setter and final getter remain distinct live calls");
-        if (calls.size() != 3 || calls[1].arguments.size() != 1) { continue; }
-        auto setter = module->lookupSymbol<ctjs::FuncOp>("put$3");
-        auto getter = module->lookupSymbol<ctjs::FuncOp>("get$2");
-        check(calls[0].function == getter && calls[1].function == setter &&
-                  calls[2].function == getter && calls[0].call->isBeforeInBlock(calls[1].call) &&
-                  calls[1].call->isBeforeInBlock(calls[2].call) &&
-                  calls[1].arguments.front().actual == calls[0].call->getResult(0) &&
-                  calls[1].arguments.front().parameter ==
-                      setter.getBody().front().getArgument(prepared ? 4 : 3) &&
-                  calls[1].arguments.front().primitiveTag == mlir::TypeID::get<ctjs::NumberAttr>(),
-              "the consuming formal keeps the producer SSA result and prepared capture offset");
-        check(hostContractFingerprint(*module) == contract.moduleSha256,
-              "presence and result proofs leave source calls and operands unchanged");
-        const unsigned completion = query.steps();
-        check(completion < 15000, "seeded presence proof stays within its fixture work limit");
-        if (completion < 15000) {
-            for (unsigned budget = 0; budget < completion; ++budget) {
-                HostContractAnalysis limited(*module, contract, budget);
-                check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                          empty(*module, limited),
-                      "every incomplete presence budget withholds the entire callable family");
+        for (const bool prepared : {false, true}) {
+            auto module = mlir::parseSourceString<mlir::ModuleOp>(
+                prepared ? prepare(source) : source, &context);
+            check(static_cast<bool>(module), "source/prepared seeded Map result fixture parses");
+            if (!module) { continue; }
+            auto contract = requested(*module);
+            HostContractAnalysis query(*module, contract);
+            check(query.proved(),
+                  "live per-key set facts independently type the same-key get result");
+            if (!query.proved()) {
+                std::fprintf(stderr, "seeded host: %s\n", query.reason().str().c_str());
+                continue;
             }
-            HostContractAnalysis exact(*module, contract, completion);
-            check(exact.proved() && exact.steps() == completion && exact.callables().size() == 3,
-                  "the exact presence completion budget reproduces every live result edge");
-        }
-        ctjs::CallOp seed, lookup;
-        getter.walk([&](ctjs::CallOp call) {
-            if (!seed) { seed = call; }
-            lookup = call;
-        });
-        check(seed && lookup && seed != lookup, "the live body retains its seed and lookup");
-        if (!seed || !lookup || seed == lookup) { continue; }
-        mlir::Builder builder(&context);
-        lookup->setAttr("ctnative.map_present", builder.getBoolAttr(true));
-        lookup->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
-        contract = requested(*module);
-        check(HostContractAnalysis(*module, contract).proved(),
-              "forged presence reports do not replace the live seed/get proof");
-        const auto originalKey = lookup.getArgs().front();
-        lookup->setOperand(2, seed.getArgs().back());
-        HostContractAnalysis stale(*module, contract);
-        check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
-              "changing the queried key invalidates the earlier presence fingerprint");
-        HostContractAnalysis mismatch(*module, requested(*module));
-        check(!mismatch.proved() && empty(*module, mismatch),
-              "a fresh fingerprint and forged presence cannot prove a different get key");
-        lookup->setOperand(2, originalKey);
+            const auto calls = query.callables();
+            check(calls.size() == 3 && calls[1].arguments.size() == 1,
+                  "seeded producer, consuming setter and final getter remain distinct live calls");
+            if (calls.size() != 3 || calls[1].arguments.size() != 1) { continue; }
+            auto setter = module->lookupSymbol<ctjs::FuncOp>("put$3");
+            auto getter = module->lookupSymbol<ctjs::FuncOp>("get$2");
+            check(calls[0].function == getter && calls[1].function == setter &&
+                      calls[2].function == getter &&
+                      calls[0].call->isBeforeInBlock(calls[1].call) &&
+                      calls[1].call->isBeforeInBlock(calls[2].call) &&
+                      calls[1].arguments.front().actual == calls[0].call->getResult(0) &&
+                      calls[1].arguments.front().parameter ==
+                          setter.getBody().front().getArgument(prepared ? 4 : 3) &&
+                      calls[1].arguments.front().primitiveTag ==
+                          mlir::TypeID::get<ctjs::NumberAttr>(),
+                  "the consuming formal keeps the producer SSA result and prepared capture offset");
+            check(hostContractFingerprint(*module) == contract.moduleSha256,
+                  "presence and result proofs leave source calls and operands unchanged");
+            const unsigned completion = query.steps();
+            check(completion < 15000, "seeded presence proof stays within its fixture work limit");
+            if (completion < 15000) {
+                for (unsigned budget = 0; budget < completion; ++budget) {
+                    HostContractAnalysis limited(*module, contract, budget);
+                    check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                              empty(*module, limited),
+                          "every incomplete presence budget withholds the entire callable family");
+                }
+                HostContractAnalysis exact(*module, contract, completion);
+                check(exact.proved() && exact.steps() == completion &&
+                          exact.callables().size() == 3,
+                      "the exact presence completion budget reproduces every live result edge");
+            }
+            ctjs::CallOp seed, lookup;
+            getter.walk([&](ctjs::CallOp call) {
+                if (!seed) { seed = call; }
+                lookup = call;
+            });
+            check(seed && lookup && seed != lookup, "the live body retains its seed and lookup");
+            if (!seed || !lookup || seed == lookup) { continue; }
+            mlir::Builder builder(&context);
+            lookup->setAttr("ctnative.map_present", builder.getBoolAttr(true));
+            lookup->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+            contract = requested(*module);
+            check(HostContractAnalysis(*module, contract).proved(),
+                  "forged presence reports do not replace the live seed/get proof");
+            const auto originalKey = lookup.getArgs().front();
+            lookup->setOperand(2, seed.getArgs().back());
+            HostContractAnalysis stale(*module, contract);
+            check(!stale.proved() && stale.reason().contains("fingerprint") &&
+                      empty(*module, stale),
+                  "changing the queried key invalidates the earlier presence fingerprint");
+            HostContractAnalysis mismatch(*module, requested(*module));
+            check(!mismatch.proved() && empty(*module, mismatch),
+                  "a fresh fingerprint and forged presence cannot prove a different get key");
+            lookup->setOperand(2, originalKey);
 
-        const auto originalPayload = seed.getArgs().back();
-        for (mlir::Attribute payload :
-             {mlir::Attribute(ctjs::BooleanAttr::get(&context, true)),
-              mlir::Attribute(ctjs::StringAttr::get(&context, "owned"))}) {
-            mlir::OpBuilder at(seed);
-            auto changedPayload = ctjs::ConstantOp::create(at, seed.getLoc(), payload);
-            seed->setOperand(3, changedPayload.getResult());
-            HostContractAnalysis old(*module, contract);
-            check(!old.proved() && old.reason().contains("fingerprint") && empty(*module, old),
-                  "a payload mutation cannot reuse the previous result fingerprint");
-            HostContractAnalysis changed(*module, requested(*module));
-            check(changed.proved() && changed.callables().size() == 3 &&
-                      changed.callables()[1].arguments.size() == 1 &&
-                      changed.callables()[1].arguments.front().actual ==
-                          calls[0].call->getResult(0) &&
-                      changed.callables()[1].arguments.front().primitiveTag == payload.getTypeID(),
-                  "boolean/string payloads independently retype the consumer without a carrier "
-                  "promise");
+            const auto originalPayload = seed.getArgs().back();
+            for (mlir::Attribute payload :
+                 {mlir::Attribute(ctjs::BooleanAttr::get(&context, true)),
+                  mlir::Attribute(ctjs::StringAttr::get(&context, "owned"))}) {
+                mlir::OpBuilder at(seed);
+                auto changedPayload = ctjs::ConstantOp::create(at, seed.getLoc(), payload);
+                seed->setOperand(3, changedPayload.getResult());
+                HostContractAnalysis old(*module, contract);
+                check(!old.proved() && old.reason().contains("fingerprint") && empty(*module, old),
+                      "a payload mutation cannot reuse the previous result fingerprint");
+                HostContractAnalysis changed(*module, requested(*module));
+                check(changed.proved() && changed.callables().size() == 3 &&
+                          changed.callables()[1].arguments.size() == 1 &&
+                          changed.callables()[1].arguments.front().actual ==
+                              calls[0].call->getResult(0) &&
+                          changed.callables()[1].arguments.front().primitiveTag ==
+                              payload.getTypeID(),
+                      "boolean/string payloads independently retype the consumer without a carrier "
+                      "promise");
+                seed->setOperand(3, originalPayload);
+                changedPayload.erase();
+            }
+            seed->setOperand(3, getter.getBody().front().getArgument(0));
+            HostContractAnalysis unknown(*module, requested(*module));
+            check(!unknown.proved() && empty(*module, unknown),
+                  "an unproved payload cannot inherit the last write's earlier primitive tag");
             seed->setOperand(3, originalPayload);
-            changedPayload.erase();
-        }
-        seed->setOperand(3, getter.getBody().front().getArgument(0));
-        HostContractAnalysis unknown(*module, requested(*module));
-        check(!unknown.proved() && empty(*module, unknown),
-              "an unproved payload cannot inherit the last write's earlier primitive tag");
-        seed->setOperand(3, originalPayload);
-        check(HostContractAnalysis(*module, contract).proved(),
-              "restoring the live key and payload restores the independent presence proof");
-        std::printf("seeded Map host %s proof and all %u incomplete budgets checked\n",
-                    prepared ? "prepared" : "source", completion);
+            check(HostContractAnalysis(*module, contract).proved(),
+                  "restoring the live key and payload restores the independent presence proof");
+            std::printf("%s Map host %s proof and all %u incomplete budgets checked\n",
+                        multiple ? "per-key" : "seeded", prepared ? "prepared" : "source",
+                        completion);
 
-        const auto variant = [&](const std::string & program, bool expected, const char * message) {
-            auto changed = mlir::parseSourceString<mlir::ModuleOp>(
-                prepared ? prepare(program) : program, &context);
-            check(static_cast<bool>(changed), "seeded Map presence variant parses");
-            if (!changed) { return; }
-            HostContractAnalysis result(*changed, requested(*changed));
-            check(result.proved() == expected && !result.exhausted() &&
-                      (expected || empty(*changed, result)),
-                  message);
-        };
-        constexpr llvm::StringLiteral seedLine =
-            "    %seeded = ctjs.call %mapSetter(%state, %seedKey, %payload)";
-        variant(replaced(source, "ctjs.call %mapGetter(%state, %probeKey)",
-                         "ctjs.call %mapGetter(%state, %seedKey)"),
-                true, "identical SSA keys establish the same local presence as equal constants");
-        variant(replaced(source, seedLine,
-                         seedLine.str() + "\n    %again = ctjs.call %mapSetter(%state, "
-                                          "%seedKey, %payload)"),
-                true, "a same-key overwrite replaces the last local write fact");
-        variant(replaced(source, seedLine, ""), false,
-                "a sibling's prior mutation cannot seed this method's initial presence");
-        variant(replaced(source, seedLine,
-                         seedLine.str() + "\n    %other = ctjs.call %mapSetter(%state, "
-                                          "%payload, %payload)"),
-                false, "an earlier distinct key is outside the bounded last-write fact");
-        variant(replaced(source, seedLine, seedLine.str() + R"MLIR(
+            const auto variant = [&](const std::string & program, bool expected,
+                                     const char * message,
+                                     mlir::TypeID expectedTag =
+                                         mlir::TypeID::get<ctjs::NumberAttr>()) {
+                auto changed = mlir::parseSourceString<mlir::ModuleOp>(
+                    prepared ? prepare(program) : program, &context);
+                check(static_cast<bool>(changed), "seeded Map presence variant parses");
+                if (!changed) { return; }
+                HostContractAnalysis result(*changed, requested(*changed));
+                check(result.proved() == expected && !result.exhausted() &&
+                          (expected || empty(*changed, result)),
+                      message);
+                if (expected && result.proved()) {
+                    check(
+                        result.callables().size() == 3 &&
+                            result.callables()[1].arguments.size() == 1 &&
+                            result.callables()[1].arguments.front().primitiveTag == expectedTag,
+                        "the retained entry supplies its current payload tag, not an older write");
+                }
+            };
+            constexpr llvm::StringLiteral seedLine =
+                "    %seeded = ctjs.call %mapSetter(%state, %seedKey, %payload)";
+            variant(replaced(source, "ctjs.call %mapGetter(%state, %probeKey)",
+                             "ctjs.call %mapGetter(%state, %seedKey)"),
+                    true,
+                    "identical SSA keys establish the same local presence as equal constants");
+            variant(replaced(source, seedLine,
+                             seedLine.str() + "\n    %again = ctjs.call %mapSetter(%state, "
+                                              "%seedKey, %payload)"),
+                    true, "a same-key overwrite replaces the last local write fact");
+            variant(replaced(source, seedLine, ""), false,
+                    "a sibling's prior mutation cannot seed this method's initial presence");
+            variant(replaced(source, seedLine,
+                             seedLine.str() + "\n    %other = ctjs.call %mapSetter(%state, "
+                                              "%payload, %payload)"),
+                    true, "an independently distinct key preserves the earlier payload fact");
+            variant(replaced(source, seedLine, seedLine.str() + R"MLIR(
     %deleteKey = ctjs.constant #ctjs.string<"delete">
     %deleter = ctjs.get_property %state[%deleteKey]
     %deleted = ctjs.call %deleter(%state, %seedKey)
 )MLIR"),
-                false, "a delete invalidates the local presence before the getter result");
-        variant(replaced(source, seedLine, seedLine.str() + R"MLIR(
+                    false, "a delete invalidates the local presence before the getter result");
+            variant(replaced(source, seedLine, seedLine.str() + R"MLIR(
     %hasKey = ctjs.constant #ctjs.string<"has">
     %hasMethod = ctjs.get_property %state[%hasKey]
     %present = ctjs.call %hasMethod(%state, %seedKey)
 )MLIR"),
-                true, "a read-only has preserves the independently seeded get result");
+                    true, "a read-only has preserves the independently seeded get result");
+            const std::string deleteOther = seedLine.str() + R"MLIR(
+    %deleteKey = ctjs.constant #ctjs.string<"delete">
+    %deleter = ctjs.get_property %state[%deleteKey]
+    %deleted = ctjs.call %deleter(%state, %payload)
+)MLIR";
+            variant(replaced(source, seedLine, deleteOther), true,
+                    "deleting a distinct literal preserves the earlier entry");
+            const std::string dynamicMutation = seedLine.str() + R"MLIR(
+    %sizeKey = ctjs.constant #ctjs.string<"size">
+    %dynamicKey = ctjs.get_property %state[%sizeKey]
+    %maybeAlias = ctjs.call %mapSetter(%state, %dynamicKey, %payload)
+)MLIR";
+            variant(replaced(source, seedLine, dynamicMutation), false,
+                    "a numeric runtime key may alias the seeded literal despite another SSA name");
+            variant(replaced(source, seedLine,
+                             replaced(dynamicMutation,
+                                      "%maybeAlias = ctjs.call %mapSetter(%state, "
+                                      "%dynamicKey, %payload)",
+                                      "%deleteKey = ctjs.constant #ctjs.string<\"delete\">\n"
+                                      "    %deleter = ctjs.get_property %state[%deleteKey]\n"
+                                      "    %deleted = ctjs.call %deleter(%state, %dynamicKey)")),
+                    false, "a possibly aliasing delete invalidates earlier contents");
+            auto stringSeed = replaced(source, "%seedKey = ctjs.constant #ctjs.number<0>",
+                                       "%seedKey = ctjs.constant #ctjs.string<\"seed\">");
+            stringSeed = replaced(stringSeed, "%probeKey = ctjs.constant #ctjs.number<0>",
+                                  "%probeKey = ctjs.constant #ctjs.string<\"seed\">");
+            variant(replaced(stringSeed, seedLine, dynamicMutation), true,
+                    "independent number/string tags prove a runtime mutation key is disjoint");
+            // Both zero encodings and every NaN payload denote the same Map key.
+            // A different payload tag after an aliasing write must replace the old
+            // fact; an aliasing delete must remove it, even with unequal attributes.
+            for (const auto & [seedBits, aliasBits] :
+                 {std::pair{"0", "9223372036854775808"},
+                  std::pair{"9221120237041090561", "9221120237041090562"}}) {
+                auto equalKey = replaced(source, "%seedKey = ctjs.constant #ctjs.number<0>",
+                                         std::string("%seedKey = ctjs.constant #ctjs.number<") +
+                                             seedBits + ">");
+                equalKey = replaced(equalKey, "%probeKey = ctjs.constant #ctjs.number<0>",
+                                    std::string("%probeKey = ctjs.constant #ctjs.number<") +
+                                        aliasBits + ">");
+                variant(equalKey, true, "SameValueZero proves equal signed-zero and NaN keys");
+                auto overwriteAlias = replaced(
+                    equalKey, "    %answer = ctjs.call %mapGetter",
+                    "    %booleanPayload = ctjs.constant #ctjs.boolean<true>\n"
+                    "    %overwritten = ctjs.call %mapSetter(%state, %probeKey, %booleanPayload)\n"
+                    "    %answer = ctjs.call %mapGetter");
+                variant(overwriteAlias, true,
+                        "equal zero/NaN encodings replace rather than preserve the previous tag",
+                        mlir::TypeID::get<ctjs::BooleanAttr>());
+                auto eraseAlias =
+                    replaced(equalKey, "    %answer = ctjs.call %mapGetter",
+                             "    %deleteKey = ctjs.constant #ctjs.string<\"delete\">\n"
+                             "    %deleter = ctjs.get_property %state[%deleteKey]\n"
+                             "    %deleted = ctjs.call %deleter(%state, %probeKey)\n"
+                             "    %answer = ctjs.call %mapGetter");
+                variant(eraseAlias, false,
+                        "unequal zero or NaN bits never establish disjointness for a delete");
+            }
+        }
     }
 }
 

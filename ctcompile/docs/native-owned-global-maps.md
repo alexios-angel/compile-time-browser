@@ -52,11 +52,14 @@ body/effect/use census publishes a result tag: `size` is numeric, `has`/`delete`
 are boolean, and literal or typed-formal returns retain their category. A
 consumer declared before its producer waits for a later worklist pass. No
 optimistic tag seeds a circular dependency, and no recursive `propertyCall`
-query supplies authority. A `Map.get` can now retain the last local `set`'s
-independent payload tag when its key is the same SSA value or equal primitive
-constant. Each invocation starts with unknown contents. Every later `set`
-replaces the fact; a delete clears it, including a delete with another key.
-The bounded proof deliberately forgets an earlier key after any later write.
+query supplies authority. A `Map.get` can retain a local `set`'s independent
+payload tag when its key is the same SSA value or a SameValueZero-equal primitive
+constant. Each invocation starts with unknown contents. Bounded per-key facts
+survive writes and deletes only when the mutation key is independently distinct.
+Different primitive tags are disjoint without coercion; different SSA names of
+the same primitive type may alias. Both zero encodings and every NaN payload
+denote the same Map key. A possibly aliasing mutation removes the old fact before
+a set installs its new payload tag. Every fact comparison spends work budget.
 Only the complete method body and use census publishes its result tag.
 Unique initialized global actuals are checked against the full initialization proof.
 
@@ -64,6 +67,10 @@ Native Map preparation separately rederives presence for these live published
 reads using its existing instance/key analysis. A proved read uses the Map's
 inferred payload type and `map_get_present`; other reads remain nullable.
 The host result tag supplies neither the Map schema nor presence annotations.
+The presence analysis uses the same primitive-key comparison for direct deletes,
+invalidating both present-key facts and cached `has` observations across the
+schema family unless their keys are independently distinct. Transitive call
+summaries still invalidate the entire affected family conservatively.
 Every source Map lookup, producing call and consuming argument remains runtime.
 
 This is an ownership/effects proof. Native admission must still prove supported
@@ -98,7 +105,34 @@ by value. Native output links neither the interpreter nor the collector. Escape
 analysis still reports global publication as `StoredGlobal`; general global
 loads remain external. The new owner does not require a weaker escape verdict.
 
-## Measured seeded-result gate, 2026-09-07
+## Measured per-key gate, 2026-09-07
+
+The producer below advances **0/5 -> 5/5 native**, preserving Node/interpreter
+`trace=1` through `host.slot.set(host.slot.get())` and the final getter:
+
+```js
+get() { state.set(0, 1); state.set(1, 2); return state.get(0); }
+```
+
+The complete native gate passes **47 programs**: fifteen **4/4**, twenty-six
+**5/5**, and six **6/6**, under explicit/deduced GCC and Clang output. Seven new
+cases cover the earlier key, a disjoint delete, overwrites, reseeding, nine live
+keys, and string/boolean keys. All producing lookups, consuming operands and
+runtime calls remain. The existing six lifetime variants still pass ASan/UBSan,
+use-after-scope/return and leak checks. Nine seeded proof refusals preserve every
+source call; the three unsupported payload-carrier boundaries remain separate.
+
+The per-key source/prepared host proofs complete at **2145/2230** steps; the
+owner proofs at **5072/4962**. Disjoint-delete owner proofs complete at
+**5116/5007**. Every smaller budget withholds the complete proof. Source native
+admission first completes at **5721** for the earlier key and **5700** for the
+disjoint delete, with **30/31** checked cutoffs and no natural speculative
+rollback interval. These are work-limit measurements, not performance claims.
+The initial focused CTest gate passes **2/2 in 14.16 seconds**, followed by all
+47 native programs; log: `/tmp/ctcompile-map-keyfacts-focused2.log`.
+The combined and full gates are recorded in [HANDOFF.md](HANDOFF.md).
+
+## Preceding seeded-result gate, 2026-09-07
 
 Commit `b2466a0` advances the seeded producer below from **0/5 to 5/5 native**,
 retaining Node/interpreter `trace=1`:
@@ -257,12 +291,13 @@ devbox build passes **475/475 CTests** in **652.00 seconds**, including
 
 ## Next boundary
 
-The retained `seeded_earlier_key` adds `state.set(1, 2)` before the producer's
-`return state.get(0)`. It remains **0/5 native** with every source call intact
-and no owner proof; fresh Node/interpreter runs both produce `trace=1`.
-The last-write proof forgets key 0. The next contents increment needs bounded
-per-key facts and independent key-disjointness evidence, conservatively
-invalidating possibly aliasing writes and deletes. The unseeded
+The retained `seeded_dynamic_write` instead uses `state.set(state.size, 2)`
+before the producer's `return state.get(0)`. It remains **0/5 native** with every
+source call intact and no owner proof. The runtime key may alias key 0, so the
+current proof discards that entry's payload fact even though both payloads are
+numeric. The next increment needs a complete result-type join across possibly
+aliasing writes, independently of key presence. A possibly aliasing delete still
+requires absence/presence evidence and cannot inherit a set's rule. The unseeded
 `get() { return state.get(0); }` remains refused. Neither an earlier observed
 invocation nor an incomplete family establishes the result.
 

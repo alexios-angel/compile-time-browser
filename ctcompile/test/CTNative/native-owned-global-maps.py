@@ -112,6 +112,29 @@ def seeded_result_sources():
     }
 
 
+def key_fact_sources():
+    return {
+        "seeded_earlier_key": (SEEDED_RESULT.replace("return state.get(0);",
+            "state.set(1, 2); return state.get(0);"), "host", 1),
+        "seeded_other_delete": (SEEDED_RESULT.replace("return state.get(0);",
+            "state.delete(9); return state.get(0);"), "host", 1),
+        "seeded_earlier_overwrite": (SEEDED_RESULT.replace("return state.get(0);",
+            "state.set(1, 9); state.set(0, 2); state.set(1, 3); return state.get(0);"), "host", 2),
+        "seeded_reseed": (SEEDED_RESULT.replace("return state.get(0);",
+            "state.delete(0); state.set(0, 3); state.set(1, 2); return state.get(0);"), "host", 3),
+        "seeded_many_keys": (SEEDED_RESULT.replace("return state.get(0);",
+            " ".join(f"state.set({key}, {key + 1});" for key in range(1, 9))
+            + " return state.get(0);"), "host", 1),
+        "seeded_string_keys": (SEEDED_RESULT.replace("state.set(0, 1); return state.get(0);",
+            "state.set('seed', 1); state.set('other', 2); state.delete('missing'); "
+            "return state.get('seed');").replace("state.set(key, 1)", "state.set('sink', key)"),
+            "host", 1),
+        "seeded_bool_keys": (SEEDED_RESULT.replace("state.set(0, 1); return state.get(0);",
+            "state.set(false, 1); state.set(true, 2); state.delete(true); return state.get(false);")
+            .replace("state.set(key, 1)", "state.set(true, key)"), "host", 1),
+    }
+
+
 def seeded_carrier_refusals():
     observed_size = SEEDED_RESULT.replace("get() {",
         "size() { return state.size; }, get() {").replace("var trace = host.slot.get();",
@@ -143,6 +166,7 @@ RESULT_SIGNATURES = {
     "result_seeded_overwrite": ("js_num", "js_num", 5),
     "result_seeded_growing": ("js_num", "js_num", 5),
     "result_seeded_formal": ("js_num", "js_num", 6),
+    **{name: ("js_num", "js_num", 5) for name in key_fact_sources()},
 }
 
 
@@ -186,10 +210,11 @@ def check_result_calls(cpp, name, mode):
         "result_seeded_overwrite": ["get", "set", "get"],
         "result_seeded_growing": ["get", "set", "get"],
         "result_seeded_formal": ["get", "set", "get", "set", "size"],
+        **{name: ["get", "set", "get"] for name in key_fact_sources()},
     }[name]
     if sequence != expected or "ctnative::map_set(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: lost runtime getter/mutation/final observation calls")
-    if name in seeded_result_sources() and not re.search(r"ctnative::map_get(?:_\w+)?\(", cpp):
+    if name in {**seeded_result_sources(), **key_fact_sources()} and not re.search(r"ctnative::map_get(?:_\w+)?\(", cpp):
         raise RuntimeError(f"{name}/{mode}: replaced the live seeded Map lookup with a summary")
 
 
@@ -514,10 +539,14 @@ def seeded_result_refusals():
             "state.clear(); return state.get(0);"),
         "seeded_deleted": SEEDED_RESULT.replace("return state.get(0);",
             "state.delete(0); return state.get(0);"),
-        "seeded_other_delete": SEEDED_RESULT.replace("return state.get(0);",
-            "state.delete(9); return state.get(0);"),
-        "seeded_earlier_key": SEEDED_RESULT.replace("return state.get(0);",
-            "state.set(1, 2); return state.get(0);"),
+        "seeded_dynamic_write": SEEDED_RESULT.replace("return state.get(0);",
+            "state.set(state.size, 2); return state.get(0);"),
+        "seeded_dynamic_delete": SEEDED_RESULT.replace("return state.get(0);",
+            "state.delete(state.size); return state.get(0);"),
+        "seeded_overwritten_unknown": SEEDED_RESULT.replace("return state.get(0);",
+            "state.set(0, state.get(9)); return state.get(0);"),
+        "seeded_deleted_earlier": SEEDED_RESULT.replace("return state.get(0);",
+            "state.set(1, 2); state.delete(0); return state.get(0);"),
         "seeded_unknown_payload": SEEDED_RESULT.replace("state.set(0, 1);",
             "state.set(0, state.get(9));"),
         "seeded_distinct_formals": SEEDED_RESULT.replace(
@@ -646,6 +675,7 @@ def main():
         **parameter_sources(),
         **result_sources(),
         **seeded_result_sources(),
+        **key_fact_sources(),
     }
     saved = {}
     for name, (source, binding, value) in positives.items():
@@ -713,6 +743,9 @@ def main():
     rollback += check_budgets(args, parameter_ir, parameter_config, "shared_parameter", functions=5)
     result_ir, result_config, result_output = saved["parameter_call_result"]
     rollback += check_budgets(args, result_ir, result_config, "parameter_call_result", functions=5)
+    for name in ("seeded_earlier_key", "seeded_other_delete"):
+        key_ir, key_config, _ = saved[name]
+        rollback += check_budgets(args, key_ir, key_config, name, functions=5)
     seeded_ir, seeded_config, seeded_output = saved["result_seeded_map_get"]
     rollback += check_budgets(args, seeded_ir, seeded_config, "result_seeded_map_get", functions=5)
 
@@ -901,6 +934,7 @@ def main():
           f"{len(result_sources())} live result programs preserve call order and operands; "
           f"{len(result_refusals())} result-proof refusals and missing-return carrier refusal; "
           f"{len(seeded_result_sources())} seeded result programs and growing lifetime pass; "
+          f"{len(key_fact_sources())} per-key result programs; "
           f"{len(seeded_result_refusals())} seeded proof and "
           f"{len(seeded_carrier_refusals())} seeded carrier refusals; "
           f"{len(rollback)} speculative rollback cutoffs")

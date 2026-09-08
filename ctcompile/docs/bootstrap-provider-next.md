@@ -150,15 +150,24 @@ native Map preparation separately proves instance/key presence and the schema.
 The seeded lookup used as a later key in one method also advances **0/4 -> 4/4**.
 The gate passes forty complete programs and six sanitizer lifetime variants.
 
-## Next: retain separate live Map entries
+## Completed: separate live Map entries
 
 `seeded_earlier_key` inserts `state.set(1, 2)` before `return state.get(0)`.
-It remains **0/5 native** with no owner proof; fresh Node/interpreter runs both
-produce `trace=1`. The local last-write fact deliberately forgets key 0.
-Extend to bounded per-key contents with independent key equality/disjointness
-and mutation effects. Possibly aliasing writes must invalidate earlier tags;
-prior invocation observations do not prove current contents. Unseeded gets
-remain refused. String/boolean/mixed Map payloads remain separate carrier
+It now advances **0/5 -> 5/5 native**, retaining Node/interpreter `trace=1`.
+Bounded per-key contents and SameValueZero key comparison preserve the earlier
+payload across independently disjoint writes/deletes. Seven new programs pass;
+the complete [published Map gate](native-owned-global-maps.md) passes 47 programs
+and the existing six lifetime variants. No lookup or call is evaluated away.
+
+## Next: payload types across possibly aliasing writes
+
+`seeded_dynamic_write` uses `state.set(state.size, 2)` instead. It stays
+**0/5 native** with no owner proof and every source call intact. Its runtime key
+may alias the seed, so the current proof discards the old payload tag. A complete
+type join across possible overwrites could retain an independently proved
+numeric payload; key presence and possibly aliasing deletes remain separate
+obligations. Prior invocation observations cannot prove current contents.
+Unseeded gets remain refused. String/boolean/mixed Map payloads remain separate carrier
 boundaries at **0/6** despite completed host proofs. Exact Bootstrap Data stays
 **0/7** in CommonJS/browser and **0/8** in AMD (the extra function registers the
 delayed factory); complete native initialization, realm owners and future-call
