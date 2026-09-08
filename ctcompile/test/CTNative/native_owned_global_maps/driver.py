@@ -100,6 +100,73 @@ def check_nullable_host_result_refusals(args, positives, node, reference):
         check_call_preservation(rejected.read_text(), failed.read_text(), name + "-" + mode)
 
 
+def check_shortcircuit_nullable_refusal(args, node, reference):
+    # Host truthiness now proves this historical result is String/Null. Its
+    # earlier &&/|| temporary still needs an unsupported optional Bool/String
+    # carrier, independently of the complete owner and published result proof.
+    name = "shortcircuit_nullable"
+    source, value, old, replacement, restored_value = shortcircuit_refusals()[name]
+    js, rejected, count = boundary.prepare(args, name, source)
+    if count != 6 or len(source_calls(rejected.read_text())) != 17:
+        raise RuntimeError(f"{name}: changed the original seventeen-call source census")
+    if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != f"trace={value}\n"
+            or host.run([str(reference), str(js)]).stdout != f"trace={value}\n"):
+        raise RuntimeError(f"{name}: Node/interpreter original observation mismatch")
+    restored_source = source.replace(old, replacement)
+    if source.count(old) != 1 or restored_source != shortcircuit_sources()["shortcircuit_same_tag"][0]:
+        raise RuntimeError(f"{name}: repair no longer restores the independently gated source")
+    restored_js, restored_ir, restored_count = boundary.prepare(args, name + "-restored", restored_source)
+    if (restored_count != 6 or value == restored_value
+            or host.run([node, "-e", boundary.NODE, str(restored_js)]).stdout
+            != f"trace={restored_value}\n"
+            or host.run([str(reference), str(restored_js)]).stdout != f"trace={restored_value}\n"):
+        raise RuntimeError(f"{name}: lost the discriminating original/repaired observations")
+    fresh = contract(args, rejected, name)
+    restored_config = contract(args, restored_ir, name + "-restored")
+
+    def check_prepared(output, original, label):
+        text = methods.census(output, 6, label, admitted=0)
+        diagnostic = ("a value of type !ctnative.opt<!ctnative.variant<!ctnative.bool, "
+                      "!ctnative.str<utf8>>> from `scf.if`")
+        if ("ctnative.host_owner_proved = true" not in text or diagnostic not in text
+                or re.search(r"\bemitc\.func @main\(", text)):
+            raise RuntimeError(f"{label}: missing complete owner or optional intermediate refusal")
+        calls = re.findall(
+            r"^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) "
+            r"\{ctnative\.stored_call = 1 : i32\}", text, re.M)
+        actuals = [arguments.split(", ") for _, _, arguments in calls]
+        if (len(source_calls(text)) != len(source_calls(original))
+                or [target for _, target, _ in calls] != ["fn$4", "fn$5", "fn$4", "fn$5", "fn$3"]
+                or [len(arguments) for arguments in actuals] != [5, 5, 5, 5, 4]
+                or actuals[1][-1] != calls[0][0] or actuals[3][-1] != calls[2][0]
+                or f'ctjs.store_global "trace", {calls[-1][0]}' not in text):
+            raise RuntimeError(f"{label}: carrier refusal changed prepared producer/consumer operands")
+        return text
+
+    for mode, options in (("default", ""), ("disabled", "optimize=false")):
+        mode_name = name + "-" + mode
+        output = owned.lower(args, rejected, mode_name, fresh, options=options, cleanup=False)
+        check_prepared(output, rejected.read_text(), mode_name)
+        restored = owned.lower(args, restored_ir, mode_name + "-restored", restored_config,
+                               options=options)
+        restored_text = methods.census(restored, 6, mode_name + "-restored", admitted=6)
+        if "ctnative.host_owner_proved = true" not in restored_text:
+            raise RuntimeError(f"{mode_name}: repaired temporary did not restore complete ownership")
+        for payload in ("bool", "string", "nullable_string"):
+            forged_name = mode_name + "-forged-" + payload
+            forged = args.work / f"{forged_name}.mlir"
+            forged.write_text(forge_map_presence(rejected.read_text(), payload))
+            stale = methods.refused(args, forged, forged_name + "-stale", fresh,
+                options=options, reason="fingerprint mismatch", admitted=0)
+            check_call_preservation(forged.read_text(), stale.read_text(), forged_name + "-stale")
+            forged_config = contract(args, forged, forged_name)
+            checked = owned.lower(args, forged, forged_name, forged_config, options=options, cleanup=False)
+            checked_text = check_prepared(checked, forged.read_text(), forged_name)
+            rerun = methods.refused(args, checked, forged_name + "-rerun", forged_config,
+                options=options, reason="fingerprint mismatch", admitted=0)
+            check_call_preservation(checked_text, rerun.read_text(), forged_name + "-rerun")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--translate", required=True)
@@ -663,7 +730,7 @@ def main():
         **{name: (*row, 1) for name, row in saved_read_refusals().items()},
         **saved_join_refusals(),
         **guarded_saved_refusals(),
-        **shortcircuit_refusals(),
+        **{name: row for name, row in shortcircuit_refusals().items() if name != "shortcircuit_nullable"},
         **nullable_result_refusals(),
         **nullable_key_refusals(),
         **nullable_payload_refusals(),
@@ -708,6 +775,7 @@ def main():
                 rerun = methods.refused(args, failed, forged_name + "-rerun", forged_config,
                                         options=options, admitted=0)
                 check_call_preservation(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
+    check_shortcircuit_nullable_refusal(args, node, reference)
     check_nullable_host_result_refusals(args, positives, node, reference)
     # A result contract does not narrow Map storage or supply an implemented
     # callable signature. Preserve the prepared producer/consumer operands.
@@ -898,6 +966,8 @@ def main():
           "guarded future reads own both selected Strings after final Map release; "
           f"{len(shortcircuit_sources())} short-circuit scalar programs in both modes; "
           f"{len(shortcircuit_refusals())} short-circuit guard/effect/tag refusals; "
+          "the original nullable short-circuit result retains complete host ownership but refuses "
+          "its optional Bool/String intermediate with prepared calls intact; "
           "present empty/false/zero select fallback, future Strings survive final Map release; "
           f"{len(nullable_result_sources())} nullable result programs preserve String/null/undefined; "
           "future nullable getter and owning strings survive reentry and final Map release; "
