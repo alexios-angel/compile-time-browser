@@ -959,3 +959,78 @@ corpus coverage. Final logs: `/tmp/ctcompile-mixed-nullable-full.log`,
 The next bounded producer candidate is the supported `ctjs.binary_static`
 family, requiring its own result/effect and refusal/budget evidence. Loops and
 native lifetime consumers remain separate work.
+
+## Static binary results after excluding BigInt
+
+This resumes that exact producer boundary from **`a539c3fa`**, the
+**`ae8e021a`** handoff and the **16:28:03** synchronization journal. Complete
+contents now admit all seven verified `ctjs.binary_static` kinds only after
+both operands have independently known, non-BigInt origins on the current
+structural path. An explicit whitelist recognizes primitive non-BigInt
+constants, fresh objects/arrays, previously admitted total primitive producers
+and earlier proved static Number results. Forwarded values and saved reads
+use their original identity, including after the source slot is overwritten.
+No alias lattice, inferred native type or completion annotation supplies this
+proof. The result is a separate primitive Number origin, without an inferred
+value, index, property key, input alias or branch-liveness fact.
+
+The exclusion is required by the actual VM contract, rather than by a blanket
+purity assumption. `Operators.td`, `bytecode_opcodes.def` and
+`vm/coerce.cpp::binary_op_static` agree that the seven operations cannot
+reenter user code, but their BigInt path can allocate and throw catchable
+TypeError/RangeError. Mixed operands and unsigned BigInt shifts throw; signed
+BigInt shifts can also fail. Even a successful literal BigInt pair stays
+outside this Number-only proof. Opaque arguments refuse on either side.
+After independently excluding BigInt, the static conversions return Number
+without an input alias, a catchable JS throw or user conversion. They can
+allocate ordinary C++ temporaries: `number_format.cpp::string_to_number`
+uses `std::string without_point` to parse a trailing decimal point. The initial
+no-allocation comment was incorrect and was corrected during review. As with
+the earlier TypeOf proof, absence of allocation or fatal/foreign failure is
+not proved. Fresh objects use those same static conversions in the VM; this
+is an existing documented deviation from source JavaScript object coercion.
+This change does not assert that source behavior agrees on objects and changes
+no runtime operation.
+
+The unit table passes **31 rows per kind**, both BigInt/opaque operand positions,
+all previously admitted primitive producer origins, saved reads before a
+BigInt/non-BigInt overwrite, retained structural arms and unsupported effects.
+Each kind passes **18 live states** under forged completion/confinement markers,
+including all six invalid static kinds and an in-place Number-to-BigInt
+constant mutation. Every table/live state uses the existing complete contents
+and retention budget sweeps, including **1,283 incomplete retention budgets
+per kind**; the wide snapshot's 32 extra results cost exactly **64 work units**.
+All earlier contents/retention families pass unchanged.
+
+Three executed-source functions separately exercise the seven Number
+operations, an opaque numeric observation and a successful literal BigInt
+pair. The high-bit input and shift count 33 distinguish signed/unsigned
+results, truncation and masking. All returned graphs preserve distinct
+source/copied containers after deleting their child fields. The two controls
+keep conservative Stored claims despite observed confinement; source Number
+observations cannot establish an opaque argument's tag. The new source family
+measures **twelve sites, twenty instances and fifteen retained instances**.
+All older source-coordinate expectations pass unchanged.
+
+All **eight escape CTests pass** in the focused nine-test gate, which includes
+the seeded host test and finishes in **21.62 seconds**. All four execution
+oracles report **zero soundness violations**. Expanded-fixture precision is
+**40/54**, with zero partial/pending claims, versus the preceding **39/51**.
+The new family adds one proved-confined site and three observed-confined sites;
+this adds coverage rather than measuring a precision gain on the historical
+fixture. Bootstrap/p5/Phaser precision remains **0/64, 0/16, 0/20**, including
+p5's existing single partial observation. Focused evidence:
+`/tmp/ctcompile-nullable-host-results-focused.log`. No measured native corpus
+gain is claimed for this escape proof.
+
+Local Node syntax/execution passes **27 combined fixture calls**, **41 identity
+assertions**, the three historical object-selector probes with zero conversion
+calls and an opaque BigInt TypeError probe. All **28 new observation mutations**
+discriminate changed operations, wrong shifts/masks, lost identities, omitted
+deletions and changed BigInt result tags. All earlier **41 observation
+mutations** continue to discriminate. Evidence:
+`/tmp/ctcompile-escape-static-binary-node.js` and its `.py` generator.
+
+The next producer boundary is catchable BigInt outcomes, requiring a separate
+completion-path proof; it is not discharged by successful literal observations.
+Loops and native lifetime consumers remain separate work.

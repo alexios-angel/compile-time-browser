@@ -322,7 +322,7 @@ struct LoadProvenanceEvidence {
                                                            std::size_t workLimit = 100000);
 
 /// Independent complete own-element/field evidence, not the candidate graph above.
-/// Values name their original constant, independent Boolean producer or fresh
+/// Values name their original constant, independent primitive producer or fresh
 /// allocation, following exact earlier reads. Each write keeps its actual
 /// operand position as a witness.
 struct ArrayElementWrite {
@@ -434,7 +434,8 @@ struct ArrayContentsEvidence {
 /// nor alias lattices. An acyclic cf.br/cf.cond_br/cf.switch graph may contain
 /// constants, fresh objects/arrays, literal append, constant-Number-index array
 /// reads/overwrites, own String-property object writes/reads/deletes/copies,
-/// strict equality, ToBoolean, logical negation, typeof, void, truthy and return.
+/// strict equality, ToBoolean, logical negation, typeof, void, supported static
+/// binary operations on independently non-BigInt origins, truthy and return.
 /// Object reads require an earlier own write; keys longer than 256 bytes and
 /// __proto__ refuse. Named/computed object deletions erase only the current own
 /// property; absent deletion is a no-op, absent reads still refuse. All earlier
@@ -455,6 +456,13 @@ struct ArrayContentsEvidence {
 /// TypeOf and Void independently yield primitive String and Undefined origins,
 /// with no key/value inference. TypeOf's VM String allocation carries no input
 /// object; this query proves neither absence of allocation nor its success.
+/// The seven static binary kinds yield Number only after both exact origins
+/// exclude BigInt. Opaque inputs and BigInt constants refuse because their
+/// catchable failure paths are unproved. Non-BigInt static conversion never
+/// invokes user code, including on a fresh object (a documented VM deviation
+/// from source JS). Results infer no Number value, index or branch liveness.
+/// String conversion can allocate C++ temporaries; absence of allocation and
+/// its success are not proved.
 /// Coercing comparison, conversion and unary kinds refuse. Joins keep exact
 /// separate states rather than unioning overwrite targets. Truthy
 /// accepts an external value only as a noncapturing predicate, never an element.

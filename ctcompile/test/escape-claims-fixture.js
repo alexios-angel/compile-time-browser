@@ -287,6 +287,53 @@ function objectFrameVoidReleased(choice) {
 H.push(objectFrameVoidReleased(false));
 H.push(objectFrameVoidReleased(true));
 
+// --- STATIC BINARY NUMBER PRODUCERS ---------------------------------------
+// Every static operand has an independent non-BigInt origin on each path.
+// The high-bit input and shift count 33 separate signed/unsigned shifts,
+// truncation and the five-bit mask. Source ++ reaches static add, unlike +.
+function objectFrameStaticBinaryReleased(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var incremented = choice ? 2147483653 : 12;
+    ++incremented;
+    var masked = incremented & 7, unioned = incremented | 2, toggled = incremented ^ 5;
+    var left = incremented << 33, signed = incremented >> 33, unsigned = incremented >>> 33;
+    var selected = masked === 6 ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target, incremented: incremented,
+             masked: masked, unioned: unioned, toggled: toggled, left: left,
+             signed: signed, unsigned: unsigned };
+}
+H.push(objectFrameStaticBinaryReleased(false));
+H.push(objectFrameStaticBinaryReleased(true));
+
+// Numeric observations cannot prove an opaque formal excludes BigInt. Both
+// controls release the child at runtime but retain the conservative Stored
+// claim. The BigInt pair also stays outside the Number-only proof, even for
+// this operation whose concrete pair succeeds. No object coercion is assumed:
+// the VM's static conversion and source JavaScript differ on object inputs.
+function objectFrameStaticBinaryOpaque(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var produced = choice | 0;
+    var selected = produced === 12 ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target, produced: produced };
+}
+H.push(objectFrameStaticBinaryOpaque(12));
+H.push(objectFrameStaticBinaryOpaque(2147483653));
+function objectFrameStaticBinaryBigInt() {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var produced = 1n | 2n;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target, produced: produced };
+}
+H.push(objectFrameStaticBinaryBigInt());
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());

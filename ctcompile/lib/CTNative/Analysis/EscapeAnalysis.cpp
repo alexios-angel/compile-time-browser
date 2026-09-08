@@ -797,6 +797,20 @@ mlir::StringAttr ownObjectKey(mlir::Value value) {
     return mlir::StringAttr::get(constant.getContext(), string.getValue());
 }
 
+// This is an ORIGINAL origin already accepted on this exact contents path,
+// not the operation immediately defining a forwarded or loaded SSA value.
+// Keep the list explicit: an unknown origin can be BigInt, and binary_static
+// reaches catchable TypeError/RangeError paths before its static conversions.
+bool nonBigIntOrigin(mlir::Value origin) {
+    mlir::Operation * definition = origin.getDefiningOp();
+    if (auto constant = llvm::dyn_cast_or_null<ctjs::ConstantOp>(definition)) {
+        return llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr, ctjs::NumberAttr,
+                         ctjs::StringAttr>(constant.getValue());
+    }
+    return llvm::isa_and_nonnull<ctjs::CreateObjectOp, ctjs::CreateArrayOp, ctjs::CompareOp,
+                                 ctjs::ConvertOp, ctjs::UnaryOp, ctjs::BinaryStaticOp>(definition);
+}
+
 } // namespace
 
 ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t workLimit) {
@@ -1018,6 +1032,33 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
                 state.origins[unary.getResult()] = unary.getResult();
+                continue;
+            }
+            if (auto binary = llvm::dyn_cast<ctjs::BinaryStaticOp>(&op)) {
+                switch (binary.getKind()) {
+                case ctjs::BinaryKind::Add:
+                case ctjs::BinaryKind::BitAnd:
+                case ctjs::BinaryKind::BitOr:
+                case ctjs::BinaryKind::BitXor:
+                case ctjs::BinaryKind::Shl:
+                case ctjs::BinaryKind::Shr:
+                case ctjs::BinaryKind::UShr: break;
+                default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
+                }
+                const mlir::Value lhs = origin(binary.getLhs());
+                const mlir::Value rhs = origin(binary.getRhs());
+                if (!lhs || !rhs) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
+                if (!nonBigIntOrigin(lhs) || !nonBigIntOrigin(rhs)) {
+                    return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
+                }
+                // binary_op_static's non-BigInt arm uses only static to_number /
+                // to_int32 / to_uint32. It returns Number without user reentry,
+                // an input alias or a catchable JS throw. String parsing may
+                // allocate ordinary C++ temporaries; this proves neither absence
+                // of allocation nor its success. Even fresh objects convert
+                // statically here, a documented VM deviation from source JS.
+                // This proves no numeric value, key, alias or branch liveness.
+                state.origins[binary.getResult()] = binary.getResult();
                 continue;
             }
             if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(&op)) {
