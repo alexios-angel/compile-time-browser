@@ -118,7 +118,7 @@ annotation.
    including their forwarding through complete `ctjs.check` register vectors;
    other functions keep the existing simplification needed by closure lifting.
    This filter grants no type/effect proof. Native recovery in
-   [Exceptions/Recovery.cpp](../lib/CTNative/Lowering/Exceptions/Recovery.cpp)
+   [Exceptions/Recovery/](../lib/CTNative/Lowering/Exceptions/Recovery/)
    checks one entry handler, a dedicated landing, complete register vectors,
    active-handler balance, throw-only blocks and acyclic normal/catch tails.
    It clones the tails separately, including shared continuations. Recovery
