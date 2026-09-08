@@ -62,7 +62,7 @@ template <class K, class V> using map_storage = std::map<K, V, map_key_less<K>>;
 )cpp";
 
 inline constexpr llvm::StringLiteral kNativeMapHelpers = R"cpp(
-// ctcompile: primitive keys, acyclic numeric/Map payloads, owning identity
+// ctcompile: primitive keys, acyclic primitive/Map payloads, owning identity
 namespace ctnative {
 template <class K> using number_map = map_storage<K, js_num>;
 using string_to_number_map = number_map<std::string>;
@@ -79,6 +79,12 @@ template <class K, class V> bool map_has(const std::shared_ptr<map_storage<K, V>
     return map->find(key) != map->end();
 }
 template <class K> nullable_scalar map_get(const std::shared_ptr<number_map<K>> & map, const K & key) {
+    const auto found = map->find(key);
+    if (found != map->end()) { return found->second; }
+    return {};
+}
+template <class K> nullable_scalar map_get(
+    const std::shared_ptr<map_storage<K, bool>> & map, const K & key) {
     const auto found = map->find(key);
     if (found != map->end()) { return found->second; }
     return {};
@@ -107,12 +113,32 @@ template <class K, class V> js_num map_size(const std::shared_ptr<map_storage<K,
 } // namespace ctnative
 )cpp";
 
+// The owning nullable string carrier is emitted only when a read may miss.
+// Present reads already return V by value; neither read borrows Map storage.
+inline constexpr llvm::StringLiteral kNativeStringMapHelpers = R"cpp(
+namespace ctnative {
+template <class K> nullable_string map_get(
+    const std::shared_ptr<map_storage<K, std::string>> & map, const K & key) {
+    const auto found = map->find(key);
+    if (found != map->end()) { return found->second; }
+    return {};
+}
+} // namespace ctnative
+)cpp";
+
 // Kept separately so a lookup-only module does not accidentally acquire an
 // iteration API whose sorted order would differ from JavaScript insertion order.
 inline constexpr llvm::StringLiteral kNativeMapSnapshotHelpers = R"cpp(
 namespace ctnative {
 template <class K> std::vector<double> map_values(const std::shared_ptr<number_map<K>> & map) {
     std::vector<double> out;
+    out.reserve(map->entries.size());
+    for (const auto & entry : map->entries) { out.push_back(entry.second); }
+    return out;
+}
+template <class K> std::vector<std::string> map_values(
+    const std::shared_ptr<map_storage<K, std::string>> & map) {
+    std::vector<std::string> out;
     out.reserve(map->entries.size());
     for (const auto & entry : map->entries) { out.push_back(entry.second); }
     return out;

@@ -12,7 +12,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nested.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NESTED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MIXED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=OBJECT
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-value.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=STRING
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-value.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=STRING --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional-value.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=OPTIONAL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/get-equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EQUALITY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=KEYS
@@ -56,12 +56,16 @@
 // NESTED: emitc.func @probe_1
 // NESTED: call_opaque "ctnative::make_map<std::string, std::shared_ptr<ctnative::number_map<double>>>"
 // MIXED: ctjs.func private @probe$1
-// MIXED-SAME: ctnative.not_native = "native Map needs supported keys and numeric, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.variant<
+// MIXED-SAME: ctnative.not_native = "native Map needs supported keys and homogeneous numeric, boolean, owning-string, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.variant<
 // OBJECT: emitc.func @probe_1
-// STRING: ctjs.func private @probe$1
-// STRING-SAME: ctnative.not_native = "native Map needs supported keys and numeric, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.str<utf8>, !ctnative.str<utf8>>"
+// STRING-LABEL: emitc.func @probe_1() -> f64
+// STRING: [[STRING_MAP:%[^ ]+]] = call_opaque "ctnative::make_map<std::string, std::string>"
+// STRING-SAME: !emitc.opaque<"std::shared_ptr<ctnative::map_storage<std::string, std::string>>">
+// STRING: call_opaque "ctnative::map_set"([[STRING_MAP]],
+// STRING: [[STRING_SIZE:%[^ ]+]] = call_opaque "ctnative::map_size"([[STRING_MAP]])
+// STRING: return [[STRING_SIZE]] : f64
 // OPTIONAL: ctjs.func private @probe$1
-// OPTIONAL-SAME: ctnative.not_native = "native Map needs supported keys and numeric, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.num<i32>, !ctnative.opt<!ctnative.num<i32>>>"
+// OPTIONAL-SAME: ctnative.not_native = "native Map needs supported keys and homogeneous numeric, boolean, owning-string, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.num<i32>, !ctnative.opt<!ctnative.num<i32>>>"
 // EQUALITY: emitc.func @probe_1() -> i1
 // EQUALITY: call_opaque "ctnative::scalar_strict_equal"
 // EQUALITY-NOT: ctnative.not_native

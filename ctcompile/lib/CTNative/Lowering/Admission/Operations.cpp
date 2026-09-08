@@ -64,8 +64,8 @@ bool admission::op(mlir::Operation * o) {
     if (auto made = llvm::dyn_cast<ConstructOp>(o)) {
         if (o->hasAttr(kNativeMapSite)) {
             return carrierOf(typeOf(made.getResult())) == carrier::map ||
-                   refuse("native Map needs supported keys and numeric, object-identity union or "
-                          "acyclic Map values; inferred " +
+                   refuse("native Map needs supported keys and homogeneous numeric, boolean, "
+                          "owning-string, object-identity union or acyclic Map values; inferred " +
                           printed(typeOf(made.getResult())));
         }
     }

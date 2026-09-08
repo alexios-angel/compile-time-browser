@@ -278,21 +278,62 @@ def size_result_refusals():
     }
 
 
+def payload_result_sources():
+    observed_size = SEEDED_RESULT.replace("get() {",
+        "size() { return state.size; }, get() {").replace("var trace = host.slot.get();",
+                                                         "var trace = host.slot.size();")
+    boolean = observed_size.replace("state.set(0, 1); return state.get(0);",
+        "state.set(false, true); return state.get(false);")
+    boolean = boolean.replace("state.set(key, 1)", "state.set(key, true)")
+    false_value = boolean.replace("state.set(false, true)", "state.set(false, false)")
+    string = observed_size.replace("state.set(0, 1); return state.get(0);",
+        f"state.set('seed', '{STRING_RESULT}'); return state.get('seed');")
+    string = string.replace("state.set(key, 1)", "state.set(key, 'stored')")
+    return {
+        "result_seeded_bool": (boolean, "host", 2),
+        "result_seeded_string": (string, "host", 2),
+        # False and empty strings overwrite their existing keys. Treating
+        # either payload as missing instead creates an undefined key: size 2.
+        "result_seeded_false": (false_value, "host", 1),
+        "result_seeded_empty_string": (string.replace(
+            f"state.set('seed', '{STRING_RESULT}'); return state.get('seed');",
+            "state.set('', ''); return state.get('');"), "host", 1),
+        "result_seeded_false_overwrite": (false_value.replace("state.set(false, false);",
+            "state.set(false, true); state.set(false, false);"), "host", 1),
+        # The returned key is present before the read. Its owning string copy
+        # must survive both replacement and deletion of the source payload.
+        # Returning the new payload or a missing result adds another key.
+        "result_seeded_string_saved": (string.replace(
+            f"state.set('seed', '{STRING_RESULT}'); return state.get('seed');",
+            f"state.set('seed', '{STRING_RESULT}'); state.set('{STRING_RESULT}', 'stored'); "
+            "const saved = state.get('seed'); state.set('seed', 'changed'); "
+            "state.delete('seed'); return saved;"), "host", 1),
+    }
+
+
+def payload_result_refusals():
+    positives = payload_result_sources()
+    return {
+        "result_seeded_false_deleted": (positives["result_seeded_false"][0]
+            .replace("return state.get(false);", "state.delete(false); return state.get(false);")
+            .replace("state.set(key, true)", "state.set(false, true); state.set(key, true)"), 2),
+        "result_seeded_empty_deleted": (positives["result_seeded_empty_string"][0]
+            .replace("return state.get('');", "state.delete(''); return state.get('');")
+            .replace("state.set(key, 'stored')", "state.set('', 'stored'); state.set(key, 'stored')"), 2),
+    }
+
+
 def seeded_carrier_refusals():
     observed_size = SEEDED_RESULT.replace("get() {",
         "size() { return state.size; }, get() {").replace("var trace = host.slot.get();",
                                                          "var trace = host.slot.size();")
     return {
-        "result_seeded_string": (observed_size.replace("state.set(0, 1); return state.get(0);",
-            f"state.set('seed', '{STRING_RESULT}'); return state.get('seed');")
-            .replace("state.set(key, 1)", "state.set(key, 'stored')"), 2),
-        "result_seeded_bool": (observed_size.replace("state.set(0, 1); return state.get(0);",
-            "state.set(false, true); return state.get(false);")
-            .replace("state.set(key, 1)", "state.set(key, true)"), 2),
         "result_seeded_mixed_contents": (observed_size.replace("state.set(0, 1);",
             "state.set(0, true); state.set(0, 1);"), 2),
         "result_seeded_join_reseed": (observed_size.replace("return state.get(0);",
             "state.set(state.size, true); state.set(0, 3); return state.get(0);"), 3),
+        "result_seeded_bool_string_contents": (payload_result_sources()["result_seeded_bool"][0]
+            .replace("state.set(false, true);", "state.set(false, 'old'); state.set(false, true);"), 2),
     }
 
 
@@ -315,6 +356,9 @@ RESULT_SIGNATURES = {
     **{name: ("js_num", "js_num", 6 if name == "seeded_dynamic_formal" else 5)
        for name in joined_result_sources()},
     **{name: ("js_num", "js_num", 5) for name in size_result_sources()},
+    **{name: (("std::string" if "string" in name else "bool"),
+              ("std::string" if "string" in name else "bool"), 6)
+       for name in payload_result_sources()},
 }
 
 

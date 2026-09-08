@@ -21,7 +21,7 @@
 // GLOBAL: ctjs.func @_script_$0
 // GLOBAL-SAME: ctnative.not_native = "store to global `result` is !ctnative.variant<!ctnative.bool, !ctnative.num<i32>>; native global observations require a definite number"
 // STRING: ctnative.not_native = "a value of type !ctnative.variant<!ctnative.bool, !ctnative.str<utf8>> from `scf.if`"
-// MAP: ctnative.not_native = "native Map needs supported keys and numeric, object-identity union or acyclic Map values;
+// MAP: ctnative.not_native = "native Map needs supported keys and homogeneous numeric, boolean, owning-string, object-identity union or acyclic Map values;
 // ARRAY: ctnative.not_native = "an array whose elements are !ctnative.opt<!ctnative.variant<!ctnative.bool, !ctnative.num<i32>>>, not numbers"
 
 //--- global.js

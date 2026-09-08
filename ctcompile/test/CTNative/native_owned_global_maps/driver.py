@@ -13,10 +13,11 @@ from .sources import (
     seeded_result_sources, key_fact_sources, joined_result_sources, seeded_carrier_refusals,
     RESULT_SIGNATURES, refusal_sources, parameter_refusals, result_refusals,
     seeded_result_refusals, size_result_sources, size_result_refusals,
+    payload_result_sources, payload_result_refusals,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
-    forge_map_presence, check_budgets,
+    forge_map_presence, check_budgets, check_prepared_result_calls,
 )
 
 
@@ -79,6 +80,7 @@ def main():
         **key_fact_sources(),
         **joined_result_sources(),
         **size_result_sources(),
+        **payload_result_sources(),
     }
     saved = {}
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
@@ -98,6 +100,21 @@ def main():
         blind.write_text(live_source.replace("state.delete(", "state.has("))
         if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == f"trace={live_value}\n":
             raise RuntimeError(f"{name}: size witness cannot distinguish a real deletion")
+    for name, old, replacements in (
+        ("result_seeded_false", "return state.get(false);", ("return undefined;",)),
+        ("result_seeded_empty_string", "return state.get('');", ("return undefined;",)),
+        ("result_seeded_false_overwrite", "return state.get(false);", ("return true;",)),
+        ("result_seeded_string_saved", "return saved;",
+         ("return state.get('seed');", "return 'changed';")),
+    ):
+        live_source, _, live_value = positives[name]
+        if live_source.count(old) != 1:
+            raise RuntimeError(f"{name}: lost the payload observation")
+        for index, replacement in enumerate(replacements):
+            blind = args.work / f"{name}-payload-blinded-{index}.js"
+            blind.write_text(live_source.replace(old, replacement))
+            if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == f"trace={live_value}\n":
+                raise RuntimeError(f"{name}: payload witness cannot distinguish {replacement}")
     for name, (source, binding, value) in positives.items():
         js, ir, count = boundary.prepare(args, name, source)
         functions = (RESULT_SIGNATURES[name][2] if name in RESULT_SIGNATURES
@@ -165,7 +182,8 @@ def main():
     rollback += check_budgets(args, result_ir, result_config, "parameter_call_result", functions=5)
     for name in ("seeded_earlier_key", "seeded_other_delete", "seeded_dynamic_write",
                  "seeded_dynamic_formal", "seeded_dynamic_delete", "seeded_size_saved",
-                 "seeded_size_two_entries", "seeded_size_two_saved_empty"):
+                 "seeded_size_two_entries", "seeded_size_two_saved_empty",
+                 "result_seeded_bool", "result_seeded_string", "result_seeded_string_saved"):
         key_ir, key_config, _ = saved[name]
         rollback += check_budgets(args, key_ir, key_config, name,
                                   functions=RESULT_SIGNATURES[name][2])
@@ -276,9 +294,36 @@ def main():
         check_call_preservation(forged.read_text(), failed.read_text(), forged_name)
         rerun = methods.refused(args, failed, forged_name + "-rerun", forged_config, admitted=0)
         check_call_preservation(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
-    # A definite local get tag is separate from an implemented native Map
-    # payload carrier. Keep the observation numeric and retain every prepared
-    # call so bool/string/mixed contents cannot acquire numeric authority.
+    for name, (source, value) in payload_result_refusals().items():
+        js, rejected, count = boundary.prepare(args, name, source)
+        if count != 6:
+            raise RuntimeError(f"{name}: changed missing-payload source denominator")
+        expected = f"trace={value}\n"
+        if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != expected
+                or host.run([str(reference), str(js)]).stdout != expected):
+            raise RuntimeError(f"{name}: Node/interpreter observation mismatch")
+        blind = args.work / f"{name}-blinded.js"
+        blind.write_text(source.replace("state.delete(", "state.has("))
+        if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == expected:
+            raise RuntimeError(f"{name}: missing payload cannot be distinguished from false/empty")
+        fresh = contract(args, rejected, name)
+        failed = methods.refused(args, rejected, name, fresh, admitted=0)
+        check_call_preservation(rejected.read_text(), failed.read_text(), name)
+        forged_name = name + "-forged"
+        forged = args.work / f"{forged_name}.mlir"
+        forged.write_text(forge_map_presence(rejected.read_text()))
+        failed = methods.refused(args, forged, forged_name + "-stale", fresh,
+                                 reason="fingerprint mismatch", admitted=0)
+        check_call_preservation(forged.read_text(), failed.read_text(), forged_name + "-stale")
+        forged_config = contract(args, forged, forged_name)
+        failed = methods.refused(args, forged, forged_name, forged_config, admitted=0)
+        if "fingerprint mismatch" in failed.read_text():
+            raise RuntimeError(f"{forged_name}: fresh forgery skipped live payload reanalysis")
+        check_call_preservation(forged.read_text(), failed.read_text(), forged_name)
+        rerun = methods.refused(args, failed, forged_name + "-rerun", forged_config, admitted=0)
+        check_call_preservation(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
+    # A definite get tag does not prove homogeneous Map storage. Each mixed
+    # carrier refusal keeps its complete owner proof and prepared runtime edge.
     for name, (source, value) in seeded_carrier_refusals().items():
         js, rejected, count = boundary.prepare(args, name, source)
         if count != 6:
@@ -291,15 +336,22 @@ def main():
         text = methods.census(output, count, name, admitted=0)
         if "ctnative.host_owner_proved = true" not in text:
             raise RuntimeError(f"{name}: did not independently prove the seeded result owner")
-        calls = re.findall(
-            r"^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) "
-            r"\{ctnative\.stored_call = 1 : i32\}", text, re.M)
-        if (len(source_calls(text)) != len(source_calls(rejected.read_text()))
-                or [target for _, target, _ in calls] != ["fn$4", "fn$5", "fn$3"]
-                or [len(arguments.split(", ")) for _, _, arguments in calls] != [4, 5, 4]
-                or calls[1][2].split(", ")[-1] != calls[0][0]
-                or f'ctjs.store_global "trace", {calls[2][0]}' not in text):
-            raise RuntimeError(f"{name}: carrier refusal lost the prepared live result edge")
+        check_prepared_result_calls(text, rejected.read_text(), name)
+        forged_name = name + "-forged"
+        forged = args.work / f"{forged_name}.mlir"
+        forged.write_text(forge_map_presence(rejected.read_text()))
+        failed = methods.refused(args, forged, forged_name + "-stale", fresh,
+                                 reason="fingerprint mismatch", admitted=0)
+        check_call_preservation(forged.read_text(), failed.read_text(), forged_name + "-stale")
+        forged_config = contract(args, forged, forged_name)
+        failed = owned.lower(args, forged, forged_name, forged_config, cleanup=False)
+        forged_text = methods.census(failed, count, forged_name, admitted=0)
+        if "ctnative.host_owner_proved = true" not in forged_text:
+            raise RuntimeError(f"{forged_name}: forged presence changed the mixed carrier proof")
+        check_prepared_result_calls(forged_text, forged.read_text(), forged_name)
+        rerun = methods.refused(args, failed, forged_name + "-rerun", forged_config,
+                                reason="fingerprint mismatch", admitted=0)
+        check_call_preservation(forged_text, rerun.read_text(), forged_name + "-rerun")
     # An implicit undefined return has an exact primitive tag, but that alone
     # does not supply an implemented native Map key. The separate size method
     # keeps the observation numeric so that it cannot cause this refusal.
@@ -382,13 +434,15 @@ def main():
     text = methods.census(rerun, 5, "seeded-rerun", admitted=5)
     if "ctnative.host_owner_proved = false" not in text or "fingerprint mismatch" not in text:
         raise RuntimeError("seeded-rerun: prepared presence reused the original source authority")
-    for name in ("seeded_size_two_entries", "seeded_size_two_saved_empty"):
-        _, cardinality_config, cardinality_output = saved[name]
-        rerun = owned.lower(args, cardinality_output, name + "-rerun", cardinality_config,
+    for name in ("seeded_size_two_entries", "seeded_size_two_saved_empty",
+                 "result_seeded_bool", "result_seeded_string", "result_seeded_string_saved"):
+        _, config, output = saved[name]
+        functions = RESULT_SIGNATURES[name][2]
+        rerun = owned.lower(args, output, name + "-rerun", config,
                             cleanup=False)
-        text = methods.census(rerun, 5, name + "-rerun", admitted=5)
+        text = methods.census(rerun, functions, name + "-rerun", admitted=functions)
         if "ctnative.host_owner_proved = false" not in text or "fingerprint mismatch" not in text:
-            raise RuntimeError(f"{name}: prepared cardinality reused the original source authority")
+            raise RuntimeError(f"{name}: prepared Map reused the original source authority")
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
           "Node/interpreter/GCC/Clang explicit+deduced and Map/table/callable lifetime pass; "
           f"{len(refusal_sources())} source refusals and contract/rerun/budget controls pass; "
@@ -402,6 +456,8 @@ def main():
           f"{len(joined_result_sources())} type-joined result programs; "
           f"{len(size_result_sources())} bounded-size programs and "
           f"{len(size_result_refusals())} size-key refusals with discriminating observations; "
+          f"{len(payload_result_sources())} Bool/String payload programs and saved-string lifetime; "
+          f"{len(payload_result_refusals())} missing-payload refusals distinguish false/empty; "
           f"{len(seeded_result_refusals())} seeded proof and "
           f"{len(seeded_carrier_refusals())} seeded carrier refusals; "
           f"{len(rollback)} speculative rollback cutoffs")

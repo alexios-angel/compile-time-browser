@@ -20,3 +20,9 @@
 # equal positive keys/snapshots can alias and must refuse without changing calls.
 # Blinded executions distinguish saved/current size and real deletion; fresh/stale
 # forged presence, reruns and budget cutoffs stay bounded.
+# Homogeneous Bool/String payloads retain typed producer/consumer calls. False
+# and empty string overwrite present keys while missing values stay refused;
+# blinded observations distinguish each from undefined. A saved owning string
+# survives payload overwrite/deletion, caller-buffer mutation, entry reexecution
+# and final Map destruction under ASan/UBSan. Mixed payloads keep their prepared
+# result edge and refuse even with freshly fingerprinted presence forgeries.

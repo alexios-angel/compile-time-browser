@@ -98,3 +98,93 @@ function projection() {
     return values[0] + 0;
 }
 var projectionResult = projection();
+
+//--- payloads.js
+function booleanPayloads() {
+    var map = new Map();
+    map.set(0, false).set(1, true);
+    var saved = map.get(0);
+    var missing = map.get(2);
+    map.delete(0);
+    return +(saved === false) + +(typeof missing === "undefined") * 2 +
+        +(missing !== false) * 4 + +(map.get(1) === true) * 8 +
+        +(typeof map.get(0) === "undefined") * 16 + +(typeof saved === "boolean") * 32;
+}
+var booleanResult = booleanPayloads();
+
+function stringPayloads() {
+    var map = new Map();
+    map.set("saved", "a long owning payload beyond the short-string buffer: café\0tail");
+    map.set("empty", "");
+    var saved = map.get("saved");
+    var empty = map.get("empty");
+    var missing = map.get("missing");
+    map.set("saved", "a different long payload that must not change the saved string");
+    map.clear();
+    return +(saved === "a long owning payload beyond the short-string buffer: café\0tail") +
+        +(empty === "") * 2 + +(typeof missing === "undefined") * 4 +
+        +(missing !== "") * 8 + +(typeof map.get("saved") === "undefined") * 16 +
+        +(typeof empty === "string") * 32;
+}
+var stringResult = stringPayloads();
+
+function leafStrings() {
+    var map = new Map();
+    map.set(false, "a returned Map owns this long string beyond its allocating frame");
+    return map;
+}
+function nestedStrings() {
+    var outer = new Map();
+    outer.set("leaf", leafStrings());
+    var leaf = outer.get("leaf");
+    outer.clear();
+    var saved = leaf.get(false);
+    leaf.clear();
+    leafStrings();
+    return +(saved === "a returned Map owns this long string beyond its allocating frame");
+}
+var nestedResult = nestedStrings();
+
+//--- string-values.js
+function valueSnapshots() {
+    var map = new Map();
+    map.set(3, "first long string owned by the original snapshot buffer");
+    map.set(1, "").set(2, "last");
+    var before = Array.from(map.values());
+    map.set(1, "replacement long string copied into the second snapshot buffer");
+    map.delete(3);
+    map.set(3, "reinserted");
+    var after = Array.from(map.values());
+    map.clear();
+    return +(before[0] === "first long string owned by the original snapshot buffer") +
+        +(before[1] === "") * 2 + +(before[2] === "last") * 4 +
+        +(after[0] === "replacement long string copied into the second snapshot buffer") * 8 +
+        +(after[1] === "last") * 16 + +(after[2] === "reinserted") * 32 +
+        +(typeof before[3] === "undefined") * 64 + before.length * 1000 + after.length * 100;
+}
+var snapshotResult = valueSnapshots();
+
+function numericKeysOfStrings() {
+    var map = new Map();
+    map.set(3, "three").set(1, "one");
+    var keys = Array.from(map.keys());
+    return keys[0] + 0;
+}
+var keyResult = numericKeysOfStrings();
+
+//--- boolean-values.js
+function refusedBooleanSnapshot() {
+    var map = new Map();
+    map.set(1, false);
+    var values = Array.from(map.values());
+    return +(values[0] === false);
+}
+var result = refusedBooleanSnapshot();
+
+//--- mixed-values.js
+function refusedMixedPayload() {
+    var map = new Map();
+    map.set(1, false).set(2, "");
+    return map.size;
+}
+var result = refusedMixedPayload();

@@ -1,7 +1,8 @@
 # Native Maps toward Bootstrap Data
 
 The native backend can lower standard `Map` instances with primitive or proved
-identity-only object keys and numeric or finite acyclic Map values, including
+identity-only object keys and homogeneous number, boolean, owning-string or
+finite acyclic Map values, including
 closed function parameters, returns and lifted captures. A returned handle
 owns its storage after the factory frame ends. Monomorphic
 [returned closures](native-returned-closures.md) can also own
@@ -22,8 +23,9 @@ use `js_num`, the alias of `double`. Different allocation sites may have
 different schemas. The result of `set` shares the original Map, so chained
 calls and aliases observe the same mutations. Parameters and return values
 copy owning handles; factory invocations still allocate independent Maps.
-This is the numeric-leaf representation. Nested schemas use `map_storage<K,
-V>` with an owning child handle as `V`; a separate containment proof rejects
+This is the numeric-leaf representation. Boolean and UTF-8 string payloads use
+`map_storage<K, bool>` and `map_storage<K, std::string>`. Nested schemas use
+`map_storage<K, V>` with an owning child handle as `V`; a separate containment proof rejects
 all schema cycles. Every instance use is proved. Generated programs link
 neither the interpreter nor its collector.
 
@@ -64,13 +66,13 @@ for its numeric payload, whose underlying type remains `double`.
 |---|---|
 | `new Map()` | Empty owning allocation; constructor arguments are refused |
 | `set(key, value)` | Replace in place or append; return the same Map identity |
-| `get(key)` | Numeric value or absent, or an owning child Map when presence is proved |
+| `get(key)` | Number, boolean or owning string value or absent; an owning child Map requires proved presence |
 | `has(key)` | Boolean membership test |
 | `delete(key)` | Remove the entry and report whether it existed |
 | `clear()` | Remove all entries and return absent |
 | `size` | Number of current entries |
 | `Array.from(map.keys())` | Independent numeric or string array snapshot after proved immediate iterator consumption |
-| `Array.from(map.values())` | Independent numeric array snapshot after proved immediate iterator consumption |
+| `Array.from(map.values())` | Independent numeric or owning string array snapshot after proved immediate iterator consumption |
 
 Numeric lookup uses SameValueZero: NaN finds NaN, and positive and negative
 zero are one key. Replacement preserves the original key and position;
@@ -94,12 +96,20 @@ by [native-string-snapshots.md](native-string-snapshots.md). Strings retain
 the interpreter's UTF-8/WTF-8 byte semantics, including embedded NUL and lone
 surrogates, as described in [native-strings.md](native-strings.md).
 
-Missing `get` results use the existing `opt<number>` representation. Arithmetic
+Missing `get` results use the existing optional scalar or owning string representation. Arithmetic
 converts a missing value to NaN for numeric operations. Equality and `typeof`
 retain the distinction between a missing value and a stored NaN through the
-[tagged optional scalar carrier](native-optional-scalars.md). Stored values must be
-definite numbers, including numeric NaN, or owning acyclic child Maps. Optional
-values, mixed key types, general object keys and string values remain refused. See
+[tagged optional scalar carrier](native-optional-scalars.md). The same scalar
+carrier distinguishes stored `false` from undefined; the nullable string carrier
+distinguishes `""` from undefined. Both ordinary and proved-present string reads
+copy their payload, so later overwrite, deletion or destruction cannot invalidate
+a saved result. String value snapshots also copy every element and retain
+insertion order independently of later Map mutation. Boolean value snapshots
+still refuse because this tier has no boolean-vector carrier.
+
+Stored primitive values must be definite and homogeneous: numbers, including
+NaN, booleans, or UTF-8 strings. Optional values, mixed primitive payloads,
+mixed key types and general object keys remain refused. See
 the nested-Map document for its additional presence and containment proofs.
 
 ## Proof boundary

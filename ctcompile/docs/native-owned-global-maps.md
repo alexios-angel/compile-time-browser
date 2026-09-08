@@ -79,8 +79,9 @@ summaries still invalidate the entire affected family conservatively.
 Every source Map lookup, producing call and consuming argument remains runtime.
 
 This is an ownership/effects proof. Native admission must still prove supported
-key, value and result carriers; the gate uses numeric values and numeric, string
-or boolean keys. A primitive result alone is insufficient.
+key, value and result carriers. The gate includes homogeneous numeric, boolean
+and owning-string values with numeric, string or boolean keys. A primitive result
+alone is insufficient; mixed stored payloads still require a separate carrier proof.
 
 The imported wrapper calls `factory()` indirectly. The host query follows
 argument 3 of the entry's sole direct wrapper invocation to the exact supplied
@@ -392,14 +393,49 @@ fourteen refusals**, including `has` branches, different instances and loop
 invalidation. Logs: `/tmp/ctcompile-cardinality-focused2.log` and
 `/tmp/ctcompile-cardinality-lit2.log`.
 
+## Homogeneous boolean and string payloads, 2026-09-08
+
+The existing `result_seeded_bool` and `result_seeded_string` programs advance
+**0/6 -> 6/6 native**, preserving Node/interpreter **`trace=2`** and every
+producing call, Map read and consuming argument. Host owner/result proofs stay
+independent of native Map inference. Storage uses the existing
+`std::shared_ptr<ctnative::map_storage<K, V>>`, with `V` equal to `bool` or
+`std::string`; construction uses `make_map<K, V>()`. No interpreter, collector
+or new value model is involved.
+
+Ordinary boolean reads use the existing optional scalar carrier; ordinary
+string reads use the existing nullable owning string carrier. Proved-present
+reads return the exact stored type by value. `false` and empty strings retain
+their tags, and missing reads remain undefined. String value snapshots copy
+into owning vectors after the existing immediate `Array.from` proof. Boolean
+value snapshots and mixed stored payloads still refuse.
+
+The published gate passes **69 complete programs**, including six payload
+programs and all **seven sanitizer lifetime variants** in explicit/deduced
+forms. False/empty and overwritten-payload witnesses return **1** while their
+blinded controls return **2**. Saved strings survive source overwrite/deletion,
+Map destruction, caller-buffer mutation and independent reentry. Both compilers,
+Node and the interpreter agree; linked native binaries have no Script symbols.
+Two new deleted-payload refusals preserve every original call under fresh/stale
+forgeries and reruns. Three mixed-carrier refusals retain their complete owner
+proof and the prepared producing/consuming call edge.
+
+Native admission first completes at **7474** steps for each original boolean
+and string program and **8008** for the saved-string program, checking
+**32/32/30** cutoffs respectively. No natural speculative rollback interval was
+observed. Log: `/tmp/ctcompile-payloads-native.log` (its initial local Map lit
+attempt failed only a refusal harness's annotation comparison; the published
+gate itself completed successfully). The current full gate and final local
+Map results are recorded in [HANDOFF.md](HANDOFF.md).
+
 ## Next boundary
 
-The existing `result_seeded_string` and `result_seeded_bool` specimens need
-native homogeneous payload carriers despite complete host ownership/result
-proofs. String, boolean and mixed Map payload carriers remain separate **0/6**
-boundaries. The unseeded `get() { return state.get(0); }` remains refused;
-neither an earlier observed invocation nor an incomplete family establishes its
-result. Raising the intentional size-witness cap does not address these barriers.
+Mixed stored payloads remain separate **0/6** boundaries despite complete
+host ownership. Native storage and each read/result need closed finite type
+facts together; a proved final get tag cannot narrow the entire Map schema.
+The unseeded `get() { return state.get(0); }` also remains refused: neither an
+earlier observed invocation nor an incomplete family establishes its result.
+Raising the intentional size-witness cap does not address these barriers.
 
 Current-call proofs cannot authorize arbitrary future external arguments or
 establish an export ABI. Future external callers, mutable publication slots,

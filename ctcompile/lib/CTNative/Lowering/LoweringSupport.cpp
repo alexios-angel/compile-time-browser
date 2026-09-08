@@ -66,8 +66,11 @@ carrier carrierOf(mlir::Type type) {
             llvm::isa<BottomType, NumType, BoolType, ObjectIdentityType>(key) ||
             (string && string.getEncoding() == StrEncoding::UTF8);
         const auto value = map.getValueType();
-        const bool ownedValue = llvm::isa<BottomType, NumType>(value) || isObjectValueType(value) ||
-                                (llvm::isa<MapType>(value) && carrierOf(value) == carrier::map);
+        const bool ownedValue =
+            llvm::isa<BottomType, NumType, BoolType>(value) ||
+            (llvm::isa<StrType>(value) && carrierOf(value) == carrier::string) ||
+            isObjectValueType(value) ||
+            (llvm::isa<MapType>(value) && carrierOf(value) == carrier::map);
         return supportedKey && ownedValue ? carrier::map : carrier::none;
     }
     // PHASE 57A: A DENSE ARRAY IS A `std::vector<double>` AND NOTHING ELSE
@@ -115,6 +118,8 @@ llvm::StringRef mapKeySpelling(mlir::Type type) {
 std::string mapValueSpelling(mlir::Type type) {
     if (isObjectValueType(type)) { return kObjectValueType.str(); }
     if (llvm::isa<BottomType, NumType>(type)) { return "double"; }
+    if (llvm::isa<BoolType>(type)) { return "bool"; }
+    if (carrierOf(type) == carrier::string) { return "std::string"; }
     if (auto map = llvm::dyn_cast<MapType>(type)) {
         return llvm::cast<ec::OpaqueType>(mapCarrierType(map)).getValue().str();
     }
@@ -122,7 +127,7 @@ std::string mapValueSpelling(mlir::Type type) {
 }
 
 bool mapNeedsString(MapType type) {
-    return llvm::isa<StrType>(type.getKeyType()) ||
+    return llvm::isa<StrType>(type.getKeyType()) || llvm::isa<StrType>(type.getValueType()) ||
            (llvm::isa<MapType>(type.getValueType()) &&
             mapNeedsString(llvm::cast<MapType>(type.getValueType())));
 }
@@ -131,7 +136,7 @@ mlir::Type mapCarrierType(MapType type) {
     const auto key = mapKeySpelling(type.getKeyType());
     const auto value = type.getValueType();
     const std::string body =
-        (llvm::isa<MapType>(value) || isObjectValueType(value))
+        (llvm::isa<MapType, BoolType, StrType>(value) || isObjectValueType(value))
             ? ("ctnative::map_storage<" + key + ", " + mapValueSpelling(value) + ">").str()
         : llvm::isa<StrType>(type.getKeyType()) ? std::string{"ctnative::string_to_number_map"}
                                                 : ("ctnative::number_map<" + key + ">").str();

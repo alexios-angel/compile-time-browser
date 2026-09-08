@@ -29,7 +29,8 @@ bool lowering::replaceMap(mlir::Operation * o) {
     if (auto made = llvm::dyn_cast<ConstructOp>(o); made && o->hasAttr(kNativeMapSite)) {
         auto map = llvm::cast<MapType>(typeOf(made.getResult()));
         const std::string callee =
-            (llvm::isa<MapType>(map.getValueType()) || isObjectValueType(map.getValueType()))
+            (llvm::isa<MapType, BoolType, StrType>(map.getValueType()) ||
+             isObjectValueType(map.getValueType()))
                 ? ("ctnative::make_map<" + mapKeySpelling(map.getKeyType()) + ", " +
                    mapValueSpelling(map.getValueType()) + ">")
                       .str()

@@ -19,7 +19,7 @@
 // INSPECT: call_opaque "ctnative::object_strict_equal"
 // MIXED: ctnative.not_native =
 // MIXED: identity-only Map key flow contains a non-object producer
-// OPTIONAL: ctnative.not_native = "native Map needs supported keys and numeric, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.boxed,
+// OPTIONAL: ctnative.not_native = "native Map needs supported keys and homogeneous numeric, boolean, owning-string, object-identity union or acyclic Map values; inferred !ctnative.map<!ctnative.boxed,
 // REFUSED: ctnative.not_native =
 // CAPTURE-DAG: call_opaque "std::make_shared<ctnative::identity_object>"
 // CAPTURE-DAG: call_opaque "ctnative::make_number_map<std::shared_ptr<ctnative::identity_object>>"

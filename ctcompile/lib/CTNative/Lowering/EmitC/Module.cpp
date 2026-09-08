@@ -177,6 +177,9 @@ void lowering::declareGlobals() {
                                b.getStringAttr(needsMapOrder ? kNativeOrderedMapStorage
                                                              : kNativeAssociativeMapStorage));
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNativeMapHelpers));
+        if (needsNullableString) {
+            ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNativeStringMapHelpers));
+        }
         if (needsMapOrder) {
             ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNativeMapSnapshotHelpers));
         }
