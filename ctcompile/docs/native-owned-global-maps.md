@@ -777,8 +777,12 @@ forgeries, reruns and budgets **17773/20330/30183/13049** with **30/32/31/31**
 cutoffs. The local gate passes **69 observations/39 refusals** under both layouts,
 isolated helper emission, CTJS-only proof rederivation and sanitizers.
 An original dual-nested branch source remains a callee-identity refusal; the
-positive tests an initial nullable write plus conditional overwrite. Full
-suite and 128-program driver results are pending in [HANDOFF.md](HANDOFF.md).
+positive tests an initial nullable write plus conditional overwrite. The final
+complete driver passes **128 programs and sixteen lifetime families**. All
+**165 lit cases pass in 489.13 seconds**; CTest finishes **512/517**, including
+all **372 compiler tests**, with only the five recorded browser failures.
+Corpus and exact Data counts remain unchanged. Fifteen code/test paths match
+committed HEAD, frozen input and final devbox source; see [HANDOFF.md](HANDOFF.md).
 
 ## Next boundary
 

@@ -947,8 +947,15 @@ to discriminate. Evidence: `/tmp/ctcompile-escape-total-unary-node.js` and its
 `.py` generator. Homebrew clang-format **22.1.8** passes all **745 files** in
 the parent's frozen snapshot, and whitespace checks pass.
 
-The final full-suite gate remains pending; the focused escape results do not
-establish a completed full gate or native Bootstrap progress. The next bounded
-producer candidate is the supported `ctjs.binary_static` family, requiring its
-own result/effect and refusal/budget
-evidence. Loops and native lifetime consumers remain separate work.
+The final 247-step devbox build passes warning-free. CTest finishes **512/517
+in 1113.08 seconds**, with all **372 compiler tests** passing and only the five
+recorded browser failures. All **165 lit cases pass in 489.13 seconds**. The
+four escape oracles again report zero soundness violations and the same fixture
+and corpus counts above. Native Bootstrap remains **19/574**, exact Data
+**0/7 browser/CommonJS and 0/8 AMD**; this escape work adds no measured native
+corpus coverage. Final logs: `/tmp/ctcompile-mixed-nullable-full.log`,
+`-evidence.json` and `-postgate.log`.
+
+The next bounded producer candidate is the supported `ctjs.binary_static`
+family, requiring its own result/effect and refusal/budget evidence. Loops and
+native lifetime consumers remain separate work.

@@ -330,7 +330,10 @@ alternatives seed `Opt<Str>` independently of the Boolean/nullable storage
 schema. All four new published programs pass explicit/deduced GCC/Clang,
 identity and saved-payload lifetime checks. Three complete-owner refusals and
 their exact admitted repairs, fresh/stale forgeries, four budget families and
-the 69-observation/39-refusal local gate pass. The full suite is still running.
+the 69-observation/39-refusal local gate pass. The complete 128-program driver,
+sixteen lifetime families and all 165 lit cases pass. Final CTest is 512/517,
+all 372 compiler tests, with only the five recorded browser failures; native
+corpus and exact Bootstrap Data counts remain unchanged.
 
 ## Next: nullable payload facts in the host result worklist
 

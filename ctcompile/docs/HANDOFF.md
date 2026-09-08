@@ -58,11 +58,20 @@ primitive String allocation is not claimed inert; source Void already imports
 as Undefined. Coercing unary kinds, loops and native lifetime consumers remain
 separate work.
 
-The full devbox gate is running in `/tmp/ctcompile-mixed-nullable-full.log`.
-Its **128-program published driver and sixteen lifetime families** are not yet
-measured as a complete run. The previous native corpus counts were Bootstrap
-**19/574**, p5 **39/4754**, Phaser **45/7725** in both modes, zero pruned;
-exact Data was **0/7 browser/CommonJS, 0/8 AMD**. Fresh final counts are pending.
+The final **247-step devbox build passes warning-free**. CTest finishes
+**512/517 in 1113.08 seconds**: all **372 compiler tests** and **140/145 browser
+tests** pass. Only the five recorded browser failures remain: `selectors`,
+`frames`, `element_attrs`, `vm_async` and `early_errors`. All **165 lit cases
+pass in 489.13 seconds**, including the complete **128-program published driver
+and sixteen lifetime families**. Exception recovery passes in **1.19 seconds**.
+Fresh native corpus counts remain Bootstrap **19/574**, p5 **39/4754**, Phaser
+**45/7725** in both modes, zero pruned; exact Data remains **0/7 browser/CommonJS,
+0/8 AMD**. Four escape oracles again report zero soundness violations.
+
+All fifteen code/test paths match committed HEAD, the frozen input and the
+final devbox source. The inspected saved-read C++ copies `nullable_string`
+before same-key Boolean overwrite and deletion, then returns the owned value.
+Both inspected generated files contain no Script or VM context/value symbols.
 
 **Exact next boundary: a nullable Map read used by another published method.**
 The acyclic **fifteen-call** `get -> set -> size(key)` program has Node/interpreter
@@ -76,10 +85,12 @@ method census and is a separate boundary. The eleven-call object-payload case
 still has no owner proof, trace=2 and **0/6**. Full Bootstrap Data, browser
 integration, general exports and native throwing-call admission are unfinished.
 
-Evidence: `/tmp/ctcompile-mixed-nullable-compile.log`, `-focused.log`, `-local.log`,
-`-positives.log`, `-controls.log`, `-next.json`, `-input-hashes.json` and
-`-snapshot.txt`. The first local failure remains in `-focused.log`; corrected
-local and direct owner/refusal controls pass separately. Complete next sources
+Evidence: `/tmp/ctcompile-mixed-nullable-full.log`, `-evidence.json`,
+`-postgate.log`, `-final-hashes.json`, `-saved.cpp`, `-mixed.cpp`, `-compile.log`,
+`-focused.log`, `-local.log`, `-positives.log`, `-controls.log`, `-next.json`,
+`-input-hashes.json` and `-snapshot.txt`. The first local failure remains in
+`-focused.log`; the corrected local and direct owner/refusal controls pass
+separately and in the final complete gate. Complete next sources
 are in `native-owned-global-maps.md` and devbox
 `/tmp/ctcompile-mixed-nullable-next/`. SSH interrupted after the focused gate
 when the home IP rotated; starting the box and refreshing `allow-ip` restored it.
