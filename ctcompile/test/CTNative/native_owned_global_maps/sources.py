@@ -983,6 +983,74 @@ def nullable_host_result_refusals():
     }
 
 
+def nullable_nested_result_sources():
+    source = nullable_payload_sources()["nullable_payload_mixed_readback"][0].replace(
+        "host.slot.set(host.slot.get(false));", "host.slot.set(host.slot.set(host.slot.get(false)));")
+    saved = nullable_payload_sources()["nullable_payload_mixed_saved"][0].replace(
+        "host.slot.set(host.slot.get(false));", "host.slot.set(host.slot.set(host.slot.get(false)));")
+    return {
+        # Preserve the exact fifteen-call trace=2 refusal recorded in a8da7c27.
+        # A proved invocation result seeds the next call to this same method;
+        # the final generalized census still includes every actual and sibling.
+        "nullable_nested_result": (source, "host", 2),
+        "nullable_nested_result_same": (source.replace("host.slot.get(true)",
+            "host.slot.get(false)"), "host", 1),
+        # These independent actuals occur after the nested invocation. The
+        # first call cannot define the complete published method signature.
+        "nullable_nested_result_identity": (source.replace("var trace =",
+            "host.slot.set(void 0); host.slot.set(''); host.slot.set('later'); var trace ="), "host", 5),
+        # Both nested calls copy their nullable read before same-key Boolean
+        # overwrite/deletion. Startup sees false; future calls run both flags.
+        "nullable_nested_result_saved": (saved, "host", 0),
+    }
+
+
+NULLABLE_NESTED_RESULT_CALLS = {
+    "nullable_nested_result": 15,
+    "nullable_nested_result_same": 15,
+    "nullable_nested_result_identity": 18,
+    "nullable_nested_result_saved": 15,
+}
+
+NULLABLE_OBSERVATIONS.update({
+    name: [("false", "string", STRING_RESULT if name == "nullable_nested_result_saved" else "future"),
+           ("true", "null_value", "")]
+    for name in nullable_nested_result_sources()
+})
+NULLABLE_PAYLOAD_READBACKS.update({
+    name: [(argument, tag, value, tag, value)
+           for argument, tag, value in ((repr(STRING_RESULT), "string", STRING_RESULT),
+                                       ("null", "null_value", ""), ("void 0", "undefined", ""),
+                                       ("''", "string", ""))]
+    for name in nullable_nested_result_sources()
+})
+
+
+def nullable_nested_result_refusals():
+    source = nullable_nested_result_sources()["nullable_nested_result"][0]
+    same = nullable_nested_result_sources()["nullable_nested_result_same"][0]
+    return {
+        # Every repair is exactly a separately gated positive. An earlier
+        # valid invocation cannot authorize unknown or foreign result evidence,
+        # a self-dependent unseeded read, a later bad actual or a bad sibling.
+        "nullable_nested_unknown": ("var unknownResult = null;\n" + same.replace(
+            "state.set(key, key);", "state.set(key, unknownResult);"), 2,
+            "state.set(key, unknownResult);", "state.set(key, key);", "nullable_nested_result_same", 15),
+        "nullable_nested_foreign": (same.replace("return state.get(key);",
+            "return new Map().get(key);"), 2,
+            "return new Map().get(key);", "return state.get(key);", "nullable_nested_result_same", 15),
+        "nullable_nested_unseeded": (same.replace("state.set(key, key);",
+            "state.set(key, state.get(key));"), 2,
+            "state.set(key, state.get(key));", "state.set(key, key);", "nullable_nested_result_same", 16),
+        "nullable_nested_later_actual": (source.replace("var trace =",
+            "host.slot.set({}); var trace ="), 3,
+            "host.slot.set({}); ", "", "nullable_nested_result", 16),
+        "nullable_nested_sibling": (source.replace("size() { return state.size; }",
+            "size() { state.set('late', {}); return state.size; }"), 3,
+            "state.set('late', {}); ", "", "nullable_nested_result", 16),
+    }
+
+
 def nullable_payload_refusals():
     source = nullable_payload_sources()["nullable_payload_readback"][0]
     mixed = nullable_payload_sources()["nullable_payload_mixed"][0]
@@ -1103,7 +1171,7 @@ RESULT_SIGNATURES = {
     **{name: (result, result, 6) for name, (result, _) in MIXED_RESULT_TYPES.items()},
     **{name: ("ctnative::nullable_string", "ctnative::nullable_string", 6)
        for name in {**nullable_result_sources(), **nullable_key_sources(), **nullable_payload_sources(),
-                    **nullable_host_result_sources()}},
+                    **nullable_host_result_sources(), **nullable_nested_result_sources()}},
 }
 
 

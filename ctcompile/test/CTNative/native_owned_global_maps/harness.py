@@ -16,6 +16,7 @@ from .sources import (
     saved_join_sources, OTHER_STRING_RESULT, guarded_saved_sources, shortcircuit_sources,
     nullable_result_sources, nullable_key_sources, NULLABLE_OBSERVATIONS,
     nullable_payload_sources, NULLABLE_PAYLOAD_READBACKS, nullable_host_result_sources,
+    nullable_nested_result_sources,
 )
 
 
@@ -29,7 +30,7 @@ def check_result_calls(cpp, name, mode):
         r"(?:\b(\w+)\s*=\s*)?ctnative::invoke_callable\((\w+)([^;\n]*)\);", entry[1])
     sequence, pending = [], []
     setter_result = None
-    for result, callee, arguments in calls:
+    for call_index, (result, callee, arguments) in enumerate(calls):
         method = methods_by_value.get(callee)
         if not method:
             raise RuntimeError(f"{name}/{mode}: result call lost its current method binding")
@@ -45,9 +46,13 @@ def check_result_calls(cpp, name, mode):
             literal_key = name in {"nullable_key_identity", "nullable_key_identity_normalized",
                                    "nullable_key_string_saved", "nullable_payload_identity",
                                    "nullable_payload_saved", "nullable_payload_mixed_identity",
-                                   "nullable_payload_mixed_saved", "nullable_host_result_identity"} \
+                                   "nullable_payload_mixed_saved", "nullable_host_result_identity",
+                                   "nullable_nested_result_identity", "nullable_nested_result_saved"} \
                 and not pending and len(actuals) == 1
-            if not literal_key and (not pending or actuals != pending):
+            if name in nullable_nested_result_sources() and call_index == 2:
+                if not setter_result or actuals != [setter_result]:
+                    raise RuntimeError(f"{name}/{mode}: outer setter lost the inner setter result")
+            elif not literal_key and (not pending or actuals != pending):
                 raise RuntimeError(f"{name}/{mode}: setter lost live producing-call operands/order")
             pending.clear()
             setter_result = result
@@ -84,6 +89,11 @@ def check_result_calls(cpp, name, mode):
         **{name: ["get", "set", "get", "set", "size"] for name in nullable_key_sources()},
         **{name: ["get", "set", "get", "set", "size"] for name in nullable_payload_sources()},
         **{name: ["get", "set", "get", "set", "size"] for name in nullable_host_result_sources()},
+        **{name: ["get", "set", "set", "get", "set", "size"]
+           for name in nullable_nested_result_sources()},
+        "nullable_nested_result_identity": ["get", "set", "set", "get", "set", "set", "set",
+                                            "set", "size"],
+        "nullable_nested_result_saved": ["get", "set", "set", "set", "size"],
         "nullable_host_result_identity": ["get", "set", "get", "set", "set", "set",
                                           "get", "set", "size"],
         "saved_join_string_saved": ["get", "set", "size"],
@@ -116,7 +126,7 @@ def check_result_calls(cpp, name, mode):
               **size_result_sources(), **payload_result_sources(), **mixed_result_sources(),
               **saved_read_sources(), **saved_join_sources(), **guarded_saved_sources(),
               **shortcircuit_sources(), **nullable_result_sources(), **nullable_key_sources(),
-              **nullable_payload_sources(), **nullable_host_result_sources()}
+              **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources()}
     if name in seeded and not re.search(r"ctnative::map_get(?:_\w+)?(?:<[^>]+>)?\(", cpp):
         raise RuntimeError(f"{name}/{mode}: replaced the live seeded Map lookup with a summary")
     if name in size_result_sources() and "ctnative::map_delete(" not in cpp:
@@ -125,12 +135,12 @@ def check_result_calls(cpp, name, mode):
                 "saved_read_write_string_saved", "saved_join_string_saved",
                 "guarded_saved_string_saved", "shortcircuit_string_saved", "nullable_string_saved",
                 "nullable_key_string_saved", "nullable_payload_saved", "nullable_payload_mixed_saved",
-                "nullable_host_result_saved"} \
+                "nullable_host_result_saved", "nullable_nested_result_saved"} \
             and "ctnative::map_delete(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: dropped the saved string's source deletion")
     mixed = {**mixed_result_sources(), **saved_read_sources(), **saved_join_sources(),
              **guarded_saved_sources(), **shortcircuit_sources(), **nullable_result_sources(),
-             **nullable_key_sources(), **nullable_payload_sources(), **nullable_host_result_sources()}
+             **nullable_key_sources(), **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources()}
     if name in mixed:
         source = mixed[name][0]
         for method in ("set", "get", "has", "delete"):
@@ -139,7 +149,7 @@ def check_result_calls(cpp, name, mode):
             if native_count != source_count:
                 raise RuntimeError(f"{name}/{mode}: changed the {source_count} live Map.{method} calls")
     if name in {**shortcircuit_sources(), **nullable_result_sources(), **nullable_key_sources(),
-                **nullable_payload_sources(), **nullable_host_result_sources()}:
+                **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources()}:
         getter = re.search(r"^[^\n;]+\bfn_4\([^\n]*\) \{(.*?)^\}", cpp, re.M | re.S)
         branches = 5 if name == "nullable_threeway" else 4 if name in nullable_result_sources() else 3
         if name == "nullable_homogeneous_key":
@@ -148,7 +158,7 @@ def check_result_calls(cpp, name, mode):
             branches = 4 if name in {"nullable_original_key", "nullable_second_key_use"} else 2
         if name in nullable_payload_sources():
             branches = 4 if name in {"nullable_payload_mixed", "nullable_mixed_payload_readback"} else 2
-        if name in nullable_host_result_sources():
+        if name in {**nullable_host_result_sources(), **nullable_nested_result_sources()}:
             branches = 2
         # Canonicalization can use ?: for the pure Null/Undefined selection.
         # The executed identity observer also checks both results separately.
@@ -167,7 +177,10 @@ def nullable_observer_source(source, name):
     for index, (argument, _, _, tag, value) in enumerate(NULLABLE_PAYLOAD_READBACKS.get(name, ()),
                                                         len(NULLABLE_OBSERVATIONS[name])):
         expected = json.dumps(value) if tag == "string" else "null" if tag == "null_value" else "undefined"
-        observed += (f"var nullableObserved{index} = host.slot.set({argument});\n"
+        invocation = f"host.slot.set({argument})"
+        if name in nullable_nested_result_sources():
+            invocation = f"host.slot.set({invocation})"
+        observed += (f"var nullableObserved{index} = {invocation};\n"
                      f"if (nullableObserved{index} === {expected}) {{ trace = trace + {1 << index}; }}\n")
     return observed + "})();\n"
 
@@ -183,10 +196,13 @@ def nullable_identity_cpp(cpp, name):
                     f"        observed_{index}.value != {json.dumps(value)}) {{ return {91 + index}; }}\n")
     for index, (_, input_tag, input_value, tag, value) in enumerate(
             NULLABLE_PAYLOAD_READBACKS.get(name, ()), len(NULLABLE_OBSERVATIONS[name])):
+        invocation = f"g_host->slot->m_set(input_{index})"
+        if name in nullable_nested_result_sources():
+            invocation = f"g_host->slot->m_set({invocation})"
         changed += (f"    ctnative::nullable_string input_{index};\n"
                     f"    input_{index}.tag = ctnative::nullable_string::kind::{input_tag};\n"
                     f"    input_{index}.value = {json.dumps(input_value)};\n"
-                    f"    const auto observed_{index} = g_host->slot->m_set(input_{index});\n"
+                    f"    const auto observed_{index} = {invocation};\n"
                     f"    if (observed_{index}.tag != ctnative::nullable_string::kind::{tag} ||\n"
                     f"        observed_{index}.value != {json.dumps(value)}) {{ return {91 + index}; }}\n")
     return changed + "    return 0;\n}\n"
@@ -736,6 +752,31 @@ int main() {
 }
 '''
     changed = changed.replace("EXPECTED_STRING", json.dumps(STRING_RESULT))
+    if name == "nullable_nested_result_saved":
+        generated, separator, observer = changed.rpartition("\nint main() {\n")
+        if not separator:
+            raise RuntimeError("nested nullable observer lost its main function")
+        # Exercise later same-method results with long caller strings and each
+        # nullish tag after releasing the published owner. Only the appended
+        # observer changes; emitted method bodies and helpers remain intact.
+        for before, after in (
+            ("const auto saved = setter(caller);", "const auto saved = setter(setter(caller));"),
+            ("auto returned = setter(input);", "auto returned = setter(setter(input));"),
+            ("const auto survivor = setter(getter(false));",
+             "const auto survivor = setter(setter(getter(false)));"),
+            ("const auto null_survivor = setter(getter(true));",
+             "const auto null_survivor = setter(setter(getter(true)));"),
+            ("const auto undefined_survivor = setter(result_type{});",
+             "const auto undefined_survivor = setter(setter(result_type{}));"),
+            ("const auto empty_survivor = setter(result_type{std::string{}});",
+             "const auto empty_survivor = setter(setter(result_type{std::string{}}));"),
+            ("const auto fresh = g_host->slot->m_set(g_host->slot->m_get(false));",
+             "const auto fresh = g_host->slot->m_set(g_host->slot->m_set(g_host->slot->m_get(false)));"),
+        ):
+            if observer.count(before) != 1:
+                raise RuntimeError("nested nullable observer lost an owning result call")
+            observer = observer.replace(before, after)
+        changed = generated + separator + observer
     if name == "nullable_host_result_saved":
         # This saved size callable itself consumes a nullable result. A fixed
         # distinct String entry observes both independent Maps without keeping
@@ -795,7 +836,7 @@ def standalone(args, output, name, value, compilers, nm):
                 "result_formal", "result_seeded_formal", "seeded_dynamic_formal"} else ""
             if name in {**saved_join_sources(), **guarded_saved_sources(), **shortcircuit_sources(),
                         **nullable_result_sources(), **nullable_key_sources(),
-                        **nullable_payload_sources(), **nullable_host_result_sources()}:
+                        **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources()}:
                 getter_params = "bool"
             if name == "nullable_threeway":
                 getter_params = "bool, bool"
@@ -820,7 +861,7 @@ def standalone(args, output, name, value, compilers, nm):
         source = args.work / f"{name}.{mode}.cpp"
         source.write_text(cpp)
         if name in {**nullable_result_sources(), **nullable_key_sources(), **nullable_payload_sources(),
-                    **nullable_host_result_sources()}:
+                    **nullable_host_result_sources(), **nullable_nested_result_sources()}:
             key = "std::string" if name == "nullable_homogeneous_key" else "std::variant<bool, std::string>"
             if name in nullable_key_sources():
                 key = "ctnative::nullable_string"
@@ -836,7 +877,7 @@ def standalone(args, output, name, value, compilers, nm):
                 elif name in {"nullable_payload_mixed_readback", "nullable_payload_mixed_identity",
                               "nullable_payload_mixed_saved"}:
                     payload = "std::variant<bool, ctnative::nullable_string>"
-            if name in nullable_host_result_sources():
+            if name in {**nullable_host_result_sources(), **nullable_nested_result_sources()}:
                 key = "ctnative::nullable_string"
                 payload = "std::variant<bool, ctnative::nullable_string>"
             if f"std::shared_ptr<ctnative::map_storage<{key}, {payload}>>" not in cpp:
@@ -862,7 +903,8 @@ def standalone(args, output, name, value, compilers, nm):
             nullable_payload_lifetime(args, cpp, name, mode, compilers[1])
         if name == "nullable_key_string_saved":
             nullable_key_lifetime(args, cpp, name, mode, compilers[1])
-        if name in {"nullable_payload_saved", "nullable_payload_mixed_saved", "nullable_host_result_saved"}:
+        if name in {"nullable_payload_saved", "nullable_payload_mixed_saved", "nullable_host_result_saved",
+                    "nullable_nested_result_saved"}:
             nullable_stored_payload_lifetime(args, cpp, name, mode, compilers[1])
 
 

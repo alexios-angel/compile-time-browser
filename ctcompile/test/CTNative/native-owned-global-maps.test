@@ -134,5 +134,9 @@
 # Unknown/missing/deleted/aliasing host-result facts independently refuse in
 # both modes; exact admitted repairs have different observations. Fresh/stale
 # scalar/nullable forgeries, reruns and transactional budgets cannot supply the
-# missing host evidence. Same-method nested setter census remains a separate
-# fifteen-call refusal with its original trace and source operands preserved.
+# missing host evidence. The original fifteen-call trace-2 nested setter now
+# retains each live result edge through same-method calls, followed by the full
+# generalized actual and sibling-body census. Later String/nullish actuals,
+# exact nested result tags and saved owning bytes remain independently checked.
+# Unknown/foreign/unseeded results, a later bad actual and a bad sibling refuse
+# fresh/stale forged evidence; exact repaired sources admit in both modes.

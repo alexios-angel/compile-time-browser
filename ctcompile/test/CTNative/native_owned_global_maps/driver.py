@@ -21,6 +21,7 @@ from .sources import (
     nullable_payload_sources, nullable_payload_refusals, NULLABLE_PAYLOAD_CALLS,
     NULLABLE_PAYLOAD_READBACKS, nullable_host_result_sources, nullable_host_result_refusals,
     NULLABLE_HOST_RESULT_CALLS,
+    nullable_nested_result_sources, nullable_nested_result_refusals, NULLABLE_NESTED_RESULT_CALLS,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
@@ -38,18 +39,21 @@ def comparable_provenance(cpp, input_ir):
 
 
 def check_nullable_host_result_refusals(args, positives, node, reference):
-    for name, (source, value, old, replacement, restored_value) in nullable_host_result_refusals().items():
+    controls = {name: (*row[:4], "nullable_host_result_both" if name.endswith("deleted")
+                      else "nullable_host_result", 16 if name.endswith(("deleted", "aliasing")) else 15)
+                for name, row in nullable_host_result_refusals().items()}
+    controls.update(nullable_nested_result_refusals())
+    for name, (source, value, old, replacement, repaired_name, expected_calls) in controls.items():
         js, rejected, count = boundary.prepare(args, name, source)
-        expected_calls = 16 if name.endswith(("deleted", "aliasing")) else 15
         if count != 6 or len(source_calls(rejected.read_text())) != expected_calls:
-            raise RuntimeError(f"{name}: changed the acyclic host-result source census")
+            raise RuntimeError(f"{name}: changed the host-result source census")
         expected = f"trace={value}\n"
         reference_expected = expected + ("unknownResult=null\n" if name.endswith("unknown") else "")
         if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != expected
                 or host.run([str(reference), str(js)]).stdout != reference_expected):
             raise RuntimeError(f"{name}: Node/interpreter host-result observation mismatch")
         restored_source = source.removeprefix("var unknownResult = null;\n").replace(old, replacement)
-        repaired_name = "nullable_host_result_both" if name.endswith("deleted") else "nullable_host_result"
+        restored_value = positives[repaired_name][2]
         if source.count(old) != 1 or restored_source != positives[repaired_name][0]:
             raise RuntimeError(f"{name}: repair no longer restores the independently gated source")
         restored_js, restored_ir, restored_count = boundary.prepare(args, name + "-restored", restored_source)
@@ -84,20 +88,6 @@ def check_nullable_host_result_refusals(args, positives, node, reference):
                 rerun = methods.refused(args, failed, forged_name + "-rerun", forged_config,
                                         options=options, admitted=0)
                 check_call_preservation(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
-    # Same-method nesting also depends on its own complete actual census.
-    # Keep that separate boundary visible after acyclic payload proofs succeed.
-    name = "nullable_host_result_nested"
-    source = nullable_payload_sources()["nullable_payload_mixed_readback"][0].replace(
-        "host.slot.set(host.slot.get(false));", "host.slot.set(host.slot.set(host.slot.get(false)));")
-    js, rejected, count = boundary.prepare(args, name, source)
-    if (count != 6 or len(source_calls(rejected.read_text())) != 15
-            or host.run([node, "-e", boundary.NODE, str(js)]).stdout != "trace=2\n"
-            or host.run([str(reference), str(js)]).stdout != "trace=2\n"):
-        raise RuntimeError("same-method census control changed its exact source observation")
-    fresh = contract(args, rejected, name)
-    for mode, options in (("default", ""), ("disabled", "optimize=false")):
-        failed = methods.refused(args, rejected, name + "-" + mode, fresh, options=options, admitted=0)
-        check_call_preservation(rejected.read_text(), failed.read_text(), name + "-" + mode)
 
 
 def check_shortcircuit_nullable_refusal(args, node, reference):
@@ -235,7 +225,7 @@ def main():
         **nullable_result_sources(),
         **nullable_key_sources(),
         **nullable_payload_sources(),
-        **nullable_host_result_sources(),
+        **nullable_host_result_sources(), **nullable_nested_result_sources(),
     }
     saved = {}
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
@@ -369,6 +359,12 @@ def main():
         ("nullable_host_result_conditional", "if (key) { state.set(key, 'selected'); }",
          ("state.has(key);",)),
         ("nullable_host_result_saved", "state.delete('seed');", ("state.has('seed');",)),
+        ("nullable_nested_result_same", "return state.get(key);",
+         ("return null;", "return void 0;", "return '';", "return true;")),
+        ("nullable_nested_result_identity", "host.slot.set(void 0);", ("host.slot.set(null);",)),
+        ("nullable_nested_result_identity", "host.slot.set('');", ("host.slot.set(null);",)),
+        ("nullable_nested_result_identity", "host.slot.set('later');", ("host.slot.set('future');",)),
+        ("nullable_nested_result_saved", "state.delete(key);", ("state.has(key);",)),
     ):
         live_source, _, live_value = positives[name]
         if live_source.count(old) != 1:
@@ -380,7 +376,7 @@ def main():
                 raise RuntimeError(f"{name}: payload witness cannot distinguish {replacement}")
     for name, (source, _, _) in {
         **nullable_result_sources(), **nullable_key_sources(), **nullable_payload_sources(),
-        **nullable_host_result_sources(),
+        **nullable_host_result_sources(), **nullable_nested_result_sources(),
     }.items():
         identity = args.work / f"{name}-identity.js"
         identity.write_text(nullable_observer_source(source, name))
@@ -400,7 +396,8 @@ def main():
             replacements += ("return state.get(false) || null;",)
         if name == "nullable_key_string_saved":
             replacements += ("return state.get('seed') || null;",)
-        if name in {"nullable_payload_saved", "nullable_payload_mixed_saved", "nullable_host_result_saved"}:
+        if name in {"nullable_payload_saved", "nullable_payload_mixed_saved", "nullable_host_result_saved",
+                    "nullable_nested_result_saved"}:
             replacements += ("return state.get('seed') || null;",)
         for index, replacement in enumerate(replacements):
             if source.count(original_return) != 1:
@@ -431,6 +428,11 @@ def main():
          ("state.has(key);", "state.set(key, 'selected');")),
         ("nullable_host_result_saved", "return saved;", ("return state.get(key);", "return true;")),
         ("nullable_host_result_saved", "const saved = state.get(key); state.set(key, true);",
+         ("state.set(key, true); const saved = state.get(key);",)),
+        ("nullable_nested_result", "return state.get(key);",
+         ("return null;", "return void 0;", "return '';", "return true;")),
+        ("nullable_nested_result_saved", "return saved;", ("return state.get(key);", "return true;")),
+        ("nullable_nested_result_saved", "const saved = state.get(key); state.set(key, true);",
          ("state.set(key, true); const saved = state.get(key);",)),
     ):
         source = positives[name][0]
@@ -476,6 +478,9 @@ def main():
         if name in NULLABLE_HOST_RESULT_CALLS \
                 and len(source_calls(ir.read_text())) != NULLABLE_HOST_RESULT_CALLS[name]:
             raise RuntimeError(f"{name}: changed the exact {NULLABLE_HOST_RESULT_CALLS[name]}-call boundary")
+        if name in NULLABLE_NESTED_RESULT_CALLS \
+                and len(source_calls(ir.read_text())) != NULLABLE_NESTED_RESULT_CALLS[name]:
+            raise RuntimeError(f"{name}: changed the exact {NULLABLE_NESTED_RESULT_CALLS[name]}-call boundary")
         if name == "already_resolved":
             ir = resolve_getter(args, ir)
         if name.startswith("legacy_"):
@@ -494,7 +499,7 @@ def main():
             raise RuntimeError(f"{name}: changed supplied source or manifest")
         if name in {**saved_read_sources(), **saved_join_sources(), **guarded_saved_sources(),
                     **shortcircuit_sources(), **nullable_result_sources(), **nullable_key_sources(),
-                    **nullable_payload_sources(), **nullable_host_result_sources()}:
+                    **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources()}:
             disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")
             if disabled.read_text() != output.read_text():
                 raise RuntimeError(f"{name}: saved scalar proof depends on optimization policy")
@@ -507,7 +512,7 @@ def main():
                  "nullable_payload_readback", "nullable_payload_mixed", "nullable_payload_deleted",
                  "nullable_payload_mixed_readback", "nullable_mixed_payload_readback",
                  "nullable_payload_mixed_identity", "nullable_payload_mixed_saved",
-                 *nullable_host_result_sources()):
+                 *nullable_host_result_sources(), *nullable_nested_result_sources()):
         ir, config, output = saved[name]
         expected_cpp = comparable_provenance(
             host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout, ir)
@@ -585,7 +590,8 @@ def main():
                  "nullable_payload_mixed", "nullable_payload_saved",
                  "nullable_payload_mixed_readback", "nullable_mixed_payload_readback",
                  "nullable_payload_mixed_identity", "nullable_payload_mixed_saved",
-                 "nullable_host_result", "nullable_host_result_conditional", "nullable_host_result_saved"):
+                 "nullable_host_result", "nullable_host_result_conditional", "nullable_host_result_saved",
+                 "nullable_nested_result", "nullable_nested_result_identity", "nullable_nested_result_saved"):
         key_ir, key_config, _ = saved[name]
         rollback += check_budgets(args, key_ir, key_config, name,
                                   functions=RESULT_SIGNATURES[name][2])
@@ -931,7 +937,7 @@ def main():
                  "result_seeded_bool_string_contents", "result_seeded_mixed_string_saved",
                  *saved_read_sources(), *saved_join_sources(), *guarded_saved_sources(),
                  *shortcircuit_sources(), *nullable_result_sources(), *nullable_key_sources(),
-                 *nullable_payload_sources(), *nullable_host_result_sources()):
+                 *nullable_payload_sources(), *nullable_host_result_sources(), *nullable_nested_result_sources()):
         _, config, output = saved[name]
         functions = RESULT_SIGNATURES[name][2]
         rerun = owned.lower(args, output, name + "-rerun", config,
@@ -988,6 +994,10 @@ def main():
           "the exact 15-call chain, live conditional writes and owning saved results; "
           f"{len(nullable_host_result_refusals())} independent unknown/missing/deleted/aliasing "
           "host-result refusals and exact repairs pass both modes and fresh/stale proof controls; "
+          f"{len(nullable_nested_result_sources())} same-method result programs retain the exact "
+          "15-call nested chain, later nullable/String actuals and saved owning nested results; "
+          f"{len(nullable_nested_result_refusals())} unknown/foreign/unseeded/later-actual/sibling "
+          "refusals and exact repairs pass both modes and fresh/stale proof controls; "
           f"{len(seeded_result_refusals())} seeded proof and "
           f"{len(seeded_carrier_refusals())} seeded carrier refusals; "
           f"{len(rollback)} speculative rollback cutoffs")
