@@ -6,7 +6,76 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Current Map payload and conditional-array checkpoint, 2026-09-08
+## Current mixed-Map checkpoint, 2026-09-08
+
+Saved locally on `ctcompile-v1`: **`6e68d3f`**, closed mixed Map keys/payloads
+with independent exact read evidence. This resumes the unfinished native
+boundary from **`6e7dd81`** and the **06:13:42 synchronization journal**.
+The starting tree was clean; the interrupted CallDirectOp recovery was already
+landed in `5307abf`, and `codex-wip-20260907` is an ancestor. No history was
+rewritten, browser source changed or push performed.
+
+The three preceding `result_seeded_mixed_contents`, `result_seeded_join_reseed`
+and `result_seeded_bool_string_contents` probes advance **0/6 -> 6/6 native**,
+with Node/interpreter traces **2/3/2** and all **9/10/9 calls retained**.
+Storage uses exact Bool/Number or Bool/String `std::variant` alternatives.
+Each mixed read separately proves membership and a scalar payload from the
+last literal write on every path. Schema inference still retains every stored
+alternative. Key comparison preserves false versus zero and numeric SameValueZero;
+string reads return owning copies. Unknown payloads and missing reads refuse.
+
+The published gate passes **76 complete programs** with Node/interpreter and
+explicit/deduced GCC/Clang agreement, no Script symbols and all **eight lifetime
+sanitizer variants**. Native admission first completes at **7658/7910/7658/8367**
+steps for the three original mixed specimens and saved-string specimen, with
+**30/30/30/31** checked cutoffs and no natural speculative rollback interval.
+The new local gate passes **nine observations across associative/ordered Maps**
+and **seven refusal controls**, including possible receiver aliases, callee
+writes, different branch tags, deletion, nonliteral payloads and forged facts.
+A dead-alternative case checks that homogeneous emission retains proved presence.
+The existing representation gate now passes **14 observations**, including the
+unchanged literal mixed-storage source. All **seven targeted lit cases** pass.
+Logs: `/tmp/ctcompile-mixed-native2.log`, `/tmp/ctcompile-mixed-checkpoint2.log`
+and `/tmp/ctcompile-mixed-lit-final.log`.
+
+The formatter passes **742 files** with Homebrew clang-format **22.1.8**.
+The focused CTest gate passes **12/12 in 28.89 seconds**. All **28 committed
+paths** byte-match the frozen snapshot. The full generated gate for this
+checkpoint is pending; the previous complete baseline below remains **512/517**
+with five recorded browser failures.
+
+**Exact next native boundary:** `saved_read_write` remains **0/6 native** in
+both optimization modes with complete host ownership, all **12 calls retained**
+and Node/interpreter **`trace=1`**. Starting from
+`payload_result_sources()["result_seeded_bool"][0]`, replace the getter body with:
+
+```js
+state.set('', '');
+const saved = state.get('');
+state.set(false, true);
+state.set(false, saved);
+const result = state.get(false);
+state.delete(false);
+return result;
+```
+
+The native proof clears payload evidence at the nonliteral write. Propagate
+independent scalar facts through the saved read/write chain while retaining
+every mutation, alias invalidation and missing-result refusal. Replacing that
+write with `true` yields **2** and admits **6/6**; moving the second read after
+deletion also yields **2**, loses host result evidence and remains **0/6**.
+Evidence: `/tmp/ctcompile-mixed-boundary.json`; source on the devbox:
+`/tmp/ctcompile-mixed-next/saved_read_write.js`.
+
+A separate agent's fixed own-property contents increment is in flight in
+`EscapeAnalysis.h/.cpp`, `EscapeAnalysisArrays.cpp` and `escape-load-evidence.md`.
+Its initial focused gate passed, but review found that canonical String array
+indices disagree with the current runtime's numeric-only element paths.
+The pending conservative fix refuses String array reads/writes and preserves
+their original escape verdicts. Runtime sources remain untouched. Measured
+source probes: `/tmp/ctcompile-object-key-oracle.json`.
+
+## Preceding Map payload and conditional-array checkpoint, 2026-09-08
 
 Saved locally on `ctcompile-v1`: **`d16f763`** (homogeneous boolean and owning
 string Map payloads) and **`ab10057`** (bounded conditional-array retention).
