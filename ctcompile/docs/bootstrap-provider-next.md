@@ -179,35 +179,41 @@ under GCC/Clang and Node/interpreter comparisons. Initial zero sizes, equal
 positive keys and equal snapshots remain explicit refusal controls. See the
 [Map checkpoint](native-owned-global-maps.md#nonempty-size-snapshots-2026-09-08).
 
-## Next: a size bound from distinct definite keys
+## Completed: distinct-key size bounds
 
-The measured `seeded_size_two_entries` getter is:
+Commit `c900f84` advances `seeded_size_two_entries` from **0/5 -> 5/5 native**,
+with Node/interpreter **`trace=2`**. The getter seeds keys 0 and 1, deletes
+`state.size`, then returns `state.get(1)`. Both analyses derive a lower bound
+from a pairwise-distinct subset of definite keys; different SSA keys alone
+never count twice. Each size read examines at most 64 candidates and retains
+its immutable bound across later mutation. The native gate passes **63 complete
+programs**, eight size programs and ten size-key refusals, plus six existing
+sanitizer lifetime variants. Source/prepared host proof budgets are **2278/2372**;
+the independent presence lit passes seven positives and fourteen refusals.
+See [the Map checkpoint](native-owned-global-maps.md#distinct-key-size-bounds-2026-09-08).
 
-```js
-get() {
-    state.set(0, 1);
-    state.set(1, 2);
-    state.delete(state.size);
-    return state.get(1);
-}
-```
+## Next: homogeneous boolean and owning-string Map payloads
 
-Within the same `host.slot.set(host.slot.get())` specimen, it remains
-**0/5 native**, with no owner proof and every call intact. Fresh Node and
-interpreter runs both produce **`trace=2`**; evidence:
-`/tmp/ctcompile-size-boundary.json`. Nonempty only proves `size >= 1`; this
-case needs `size >= 2`. Derive a bounded lower bound from independently
-distinct definite keys in both analyses. Counting facts is unsound when
-different SSA keys can alias. Preserve SameValueZero, exact instance identity,
-saved-snapshot timing, loop-carried replacements, invalidation and
-incomplete-budget controls.
+The existing `result_seeded_bool` and `result_seeded_string` specimens remain
+**0/6 native**, although their complete host owner/result proofs succeed and
+Node/interpreter agree on **`trace=2`**. They need payload carriers, not more
+cardinality evidence. `LoweringSupport.cpp` currently accepts Bottom/Number,
+object-value and nested Map payloads, excluding homogeneous Bool and UTF8 String.
 
-Unseeded gets remain refused. String/boolean/mixed Map payloads remain separate carrier
-boundaries at **0/6** despite completed host proofs. Exact Bootstrap Data stays
-**0/7** in CommonJS/browser and **0/8** in AMD (the extra function registers the
-delayed factory); complete native initialization, realm owners and future-call
-contracts remain unfinished. See [the current handoff](HANDOFF.md) for measured
-corpus counts and the combined gate against Claude's merged browser changes.
+Extend `carrierOf`, `mapValueSpelling`, `mapCarrierType`, `mapNeedsString` and
+`EmitC/Maps.cpp::replaceMap` together. Existing generic `make_map<K,V>`,
+`map_get_present`, setters and mutations already offer the ordinary owning C++
+implementation. Unproved-presence reads need the existing nullable scalar/string
+representations with false and empty strings distinct from missing. String
+value snapshots need owning copies or an explicit refusal; this does not
+admit `vector<bool>` or mixed stored payloads. Promote these two fixtures only
+with complete 6/6 admission, actual payload observations, retained calls, saved
+string lifetime/sanitizer coverage, live type/forgery/rerun controls and no VM
+symbols. The 64-candidate size cap is deliberate and is not this next boundary.
+
+Unseeded reads and mixed-payload carriers still refuse. Exact Bootstrap Data,
+general realm owners and future-call contracts remain unfinished; the latest
+completed corpus counts and full gate are in [HANDOFF.md](HANDOFF.md).
 
 Exceptions do not make a callback or allocation inert. Native try/catch covers
 one acyclic handler with homogeneous number, boolean or owning string throws

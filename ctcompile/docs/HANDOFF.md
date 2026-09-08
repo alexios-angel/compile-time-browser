@@ -6,7 +6,72 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Current Map.size and imported-array checkpoint, 2026-09-08
+## Current distinct-key Map and array-chain checkpoint, 2026-09-08
+
+Saved locally on `ctcompile-v1`: **`c900f84`** (distinct-key Map size bounds)
+and **`d863dc3`** (array retention through unconditional branch chains). The
+starting tree was clean at `310c9a3`. The interrupted CallDirectOp/frame work
+was already recovered and gated in `5307abf`, `e8d5cdb` and `f063455`; this
+session continued the exact `seeded_size_two_entries` boundary recorded in that
+handoff and the 04:49 synchronization journal. Older unmerged branches were
+audited and are browser work, not an unfinished native recovery. Main work and
+two disjoint implementation agents were integrated; a third audited the next
+payload and source-exception boundaries. No browser source changed or push occurred.
+
+The published Map specimen now seeds keys 0 and 1, deletes `state.size`, then
+returns `state.get(1)`: **0/5 -> 5/5 native**, with Node/interpreter **`trace=2`**.
+Host result and native presence analyses independently count a pairwise-distinct
+subset of definite keys in the same runtime Map. Each read examines at most
+**64 candidates**; saved lower bounds survive later mutation. Aliasing SSA keys,
+signed zeros and NaN encodings cannot inflate cardinality. Host work is charged
+per candidate/comparison, and incomplete proofs expose no callable/property facts.
+The 64/65-candidate boundary is intentional, not the next implementation target.
+
+The gate passes **63 complete native programs**, eight size programs and ten
+size-key refusals, with explicit/deduced GCC/Clang, Node/interpreter agreement,
+no interpreter symbols and all six existing sanitizer lifetime variants.
+Runtime calls and result transport remain intact. Source/prepared cardinality
+proofs check all **2278/2372** incomplete budgets; native completion is
+**5931/9391** for two entries/saved emptied state, with **30** cutoffs each.
+The separate nested-Map presence lit gate passes **seven positives and fourteen
+refusals**. Logs: `/tmp/ctcompile-cardinality-focused2.log` and
+`/tmp/ctcompile-cardinality-lit2.log`.
+
+The array query now follows only acyclic `cf.br` chains with one predecessor per
+destination and exact value/frame forwarding. Joins, conditional flow, loops,
+unknown values/effects and incomplete work still refuse. The combined focused
+gate passes **12/12 CTests in 28.45 seconds**: **35 contents rows, 20 retention
+rows, 26 frame rows**, twelve live frame/control-flow states, **500 retention
+and 387 frame budget cutoffs**, and four execution oracles with zero violations.
+Fixture precision stays **22/33**; Bootstrap/p5/Phaser precision stays
+**0/64, 0/16, 0/20**. Native ownership consumers remain separate.
+
+The current frozen source passes `tools/format.sh --check`: **742 files** with
+Homebrew clang-format **22.1.8**. The full generated devbox gate is running at
+`/tmp/ctcompile-cardinality-full.log`; the preceding checkpoint below is the
+last completed full gate. No new full-corpus coverage gain is claimed yet.
+
+**Exact next native boundary:** `result_seeded_bool` and
+`result_seeded_string` in the existing Map gate remain **0/6 native** despite
+complete host owner/result proofs; Node/interpreter both produce **`trace=2`**.
+`LoweringSupport.cpp` refuses homogeneous Bool/UTF8 String Map payload carriers.
+Extend carrier selection/spelling, `replaceMap` construction and generic Map
+reads together, reusing owning string/nullable scalar types. Preserve false and
+empty-string versus missing, saved string lifetime and mixed-payload refusals;
+string-value snapshots need owning copies or an explicit refusal. Full native
+Bootstrap Data, realm owners and future external callers remain unfinished.
+
+Source exceptions next need one transaction covering the complete call
+component, standalone throwing helpers, invoke admission/emission and owning
+saved state, including pruning only provably dead invocation tuple slots.
+A live whole-entry caller-depth/reentry proof must discharge frame-entry
+failure separately: the public AOT contract returns `CT_AOT_FAILED`, never a
+catchable JS payload. The existing 32-level analysis bound does not prove the
+runtime caller stack safe. Retain complete rollback until every component
+member lowers. Array contents next need conditional/join/loop flow, external
+values and other containers before broader ownership consumers.
+
+## Preceding Map.size and imported-array checkpoint, 2026-09-08
 
 Saved locally on `ctcompile-v1`: **`e8d5cdb`** (nonempty Map.size snapshots)
 and **`f063455`** (imported array frame/root retention). This session resumed
