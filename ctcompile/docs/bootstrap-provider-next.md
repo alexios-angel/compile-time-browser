@@ -159,21 +159,54 @@ payload across independently disjoint writes/deletes. Seven new programs pass;
 the complete [published Map gate](native-owned-global-maps.md) passes 47 programs
 and the existing six lifetime variants. No lookup or call is evaluated away.
 
-## Next: payload types across possibly aliasing writes
+## Completed: payload types across possibly aliasing writes
 
-`seeded_dynamic_write` uses `state.set(state.size, 2)` instead. It stays
-**0/5 native** with no owner proof and every source call intact; fresh Node and
-interpreter runs both produce `trace=1`. Its runtime key
-may alias the seed, so the current proof discards the old payload tag. A complete
-type join across possible overwrites could retain an independently proved
-numeric payload; key presence and possibly aliasing deletes remain separate
-obligations. Prior invocation observations cannot prove current contents.
+Commit `0054611` retains a definite payload tag when every possible overwrite
+has that same independently proved tag. `seeded_dynamic_write` advances
+**0/5 -> 5/5 native** with `trace=1`. Exact-key writes replace their tag;
+possible incompatible writes lose it. Presence and type evidence remain
+independent, and no call is evaluated away.
+
+## Completed: nonempty Map.size snapshots
+
+Commit `e8d5cdb` independently proves that a size read from a Map with a
+definite entry is at least one. A delete using that saved number cannot erase
+key zero. `seeded_dynamic_delete` advances **0/5 -> 5/5 native**, preserving
+Node/interpreter `trace=1`. Host result analysis and native presence each derive
+their own evidence from live IR; later mutation cannot change the saved number.
+The gate passes **58 complete programs** and all six existing lifetime variants
+under GCC/Clang and Node/interpreter comparisons. Initial zero sizes, equal
+positive keys and equal snapshots remain explicit refusal controls. See the
+[Map checkpoint](native-owned-global-maps.md#nonempty-size-snapshots-2026-09-08).
+
+## Next: a size bound from distinct definite keys
+
+The measured `seeded_size_two_entries` getter is:
+
+```js
+get() {
+    state.set(0, 1);
+    state.set(1, 2);
+    state.delete(state.size);
+    return state.get(1);
+}
+```
+
+Within the same `host.slot.set(host.slot.get())` specimen, it remains
+**0/5 native**, with no owner proof and every call intact. Fresh Node and
+interpreter runs both produce **`trace=2`**; evidence:
+`/tmp/ctcompile-size-boundary.json`. Nonempty only proves `size >= 1`; this
+case needs `size >= 2`. Derive a bounded lower bound from independently
+distinct definite keys in both analyses. Counting facts is unsound when
+different SSA keys can alias. Preserve SameValueZero, exact instance identity,
+saved-snapshot timing, invalidation and incomplete-budget controls.
+
 Unseeded gets remain refused. String/boolean/mixed Map payloads remain separate carrier
 boundaries at **0/6** despite completed host proofs. Exact Bootstrap Data stays
 **0/7** in CommonJS/browser and **0/8** in AMD (the extra function registers the
 delayed factory); complete native initialization, realm owners and future-call
-contracts remain unfinished. The full devbox gate passes **475/475 CTests**;
-see [the current handoff](HANDOFF.md) for corpus counts and evidence.
+contracts remain unfinished. See [the current handoff](HANDOFF.md) for measured
+corpus counts and the combined gate against Claude's merged browser changes.
 
 Exceptions do not make a callback or allocation inert. Native try/catch covers
 one acyclic handler with homogeneous number, boolean or owning string throws

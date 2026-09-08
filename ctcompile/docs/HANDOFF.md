@@ -6,7 +6,72 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Current per-key Map, array retention and transitive-call checkpoint, 2026-09-07
+## Current Map.size and imported-array checkpoint, 2026-09-08
+
+Saved locally on `ctcompile-v1`: **`e8d5cdb`** (nonempty Map.size snapshots)
+and **`f063455`** (imported array frame/root retention). This session resumed
+the dirty compiler work recorded in the synchronization journal at 03:52/04:00,
+abandoned at 04:02:32. The earlier reverted source-completion thread was already
+recovered in `5307abf`/`5b0b602`, including the corrected `CallDirectOp` builder;
+no branch was rewritten. Two agents completed disjoint proof/test work and a
+third audited the next boundary. No browser source changed; no push occurred.
+
+The [published Map gate](native-owned-global-maps.md) now admits
+`state.set(0, 1); state.delete(state.size); return state.get(0)` as the producer
+in `host.slot.set(host.slot.get())`: **0/5 -> 5/5 native**, preserving
+Node/interpreter **`trace=1`**. Host result and native presence proofs each
+establish a nonempty size snapshot from a definite entry in the actual Map.
+Saved numbers survive later mutations; initial zero sizes, equal positive keys
+and equal snapshots cannot borrow disjointness. All runtime calls remain.
+
+**58 complete native programs** pass Node/interpreter and explicit/deduced
+GCC/Clang execution, including all six existing sanitizer lifetime variants
+and the no-interpreter-symbol gate. Three new size programs and three
+observationally distinct refusals cover saved/current size, empty Maps and
+aliasing. Source/prepared host proofs check all **2212/2299** incomplete
+budgets. The new presence lit test passes three positives and seven refusals.
+Logs: `/tmp/ctcompile-size-focused.log`, `/tmp/ctcompile-size-native.log`,
+`/tmp/ctcompile-size-lit.log`. Emitted C++ was inspected at
+`/tmp/ctcompile-size-dynamic-delete.cpp`: seed, size, delete and typed lookup
+execute against the same owning Map, with no VM context or collector.
+
+The [array retention query](escape-load-evidence.md) validates entry-first
+frame creation, exact active roots and a matching exit immediately before
+return. A no-successor/no-region entry scan proves the importer's extra default
+return block unreachable independently of solver flags. Frame-entry failure
+still precedes tracked allocations; this is no native nonthrowing permission.
+The gate passes **8/8 CTests in 8.45 seconds**, including **19 frame rows,
+eight live states and 248 budget cutoffs**, all four escape units and all four
+execution oracles with zero soundness violations. Nine new source functions
+exercise **19 sites / 21 instances / 11 retained instances**. On this same
+expanded fixture, observed confined-site precision advances **18/33 -> 22/33**
+after supporting the dead fallback block. Bootstrap/p5/Phaser observed precision
+remains **0/64, 0/16, 0/20** in these script-mode probes. Log:
+`/tmp/ctcompile-size-escape2.log`. Native ownership consumers remain separate.
+
+The full generated devbox build and combined CTest gate are running against
+Claude's merged browser tree: `/tmp/ctcompile-size-full.log`. No current full
+pass is claimed yet. The prior recovered snapshot had five known browser
+failures (`selectors`, `frames`, `element_attrs`, `vm_async`, `early_errors`)
+and its local log ended at test 398. The frozen current source passes
+`tools/format.sh --check`: **742 C++ files**, Homebrew clang-format **22.1.8**,
+matching the preceding accepted checkpoint. The ignored local toolchain's
+clang-format 23 instead flags nine baseline files; those were left untouched.
+
+**Exact next native boundary:** `seeded_size_two_entries` seeds keys 0 and 1,
+deletes `state.size`, then returns `state.get(1)`. It is freshly measured at
+**0/5 native**, no owner proof and every source call intact; Node/interpreter
+both produce **`trace=2`**. Evidence: `/tmp/ctcompile-size-boundary.json`.
+Derive a bounded cardinality lower bound from independently distinct definite
+keys in both analyses; the number of facts is not a size proof when keys can
+alias. Unseeded reads, mixed payload carriers, exact Bootstrap Data, general
+realm owners and future-call contracts remain unfinished. Source throwing-call
+work next needs complete native component admission and owning payload/state
+emission; the restored normal-return inference alone cannot erase fallible
+frame entry. The array query next needs reachable control flow, external values
+and other containers before broader ownership consumers.
+
+## Preceding per-key Map, array retention and transitive-call checkpoint, 2026-09-07
 
 Saved locally on `ctcompile-v1`: **`ec2dc20`** (bounded array retention
 consumer), **`327a3c5`** (disjoint per-key Map facts), and **`fd90ea9`**
