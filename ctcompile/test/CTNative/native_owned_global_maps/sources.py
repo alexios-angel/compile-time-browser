@@ -816,12 +816,98 @@ NULLABLE_OBSERVATIONS.update({
 })
 
 
-def nullable_carrier_refusals():
+def nullable_payload_sources():
     source = nullable_key_sources()["nullable_key_homogeneous"][0]
+    write = source.replace("state.set(key, true)", "state.set(key, key)")
+    readback = write.replace("set(key) { state.set(key, key); return state.size; }",
+        "set(key) { state.set(key, key); return state.get(key); }")
+    identity = readback.replace("var trace =",
+        "host.slot.set(void 0); host.slot.set(''); var trace =")
+    saved = write.replace("state.set('seed', 'future');",
+        f"state.set('seed', '{STRING_RESULT}');")
+    saved = saved.replace("state.delete('seed');",
+        "state.set('seed', 'overwritten'); state.delete('seed');")
+    saved = saved.replace("set(key) { state.set(key, key); return state.size; }",
+        "set(key) { state.set(key, key); const saved = state.get(key); "
+        "state.set(key, 'overwritten'); state.delete(key); return saved; }")
+    saved = saved.replace(" host.slot.set(host.slot.get(true));", "")
+    saved = saved.replace("var trace =", "host.slot.set(void 0); var trace =")
     return {
-        # Key support cannot authorize an optional stored payload. Ownership
-        # still succeeds, so refusal preserves the prepared producer edge.
-        "nullable_key_payload": (source.replace("state.set(key, true)", "state.set(key, key)"), 2),
+        # Preserve both exact sources from 1c7985a5 before adding observations.
+        "nullable_payload_write": (write, "host", 2),
+        "nullable_payload_readback": (readback, "host", 2),
+        # Full nullable String storage represents a deleted read as Undefined;
+        # its return must not reuse either the payload or its absent tag.
+        "nullable_payload_deleted": (readback.replace("return state.get(key);",
+            "state.delete(key); return state.get(key);"), "host", 0),
+        "nullable_payload_identity": (identity, "host", 4),
+        # Scalar reads remain independently proved inside the getter even
+        # when the full storage schema also contains null and Boolean.
+        "nullable_payload_mixed": (nullable_key_sources()["nullable_original_key"][0]
+            .replace("state.set(key, true)", "state.set(key, key)"), "host", 3),
+        # Startup sees only false; saved methods later run both flags and
+        # return an owning payload copied before overwrite and deletion.
+        "nullable_payload_saved": (saved, "host", 0),
+    }
+
+
+NULLABLE_PAYLOAD_CALLS = {
+    "nullable_payload_write": 11,
+    "nullable_payload_readback": 12,
+    "nullable_payload_deleted": 13,
+    "nullable_payload_identity": 14,
+    "nullable_payload_mixed": 18,
+    "nullable_payload_saved": 14,
+}
+
+NULLABLE_PAYLOAD_READBACKS = {
+    # Keep native input tags/bytes independent from the expected return.
+    "nullable_payload_readback": [("'future'", "string", "future", "string", "future"),
+                                  ("null", "null_value", "", "null_value", "")],
+    **{name: [(argument, tag, value, tag, value) for argument, tag, value in (
+        (repr(STRING_RESULT), "string", STRING_RESULT), ("null", "null_value", ""),
+        ("void 0", "undefined", ""), ("''", "string", ""))]
+       for name in ("nullable_payload_identity", "nullable_payload_saved")},
+    "nullable_payload_deleted": [(argument, tag, value, "undefined", "")
+        for argument, tag, value in ((repr(STRING_RESULT), "string", STRING_RESULT),
+                                    ("null", "null_value", ""), ("void 0", "undefined", ""),
+                                    ("''", "string", ""))],
+}
+
+NULLABLE_OBSERVATIONS.update({
+    name: [("false", "string", STRING_RESULT if name == "nullable_payload_saved" else "future"),
+           ("true", "null_value", "")]
+    for name in nullable_payload_sources()
+})
+
+
+def nullable_payload_refusals():
+    source = nullable_payload_sources()["nullable_payload_readback"][0]
+    mixed = nullable_payload_sources()["nullable_payload_mixed"][0]
+    return {
+        # Representing a missing result does not invent the host's independent
+        # payload proof, nor authorize a snapshot or an object graph.
+        "nullable_payload_missing": (source.replace("return state.get(key);",
+            "return state.get('missing');").replace("host.slot.set(host.slot.get(false));",
+            "host.slot.set(host.slot.set(host.slot.get(false)));"), 3,
+            "return state.get('missing');", "return state.get(key);", 2),
+        "nullable_payload_snapshot": (mixed.replace("state.set(key, key);",
+            "state.set(key, key); state.values();"), 3,
+            "state.values();", "state.size;", 3),
+        "nullable_payload_object": (nullable_payload_sources()["nullable_payload_write"][0]
+            .replace("state.set(key, key);", "state.set(key, {value: 'instance'});"), 2,
+            "state.set(key, {value: 'instance'});", "state.set(key, key);", 2),
+    }
+
+
+def nullable_carrier_refusals():
+    source = nullable_payload_sources()["nullable_payload_mixed"][0]
+    return {
+        # A full optional Bool/String read needs an implemented scalar carrier;
+        # a nullable String method signature cannot narrow its Map schema.
+        "nullable_mixed_payload_readback": (source.replace(
+            "set(key) { state.set(key, key); return state.size; }",
+            "set(key) { state.set(key, key); return state.get(key); }"), 3),
     }
 
 
@@ -906,7 +992,7 @@ RESULT_SIGNATURES = {
        for name in payload_result_sources()},
     **{name: (result, result, 6) for name, (result, _) in MIXED_RESULT_TYPES.items()},
     **{name: ("ctnative::nullable_string", "ctnative::nullable_string", 6)
-       for name in {**nullable_result_sources(), **nullable_key_sources()}},
+       for name in {**nullable_result_sources(), **nullable_key_sources(), **nullable_payload_sources()}},
 }
 
 

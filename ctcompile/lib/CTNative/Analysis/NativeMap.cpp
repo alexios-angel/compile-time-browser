@@ -382,8 +382,8 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
             if (depth > 32) { return false; }
             if (savedReads.contains(value)) { return true; }
             if (auto constant = value.getDefiningOp<ctjs::ConstantOp>()) {
-                return llvm::isa<ctjs::BooleanAttr, ctjs::NumberAttr, ctjs::StringAttr>(
-                    constant.getValue());
+                return llvm::isa<ctjs::BooleanAttr, ctjs::NumberAttr, ctjs::StringAttr,
+                                 ctjs::NullAttr, ctjs::UndefinedAttr>(constant.getValue());
             }
             auto result = llvm::dyn_cast<mlir::OpResult>(value);
             auto branch =
@@ -416,7 +416,8 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
             boolean |= llvm::isa<ctjs::BooleanAttr>(value);
             number |= llvm::isa<ctjs::NumberAttr>(value);
             string |= llvm::isa<ctjs::StringAttr>(value);
-            primitive &= llvm::isa<ctjs::BooleanAttr, ctjs::NumberAttr, ctjs::StringAttr>(value);
+            primitive &= llvm::isa<ctjs::BooleanAttr, ctjs::NumberAttr, ctjs::StringAttr,
+                                   ctjs::NullAttr, ctjs::UndefinedAttr>(value);
         }
         const bool mixed = primitive && boolean && (number != string);
         for (ctjs::CallOp read : candidate.calls) {

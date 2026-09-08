@@ -30,7 +30,9 @@ bool lowering::replaceMap(mlir::Operation * o) {
         auto map = llvm::cast<MapType>(typeOf(made.getResult()));
         const std::string callee =
             (llvm::isa<MapType, BoolType, StrType>(map.getValueType()) ||
-             isObjectValueType(map.getValueType()) || !mixedMapSpelling(map.getValueType()).empty())
+             isObjectValueType(map.getValueType()) ||
+             !mixedMapSpelling(map.getValueType()).empty() ||
+             !nullableMapSpelling(map.getValueType()).empty())
                 ? ("ctnative::make_map<" + mapKeySpelling(map.getKeyType()) + ", " +
                    mapValueSpelling(map.getValueType()) + ">")
                       .str()
@@ -52,92 +54,78 @@ bool lowering::replaceMap(mlir::Operation * o) {
             args.push_back(llvm::cast<GetPropertyOp>(o).getObject());
         }
         const auto map = mapSchemas.lookup(o);
+        const auto extractProvedScalar = [&](mlir::Value value, llvm::StringRef proofName) {
+            auto proof = o->getAttrOfType<mlir::StringAttr>(proofName);
+            if (!proof) { return value; }
+            const auto tag = proof.getValue();
+            const auto scalar = tag == "string" ? carrier::string
+                                : tag == "bool" ? carrier::boolean
+                                                : carrier::number;
+            const auto type = carrierType(context, scalar);
+            if (isBooleanStringCarrier(value.getType())) {
+                const auto helper = tag == "string" ? "std::get<std::string>" : "std::get<bool>";
+                return callWithConstValueOperands(b, where, mlir::TypeRange{type},
+                                                  b.getStringAttr(helper), mlir::ValueRange{value})
+                    .getResult(0);
+            }
+            if (isNullableCarrier(value.getType()) || isNullableStringCarrier(value.getType())) {
+                // Only a rederived exact tag can narrow an owning temporary.
+                // String extraction copies; it cannot borrow the source value.
+                return convertScalar(b, where, value, type);
+            }
+            return value;
+        };
         const auto convertAlternative = [&](mlir::Value value, mlir::Type type) {
-            const auto spelling = mixedMapSpelling(type);
+            auto spelling = nullableMapSpelling(type);
+            if (!spelling.empty()) {
+                const bool mixed = spelling != kNullableStringType;
+                auto argumentType = value.getType();
+                if (auto lvalue = llvm::dyn_cast<ec::LValueType>(argumentType)) {
+                    argumentType = lvalue.getValueType();
+                }
+                if (!mixed || !llvm::isa<mlir::IntegerType>(argumentType)) {
+                    // Preserve Null/Undefined tags and own every String in
+                    // both key and payload storage, including saved reads.
+                    value = convertScalar(b, where, value,
+                                          carrierType(context, carrier::nullableString));
+                }
+                if (!mixed) { return value; }
+            } else {
+                spelling = mixedMapSpelling(type);
+                if (spelling.empty()) { return value; }
+            }
             return callWithConstValueOperands(
                        b, where, mlir::TypeRange{ec::OpaqueType::get(context, spelling)},
                        b.getStringAttr(spelling), mlir::ValueRange{value})
                 .getResult(0);
         };
         if (map && args.size() >= 2) {
-            if (auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapKeyType)) {
-                const auto tag = proof.getValue();
-                const auto scalar = tag == "string" ? carrier::string
-                                    : tag == "bool" ? carrier::boolean
-                                                    : carrier::number;
-                const auto type = carrierType(context, scalar);
-                if (isBooleanStringCarrier(args[1].getType())) {
-                    const auto helper =
-                        tag == "string" ? "std::get<std::string>" : "std::get<bool>";
-                    args[1] = callWithConstValueOperands(b, where, mlir::TypeRange{type},
-                                                         b.getStringAttr(helper),
-                                                         mlir::ValueRange{args[1]})
-                                  .getResult(0);
-                } else if (isNullableCarrier(args[1].getType()) ||
-                           isNullableStringCarrier(args[1].getType())) {
-                    // This conversion copies the proved String, so normalized
-                    // keys do not borrow the nullable argument's storage.
-                    args[1] = convertScalar(b, where, args[1], type);
-                }
-            }
-            if (auto nullable = nullableMapKeySpelling(map.getKeyType()); !nullable.empty()) {
-                const auto keyType = ec::OpaqueType::get(context, nullable);
-                const bool mixed = nullable != kNullableStringType;
-                auto argumentType = args[1].getType();
-                if (auto lvalue = llvm::dyn_cast<ec::LValueType>(argumentType)) {
-                    argumentType = lvalue.getValueType();
-                }
-                if (!mixed || !llvm::isa<mlir::IntegerType>(argumentType)) {
-                    // Widen String and absent values without coercion. The
-                    // nullable carrier owns the text copied into Map storage.
-                    args[1] = convertScalar(b, where, args[1],
-                                            carrierType(context, carrier::nullableString));
-                }
-                if (mixed) {
-                    args[1] = callWithConstValueOperands(b, where, mlir::TypeRange{keyType},
-                                                         b.getStringAttr(nullable),
-                                                         mlir::ValueRange{args[1]})
-                                  .getResult(0);
-                }
-            } else if (!mixedMapSpelling(map.getKeyType()).empty()) {
-                args[1] = convertAlternative(args[1], map.getKeyType());
-            }
+            args[1] = convertAlternative(extractProvedScalar(args[1], kNativeMapKeyType),
+                                         map.getKeyType());
         }
         if (action == "set") {
             auto call = llvm::cast<CallOp>(o);
-            // set returns the same Map schema. Its result still has a solver
-            // fact here; the receiver may already be a replacement EmitC SSA
-            // value, which deliberately has no entry in that analysis.
+            // The result retains its solver fact after the receiver becomes
+            // replacement EmitC SSA, which has no analysis entry.
             const auto storedMap = llvm::cast<MapType>(typeOf(call.getResult()));
-            if (!mixedMapSpelling(storedMap.getValueType()).empty()) {
-                if (auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapWriteType)) {
-                    const auto tag = proof.getValue();
-                    const auto scalar = tag == "string" ? carrier::string
-                                        : tag == "bool" ? carrier::boolean
-                                                        : carrier::number;
-                    const auto type = carrierType(context, scalar);
-                    if (isBooleanStringCarrier(args[2].getType())) {
-                        const auto helper =
-                            tag == "string" ? "std::get<std::string>" : "std::get<bool>";
-                        args[2] = callWithConstValueOperands(b, where, mlir::TypeRange{type},
-                                                             b.getStringAttr(helper),
-                                                             mlir::ValueRange{args[2]})
-                                      .getResult(0);
-                    } else if (isNullableCarrier(args[2].getType())) {
-                        args[2] = convertScalar(b, where, args[2], type);
-                    }
-                }
-                args[2] = convertAlternative(args[2], storedMap.getValueType());
-            } else if (isObjectValueType(storedMap.getValueType())) {
+            args[2] = convertAlternative(extractProvedScalar(args[2], kNativeMapWriteType),
+                                         storedMap.getValueType());
+            if (isObjectValueType(storedMap.getValueType())) {
                 args[2] =
                     convertScalar(b, where, args[2], carrierType(context, carrier::objectValue));
             }
         }
         const auto helper = o->hasAttr(kNativeMapPresent) ? "get_present" : action;
         std::string helperName = ("ctnative::map_" + helper).str();
-        if (action == "get" && map && !mixedMapSpelling(map.getValueType()).empty()) {
-            helperName =
-                "ctnative::map_get_present_as<" + mapValueSpelling(typeOf(o->getResult(0))) + ">";
+        if (action == "get" && map) {
+            if (!mixedMapSpelling(map.getValueType()).empty()) {
+                helperName = "ctnative::map_get_present_as<" +
+                             mapValueSpelling(typeOf(o->getResult(0))) + ">";
+            } else if (!nullableMapSpelling(map.getValueType()).empty() &&
+                       o->hasAttr(kNativeMapReadType)) {
+                helperName = "ctnative::map_get_present_nullable_as<" +
+                             mapValueSpelling(typeOf(o->getResult(0))) + ">";
+            }
         }
         const auto name = b.getStringAttr(helperName);
         if (action == "clear") {

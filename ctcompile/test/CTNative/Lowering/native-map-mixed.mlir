@@ -1,3 +1,4 @@
+// RUN: rm -rf %t
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-binding-time-analysis -o /dev/null
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-partial-evaluate -o /dev/null
@@ -318,6 +319,73 @@ function mixedNullableTags() {
     return initial + (rewritten === 'replaced' ? 256 : 0) + (removed && distinct ? 512 : 0)
         + (saved === 'null' ? 1024 : 0);
 }
+function nullablePayloadTags() {
+    const map = new Map();
+    map.set(0, 'owning-nullable-payload-with-embedded-\0-bytes');
+    map.set(1, null);
+    map.set(2, void 0);
+    map.set(3, '');
+    map.set(4, 'null');
+    map.set(5, 'undefined');
+    const saved = map.get(0);
+    const absent = map.get(1);
+    const undefinedValue = map.get(2);
+    const empty = map.get(3);
+    const initial = (map.size === 6 ? 1 : 0)
+        + (absent === null && absent !== void 0 ? 2 : 0)
+        + (undefinedValue === void 0 && undefinedValue !== null ? 4 : 0)
+        + (empty === '' && empty !== null && empty !== void 0 ? 8 : 0)
+        + (map.get(4) === 'null' && map.get(5) === 'undefined' ? 16 : 0)
+        + (map.has(2) && !map.has(6) && map.get(6) === void 0 ? 32 : 0);
+    map.set(0, null);
+    map.set(1, 'replacement');
+    map.set(2, '');
+    map.set(3, void 0);
+    const changed = map.get(0) === null && map.get(1) === 'replacement'
+        && map.get(2) === '' && map.get(3) === void 0;
+    map.delete(0);
+    map.clear();
+    return initial + (changed ? 64 : 0)
+        + (saved === 'owning-nullable-payload-with-embedded-\0-bytes' ? 128 : 0)
+        + (absent === null && undefinedValue === void 0 && empty === '' ? 256 : 0)
+        + (map.size === 0 ? 512 : 0);
+}
+function nullablePayloadOwned(flag, missing) {
+    const map = new Map();
+    let value = flag ? 'returned-owning-nullable-payload-with-embedded-\0-bytes'
+        : (missing ? void 0 : null);
+    const key = value;
+    map.set(key, value);
+    const saved = map.get(key);
+    value = 'replacement-input';
+    map.set(key, value);
+    map.delete(key);
+    map.clear();
+    return saved;
+}
+function mixedNullablePayload(flag) {
+    const map = new Map();
+    map.set('flag', false);
+    map.set('keep', 'saved-mixed-nullable-payload-with-embedded-\0-bytes');
+    map.set('null', null);
+    map.set('undefined', void 0);
+    const nullable = flag ? 'temporary' : null;
+    map.set('nullable', nullable);
+    const saved = map.get('keep');
+    const boolean = map.get('flag');
+    map.set('keep', null);
+    map.set('flag', 'replacement');
+    map.set('saved', saved);
+    map.set('boolean', boolean);
+    const rewritten = map.get('flag');
+    const copied = map.get('saved');
+    const copiedBoolean = map.get('boolean');
+    const removed = map.delete('null');
+    map.clear();
+    return (saved === 'saved-mixed-nullable-payload-with-embedded-\0-bytes' ? 1 : 0)
+        + (copied === saved ? 2 : 0) + (rewritten === 'replacement' ? 4 : 0)
+        + (!boolean && !copiedBoolean ? 8 : 0) + (removed && map.size === 0 ? 16 : 0);
+}
 var traceNumbers = numberKeys();
 var traceSaved = savedString();
 var traceBranches = branch(true) * 10 + branch(false);
@@ -356,6 +424,12 @@ var traceNullableOwned = nullableOwned(true, false) * 10000 + nullableOwned(fals
     + nullableOwned(false, true);
 var traceNullablePerUse = nullablePerUse(true) * 100 + nullablePerUse(false);
 var traceMixedNullableTags = mixedNullableTags();
+var traceNullablePayloadTags = nullablePayloadTags();
+var traceNullablePayloadOwned = (nullablePayloadOwned(true, false)
+        === 'returned-owning-nullable-payload-with-embedded-\0-bytes' ? 100 : 0)
+    + (nullablePayloadOwned(false, false) === null ? 10 : 0)
+    + (nullablePayloadOwned(false, true) === void 0 ? 1 : 0);
+var traceMixedNullablePayload = mixedNullablePayload(true) * 100 + mixedNullablePayload(false);
 
 //--- snapshot.js
 function snapshot() {
@@ -618,15 +692,6 @@ function run() {
 }
 var trace = run();
 
-//--- nullable-payload-refused.js
-function run() {
-    const map = new Map();
-    map.set('', 'value');
-    map.set(null, null);
-    return map.size;
-}
-var trace = run();
-
 //--- nullable-snapshot-refused.js
 function run() {
     const map = new Map();
@@ -663,6 +728,74 @@ function run(flag, other) {
     const map = new Map();
     const key = flag ? false : (other ? '' : null);
     map.set(key, true);
+    return map.size;
+}
+var trace = run(true, false) + run(false, true) + run(false, false);
+
+//--- nullable-number-payload-refused.js
+function run() {
+    const map = new Map();
+    map.set(0, null);
+    map.set(1, 2);
+    return map.size;
+}
+var trace = run();
+
+//--- nullable-boolean-payload-refused.js
+function run() {
+    const map = new Map();
+    map.set(0, null);
+    map.set(1, false);
+    return map.size;
+}
+var trace = run();
+
+//--- nullable-payload-snapshot-refused.js
+function run() {
+    const map = new Map();
+    map.set(0, 'value');
+    map.set(1, null);
+    return Array.from(map.values()).length;
+}
+var trace = run();
+
+//--- mixed-nullable-payload-snapshot-refused.js
+function run() {
+    const map = new Map();
+    map.set(0, false);
+    map.set(1, null);
+    map.set(2, 'value');
+    return Array.from(map.values()).length;
+}
+var trace = run();
+
+//--- mixed-nullable-payload-read-refused.js
+function run(flag) {
+    const map = new Map();
+    map.set('key', false);
+    map.set('nullable', null);
+    if (flag) { map.set('key', 'value'); }
+    return map.get('key') ? 1 : 2;
+}
+var trace = run(true) * 10 + run(false);
+
+//--- mixed-nullable-payload-stale-refused.js
+function run(flag) {
+    const map = new Map();
+    map.set('flag', false);
+    map.set('nullable', null);
+    map.set('key', 'value');
+    const seen = map.has('key');
+    if (flag) { map.delete('key'); }
+    return seen ? (map.get('key') ? 1 : 2) : 3;
+}
+var trace = run(false) * 10 + run(true);
+
+//--- mixed-nullable-payload-temporary-refused.js
+function run(flag, other) {
+    const map = new Map();
+    const payload = flag ? false : (other ? '' : null);
+    map.set(0, payload);
     return map.size;
 }
 var trace = run(true, false) + run(false, true) + run(false, false);

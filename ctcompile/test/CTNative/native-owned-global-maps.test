@@ -66,7 +66,7 @@
 # ternary changes all three observations. Distinct truthy/falsy results preserve
 # runtime reads, writes, deletions and producer/consumer order in both modes.
 # Missing/stale/wrong guards, mutation inside &&, missing/incompatible payloads,
-# nullable stored payloads and an unexecuted future unknown effect remain refusals
+# unrepresented stored payloads and an unexecuted future unknown effect remain refusals
 # with source calls and branch operands intact through forgeries/reruns/budgets.
 # Forged read and write tags cannot justify extracting a short-circuit carrier
 # before a Map set; both tags require independent live reanalysis.
@@ -92,9 +92,23 @@
 # preserves the original eighteen-call getter and nineteen-call per-use control.
 # Normalizing one use keeps the original nullable formal at its later raw write;
 # live schema proof and both writes survive fresh/stale key/read/write forgeries,
-# reruns and both optimization modes. Optional payloads and mixed snapshots
-# remain refused. A saved-key lifetime fixture deletes/reinserts keys and owns
+# reruns and both optimization modes. Mixed snapshots remain refused.
+# A saved-key lifetime fixture deletes/reinserts keys and owns
 # long String bytes after caller-buffer mutation and source overwrite/delete;
 # Null, Undefined and empty String stay distinct after owner release, independent
 # reentry and final destruction of both Maps under ASan/UBSan. The measured
 # budget endpoints retain the original functions, branches and runtime calls.
+# Nullable String payloads preserve the exact eleven-call write and twelve-call
+# readback sources. A fourteen-call identity witness observes String, Null,
+# Undefined and empty String through the setter's Map read; tags and bytes are
+# checked separately from size. Optional Bool/String storage keeps independent
+# scalar getter evidence. A full optional mixed read remains unrepresented.
+# Fresh/stale read/write/key forgeries, reruns and incomplete budgets cannot
+# invent a payload tag or narrow the storage schema. Deleted nullable reads
+# preserve the thirteen-call source and return Undefined for String, Null,
+# Undefined and empty String inputs; deleting and retaining the entry differ.
+# Missing producer evidence, object payload ownership and values snapshots stay refused.
+# A false-only startup saves a nullable payload before overwriting and deleting
+# its entry. Saved callables later run both flags, copy every nullish/String tag
+# and own long String bytes through caller/result mutation, independent reentry
+# and final release of both Maps under ASan/UBSan.

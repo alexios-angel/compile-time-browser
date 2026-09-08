@@ -15,6 +15,7 @@ from .sources import (
     RESULT_SIGNATURES, mixed_result_sources, MIXED_RESULT_TYPES, saved_read_sources,
     saved_join_sources, OTHER_STRING_RESULT, guarded_saved_sources, shortcircuit_sources,
     nullable_result_sources, nullable_key_sources, NULLABLE_OBSERVATIONS,
+    nullable_payload_sources, NULLABLE_PAYLOAD_READBACKS,
 )
 
 
@@ -41,7 +42,8 @@ def check_result_calls(cpp, name, mode):
             actuals = [re.sub(r"^std::move\((\w+)\)$", r"\1", argument)
                        for argument in actuals]
             literal_key = name in {"nullable_key_identity", "nullable_key_identity_normalized",
-                                   "nullable_key_string_saved"} \
+                                   "nullable_key_string_saved", "nullable_payload_identity",
+                                   "nullable_payload_saved"} \
                 and not pending and len(actuals) == 1
             if not literal_key and (not pending or actuals != pending):
                 raise RuntimeError(f"{name}/{mode}: setter lost live producing-call operands/order")
@@ -72,6 +74,7 @@ def check_result_calls(cpp, name, mode):
         **{name: ["get", "set", "get", "set", "size"] for name in shortcircuit_sources()},
         **{name: ["get", "set", "get", "set", "size"] for name in nullable_result_sources()},
         **{name: ["get", "set", "get", "set", "size"] for name in nullable_key_sources()},
+        **{name: ["get", "set", "get", "set", "size"] for name in nullable_payload_sources()},
         "saved_join_string_saved": ["get", "set", "size"],
         "guarded_saved_string_saved": ["get", "set", "size"],
         "shortcircuit_empty_string": ["get", "set", "size"],
@@ -83,6 +86,8 @@ def check_result_calls(cpp, name, mode):
         "nullable_key_identity": ["get", "set", "get", "set", "set", "set", "size"],
         "nullable_key_identity_normalized": ["get", "set", "get", "set", "set", "set", "size"],
         "nullable_key_string_saved": ["get", "set", "set", "size"],
+        "nullable_payload_identity": ["get", "set", "get", "set", "set", "set", "size"],
+        "nullable_payload_saved": ["get", "set", "set", "size"],
         "saved_read_write_repeated": ["get", "set", "get", "set", "size"],
         "seeded_dynamic_overwrite": ["get", "set", "get", "set"],
         "seeded_dynamic_repeated": ["get", "set", "get", "set", "get"],
@@ -97,7 +102,8 @@ def check_result_calls(cpp, name, mode):
     seeded = {**seeded_result_sources(), **key_fact_sources(), **joined_result_sources(),
               **size_result_sources(), **payload_result_sources(), **mixed_result_sources(),
               **saved_read_sources(), **saved_join_sources(), **guarded_saved_sources(),
-              **shortcircuit_sources(), **nullable_result_sources(), **nullable_key_sources()}
+              **shortcircuit_sources(), **nullable_result_sources(), **nullable_key_sources(),
+              **nullable_payload_sources()}
     if name in seeded and not re.search(r"ctnative::map_get(?:_\w+)?(?:<[^>]+>)?\(", cpp):
         raise RuntimeError(f"{name}/{mode}: replaced the live seeded Map lookup with a summary")
     if name in size_result_sources() and "ctnative::map_delete(" not in cpp:
@@ -105,12 +111,12 @@ def check_result_calls(cpp, name, mode):
     if name in {"result_seeded_string_saved", "result_seeded_mixed_string_saved",
                 "saved_read_write_string_saved", "saved_join_string_saved",
                 "guarded_saved_string_saved", "shortcircuit_string_saved", "nullable_string_saved",
-                "nullable_key_string_saved"} \
+                "nullable_key_string_saved", "nullable_payload_saved"} \
             and "ctnative::map_delete(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: dropped the saved string's source deletion")
     mixed = {**mixed_result_sources(), **saved_read_sources(), **saved_join_sources(),
              **guarded_saved_sources(), **shortcircuit_sources(), **nullable_result_sources(),
-             **nullable_key_sources()}
+             **nullable_key_sources(), **nullable_payload_sources()}
     if name in mixed:
         source = mixed[name][0]
         for method in ("set", "get", "has", "delete"):
@@ -118,13 +124,16 @@ def check_result_calls(cpp, name, mode):
             native_count = len(re.findall(rf"\bctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(", cpp))
             if native_count != source_count:
                 raise RuntimeError(f"{name}/{mode}: changed the {source_count} live Map.{method} calls")
-    if name in {**shortcircuit_sources(), **nullable_result_sources(), **nullable_key_sources()}:
+    if name in {**shortcircuit_sources(), **nullable_result_sources(), **nullable_key_sources(),
+                **nullable_payload_sources()}:
         getter = re.search(r"^[^\n;]+\bfn_4\([^\n]*\) \{(.*?)^\}", cpp, re.M | re.S)
         branches = 5 if name == "nullable_threeway" else 4 if name in nullable_result_sources() else 3
         if name == "nullable_homogeneous_key":
             branches = 2
         if name in nullable_key_sources():
             branches = 4 if name in {"nullable_original_key", "nullable_second_key_use"} else 2
+        if name in nullable_payload_sources():
+            branches = 4 if name == "nullable_payload_mixed" else 2
         # Canonicalization can use ?: for the pure Null/Undefined selection.
         # The executed identity observer also checks both results separately.
         if not getter or len(re.findall(r"\bif\s*\(|\?", getter[1])) != branches:
@@ -139,6 +148,11 @@ def nullable_observer_source(source, name):
         expected = json.dumps(value) if tag == "string" else "null" if tag == "null_value" else "undefined"
         observed += (f"var nullableObserved{index} = host.slot.get({arguments});\n"
                      f"if (nullableObserved{index} === {expected}) {{ trace = trace + {1 << index}; }}\n")
+    for index, (argument, _, _, tag, value) in enumerate(NULLABLE_PAYLOAD_READBACKS.get(name, ()),
+                                                        len(NULLABLE_OBSERVATIONS[name])):
+        expected = json.dumps(value) if tag == "string" else "null" if tag == "null_value" else "undefined"
+        observed += (f"var nullableObserved{index} = host.slot.set({argument});\n"
+                     f"if (nullableObserved{index} === {expected}) {{ trace = trace + {1 << index}; }}\n")
     return observed + "})();\n"
 
 
@@ -149,6 +163,14 @@ def nullable_identity_cpp(cpp, name):
     changed += "\nint main() {\n    if (ctnative_test_entry() != 0) { return 90; }\n"
     for index, (arguments, tag, value) in enumerate(NULLABLE_OBSERVATIONS[name]):
         changed += (f"    const auto observed_{index} = g_host->slot->m_get({arguments});\n"
+                    f"    if (observed_{index}.tag != ctnative::nullable_string::kind::{tag} ||\n"
+                    f"        observed_{index}.value != {json.dumps(value)}) {{ return {91 + index}; }}\n")
+    for index, (_, input_tag, input_value, tag, value) in enumerate(
+            NULLABLE_PAYLOAD_READBACKS.get(name, ()), len(NULLABLE_OBSERVATIONS[name])):
+        changed += (f"    ctnative::nullable_string input_{index};\n"
+                    f"    input_{index}.tag = ctnative::nullable_string::kind::{input_tag};\n"
+                    f"    input_{index}.value = {json.dumps(input_value)};\n"
+                    f"    const auto observed_{index} = g_host->slot->m_set(input_{index});\n"
                     f"    if (observed_{index}.tag != ctnative::nullable_string::kind::{tag} ||\n"
                     f"        observed_{index}.value != {json.dumps(value)}) {{ return {91 + index}; }}\n")
     return changed + "    return 0;\n}\n"
@@ -621,6 +643,97 @@ int main() {
                            f"{result.stdout}{result.stderr}")
 
 
+def nullable_stored_payload_lifetime(args, cpp, name, mode, compiler):
+    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
+    if count != 1:
+        raise RuntimeError("nullable stored-payload harness needs exactly one entry")
+    changed = ("#include <memory>\n#include <type_traits>\n#include <vector>\n"
+               "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed)
+    changed, count = re.subn(r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
+        lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
+                      "ctn_test_maps.emplace_back(made); return made;", changed)
+    if count != 2:
+        raise RuntimeError("nullable stored-payload observer lost its allocation helpers")
+    changed += r'''
+int main() {
+    using result_type = ctnative::nullable_string;
+    using kind = result_type::kind;
+    const std::string expected = EXPECTED_STRING;
+    const auto equal = [](const result_type & value, kind tag, const std::string & text = {}) {
+        return value.tag == tag && value.value == text;
+    };
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1) { return 90; }
+    auto owner = g_host;
+    auto table = owner->slot;
+    auto getter = table->m_get;
+    auto setter = table->m_set;
+    auto size = table->m_size;
+    static_assert(std::is_same_v<decltype(getter), std::function<result_type(bool)>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<result_type(result_type)>>);
+    auto caller = getter(false);
+    const auto saved = setter(caller);
+    const auto absent = getter(true);
+    caller.value.assign(expected.size(), 'x');
+    if (!equal(saved, kind::string, expected) || !equal(setter(absent), kind::null_value) ||
+        !equal(setter(result_type{}), kind::undefined) ||
+        !equal(setter(result_type{std::string{}}), kind::string) || size() != 0) { return 91; }
+    std::weak_ptr owner_lifetime = owner;
+    std::weak_ptr table_lifetime = table;
+    g_host.reset();
+    owner.reset();
+    table.reset();
+    if (!owner_lifetime.expired() || !table_lifetime.expired() ||
+        ctn_test_maps[0].expired()) { return 92; }
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
+        ctn_test_maps[0].lock() == ctn_test_maps[1].lock()) { return 93; }
+    for (int index = 0; index < 128; ++index) {
+        const std::string text = expected + std::to_string(index);
+        auto input = result_type{text};
+        auto returned = setter(input);
+        input.value.assign(text.size(), 'q');
+        const auto copied = returned;
+        returned.value.assign(text.size(), 'z');
+        if (!equal(copied, kind::string, text) || !equal(getter(false), kind::string, expected) ||
+            !equal(getter(true), kind::null_value) || !equal(setter(absent), kind::null_value) ||
+            !equal(setter(result_type{}), kind::undefined) ||
+            !equal(setter(result_type{std::string{}}), kind::string) ||
+            size() != 0 || g_host->slot->m_size() != 0) { return 94; }
+    }
+    const auto survivor = setter(getter(false));
+    const auto null_survivor = setter(getter(true));
+    const auto undefined_survivor = setter(result_type{});
+    const auto empty_survivor = setter(result_type{std::string{}});
+    getter = {};
+    setter = {};
+    if (ctn_test_maps[0].expired()) { return 95; }
+    size = {};
+    if (!ctn_test_maps[0].expired() || ctn_test_maps[1].expired()) { return 96; }
+    std::vector<std::string> churn;
+    for (int index = 0; index < 4096; ++index) { churn.emplace_back(expected.size(), 'w'); }
+    const auto fresh = g_host->slot->m_set(g_host->slot->m_get(false));
+    g_host.reset();
+    if (!ctn_test_maps[1].expired() || !equal(saved, kind::string, expected) ||
+        !equal(survivor, kind::string, expected) || !equal(null_survivor, kind::null_value) ||
+        !equal(undefined_survivor, kind::undefined) || !equal(empty_survivor, kind::string) ||
+        !equal(fresh, kind::string, expected)) { return 97; }
+    return 0;
+}
+'''
+    changed = changed.replace("EXPECTED_STRING", json.dumps(STRING_RESULT))
+    source = args.work / f"{name}.{mode}.lifetime.cpp"
+    source.write_text(changed)
+    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
+    host.run([compiler, *owned.FLAGS, "-O1", "-g", "-fno-omit-frame-pointer",
+              "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
+              str(source), "-o", str(binary)])
+    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
+        env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+                 UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+    if result.returncode or result.stdout != "trace=0\n" * 2:
+        raise RuntimeError(f"{name}/{mode}: nullable stored-payload lifetime failure\n"
+                           f"{result.stdout}{result.stderr}")
+
+
 def standalone(args, output, name, value, compilers, nm):
     deduced = args.work / f"{name}.deduced.mlir"
     host.run([args.opt, str(output), "--ctnative-print-deduced", "-o", str(deduced)])
@@ -640,12 +753,14 @@ def standalone(args, output, name, value, compilers, nm):
             getter_params = "js_num" if name in {
                 "result_formal", "result_seeded_formal", "seeded_dynamic_formal"} else ""
             if name in {**saved_join_sources(), **guarded_saved_sources(), **shortcircuit_sources(),
-                        **nullable_result_sources(), **nullable_key_sources()}:
+                        **nullable_result_sources(), **nullable_key_sources(),
+                        **nullable_payload_sources()}:
                 getter_params = "bool"
             if name == "nullable_threeway":
                 getter_params = "bool, bool"
+            setter_result = "ctnative::nullable_string" if name in NULLABLE_PAYLOAD_READBACKS else "js_num"
             if (f"std::function<{result}({getter_params})>" not in cpp
-                    or f"std::function<js_num({params})>" not in cpp):
+                    or f"std::function<{setter_result}({params})>" not in cpp):
                 raise RuntimeError(f"{name}/{mode}: missing typed producer/consumer signatures\n{cpp}")
             check_result_calls(cpp, name, mode)
         if name in payload_result_sources():
@@ -663,7 +778,7 @@ def standalone(args, output, name, value, compilers, nm):
                 raise RuntimeError(f"{name}/{mode}: missing exact finite key/payload carrier\n{cpp}")
         source = args.work / f"{name}.{mode}.cpp"
         source.write_text(cpp)
-        if name in {**nullable_result_sources(), **nullable_key_sources()}:
+        if name in {**nullable_result_sources(), **nullable_key_sources(), **nullable_payload_sources()}:
             key = "std::string" if name == "nullable_homogeneous_key" else "std::variant<bool, std::string>"
             if name in nullable_key_sources():
                 key = "ctnative::nullable_string"
@@ -671,7 +786,12 @@ def standalone(args, output, name, value, compilers, nm):
                     key = "std::string"
                 elif name in {"nullable_original_key", "nullable_second_key_use", "nullable_key_mixed"}:
                     key = "std::variant<bool, ctnative::nullable_string>"
-            if f"std::shared_ptr<ctnative::map_storage<{key}, std::variant<bool, std::string>>>" not in cpp:
+            payload = "std::variant<bool, std::string>"
+            if name in nullable_payload_sources():
+                key = payload = "ctnative::nullable_string"
+                if name == "nullable_payload_mixed":
+                    key = payload = "std::variant<bool, ctnative::nullable_string>"
+            if f"std::shared_ptr<ctnative::map_storage<{key}, {payload}>>" not in cpp:
                 raise RuntimeError(f"{name}/{mode}: nullable signature changed the exact Map schema")
             source = args.work / f"{name}.{mode}.identity.cpp"
             source.write_text(nullable_identity_cpp(cpp, name))
@@ -694,6 +814,8 @@ def standalone(args, output, name, value, compilers, nm):
             nullable_payload_lifetime(args, cpp, name, mode, compilers[1])
         if name == "nullable_key_string_saved":
             nullable_key_lifetime(args, cpp, name, mode, compilers[1])
+        if name == "nullable_payload_saved":
+            nullable_stored_payload_lifetime(args, cpp, name, mode, compilers[1])
 
 
 def check_call_preservation(original, output, name):

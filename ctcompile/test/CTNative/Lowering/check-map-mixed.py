@@ -15,32 +15,39 @@ spec.loader.exec_module(representation)
 boundary, run = representation.boundary, representation.run
 
 
-def check_isolated_nullable_numbers(args, source, node, reference, compilers, nm):
-    # Numeric payloads must request nullable String key helpers on their own.
-    # Reuse the existing function so this probe cannot silently diverge from it.
-    function = re.search(r"^function nullableNumberKeys\(\) \{\n.*?^\}", source, re.M | re.S)
-    assert function
-    js = args.work / "nullable-numbers-only.js"
-    js.write_text(function[0] + "\nvar traceNullableNumbers = nullableNumberKeys();\n")
-    expected = "traceNullableNumbers=41234\n"
-    assert run([node, "-e", representation.NODE_GLOBALS, str(js)]) == expected
-    assert run([str(reference), str(js)]) == expected
-    ir = args.work / "nullable-numbers-only.mlir"
-    run(["cmake", f"-DTRANSLATE={args.translate}", f"-DOPT={args.opt}",
-         f"-DSOURCE={js}", f"-DOUTPUT={ir}", "-DOPTIMIZE=OFF", "-P",
-         str(Path(__file__).resolve().parents[2] / "native-pipeline.cmake")])
-    cpp = run([args.translate, "--mlir-to-cpp", str(ir)])
-    assert "struct nullable_string" in cpp
-    assert "ctnative::number_map<ctnative::nullable_string>" in cpp
-    assert "ctbrowser::script" not in cpp
-    out = args.work / "nullable-numbers-only.cpp"
-    out.write_text(cpp)
-    for index, compiler in enumerate(compilers):
-        binary = args.work / f"nullable-numbers-only-{index}"
-        run([compiler, "-std=c++23", "-O2", "-Wall", "-Wextra", "-Werror",
-             "-Wconversion", "-pedantic", "-ffp-contract=off", str(out), "-o", str(binary)])
-        assert run([str(binary)]) == expected
-        assert "ctbrowser::script::" not in run([nm, "-C", str(binary)])
+def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm):
+    # Either nullable keys or nullable payloads must request their helpers alone.
+    # Reuse existing functions without expanding the full layout/sanitizer matrix.
+    cases = [
+        ("nullable-numbers-only", "nullableNumberKeys", "traceNullableNumbers", 41234,
+         "ctnative::number_map<ctnative::nullable_string>"),
+        ("nullable-payloads-only", "nullablePayloadTags", "traceNullablePayloadTags", 1023,
+         "map_storage<double, ctnative::nullable_string>"),
+    ]
+    for name, symbol, trace, value, carrier in cases:
+        function = re.search(r"^function " + symbol + r"\(\) \{\n.*?^\}", source, re.M | re.S)
+        assert function
+        js = args.work / f"{name}.js"
+        js.write_text(function[0] + f"\nvar {trace} = {symbol}();\n")
+        expected = f"{trace}={value}\n"
+        assert run([node, "-e", representation.NODE_GLOBALS, str(js)]) == expected
+        assert run([str(reference), str(js)]) == expected
+        ir = args.work / f"{name}.mlir"
+        run(["cmake", f"-DTRANSLATE={args.translate}", f"-DOPT={args.opt}",
+             f"-DSOURCE={js}", f"-DOUTPUT={ir}", "-DOPTIMIZE=OFF", "-P",
+             str(Path(__file__).resolve().parents[2] / "native-pipeline.cmake")])
+        cpp = run([args.translate, "--mlir-to-cpp", str(ir)])
+        assert "struct nullable_string" in cpp
+        assert carrier in cpp
+        assert "ctbrowser::script" not in cpp
+        out = args.work / f"{name}.cpp"
+        out.write_text(cpp)
+        for index, compiler in enumerate(compilers):
+            binary = args.work / f"{name}-{index}"
+            run([compiler, "-std=c++23", "-O2", "-Wall", "-Wextra", "-Werror",
+                 "-Wconversion", "-pedantic", "-ffp-contract=off", str(out), "-o", str(binary)])
+            assert run([str(binary)]) == expected
+            assert "ctbrowser::script::" not in run([nm, "-C", str(binary)])
 
 
 def main():
@@ -65,8 +72,10 @@ def main():
         js = args.work / f"{name}.js"
         js.write_text(text)
         expected = ("traceBranches=23\ntraceDead=2\ntraceGuardBoolean=12\ntraceGuardDisjoint=117\n"
-                    "traceGuardNumber=133\ntraceGuardString=12\ntraceMixedNullableTags=2047\n"
+                    "traceGuardNumber=133\ntraceGuardString=12\ntraceMixedNullablePayload=3131\n"
+                    "traceMixedNullableTags=2047\n"
                     "traceNullableNumbers=41234\ntraceNullableOwned=151515\n"
+                    "traceNullablePayloadOwned=111\ntraceNullablePayloadTags=1023\n"
                     "traceNullablePerUse=3131\ntraceNullableTags=4095\n"
                     "traceNumbers=1334\ntraceRewrite=1\n"
                     "traceSaved=1\ntraceSavedAlias=82\ntraceSavedBoolean=1\ntraceSavedBranch=11\n"
@@ -91,6 +100,9 @@ def main():
             assert "ctnative::number_map<ctnative::nullable_string>" in cpp
             assert "map_storage<ctnative::nullable_string, std::variant<bool, std::string>>" in cpp
             assert "std::variant<bool, ctnative::nullable_string>" in cpp
+            assert "map_storage<double, ctnative::nullable_string>" in cpp
+            assert "map_storage<ctnative::nullable_string, ctnative::nullable_string>" in cpp
+            assert "map_storage<std::string, std::variant<bool, ctnative::nullable_string>>" in cpp
             assert ("struct map_storage" in cpp) == ordered
             out = args.work / f"{name}-{label}.cpp"
             out.write_text(cpp)
@@ -108,7 +120,7 @@ def main():
                 environment = dict(os.environ, ASAN_OPTIONS="detect_leaks=1:detect_stack_use_after_return=1",
                                    UBSAN_OPTIONS="halt_on_error=1")
                 assert run([str(binary)], environment=environment) == expected
-    check_isolated_nullable_numbers(args, source, node, reference, compilers, nm)
+    check_isolated_nullable_helpers(args, source, node, reference, compilers, nm)
     for fixture in args.fixtures.glob("*-refused.js"):
         name = fixture.stem
         js, ir, count = boundary.prepare(args, name, fixture.read_text())
@@ -130,28 +142,28 @@ def main():
                 result = output.read_text()
                 assert not re.search(r"\bemitc.func @main\(", result), name
                 assert len(boundary.FUNCTION.findall(result)) + len(boundary.NATIVE.findall(result)) == count
-                if name in {"saved-missing-refused", "saved-join-missing-refused",
-                            "short-stale-refused", "short-unknown-refused"}:
+                if name in {"saved-missing-refused", "saved-join-missing-refused"}:
                     assert "native Map needs supported keys" in result, name
                     assert "!ctnative.opt<!ctnative.variant<" in result, name
                 elif name in {"saved-join-tags-refused", "short-truthy-bool-refused",
                               "short-wrong-condition-refused"}:
                     assert "mixed native Map write needs one proved scalar alternative" in result, name
                 elif name in {"nullable-number-key-refused", "nullable-boolean-key-refused",
-                              "nullable-payload-refused"}:
+                              "nullable-number-payload-refused", "nullable-boolean-payload-refused"}:
                     assert "native Map needs supported keys" in result, name
                     assert "!ctnative.opt<" in result, name
-                elif name in {"nullable-snapshot-refused", "mixed-nullable-snapshot-refused"}:
+                elif name in {"nullable-snapshot-refused", "mixed-nullable-snapshot-refused",
+                              "nullable-payload-snapshot-refused", "mixed-nullable-payload-snapshot-refused"}:
                     assert "native Map snapshot requires confined numeric or string elements" in result, name
-                elif name == "mixed-nullable-temporary-refused":
+                elif name in {"mixed-nullable-temporary-refused", "mixed-nullable-payload-temporary-refused"}:
                     assert "a value of type !ctnative.opt<!ctnative.variant<" in result, name
                 else:
                     assert "mixed native Map read needs independent present payload type evidence" in result, name
                 current = output
-    print("mixed Maps: 59 associative/ordered observations, owning nullable String and Boolean/String keys, "
+    print("mixed Maps: 63 associative/ordered observations, owning nullable String and Boolean/String keys/payloads, "
           "Node/interpreter, GCC/Clang, plain/deduced and ASan/UBSan; "
-          "isolated numeric-payload nullable-key helpers; "
-          "28 storage/read/write-proof refusals with forged key facts and reruns")
+          "isolated nullable-key and nullable-payload helpers; "
+          "34 storage/read/write-proof refusals with forged key facts and reruns")
 
 
 if __name__ == "__main__":

@@ -157,8 +157,8 @@ template <class K, class V> js_num map_size(const std::shared_ptr<map_storage<K,
 } // namespace ctnative
 )cpp";
 
-// The owning nullable string carrier is emitted only when a read may miss.
-// Present reads already return V by value; neither read borrows Map storage.
+// Nullable Strings also own payload storage. Every read returns a copy;
+// neither a full-schema read nor an exact-tag read borrows Map storage.
 inline constexpr llvm::StringLiteral kNativeStringMapHelpers = R"cpp(
 namespace ctnative {
 template <class K> nullable_string map_get(
@@ -166,6 +166,37 @@ template <class K> nullable_string map_get(
     const auto found = map->find(key);
     if (found != map->end()) { return found->second; }
     return {};
+}
+template <class K> nullable_string map_get(
+    const std::shared_ptr<map_storage<K, nullable_string>> & map, const K & key) {
+    const auto found = map->find(key);
+    if (found != map->end()) { return found->second; }
+    return {};
+}
+template <class T> T map_nullable_payload_as(const nullable_string & value) {
+    if constexpr (std::is_same_v<T, nullable_string>) { return value; }
+    else if constexpr (std::is_same_v<T, std::string>) {
+        if (value.tag != nullable_string::kind::string) { std::terminate(); }
+        return value.value;
+    } else { std::terminate(); }
+}
+// The compiler supplies T only from an independent present payload fact.
+// The storage schema itself never selects a narrower alternative.
+template <class T, class K, class V> T map_get_present_nullable_as(
+    const std::shared_ptr<map_storage<K, V>> & map, const K & key) {
+    const auto found = map->find(key);
+    if (found == map->end()) { std::terminate(); }
+    if constexpr (std::is_same_v<V, nullable_string>) {
+        return map_nullable_payload_as<T>(found->second);
+    } else {
+        return std::visit([](const auto & value) -> T {
+            using Actual = std::decay_t<decltype(value)>;
+            if constexpr (std::is_same_v<Actual, nullable_string>) {
+                return map_nullable_payload_as<T>(value);
+            } else if constexpr (std::is_same_v<T, Actual>) { return value; }
+            else { std::terminate(); }
+        }, found->second);
+    }
 }
 } // namespace ctnative
 )cpp";
