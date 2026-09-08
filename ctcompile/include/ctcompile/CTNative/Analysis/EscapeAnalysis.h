@@ -407,7 +407,7 @@ struct ArrayContentsEvidence {
 };
 
 /// Recompute from the CURRENT verified IR; needs neither trusted annotations
-/// nor alias lattices. An acyclic cf.br/cf.cond_br graph may contain
+/// nor alias lattices. An acyclic cf.br/cf.cond_br/cf.switch graph may contain
 /// constants, fresh objects/arrays, literal append, constant-Number-index array
 /// reads/overwrites, own String-property object writes/reads, truthy and return.
 /// Object reads require an earlier own write; keys longer than 256 bytes and
@@ -416,7 +416,9 @@ struct ArrayContentsEvidence {
 /// index semantics. Loaded aliases share one contents state per path; cycles
 /// are visited once at exits. Unknown values/keys,
 /// holes, calls, throws, publication, regions, prototypes and accessors refuse.
-/// Both conditional edges are explored, even with a constant predicate. Joins
+/// Every conditional/switch edge is explored, including default and statically
+/// untaken cases. Switch flags must have an independently known origin; no
+/// additional selector-producing operations or JS coercions are admitted. Joins
 /// keep exact separate states rather than unioning overwrite targets. Truthy
 /// accepts an external value only as a noncapturing predicate, never an element.
 /// Exact forwarded values are required; revisiting a block on one path refuses

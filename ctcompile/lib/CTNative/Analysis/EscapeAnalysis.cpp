@@ -815,8 +815,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
     // Enumerate structural paths, never solver flags or annotations. A join
     // keeps separate exact states: unioning array aliases before a strong
     // overwrite would incorrectly erase an element of an unmodified array.
-    // Both conditional edges are visited, including a constant predicate's
-    // untaken edge. An operation unsupported on any path refuses everything.
+    // Every branch edge is visited, including a constant flag's untaken edge
+    // and a switch's default edge. Any unsupported path refuses everything.
     struct State {
         llvm::DenseMap<mlir::Value, mlir::Value> origins;
         llvm::MapVector<mlir::Operation *, llvm::SmallVector<mlir::Value, 4>> arrays;
@@ -847,6 +847,25 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         path.current = &next->front();
         return ArrayContentsFailure::None;
     };
+    const auto alternative = [&](mlir::Block * next, mlir::ValueRange operands) {
+        // Path enumeration can be exponential. Charge every copied value,
+        // visited block, container and element before allocating the snapshot.
+        if (!spend(state.origins.size()) || !spend(state.visited.size())) {
+            return ArrayContentsFailure::WorkLimit;
+        }
+        for (const auto & [array, elements] : state.arrays) {
+            (void)array;
+            if (!spend() || !spend(elements.size())) { return ArrayContentsFailure::WorkLimit; }
+        }
+        for (const auto & [object, properties] : state.objects) {
+            (void)object;
+            if (!spend() || !spend(properties.size())) { return ArrayContentsFailure::WorkLimit; }
+        }
+        State copy = state;
+        const auto failure = forward(copy, next, operands);
+        if (failure == ArrayContentsFailure::None) { alternatives.push_back(std::move(copy)); }
+        return failure;
+    };
     while (true) {
         bool returned = false;
         while (state.current != nullptr) {
@@ -855,7 +874,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
             if (op.getNumRegions() != 0 ||
                 (op.getNumSuccessors() != 0 &&
-                 !llvm::isa<mlir::cf::BranchOp, mlir::cf::CondBranchOp>(&op))) {
+                 !llvm::isa<mlir::cf::BranchOp, mlir::cf::CondBranchOp, mlir::cf::SwitchOp>(&op))) {
                 return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
             }
             if (auto entered = llvm::dyn_cast<ctjs::FrameEnterOp>(&op)) {
@@ -905,30 +924,28 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 if (!origin(branch.getCondition())) {
                     return refuse(ArrayContentsFailure::UnknownValue, &op);
                 }
-                // Path enumeration can be exponential. Charge every copied value,
-                // visited block, array and element before allocating the snapshot.
-                if (!spend(state.origins.size()) || !spend(state.visited.size())) {
-                    return refuse(ArrayContentsFailure::WorkLimit, &op);
-                }
-                for (const auto & [array, elements] : state.arrays) {
-                    (void)array;
-                    if (!spend() || !spend(elements.size())) {
-                        return refuse(ArrayContentsFailure::WorkLimit, &op);
-                    }
-                }
-                for (const auto & [object, properties] : state.objects) {
-                    (void)object;
-                    if (!spend() || !spend(properties.size())) {
-                        return refuse(ArrayContentsFailure::WorkLimit, &op);
-                    }
-                }
-                State alternative = state;
-                auto failure =
-                    forward(alternative, branch.getFalseDest(), branch.getFalseDestOperands());
+                auto failure = alternative(branch.getFalseDest(), branch.getFalseDestOperands());
                 if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
                 failure = forward(state, branch.getTrueDest(), branch.getTrueDestOperands());
                 if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
-                alternatives.push_back(std::move(alternative));
+                continue;
+            }
+            if (auto branch = llvm::dyn_cast<mlir::cf::SwitchOp>(&op)) {
+                if (!origin(branch.getFlag())) {
+                    return refuse(ArrayContentsFailure::UnknownValue, &op);
+                }
+                // The flag selects an edge without JS coercion. Prove every
+                // structural edge, so neither case values nor exhaustiveness
+                // supply a liveness fact. Repeated destinations still carry
+                // their own operands. Push in reverse for default/case order.
+                for (unsigned i = branch->getNumSuccessors() - 1; i != 0; --i) {
+                    const auto failure = alternative(branch.getCaseDestinations()[i - 1],
+                                                     branch.getCaseOperands(i - 1));
+                    if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
+                }
+                const auto failure =
+                    forward(state, branch.getDefaultDestination(), branch.getDefaultOperands());
+                if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
                 continue;
             }
             // Truthy is total, noncapturing and nonthrowing (Operators.td). An

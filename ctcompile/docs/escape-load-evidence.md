@@ -266,8 +266,8 @@ and unknown users of the frame handle. Refusal publishes no partial contents
 and preserves every original escape verdict.
 
 The current query follows every structural path through an acyclic graph of
-`cf.br` and `cf.cond_br` operations, with no nested regions. Every forwarded
-argument must resolve to an already proved constant, allocation, earlier read,
+`cf.br`, `cf.cond_br` and `cf.switch` operations, with no nested regions. Every
+forwarded argument must resolve to an already proved constant, allocation, earlier read,
 truthy predicate or active frame handle. No external alternative is dropped even
 when the destination never uses it. A join keeps separate exact states for each
 incoming path; repeating a block within one path and unknown successor semantics
@@ -458,3 +458,46 @@ passes **372/372 compiler CTests**, including **165/165 lit cases**; overall
 **512/517** leaves only the five recorded browser failures. Final log:
 `/tmp/ctcompile-mixed-full2.log`; evidence: `/tmp/ctcompile-mixed-evidence.json`.
 The full checkpoint and next native boundary are in [HANDOFF.md](HANDOFF.md).
+
+## Bounded switch paths
+
+The complete contents query now explores `cf.switch` default and case edges,
+with a separate exact origin, array, object and frame state for every edge.
+Repeated destinations preserve their individual successor operands. Default
+and cases are visited in source order, with each case snapshot charged before
+copying. A default-only switch forwards its state without copying it.
+
+The selector must already have an independently known origin, currently an
+`i1` from `ctjs.truthy` or an exact forwarding of it. This adds no selector
+producer or JavaScript conversion. Every structural edge is checked even when
+the flag is constant or the listed cases exhaust its possible values; default
+is not omitted by an exhaustiveness argument. Unsupported operations, absent
+own slots/properties, unknown operands, invalid frame operations and loops on
+any edge discard every earlier contents record. The retention consumer still
+requires an acyclic union of all writes, including transient and mutually
+exclusive array/object edges, before changing any `Stored` verdict.
+
+The unit suite configures **21 switch rows, six live states, four malformed
+controls and five path-explosion cutoffs**. The rows cover same-destination
+edges with different target/value operands, saved children after overwrite,
+shared-successor allocations, own-object reads, mixed-container aliases,
+return reachability, frames, unknown selectors and late effects. Live edits
+change the final case's operands under forged completion/confinement markers,
+then restore the real proof. Direct queries reject missing successor operands,
+an empty target and an unknown selector without passing malformed IR to the
+legacy solver. Every row and live state checks every incomplete contents and
+retention budget plus its exact endpoint; the malformed queries do likewise
+for contents. A ten-block, three-edge-per-block case checks bounded rollback
+through an exponential path graph with both arrays and object properties.
+
+The combined devbox build and focused CTest gate pass **12/12 in 29.05 seconds**.
+The switch rows pass all **1526 retention budget cutoffs**, six live states,
+four malformed controls and five path-explosion cutoffs. Existing array,
+object, conditional and frame cases still pass. All four execution oracles
+report zero violations; fixture precision remains **22/33** and Bootstrap,
+p5 and Phaser remain **0/64, 0/16 and 0/20**. Log:
+`/tmp/ctcompile-saved-checkpoint.log`. Homebrew clang-format 22.1.8 passes all
+742 files; whitespace checks pass. The complete generated gate is pending.
+Source fixtures, runtime behavior and native ownership admission are unchanged.
+Loops, external contents, additional selector producers and native lifetime
+consumers remain separate work.

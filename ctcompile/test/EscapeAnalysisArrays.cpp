@@ -1642,6 +1642,392 @@ void checkArrayConditionals(mlir::MLIRContext & context) {
                 rows.size(), budgets);
 }
 
+void checkContainerSwitches(mlir::MLIRContext & context) {
+    const std::string values =
+        "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
+        "  %one = ctjs.constant #ctjs.number<4607182418800017408> "
+        "{storage_test_id = \"one\"}\n"
+        "  %key = ctjs.constant #ctjs.string<\"child\">\n"
+        "  %x = ctjs.create_object {storage_test_id = \"x\"}\n"
+        "  %y = ctjs.create_object {storage_test_id = \"y\"}\n"
+        "  %flag = ctjs.truthy %p\n";
+    const std::string array = values + "  %a = ctjs.create_array [%x] {storage_test_id = \"a\"}\n";
+    const std::string split =
+        "  cf.switch %flag : i1, [default: ^fallback, 0: ^zero, 1: ^one]\n^fallback:\n";
+    const std::string done = "  ctjs.return %zero\n";
+    struct switch_row {
+        contents_row contents;
+        const char * discharged = "";
+        bool acyclicWrites = true;
+    };
+    const std::vector<switch_row> rows = {
+        {.contents = {.what = "a default-only switch forwards exact values without a snapshot",
+                      .body = array + "  cf.switch %flag : i1, [default: ^join(%a : !ctjs.value)]\n"
+                                      "^join(%selected: !ctjs.value):\n"
+                                      "  ctjs.set_property %selected[%zero], %y\n"
+                                      "  ctjs.return %selected\n",
+                      .arrays = "a:[y]",
+                      .exit = "a -> {a,y}"},
+         .discharged = "x"},
+        {.contents = {.what = "all switch edges overwrite the old child before a shared return",
+                      .body = array +
+                              "  cf.switch %flag : i1, [default: ^join(%y : !ctjs.value), "
+                              "0: ^join(%zero : !ctjs.value), 1: ^join(%one : !ctjs.value)]\n"
+                              "^join(%replacement: !ctjs.value):\n"
+                              "  ctjs.set_property %a[%zero], %replacement\n"
+                              "  ctjs.return %a\n",
+                      .arrays = "a:[y] | a:[zero] | a:[one]",
+                      .exit = "a -> {a,y}; a -> {a}; a -> {a}"},
+         .discharged = "x"},
+        {.contents = {.what =
+                          "three edges to the same block preserve distinct target and value pairs",
+                      .body = array +
+                              "  %b = ctjs.create_array [%y] {storage_test_id = \"b\"}\n"
+                              "  %c = ctjs.create_array [%a, %b] {storage_test_id = \"c\"}\n"
+                              "  cf.switch %flag : i1, ["
+                              "default: ^join(%a, %zero : !ctjs.value, !ctjs.value), "
+                              "0: ^join(%b, %zero : !ctjs.value, !ctjs.value), "
+                              "1: ^join(%a, %y : !ctjs.value, !ctjs.value)]\n"
+                              "^join(%target: !ctjs.value, %replacement: !ctjs.value):\n"
+                              "  ctjs.set_property %target[%zero], %replacement\n"
+                              "  ctjs.return %c\n",
+                      .arrays = "a:[zero]; b:[y]; c:[a,b] | a:[x]; b:[zero]; c:[a,b] | "
+                                "a:[y]; b:[y]; c:[a,b]",
+                      .exit = "c -> {a,b,c,y}; c -> {a,b,c,x}; c -> {a,b,c,y}"}},
+        {.contents = {.what = "the final switch case retains a child overwritten on earlier edges",
+                      .body = array + split +
+                              "  ctjs.set_property %a[%zero], %y\n  ctjs.return %a\n"
+                              "^zero:\n  ctjs.set_property %a[%zero], %zero\n"
+                              "  ctjs.return %a\n^one:\n  ctjs.return %a\n",
+                      .arrays = "a:[y] | a:[zero] | a:[x]",
+                      .exit = "a -> {a,y}; a -> {a}; a -> {a,x}"}},
+        {.contents = {.what =
+                          "a saved child returned on one switch edge survives later replacement",
+                      .body = array +
+                              "  %saved = ctjs.get_property %a[%zero]\n"
+                              "  cf.switch %flag : i1, [default: ^join(%saved : !ctjs.value), "
+                              "0: ^join(%y : !ctjs.value), 1: ^join(%zero : !ctjs.value)]\n"
+                              "^join(%result: !ctjs.value):\n"
+                              "  ctjs.set_property %a[%zero], %y\n"
+                              "  ctjs.return %result\n",
+                      .arrays = "a:[y] | a:[y] | a:[y]",
+                      .reads = "a[0]=x",
+                      .exit = "x -> {x}; y -> {y}; zero -> {}"}},
+        {.contents = {.what = "switch joins allocate one exact container instance per path",
+                      .body = values +
+                              "  cf.switch %flag : i1, [default: ^join(%x : !ctjs.value), "
+                              "0: ^join(%y : !ctjs.value), 1: ^join(%zero : !ctjs.value)]\n"
+                              "^join(%element: !ctjs.value):\n"
+                              "  %b = ctjs.create_array [%element] {storage_test_id = \"b\"}\n"
+                              "  ctjs.return %b\n",
+                      .arrays = "b:[x] | b:[y] | b:[zero]",
+                      .exit = "b -> {b,x}; b -> {b,y}; b -> {b}"}},
+        {.contents = {.what = "own object reads use the replacement from their switch edge",
+                      .body = values +
+                              "  %o = ctjs.create_object {storage_test_id = \"o\"}\n"
+                              "  ctjs.set_property %o[%key], %x\n"
+                              "  cf.switch %flag : i1, [default: ^join(%y : !ctjs.value), "
+                              "0: ^join(%zero : !ctjs.value), 1: ^join(%one : !ctjs.value)]\n"
+                              "^join(%replacement: !ctjs.value):\n"
+                              "  ctjs.set_property %o[%key], %replacement\n"
+                              "  %read = ctjs.get_property %o[%key]\n  ctjs.return %read\n",
+                      .exit = "y -> {y}; zero -> {}; one -> {}",
+                      .objects = "x:{}; y:{}; o:{child:y} | x:{}; y:{}; o:{child:zero} | "
+                                 "x:{}; y:{}; o:{child:one}",
+                      .propertyReads = "o[child]=y; o[child]=zero; o[child]=one"},
+         .discharged = "x"},
+        {.contents = {.what = "switch object targets retain exact own fields through array aliases",
+                      .body = values +
+                              "  %o = ctjs.create_object {storage_test_id = \"o\"}\n"
+                              "  %b = ctjs.create_object {storage_test_id = \"b\"}\n"
+                              "  ctjs.set_property %o[%key], %x\n"
+                              "  ctjs.set_property %b[%key], %y\n"
+                              "  %c = ctjs.create_array [%o, %b] {storage_test_id = \"c\"}\n"
+                              "  cf.switch %flag : i1, ["
+                              "default: ^join(%zero, %zero : !ctjs.value, !ctjs.value), "
+                              "0: ^join(%one, %zero : !ctjs.value, !ctjs.value), "
+                              "1: ^join(%zero, %y : !ctjs.value, !ctjs.value)]\n"
+                              "^join(%index: !ctjs.value, %replacement: !ctjs.value):\n"
+                              "  %target = ctjs.get_property %c[%index]\n"
+                              "  ctjs.set_property %target[%key], %replacement\n"
+                              "  ctjs.return %c\n",
+                      .arrays = "c:[o,b] | c:[o,b] | c:[o,b]",
+                      .reads = "c[0]=o; c[1]=b; c[0]=o",
+                      .exit = "c -> {b,c,o,y}; c -> {b,c,o,x}; c -> {b,c,o,y}",
+                      .objects = "x:{}; y:{}; o:{child:zero}; b:{child:y} | "
+                                 "x:{}; y:{}; o:{child:x}; b:{child:zero} | "
+                                 "x:{}; y:{}; o:{child:y}; b:{child:y}",
+                      .propertyWrites = "ctjs.set_property[2]:o[child]=x; "
+                                        "ctjs.set_property[2]:b[child]=y; "
+                                        "ctjs.set_property[2]:o[child]=zero; "
+                                        "ctjs.set_property[2]:b[child]=zero; "
+                                        "ctjs.set_property[2]:o[child]=y"}},
+        {.contents = {.what =
+                          "mutually exclusive switch writes cannot hide a mixed-container cycle",
+                      .body = values +
+                              "  %a = ctjs.create_array [] {storage_test_id = \"a\"}\n"
+                              "  %o = ctjs.create_object {storage_test_id = \"o\"}\n" +
+                              split + "  ctjs.append %o to %a\n" + done +
+                              "^zero:\n  ctjs.set_property %o[%key], %a\n" + done + "^one:\n" +
+                              done,
+                      .arrays = "a:[o] | a:[] | a:[]",
+                      .exit = "zero -> {}; zero -> {}; zero -> {}",
+                      .objects = "x:{}; y:{}; o:{} | x:{}; y:{}; o:{child:a} | "
+                                 "x:{}; y:{}; o:{}"},
+         .acyclicWrites = false},
+        {.contents = {.what =
+                          "a transient cycle on a later case survives the final contents overwrite",
+                      .body = array + split + done +
+                              "^zero:\n  ctjs.set_property %a[%zero], %a\n"
+                              "  ctjs.set_property %a[%zero], %zero\n" +
+                              done + "^one:\n" + done,
+                      .arrays = "a:[x] | a:[zero] | a:[x]",
+                      .exit = "zero -> {}; zero -> {}; zero -> {}"},
+         .acyclicWrites = false},
+        {.contents = {.what = "switch case operands cannot discard an unused external alternative",
+                      .body = array +
+                              "  cf.switch %flag : i1, [default: ^join(%a : !ctjs.value), "
+                              "0: ^join(%x : !ctjs.value), 1: ^join(%p : !ctjs.value)]\n"
+                              "^join(%unused: !ctjs.value):\n" +
+                              done,
+                      .failure = ArrayContentsFailure::UnknownValue}},
+        {.contents = {.what = "the last switch path cannot borrow an earlier path's appended slot",
+                      .body = array + split +
+                              "  ctjs.append %y to %a\n  cf.br ^join\n"
+                              "^zero:\n  ctjs.append %y to %a\n  cf.br ^join\n"
+                              "^one:\n  cf.br ^join\n^join:\n"
+                              "  %read = ctjs.get_property %a[%one]\n  ctjs.return %read\n",
+                      .failure = ArrayContentsFailure::MissingElement}},
+        {.contents = {.what = "the last switch path cannot borrow an earlier path's own property",
+                      .body = values + "  %o = ctjs.create_object\n" + split +
+                              "  ctjs.set_property %o[%key], %x\n  cf.br ^join\n"
+                              "^zero:\n  ctjs.set_property %o[%key], %y\n  cf.br ^join\n"
+                              "^one:\n  cf.br ^join\n^join:\n"
+                              "  %read = ctjs.get_property %o[%key]\n  ctjs.return %read\n",
+                      .failure = ArrayContentsFailure::MissingProperty}},
+        {.contents = {.what = "exhaustive case values cannot hide publication on the default edge",
+                      .body = array + split + "  ctjs.store_global \"held\", %a\n" + done +
+                              "^zero:\n" + done + "^one:\n" + done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what = "late publication on the last switch case discards earlier exits",
+                      .body = array + split + done + "^zero:\n" + done +
+                              "^one:\n  ctjs.store_global \"held\", %a\n" + done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what = "a constant selector cannot conceal an unsupported case",
+                      .body = array +
+                              "  %constant = ctjs.truthy %zero\n"
+                              "  cf.switch %constant : i1, [default: ^fallback, 1: ^one]\n"
+                              "^fallback:\n" +
+                              done + "^one:\n  ctjs.store_global \"held\", %a\n" + done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what = "a switch back edge refuses repeated allocation-site instances",
+                      .body = array + split + done + "^zero:\n" + done + "^one:\n  cf.br ^one\n",
+                      .failure = ArrayContentsFailure::UnsupportedControlFlow}},
+        {.contents = {.what = "unknown selector producers do not borrow the switch whitelist",
+                      .body = array +
+                              "  %opaque = \"test.selector\"() : () -> i32\n"
+                              "  cf.switch %opaque : i32, [default: ^join]\n^join:\n" +
+                              done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what =
+                          "all switch edges preserve the active frame and an exact forwarded flag",
+                      .body = "  %frame = ctjs.frame_enter 4\n" + array +
+                              "  cf.switch %flag : i1, ["
+                              "default: ^join(%frame, %a, %flag : !ctjs.context, !ctjs.value, i1), "
+                              "0: ^join(%frame, %x, %flag : !ctjs.context, !ctjs.value, i1), "
+                              "1: ^join(%frame, %y, %flag : !ctjs.context, !ctjs.value, i1)]\n"
+                              "^join(%active: !ctjs.context, %root: !ctjs.value, %test: i1):\n"
+                              "  ctjs.root %root in %active\n"
+                              "  cf.switch %test : i1, [default: ^exit]\n^exit:\n"
+                              "  ctjs.frame_exit %active\n" +
+                              done,
+                      .arrays = "a:[x] | a:[x] | a:[x]",
+                      .exit = "zero -> {}; zero -> {}; zero -> {}"},
+         .discharged = "x"},
+        {.contents = {.what = "a missing frame exit on the last switch path refuses every root",
+                      .body = "  %frame = ctjs.frame_enter 4\n" + array + split +
+                              "  ctjs.frame_exit %frame\n" + done +
+                              "^zero:\n  ctjs.frame_exit %frame\n" + done + "^one:\n" + done,
+                      .failure = ArrayContentsFailure::InvalidFrame}},
+        {.contents = {.what = "an external rooted value on the last switch path remains unknown",
+                      .body = "  %frame = ctjs.frame_enter 4\n" + array + split +
+                              "  ctjs.frame_exit %frame\n" + done +
+                              "^zero:\n  ctjs.frame_exit %frame\n" + done +
+                              "^one:\n  ctjs.root %p in %frame\n  ctjs.frame_exit %frame\n" + done,
+                      .failure = ArrayContentsFailure::UnknownValue}},
+    };
+    std::size_t budgets = 0;
+    const auto check = [&](mlir::ModuleOp module, const switch_row & expected) {
+        checkArrayContents(module, expected.contents);
+        budgets += checkArrayRetention(
+            module, {.what = expected.contents.what,
+                     .body = expected.contents.body,
+                     .discharged = expected.discharged,
+                     .complete = expected.contents.failure == ArrayContentsFailure::None &&
+                                 expected.acyclicWrites});
+    };
+    for (const auto & expected : rows) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(
+            std::string{kPrologue} + expected.contents.body + "}\n", &context);
+        if (module) {
+            check(*module, expected);
+        } else {
+            fail(
+                row{.what = expected.contents.what, .body = expected.contents.body, .expected = ""},
+                "the switch fixture did not parse");
+        }
+    }
+
+    // Change only the last case's successor operands, retaining forged markers
+    // while its target, value and use sites invalidate earlier complete proofs.
+    switch_row mutation = rows[1];
+    mutation.contents.what = "live switch edges invalidate and restore complete retention";
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + mutation.contents.body + "}\n", &context);
+    if (module) {
+        ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+        mlir::cf::SwitchOp branch;
+        ctjs::SetPropertyOp changed;
+        ctjs::CreateArrayOp container;
+        module->walk([&](mlir::cf::SwitchOp op) { branch = op; });
+        module->walk([&](ctjs::SetPropertyOp op) { changed = op; });
+        module->walk([&](ctjs::CreateArrayOp op) { container = op; });
+        const mlir::Value original = branch.getCaseOperands(1).front();
+        const mlir::Value child = container.getElements().front();
+        mlir::OpBuilder builder(changed);
+        function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+        function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
+        child.getDefiningOp()->setAttr("ctnative.confined", builder.getUnitAttr());
+        check(*module, mutation);
+        branch.getCaseOperandsMutable(1).assign(mlir::ValueRange{child});
+        mutation.contents.arrays = "a:[y] | a:[zero] | a:[x]";
+        mutation.contents.exit = "a -> {a,y}; a -> {a}; a -> {a,x}";
+        mutation.discharged = "";
+        check(*module, mutation);
+        branch.getCaseOperandsMutable(1).assign(
+            mlir::ValueRange{function.getBody().front().getArgument(3)});
+        mutation.contents.failure = ArrayContentsFailure::UnknownValue;
+        check(*module, mutation);
+        branch.getCaseOperandsMutable(1).assign(mlir::ValueRange{original});
+        auto publication =
+            ctjs::StoreGlobalOp::create(builder, function.getLoc(), "held", container.getResult());
+        mutation.contents.failure = ArrayContentsFailure::UnsupportedOperation;
+        check(*module, mutation);
+        publication.erase();
+        mutation = rows[1];
+        check(*module, mutation);
+
+        // These temporarily malformed edge layouts are checked directly,
+        // without feeding invalid IR to the legacy sparse solver. Every
+        // incomplete prefix still discards all records, and restoring the
+        // valid operation restores the complete query and its refinement.
+        const auto malformed = [&](ArrayContentsFailure failure) {
+            const row r{.what = "malformed switch edges cannot publish partial proof",
+                        .body = mutation.contents.body,
+                        .expected = ""};
+            const auto empty = [](const ArrayContentsEvidence & result) {
+                return result.arrays.empty() && result.objects.empty() && result.writes.empty() &&
+                       result.reads.empty() && result.propertyWrites.empty() &&
+                       result.propertyReads.empty() && result.exits.empty();
+            };
+            const auto result = computeArrayContents(function);
+            if (result.complete || result.failure != failure || !result.refusedBy ||
+                !empty(result)) {
+                fail(r, "malformed edge was accepted or kept partial contents");
+            }
+            for (std::size_t limit = 0; limit < result.work; ++limit) {
+                const auto partial = computeArrayContents(function, limit);
+                if (partial.complete || partial.failure != ArrayContentsFailure::WorkLimit ||
+                    partial.work != limit || !empty(partial)) {
+                    fail(r, "malformed edge's incomplete budget retained evidence");
+                    break;
+                }
+            }
+            const auto exact = computeArrayContents(function, result.work);
+            if (exact.complete || exact.failure != result.failure || exact.work != result.work ||
+                !empty(exact)) {
+                fail(r, "malformed edge's exact budget changed the refusal");
+            }
+        };
+        const mlir::Value defaultValue = branch.getDefaultOperands().front();
+        branch.getDefaultOperandsMutable().assign(mlir::ValueRange{});
+        malformed(ArrayContentsFailure::UnsupportedControlFlow);
+        branch.getDefaultOperandsMutable().assign(mlir::ValueRange{defaultValue});
+        branch.getCaseOperandsMutable(1).assign(mlir::ValueRange{});
+        malformed(ArrayContentsFailure::UnsupportedControlFlow);
+        branch.getCaseOperandsMutable(1).assign(mlir::ValueRange{original});
+        mlir::Block * oldTarget = branch.getCaseDestinations()[1];
+        auto * emptyBlock = new mlir::Block;
+        function.getBody().push_back(emptyBlock);
+        branch->setSuccessor(emptyBlock, 2);
+        malformed(ArrayContentsFailure::UnsupportedControlFlow);
+        branch->setSuccessor(oldTarget, 2);
+        emptyBlock->erase();
+        const mlir::Value flag = branch.getFlag();
+        const auto unknown =
+            function.getBody().front().addArgument(builder.getI1Type(), function.getLoc());
+        branch.getFlagMutable().set(unknown);
+        malformed(ArrayContentsFailure::UnknownValue);
+        branch.getFlagMutable().set(flag);
+        function.getBody().front().eraseArgument(unknown.getArgNumber());
+        check(*module, mutation);
+    } else {
+        fail(row{.what = mutation.contents.what, .body = mutation.contents.body, .expected = ""},
+             "the live switch fixture did not parse");
+    }
+
+    // Three edges at each of ten joins create 3^10 paths from a small CFG.
+    // Snapshot charges include both array slots and object properties.
+    std::string expanding = array + "  %o = ctjs.create_object {storage_test_id = \"o\"}\n"
+                                    "  ctjs.set_property %o[%key], %a\n  cf.br ^b0\n";
+    for (unsigned i = 0; i < 10; ++i) {
+        const std::string next = "^b" + std::to_string(i + 1);
+        expanding += "^b" + std::to_string(i) + ":\n  cf.switch %flag : i1, [default: " + next +
+                     ", 0: " + next + ", 1: " + next + "]\n";
+    }
+    expanding += "^b10:\n" + done;
+    auto explosion = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + expanding + "}\n", &context);
+    if (explosion) {
+        ctjs::FuncOp function = *explosion->getOps<ctjs::FuncOp>().begin();
+        mlir::DataFlowSolver solver;
+        solver.load<mlir::dataflow::DeadCodeAnalysis>();
+        solver.load<mlir::dataflow::SparseConstantPropagation>();
+        solver.load<EscapeAnalysis>();
+        const row r{.what = "switch path explosion is budgeted", .body = expanding, .expected = ""};
+        if (failed(solver.initializeAndRun(*explosion))) {
+            fail(r, "the switch path-budget fixture's solver did not converge");
+            return;
+        }
+        const EscapeVerdicts original = computeVerdicts(solver, function, 0);
+        for (std::size_t limit : {0U, 1U, 32U, 128U, 1024U}) {
+            const auto result = computeArrayContents(function, limit);
+            const EscapeVerdicts refined = computeVerdicts(solver, function, limit);
+            if (result.complete || result.failure != ArrayContentsFailure::WorkLimit ||
+                result.work != limit || !result.arrays.empty() || !result.reads.empty() ||
+                !result.writes.empty() || !result.objects.empty() ||
+                !result.propertyReads.empty() || !result.propertyWrites.empty() ||
+                !result.exits.empty() || refined.arrayRetentionComplete ||
+                refined.confinedStoredSites != 0 || refined.arrayRetentionWork != limit ||
+                !llvm::all_of(original.sites, [&](const auto & entry) {
+                    auto found = refined.sites.find(entry.first);
+                    return found != refined.sites.end() &&
+                           found->second.reason == entry.second.reason &&
+                           found->second.by == entry.second.by &&
+                           found->second.position == entry.second.position;
+                })) {
+                fail(r, "bounded switch enumeration published partial evidence");
+            }
+        }
+    } else {
+        fail(row{.what = "switch path explosion is budgeted", .body = expanding, .expected = ""},
+             "the switch path-budget fixture did not parse");
+    }
+    std::printf("container switches: %zu rows, six live states, four malformed controls, "
+                "%zu retention budget cutoffs, five path-explosion cutoffs\n",
+                rows.size(), budgets);
+}
+
 } // namespace
 
 int main() {
@@ -1659,6 +2045,7 @@ int main() {
     checkObjectContents(context);
     checkArrayFrames(context);
     checkArrayConditionals(context);
+    checkContainerSwitches(context);
 
     if (failures != 0) {
         std::printf("\n%d check(s) failed\n", failures);
