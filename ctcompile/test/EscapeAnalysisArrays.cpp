@@ -2591,6 +2591,219 @@ void checkSelectorProducers(mlir::MLIRContext & context) {
                 rows.size() + comparisons.size() + conversions.size(), liveStates, budgets);
 }
 
+void checkLogicalNegation(mlir::MLIRContext & context) {
+    const std::string values =
+        "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
+        "  %x = ctjs.create_object {storage_test_id = \"x\"}\n"
+        "  %a = ctjs.create_array [%x] {storage_test_id = \"a\"}\n";
+    const std::string negate = "  %negated = ctjs.unary not %p {storage_test_id = \"negated\"}\n";
+    const std::string done = "  ctjs.return %zero\n";
+    const std::string overwrite = "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n";
+    const std::string branch =
+        "  %flag = ctjs.truthy %negated\n  cf.cond_br %flag, ^yes, ^no\n^yes:\n";
+    struct negation_row {
+        contents_row contents;
+        const char * discharged = "x";
+    };
+    const std::vector<negation_row> rows = {
+        {.contents = {.what = "negation releases a stored child only after both overwrites",
+                      .body = values + negate + branch + overwrite + "^no:\n" + overwrite,
+                      .arrays = "a:[zero] | a:[zero]",
+                      .exit = "a -> {a}; a -> {a}"}},
+        {.contents = {.what = "negating a local object returns a primitive without its origin",
+                      .body = values + "  %negated = ctjs.unary not %x "
+                                       "{storage_test_id = \"negated\"}\n"
+                                       "  ctjs.return %negated\n",
+                      .arrays = "a:[x]",
+                      .exit = "negated -> {}"}},
+        {.contents = {.what = "negating an opaque entry returns an independent Boolean",
+                      .body = values + negate + "  ctjs.return %negated\n",
+                      .arrays = "a:[x]",
+                      .exit = "negated -> {}"}},
+        {.contents = {.what = "a stored negation carries no operand heap origin",
+                      .body = values + negate +
+                              "  ctjs.set_property %a[%zero], %negated\n  ctjs.return %a\n",
+                      .arrays = "a:[negated]",
+                      .exit = "a -> {a}"}},
+        {.contents = {.what = "a forwarded negation may root while its opaque input only forwards",
+                      .body = "  %frame = ctjs.frame_enter 8\n" + values + negate +
+                              "  cf.br ^next(%p, %negated : !ctjs.value, !ctjs.value)\n"
+                              "^next(%opaque: !ctjs.value, %test: !ctjs.value):\n"
+                              "  ctjs.root %test in %frame\n  ctjs.frame_exit %frame\n"
+                              "  ctjs.return %test\n",
+                      .arrays = "a:[x]",
+                      .exit = "negated -> {}"}},
+        {.contents = {.what = "negating a local or opaque join does not merge their origins",
+                      .body = values + "  %flag = ctjs.truthy %p\n"
+                                       "  cf.cond_br %flag, ^join(%x : !ctjs.value), "
+                                       "^join(%p : !ctjs.value)\n"
+                                       "^join(%selected: !ctjs.value):\n"
+                                       "  %negated = ctjs.unary not %selected "
+                                       "{storage_test_id = \"negated\"}\n"
+                                       "  ctjs.return %negated\n",
+                      .arrays = "a:[x] | a:[x]",
+                      .exit = "negated -> {}; negated -> {}"}},
+        {.contents = {.what = "negation does not erase a saved child's retention identity",
+                      .body = values + "  %saved = ctjs.get_property %a[%zero]\n"
+                                       "  %negated = ctjs.unary not %saved\n"
+                                       "  ctjs.set_property %a[%zero], %negated\n"
+                                       "  ctjs.return %saved\n",
+                      .arrays = "a:[ctjs.unary]",
+                      .reads = "a[0]=x",
+                      .exit = "x -> {x}"},
+         .discharged = ""},
+        {.contents = {.what = "negating zero cannot prune an unsupported untaken arm",
+                      .body = values + "  %negated = ctjs.unary not %zero\n" + branch + done +
+                              "^no:\n  ctjs.store_global \"held\", %a\n" + done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what = "a negation Boolean is not an exact array index",
+                      .body = values + negate + "  %read = ctjs.get_property %a[%negated]\n" + done,
+                      .failure = ArrayContentsFailure::UnknownIndex}},
+        {.contents = {.what = "a negation Boolean is not an own String key",
+                      .body = values + negate + "  ctjs.set_property %x[%negated], %zero\n" + done,
+                      .failure = ArrayContentsFailure::UnknownPropertyKey}},
+        {.contents = {.what = "a negation Boolean is not a copy endpoint",
+                      .body = values + negate + "  ctjs.copy_props %negated into %x\n" + done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what = "negation does not authorize returning its opaque operand",
+                      .body = values + negate + "  ctjs.return %p\n",
+                      .failure = ArrayContentsFailure::UnknownValue}},
+        {.contents = {.what = "negation does not authorize storing its opaque operand",
+                      .body = values + negate + "  ctjs.append %p to %a\n" + done,
+                      .failure = ArrayContentsFailure::UnknownValue}},
+        {.contents = {.what = "negation does not authorize rooting its opaque operand",
+                      .body = "  %frame = ctjs.frame_enter 8\n" + values + negate +
+                              "  ctjs.root %p in %frame\n  ctjs.frame_exit %frame\n" + done,
+                      .failure = ArrayContentsFailure::UnknownValue}},
+        {.contents = {.what = "negation cannot conceal an unsupported operand producer",
+                      .body = values +
+                              "  %bad = \"test.value\"() : () -> !ctjs.value\n"
+                              "  %negated = ctjs.unary not %bad\n" +
+                              done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what = "a negation result does not authorize unknown effects",
+                      .body = values + negate +
+                              "  \"test.effect\"(%negated) : (!ctjs.value) -> ()\n" + done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what = "a negation Boolean cannot become a container",
+                      .body =
+                          values + negate + "  %read = ctjs.get_property %negated[%zero]\n" + done,
+                      .failure = ArrayContentsFailure::UnknownArray}},
+    };
+    std::size_t budgets = 0;
+    const auto check = [&](mlir::ModuleOp module, const negation_row & expected) {
+        checkArrayContents(module, expected.contents);
+        const bool complete = expected.contents.failure == ArrayContentsFailure::None;
+        budgets += checkArrayRetention(module, {.what = expected.contents.what,
+                                                .body = expected.contents.body,
+                                                .discharged = complete ? expected.discharged : "",
+                                                .complete = complete});
+    };
+    const auto parse = [&](const negation_row & expected) {
+        return mlir::parseSourceString<mlir::ModuleOp>(
+            std::string{kPrologue} + expected.contents.body + "}\n", &context);
+    };
+    const auto parseAndCheck = [&](const negation_row & expected) {
+        if (auto module = parse(expected)) {
+            check(*module, expected);
+        } else {
+            fail(
+                row{.what = expected.contents.what, .body = expected.contents.body, .expected = ""},
+                "the logical negation fixture did not parse");
+        }
+    };
+    for (const auto & expected : rows) { parseAndCheck(expected); }
+    // Even total typeof/void need their own result proof; the three arithmetic
+    // kinds can coerce. No unary kind borrows the Boolean result contract.
+    const std::vector<std::string> refusedKinds = {"neg", "plus", "bitnot", "typeof", "void"};
+    for (const auto & kind : refusedKinds) {
+        parseAndCheck({.contents = {.what = "every other unary kind still refuses",
+                                    .body = values + "  %bad = ctjs.unary " + kind + " %p\n" + done,
+                                    .failure = ArrayContentsFailure::UnsupportedOperation}});
+    }
+
+    negation_row wide = rows.front();
+    std::string extras;
+    for (unsigned i = 0; i < 32; ++i) {
+        extras += "  %extra_" + std::to_string(i) + " = ctjs.unary not %p\n";
+    }
+    wide.contents.body.insert(wide.contents.body.find("  %flag ="), extras);
+    auto narrowModule = parse(rows.front());
+    auto wideModule = parse(wide);
+    if (narrowModule && wideModule) {
+        const auto narrow = computeArrayContents(*narrowModule->getOps<ctjs::FuncOp>().begin());
+        const auto expanded = computeArrayContents(*wideModule->getOps<ctjs::FuncOp>().begin());
+        if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 64) {
+            fail(row{.what = "negation snapshots charge every primitive origin",
+                     .body = wide.contents.body,
+                     .expected = ""},
+                 "32 extra negations did not cost one producer and one snapshot visit each");
+        }
+        check(*wideModule, wide);
+    } else {
+        fail(row{.what = "wide negation snapshot", .body = wide.contents.body, .expected = ""},
+             "the logical negation snapshot fixture did not parse");
+    }
+
+    negation_row mutation = rows.front();
+    mutation.contents.what = "live negation edits defeat stale forged completion markers";
+    unsigned liveStates = 0;
+    if (auto module = parse(mutation)) {
+        ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+        ctjs::UnaryOp unary;
+        ctjs::CreateObjectOp child;
+        module->walk([&](ctjs::UnaryOp op) { unary = op; });
+        module->walk([&](ctjs::CreateObjectOp op) { child = op; });
+        mlir::OpBuilder builder(unary);
+        function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+        function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
+        child->setAttr("ctnative.confined", builder.getUnitAttr());
+        const auto inspect = [&](ArrayContentsFailure failure) {
+            mutation.contents.failure = failure;
+            check(*module, mutation);
+            ++liveStates;
+        };
+        inspect(ArrayContentsFailure::None);
+        unary.setKindAttr(ctjs::UnaryKindAttr::get(&context, ctjs::UnaryKind::Neg));
+        inspect(ArrayContentsFailure::UnsupportedOperation);
+        unary.setKindAttr(ctjs::UnaryKindAttr::get(&context, ctjs::UnaryKind::Not));
+        inspect(ArrayContentsFailure::None);
+        unary->setOperand(0, child.getResult());
+        inspect(ArrayContentsFailure::None);
+        mlir::Block & last = function.getBody().back();
+        auto store = llvm::cast<ctjs::SetPropertyOp>(&last.front());
+        const mlir::Value replacement = store.getValue();
+        store->setOperand(2, child.getResult());
+        mutation.contents.arrays = "a:[zero] | a:[x]";
+        mutation.contents.exit = "a -> {a}; a -> {a,x}";
+        mutation.discharged = "";
+        inspect(ArrayContentsFailure::None);
+        store->setOperand(2, function.getBody().front().getArgument(3));
+        inspect(ArrayContentsFailure::UnknownValue);
+        store->setOperand(2, replacement);
+        mutation.contents.arrays = rows.front().contents.arrays;
+        mutation.contents.exit = rows.front().contents.exit;
+        mutation.discharged = "x";
+        inspect(ArrayContentsFailure::None);
+        builder.setInsertionPoint(last.getTerminator());
+        auto published = ctjs::StoreGlobalOp::create(builder, function.getLoc(), "held",
+                                                     function.getBody().front().getArgument(3));
+        inspect(ArrayContentsFailure::UnsupportedOperation);
+        published.erase();
+        inspect(ArrayContentsFailure::None);
+        unary.setKindAttr(ctjs::UnaryKindAttr::get(&context, ctjs::UnaryKind::TypeOf));
+        inspect(ArrayContentsFailure::UnsupportedOperation);
+        unary.setKindAttr(ctjs::UnaryKindAttr::get(&context, ctjs::UnaryKind::Not));
+        inspect(ArrayContentsFailure::None);
+    } else {
+        fail(row{.what = mutation.contents.what, .body = mutation.contents.body, .expected = ""},
+             "the live logical negation fixture did not parse");
+    }
+    std::printf("logical negation: %zu rows, %u live states, one wide snapshot, "
+                "%zu retention budget cutoffs\n",
+                rows.size() + refusedKinds.size(), liveStates, budgets);
+}
+
 void checkArrayFrames(mlir::MLIRContext & context) {
     const std::string enter = "  %frame = ctjs.frame_enter 4\n";
     const std::string array =
@@ -3513,6 +3726,7 @@ int main() {
     checkObjectCopies(context);
     checkOpaqueEntryTransport(context);
     checkSelectorProducers(context);
+    checkLogicalNegation(context);
     checkArrayFrames(context);
     checkArrayConditionals(context);
     checkContainerSwitches(context);

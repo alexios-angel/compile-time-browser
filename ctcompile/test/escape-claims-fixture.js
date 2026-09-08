@@ -235,6 +235,24 @@ H.push(objectFrameSwitchReleased(0));
 H.push(objectFrameSwitchReleased(1));
 H.push(objectFrameSwitchReleased("0"));
 
+// --- NONCAPTURING LOGICAL NEGATION ----------------------------------------
+// A stored negation is a Boolean, not the original opaque input or an alias
+// of either container. Both arms release the child before returning their
+// distinct identities. Nonempty String "0" distinguishes ! from == false.
+function objectFrameNegatedReleased(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var negated = !choice;
+    var selected = negated ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target, negated: negated };
+}
+H.push(objectFrameNegatedReleased(0));
+H.push(objectFrameNegatedReleased(1));
+H.push(objectFrameNegatedReleased(""));
+H.push(objectFrameNegatedReleased("0"));
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());

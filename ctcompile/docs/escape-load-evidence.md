@@ -806,3 +806,63 @@ not claim a completed full-suite gate.
 The next bounded proof remains outside coercing comparisons: logical negation
 and other total selector producers need their own effect, primitive-result,
 refusal and budget evidence.
+
+## Noncapturing logical negation
+
+This resumes the next boundary recorded after **`643501db`** and in the
+**`1c7985a5`** handoff. The complete contents query admits only `ctjs.unary not`
+from the unary family. `Operators.td`, the `logical_not` opcode contract and
+`ctbrowser/lib/Script/vm/{run_loop,coerce}.cpp` agree: the operation inspects
+truthiness and negates it, yielding an independent Boolean without allocating,
+throwing, retaining the input or invoking `valueOf`/`toString`. The query records
+no truth value, input alias or branch liveness. Every other unary kind still
+refuses, including `typeof` and `void`, whose result proofs remain separate.
+
+The Boolean may be stored, returned or forwarded and rooted in a matched local
+frame. Its input remains opaque when it began as an entry value. Keys, contents,
+returns, roots and copy endpoints still require their independent existing
+proofs. Unsupported producers and effects refuse even when negation consumes
+their results. Both structural conditional arms remain checked, including an
+unsupported arm after a literal zero's negation. Budget exhaustion discards all
+contents evidence and leaves every original escape verdict unchanged.
+
+The devbox unit family passes **22 rows**, **eleven live mutation states**
+under forged completion/confinement markers, and a wide snapshot with 32 extra
+negation origins. Their measured additional cost is **64 work units**, one
+producer and one copied origin per extra result. Every row and live state
+sweeps every incomplete contents/retention budget and the exact endpoint.
+The arithmetic unary kinds, `typeof` and `void` each have refusal controls.
+Saved child identity, primitive return/storage, opaque/local joins, invalid
+Boolean keys, forbidden opaque uses and a later retained arm are covered.
+All **946 incomplete retention budget cutoffs** pass.
+
+One separate executed-source witness negates `0`, `1`, empty String and
+nonempty String `"0"`. It deletes the original and copied child field before
+returning both distinct containers, the selected alias and the Boolean result.
+Its source-coordinate checker observes **four sites, sixteen instances and
+twelve retained instances**, with the old child confined on all four calls.
+The historical copy-path family remains **21 sites, 39 instances, 23 retained**;
+the preceding source-switch family remains **four sites, ten instances, three
+retained**. All earlier family expectations pass unchanged.
+
+All **eight escape CTests pass in 8.23 seconds**, and all four execution oracles
+report **zero soundness violations**. Expanded-fixture precision measures
+**37/49**, with zero partial or pending claims, versus the preceding **36/48**.
+The separate negation witness contributes one additional proved-confined site
+and one observed-confined site. This is additional coverage, not a precision
+gain on the historical fixture. Bootstrap/p5/Phaser precision remains
+**0/64, 0/16, 0/20**, including p5's existing single partial observation.
+Focused log: `/tmp/ctcompile-nullable-payloads-focused.log`. These measurements
+cover the escape CTests; the full generated build and combined suite gate
+remain pending.
+
+Local Node syntax and execution pass **fifteen fixture calls**, sixteen explicit
+identity assertions and two extra object-selector probes whose coercion
+counters remain zero. Eight new negation mutations discriminate removed or
+duplicated negation, coercing equality, forced alias selection, retained child
+fields and copied-container aliasing. The eight historical copy-path and six
+source-switch mutations also continue to discriminate. Evidence:
+`/tmp/ctcompile-escape-negation-node.js` and its `.py` generator. Homebrew
+clang-format **22.1.8** passes all **745 files**; whitespace checks pass.
+No runtime behavior or native ownership admission changes. Other total unary
+producers, loops and native lifetime consumers remain separate work.

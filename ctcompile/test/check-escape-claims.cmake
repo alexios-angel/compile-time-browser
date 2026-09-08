@@ -198,6 +198,7 @@ if(STRICT)
   set(_object_copy_rows "")
   set(_object_copy_path_rows "")
   set(_object_switch_selector_rows "")
+  set(_object_negation_rows "")
   foreach(_line IN LISTS _recording_lines)
     if(_line MATCHES "^program ([0-9a-f]+) ")
       set(_program_hash "${CMAKE_MATCH_1}")
@@ -277,6 +278,16 @@ if(STRICT)
         message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
       endif()
       list(APPEND _object_switch_selector_rows "${_row} ${CMAKE_MATCH_1}")
+    elseif(_function_name STREQUAL "objectFrameNegatedReleased" AND _line MATCHES "^site ")
+      if(NOT _line MATCHES "^site ([0-9]+) kind obj made ([0-9]+) confined ([0-9]+) escaped ([0-9]+) unresolved ([0-9]+) unchecked ([0-9]+) routes ([^ ]+)$")
+        message(FATAL_ERROR "${_function_name}: unexpected logical negation observation: ${_line}")
+      endif()
+      set(_pc "${CMAKE_MATCH_1}")
+      set(_row "${_function_name} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3} ${CMAKE_MATCH_4} ${CMAKE_MATCH_5} ${CMAKE_MATCH_6} ${CMAKE_MATCH_7}")
+      if(NOT _claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_pc} obj ([^\n]+)")
+        message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
+      endif()
+      list(APPEND _object_negation_rows "${_row} ${CMAKE_MATCH_1}")
     endif()
   endforeach()
   set(_expected_publication_rows
@@ -431,6 +442,21 @@ if(STRICT)
     message(FATAL_ERROR "imported source switch selector evidence mismatch:\nexpected: ${_expected_object_switch_selector_rows}\nobserved: ${_object_switch_selector_rows}")
   endif()
   message(STATUS "imported source switch selectors: four sites, ten instances, three retained; live claims agree")
+
+  # Every negation input executes, including empty and nonempty Strings. The
+  # returned graph preserves both container identities and the chosen alias,
+  # while its original child is absent from every structural path.
+  set(_expected_object_negation_rows
+      "objectFrameNegatedReleased 4 4 0 0 0 - confined"
+      "objectFrameNegatedReleased 4 0 4 0 0 temporaries:4 escapes:stored"
+      "objectFrameNegatedReleased 4 0 4 0 0 temporaries:4 escapes:stored"
+      "objectFrameNegatedReleased 4 0 4 0 0 temporaries:4 escapes:returned")
+  list(SORT _object_negation_rows)
+  list(SORT _expected_object_negation_rows)
+  if(NOT _object_negation_rows STREQUAL _expected_object_negation_rows)
+    message(FATAL_ERROR "imported logical negation evidence mismatch:\nexpected: ${_expected_object_negation_rows}\nobserved: ${_object_negation_rows}")
+  endif()
+  message(STATUS "imported logical negation: four sites, sixteen instances, twelve retained; live claims agree")
 endif()
 if(NOT _pyrc EQUAL 0)
   message(FATAL_ERROR "${NAME}: the checker exited ${_pyrc}")

@@ -434,7 +434,7 @@ struct ArrayContentsEvidence {
 /// nor alias lattices. An acyclic cf.br/cf.cond_br/cf.switch graph may contain
 /// constants, fresh objects/arrays, literal append, constant-Number-index array
 /// reads/overwrites, own String-property object writes/reads/deletes/copies,
-/// strict equality, ToBoolean, truthy and return.
+/// strict equality, ToBoolean, logical negation, truthy and return.
 /// Object reads require an earlier own write; keys longer than 256 bytes and
 /// __proto__ refuse. Named/computed object deletions erase only the current own
 /// property; absent deletion is a no-op, absent reads still refuse. All earlier
@@ -450,10 +450,10 @@ struct ArrayContentsEvidence {
 /// holes, calls, throws, publication, regions, prototypes and accessors refuse.
 /// Every conditional/switch edge is explored, including default and statically
 /// untaken cases. Switch flags must have an independently known origin. Strict
-/// equality and ToBoolean produce independent, noncapturing primitive Booleans;
-/// they infer no operand value, alias or branch liveness. Every other comparison
-/// and conversion kind refuses, including those that may coerce objects. Joins
-/// keep exact separate states rather than unioning overwrite targets. Truthy
+/// equality, ToBoolean and logical negation produce independent, noncapturing
+/// primitive Booleans; they infer no operand value, alias or branch liveness.
+/// Every other comparison, conversion and unary kind refuses. Joins keep exact
+/// separate states rather than unioning overwrite targets. Truthy
 /// accepts an external value only as a noncapturing predicate, never an element.
 /// Exact entry !ctjs.value identities may travel through unused register arguments
 /// and these noncapturing tests separately from known origins. They never authorize

@@ -1002,6 +1002,18 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 state.origins[convert.getResult()] = convert.getResult();
                 continue;
             }
+            if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(&op)) {
+                // Logical not applies total ToBoolean and flips the result
+                // (Operators.td, VM logical_not/coerce.cpp). It neither calls
+                // user code nor captures its input, including an opaque entry.
+                // Keep an independent primitive origin; do not infer its value,
+                // lend an origin to the operand or prune either structural arm.
+                if (unary.getKind() != ctjs::UnaryKind::Not) {
+                    return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
+                }
+                state.origins[unary.getResult()] = unary.getResult();
+                continue;
+            }
             if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(&op)) {
                 if (objectSites.insert(&op).second) { out.objects.push_back(&op); }
                 state.objects.try_emplace(&op);
