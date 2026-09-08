@@ -1390,7 +1390,7 @@ primary backend, sources are in `lib/`, build on the devbox.
   `ctcompile_inventories` asserts it.
   **The finding that justifies the whole design:** `uint32_t op_kind` is a
   `ctbrowser::script::op` **bytecode opcode**, not a CTJS enum ordinal —
-  `aot_bridge.cpp` does `static_cast<op>(op_kind)`. Passing the CTJS ordinal
+  `aot_bridge/operators.cpp` does `static_cast<op>(op_kind)`. Passing the CTJS ordinal
   would compile `**` into whatever `op(5)` is. A backend must spell it by name.
 * **Phase 10 — started: one conversion pattern, matching on the INTERFACE.**
   `ctjs-opt --ctjs-lower-to-runtime` turns CTJS operations into `func.call`s on
@@ -1621,7 +1621,7 @@ interpreter is 1.4%. Phases 7–12A are the rest and are not started.
    unblock every captured variable). Leave `ct_aot_construct` (~90 lines),
    `ct_aot_instance_of` (~56) and `ct_aot_set_index` (~36) until last.
    PREVIOUSLY: **Phases 4, 5 and 6** / **Phases 1–6**, the runtime preparation. Phase 2's gate is MET as of
-   2026-08-22 — `ctbrowser/lib/Script/aot_bridge.cpp` has four helper bodies and
+   2026-08-22 — `ctbrowser/lib/Script/aot_bridge/` has four helper bodies and
    `unittests/unit/aot_basics` calls a hand-authored compiled function from
    interpreted JavaScript. Doing it falsified `ct_aot_catch_land`, which cannot
    be implemented as written; the row says so now. The throwing tier and Phases
@@ -1922,7 +1922,7 @@ In the frame, not a C++ array: the call is a safepoint that runs user JavaScript
 before reading them. The GC test now exercises exactly that.
 
 **ONLY 32 OF THE 69 ABI ROWS HAVE IMPLEMENTATIONS.** `aot.hpp` declares all of
-them; `aot_bridge.cpp` defines 32. A call to one of the other 37 **compiles
+them; `lib/Script/aot_bridge/` defines 32. A call to one of the other 37 **compiles
 perfectly and fails at link** — and that shipped: `ct_aot_global_get` and
 `ct_aot_negate` were emitted for two commits with a green suite, because every
 EmitC lit test uses `-fsyntax-only`. `runtime_defines()` in `CTJSToEmitC.cpp` is
@@ -1957,7 +1957,7 @@ say "DELEGATES TO" a `context` method that already exists.
 
 **Next**: `ct_aot_set_index` and the other 36 unimplemented rows are the
 critical path now — the backend can lower more than the runtime can execute.
-Either implement rows in `aot_bridge.cpp`, or widen into what is already
+Either implement rows in `lib/Script/aot_bridge/`, or widen into what is already
 implemented: `ct_aot_new_object`, `ct_aot_new_array` and `ct_aot_truthy` are
 there, `ct_aot_append` and `ct_aot_construct` are not, so object and array
 literals are half-reachable.

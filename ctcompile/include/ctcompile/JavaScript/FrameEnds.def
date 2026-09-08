@@ -76,15 +76,13 @@ CT_FRAME_END(
     /* note */ "a rejected await nothing caught; the async function's own promise rejects")
 CT_FRAME_END(/* name */ aot_leave,
              /* where */
-             "aot_bridge.cpp aot_bridge::leave: cx.frames_.resize(held.frame_index) "
-             "(aot_bridge.cpp:1069)",
+             "aot_bridge/frames.cpp aot_bridge::leave: cx.frames_.resize(held.frame_index)",
              /* hooked */ 0,
              /* note */
              "legacy exits, failed exits and foreign-frame cleanup lack a valid result handoff; "
              "their compiled allocations remain UNCHECKED")
 CT_FRAME_END(/* name */ aot_return,
-             /* where */ "aot_bridge.cpp ct_aot_leave_return: aot_bridge::leave "
-                         "(aot_bridge.cpp:1561)",
+             /* where */ "aot_bridge/frames.cpp ct_aot_leave_return: aot_bridge::leave",
              /* hooked */ 1,
              /* note */
              "a normal compiled return passes the constructor-normalized result; the frame "

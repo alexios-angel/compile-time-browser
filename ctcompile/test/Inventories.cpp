@@ -233,7 +233,7 @@ int main() {
     }
 
     // AND THE ONE THE SIGNATURE CANNOT SHOW. `uint32_t op_kind` is a
-    // ctbrowser::script::op - aot_bridge.cpp does static_cast<op>(op_kind) and
+    // ctbrowser::script::op - aot_bridge/operators.cpp does static_cast<op>(op_kind) and
     // dispatches the interpreter's own switch on it - so a lowering that passed
     // a CTJS enum ordinal would compile one operator into another. Pinning the
     // classification is what makes that a build failure rather than an answer

@@ -19,7 +19,7 @@
 //   perfectly well and corrupts the frame stack on one of the two.
 //
 // AND THE OPCODE IS AN ENUMERATOR, NEVER A NUMBER. `uint32_t op_kind` is a
-// ctbrowser::script::op that aot_bridge.cpp casts straight back, and Phases 13
+// ctbrowser::script::op that aot_bridge/operators.cpp casts straight back, and Phases 13
 // and 14 renumber that enum deliberately. Emitted as a number this call keeps
 // compiling and starts meaning a different operator; emitted as a name, the
 // renumbering is a build error in the generated translation unit.

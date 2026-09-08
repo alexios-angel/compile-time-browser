@@ -179,7 +179,7 @@ ctjs.func @wrong_family(%receiver: !ctjs.value, %new_target: !ctjs.value,
 //
 // A BIGINT LITERAL IS NOT REFUSED ANY MORE EITHER, and its stale reason is
 // worth recording beside the string's: "ct_aot_new_bigint_literal is one of the
-// rows aot.hpp declares and aot_bridge.cpp does not define, so a call would
+// rows aot.hpp declares and lib/Script/aot_bridge/ does not define, so a call would
 // compile and fail at link." That was true when written. The helper has a body
 // now, delegating to context::interned_bigint_literal - which the ABI row had
 // asked for by name and which nothing had extracted.

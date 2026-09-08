@@ -762,7 +762,7 @@ drift — the move `make_closure`, `construct_new`, `iterable_values`,
 `has_property`, `instance_of`, `delete_index` and `own_keys` have all already
 made.
 
-**2 — `ctbrowser/lib/Script/aot_bridge.cpp`: the static plus the `extern "C"`
+**2 — `ctbrowser/lib/Script/aot_bridge/calls.cpp`: the static plus the `extern "C"`
 wrapper.** `aot_bridge::wrap_promise` is `cx.wrap_in_promise(...).bits()` and
 **returns the value plainly with no status test** — raise tier, following
 `ct_aot_cell_new`'s body exactly. No new ABI row: the row was written in Phase

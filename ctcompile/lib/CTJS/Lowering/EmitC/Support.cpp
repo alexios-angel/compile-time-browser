@@ -19,7 +19,7 @@ ec::PointerType pointer_to(mlir::MLIRContext * context, llvm::StringRef spelling
 // AN OPCODE'S C++ ENUMERATOR NAME, from the same file the enum is generated
 // from.
 //
-// `uint32_t op_kind` in the ABI is a ctbrowser::script::op and aot_bridge.cpp
+// `uint32_t op_kind` in the ABI is a ctbrowser::script::op and aot_bridge/operators.cpp
 // casts it back, so the emitted call must name the OPERATOR. Spelling it as a
 // number would survive the renumbering Phases 13 and 14 do deliberately and
 // silently mean something else; spelling it as an enumerator makes that a build

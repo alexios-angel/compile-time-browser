@@ -107,7 +107,7 @@ enum class return_role {
 // `op_kind` IS A ctbrowser::script::op, NOT A CTJS ENUM ORDINAL.
 //
 // This is the sharpest thing about the table and it is invisible from the
-// signature: aot_bridge.cpp does `static_cast<op>(op_kind)` and dispatches the
+// signature: aot_bridge/operators.cpp does `static_cast<op>(op_kind)` and dispatches the
 // interpreter's own switch on it. So lowering `ctjs.binary pow` by passing the
 // CTJS BinaryKind ordinal - 5 - would call the runtime with `op(5)`, whatever
 // that happens to be, and compile `**` into a different operator entirely. It

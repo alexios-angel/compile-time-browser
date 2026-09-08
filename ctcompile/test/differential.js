@@ -28,7 +28,7 @@ function ge(a, b) { return a >= b; }
 // STRICT AND LOOSE EQUALITY REACH DIFFERENT HELPERS with different effect
 // profiles - one cannot throw at all, the other converts.
 // Two functions rather than one returning both: an array literal needs
-// ctjs.append, whose helper is one of the rows aot_bridge.cpp does not define.
+// ctjs.append, whose helper is one of the rows lib/Script/aot_bridge/ does not define.
 function strict(a, b) { return a === b; }
 function loose(a, b) { return a == b; }
 

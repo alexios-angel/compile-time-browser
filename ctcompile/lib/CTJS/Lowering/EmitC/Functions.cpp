@@ -150,7 +150,7 @@ bool lowering::lower(FuncOp function, mlir::OpBuilder & build, mlir::MLIRContext
     // the runtime's own header defines rather than from a number written
     // ALIGNED, because `unsigned char[N]` is aligned to 1 and ct_aot_enter
     // constructs an aot_frame_storage in it - a struct with a pointer and
-    // three indices. aot_bridge.cpp asserts its size against
+    // three indices. aot_bridge/internal.hpp asserts its size against
     // CT_AOT_FRAME_BYTES but nothing asserted the ALIGNMENT, and an
     // under-aligned placement is undefined behaviour that happens to work
     // on x86-64 and need not elsewhere.

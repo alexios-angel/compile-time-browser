@@ -373,7 +373,7 @@ already has the number: `context::call`, the module-evaluation path and
 `context::run` in `call.cpp`, and `op::call`'s and `op::construct`'s compiled
 arms in `run_loop.cpp`. `context::run` passes 0 with `argc` 0.
 
-**4 — `ctbrowser/lib/Script/aot_bridge.cpp`: `aot_bridge::enter` consumes them.**
+**4 — `ctbrowser/lib/Script/aot_bridge/frames.cpp`: `aot_bridge::enter` consumes them.**
 `aot_frame_storage` gains `argv_base`; `entered.argc = static_cast<std::uint16_t>(cx.pending_argc_)`;
 both pending fields cleared AFTER `frames_.push_back(entered)`, in the same
 place and for the same stated reason as `pending_new_target_` and
@@ -393,7 +393,7 @@ place and for the same stated reason as `pending_new_target_` and
 * Neither carries a `CT_AOT_COVERS`; neither covers an opcode. `helper_count` is
   derived from the table, so 69 becomes 71 with no other edit.
 
-**6 — `ctbrowser/lib/Script/aot_bridge.cpp`: four statics and four `extern "C"`
+**6 — `ctbrowser/lib/Script/aot_bridge/frames.cpp`: four statics and four `extern "C"`
 wrappers.** `args` and `argc` are one line each. `make_arguments` and
 `gather_rest` delegate to the Step 1 members against
 `cx.frames_[held.frame_index]` and **return the value plainly, with no status
@@ -634,7 +634,7 @@ the subsequent call accepts without a cast, are both plausible and unchecked.
 
 **The working tree moved underneath this reading, twice.** `git status` was clean
 at the start; partway through it carried `own_keys` and `delete_prop` landing
-across `run_loop.cpp`, `vm.hpp`, `aot_bridge.cpp`, `objects.cpp`, `CTJSOps.td`,
+across `run_loop.cpp`, `vm.hpp`, `aot_bridge/`, `objects.cpp`, `CTJSOps.td`,
 `BytecodeImport.cpp`, `CTJSToEmitC.cpp`, `Differential.cpp`, `differential.js`,
 `ImporterCoverage.cpp` and `test/CMakeLists.txt`, and by the end it carried a
 different set with `aot_helpers.def` in it — `load_bigint`, which is the third
