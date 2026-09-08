@@ -12,7 +12,9 @@
 // `arguments`, `suspended`, `unknown_op` and the `unvisited*` gaps are outside
 // the native subset and become a compile-time diagnostic naming the site and
 // the reason. So the reason is load-bearing, not a roadmap, and the analysis
-// keeps the FIRST one it finds.
+// keeps the FIRST one it finds. A separate, complete local-array proof may
+// discharge a Stored verdict when no return path can retain the site. It
+// never relabels a stored child as uniquely returned or chooses a graph owner.
 //
 // TWO LATTICES, ONE POST-PASS, and the split is the design's central fact:
 //
@@ -261,6 +263,17 @@ struct EscapeVerdicts {
     /// R4 `suspended` or R1's guard `arguments_late`: every site escapes with
     /// this reason.
     std::optional<EscapeReason> wholeFunction;
+    /// A separate complete local-array proof discharged these Stored sites.
+    /// Its all-write graph must be acyclic, every operation must be supported,
+    /// and none of these sites may be reachable through the returned value.
+    /// This does not discharge native type, identity or lifetime obligations.
+    unsigned confinedStoredSites = 0;
+    /// Complete contents, acyclicity, return reachability and the full verdict
+    /// refinement finished. False leaves every original verdict untouched.
+    bool arrayRetentionComplete = false;
+    /// Contents-query work plus array/write graph and verdict visits. A zero
+    /// limit disables the refinement and preserves the original sink verdicts.
+    std::size_t arrayRetentionWork = 0;
 };
 
 /// Diagnostic candidates after closing direct writes and property reads over
@@ -369,10 +382,10 @@ struct ArrayContentsEvidence {
 /// contents state; cycles are visited once at exits. Unknown values/indices,
 /// holes, calls, throws, publication, regions, prototypes and accessors refuse.
 ///
-/// This proves only the stated own contents and local exit reachability. It
-/// changes no legacy escape verdict, does not prove native element types or
-/// ownership/lifetime, and has no native-admission consumer. Any IR mutation
-/// invalidates all returned records, including successful ones.
+/// This query changes no escape verdict itself. computeVerdicts independently
+/// recomputes it before its bounded Stored refinement; neither query proves
+/// native element types or ownership/lifetime. Any IR mutation invalidates all
+/// returned records, including successful ones.
 [[nodiscard]] ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function,
                                                          std::size_t workLimit = 100000);
 
@@ -384,7 +397,15 @@ struct ArrayContentsEvidence {
 /// is inferred. Allocations inside nested regions have no verdict and must
 /// never be treated as confined by a consumer. Frame-retaining operations
 /// inside those regions still trigger the whole-function refusals.
-[[nodiscard]] EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp function);
+///
+/// With initialized solver evidence, a complete current computeArrayContents
+/// proof may discharge Stored sites absent from every return path. A bounded
+/// acyclicity check over ALL writes excludes even transient cycles. Retained
+/// children keep their original Stored witness; no unique owner is inferred.
+/// Unsupported operations, cycles, missing lattices or budget exhaustion leave
+/// every original verdict intact. No native admission consumes this refinement.
+[[nodiscard]] EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp function,
+                                             std::size_t arrayRetentionWorkLimit = 100000);
 
 } // namespace ctcompile::ctnative
 

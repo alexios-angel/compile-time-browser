@@ -298,6 +298,89 @@ mlir::Value storageTargetValue(const Verdict & verdict) {
     return {};
 }
 
+void refineArrayRetention(EscapeVerdicts & verdicts, ctjs::FuncOp function, std::size_t workLimit) {
+    if (workLimit == 0 || verdicts.unvisitedSites != 0 || verdicts.unvisitedOperands != 0 ||
+        verdicts.wholeFunction || !verdicts.directStorage.complete ||
+        !verdicts.directLoads.complete || !llvm::any_of(verdicts.sites, [](const auto & entry) {
+            return entry.second.reason == EscapeReason::Stored;
+        })) {
+        return;
+    }
+
+    // Candidate alias closure cannot discharge a sink. The independent query
+    // must prove every operation in the CURRENT function, including effects
+    // after the last read and the exact origin of a saved, later-returned read.
+    const ArrayContentsEvidence contents = computeArrayContents(function, workLimit);
+    verdicts.arrayRetentionWork = contents.work;
+    if (!contents.complete) { return; }
+    const auto spend = [&]() {
+        if (verdicts.arrayRetentionWork == workLimit) { return false; }
+        ++verdicts.arrayRetentionWork;
+        return true;
+    };
+
+    // This increment discharges no cycle ownership obligation. Reject cycles
+    // in the union of ALL writes, not just final contents: even a cycle that
+    // was overwritten before return stays outside this refinement. Count
+    // duplicate edges independently so Kahn's traversal handles shared children
+    // and repeated writes without treating either as a cycle.
+    llvm::DenseMap<mlir::Operation *, std::size_t> incoming;
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *, 2>> successors;
+    for (const auto & entry : contents.arrays) {
+        if (!spend()) { return; }
+        incoming.try_emplace(entry.first, 0);
+    }
+    for (const ArrayElementWrite & write : contents.writes) {
+        if (!spend()) { return; }
+        mlir::Operation * child = write.value.getDefiningOp();
+        auto found = incoming.find(child);
+        if (found == incoming.end()) { continue; } // constant or property-free object
+        successors[write.array].push_back(child);
+        ++found->second;
+    }
+    llvm::SmallVector<mlir::Operation *, 8> pending;
+    for (const auto & entry : contents.arrays) {
+        if (!spend()) { return; }
+        if (incoming.lookup(entry.first) == 0) { pending.push_back(entry.first); }
+    }
+    std::size_t visited = 0;
+    while (!pending.empty()) {
+        if (!spend()) { return; }
+        mlir::Operation * array = pending.pop_back_val();
+        ++visited;
+        auto found = successors.find(array);
+        if (found == successors.end()) { continue; }
+        for (mlir::Operation * child : found->second) {
+            if (!spend()) { return; }
+            if (--incoming[child] == 0) { pending.push_back(child); }
+        }
+    }
+    if (visited != contents.arrays.size()) { return; }
+
+    llvm::SmallPtrSet<mlir::Operation *, 8> retained;
+    for (const ArrayContentsExit & exit : contents.exits) {
+        for (mlir::Operation * site : exit.reachableSites) {
+            if (!spend()) { return; }
+            retained.insert(site);
+        }
+    }
+    llvm::SmallVector<mlir::Operation *, 8> confined;
+    for (const auto & [site, verdict] : verdicts.sites) {
+        if (!spend()) { return; }
+        if (verdict.reason == EscapeReason::Stored && retained.count(site) == 0) {
+            confined.push_back(site);
+        }
+    }
+    // Transactional commit: not even the first candidate changes before the
+    // final graph/verdict visit. Reachable children keep their Stored witnesses,
+    // because returning a container does not give each child a unique owner.
+    for (mlir::Operation * site : confined) {
+        verdicts.sites[site] = Verdict{};
+        ++verdicts.confinedStoredSites;
+    }
+    verdicts.arrayRetentionComplete = true;
+}
+
 } // namespace
 
 AliasValue directStorageTarget(const mlir::DataFlowSolver & solver, const Verdict & verdict) {
@@ -307,7 +390,8 @@ AliasValue directStorageTarget(const mlir::DataFlowSolver & solver, const Verdic
     return lattice != nullptr ? lattice->getValue() : AliasValue{};
 }
 
-EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp function) {
+EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp function,
+                               std::size_t arrayRetentionWorkLimit) {
     EscapeVerdicts out;
 
     const auto blockIsLive = [&](mlir::Block & block) {
@@ -500,6 +584,7 @@ EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp funct
             out.directLoads.reads.push_back(std::move(read));
         }
     }
+    refineArrayRetention(out, function, arrayRetentionWorkLimit);
     return out;
 }
 

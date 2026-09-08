@@ -268,7 +268,9 @@ void check(mlir::MLIRContext & context, const row & r) {
         return;
     }
 
-    const EscapeVerdicts verdicts = computeVerdicts(solver, function);
+    // These rows pin the ODS sink/carry table independently of the complete
+    // array refinement, which has its own retention and refusal controls.
+    const EscapeVerdicts verdicts = computeVerdicts(solver, function, 0);
 
     std::string got;
     if (r.alias || r.aliasOperand) {
@@ -575,7 +577,7 @@ void checkArrayContents(mlir::ModuleOp module, const contents_row & expected) {
         fail(r, "the contents fixture's legacy solver did not converge");
         return;
     }
-    const EscapeVerdicts before = computeVerdicts(solver, function);
+    const EscapeVerdicts before = computeVerdicts(solver, function, 0);
     const ArrayContentsEvidence contents = computeArrayContents(function);
     const bool complete = expected.failure == ArrayContentsFailure::None;
     if (contents.complete != complete || contents.failure != expected.failure) {
@@ -655,11 +657,23 @@ void checkArrayContents(mlir::ModuleOp module, const contents_row & expected) {
         exact.work != contents.work) {
         fail(r, "the exact contents completion/refusal budget changed its result");
     }
-    const EscapeVerdicts after = computeVerdicts(solver, function);
+    const EscapeVerdicts after = computeVerdicts(solver, function, 0);
     for (const auto & [site, verdict] : before.sites) {
         if (verdictString(before, site) != verdictString(after, site) ||
             after.sites.find(site)->second.by != verdict.by) {
             fail(r, "the contents prerequisite changed a legacy escape verdict");
+        }
+    }
+    if (!complete) {
+        const EscapeVerdicts refused = computeVerdicts(solver, function);
+        if (refused.arrayRetentionComplete || refused.confinedStoredSites != 0) {
+            fail(r, "unsupported contents authorized a Stored refinement");
+        }
+        for (const auto & [site, verdict] : before.sites) {
+            if (verdictString(before, site) != verdictString(refused, site) ||
+                refused.sites.find(site)->second.by != verdict.by) {
+                fail(r, "unsupported contents changed an original escape verdict");
+            }
         }
     }
     module.walk([&](ctjs::GetPropertyOp read) {
@@ -923,6 +937,259 @@ void checkArrayContents(mlir::MLIRContext & context) {
     }
     std::printf("array contents: %zu rows, %zu key controls, seven live states\n", rows.size(),
                 keys.size());
+}
+
+struct retention_row {
+    const char * what;
+    std::string body;
+    const char * discharged = "";
+    bool complete = true;
+    bool withAnalysis = true;
+};
+
+std::size_t checkArrayRetention(mlir::ModuleOp module, const retention_row & expected) {
+    const row r{.what = expected.what, .body = expected.body, .expected = expected.discharged};
+    ctjs::FuncOp function = *module.getOps<ctjs::FuncOp>().begin();
+    mlir::DataFlowSolver solver;
+    solver.load<mlir::dataflow::DeadCodeAnalysis>();
+    solver.load<mlir::dataflow::SparseConstantPropagation>();
+    if (expected.withAnalysis) { solver.load<EscapeAnalysis>(); }
+    if (failed(solver.initializeAndRun(module))) {
+        fail(r, "the retention fixture's solver did not converge");
+        return 0;
+    }
+    const auto ir = [&]() {
+        std::string text;
+        llvm::raw_string_ostream stream(text);
+        module->print(stream);
+        return text;
+    };
+    const std::string beforeIR = ir();
+    const EscapeVerdicts original = computeVerdicts(solver, function, 0);
+    const EscapeVerdicts refined = computeVerdicts(solver, function);
+    if (refined.arrayRetentionComplete != expected.complete) {
+        fail(r, "the retention completion marker differs");
+    }
+    const auto sameVerdicts = [&](const EscapeVerdicts & actual, const EscapeVerdicts & wanted) {
+        if (actual.sites.size() != wanted.sites.size()) { return false; }
+        for (const auto & [site, verdict] : wanted.sites) {
+            auto found = actual.sites.find(site);
+            if (found == actual.sites.end() || found->second.reason != verdict.reason ||
+                found->second.by != verdict.by || found->second.position != verdict.position) {
+                return false;
+            }
+        }
+        return true;
+    };
+    std::vector<std::string> discharged;
+    for (const auto & [site, verdict] : original.sites) {
+        auto found = refined.sites.find(site);
+        if (found == refined.sites.end()) {
+            fail(r, "the retention consumer lost an original site");
+            continue;
+        }
+        const Verdict & after = found->second;
+        if (after.reason == verdict.reason) {
+            if (after.by != verdict.by || after.position != verdict.position) {
+                fail(r, "an unchanged retained site lost its original witness");
+            }
+        } else if (verdict.reason != EscapeReason::Stored ||
+                   after.reason != EscapeReason::Confined || after.by != nullptr ||
+                   after.position != 0 || !refined.arrayRetentionComplete) {
+            fail(r, "the consumer changed a verdict outside the complete Stored refinement");
+        } else {
+            discharged.push_back(contentsLabel(site));
+        }
+    }
+    const std::string actual = llvm::join(discharged, ",");
+    if (actual != expected.discharged || discharged.size() != refined.confinedStoredSites) {
+        fail(r,
+             "expected discharged sites " + std::string{expected.discharged} + ", got " + actual);
+    }
+    if (refined.directStorage.writes.size() != original.directStorage.writes.size() ||
+        refined.directLoads.reads.size() != original.directLoads.reads.size() ||
+        refined.directStorage.complete != original.directStorage.complete ||
+        refined.directLoads.complete != original.directLoads.complete ||
+        refined.unvisitedSites != original.unvisitedSites ||
+        refined.unvisitedOperands != original.unvisitedOperands) {
+        fail(r, "the independent retention consumer changed legacy census or gap evidence");
+    }
+
+    // Each cutoff is a failed transaction, including the interval after the
+    // independent contents proof finished but before graph/verdict completion.
+    for (std::size_t budget = 0; budget < refined.arrayRetentionWork; ++budget) {
+        const EscapeVerdicts partial = computeVerdicts(solver, function, budget);
+        if (partial.arrayRetentionComplete || partial.confinedStoredSites != 0 ||
+            partial.arrayRetentionWork != budget || !sameVerdicts(partial, original)) {
+            fail(r, "an incomplete retention budget changed an original verdict or work count");
+            break;
+        }
+    }
+    const EscapeVerdicts exact = computeVerdicts(solver, function, refined.arrayRetentionWork);
+    if (exact.arrayRetentionComplete != refined.arrayRetentionComplete ||
+        exact.arrayRetentionWork != refined.arrayRetentionWork ||
+        exact.confinedStoredSites != refined.confinedStoredSites || !sameVerdicts(exact, refined)) {
+        fail(r, "the exact retention completion/refusal budget changed its result");
+    }
+    module.walk([&](ctjs::GetPropertyOp read) {
+        const AliasLattice * lattice = solver.lookupState<AliasLattice>(read.getResult());
+        if (lattice != nullptr && !lattice->getValue().isUninitialized() &&
+            lattice->getValue() != AliasValue::external()) {
+            fail(r, "retention refinement changed a legacy load result lattice");
+        }
+    });
+    if (ir() != beforeIR) { fail(r, "retention refinement changed the source IR"); }
+    return refined.arrayRetentionWork;
+}
+
+void checkArrayRetention(mlir::MLIRContext & context) {
+    const std::string values = "  %zero = ctjs.constant #ctjs.number<0>\n"
+                               "  %one = ctjs.constant #ctjs.number<4607182418800017408>\n"
+                               "  %x = ctjs.create_object {storage_test_id = \"x\"}\n"
+                               "  %y = ctjs.create_object {storage_test_id = \"y\"}\n";
+    const std::string array = values + "  %a = ctjs.create_array [%x] {storage_test_id = \"a\"}\n";
+    const std::string read = "  %read = ctjs.get_property %a[%zero]\n";
+    const std::string done = "  ctjs.return %zero\n";
+    const std::vector<retention_row> rows = {
+        {.what = "retention discharges a local array's unreturned object element",
+         .body = array + done,
+         .discharged = "x"},
+        {.what = "retention discharges every private append and repeated initializer",
+         .body = array + "  ctjs.append %x to %a\n  ctjs.append %y to %a\n" + done,
+         .discharged = "x,y"},
+        {.what = "retention discharges a nested acyclic local array graph",
+         .body = array + "  %b = ctjs.create_array [%a] {storage_test_id = \"b\"}\n" + done,
+         .discharged = "x,a"},
+        {.what = "repeated edges and shared children are not cycles",
+         .body = array +
+                 "  %b = ctjs.create_array [%a, %a] {storage_test_id = \"b\"}\n"
+                 "  %c = ctjs.create_array [%a] {storage_test_id = \"c\"}\n" +
+                 done,
+         .discharged = "x,a"},
+        {.what = "a returned array retains every child with its original Stored witness",
+         .body = array + "  ctjs.append %y to %a\n  ctjs.return %a\n"},
+        {.what = "a returned array does not retain an overwritten child",
+         .body = array + "  ctjs.set_property %a[%zero], %y\n  ctjs.return %a\n",
+         .discharged = "x"},
+        {.what = "a saved returned read retains the old child after replacement",
+         .body = array + read + "  ctjs.set_property %a[%zero], %y\n  ctjs.return %read\n",
+         .discharged = "y"},
+        {.what = "a loaded array alias updates the returned container's retention graph",
+         .body = values + "  %a = ctjs.create_array [] {storage_test_id = \"a\"}\n"
+                          "  %b = ctjs.create_array [%a] {storage_test_id = \"b\"}\n"
+                          "  %alias = ctjs.get_property %b[%zero]\n"
+                          "  ctjs.append %x to %alias\n"
+                          "  ctjs.return %b\n"},
+        {.what = "a loaded child stored in a returned second array remains retained",
+         .body = array + read +
+                 "  %b = ctjs.create_array [%read] {storage_test_id = \"b\"}\n"
+                 "  ctjs.set_property %a[%zero], %y\n"
+                 "  ctjs.return %b\n",
+         .discharged = "y"},
+        {.what = "a saved returned array read retains its own current descendants",
+         .body = array + "  %b = ctjs.create_array [%a] {storage_test_id = \"b\"}\n"
+                         "  %saved = ctjs.get_property %b[%zero]\n"
+                         "  ctjs.set_property %b[%zero], %y\n"
+                         "  ctjs.return %saved\n",
+         .discharged = "y"},
+        {.what = "a direct child return is not hidden by its earlier storage",
+         .body = array + "  ctjs.return %x\n"},
+        {.what = "a primitive loaded return cannot retain the overwritten object",
+         .body = array + "  ctjs.set_property %a[%zero], %zero\n" + read + "  ctjs.return %read\n",
+         .discharged = "x"},
+        {.what = "an unreturned self cycle does not select a shared graph owner",
+         .body = array + "  ctjs.append %a to %a\n" + done,
+         .complete = false},
+        {.what = "an unreturned mutual cycle stays outside the refinement",
+         .body = array +
+                 "  %b = ctjs.create_array [%a] {storage_test_id = \"b\"}\n"
+                 "  ctjs.append %b to %a\n" +
+                 done,
+         .complete = false},
+        {.what = "a transient cycle stays refused after its last edge is overwritten",
+         .body = array +
+                 "  ctjs.set_property %a[%zero], %a\n"
+                 "  ctjs.set_property %a[%zero], %y\n" +
+                 done,
+         .complete = false},
+        {.what = "a disconnected cycle leaves even an acyclic candidate untouched",
+         .body = array +
+                 "  %b = ctjs.create_array [] {storage_test_id = \"b\"}\n"
+                 "  ctjs.append %b to %b\n" +
+                 done,
+         .complete = false},
+        {.what = "an unknown return does not borrow complete local contents",
+         .body = array + "  ctjs.return %p\n",
+         .complete = false},
+        {.what = "missing solver lattices keep their unvisited refusal",
+         .body = array + done,
+         .complete = false,
+         .withAnalysis = false},
+    };
+    std::size_t budgets = 0;
+    for (const retention_row & r : rows) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(
+            std::string{kPrologue} + r.body + "}\n", &context);
+        if (!module) {
+            fail(row{.what = r.what, .body = r.body, .expected = r.discharged},
+                 "the retention fixture did not parse");
+            continue;
+        }
+        budgets += checkArrayRetention(*module, r);
+    }
+
+    retention_row mutation{
+        .what = "retention follows current returns, writes, keys and late exposures",
+        .body = array + read + "  ctjs.set_property %a[%zero], %y\n  ctjs.return %a\n",
+        .discharged = "x"};
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + mutation.body + "}\n", &context);
+    if (module) {
+        ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp store;
+        ctjs::GetPropertyOp load;
+        module->walk([&](ctjs::SetPropertyOp op) { store = op; });
+        module->walk([&](ctjs::GetPropertyOp op) { load = op; });
+        mlir::Operation * exit = function.getBody().front().getTerminator();
+        const mlir::Value base = load.getObject();
+        const mlir::Value key = load.getKey();
+        const mlir::Value replacement = store.getValue();
+        const mlir::Value first =
+            llvm::cast<ctjs::CreateArrayOp>(base.getDefiningOp()).getElements()[0];
+        const mlir::Value parameter = function.getBody().front().getArgument(3);
+        budgets += checkArrayRetention(*module, mutation);
+        exit->setOperand(0, load.getResult());
+        mutation.discharged = "y";
+        budgets += checkArrayRetention(*module, mutation);
+        store->setOperand(2, first);
+        mutation.discharged = "";
+        budgets += checkArrayRetention(*module, mutation);
+        store->setOperand(2, replacement);
+        load->setOperand(1, parameter);
+        mutation.complete = false;
+        budgets += checkArrayRetention(*module, mutation);
+        load->setOperand(1, key);
+        load->setOperand(0, parameter);
+        budgets += checkArrayRetention(*module, mutation);
+        load->setOperand(0, base);
+        exit->setOperand(0, base);
+        mlir::OpBuilder builder(exit);
+        auto publication = ctjs::StoreGlobalOp::create(builder, function.getLoc(), "held", base);
+        base.getDefiningOp()->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+        base.getDefiningOp()->setAttr("ctnative.confined", builder.getUnitAttr());
+        budgets += checkArrayRetention(*module, mutation);
+        publication.erase();
+        // Forged markers remain present. Only restoring the complete current
+        // operation/contents graph permits the same refinement again.
+        mutation.complete = true;
+        mutation.discharged = "x";
+        budgets += checkArrayRetention(*module, mutation);
+    } else {
+        fail(row{.what = mutation.what, .body = mutation.body, .expected = mutation.discharged},
+             "the live retention mutation fixture did not parse");
+    }
+    std::printf("array retention: %zu rows, seven live states, %zu budget cutoffs\n", rows.size(),
+                budgets);
 }
 
 } // namespace
@@ -2463,6 +2730,7 @@ int main() {
     for (const row & r : rows) { check(context, r); }
     checkReadEvidenceMutation(context);
     checkArrayContents(context);
+    checkArrayRetention(context);
 
     // allocationPc: the importer's NameLoc inside its FusedLoc, and nothing
     // else.

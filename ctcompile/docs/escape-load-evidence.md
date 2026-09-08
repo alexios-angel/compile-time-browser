@@ -25,8 +25,8 @@ The marker does not establish complete contents or points-to information.
 Loads still produce the original external alias lattice, so this direct census
 does not connect a second read through a loaded container to its writes. Prototype access,
 accessors, calls, `copy_props` and other indirect transfers require additional
-proofs. No native admission consumes this evidence and every escape verdict,
-including `Stored`, remains unchanged. Consumers must recompute it after IR
+proofs. No native admission consumes these candidates, and they alone change no
+escape verdict, including `Stored`. Consumers must recompute them after IR
 changes; the records are not persisted as trusted attributes.
 
 Focused unit controls cover initializer/append links, different keys and later
@@ -199,8 +199,50 @@ passes **475/475 CTests in 693.86 seconds**, including all four oracles; log:
 `/tmp/ctcompile-map-presence-full.log`. These measurements do not claim a corpus
 precision increase.
 
-No native admission consumes this query. Complete contents for control flow,
-external values and other containers remain unfinished. Any future escape
-consumer must account for every exposure and indirect retention route before
-changing a `Stored` verdict. Native automatic storage also requires the plan's
-separate type, identity, cycle ownership and frame-lifetime obligations.
+## Bounded retention consumer
+
+`computeVerdicts` now independently recomputes the complete local-array query
+before discharging a `Stored` verdict. Every operation must belong to the
+supported subset above, and the exact allocation must be absent from the
+returned value's complete reachability graph. A private array containing a
+local object can therefore leave that object `Confined`; returning the array
+keeps the child `Stored`. Returning a saved read also keeps the original child
+`Stored`, even after its old slot was overwritten. Loaded array aliases and
+loaded values stored into a second returned container retain their identities.
+
+The consumer requires an acyclic graph over **all writes**, including writes
+subsequently overwritten. Self cycles, mutual cycles and transient cycles
+preserve every original verdict. The graph may share children and contain
+repeated edges. A returned child keeps its original `Stored` witness; it is
+never relabeled as uniquely `Returned`. This increment chooses no graph owner.
+
+Missing solver lattices, whole-frame refusals, incomplete census evidence or
+any unsupported contents operation prevent refinement. A separate 100,000-step
+default limit includes the contents query, all-write graph construction,
+acyclicity traversal, returned-site collection and the complete verdict scan.
+No verdict changes until all work finishes. A zero limit preserves the original
+sink-table verdicts. `arrayRetentionComplete`, `arrayRetentionWork` and
+`confinedStoredSites` report whether the query completed, its work and the number
+of discharged sites; incomplete work never publishes a partial refinement.
+No stored annotations authorize this proof, and every IR change requires a
+new solver and query.
+
+The unit suite adds eighteen retention rows and seven live mutation states,
+checking every budget below actual completion/refusal and the exact budget.
+Controls cover indirect returns, overwritten values, nested/shared children,
+late publication, external keys/bases, forged markers and missing lattices.
+All existing unsupported contents rows also assert that the default consumer
+preserves original verdicts. The 209 sink-table rows explicitly disable the
+refinement so they continue to check ODS classifications independently. The
+devbox gate passes all eighteen rows, seven mutation states and **454 budget
+cutoffs**, alongside the 31 contents rows and 209 sink-table rows. All four
+existing execution oracles report zero violations. The combined Map/escape
+gate passes **7/7 CTests in 22.54 seconds**; log:
+`/tmp/ctcompile-map-keyfacts-units.log`. Corpus precision is unchanged in this
+gate; preceding measurements above describe the prerequisite only.
+
+No native admission consumes these verdicts. Complete contents for control flow,
+external values and other containers remain unfinished. Native automatic storage
+still requires the plan's separate type, identity, cycle ownership and
+frame-lifetime obligations. Corpus precision improvements require measurement;
+these unit cases do not establish a Bootstrap gain.
