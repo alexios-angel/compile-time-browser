@@ -13,7 +13,10 @@
 add_library(ctbrowser-app)
 target_sources(ctbrowser-app
   PRIVATE
-    app.cpp
+    # app.cpp was 1,034 lines; it is two now, with the `host` interface both
+    # need and the includes it had in app/internal.hpp.
+    app/hosts.cpp
+    app/run.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"

@@ -64,7 +64,7 @@ load-bearing: **`docs/tools.md`**.
 
 ## Invariants — the things that are easy to break
 
-- **The engine is SDL-FREE.** `ctbrowser/include/ctbrowser/app/app.hpp` and `ctbrowser/lib/App/app.cpp` are the
+- **The engine is SDL-FREE.** `ctbrowser/include/ctbrowser/app/app.hpp` and `ctbrowser/lib/App/app/` are the
   only places that know SDL exists, and SDL3 is optional at build time.
   `ctbrowser/test/lint/api_surface` lints both halves: an application source must contain
   exactly one engine include - the umbrella header - and no SDL symbol, and the
