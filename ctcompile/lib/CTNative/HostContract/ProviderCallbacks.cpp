@@ -126,9 +126,7 @@ struct callbackReader {
 
     completion region(mlir::Region & region, environment & values, unsigned depth = 0) {
         if (depth > 64 || !prefix.step()) { return {}; }
-        if (region.empty()) {
-            return {completion::Kind::yielded, {}};
-        }
+        if (region.empty()) { return {completion::Kind::yielded, {}}; }
         if (!llvm::hasSingleElement(region)) { return {}; }
         for (mlir::Operation & operation : region.front()) {
             if (!prefix.step()) { return {}; }

@@ -174,9 +174,7 @@ prefixAnalysis::completion prefixAnalysis::function(ctjs::FuncOp function,
 
 prefixAnalysis::completion prefixAnalysis::region(mlir::Region & region, environment & values,
                                                   unsigned depth) {
-    if (region.empty()) {
-        return {completion::Kind::yielded, {}};
-    }
+    if (region.empty()) { return {completion::Kind::yielded, {}}; }
     if (!llvm::hasSingleElement(region)) {
         stop(region.getParentOp(), "unstructured prefix control");
         return {};
