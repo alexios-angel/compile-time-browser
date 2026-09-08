@@ -291,18 +291,30 @@ C++ compilers, identity observations, forgeries, reruns and budgets pass; all
 with only the five recorded browser failures. See
 [the nullable checkpoint](native-owned-global-maps.md#finite-nullable-published-results-2026-09-08).
 
-## Next: nullable Map-key storage
+## Completed: owning nullable String Map keys
 
-The original setter still stores a real null key. Its eighteen-call program now
-has complete host ownership, but remains **0/6** in both modes with **trace=3**
-and `Opt<Variant<Bool, Str>>` keys. A smaller **eleven-call**, **trace=2** witness
-isolates `Opt<Str>` keys; adding a temporary Boolean key gives **thirteen calls**
-and the mixed schema. Both have proved ownership and remain **0/6**. A thirteen-call
-Null/Undefined/empty String identity witness gives **trace=4**, versus **trace=2**
-and **6/6** with a normalized setter. Implement
-owning, tag-aware nullable String keys first, preserving Null/Undefined/empty
-String identity in both storage layouts. Nullable payloads and mixed snapshots
-require separate proofs. The exact source and evidence are in
+Commit `5e63d993` admits the original **eighteen-call** nullable-key program
+at **6/6 native** in both modes with Node/interpreter **trace=3**. The smaller
+**eleven-call** `Opt<Str>` case also admits **6/6**, trace=2; the **thirteen-call**
+String/Null/Undefined/empty String identity witness gives trace=4, versus trace=2
+for its normalized control. Both layouts use owning tag-aware keys, including
+Boolean composition as `std::variant<bool, ctnative::nullable_string>`.
+The per-use key proof remains separate from storage; nullable payloads and
+unsupported snapshots still refuse. Local native/VM/compiler and sanitizer
+tests pass, as do all 118 published positives and fourteen lifetime families;
+final whole-suite results are recorded in [HANDOFF.md](HANDOFF.md).
+
+## Next: nullable Map payload storage
+
+Change the small accepted setter from `state.set(key, true)` to
+`state.set(key, key)`. Its **eleven-call**, **trace=2** program retains complete
+host ownership but stays **0/6 native** in both modes: the payload schema is
+now `Opt<Str>`. Returning `state.get(key)` instead of size yields a **twelve-call**
+variant with the same owner, trace and refusal. Nullable String payload storage,
+followed by Boolean composition and independent nullable read evidence, is the
+next bounded carrier obligation. An ordinary object payload keeps eleven calls
+and trace=2 but has no host ownership proof, separating that larger identity
+boundary. Complete sources and measured controls are in
 [the Map boundary](native-owned-global-maps.md#next-boundary).
 
 The exact Bootstrap getter at vendor line 17 also needs nested/object payloads.

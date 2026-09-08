@@ -6,6 +6,79 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Nullable Map-key and switch-selector checkpoint, 2026-09-08
+
+Saved locally on `ctcompile-v1`: **`5e63d993`**, owning nullable Map keys, and
+**`643501db`**, bounded strict switch selectors in escape analysis. This resumes
+the exact nullable-key boundary in **`178f65e9`** and the **13:07:05 synchronization
+journal**. The tree started clean; the old `codex-wip-20260907` recovery was
+already gated in `5307abf` and its branch is an ancestor. Three agents handled
+published execution tests, independent local tests and escape selectors while
+the root implemented the native/Bootstrap boundary. No browser source or runtime
+semantics changed. No history was rewritten or push performed.
+
+Nullable String keys reuse owning `nullable_string`; Boolean composition uses
+`std::variant<bool, ctnative::nullable_string>`. Both storage layouts compare
+tags before bytes. Null, Undefined, empty String and tag-looking text remain
+distinct. Key-only spelling and admission preserve separate payload/snapshot
+refusals. A normalized operation can extract a proved String without narrowing
+a second use of its original nullable argument. Numeric-only helper emission
+is checked independently of other String functions in a module.
+
+The **eleven-call** homogeneous and **eighteen-call** original witnesses advance
+**0/6 -> 6/6 native** in both modes, with Node/interpreter **trace=2/3**. The
+**thirteen-call** String/Null/Undefined/empty String identity case admits **6/6**
+with **trace=4**, versus **trace=2** for normalization. Boolean composition and
+the **nineteen-call** second-use case also admit **6/6**. All source calls remain.
+All **118 positive programs** and **fourteen lifetime families** pass explicit/
+deduced GCC/Clang, identity and sanitizer checks. The new saved setter owns its
+keys through caller-buffer mutation, deletion/reinsertion, independent reentry
+and final Map release. Fifteen nullable identity observers and **46 identity
+mutations** include 25 new mutations; nine new structural mutations discriminate.
+
+The first published driver stopped after all positives on a new forged-output
+comparison: only input filenames in provenance comments differed. The correction
+normalizes those known filenames and preserves coordinates, comments and code.
+Focused fresh/stale key/read/write forgeries, both new refusal families and
+budgets **17225/29477/20285/12808** pass, with **29/31/31/32** cutoffs and no natural
+speculative rollback interval. Four host/owner CTests pass in **26.38 seconds**;
+seven targeted lit cases pass in **29.72 seconds**. The local gate passes **59
+observations and 28 refusals** under both layouts, plus the isolated numeric
+payload test. Formatter **22.1.8** passes all **745 files**. The warning-free
+**247-step generated build succeeds**; the complete CTest gate is still running.
+Final full-suite and corpus counts will replace this checkpoint when complete.
+
+Escape contents admit only noncapturing `StrictEq` and `ToBoolean` producers.
+Every structural edge remains checked; coercing comparisons/conversions and
+unknown roots, contents, returns, keys and copy endpoints still refuse. Eight
+escape CTests pass in **8.35 seconds**: **28 new rows, eleven live mutations,
+1,079 retention cutoffs** and the wide snapshot's exact additional budget. Four
+oracles report zero violations. The historical copy family stays **21 sites,
+39 instances, 23 retained**; a separate source-switch family measures **four
+sites, ten instances, three retained**. Expanded-fixture precision **36/48**
+adds coverage relative to **35/47**; corpus precision remains **0/64, 0/16, 0/20**.
+This is not a corpus precision gain. Other primitive selector producers and
+loops still need complete proofs.
+
+**Exact next boundary: nullable payload storage.** Change only the small
+accepted setter from `state.set(key, true)` to `state.set(key, key)`. The
+**eleven-call**, **trace=2** program retains complete host ownership but stays
+**0/6 native** in both modes with `Opt<Str>` keys and payloads. Returning
+`state.get(key)` instead of size produces **twelve calls**, the same owner,
+trace and refusal. Implement nullable String payload storage before composing
+Boolean with it, retaining independent read facts and snapshot refusals. An
+object payload `{value: 'instance'}` preserves eleven calls and trace=2 but
+has no host owner proof and remains **0/6**; object identity/fields are a
+separate Bootstrap obligation. Full native Bootstrap Data, browser integration,
+general exports and native throwing-call admission remain unfinished.
+
+Evidence: `/tmp/ctcompile-nullable-keys-focused.log`, `-escape.log`, `-native.log`,
+`-controls.log`, `-full.log` and `-boundary.json`. The full native driver is rerun
+by CTest after the provenance correction. Frozen input is recorded in
+`/tmp/ctcompile-nullable-keys-snapshot.txt`; fourteen native and five escape
+code/test files match their frozen input. Complete next sources are in
+`native-owned-global-maps.md` and devbox `/tmp/ctcompile-nullable-keys-next/`.
+
 ## Nullable Map methods and opaque-register checkpoint, 2026-09-08
 
 Commits **`6f13212`** (opaque entry transport), **`fa29d49`** (finite host

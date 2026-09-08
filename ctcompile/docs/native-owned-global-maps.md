@@ -656,11 +656,52 @@ the five recorded browser failures. All 28 code/test paths match committed HEAD,
 frozen input and final devbox source. Logs and unchanged corpus counts are in
 [HANDOFF.md](HANDOFF.md).
 
+## Owning nullable Map keys, 2026-09-08
+
+Commit `5e63d993` resumes the nullable-key boundary recorded in `178f65e9`
+and the **13:07:05 synchronization journal**. The existing `Opt<Str>` schema
+uses owning `nullable_string` storage; `Opt<Variant<Bool, Str>>` uses
+`std::variant<bool, ctnative::nullable_string>`. A key-specific admission and
+conversion path leaves payload and snapshot rules separate. Both associative
+and insertion-ordered storage compare tags before String bytes. Null, Undefined,
+empty String and their textual spellings stay distinct. Normalization remains
+per-operation: a second original-key use retains its own nullable alternatives.
+
+The original **eighteen-call** `(has && get) || null` witness advances
+**0/6 -> 6/6 native** in both modes, with Node/interpreter **trace=3**. The smaller
+**eleven-call** String-key case also advances **0/6 -> 6/6**, **trace=2**. The
+**thirteen-call** String/Null/Undefined/empty String identity case gives
+**trace=4** and **6/6**, versus **trace=2** for the normalized control. A temporary
+Boolean key and the **nineteen-call** second-use witness also admit **6/6**.
+All source calls and getter selections remain. Evidence:
+`/tmp/ctcompile-nullable-keys-boundary.json`.
+
+All **118 positive programs**, including eight new nullable-key programs, pass
+Node/interpreter and explicit/deduced GCC/Clang execution. The **fourteen lifetime
+families** include a false-only startup getter and a saved setter that deletes
+and reinserts nullable keys. Caller-buffer mutation cannot alter stored bytes;
+all four key identities survive repeated calls, independent reentry and final
+Map destruction. Fifteen nullable getter observers and **46 discriminating
+identity mutations** include 25 new mutations; nine new structural mutations
+also distinguish the changed behavior.
+
+The first full native driver stopped after these positives because its new
+forgery comparison included different input filenames in provenance comments.
+The correction normalizes only the known input filename on provenance lines;
+coordinates, other comments and emitted code still compare. The focused rerun
+passes fresh/stale key/read/write forgeries, both nullable-payload and mixed
+snapshot refusals, and budgets **17225/29477/20285/12808**, with **29/31/31/32**
+cutoffs and no natural speculative rollback interval. Local tests pass **59
+observations and 28 refusals** across both storage layouts, plus a standalone
+numeric-payload helper test. Four host/owner CTests pass in **26.38 seconds**;
+seven targeted lit tests pass in **29.72 seconds**. The final generated build
+and complete CTest gate are still running; see `HANDOFF.md` for final results.
+
 ## Next boundary
 
-Bootstrap's exact getter uses `(has && get) || null`. The finite nullable
-result contract and normalized consumer are now supported. Keep the original
-unnormalized setter to isolate the remaining Map-key storage obligation:
+Nullable stored payloads remain separate from the now-supported nullable keys.
+The smallest measured continuation changes only the setter payload from `true`
+to its nullable parameter:
 
 ```js
 var host = {};
@@ -671,17 +712,12 @@ var host = {};
     return {
         size() { return state.size; },
         get(flag) {
-            state.set('', '');
-            state.set('other', 'future');
-            if (flag) { state.delete('other'); }
-            const saved = (state.has('other') && state.get('other')) || state.get('');
-            state.set(false, true);
-            state.set(false, saved);
-            const result = state.get(false);
-            state.delete(false);
+            state.set('seed', 'future');
+            const result = flag ? '' : state.get('seed');
+            state.delete('seed');
             return result || null;
         },
-        set(key) { state.set(key, true); return state.size; }
+        set(key) { state.set(key, key); return state.size; }
     };
 });
 host.slot.set(host.slot.get(false));
@@ -689,46 +725,20 @@ host.slot.set(host.slot.get(true));
 var trace = host.slot.size();
 ```
 
-Node/interpreter agree on **`trace=3`**. Both native modes still report **0/6**
-with all **eighteen calls retained**, but now have a complete host owner proof.
-The diagnostic identifies the key schema `Opt<Variant<Bool, Str>>`; payload
-storage remains the already supported `Variant<Bool, Str>`. Normalizing only
-the setter key restores **6/6** with the same trace and source-call count. The
-nullable ternary control also admits **6/6**. Evidence:
-`/tmp/ctcompile-nullable-boundary.json`; devbox source:
-`/tmp/ctcompile-nullable-next/nullable_or.js`.
+This retains **eleven calls**, complete ownership and Node/interpreter
+**trace=2**, but stays **0/6 native** in both modes with `Opt<Str>` key and
+payload schemas. Changing the setter return to `state.get(key)` retains
+**twelve calls**, complete ownership and the same trace/refusal. Restoring the
+`true` payload admits **6/6**. The corresponding original mixed-key program
+will also need nullable Bool/String payload storage, without using the schema
+to invent an exact read tag or admitting unrepresented snapshots.
 
-A smaller witness replaces the getter body with:
-
-```js
-state.set('seed', 'future');
-const result = flag ? '' : state.get('seed');
-state.delete('seed');
-return result || null;
-```
-
-With the same original setter and two `set(get(flag))` calls, this has **eleven
-source calls**, **trace=2**, complete ownership and **0/6 native** in both modes.
-It isolates `Opt<Str>` keys. Adding `state.set(false, true); state.delete(false);`
-after the seed deletion gives **thirteen calls**, the mixed nullable key schema,
-the same trace and refusal. Appending `host.slot.set(void 0); host.slot.set('');`
-before the final size observation gives **thirteen calls**, **trace=4**,
-complete ownership and **0/6 native**. It distinguishes the String, Null,
-Undefined and empty String keys. Its normalized-setter control gives **trace=2**
-and **6/6 native** in both modes. These are executed Node/interpreter and native
-admission measurements, not a claim that nullable key storage is implemented.
-
-The next bounded implementation can reuse `nullable_string` for optional
-String keys, then compose it with Boolean for the mixed nullable key schema.
-Both Map storage implementations need tag-aware equality and ordering plus
-owning conversion. Null, Undefined and empty String must remain distinct keys;
-converting a real null key through `string_text` would be wrong. Key support
-must not implicitly admit nullable stored payloads or mixed snapshots. The
-lattice already represents both schemas, so a new general value type is not
-needed. Object identity and general exports remain separate work.
-
-Current-call proofs cannot authorize arbitrary future external arguments or
-establish an export ABI. Future external callers, mutable publication slots,
-general realm owners, reentry and throwing provider effects remain separate
-obligations. Keep observer calls as standalone statements; arithmetic on their
-results tests a separate boundary. See [the next Bootstrap work](bootstrap-provider-next.md).
+An ordinary object payload `{value: 'instance'}` instead retains eleven calls
+and trace=2 but has **no host owner proof**, and stays **0/6**. That is a separate
+identity/field proof obligation needed for Bootstrap component instances.
+Full native Bootstrap Data, browser API integration and general exports remain
+unfinished. Current-call proofs do not establish an arbitrary future-call ABI.
+Complete sources and both-mode measurements are saved in
+`/tmp/ctcompile-nullable-keys-boundary.json` and on the devbox under
+`/tmp/ctcompile-nullable-keys-next/`. The nullable payload carrier refusal is
+also committed in `native_owned_global_maps/sources.py`.
