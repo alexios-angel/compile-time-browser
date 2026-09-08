@@ -1394,3 +1394,83 @@ Script/VM context symbols. Evidence:
 Remaining boundaries include independently proved primitive conversions and
 dynamic arithmetic, BigInt comparison categories, loops, callee summaries and
 native lifetime consumers. These retain their existing conservative behavior.
+
+## Primitive dynamic arithmetic origins, 2026-09-08
+
+This continues the dynamic-arithmetic boundary left by **`b98efac0`** and the
+**`e385f885`** handoff. `computeArrayContents` accepts dynamic Sub, Mul, Div,
+Mod and Pow only when **both original operand origins** independently prove
+Undefined, Null, Boolean, Number or String. Saved reads keep their original
+identity through overwrites and deletions, and every structural incoming arm
+must qualify separately. No type, completion or confinement annotation is
+proof. Dynamic Add/Concat, all other dynamic kinds, objects, arrays, opaque
+inputs and BigInt remain outside this increment. The operand-role table and
+native admission are unchanged.
+
+Current `Script/vm/coerce.cpp::binary_op` first checks `bigint_binary`.
+Independently excluding BigInt makes that helper return false without
+allocation or a JS throw; each admitted kind then converts both operands
+through `to_number_value`. Normal primitive paths use static numeric conversion
+and produce an independent Number, including NaN, infinity and signed zero.
+Mod uses `fmod`; Pow uses the VM's `exponentiate`, including its +/-1 to NaN
+special case. None of these paths returns an input object or invokes an object
+conversion. The origin proof infers no numeric value, array index, property key
+or branch liveness.
+
+As with Neg/Plus, `to_number_value` enters the depth guard before inspecting
+the primitive tag. Its unrelated RangeError cannot retain unpublished fresh
+locals in this complete call/handler/publication-free query; the preceding
+relational section's Error construction, stack serialization and unwind-root
+audit also applies here. This is **retention-only evidence**, never normal
+completion or a no-throw/effect contract. String parsing can allocate C++
+temporaries, and allocation success remains unproved. No deep-stack dynamic
+measurement or browser/runtime change is claimed.
+
+The existing independent two-operand table is shared with the new arithmetic
+family, preserving every comparison row and its operator-specific mutation
+controls. Each kind passes **80 rows**, an exact **64-work-unit** wide snapshot
+increment, and exhaustive incomplete contents/retention budgets. Each comparison
+kind passes **34 live states and 3,425 retention budget cutoffs**; each arithmetic
+kind passes **49 live states and 3,941 retention budget cutoffs**, including all
+thirteen dynamic enum values and restoration. Controls cover both operands,
+every structural arm, original array/field reads before
+replacement/deletion, saved returned children, primitive rooting/storage,
+invalid result keys, forged completion/confinement markers, and publication,
+calls, explicit throws and local handlers. Five new cross-producer rows also
+exercise the independent Number origins as inputs to every comparison kind.
+
+The initial devbox build compiles production but finds four missing dependent
+`template` keywords in the shared test helper: three `getOps` calls and one
+`getDefiningOp`. Adding only those keywords fixes compilation; production
+behavior and every JavaScript source byte are unchanged. The corrected
+eleven-step rebuild and focused **14/14 CTests pass in 18.28 seconds**, including
+**all eight escape CTests**. Historical array/object contents and retention
+families also pass. Evidence: `/tmp/ctcompile-field-presence-build3.log`,
+`-focused.log` and `-focused-detail.log`. The full generated gate is pending.
+
+Five additive source functions measure **20 sites, 40 instances and 32
+retained**, with confinement only for the two independently proved arithmetic
+children. Opaque formal and successful BigInt controls retain Stored claims; an independently saved returned child remains retained after
+both container fields are deleted. Every historical source byte and historical
+family expectation is preserved, including the historical relational
+**20/40/32** and equality **24/44/33** families. All four execution oracles report
+**zero soundness violations**. Expanded-fixture precision is **49/72**, with
+zero partial/pending claims, versus the preceding **47/68**. This adds two
+proved-confined and four observed-confined sites; it measures additional source
+coverage, not precision improvement on historical source. Bootstrap/p5/Phaser
+remain **0/64, 0/16, 0/20**, including p5's existing single partial observation.
+These escape measurements do not increase native corpus admission.
+
+Local Node execution passes **65 combined fixture calls**, **60 new observation
+mutations** and **207 historical mutations**. Assertions distinguish operand
+order, saved String values after a BigInt overwrite, finite results, NaN,
+infinity, signed zero, BigInt result types, container identity and retained
+saved children. An opaque object executes five `valueOf` calls; a throwing
+conversion stops after one; five mixed/zero-divisor/negative-exponent BigInt
+probes throw. These observations justify conservative refusal without replacing
+current-IR proof. Evidence: `/tmp/ctcompile-escape-dynamic-node.{py,js,json}`.
+Homebrew clang-format **22.1.8** and changed-path whitespace checks pass.
+
+Remaining producer boundaries include primitive conversions, dynamic
+Add/Concat and BigInt categories, followed by loops, callee summaries and native
+lifetime/effect consumers. Each retains its existing conservative behavior.

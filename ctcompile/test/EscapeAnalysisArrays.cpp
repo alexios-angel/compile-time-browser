@@ -12,6 +12,8 @@
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
+#include <type_traits>
+
 using namespace ctcompile::test::escape;
 
 namespace {
@@ -3577,8 +3579,21 @@ void checkArithmeticUnaryProducers(mlir::MLIRContext & context) {
     }
 }
 
-void checkPrimitiveComparison(mlir::MLIRContext & context, ctjs::CompareKind comparisonKind) {
-    const std::string spelling = ctjs::stringifyCompareKind(comparisonKind).str();
+// Both families require independent original primitive operands, and share
+// the same contents/retention obligations. Operator-specific mutation controls
+// keep their distinct whitelists independent.
+template <typename ProducerOp, typename Kind>
+void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind) {
+    constexpr bool isComparison = std::is_same_v<ProducerOp, ctjs::CompareOp>;
+    using KindAttr = std::conditional_t<isComparison, ctjs::CompareKindAttr, ctjs::BinaryKindAttr>;
+    const std::string spelling = [&] {
+        if constexpr (isComparison) {
+            return ctjs::stringifyCompareKind(producerKind).str();
+        } else {
+            return ctjs::stringifyBinaryKind(producerKind).str();
+        }
+    }();
+    const std::string mnemonic = isComparison ? "ctjs.compare" : "ctjs.binary";
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
         "  %number = ctjs.constant #ctjs.number<17>\n"
@@ -3586,7 +3601,7 @@ void checkPrimitiveComparison(mlir::MLIRContext & context, ctjs::CompareKind com
         "  %x = ctjs.create_object {storage_test_id = \"x\"}\n"
         "  %a = ctjs.create_array [%x] {storage_test_id = \"a\"}\n";
     const auto compare = [&](const std::string & lhs, const std::string & rhs) {
-        return "  %produced = ctjs.compare " + spelling + " " + lhs + ", " + rhs +
+        return "  %produced = " + mnemonic + " " + spelling + " " + lhs + ", " + rhs +
                " {storage_test_id = \"produced\"}\n";
     };
     const std::string produce = compare("%number", "%zero");
@@ -3603,7 +3618,7 @@ void checkPrimitiveComparison(mlir::MLIRContext & context, ctjs::CompareKind com
                       .body = values + produce + branch + overwrite + "^no:\n" + overwrite,
                       .arrays = "a:[zero] | a:[zero]",
                       .exit = "a -> {a}; a -> {a}"}},
-        {.contents = {.what = "primitive comparison returns an independent primitive Boolean",
+        {.contents = {.what = "primitive binary result returns independently of both operands",
                       .body = values + produce + "  ctjs.return %produced\n",
                       .arrays = "a:[x]",
                       .exit = "produced -> {}"}},
@@ -3620,7 +3635,7 @@ void checkPrimitiveComparison(mlir::MLIRContext & context, ctjs::CompareKind com
                               "  ctjs.return %result\n",
                       .arrays = "a:[x]",
                       .exit = "produced -> {}"}},
-        {.contents = {.what = "a saved child remains retained after a Boolean overwrite",
+        {.contents = {.what = "a saved child remains retained after a primitive overwrite",
                       .body = values + "  %saved = ctjs.get_property %a[%zero]\n" + produce +
                               "  ctjs.set_property %a[%zero], %produced\n"
                               "  ctjs.return %saved\n",
@@ -3637,11 +3652,11 @@ void checkPrimitiveComparison(mlir::MLIRContext & context, ctjs::CompareKind com
                       .body = values + compare("%zero", "%zero") + branch + done +
                               "^no:\n  ctjs.store_global \"held\", %x\n" + done,
                       .failure = ArrayContentsFailure::UnsupportedOperation}},
-        {.contents = {.what = "a comparison Boolean is not a literal array index",
+        {.contents = {.what = "a primitive binary result is not a literal array index",
                       .body =
                           values + produce + "  %read = ctjs.get_property %a[%produced]\n" + done,
                       .failure = ArrayContentsFailure::UnknownIndex}},
-        {.contents = {.what = "a comparison Boolean is not a literal own String key",
+        {.contents = {.what = "a primitive binary result is not a literal own String key",
                       .body =
                           values + produce + "  ctjs.set_property %x[%produced], %zero\n" + done,
                       .failure = ArrayContentsFailure::UnknownPropertyKey}},
@@ -3789,18 +3804,28 @@ void checkPrimitiveComparison(mlir::MLIRContext & context, ctjs::CompareKind com
                  .arrays = "a:[x]",
                  .exit = "produced -> {}"}});
     }
+    for (const std::string kind : {"sub", "mul", "div", "mod", "pow"}) {
+        run({.contents = {
+                 .what = "arithmetic result origins feed independently checked binary producers",
+                 .body = values + "  %operand = ctjs.binary " + kind + " %number, %zero\n" +
+                         compare("%operand", "%zero") + "  ctjs.return %produced\n",
+                 .arrays = "a:[x]",
+                 .exit = "produced -> {}"}});
+    }
     comparison_row wide = rows.front();
     std::string extras;
     for (unsigned i = 0; i < 32; ++i) {
-        extras +=
-            "  %extra_" + std::to_string(i) + " = ctjs.compare " + spelling + " %number, %zero\n";
+        extras += "  %extra_" + std::to_string(i) + " = " + mnemonic + " " + spelling +
+                  " %number, %zero\n";
     }
     wide.contents.body.insert(wide.contents.body.find("  %flag ="), extras);
     auto narrowModule = parse(rows.front());
     auto wideModule = parse(wide);
     if (narrowModule && wideModule) {
-        const auto narrow = computeArrayContents(*narrowModule->getOps<ctjs::FuncOp>().begin());
-        const auto expanded = computeArrayContents(*wideModule->getOps<ctjs::FuncOp>().begin());
+        const auto narrow =
+            computeArrayContents(*narrowModule->template getOps<ctjs::FuncOp>().begin());
+        const auto expanded =
+            computeArrayContents(*wideModule->template getOps<ctjs::FuncOp>().begin());
         if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 64) {
             fail(row{.what = "comparison snapshots charge every independent primitive origin",
                      .body = wide.contents.body,
@@ -3816,12 +3841,12 @@ void checkPrimitiveComparison(mlir::MLIRContext & context, ctjs::CompareKind com
     mutation.contents.what = "live comparison inputs and kinds defeat forged completion";
     unsigned liveStates = 0;
     if (auto module = parse(mutation)) {
-        ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
-        ctjs::CompareOp comparison;
+        ctjs::FuncOp function = *module->template getOps<ctjs::FuncOp>().begin();
+        ProducerOp comparison;
         ctjs::CreateObjectOp child;
         ctjs::CreateArrayOp array;
         ctjs::ConstantOp big;
-        module->walk([&](ctjs::CompareOp op) { comparison = op; });
+        module->walk([&](ProducerOp op) { comparison = op; });
         module->walk([&](ctjs::CreateObjectOp op) { child = op; });
         module->walk([&](ctjs::CreateArrayOp op) { array = op; });
         module->walk([&](ctjs::ConstantOp op) {
@@ -3848,27 +3873,46 @@ void checkPrimitiveComparison(mlir::MLIRContext & context, ctjs::CompareKind com
                 comparison->setOperand(position, original[position]);
                 inspect(ArrayContentsFailure::None);
             }
-            auto constant = original[position].getDefiningOp<ctjs::ConstantOp>();
+            auto constant = original[position].template getDefiningOp<ctjs::ConstantOp>();
             const mlir::Attribute oldValue = constant.getValue();
             constant.setValueAttr(big.getValue());
             inspect(ArrayContentsFailure::UnsupportedOperation);
             constant.setValueAttr(oldValue);
             inspect(ArrayContentsFailure::None);
         }
-        for (const auto kind : {ctjs::CompareKind::Lt, ctjs::CompareKind::Le, ctjs::CompareKind::Gt,
-                                ctjs::CompareKind::Ge}) {
-            comparison.setKindAttr(ctjs::CompareKindAttr::get(&context, kind));
+        if constexpr (isComparison) {
+            for (const auto kind : {ctjs::CompareKind::Lt, ctjs::CompareKind::Le,
+                                    ctjs::CompareKind::Gt, ctjs::CompareKind::Ge}) {
+                comparison.setKindAttr(KindAttr::get(&context, kind));
+                inspect(ArrayContentsFailure::None);
+                comparison.setKindAttr(KindAttr::get(&context, producerKind));
+                inspect(ArrayContentsFailure::None);
+            }
+            comparison->setOperand(0, opaque);
+            comparison.setKindAttr(KindAttr::get(&context, ctjs::CompareKind::StrictEq));
             inspect(ArrayContentsFailure::None);
-            comparison.setKindAttr(ctjs::CompareKindAttr::get(&context, comparisonKind));
+            comparison.setKindAttr(KindAttr::get(&context, producerKind));
+            inspect(ArrayContentsFailure::UnsupportedOperation);
+            comparison->setOperand(0, original[0]);
             inspect(ArrayContentsFailure::None);
+        } else {
+            for (const auto kind :
+                 {ctjs::BinaryKind::Sub, ctjs::BinaryKind::Mul, ctjs::BinaryKind::Div,
+                  ctjs::BinaryKind::Mod, ctjs::BinaryKind::Pow, ctjs::BinaryKind::Add,
+                  ctjs::BinaryKind::Concat, ctjs::BinaryKind::BitAnd, ctjs::BinaryKind::BitOr,
+                  ctjs::BinaryKind::BitXor, ctjs::BinaryKind::Shl, ctjs::BinaryKind::Shr,
+                  ctjs::BinaryKind::UShr}) {
+                comparison.setKindAttr(KindAttr::get(&context, kind));
+                const bool supported =
+                    kind == ctjs::BinaryKind::Sub || kind == ctjs::BinaryKind::Mul ||
+                    kind == ctjs::BinaryKind::Div || kind == ctjs::BinaryKind::Mod ||
+                    kind == ctjs::BinaryKind::Pow;
+                inspect(supported ? ArrayContentsFailure::None
+                                  : ArrayContentsFailure::UnsupportedOperation);
+                comparison.setKindAttr(KindAttr::get(&context, producerKind));
+                inspect(ArrayContentsFailure::None);
+            }
         }
-        comparison->setOperand(0, opaque);
-        comparison.setKindAttr(ctjs::CompareKindAttr::get(&context, ctjs::CompareKind::StrictEq));
-        inspect(ArrayContentsFailure::None);
-        comparison.setKindAttr(ctjs::CompareKindAttr::get(&context, comparisonKind));
-        inspect(ArrayContentsFailure::UnsupportedOperation);
-        comparison->setOperand(0, original[0]);
-        inspect(ArrayContentsFailure::None);
         mlir::Block & last = function.getBody().back();
         auto store = llvm::cast<ctjs::SetPropertyOp>(&last.front());
         const mlir::Value replacement = store.getValue();
@@ -3886,9 +3930,10 @@ void checkPrimitiveComparison(mlir::MLIRContext & context, ctjs::CompareKind com
         fail(row{.what = mutation.contents.what, .body = mutation.contents.body, .expected = ""},
              "the live primitive comparison fixture did not parse");
     }
-    std::printf("primitive comparison %s: %u rows, %u live states, one wide snapshot, "
+    std::printf("primitive %s %s: %u rows, %u live states, one wide snapshot, "
                 "%zu retention budget cutoffs\n",
-                spelling.c_str(), rowCount, liveStates, budgets);
+                isComparison ? "comparison" : "arithmetic binary", spelling.c_str(), rowCount,
+                liveStates, budgets);
 }
 
 void checkArrayFrames(mlir::MLIRContext & context) {
@@ -4819,7 +4864,11 @@ int main() {
     checkArithmeticUnaryProducers(context);
     for (const auto kind : {ctjs::CompareKind::Eq, ctjs::CompareKind::Lt, ctjs::CompareKind::Le,
                             ctjs::CompareKind::Gt, ctjs::CompareKind::Ge}) {
-        checkPrimitiveComparison(context, kind);
+        checkPrimitiveBinaryProducer<ctjs::CompareOp>(context, kind);
+    }
+    for (const auto kind : {ctjs::BinaryKind::Sub, ctjs::BinaryKind::Mul, ctjs::BinaryKind::Div,
+                            ctjs::BinaryKind::Mod, ctjs::BinaryKind::Pow}) {
+        checkPrimitiveBinaryProducer<ctjs::BinaryOp>(context, kind);
     }
     checkArrayFrames(context);
     checkArrayConditionals(context);

@@ -807,7 +807,7 @@ bool primitiveNonBigIntOrigin(mlir::Value origin) {
         return llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr, ctjs::NumberAttr,
                          ctjs::StringAttr>(constant.getValue());
     }
-    return llvm::isa_and_nonnull<ctjs::CompareOp, ctjs::ConvertOp, ctjs::UnaryOp,
+    return llvm::isa_and_nonnull<ctjs::CompareOp, ctjs::ConvertOp, ctjs::UnaryOp, ctjs::BinaryOp,
                                  ctjs::BinaryStaticOp>(definition);
 }
 
@@ -1083,6 +1083,35 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
                 state.origins[unary.getResult()] = unary.getResult();
+                continue;
+            }
+            if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(&op)) {
+                switch (binary.getKind()) {
+                case ctjs::BinaryKind::Sub:
+                case ctjs::BinaryKind::Mul:
+                case ctjs::BinaryKind::Div:
+                case ctjs::BinaryKind::Mod:
+                case ctjs::BinaryKind::Pow: break;
+                default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
+                }
+                const mlir::Value lhs = origin(binary.getLhs());
+                const mlir::Value rhs = origin(binary.getRhs());
+                if (!lhs || !rhs || !primitiveNonBigIntOrigin(lhs) ||
+                    !primitiveNonBigIntOrigin(rhs)) {
+                    return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
+                }
+                // binary_op first excludes the BigInt arm, then these five
+                // kinds use to_number_value independently on both operands.
+                // Primitive non-BigInt origins cannot call object conversions;
+                // successful results are independent Numbers, including NaN,
+                // infinity and signed zero. No value/index/key is inferred.
+                // As with Neg/Plus, to_number_value's depth guard may throw an
+                // unrelated RangeError. This whole-frame query refuses calls,
+                // handlers and publication, so it cannot retain its fresh
+                // locals on that exit. This is retention-only evidence, never
+                // a normal-completion or no-throw/effect contract. String
+                // parsing may allocate C++ temporaries; success is unproved.
+                state.origins[binary.getResult()] = binary.getResult();
                 continue;
             }
             if (auto binary = llvm::dyn_cast<ctjs::BinaryStaticOp>(&op)) {

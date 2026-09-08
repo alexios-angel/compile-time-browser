@@ -436,10 +436,9 @@ struct ArrayContentsEvidence {
 /// reads/overwrites, own String-property object writes/reads/deletes/copies,
 /// strict equality, ToBoolean, logical negation, typeof, void, supported static
 /// binary operations on independently non-BigInt origins, arithmetic unary
-/// operations, loose equality and relational comparisons on independently
-/// primitive non-BigInt origins,
-/// truthy and return.
-/// Object reads require an earlier own write; keys longer than 256 bytes and
+/// operations, dynamic Sub/Mul/Div/Mod/Pow, loose equality and relational comparisons on
+/// independently primitive non-BigInt origins, truthy and return. Object reads require an earlier
+/// own write; keys longer than 256 bytes and
 /// __proto__ refuse. Named/computed object deletions erase only the current own
 /// property; absent deletion is a no-op, absent reads still refuse. All earlier
 /// writes remain in the cycle graph and saved reads retain their exact origins.
@@ -486,6 +485,12 @@ struct ArrayContentsEvidence {
 /// handlers and publication prevents retention of its unpublished fresh locals;
 /// this is not normal-completion or no-throw/effect evidence. Opaque/object and
 /// BigInt inputs remain refused. Other conversion kinds refuse.
+/// Dynamic Sub/Mul/Div/Mod/Pow likewise require BOTH original primitive
+/// non-BigInt operands. Normal results are independent Numbers even for NaN,
+/// infinity or signed zero, with no constant/index/key inference. Each operand's
+/// to_number_value depth guard has the same retention-only early-exit argument
+/// as Neg/Plus; this adds no completion/effect guarantee. Dynamic Add/Concat,
+/// BigInt and object/opaque arithmetic remain outside this bounded proof.
 /// Joins keep exact separate states rather than unioning overwrite targets. Truthy
 /// accepts an external value only as a noncapturing predicate, never an element.
 /// Exact entry !ctjs.value identities may travel through unused register arguments

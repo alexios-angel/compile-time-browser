@@ -579,6 +579,95 @@ function objectFrameRelationalRetained(choice) {
 H.push(objectFrameRelationalRetained(false));
 H.push(objectFrameRelationalRetained(true));
 
+// Saved String operands keep their original value through a BigInt field
+// overwrite and deletion. Every arithmetic result and selected alias survives.
+function objectFrameArithmeticBinarySaved(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    source.input = choice ? "20" : "-0";
+    var saved = source.input;
+    source.input = 1n;
+    delete source.input;
+    var difference = saved - 3, product = saved * -2, quotient = 1 / saved;
+    var remainder = saved % 2, power = saved ** 2;
+    var selected = difference < 0 ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target,
+             difference: difference, product: product, quotient: quotient,
+             remainder: remainder, power: power };
+}
+H.push(objectFrameArithmeticBinarySaved(false));
+H.push(objectFrameArithmeticBinarySaved(true));
+
+// Number arithmetic stays primitive for NaN, infinity and signed zero. Pow's
+// +/-1 to NaN differs from libm; neither NaN selector chooses its true arm.
+function objectFrameArithmeticBinaryNumbers(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var input = choice ? 1 : -1, nan = (void 0) - 1;
+    var quotient = input / 0, remainder = input % 0, power = input ** nan;
+    var product = (choice ? 0 : -0) * -2;
+    var selected = power ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target,
+             nan: nan, product: product, quotient: quotient,
+             remainder: remainder, power: power };
+}
+H.push(objectFrameArithmeticBinaryNumbers(false));
+H.push(objectFrameArithmeticBinaryNumbers(true));
+
+// Primitive actual observations cannot prove this formal's future conversions.
+function objectFrameArithmeticBinaryOpaque(input) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var difference = input - 3, product = input * 2, quotient = input / 2;
+    var remainder = input % 2, power = input ** 2;
+    var selected = difference < 0 ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target,
+             difference: difference, product: product, quotient: quotient,
+             remainder: remainder, power: power };
+}
+H.push(objectFrameArithmeticBinaryOpaque(2));
+H.push(objectFrameArithmeticBinaryOpaque("5."));
+
+// Successful BigInt results do not supply a primitive Number origin proof.
+function objectFrameArithmeticBinaryBigInt(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var input = choice ? 5n : 2n;
+    var difference = input - 3n, product = input * 2n, quotient = input / 2n;
+    var remainder = input % 2n, power = input ** 2n;
+    var selected = difference < 0n ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target,
+             difference: difference, product: product, quotient: quotient,
+             remainder: remainder, power: power };
+}
+H.push(objectFrameArithmeticBinaryBigInt(false));
+H.push(objectFrameArithmeticBinaryBigInt(true));
+
+// Deleting both container edges cannot release the independently returned child.
+function objectFrameArithmeticBinaryRetained(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var saved = target.held, input = choice ? "5." : "2";
+    var difference = input - 3, product = input * 2, quotient = input / 2;
+    var remainder = input % 2, power = input ** 2;
+    var selected = difference < 0 ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target, saved: saved,
+             difference: difference, product: product, quotient: quotient,
+             remainder: remainder, power: power };
+}
+H.push(objectFrameArithmeticBinaryRetained(false));
+H.push(objectFrameArithmeticBinaryRetained(true));
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());
