@@ -384,5 +384,8 @@ All four execution oracles report zero violations. Fixture precision remains
 The p5 oracle retains its one partial observation, without a soundness violation.
 Existing source fixtures and precision expectations are unchanged; this unit
 precision increment does not establish a corpus gain. Homebrew clang-format
-22.1.8 and whitespace checks pass locally. The full generated CTest gate remains
-pending at this checkpoint, and native ownership consumers remain separate.
+22.1.8 and whitespace checks pass locally. The full generated gate completes
+**512/517 CTests in 808.06 seconds**, including **372/372 compiler** and
+**164/164 lit cases**. Only the five recorded browser failures remain; no browser
+source changed. Log: `/tmp/ctcompile-payloads-full.log`; fresh oracle evidence:
+`/tmp/ctcompile-payloads-evidence.json`. Native ownership consumers remain separate.

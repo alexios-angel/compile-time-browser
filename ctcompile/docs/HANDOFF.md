@@ -59,15 +59,27 @@ rows. Four execution oracles report zero violations. Fixture precision remains
 **22/33**; Bootstrap/p5/Phaser remains **0/64, 0/16, 0/20**. Native ownership
 consumers remain separate. Log: `/tmp/ctcompile-payloads-focused.log`.
 
-The full generated devbox build succeeds (**243 build steps**). The **517-test
-combined CTest gate is running**, with the lit CTest already passing in
-**208.85 seconds**. Final totals and fresh corpus counts are pending at
-`/tmp/ctcompile-payloads-full.log`; extraction will write
-`/tmp/ctcompile-payloads-evidence.json`. Do not treat the prior checkpoint's
-512/517 result or corpus counts as a completed gate for this increment.
+The full generated devbox build succeeds (**243 build steps**). The combined
+gate finishes **512/517 CTests in 808.06 seconds**: **372/372 compiler** and
+**140/145 browser**. Its five failures exactly match the preceding gate:
+`selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`. No browser
+source changed. All **164/164 lit cases** pass in **208.85 seconds**, and source
+exception recovery passes in **1.15 seconds**. Log:
+`/tmp/ctcompile-payloads-full.log`; extracted evidence:
+`/tmp/ctcompile-payloads-evidence.json`.
+
+Fresh native component coverage remains **19/574 Bootstrap**, **39/4754 p5**
+and **45/7725 Phaser**, in both optimization modes with zero pruned functions.
+Exact Data remains **0/7 browser**, **0/7 CommonJS** and **0/8 AMD**. Complete
+native Bootstrap initialization remains unfinished.
+
 The frozen source passes `tools/format.sh --check`: **742 files** using
 Homebrew clang-format **22.1.8**. All **19 changed code/test paths** byte-match
-the frozen devbox input and committed implementation.
+the frozen devbox input and committed implementation. Emitted C++ inspected at
+`/tmp/ctcompile-payloads-saved-string.cpp` copies the read into a `std::string`,
+then overwrites and deletes the source entry in the same owning `std::map`,
+returns the saved value and passes it to the live setter. No interpreter context,
+collector or Script symbols occur in the native program.
 
 **Exact next native boundary:** `result_seeded_mixed_contents`,
 `result_seeded_join_reseed` and `result_seeded_bool_string_contents` remain
