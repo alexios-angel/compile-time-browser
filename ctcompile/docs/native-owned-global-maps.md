@@ -559,11 +559,55 @@ refusals** across both storage layouts. Seven targeted lit cases pass in
 Log: `/tmp/ctcompile-guard-focused.log`. The combined object-copy gate and full
 generated build are recorded in [HANDOFF.md](HANDOFF.md).
 
+## Scalar short-circuit results, 2026-09-08
+
+Commit `58decfe` advances the preceding `shortcircuit_same_tag` from **0/6 to
+6/6 native** in both modes, retaining all **eighteen calls**, three getter
+conditionals and Node/interpreter **`trace=2`**. The getter selects
+`(state.has('other') && state.get('other')) || state.get('')` after conditional
+deletion, then keeps the saved write/read/delete chain. Its intermediate
+false/String result now carries independent primitive alternatives partitioned
+by truthiness. The exact tested SSA value loses impossible alternatives within
+each arm; this does not omit any structural arm or its effects. Empty String,
+false, zero, signed zero and NaN retain JavaScript fallback behavior. Unknown
+values remain unknown; unrelated conditions do not refine a saved result.
+
+Host and native proofs use the same semantic set representation independently.
+Map membership, payload tags and saved scalar alternatives remain separate.
+The native write proof rederives `ctnative.map_write_type` from the live body,
+never from its input attribute, a host result tag or the storage schema. A wider
+SCF temporary can therefore supply an independently proved exact scalar write.
+Bool/String temporaries use owning `std::variant<bool, std::string>` with a
+plain truthiness visitor and copied `std::get` extraction. Numeric intermediates
+reuse existing optional scalar carriers. General union function signatures,
+returns, captures, fields and coercions remain refused.
+
+The gate passes **103 complete programs**, eight new scalar short-circuit
+programs, nine new guard/effect/tag refusals and all **twelve lifetime sanitizer
+families**. It checks both optimization modes, explicit/deduced GCC/Clang,
+Node/interpreter, all original calls and branches, fresh/stale forged markers,
+reruns and **24** discriminating source mutations. Empty/false/zero witnesses
+distinguish `||` from a ternary. The long String getter sees only false at
+startup; saved native callables later use both flags, preserve both owning
+results through overwrite/deletion and independent reentry, and survive final
+Map release. First complete budgets for the four new probes are
+**19555/20373/10371/11606**, with **31 cutoffs each** and no natural speculative
+rollback interval. Log: `/tmp/ctcompile-shortcircuit-native.log`.
+
+Host units pass **82 rows each in source/prepared form**, all **3356/3494**
+short-circuit budget cutoffs, **3031/3169** guarded and **2567/2692** conditional
+cutoffs, exact endpoints and live forged read/key/condition/yield mutations.
+Local mixed Maps pass **49 observations and 21 refusals** across both storage
+layouts, including inverted falsy refinement and a standalone local temporary.
+All seven targeted lit cases pass in **28.51 seconds**. Focused CTest passes
+**12/12 in 31.25 seconds**. Homebrew clang-format **22.1.8** passes **744 files**.
+The full generated gate is running; final results belong in [HANDOFF.md](HANDOFF.md).
+
 ## Next boundary
 
-Bootstrap's exact getter uses `(has && get) || null`. Replacing only the
-accepted saved-value ternary with `(has && get) || fallback` isolates its
-short-circuit shape while keeping String results and the same publication:
+Bootstrap's exact getter uses `(has && get) || null`. The short-circuit shape
+is now proved for scalar results. Add only `|| null` to the accepted getter's
+return to isolate its result contract from nullable stored payloads:
 
 ```js
 var host = {};
@@ -582,7 +626,7 @@ var host = {};
             state.set(false, saved);
             const result = state.get(false);
             state.delete(false);
-            return result;
+            return result || null;
         },
         set(key) { state.set(key, true); return state.size; }
     };
@@ -592,31 +636,16 @@ host.slot.set(host.slot.get(true));
 var trace = host.slot.size();
 ```
 
-Node/interpreter agree on **`trace=2`**, but both native modes remain **0/6**,
-with all **eighteen calls retained** and no host owner proof. Replacing the saved
-expression with `state.has('other') ? state.get('other') : state.get('')`
-restores **6/6** with the same trace and source call count. This is the next
-boundary from `ca99089` carried forward after its guarded ternary was completed.
-
-The intermediate `&&` may carry false or String. The current host body proof
-records only one scalar tag and loses it at that join; the truthy `||` arm does
-not yet rederive that only String can reach it. Prove these live conditional
-result facts without selecting a startup value, trusting a schema, erasing
-calls or admitting arbitrary union results. Then connect the independent native
-result proof and preserve saved owning Strings. General nullable return and
-object identity payload contracts remain separate work.
-
-In the newly measured guarded specimens, `return result || null`, an explicit
-nullable ternary, normalized consumer keys and ordinary object payloads each
-remain **0/6** with **eighteen calls**, no host owner and Node/interpreter
-**`trace=3`**. A second guarded nullable return retains **nineteen calls** with
-the same trace and refusal. These are new specimens, distinct from the preceding
-checkpoint's nullable/object witnesses. Evidence:
-`/tmp/ctcompile-guard-boundary.json`; source on the devbox:
-`/tmp/ctcompile-guard-next/shortcircuit_same_tag.js`. Keep observer calls as
-standalone statements; arithmetic on their results tests a separate boundary.
+Local Node gives **`trace=3`**. Fresh devbox measurements are queued for this
+source, a nullable ternary, a consumer that normalizes `key || 'missing'`,
+a directly stored `(has && get) || null` value and object payloads. The
+short-circuit and ternary controls give Node **2**. These new measurements must
+not be confused with the preceding guarded-ternary witnesses. Source is frozen
+in `/tmp/ctcompile-shortcircuit-next-sources/`; pending evidence is
+`/tmp/ctcompile-shortcircuit-boundary.json`.
 
 Current-call proofs cannot authorize arbitrary future external arguments or
 establish an export ABI. Future external callers, mutable publication slots,
 general realm owners, reentry and throwing provider effects remain separate
-obligations. See [the next Bootstrap work](bootstrap-provider-next.md).
+obligations. Keep observer calls as standalone statements; arithmetic on their
+results tests a separate boundary. See [the next Bootstrap work](bootstrap-provider-next.md).

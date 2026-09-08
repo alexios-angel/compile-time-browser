@@ -6,6 +6,89 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Short-circuit Map and executed copy-path checkpoint, 2026-09-08
+
+Saved locally on `ctcompile-v1`: **`58decfe`**, scalar Map short-circuit
+alternatives, and **`0f1a1a0`**, executed object-copy path witnesses. This resumes
+`shortcircuit_same_tag` from **`b806b26`** and the **09:59:24 synchronization
+journal**. The tree started clean; the old CallDirectOp recovery was already
+landed in `5307abf`, and its branch is an ancestor. No history was rewritten,
+browser source changed or push performed. Three agents supplied independent
+native execution/lifetime tests, host proof controls/audit and escape witnesses.
+
+The exact `(has && get) || fallback` getter advances **0/6 -> 6/6 native** in
+both modes, preserving all **eighteen calls**, three getter conditionals and
+Node/interpreter **`trace=2`**. The semantic proof retains finite primitive
+alternatives partitioned by truthiness, refining only the tested SSA value.
+Every structural arm's effects remain checked, even with literal predicates.
+Unknown alternatives stay unknown. Membership, entry payload tags and saved
+scalar alternatives remain independent. A live native write proof rederives
+`ctnative.map_write_type`; a wider SCF temporary may supply a proved exact
+scalar write without narrowing its Map schema or trusting input annotations.
+Bool/String temporaries own `std::variant<bool, std::string>` values; a plain
+truthiness visitor and copied extraction preserve String lifetime. General
+union signatures, returns, captures, fields and coercions remain refused.
+
+The published gate passes **103 complete programs**, eight new short-circuit
+programs, nine new guard/effect/tag refusals and **twelve lifetime sanitizer
+families**, in both modes with explicit/deduced GCC/Clang, Node/interpreter,
+forged/rerun checks and **24** discriminating source mutations. Present empty
+String, false and zero still select the fallback. The long String getter sees
+only false during startup; saved native callables later use both flags and keep
+owning results through overwrite/deletion, independent reentry and final Map
+release. First complete native budgets are **19555/20373/10371/11606**, with
+**31 cutoffs each** and no natural speculative rollback interval. Log:
+`/tmp/ctcompile-shortcircuit-native.log`.
+
+Host units pass **82 rows each in source/prepared form**, every **3356/3494**
+short-circuit, **3031/3169** guarded and **2567/2692** conditional budget cutoff,
+exact endpoints and live forged read/key/condition/yield mutations. Local mixed
+Maps pass **49 observations and 21 refusals** under both storage layouts,
+Node/interpreter, GCC/Clang and ASan/UBSan, including inverted falsy refinement
+and a standalone Bool/String temporary. All seven targeted lit cases pass in
+**28.51 seconds**. Focused CTest passes **12/12 in 31.25 seconds**. Homebrew
+clang-format **22.1.8** passes **744 files**, and whitespace checks pass. Inspected
+`/tmp/ctcompile-shortcircuit-string.cpp`: live branches and owning saved Strings
+through write/delete, with no Script symbols or interpreter context.
+
+The parallel escape increment changes **no production analysis**. Four source
+functions and eight runtime calls cover conditional copy source/target aliases,
+replacement/deletion, every switch case/default and saved-child return graphs.
+Exact source-coordinate joins check **21 sites, 39 instances and 23 retained
+instances**, preserving all earlier families. Four execution oracles report zero
+violations. Expanded-fixture precision is **34/47**, versus **29/41** on the
+smaller fixture; this adds five proved-confined and six observed-confined sites,
+not a corpus precision improvement. Bootstrap/p5/Phaser remain **0/64, 0/16,
+0/20**. Raw unknown predicate transport and comparison/Boolean producers for
+source switches remain outside the complete contents proof. See
+`ctcompile/docs/escape-load-evidence.md` for the next bounded proof.
+
+The full **252-step generated devbox build succeeds**. Complete CTest is running
+at `/tmp/ctcompile-shortcircuit-full.log`; final totals, fresh corpus/native Data
+counts and `/tmp/ctcompile-shortcircuit-evidence.json` remain pending. The only
+failures observed before the compiler lit test are the five recorded browser
+baselines: `selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`.
+All **23 native code/test paths** match committed HEAD and frozen gate input.
+
+**Exact next boundary:** add `return result || null` to the accepted short-circuit
+getter, keeping its existing Map writes and both standalone `set(get(flag))`
+calls followed by `size()`. Local Node gives **3**. Fresh interpreter/native
+measurements for this eighteen-call source, a nullable ternary, normalized
+consumer key, directly stored nullable result and object payloads are queued.
+Complete source is in `native-owned-global-maps.md` under "Next boundary" and
+frozen in `/tmp/ctcompile-shortcircuit-next-sources/`; pending evidence is
+`/tmp/ctcompile-shortcircuit-boundary.json`.
+
+A read-only audit identifies the first proof boundary: the host body reduces
+known String/Null alternatives to one optional tag, so `HostContract/Values.cpp`
+cannot supply the consuming setter's parameter fact. Carry finite result and
+parameter evidence through that dependency worklist without authorizing an
+unseeded cycle. Reuse the existing owning `nullable_string` carrier; stored
+callable admission and `EmitC/MethodTables.cpp` still lack its signature support.
+The original setter additionally stores a real null key, while the normalized
+consumer control isolates that obligation. Optional key/storage schemas, object
+identity, export ABI and complete native Bootstrap Data remain separate work.
+
 ## Guarded Map reads and copied-object checkpoint, 2026-09-08
 
 Saved locally on `ctcompile-v1`: **`677714b`**, guarded saved scalar Map reads

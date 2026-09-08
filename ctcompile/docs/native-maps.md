@@ -31,7 +31,8 @@ neither the interpreter nor its collector.
 
 Closed mixed key and payload schemas use exactly `std::variant<bool, double>`
 or `std::variant<bool, std::string>` in that same owning storage. Each call
-operand must have one proved scalar alternative. Key comparison first compares
+operand must have one proved scalar alternative, including a mixed temporary
+whose actual tag is independently established on that path. Key comparison first compares
 the alternative, then applies its ordinary scalar equality: false and zero are
 distinct keys, while numeric NaNs and signed zeros still use SameValueZero.
 The final read's type never narrows the storage schema or removes other writes.
@@ -126,20 +127,34 @@ clears definite membership while retaining the payload tag valid whenever
 present. A live same-instance/same-key `has` arm can restore membership, but
 never supplies a tag. Record keys and equal tags still intersect across arms;
 a missing record is unknown prior contents, not proof of absence.
-A saved read keeps its own scalar tag after known mutations; branches intersect
-these SSA facts separately from entry contents. Unknown values never gain a tag
+A saved read keeps its own scalar alternatives after known mutations; branches
+join these SSA facts separately from entry contents. Unknown values never gain a tag
 from the Map schema, another invocation or input annotations.
 
-Commit `53b44b9` also propagates a scalar tag through `scf.if` results when both
-yielded values independently prove the same tag. The initial candidate census
-recognizes selected saved reads before monotone inference, but supplies no
-payload proof itself. Differing or missing arm results remain refused. Published
-captured Map methods now have a bounded structured body proof that checks every
-arm, including constant predicates and an implicit unchanged `else` path.
-The local mixed gate covers **35 observations and seventeen refusals** across
-both storage implementations. Guarded saved String, Boolean and Number reads
-survive conditional deletion and subsequent writes. Stale observations,
-wrong-key guards, unknown join arms and intervening callee writes refuse.
+Commit `58decfe` extends the structured result proof to finite primitive
+alternatives partitioned by JavaScript truthiness. A false/String intermediate
+from `has && get` keeps only its String alternative in the truthy arm of `||`;
+an empty String, false or zero still selects the fallback. Only the exact tested
+SSA value is refined. Literals supply their actual truthiness, unknown inputs
+remain unknown, and every structural arm's effects are checked, including
+constant predicates and an implicit unchanged `else` path. The initial
+candidate census supplies no payload proof itself.
+
+The independent write proof publishes `ctnative.map_write_type`, cleared and
+rederived with the other Map facts on every run. It can prove one actual tag
+while upstream SCF inference still represents a wider local scalar temporary.
+A Bool/String temporary uses owning `std::variant<bool, std::string>` and a
+plain truthiness visitor. A proved write copies its selected scalar by value.
+Bool/String function signatures, arbitrary union returns, captures, fields,
+arithmetic and coercions remain outside this increment. Existing numeric
+optional carriers handle Bool/Number intermediates.
+
+The local mixed gate covers **49 observations and 21 refusals** across both
+storage implementations, including inverted falsy refinement and a local
+Bool/String temporary without a Map. Guarded and short-circuit saved String,
+Boolean and Number reads survive conditional deletion and subsequent writes.
+Stale observations, wrong-key guards, unknown join arms and intervening callee
+writes refuse.
 See [the published checkpoint](native-owned-global-maps.md).
 
 The read returns its exact scalar by value, preserving saved string ownership.

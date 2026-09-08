@@ -255,22 +255,33 @@ source/prepared form. All guarded budgets, forged edits, both runtime flags and
 saved owning Strings after final Map release pass. See
 [the Map checkpoint](native-owned-global-maps.md#guarded-saved-reads-after-conditional-deletion-2026-09-08).
 
-## Next: short-circuit scalar result refinement
+## Completed: scalar short-circuit result refinement
 
-Replace that ternary with `(state.has('other') && state.get('other')) ||
-state.get('')`, preserving the same saved write/read/delete chain and standalone
-calls. Node/interpreter still give **`trace=2`**, but native remains **0/6** in
-both modes with all **eighteen calls retained** and no host owner proof. The
-ternary control remains **6/6**. The intermediate `&&` has Boolean/String
-alternatives; the truthy `||` arm needs a live proof that its retained result is
-String. An observed startup value or storage schema cannot supply that proof.
-This matches the shape of Bootstrap's exact `get` at vendor line 17 before
-adding its nullable result and nested/object payload obligations.
+Commit `58decfe` admits **6/6 native** in both modes for
+`(state.has('other') && state.get('other')) || state.get('')`, preserving all
+**eighteen calls**, three getter conditionals and Node/interpreter **`trace=2`**.
+The live proofs retain finite primitive alternatives by truthiness and refine
+only the tested SSA value in each arm. Every arm's effects remain checked.
+A local Bool/String temporary owns its String; independently rederived exact
+write tags bridge wider SCF inference without changing the Map storage schema.
 
-Fresh guarded nullable-result and object-payload specimens remain **0/6** with
-Node/interpreter `trace=3`; normalizing a nullable consumer key still lacks a
-host result proof. Evidence: `/tmp/ctcompile-guard-boundary.json`. Complete next
-source: [the Map boundary](native-owned-global-maps.md#next-boundary).
+The gate passes **103 complete programs**, **twelve lifetime sanitizer
+families**, **49 local observations and 21 refusals**, and **82 host rows** each
+in source/prepared form. Nine new published refusals, all short-circuit budgets,
+forged edits and reruns pass. Empty String, false and zero still select the
+fallback, and saved future Strings survive final Map release. See
+[the Map checkpoint](native-owned-global-maps.md#scalar-short-circuit-results-2026-09-08).
+
+## Next: a nullable result contract
+
+Add `return result || null` to that accepted getter without changing its Map
+writes. This isolates a String/Null result from the separate nullable stored
+payload and key schemas. Local Node gives **3**; fresh interpreter/native
+measurements, including a normalized consumer-key control, are queued. The
+complete source and measurement status are in
+[the Map boundary](native-owned-global-maps.md#next-boundary).
+
+The exact Bootstrap getter at vendor line 17 also needs nested/object payloads.
 Exact Bootstrap Data, general realm owners and future-call contracts remain
 unfinished; the measured corpus counts and full gate are in [HANDOFF.md](HANDOFF.md).
 
