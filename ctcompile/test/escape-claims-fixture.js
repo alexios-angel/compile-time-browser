@@ -394,6 +394,104 @@ function objectFrameArithmeticUnaryBigInt() {
 }
 H.push(objectFrameArithmeticUnaryBigInt());
 
+// --- LOOSE EQUALITY FROM INDEPENDENT PRIMITIVE ORIGINS -----------------------
+// Check numeric String conversion, nullish equality, operand reversal and !=
+// (the importer's Eq followed by Not). This original witness reads global
+// undefined, which refuses; the separate Literal repair below proves both origins.
+function objectFrameLooseEqualityReleased(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var input = choice ? "17." : null, other = choice ? 18 : undefined;
+    var equal = input == other, different = input != other;
+    var reversed = other == input, numeric = input == 17, nullZero = null == 0;
+    var selected = equal ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target,
+             equal: equal, different: different, reversed: reversed,
+             numeric: numeric, nullZero: nullZero };
+}
+H.push(objectFrameLooseEqualityReleased(false));
+H.push(objectFrameLooseEqualityReleased(true));
+
+// A later BigInt in the original field does not change either saved operand.
+// The unit controls also cover the reverse: a primitive overwrite cannot
+// clean an earlier saved object, opaque value or BigInt.
+function objectFrameLooseEqualitySaved(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    source.operand = choice ? "17." : false;
+    var saved = source.operand;
+    source.operand = 1n;
+    var equal = saved == 17, reversed = 17 == saved, different = saved != 17;
+    var selected = equal ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target,
+             equal: equal, reversed: reversed, different: different };
+}
+H.push(objectFrameLooseEqualitySaved(false));
+H.push(objectFrameLooseEqualitySaved(true));
+
+// Successful observations do not prove an opaque formal primitive. Literal
+// BigInt comparisons remain outside this bounded family even when successful.
+function objectFrameLooseEqualityOpaque(input) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var equal = input == 17, reversed = 17 == input, different = input != 17;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target,
+             equal: equal, reversed: reversed, different: different };
+}
+H.push(objectFrameLooseEqualityOpaque(0));
+H.push(objectFrameLooseEqualityOpaque("17."));
+function objectFrameLooseEqualityBigInt() {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var equal = 1n == 1, reversed = 1 == 1n, different = 1n != 2n;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target,
+             equal: equal, reversed: reversed, different: different };
+}
+H.push(objectFrameLooseEqualityBigInt());
+
+// Relational comparison still requires a separate completion/retention proof:
+// the VM enters to_primitive's depth guard even for these primitive operands.
+function objectFrameLooseEqualityRelational(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var input = choice ? "17." : 0;
+    var less = input < 17, atMost = input <= 17, greater = input > 17, atLeast = input >= 17;
+    var selected = less ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target,
+             less: less, atMost: atMost, greater: greater, atLeast: atLeast };
+}
+H.push(objectFrameLooseEqualityRelational(false));
+H.push(objectFrameLooseEqualityRelational(true));
+
+// The original Released function above is preserved as a global-lookup refusal:
+// bare undefined imports as load_global. This exact repair uses literal void 0,
+// which imports as constant Undefined. Both original runtime observations agree.
+function objectFrameLooseEqualityLiteral(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var input = choice ? "17." : null, other = choice ? 18 : void 0;
+    var equal = input == other, different = input != other;
+    var reversed = other == input, numeric = input == 17, nullZero = null == 0;
+    var selected = equal ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target,
+             equal: equal, different: different, reversed: reversed,
+             numeric: numeric, nullZero: nullZero };
+}
+H.push(objectFrameLooseEqualityLiteral(false));
+H.push(objectFrameLooseEqualityLiteral(true));
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());

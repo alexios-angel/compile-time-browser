@@ -436,7 +436,8 @@ struct ArrayContentsEvidence {
 /// reads/overwrites, own String-property object writes/reads/deletes/copies,
 /// strict equality, ToBoolean, logical negation, typeof, void, supported static
 /// binary operations on independently non-BigInt origins, arithmetic unary
-/// operations on independently primitive non-BigInt origins, truthy and return.
+/// operations and loose equality on independently primitive non-BigInt origins,
+/// truthy and return.
 /// Object reads require an earlier own write; keys longer than 256 bytes and
 /// __proto__ refuse. Named/computed object deletions erase only the current own
 /// property; absent deletion is a no-op, absent reads still refuse. All earlier
@@ -469,8 +470,17 @@ struct ArrayContentsEvidence {
 /// BigInt alone does not exclude object conversion. Saved reads use their
 /// original primitive identity, never a slot's newer contents. BigInt results
 /// and Plus's catchable BigInt TypeError remain outside this Number proof.
-/// Other coercing comparison/conversion kinds refuse. Joins keep exact
-/// separate states rather than unioning overwrite targets. Truthy
+/// Neg/Plus still have a catchable recursion-depth guard: its unrelated Error
+/// cannot retain unpublished fresh locals from this call/handler-free subset.
+/// This retention query proves no normal completion or no-throw/effect contract;
+/// a native lifetime/effect consumer would need an independent proof.
+/// Loose equality yields an independent Boolean only after BOTH original
+/// origins prove primitive non-BigInt inputs. Its VM primitive paths never
+/// invoke user conversion or the reentry-depth guard. Saved reads retain their
+/// original identity across overwrites; no operand value, key or branch choice
+/// is inferred. Relational kinds still refuse: even a primitive operand reaches
+/// to_primitive's catchable reentry-depth guard. Other conversion kinds refuse.
+/// Joins keep exact separate states rather than unioning overwrite targets. Truthy
 /// accepts an external value only as a noncapturing predicate, never an element.
 /// Exact entry !ctjs.value identities may travel through unused register arguments
 /// and these noncapturing tests separately from known origins. They never authorize

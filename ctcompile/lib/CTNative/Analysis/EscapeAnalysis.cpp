@@ -1003,9 +1003,22 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // it cannot coerce, call, throw or retain either operand
                 // (Operators.td, value::strict_equals). The independent Boolean
                 // result is known even when an operand is an opaque entry.
-                // No value or liveness fact is inferred, and no other comparison
-                // kind borrows this proof: those may reenter through coercion.
-                if (compare.getKind() != ctjs::CompareKind::StrictEq) {
+                // Loose equality needs a separate proof for BOTH original
+                // origins. Its five primitive non-BigInt categories stay in
+                // loose_equals' guard-free tag/string/static-number paths,
+                // without user conversion, a catchable JS throw or an input
+                // alias. String parsing may allocate C++ temporaries; success
+                // of allocation is not proved. No value/key/liveness is inferred.
+                if (compare.getKind() == ctjs::CompareKind::Eq) {
+                    const mlir::Value lhs = origin(compare.getLhs());
+                    const mlir::Value rhs = origin(compare.getRhs());
+                    if (!lhs || !rhs || !primitiveNonBigIntOrigin(lhs) ||
+                        !primitiveNonBigIntOrigin(rhs)) {
+                        return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
+                    }
+                } else if (compare.getKind() != ctjs::CompareKind::StrictEq) {
+                    // Relational comparison calls to_primitive even for a
+                    // primitive; its reentry-depth guard can throw RangeError.
                     return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
                 state.origins[compare.getResult()] = compare.getResult();
@@ -1047,6 +1060,11 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     // VM's static conversion, but objects stay outside this
                     // common source-compatible proof. String parsing may
                     // allocate C++ temporaries; allocation success is unproved.
+                    // Neg/Plus still enter a recursion guard that may throw an
+                    // unrelated RangeError. This whole-frame retention query
+                    // rejects publication, calls and handlers, so that early
+                    // exit cannot expose its fresh locals. This is NOT proof
+                    // of normal completion or an effect/no-throw contract.
                     break;
                 }
                 default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);

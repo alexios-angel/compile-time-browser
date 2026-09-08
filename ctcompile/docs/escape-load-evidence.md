@@ -1141,3 +1141,112 @@ remains **0/7 browser/CommonJS and 0/8 AMD**. All twelve session code/test
 paths match committed HEAD, frozen gate input and final devbox sources.
 Evidence: `/tmp/ctcompile-nested-method-full.log`, `-full-detail.log`,
 `-evidence.json` and `-postgate.log`.
+
+## Loose equality from two proved primitive origins
+
+This continues the producer thread in **`1392478f`**, the **`e533a865`**
+handoff and the **18:56:37** synchronization journal. Complete contents now
+admit `ctjs.compare eq` only when **both** current original operand origins
+independently prove Undefined, Null, Boolean, Number or String. Earlier admitted
+primitive producers also supply independent origins. Objects, arrays, opaque
+entry values and BigInt refuse on either side; proving one operand never proves
+the other. Saved reads keep their original identity after a slot is overwritten
+or deleted, and all structural incoming paths must pass independently.
+
+`CTJS/IR/Ops/Operators.td`, `CTJS/Import/Bytecode/OperatorTables.h` and the
+`loose_equal`/`loose_not_equal` opcode rows connect source `==` and `!=` to
+Eq and Eq followed by Not. The new restriction follows the current
+`ctbrowser/lib/Script/vm/coerce.cpp::loose_equals` implementation: the five
+primitive categories use tag/nullish tests, primitive String equality or static
+`to_number`. These paths never invoke user conversion or a reentry-depth guard,
+throw a catchable JS exception, or carry either input's object identity.
+String parsing can allocate C++ temporaries; neither absence nor success of
+allocation is proved. The Boolean has no inferred truth value, property key,
+array index, operand alias or branch-liveness fact. StrictEq and `operandRole`
+are unchanged; the existing converted sink classifications remain conservative.
+
+The devbox unit family passes **70 rows**, **34 live mutation states** under
+forged completion/confinement markers, and a 32-origin wide snapshot requiring
+exactly **64 additional work units**. Every row and live state uses the existing
+exhaustive incomplete contents/retention budget sweeps and exact endpoint.
+Controls cover each operand position, original primitive/object/BigInt reads
+across array overwrites, own fields after overwrite/deletion, both structural
+incoming arms, retained child identities, primitive storage/return/rooting,
+invalid result keys, unsupported effects and all four relational kinds.
+Number-to-BigInt in-place constant mutations and Eq/StrictEq/relational kind
+changes defeat stale completion markers. All **3,017 incomplete retention
+budget cutoffs** pass; all historical array contents/retention families pass.
+
+The initial focused devbox gate passes **11/12 CTests in 71.88 seconds**,
+including the four escape analysis tests and all three corpus claim tests. Its
+fixture oracle reports **zero violations**, **43/63 precision**, zero partial
+and pending claims, and the expected **twenty sites, 36 instances, 27 retained**
+for the five new functions. The fixture CTest nevertheless fails because the
+new `Released` child's predicted confinement was overbroad: its source spells
+`other = choice ? 18 : undefined`, whose bare identifier imports as
+`ctjs.load_global "undefined"` at line **2422** of
+`/tmp/ctcompile-leaf-object-escape-raw.mlir`. `compile_ident` in
+`Script/compile/expressions.cpp` emits `get_global` for that unbound identifier;
+`CTJS/Import/Bytecode/Instructions.cpp` preserves the lookup. The whole-function
+query correctly refuses that unsupported operation, regardless of the runtime
+value it returned. This was a test expectation error, not a producer defect.
+Only the `Saved` source proves confinement in this first run. All historical
+source-coordinate families pass unchanged; Bootstrap/p5/Phaser remain
+**0/64, 0/16, 0/20**, with zero soundness violations. Focused log:
+`/tmp/ctcompile-leaf-object-focused.log`.
+
+The corrected source family preserves the original `Released` function and
+both calls byte-for-byte as a global-lookup refusal control. A separately named
+`Literal` repair changes only that operand spelling to `void 0`, which imports
+as constant Undefined; the two observations still agree in Node. The original
+function-and-calls SHA256 is
+`7e07592c147839ff38475ed69820f04004942fdb541a9bbaacc45a5eb1c27353`.
+Six source functions now provide two positives (`Literal` and `Saved`) and
+four controls (global lookup, opaque formal, BigInt and relational). The
+corrected devbox rerun passes **2/2 CTests in 0.26 seconds**: all array unit
+families, including the **70 rows/34 states/3,017 cutoffs** above, and the exact
+fixture checker with **24 sites, 44 instances and 33 retained instances**.
+The expanded fixture reports **zero violations**, **44/64 precision**, and
+zero partial/pending claims. Relative to the preceding committed **42/58**,
+this adds two proved-confined and six observed-confined source sites; it adds
+coverage, rather than measuring a precision improvement on historical input.
+All **eight escape CTests pass across the initial gate and corrected rerun**.
+Every original source function, invocation and historical family expectation
+is preserved. Evidence: `/tmp/ctcompile-leaf-object-escape-rerun.log`.
+The full generated build/CTest gate remains **pending**; no native corpus gain
+is claimed.
+
+Local Node syntax/execution passes **45 combined fixture calls**, with explicit
+result/tag/field/identity checks. All **56 new observation mutations** and
+**100 historical mutations** discriminate; additional opaque object probes
+observe three `valueOf` calls and one thrown conversion value with one call.
+These probes justify retaining opaque/object refusals and do not replace
+current-IR proofs. Evidence: `/tmp/ctcompile-escape-primitive-equality-node.js`
+and its `.py` generator; the preceding 43-call observations are preserved in
+`/tmp/ctcompile-escape-primitive-equality-initial-node.{js,py}`. Homebrew
+clang-format **22.1.8** and whitespace checks pass the changed paths. No runtime
+behavior, producer logic or native admission changed in this correction.
+
+A source audit also qualifies the preceding arithmetic-unary contract.
+`coerce.cpp::negate_value` reaches `to_number_value`, whose unconditional
+`vm.hpp::reentry_scope` can throw a catchable RangeError above depth **512**
+before testing a primitive operand's tag. BitNot uses the guard-free static
+conversion. Thus Neg/Plus exclude conversion of an object operand and the
+BigInt TypeError; they do **not** prove normal completion or absence of all
+runtime exceptions. Uncaught error description can itself consult Error
+prototype accessors (`vm/call/invoke.cpp::describe_thrown`). The current sole
+consumer, `refineArrayRetention`, proves the entire function without calls,
+publication, handlers or closure creation. `vm.hpp::make_error` attaches only
+an unrelated Error, primitive message/stack data and a pre-existing prototype;
+an early exceptional exit cannot expose those unpublished fresh locals.
+Caught unwind excludes the ending frame's register window in the oracle
+(`vm.hpp::unwind_to_handler`/`each_root`). No retention counterexample was found;
+this is source inspection, **not a measured deep-stack execution**. Comments
+now explicitly forbid treating this retention evidence as a no-throw/effect
+contract for future native consumers. Earlier measured unary behavior stays.
+
+All four relational kinds remain a conservative next producer boundary. They
+unconditionally call `to_primitive`, including its depth guard for primitive
+operands, so they need their own completion/retention argument and controls.
+BigInt comparison categories, loops and native lifetime consumers also remain
+separate work.
