@@ -46,14 +46,33 @@ and 387 frame budget cutoffs**, and four execution oracles with zero violations.
 Fixture precision stays **22/33**; Bootstrap/p5/Phaser precision stays
 **0/64, 0/16, 0/20**. Native ownership consumers remain separate.
 
+The full generated devbox build succeeds (**243 build steps**). The combined
+gate finishes **512/517 CTests in 788.70 seconds**: **372/372 compiler** and
+**140/145 browser**. Its five failures remain the recorded browser `selectors`,
+`frames`, `element_attrs`, `vm_async` and `early_errors`; no browser source
+changed. All **164/164 lit cases** pass in **187.86 seconds**, and source
+exception recovery passes in **1.20 seconds**. Log:
+`/tmp/ctcompile-cardinality-full.log`; extracted evidence:
+`/tmp/ctcompile-cardinality-evidence.json`.
+
+Fresh native component coverage remains **19/574 Bootstrap**, **39/4754 p5**
+and **45/7725 Phaser**, in both optimization modes with zero pruned functions.
+Exact Data remains **0/7 browser**, **0/7 CommonJS** and **0/8 AMD**. Complete
+native Bootstrap initialization remains unfinished.
+
 The current frozen source passes `tools/format.sh --check`: **742 files** with
-Homebrew clang-format **22.1.8**. The full generated devbox gate is running at
-`/tmp/ctcompile-cardinality-full.log`; the preceding checkpoint below is the
-last completed full gate. No new full-corpus coverage gain is claimed yet.
+Homebrew clang-format **22.1.8**. All **12 changed code/test paths** byte-match
+the frozen devbox input and committed implementation. Emitted C++ at
+`/tmp/ctcompile-cardinality-two-entries.cpp` was inspected: the two seeds, size
+read, deletion and typed lookup execute against the same owning `std::map`,
+with no interpreter context, collector or Script symbols.
 
 **Exact next native boundary:** `result_seeded_bool` and
 `result_seeded_string` in the existing Map gate remain **0/6 native** despite
 complete host owner/result proofs; Node/interpreter both produce **`trace=2`**.
+A fresh post-gate probe retains **all eight source calls** in each refusal and
+confirms the completed size specimen at **5/5**, with its owner proof and
+`trace=2`. Evidence: `/tmp/ctcompile-cardinality-boundary.json`.
 `LoweringSupport.cpp` refuses homogeneous Bool/UTF8 String Map payload carriers.
 Extend carrier selection/spelling, `replaceMap` construction and generic Map
 reads together, reusing owning string/nullable scalar types. Preserve false and
