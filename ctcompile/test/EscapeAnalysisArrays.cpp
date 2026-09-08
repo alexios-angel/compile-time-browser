@@ -27,6 +27,7 @@ struct contents_row {
     const char * objects = nullptr;
     const char * propertyReads = nullptr;
     const char * propertyWrites = nullptr;
+    const char * propertyDeletions = nullptr;
 };
 
 void checkArrayContents(mlir::ModuleOp module, const contents_row & expected) {
@@ -50,7 +51,8 @@ void checkArrayContents(mlir::ModuleOp module, const contents_row & expected) {
     const auto empty = [](const ArrayContentsEvidence & result) {
         return result.arrays.empty() && result.reads.empty() && result.writes.empty() &&
                result.objects.empty() && result.propertyReads.empty() &&
-               result.propertyWrites.empty() && result.exits.empty();
+               result.propertyWrites.empty() && result.propertyDeletions.empty() &&
+               result.exits.empty();
     };
     if (!complete) {
         if (!empty(contents) || contents.refusedBy == nullptr) {
@@ -151,6 +153,17 @@ void checkArrayContents(mlir::ModuleOp module, const contents_row & expected) {
                     write.key.getValue().str() + "]=" + contentsLabel(write.value.getDefiningOp());
             }
             equal("property writes", propertyWrites, expected.propertyWrites);
+        }
+        if (expected.propertyDeletions != nullptr) {
+            std::string propertyDeletions;
+            for (const ObjectPropertyDeletion & deletion : contents.propertyDeletions) {
+                if (!propertyDeletions.empty()) { propertyDeletions += "; "; }
+                propertyDeletions +=
+                    deletion.by->getName().getStringRef().str() + ":" +
+                    contentsLabel(deletion.object) + "[" + deletion.key.getValue().str() + "]=" +
+                    (deletion.value ? contentsLabel(deletion.value.getDefiningOp()) : "absent");
+            }
+            equal("property deletions", propertyDeletions, expected.propertyDeletions);
         }
         if (expected.writes != nullptr) {
             std::string writes;
@@ -897,9 +910,14 @@ void checkObjectContents(mlir::MLIRContext & context) {
                       .body = values + read +
                               "  ctjs.define_accessor \"child\" on %o get %p set %q\n" + done,
                       .failure = ArrayContentsFailure::UnsupportedOperation}},
-        {.contents = {.what = "own-field deletion remains outside complete contents",
+        {.contents = {.what = "private own-field deletion preserves its saved read origin",
                       .body = values + read + "  ctjs.delete_property %o[%key]\n" + done,
-                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+                      .exit = "zero -> {}",
+                      .objects = "x:{}; y:{}; o:{}",
+                      .propertyReads = "o[child]=x",
+                      .propertyWrites = "ctjs.set_property[2]:o[child]=x",
+                      .propertyDeletions = "ctjs.delete_property:o[child]=x"},
+         .discharged = "x"},
         {.contents = {.what = "an unrelated late call still invalidates own-field evidence",
                       .body = values + read + "  %call = ctjs.call %p(%q)\n" + done,
                       .failure = ArrayContentsFailure::UnsupportedOperation}},
@@ -1133,6 +1151,429 @@ void checkObjectContents(mlir::MLIRContext & context) {
     std::printf("object contents/retention: %zu rows, %zu key controls, twelve live states, "
                 "%zu retention budget cutoffs\n",
                 rows.size(), keys.size(), budgets);
+}
+
+void checkObjectDeletions(mlir::MLIRContext & context) {
+    const std::string values =
+        "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
+        "  %key = ctjs.constant #ctjs.string<\"child\"> {storage_test_id = \"key\"}\n"
+        "  %other = ctjs.constant #ctjs.string<\"other\">\n"
+        "  %x = ctjs.create_object {storage_test_id = \"x\"}\n"
+        "  %y = ctjs.create_object {storage_test_id = \"y\"}\n"
+        "  %o = ctjs.create_object {storage_test_id = \"o\"}\n"
+        "  ctjs.set_property %o[%key], %x\n";
+    const std::string read = "  %saved = ctjs.get_property %o[%key]\n";
+    const std::string computed = "  ctjs.delete_property %o[%key]\n";
+    const std::string named = "  ctjs.delete_named \"child\" from %o\n";
+    const std::string returned = "  ctjs.return %o\n";
+    const std::string done = "  ctjs.return %zero\n";
+    const std::string split = "  %condition = ctjs.truthy %p\n"
+                              "  cf.cond_br %condition, ^left, ^right\n^left:\n";
+    struct deletion_row {
+        contents_row contents;
+        const char * discharged = "";
+        bool acyclic = true;
+    };
+    const std::vector<deletion_row> rows = {
+        {.contents = {.what = "computed deletion removes a child from the returned object",
+                      .body = values + computed + returned,
+                      .exit = "o -> {o}",
+                      .objects = "x:{}; y:{}; o:{}",
+                      .propertyWrites = "ctjs.set_property[2]:o[child]=x",
+                      .propertyDeletions = "ctjs.delete_property:o[child]=x"},
+         .discharged = "x"},
+        {.contents = {.what = "named deletion preserves a saved child returned directly",
+                      .body = values + read + named + "  ctjs.return %saved\n",
+                      .exit = "x -> {x}",
+                      .objects = "x:{}; y:{}; o:{}",
+                      .propertyReads = "o[child]=x",
+                      .propertyWrites = "ctjs.set_property[2]:o[child]=x",
+                      .propertyDeletions = "ctjs.delete_named:o[child]=x"}},
+        {.contents = {.what = "a returned array keeps a saved own read across deletion",
+                      .body = values + read + computed +
+                              "  %a = ctjs.create_array [%saved] {storage_test_id = \"a\"}\n"
+                              "  ctjs.return %a\n",
+                      .arrays = "a:[x]",
+                      .exit = "a -> {a,x}",
+                      .objects = "x:{}; y:{}; o:{}",
+                      .propertyReads = "o[child]=x",
+                      .propertyDeletions = "ctjs.delete_property:o[child]=x"}},
+        {.contents = {.what = "repeated named and computed deletion records exact absence",
+                      .body = values + named + computed + named + returned,
+                      .exit = "o -> {o}",
+                      .objects = "x:{}; y:{}; o:{}",
+                      .propertyWrites = "ctjs.set_property[2]:o[child]=x",
+                      .propertyDeletions = "ctjs.delete_named:o[child]=x; "
+                                           "ctjs.delete_property:o[child]=absent; "
+                                           "ctjs.delete_named:o[child]=absent"},
+         .discharged = "x"},
+        {.contents = {.what = "absent own deletion does not consult a builtin or prototype",
+                      .body = values +
+                              "  ctjs.delete_named \"constructor\" from %o\n"
+                              "  ctjs.delete_property %o[%other]\n" +
+                              returned,
+                      .exit = "o -> {o,x}",
+                      .objects = "x:{}; y:{}; o:{child:x}",
+                      .propertyDeletions = "ctjs.delete_named:o[constructor]=absent; "
+                                           "ctjs.delete_property:o[other]=absent"}},
+        {.contents = {.what = "deletion and reinsertion preserve unrelated own fields",
+                      .body = values + "  ctjs.set_property %o[%other], %y\n" + computed +
+                              "  ctjs.set_property %o[%key], %y\n" + read + returned,
+                      .exit = "o -> {o,y}",
+                      .objects = "x:{}; y:{}; o:{other:y,child:y}",
+                      .propertyReads = "o[child]=y",
+                      .propertyWrites = "ctjs.set_property[2]:o[child]=x; "
+                                        "ctjs.set_property[2]:o[other]=y; "
+                                        "ctjs.set_property[2]:o[child]=y",
+                      .propertyDeletions = "ctjs.delete_property:o[child]=x"},
+         .discharged = "x"},
+        {.contents = {.what = "a saved object alias still receives writes after its field deletion",
+                      .body = values + read + named +
+                              "  ctjs.set_property %saved[%other], %y\n"
+                              "  ctjs.return %saved\n",
+                      .exit = "x -> {x,y}",
+                      .objects = "x:{other:y}; y:{}; o:{}",
+                      .propertyReads = "o[child]=x",
+                      .propertyDeletions = "ctjs.delete_named:o[child]=x"}},
+        {.contents = {.what = "deletion through an array-loaded object alias updates one object",
+                      .body = values + "  %a = ctjs.create_array [%o] {storage_test_id = \"a\"}\n"
+                                       "  %alias = ctjs.get_property %a[%zero]\n"
+                                       "  ctjs.delete_named \"child\" from %alias\n"
+                                       "  ctjs.return %a\n",
+                      .arrays = "a:[o]",
+                      .reads = "a[0]=o",
+                      .exit = "a -> {a,o}",
+                      .objects = "x:{}; y:{}; o:{}",
+                      .propertyDeletions = "ctjs.delete_named:o[child]=x"},
+         .discharged = "x"},
+        {.contents = {.what = "deletion through an object-loaded alias updates its own snapshot",
+                      .body = values + "  ctjs.set_property %y[%other], %o\n"
+                                       "  %alias = ctjs.get_property %y[%other]\n"
+                                       "  ctjs.delete_property %alias[%key]\n"
+                                       "  ctjs.return %y\n",
+                      .exit = "y -> {o,y}",
+                      .objects = "x:{}; y:{other:o}; o:{}",
+                      .propertyReads = "y[other]=o",
+                      .propertyDeletions = "ctjs.delete_property:o[child]=x"},
+         .discharged = "x"},
+        {.contents = {.what = "a saved String key remains usable after its own field is deleted",
+                      .body = values +
+                              "  ctjs.set_property %o[%other], %key\n"
+                              "  %savedKey = ctjs.get_property %o[%other]\n"
+                              "  ctjs.delete_named \"other\" from %o\n"
+                              "  ctjs.delete_property %o[%savedKey]\n" +
+                              returned,
+                      .exit = "o -> {o}",
+                      .objects = "x:{}; y:{}; o:{}",
+                      .propertyReads = "o[other]=key",
+                      .propertyDeletions = "ctjs.delete_named:o[other]=key; "
+                                           "ctjs.delete_property:o[child]=x"},
+         .discharged = "x"},
+        {.contents = {.what = "a missing read after deletion refuses the whole contents proof",
+                      .body = values + computed + read + returned,
+                      .failure = ArrayContentsFailure::MissingProperty}},
+        {.contents = {.what = "named deletion cannot authorize a later builtin lookup",
+                      .body = values +
+                              "  %constructor = ctjs.constant #ctjs.string<\"constructor\">\n"
+                              "  ctjs.set_property %o[%constructor], %y\n"
+                              "  ctjs.delete_named \"constructor\" from %o\n"
+                              "  %read = ctjs.get_property %o[%constructor]\n" +
+                              done,
+                      .failure = ArrayContentsFailure::MissingProperty}},
+        {.contents = {.what = "an undeleted conditional edge still retains the original child",
+                      .body = values + split + computed + returned + "^right:\n" + returned,
+                      .exit = "o -> {o}; o -> {o,x}",
+                      .objects = "x:{}; y:{}; o:{} | x:{}; y:{}; o:{child:x}",
+                      .propertyDeletions = "ctjs.delete_property:o[child]=x"}},
+        {.contents = {.what = "deleting on both conditional edges discharges the child",
+                      .body = values + split + computed + "  cf.br ^join\n^right:\n" + named +
+                              "  cf.br ^join\n^join:\n" + returned,
+                      .exit = "o -> {o}; o -> {o}",
+                      .objects = "x:{}; y:{}; o:{} | x:{}; y:{}; o:{}",
+                      .propertyDeletions = "ctjs.delete_property:o[child]=x; "
+                                           "ctjs.delete_named:o[child]=x"},
+         .discharged = "x"},
+        {.contents = {.what = "a joined deletion target cannot erase both alternative objects",
+                      .body = values +
+                              "  %b = ctjs.create_object {storage_test_id = \"b\"}\n"
+                              "  ctjs.set_property %b[%key], %y\n"
+                              "  %a = ctjs.create_array [%o, %b] {storage_test_id = \"a\"}\n"
+                              "  %condition = ctjs.truthy %p\n"
+                              "  cf.cond_br %condition, ^join(%o : !ctjs.value), "
+                              "^join(%b : !ctjs.value)\n"
+                              "^join(%selected: !ctjs.value):\n"
+                              "  ctjs.delete_property %selected[%key]\n"
+                              "  ctjs.return %a\n",
+                      .arrays = "a:[o,b] | a:[o,b]",
+                      .exit = "a -> {a,b,o,y}; a -> {a,b,o,x}",
+                      .objects = "x:{}; y:{}; o:{}; b:{child:y} | "
+                                 "x:{}; y:{}; o:{child:x}; b:{}",
+                      .propertyDeletions = "ctjs.delete_property:o[child]=x; "
+                                           "ctjs.delete_property:b[child]=y"}},
+        {.contents = {.what = "all switch edges preserve their exact deletion and exit records",
+                      .body = values +
+                              "  %flag = ctjs.truthy %p\n"
+                              "  cf.switch %flag : i1, [default: ^default, 0: ^left, 1: ^right]\n"
+                              "^default:\n" +
+                              computed + returned + "^left:\n" + named + returned + "^right:\n" +
+                              computed + named + returned,
+                      .exit = "o -> {o}; o -> {o}; o -> {o}",
+                      .objects = "x:{}; y:{}; o:{} | x:{}; y:{}; o:{} | x:{}; y:{}; o:{}",
+                      .propertyDeletions = "ctjs.delete_property:o[child]=x; "
+                                           "ctjs.delete_named:o[child]=x; "
+                                           "ctjs.delete_property:o[child]=x; "
+                                           "ctjs.delete_named:o[child]=absent"},
+         .discharged = "x"},
+        {.contents = {.what = "a second-path missing read discards earlier deletion records",
+                      .body = values + split + computed + returned + "^right:\n" + named + read +
+                              returned,
+                      .failure = ArrayContentsFailure::MissingProperty}},
+        {.contents = {.what = "a second-path unknown delete key discards an earlier complete exit",
+                      .body = values + split + computed + returned +
+                              "^right:\n  ctjs.delete_property %o[%p]\n" + returned,
+                      .failure = ArrayContentsFailure::UnknownPropertyKey}},
+        {.contents = {.what = "late publication after deletion preserves every original verdict",
+                      .body = values + read + computed + "  ctjs.store_global \"held\", %saved\n" +
+                              done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what = "an accessor cannot be hidden by deleting its field",
+                      .body = values + "  ctjs.define_accessor \"child\" on %o get %p set %q\n" +
+                              named + done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what = "prototype changes after deletion still refuse complete contents",
+                      .body = values + named + "  ctjs.set_proto %y on %o\n" + returned,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what = "a deleted self edge remains in the all-write cycle graph",
+                      .body = values +
+                              "  ctjs.set_property %o[%other], %o\n"
+                              "  ctjs.delete_named \"other\" from %o\n" +
+                              done,
+                      .exit = "zero -> {}",
+                      .objects = "x:{}; y:{}; o:{child:x}",
+                      .propertyWrites = "ctjs.set_property[2]:o[child]=x; "
+                                        "ctjs.set_property[2]:o[other]=o",
+                      .propertyDeletions = "ctjs.delete_named:o[other]=o"},
+         .acyclic = false},
+        {.contents = {.what = "deleting a mixed array-object cycle does not select its owner",
+                      .body = values +
+                              "  %a = ctjs.create_array [%o] {storage_test_id = \"a\"}\n"
+                              "  ctjs.set_property %o[%key], %a\n" +
+                              computed + returned,
+                      .arrays = "a:[o]",
+                      .exit = "o -> {o}",
+                      .objects = "x:{}; y:{}; o:{}",
+                      .propertyDeletions = "ctjs.delete_property:o[child]=a"},
+         .acyclic = false},
+        {.contents = {.what = "imported roots keep saved reads until the matching frame exit",
+                      .body = "  %frame = ctjs.frame_enter 4\n" + values + read + computed +
+                              "  ctjs.root %saved in %frame\n"
+                              "  ctjs.frame_exit %frame\n" +
+                              returned,
+                      .exit = "o -> {o}",
+                      .objects = "x:{}; y:{}; o:{}",
+                      .propertyReads = "o[child]=x",
+                      .propertyDeletions = "ctjs.delete_property:o[child]=x"},
+         .discharged = "x"},
+        {.contents = {.what = "an external deletion target cannot borrow local own properties",
+                      .body = values + "  ctjs.delete_property %p[%key]\n" + returned,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what = "computed array deletion cannot claim JavaScript hole semantics",
+                      .body = values +
+                              "  %a = ctjs.create_array [%x]\n"
+                              "  ctjs.delete_property %a[%zero]\n" +
+                              done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what = "named array deletion remains outside own-object contents",
+                      .body = values +
+                              "  %a = ctjs.create_array [%x]\n"
+                              "  ctjs.delete_named \"0\" from %a\n" +
+                              done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what = "String array deletion cannot borrow ordinary object erasure",
+                      .body = values +
+                              "  %a = ctjs.create_array [%x]\n"
+                              "  %index = ctjs.constant #ctjs.string<\"0\">\n"
+                              "  ctjs.delete_property %a[%index]\n" +
+                              done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what = "coercing numeric deletion keys remain outside the object proof",
+                      .body = values + "  ctjs.delete_property %o[%zero]\n" + returned,
+                      .failure = ArrayContentsFailure::UnknownPropertyKey}},
+        {.contents = {.what = "coercing Boolean deletion keys remain outside the object proof",
+                      .body = values +
+                              "  %boolean = ctjs.constant #ctjs.boolean<true>\n"
+                              "  ctjs.delete_property %o[%boolean]\n" +
+                              returned,
+                      .failure = ArrayContentsFailure::UnknownPropertyKey}},
+    };
+    std::size_t budgets = 0;
+    const auto check = [&](mlir::ModuleOp module, const deletion_row & expected) {
+        checkArrayContents(module, expected.contents);
+        budgets += checkArrayRetention(
+            module, {.what = expected.contents.what,
+                     .body = expected.contents.body,
+                     .discharged = expected.discharged,
+                     .complete = expected.contents.failure == ArrayContentsFailure::None &&
+                                 expected.acyclic});
+    };
+    const auto run = [&](const deletion_row & expected) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(
+            std::string{kPrologue} + expected.contents.body + "}\n", &context);
+        if (!module) {
+            fail(
+                row{.what = expected.contents.what, .body = expected.contents.body, .expected = ""},
+                "the object deletion fixture did not parse");
+            return;
+        }
+        check(*module, expected);
+    };
+    for (const deletion_row & expected : rows) { run(expected); }
+
+    const std::vector<std::pair<std::string, bool>> keys = {
+        {"\"\"", true},
+        {"\"0\"", true},
+        {"\"00\"", true},
+        {"\"length\"", true},
+        {"\"constructor\"", true},
+        {"\"x\\00y\"", true},
+        {"\"" + std::string(256, 'k') + "\"", true},
+        {"\"" + std::string(257, 'k') + "\"", false},
+        {"\"__proto__\"", false},
+    };
+    for (const auto & [key, supported] : keys) {
+        for (bool isNamed : {false, true}) {
+            // Unsupported keys reach the deletion itself, rather than being
+            // refused by an earlier write using the same invalid key.
+            const std::string prefix = values + "  %fixed = ctjs.constant #ctjs.string<" + key +
+                                       ">\n" +
+                                       (supported ? "  ctjs.set_property %o[%fixed], %y\n" : "");
+            const std::string deletion = isNamed ? "  ctjs.delete_named " + key + " from %o\n"
+                                                 : "  ctjs.delete_property %o[%fixed]\n";
+            run({.contents = {.what = "both deletion forms validate exact bounded String keys",
+                              .body = prefix + deletion + returned,
+                              .failure = supported ? ArrayContentsFailure::None
+                                                   : ArrayContentsFailure::UnknownPropertyKey,
+                              .exit = supported ? "o -> {o,x}" : ""},
+                 .discharged = supported ? "y" : ""});
+        }
+    }
+
+    deletion_row mutation = rows[0];
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + mutation.contents.body + "}\n", &context);
+    if (module) {
+        ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+        ctjs::DeletePropertyOp deletion;
+        mlir::Value child;
+        mlir::Value other;
+        module->walk([&](ctjs::DeletePropertyOp op) { deletion = op; });
+        module->walk([&](ctjs::CreateObjectOp op) {
+            if (contentsLabel(op) == "x") { child = op.getResult(); }
+        });
+        module->walk([&](ctjs::ConstantOp op) {
+            auto string = llvm::dyn_cast<ctjs::StringAttr>(op.getValue());
+            if (string && string.getValue() == "other") { other = op.getResult(); }
+        });
+        const mlir::Value base = deletion.getObject();
+        const mlir::Value key = deletion.getKey();
+        const mlir::Value parameter = function.getBody().front().getArgument(3);
+        mlir::OpBuilder builder(function.getBody().front().getTerminator());
+        function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+        child.getDefiningOp()->setAttr("ctnative.confined", builder.getUnitAttr());
+        check(*module, mutation);
+        deletion->setOperand(1, other);
+        mutation.contents.exit = "o -> {o,x}";
+        mutation.contents.objects = "x:{}; y:{}; o:{child:x}";
+        mutation.contents.propertyDeletions = "ctjs.delete_property:o[other]=absent";
+        mutation.discharged = "";
+        check(*module, mutation);
+        deletion->setOperand(1, parameter);
+        mutation.contents.failure = ArrayContentsFailure::UnknownPropertyKey;
+        check(*module, mutation);
+        deletion->setOperand(1, key);
+        deletion->setOperand(0, parameter);
+        mutation.contents.failure = ArrayContentsFailure::UnsupportedOperation;
+        check(*module, mutation);
+        deletion->setOperand(0, child);
+        mutation.contents.failure = ArrayContentsFailure::None;
+        mutation.contents.propertyDeletions = "ctjs.delete_property:x[child]=absent";
+        check(*module, mutation);
+        deletion->setOperand(0, base);
+        auto publication = ctjs::StoreGlobalOp::create(builder, function.getLoc(), "held", base);
+        mutation.contents.failure = ArrayContentsFailure::UnsupportedOperation;
+        check(*module, mutation);
+        publication.erase();
+        auto missing = ctjs::GetPropertyOp::create(builder, function.getLoc(),
+                                                   ctjs::ValueType::get(&context), base, key);
+        mutation.contents.failure = ArrayContentsFailure::MissingProperty;
+        check(*module, mutation);
+        missing.erase();
+        mutation = rows[0];
+        check(*module, mutation);
+        checkArrayRetention(*module, {.what = "deletion refinement still requires alias lattices",
+                                      .body = mutation.contents.body,
+                                      .complete = false,
+                                      .withAnalysis = false});
+    } else {
+        fail(row{.what = mutation.contents.what, .body = mutation.contents.body, .expected = ""},
+             "the live computed deletion fixture did not parse");
+    }
+
+    deletion_row namedMutation{
+        .contents = {.what = "live named deletion changes invalidate forged second-path proofs",
+                     .body = values + split + computed + returned + "^right:\n" + named + returned,
+                     .exit = "o -> {o}; o -> {o}",
+                     .objects = "x:{}; y:{}; o:{} | x:{}; y:{}; o:{}",
+                     .propertyDeletions = "ctjs.delete_property:o[child]=x; "
+                                          "ctjs.delete_named:o[child]=x"},
+        .discharged = "x"};
+    auto namedModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + namedMutation.contents.body + "}\n", &context);
+    if (namedModule) {
+        ctjs::FuncOp function = *namedModule->getOps<ctjs::FuncOp>().begin();
+        ctjs::DeleteNamedOp deletion;
+        namedModule->walk([&](ctjs::DeleteNamedOp op) { deletion = op; });
+        const mlir::Value base = deletion.getObject();
+        const mlir::StringAttr name = deletion.getNameAttr();
+        const mlir::Value parameter = function.getBody().front().getArgument(3);
+        mlir::OpBuilder builder(function);
+        function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+        function->setAttr("ctnative.confined", builder.getUnitAttr());
+        check(*namedModule, namedMutation);
+        deletion->setAttr("name", builder.getStringAttr("other"));
+        namedMutation.contents.exit = "o -> {o}; o -> {o,x}";
+        namedMutation.contents.objects = "x:{}; y:{}; o:{} | x:{}; y:{}; o:{child:x}";
+        namedMutation.contents.propertyDeletions = "ctjs.delete_property:o[child]=x; "
+                                                   "ctjs.delete_named:o[other]=absent";
+        namedMutation.discharged = "";
+        check(*namedModule, namedMutation);
+        deletion->setAttr("name", builder.getStringAttr("__proto__"));
+        namedMutation.contents.failure = ArrayContentsFailure::UnknownPropertyKey;
+        check(*namedModule, namedMutation);
+        deletion->setAttr("name", builder.getStringAttr(std::string(257, 'k')));
+        check(*namedModule, namedMutation);
+        deletion->setAttr("name", name);
+        deletion->setOperand(0, parameter);
+        namedMutation.contents.failure = ArrayContentsFailure::UnsupportedOperation;
+        check(*namedModule, namedMutation);
+        deletion->setOperand(0, base);
+        namedMutation.contents.failure = ArrayContentsFailure::None;
+        namedMutation.contents.exit = "o -> {o}; o -> {o}";
+        namedMutation.contents.objects = "x:{}; y:{}; o:{} | x:{}; y:{}; o:{}";
+        namedMutation.contents.propertyDeletions = "ctjs.delete_property:o[child]=x; "
+                                                   "ctjs.delete_named:o[child]=x";
+        namedMutation.discharged = "x";
+        check(*namedModule, namedMutation);
+    } else {
+        fail(row{.what = namedMutation.contents.what,
+                 .body = namedMutation.contents.body,
+                 .expected = ""},
+             "the live named deletion fixture did not parse");
+    }
+    std::printf("object deletion: %zu rows, %zu key controls, fourteen live states, "
+                "one missing-lattice control, "
+                "%zu retention budget cutoffs\n",
+                rows.size(), keys.size() * 2, budgets);
 }
 
 void checkArrayFrames(mlir::MLIRContext & context) {
@@ -1616,8 +2057,9 @@ void checkArrayConditionals(mlir::MLIRContext & context) {
                 result.work != limit || !result.arrays.empty() || !result.reads.empty() ||
                 !result.writes.empty() || !result.objects.empty() ||
                 !result.propertyReads.empty() || !result.propertyWrites.empty() ||
-                !result.exits.empty() || refined.arrayRetentionComplete ||
-                refined.confinedStoredSites != 0 || refined.arrayRetentionWork != limit ||
+                !result.propertyDeletions.empty() || !result.exits.empty() ||
+                refined.arrayRetentionComplete || refined.confinedStoredSites != 0 ||
+                refined.arrayRetentionWork != limit ||
                 !llvm::all_of(original.sites, [&](const auto & entry) {
                     auto found = refined.sites.find(entry.first);
                     return found != refined.sites.end() &&
@@ -1928,7 +2370,8 @@ void checkContainerSwitches(mlir::MLIRContext & context) {
             const auto empty = [](const ArrayContentsEvidence & result) {
                 return result.arrays.empty() && result.objects.empty() && result.writes.empty() &&
                        result.reads.empty() && result.propertyWrites.empty() &&
-                       result.propertyReads.empty() && result.exits.empty();
+                       result.propertyReads.empty() && result.propertyDeletions.empty() &&
+                       result.exits.empty();
             };
             const auto result = computeArrayContents(function);
             if (result.complete || result.failure != failure || !result.refusedBy ||
@@ -2007,8 +2450,9 @@ void checkContainerSwitches(mlir::MLIRContext & context) {
                 result.work != limit || !result.arrays.empty() || !result.reads.empty() ||
                 !result.writes.empty() || !result.objects.empty() ||
                 !result.propertyReads.empty() || !result.propertyWrites.empty() ||
-                !result.exits.empty() || refined.arrayRetentionComplete ||
-                refined.confinedStoredSites != 0 || refined.arrayRetentionWork != limit ||
+                !result.propertyDeletions.empty() || !result.exits.empty() ||
+                refined.arrayRetentionComplete || refined.confinedStoredSites != 0 ||
+                refined.arrayRetentionWork != limit ||
                 !llvm::all_of(original.sites, [&](const auto & entry) {
                     auto found = refined.sites.find(entry.first);
                     return found != refined.sites.end() &&
@@ -2043,6 +2487,7 @@ int main() {
     checkArrayContents(context);
     checkArrayRetention(context);
     checkObjectContents(context);
+    checkObjectDeletions(context);
     checkArrayFrames(context);
     checkArrayConditionals(context);
     checkContainerSwitches(context);

@@ -322,7 +322,7 @@ void refineArrayRetention(EscapeVerdicts & verdicts, ctjs::FuncOp function, std:
 
     // This increment discharges no cycle ownership obligation. Reject cycles
     // in the union of ALL writes, not just final contents: even a cycle that
-    // was overwritten before return stays outside this refinement. Count
+    // was overwritten or deleted before return stays outside this refinement. Count
     // duplicate edges independently so Kahn's traversal handles shared children
     // and repeated writes without treating either as a cycle.
     llvm::DenseMap<mlir::Operation *, std::size_t> incoming;
@@ -779,6 +779,11 @@ std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
     return std::nullopt;
 }
 
+mlir::StringAttr ownObjectKey(mlir::StringAttr key) {
+    if (!key || key.getValue().size() > 256 || key.getValue() == "__proto__") { return {}; }
+    return key;
+}
+
 mlir::StringAttr ownObjectKey(mlir::Value value) {
     auto constant = value.getDefiningOp<ctjs::ConstantOp>();
     if (!constant) { return {}; }
@@ -972,6 +977,41 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     out.writes.push_back({&op, position, &op, position, value});
                 }
                 state.origins[array.getResult()] = array.getResult();
+                continue;
+            }
+            if (llvm::isa<ctjs::DeletePropertyOp, ctjs::DeleteNamedOp>(&op)) {
+                const mlir::Value base = origin(op.getOperand(0));
+                mlir::Operation * container = base ? base.getDefiningOp() : nullptr;
+                auto object = state.objects.find(container);
+                if (object == state.objects.end()) {
+                    // Array deletion has different hole behavior in JS and the VM.
+                    // This proof covers only fresh ordinary own data properties.
+                    return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
+                }
+                mlir::StringAttr key;
+                if (auto named = llvm::dyn_cast<ctjs::DeleteNamedOp>(&op)) {
+                    key = ownObjectKey(named.getNameAttr());
+                } else {
+                    const mlir::Value keyValue = origin(op.getOperand(1));
+                    if (keyValue) { key = ownObjectKey(keyValue); }
+                }
+                if (!key) { return refuse(ArrayContentsFailure::UnknownPropertyKey, &op); }
+                auto & properties = object->second;
+                auto found = properties.find(key);
+                const mlir::Value removed =
+                    found == properties.end() ? mlir::Value{} : found->second;
+                if (removed) {
+                    // Fresh set_property fields are configurable (value.hpp's
+                    // attr_default). delete_own_property erases exactly that own
+                    // field; no prototype walk or accessor can occur in this subset.
+                    // MapVector erase shifts fields and repairs its index. Charge
+                    // the complete field set before mutating even a single entry.
+                    if (!spend(properties.size())) {
+                        return refuse(ArrayContentsFailure::WorkLimit, &op);
+                    }
+                    properties.erase(key);
+                }
+                out.propertyDeletions.push_back({&op, container, key, removed});
                 continue;
             }
             if (llvm::isa<ctjs::AppendOp, ctjs::SetPropertyOp, ctjs::GetPropertyOp>(&op)) {

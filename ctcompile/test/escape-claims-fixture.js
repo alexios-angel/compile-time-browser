@@ -85,6 +85,31 @@ function arrayFrameTransientCycle() {
 }
 arrayFrameTransientCycle();
 
+// --- OWN-OBJECT DELETION THROUGH REAL IMPORTED FRAMES ---------------------
+// Erasing a field releases its child only when no saved value retains it.
+// Named and computed deletion share this boundary; historical cycle edges
+// remain conservative even when deletion empties the final object.
+function objectFrameDeletedChild() {
+    var child = {}, container = { child: child };
+    delete container.child;
+    return container;
+}
+H.push(objectFrameDeletedChild());
+function objectFrameDeletedSavedRead() {
+    var child = {}, container = { child: child }, key = "child";
+    var saved = container[key];
+    delete container[key];
+    return saved;
+}
+H.push(objectFrameDeletedSavedRead());
+function objectFrameDeletedTransientCycle() {
+    var container = {};
+    container.self = container;
+    delete container.self;
+    return 0;
+}
+objectFrameDeletedTransientCycle();
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());

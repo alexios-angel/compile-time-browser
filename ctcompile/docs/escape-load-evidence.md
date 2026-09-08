@@ -505,3 +505,54 @@ evidence: `/tmp/ctcompile-saved-evidence.json`.
 Source fixtures, runtime behavior and native ownership admission are unchanged.
 Loops, external contents, additional selector producers and native lifetime
 consumers remain separate work.
+
+## Fixed own-field deletion
+
+The complete contents query also models `ctjs.delete_property` and
+`ctjs.delete_named` on proved fresh ordinary objects. Computed keys must have an
+exact String origin; named keys use their current String attribute. Both forms
+use the existing 256-byte limit and explicit `__proto__` refusal. Each deletion
+records its operation, object, exact key and removed value, or an absent value
+when there was no own field. Deletion of an absent own field is a no-op; a later
+read of that absent field still refuses the whole proof.
+
+The runtime contract was checked against `Properties.td`, `Runtime.td`,
+`ctbrowser/lib/Script/vm/objects/descriptors.cpp` and
+`ctbrowser/include/ctbrowser/script/value.hpp`. Fresh assignment creates
+configurable own data (`attr_default`), and both delete paths remove exactly
+that own property without consulting a prototype or invoking a getter. All
+descriptor, prototype, call, publication and unknown-value effects remain
+outside this complete query. Arrays remain refused for both deletion forms:
+the current VM does not represent deletion holes, so an object erasure proof
+cannot supply array semantics. No runtime behavior or native admission changes.
+
+Only the current path's property snapshot loses the field. Saved reads,
+including object aliases and String keys, retain their original values.
+All historical writes remain in the conservative cycle graph; removing a
+self-edge or mixed array/object edge cannot discharge cycle ownership. Return
+reachability still unions every structural conditional/switch path, so an
+undeleted alternative retains its child. Before an actual erase, the query
+charges the entire current property set for `MapVector`'s linear update.
+Refusal or exhaustion discards every deletion record along with all earlier
+contents, and retention remains transactional through its final verdict scan.
+
+The devbox unit suite passes **30 deletion rows, eighteen key controls, fourteen
+live mutation states and one missing-lattice control**. It checks exact own
+snapshots, historical writes, removed/absent values, return routes and
+discharged sites. Every row and live state checks every incomplete contents
+and retention budget and the exact endpoint. Live edits change deletion keys,
+bases and a later branch's named key, insert publication or a missing read,
+and restore valid IR while forged completion/confinement markers remain.
+There are **1663 incomplete retention budget cutoffs**. Three new executed
+functions cover five sites and five instances: a deleted child, a saved child
+returned after deletion, and a deleted self-cycle. The two retained instances
+keep their escape claims; the observed-confined cycle remains `Stored`.
+Two allocation sites receive `Confined` claims. Earlier source families keep
+their exact expectations. The expanded fixture measures **24/36** precision;
+Bootstrap/p5/Phaser remain **0/64, 0/16, 0/20**. All four execution oracles
+report zero violations.
+
+The combined focused devbox gate passes **12/12 CTests in 29.32 seconds**.
+Homebrew clang-format **22.1.8** passes all **743 files**, and whitespace checks
+pass. Log: `/tmp/ctcompile-conditional-checkpoint2.log`. The full generated
+gate is recorded separately in [HANDOFF.md](HANDOFF.md).
