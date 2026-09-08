@@ -125,6 +125,9 @@ its header, and the header did not change:
   how a value is serialised, every property of one element, and the live
   object. The serialisers are declared in `internal.hpp` in `shell::detail`,
   which also carries the note on where a computed value comes from.
+- `ctbrowser/lib/Shell/bindings/window/` — two, from 1,106 (2026-09-08): the
+  callback queue, console and timers in one, `install_window` whole at 885
+  lines in the other. Nothing is shared; `internal.hpp` carries the includes.
 
 ### What splitting the compiler cost, measured
 

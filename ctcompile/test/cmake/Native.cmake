@@ -289,7 +289,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   # census to bind and `resolved` is 0 by clause 1 whatever clause 5 says. The
   # escape reasons these rows carried were decorations on a refusal clauses 1-3
   # make anyway. That does not relax clause 5 - the window proxy's `set` trap
-  # really does define_global (Shell/bindings/window.cpp:880-892) - it says
+  # really does define_global (the "set" window_trap in Shell/bindings/window/window.cpp) - it says
   # clause 5 is not where a vendor bundle is lost.
   #
   # THAT OTHER HALF OF known_callee() IS NOW TAKEN, and `direct` is no longer 0

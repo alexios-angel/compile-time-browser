@@ -162,7 +162,7 @@
 // pinned `globalThis.x = 1` refusing EVERY name in the program, on the
 // reasoning that a write through the window proxy calls define_global. That
 // reasoning is right and it is about ONE name: the `set` trap
-// (lib/Shell/bindings/window.cpp:880-892) is a two-armed if, and both arms -
+// (the "set" window_trap in lib/Shell/bindings/window/window.cpp) is a two-armed if, and both arms -
 // store_property on an own property of the window target, define_global on
 // everything else - touch exactly the name written. `x` is therefore rebound
 // and `add` is not, so `add` resolves and `x` gets a row of its own saying
@@ -359,7 +359,7 @@
 
 // --- NEGATIVE: and `window.self` IS the window -------------------------------------
 //
-// One of the five names lib/Shell/bindings/window.cpp binds to the same proxy.
+// One of the five names lib/Shell/bindings/window/window.cpp binds to the same proxy.
 // The taint follows it and the write through it answers - which is not
 // politeness: the proxy's `set` trap calls define_global, so this really does
 // rebind a global.
@@ -467,7 +467,7 @@
 
 // --- NEGATIVE: `self` IS a name of the global object, and was not ------------------
 //
-// lib/Shell/bindings/window.cpp:934-948 is three define_global calls of the
+// the end of install_window in lib/Shell/bindings/window/window.cpp is three define_global calls of the
 // same proxy and names_global_object() listed two of them, so `self.injected =
 // 1` - define_global("injected", 1) through the `set` trap - was invisible.
 // The row below is the whole test: without `self` in that list the value is

@@ -49,7 +49,10 @@ target_sources(ctbrowser-shell
     # keeps no stylesheet - and because CSSStyleSheet, CSSRuleList, CSSRule and
     # CSSStyleDeclaration are four interfaces nothing else in bindings/ owns.
     bindings/stylesheets.cpp
-    bindings/window.cpp
+    # window, console, timers and the callback queue - one 1,106-line file until
+    # 2026-09-08, two now; install_window stays whole at 885 lines.
+    bindings/window/callbacks.cpp
+    bindings/window/window.cpp
     bindings/canvas.cpp
     bindings/resources.cpp
     # WebGL: the context and its wrapper, the constant table, and the methods in

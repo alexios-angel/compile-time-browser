@@ -179,7 +179,7 @@ void install_262(context & cx) {
     // `global`: AN ORDINARY OBJECT, AND IT IS NOT THE GLOBAL OBJECT. This
     // engine's globals are a map on the context, not properties of an object -
     // `globalThis` exists only as a DOM binding the Shell installs (see
-    // lib/Shell/bindings/window.cpp), and the script engine alone has no global
+    // lib/Shell/bindings/window/window.cpp), and the script engine alone has no global
     // object at all. So this is the property the suite requires, holding the
     // only thing there is to put in it. Tests that reach the global through it
     // FAIL rather than silently measuring a different object, and the gap is

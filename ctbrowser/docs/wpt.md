@@ -252,7 +252,7 @@ in the evening run above.
 | **interface objects for node types** | `lib/Shell/bindings/element.cpp` | `HTMLBodyElement`, `Window`, `Document`, `NodeList`, `HTMLCollection` as globals with prototypes the wrappers chain to. It is what `assert_class_string`, `e instanceof HTMLBodyElement` and `eventTarget.constructor.name` all ask, and one defect stands behind `Body-FrameSet-Event-Handlers.html`, `passive-by-default.html`, `document.links` and `document.scripts` |
 | **shadow DOM** | the tree model | `attachShadow`: 14 files plus five harness errors across three suites. Not a bindings change |
 | **attribute namespaces** | `include/ctbrowser/dom/node.hpp` | `setAttributeNS`/`getAttributeNS`: `struct attribute` is `(atom name, std::string value)` with nowhere to put a namespace, so this is a DOM-layer change rather than a binding. 80 subtests and two harness errors in `dom/nodes` |
-| **named access on the Window** | `lib/Shell/bindings/window.cpp` | `window[id]` for an element with an `id`. One harness error in `dom/events` found it; it is a documented HTML feature that pages use widely |
+| **named access on the Window** | `lib/Shell/bindings/window/window.cpp` | `window[id]` for an element with an `id`. One harness error in `dom/events` found it; it is a documented HTML feature that pages use widely |
 
 ## Skips, all 542 of them
 
