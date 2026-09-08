@@ -103,9 +103,26 @@ ctbrowser_test(unit/xml_parse)
 # contentType and compatMode, a <script> in a marked section that RUNS, and a
 # tag whose case survives to `tagName`.
 ctbrowser_test(unit/xml_document)
-ctbrowser_test(unit/layout_basics)
-# The flex formatting context. Its own file rather than more of layout_basics:
-# S9.7's freeze loop has more cases than the other three contexts together.
+# THE LAYOUT SUITE IS FOUR FILES. layout_basics was 1,364 lines and 41 tests
+# when it was split by topic on 2026-09-08; they share layout_fixture.hpp - the
+# document-to-box-tree fixture and the prose assertions - and `ctest -R layout_`
+# runs the family.
+#
+# Block layout: the box tree is not the DOM tree, and a block's geometry -
+# widths, lengths, min/max clamps, auto margins, and what a fragment does not
+# carry back to the DOM.
+ctbrowser_test(unit/layout_blocks)
+# Margin collapsing: siblings, an empty block collapsing through, parent and
+# child edges, and the four things that stop it.
+ctbrowser_test(unit/layout_margins)
+# Inline layout: text wrapping, line boxes, inline-block, replaced elements,
+# baselines, text-align and line-height.
+ctbrowser_test(unit/layout_inline)
+# PARALLEL LAYOUT IS IDENTICAL TO SEQUENTIAL, fragment for fragment, to the
+# float - the load-bearing claim of the whole stage.
+ctbrowser_test(unit/layout_parallel)
+# The flex formatting context. Its own file rather than more of the layout_*
+# files: S9.7's freeze loop has more cases than the other three contexts together.
 ctbrowser_test(unit/flex_basics)
 # <iframe>: a second document inside the first. See lib/Shell/bindings/frames.cpp.
 ctbrowser_test(unit/frames)

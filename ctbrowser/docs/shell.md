@@ -340,7 +340,7 @@ page's life.
 **Still divergent, and deliberately:** line-height is a fixed 1.25 factor with
 nine hardcoded copies, so ctbrowser's rows still sit further apart than
 Chrome's. It is the single largest remaining difference and it is left for its
-own change — it touches ten sites and `layout_basics` asserts the 1.25 outright.
+own change — it touches ten sites and `layout_inline` asserts the 1.25 outright.
 
 **`<a href>` reaches the SYSTEM BROWSER.** `app_options::on_navigate` gives the
 application first refusal — `ctbrowse` loads a local `.html` that way — and
