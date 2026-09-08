@@ -6,7 +6,7 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Current mixed-Map checkpoint, 2026-09-08
+## Current mixed-Map and object-contents checkpoint, 2026-09-08
 
 Saved locally on `ctcompile-v1`: **`6e68d3f`**, closed mixed Map keys/payloads
 with independent exact read evidence. This resumes the unfinished native
@@ -14,6 +14,9 @@ boundary from **`6e7dd81`** and the **06:13:42 synchronization journal**.
 The starting tree was clean; the interrupted CallDirectOp recovery was already
 landed in `5307abf`, and `codex-wip-20260907` is an ancestor. No history was
 rewritten, browser source changed or push performed.
+The parallel fixed own-property contents increment is saved as **`0a3000a`**.
+Two implementation agents and a separate audit supplied disjoint work; service
+interruptions were recovered before their results were integrated.
 
 The three preceding `result_seeded_mixed_contents`, `result_seeded_join_reseed`
 and `result_seeded_bool_string_contents` probes advance **0/6 -> 6/6 native**,
@@ -39,10 +42,11 @@ Logs: `/tmp/ctcompile-mixed-native2.log`, `/tmp/ctcompile-mixed-checkpoint2.log`
 and `/tmp/ctcompile-mixed-lit-final.log`.
 
 The formatter passes **742 files** with Homebrew clang-format **22.1.8**.
-The focused CTest gate passes **12/12 in 28.89 seconds**. All **28 committed
-paths** byte-match the frozen snapshot. The full generated gate for this
-checkpoint is pending; the previous complete baseline below remains **512/517**
-with five recorded browser failures.
+The final combined focused CTest gate passes **12/12 in 28.30 seconds**. All
+committed code/test paths byte-match the frozen snapshot. The full generated
+devbox build succeeds; the **517-test CTest gate is running** in
+`/tmp/ctcompile-mixed-full.log`. The previous complete baseline below remains
+**512/517** with five recorded browser failures.
 
 **Exact next native boundary:** `saved_read_write` remains **0/6 native** in
 both optimization modes with complete host ownership, all **12 calls retained**
@@ -67,13 +71,29 @@ deletion also yields **2**, loses host result evidence and remains **0/6**.
 Evidence: `/tmp/ctcompile-mixed-boundary.json`; source on the devbox:
 `/tmp/ctcompile-mixed-next/saved_read_write.js`.
 
-A separate agent's fixed own-property contents increment is in flight in
-`EscapeAnalysis.h/.cpp`, `EscapeAnalysisArrays.cpp` and `escape-load-evidence.md`.
-Its initial focused gate passed, but review found that canonical String array
-indices disagree with the current runtime's numeric-only element paths.
-The pending conservative fix refuses String array reads/writes and preserves
-their original escape verdicts. Runtime sources remain untouched. Measured
-source probes: `/tmp/ctcompile-object-key-oracle.json`.
+The independent contents query now tracks exact own String properties on fresh
+objects, including saved reads, object/array aliases and return reachability.
+The retention consumer checks every write across both container kinds, so
+transient or mutually exclusive cycles preserve original escape verdicts.
+Keys are bounded to 256 bytes; missing properties, `__proto__`, prototypes,
+accessors, external values, loops and incomplete proofs refuse. This adds no
+native ownership admission. The gate passes **31 object rows, eleven keys,
+twelve live states and 1269 retention cutoffs**, plus **38 array contents
+rows/14 keys**, 20 retention rows/661 cutoffs, 26 frame rows/444 cutoffs and
+17 conditional rows/877 cutoffs with five path-explosion controls.
+All four execution oracles report zero violations; precision remains **22/33**
+for the fixture and **0/64, 0/16, 0/20** for Bootstrap/p5/Phaser.
+Log: `/tmp/ctcompile-object-focused2.log`.
+
+Review exposed an older unsound String-array-index assumption. A literal or
+object-loaded String `"0"` write yields **Node 2 versus interpreter 1** because
+the runtime retains the old element; its String read yields **Node 1 versus
+interpreter undefined**. Complete contents now refuses String array reads
+and writes, retaining numeric indices and own String object fields. Direct,
+loaded and live Number/String key changes under forged markers guard the fix.
+Runtime sources and source oracle expectations remain unchanged; the mismatch
+is in the synchronization journal and `/tmp/ctcompile-object-key-oracle.json`.
+Next escape work remains loops/external values and native lifetime consumers.
 
 ## Preceding Map payload and conditional-array checkpoint, 2026-09-08
 
