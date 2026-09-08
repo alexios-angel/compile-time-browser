@@ -80,13 +80,21 @@
 # String/Null/Undefined calls retain every runtime Map call and result operand.
 # Unknown results, unproved reads, Number/String mixtures, object results and
 # unexecuted future effects refuse fresh/stale forged read/write/key facts and
-# reruns in both modes. Real null Map keys keep independent owner proofs but
-# remain native refusals. A false-only startup's saved nullable getter later
+# reruns in both modes. A false-only startup's saved nullable getter later
 # returns null for true; its long String snapshots retain their bytes through
 # source overwrite/delete, caller-buffer mutation, independent reentry and final
 # release of both Maps under ASan/UBSan. Measured budget boundaries retain the
 # entire source component, signatures, branches and calls at every checked cutoff.
 # The same normalized consumer also works with exclusively String Map keys.
-# Normalizing one use never narrows the original nullable formal at a later
-# unnormalized Map write; that carrier refusal retains both writes and all
-# nineteen source calls under fresh/stale key forgeries and reruns in both modes.
+# Owning nullable String Map keys preserve the exact eleven-call source and
+# its thirteen-call String/Null/Undefined/empty-key witness (size 4). Normalizing
+# the same witness observes size 2. Composing Boolean with nullable String
+# preserves the original eighteen-call getter and nineteen-call per-use control.
+# Normalizing one use keeps the original nullable formal at its later raw write;
+# live schema proof and both writes survive fresh/stale key/read/write forgeries,
+# reruns and both optimization modes. Optional payloads and mixed snapshots
+# remain refused. A saved-key lifetime fixture deletes/reinserts keys and owns
+# long String bytes after caller-buffer mutation and source overwrite/delete;
+# Null, Undefined and empty String stay distinct after owner release, independent
+# reentry and final destruction of both Maps under ASan/UBSan. The measured
+# budget endpoints retain the original functions, branches and runtime calls.

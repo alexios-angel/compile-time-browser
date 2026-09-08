@@ -80,7 +80,26 @@ bool lowering::replaceMap(mlir::Operation * o) {
                     args[1] = convertScalar(b, where, args[1], type);
                 }
             }
-            if (!mixedMapSpelling(map.getKeyType()).empty()) {
+            if (auto nullable = nullableMapKeySpelling(map.getKeyType()); !nullable.empty()) {
+                const auto keyType = ec::OpaqueType::get(context, nullable);
+                const bool mixed = nullable != kNullableStringType;
+                auto argumentType = args[1].getType();
+                if (auto lvalue = llvm::dyn_cast<ec::LValueType>(argumentType)) {
+                    argumentType = lvalue.getValueType();
+                }
+                if (!mixed || !llvm::isa<mlir::IntegerType>(argumentType)) {
+                    // Widen String and absent values without coercion. The
+                    // nullable carrier owns the text copied into Map storage.
+                    args[1] = convertScalar(b, where, args[1],
+                                            carrierType(context, carrier::nullableString));
+                }
+                if (mixed) {
+                    args[1] = callWithConstValueOperands(b, where, mlir::TypeRange{keyType},
+                                                         b.getStringAttr(nullable),
+                                                         mlir::ValueRange{args[1]})
+                                  .getResult(0);
+                }
+            } else if (!mixedMapSpelling(map.getKeyType()).empty()) {
                 args[1] = convertAlternative(args[1], map.getKeyType());
             }
         }

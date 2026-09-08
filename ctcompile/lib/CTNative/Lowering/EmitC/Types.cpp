@@ -62,6 +62,7 @@ void lowering::retype(ctjs::FuncOp fn) {
         if (c == carrier::map) {
             auto map = llvm::cast<MapType>(typeOf(v));
             needsMap = true;
+            needsNullableMapKeys |= mapNeedsNullableStringKey(map);
             needsString |= mapNeedsString(map);
             needsObjectValue |= mapNeedsObjectValues(map);
             v.setType(mapCarrierType(map));

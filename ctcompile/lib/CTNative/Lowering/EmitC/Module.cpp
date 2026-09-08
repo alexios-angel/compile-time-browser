@@ -99,7 +99,7 @@ void lowering::declareGlobals() {
     module->setAttr("ctnative.constexpr_bindings", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.numeric_alias", mlir::UnitAttr::get(context));
     needsString |= needsBooleanString;
-    needsNullableString |= needsStringVector;
+    needsNullableString |= needsStringVector || needsNullableMapKeys;
     needsNullable |= needsNullableString;
     needsNullable |= needsObjectValue;
     needsObjectIdentity |= needsObjectValue;
@@ -190,6 +190,10 @@ inline bool boolean_string_truthy(const std::variant<bool, std::string> & value)
             for (llvm::StringRef header : {"map", "functional"}) {
                 ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
             }
+        }
+        if (needsNullableMapKeys) {
+            ec::VerbatimOp::create(b, module.getLoc(),
+                                   b.getStringAttr(kNativeNullableStringMapKeys));
         }
         ec::VerbatimOp::create(b, module.getLoc(),
                                b.getStringAttr(needsMapOrder ? kNativeOrderedMapStorage

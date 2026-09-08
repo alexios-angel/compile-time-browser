@@ -90,6 +90,29 @@ bool admission::op(mlir::Operation * o) {
                        (llvm::isa_and_nonnull<NumType>(value) && llvm::isa<NumType>(alternative));
             });
         };
+        if (!nullableMapKeySpelling(map.getKeyType()).empty() && !call.getArgs().empty()) {
+            const auto keyType = typeOf(call.getArgs()[0]);
+            const auto keyCarrier = carrierOf(keyType);
+            const auto absent = llvm::dyn_cast_or_null<OptType>(keyType);
+            const auto schema = llvm::cast<OptType>(map.getKeyType()).getElementType();
+            const bool allowsBoolean = !mixedMapSpelling(schema).empty();
+            bool represented = keyCarrier == carrier::string ||
+                               keyCarrier == carrier::nullableString ||
+                               (absent && llvm::isa<BottomType>(absent.getElementType())) ||
+                               (allowsBoolean && keyCarrier == carrier::boolean);
+            // As with nonnullable mixed keys, a wider temporary may supply
+            // an exact scalar only through the rederived per-operation fact.
+            if (auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapKeyType)) {
+                represented |=
+                    (proof.getValue() == "string" && keyCarrier == carrier::booleanString) ||
+                    (allowsBoolean && proof.getValue() == "bool" &&
+                     (keyCarrier == carrier::booleanString || keyCarrier == carrier::nullable));
+            }
+            if (!represented) {
+                return refuse("nullable native Map key needs a proved String, absent or Boolean "
+                              "alternative with an owning carrier");
+            }
+        }
         if (!mixedMapSpelling(map.getKeyType()).empty() && !call.getArgs().empty() &&
             !scalarAlternative(map.getKeyType(), call.getArgs()[0])) {
             const auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapKeyType);

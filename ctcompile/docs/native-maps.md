@@ -37,6 +37,16 @@ the alternative, then applies its ordinary scalar equality: false and zero are
 distinct keys, while numeric NaNs and signed zeros still use SameValueZero.
 The final read's type never narrows the storage schema or removes other writes.
 
+Optional String keys use the existing owning `ctnative::nullable_string`.
+Combining Boolean keys with them uses
+`std::variant<bool, ctnative::nullable_string>`. These are key-only storage
+schemas. Null, Undefined, empty String, `"null"` and `"undefined"` stay distinct;
+both storage layouts compare the tag before the owned text. Conversions copy
+String bytes and retain absent tags. A key is never coerced through `string_text`
+unless an independent per-operation proof has established that it is a String.
+Optional numeric/Boolean key schemas and unrepresented scalar temporaries
+remain refused, as do nullable payloads and nullable-key snapshots.
+
 When no admitted native Map operation observes iteration order, the module
 uses `std::map<K, V, map_key_less<K>>`. Lookup helpers call `map->find(key)`;
 updates use `insert_or_assign`. The comparator groups all numeric NaNs into
@@ -159,18 +169,23 @@ per-operation fact; the original SSA lattice and every other use stay unchanged.
 Number key evidence preserves separately inferred integer widths.
 Lowering copies the selected String before homogeneous storage or mixed-key
 wrapping. A second unnormalized write of the same formal keeps its nullable
-key schema and refuses. Input key annotations never authorize extraction.
+key schema; its Null and Undefined alternatives survive independently of the
+normalized first use. Input key annotations never authorize extraction.
 
 Published methods can carry finite String/Null/Undefined results and parameters
 using the existing owning `nullable_string` type. This does not implement
-nullable Map-key or payload storage: real null and undefined keys remain a
-separate representation boundary. The complete host dependency worklist must
+nullable payload storage. Real null and undefined keys now use the separate
+key schemas above. The complete host dependency worklist must
 finish before these parameter facts are available; an unseeded cycle, unknown
 result or unsupported effect still withholds the proof.
 
-The local mixed gate covers **49 observations and 21 refusals** across both
+The local mixed gate covers **59 observations and 28 refusals** across both
 storage implementations, including inverted falsy refinement and a local
-Bool/String temporary without a Map. Guarded and short-circuit saved String,
+Bool/String temporary without a Map. Nullable-key controls distinguish all
+tags and spelling-like Strings, preserve owning dynamic keys and a second
+unnormalized use, and compose Boolean with nullable String storage. A separate
+numeric-payload-only program checks nullable-key helper emission without other
+String functions in the module. Guarded and short-circuit saved String,
 Boolean and Number reads survive conditional deletion and subsequent writes.
 Stale observations, wrong-key guards, unknown join arms and intervening callee
 writes refuse.

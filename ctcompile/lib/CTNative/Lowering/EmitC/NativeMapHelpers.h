@@ -6,6 +6,21 @@
 
 namespace ctcompile::ctnative {
 
+// Only nullable String key schemas need these comparisons. Both storage
+// layouts preserve the tag before comparing owned text; absent keys neither
+// coerce to their spelling nor alias the empty String.
+inline constexpr llvm::StringLiteral kNativeNullableStringMapKeys = R"cpp(
+namespace ctnative {
+inline bool operator==(const nullable_string & a, const nullable_string & b) {
+    return a.tag == b.tag && (a.tag != nullable_string::kind::string || a.value == b.value);
+}
+inline bool operator<(const nullable_string & a, const nullable_string & b) {
+    if (a.tag != b.tag) { return a.tag < b.tag; }
+    return a.tag == nullable_string::kind::string && a.value < b.value;
+}
+} // namespace ctnative
+)cpp";
+
 // A module with any snapshot keeps insertion order for all Map schemas.
 // The facade gives the shared helpers the same operations as std::map.
 inline constexpr llvm::StringLiteral kNativeOrderedMapStorage = R"cpp(

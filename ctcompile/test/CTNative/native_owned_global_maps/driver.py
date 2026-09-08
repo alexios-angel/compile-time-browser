@@ -17,13 +17,21 @@ from .sources import (
     saved_read_sources, saved_read_refusals, saved_join_sources, saved_join_refusals,
     guarded_saved_sources, guarded_saved_refusals, shortcircuit_sources, shortcircuit_refusals,
     nullable_result_sources, nullable_result_refusals, nullable_carrier_refusals,
-    NULLABLE_OBSERVATIONS,
+    nullable_key_sources, nullable_key_refusals, NULLABLE_OBSERVATIONS, NULLABLE_KEY_CALLS,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
     forge_map_presence, check_budgets, check_prepared_result_calls,
     nullable_observer_source,
 )
+
+
+def comparable_provenance(cpp, input_ir):
+    # Reparsed forged input has a different filename but the same source
+    # locations. Keep every line/column, other comment byte and emitted token.
+    filename = re.compile(r"(?<!\S)" + re.escape(str(input_ir)) + r"(?=:\d+:\d+(?:\D|$))")
+    return "".join(filename.sub("<input>", line) if line.startswith("// ctcompile:") else line
+                   for line in cpp.splitlines(keepends=True))
 
 
 def main():
@@ -92,6 +100,7 @@ def main():
         **guarded_saved_sources(),
         **shortcircuit_sources(),
         **nullable_result_sources(),
+        **nullable_key_sources(),
     }
     saved = {}
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
@@ -202,6 +211,16 @@ def main():
         ("shortcircuit_string_saved", "state.delete('');", ("state.has('');",)),
         ("shortcircuit_string_saved", "state.set('other', false); state.delete('other');",
          ("state.set('other', false); state.has('other');",)),
+        ("nullable_key_identity", "state.set(key, true);",
+         ("state.set(key || 'missing', true);",)),
+        ("nullable_key_identity", "host.slot.set(void 0);", ("host.slot.set(null);",)),
+        ("nullable_key_identity", "host.slot.set('');", ("host.slot.set(null);",)),
+        ("nullable_key_identity", "return result || null;", ("return result || (void 0);",)),
+        ("nullable_key_second_use", "state.set(key, true);", ("state.has(key);",)),
+        ("nullable_key_mixed", "state.delete(false);", ("state.has(false);",)),
+        ("nullable_original_key", "return result || null;", ("return result;",)),
+        ("nullable_second_key_use", "state.set(key, true);", ("state.has(key);",)),
+        ("nullable_key_string_saved", "state.delete('seed');", ("state.has('seed');",)),
     ):
         live_source, _, live_value = positives[name]
         if live_source.count(old) != 1:
@@ -211,7 +230,7 @@ def main():
             blind.write_text(live_source.replace(old, replacement))
             if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == f"trace={live_value}\n":
                 raise RuntimeError(f"{name}: payload witness cannot distinguish {replacement}")
-    for name, (source, _, _) in nullable_result_sources().items():
+    for name, (source, _, _) in {**nullable_result_sources(), **nullable_key_sources()}.items():
         identity = args.work / f"{name}-identity.js"
         identity.write_text(nullable_observer_source(source, name))
         expected = f"trace={(1 << len(NULLABLE_OBSERVATIONS[name])) - 1}\n"
@@ -227,6 +246,8 @@ def main():
             replacements = ("return result;", "return undefined;")
         if name == "nullable_string_saved":
             replacements += ("return state.get(false) || null;",)
+        if name == "nullable_key_string_saved":
+            replacements += ("return state.get('seed') || null;",)
         for index, replacement in enumerate(replacements):
             if source.count(original_return) != 1:
                 raise RuntimeError(f"{name}: lost the nullable return observation")
@@ -249,6 +270,8 @@ def main():
             raise RuntimeError(f"{name}: changed the exact 18-call boundary")
         if name == "nullable_homogeneous_key" and len(source_calls(ir.read_text())) != 11:
             raise RuntimeError("nullable_homogeneous_key: changed the exact 11-call control")
+        if name in NULLABLE_KEY_CALLS and len(source_calls(ir.read_text())) != NULLABLE_KEY_CALLS[name]:
+            raise RuntimeError(f"{name}: changed the exact {NULLABLE_KEY_CALLS[name]}-call boundary")
         if name == "already_resolved":
             ir = resolve_getter(args, ir)
         if name.startswith("legacy_"):
@@ -266,12 +289,35 @@ def main():
         if ir.read_text() != original or config.read_text() != manifest:
             raise RuntimeError(f"{name}: changed supplied source or manifest")
         if name in {**saved_read_sources(), **saved_join_sources(), **guarded_saved_sources(),
-                    **shortcircuit_sources(), **nullable_result_sources()}:
+                    **shortcircuit_sources(), **nullable_result_sources(), **nullable_key_sources()}:
             disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")
             if disabled.read_text() != output.read_text():
                 raise RuntimeError(f"{name}: saved scalar proof depends on optimization policy")
         standalone(args, output, name, value, compilers, nm)
         saved[name] = ir, config, output
+
+    # Valid-looking scalar markers cannot normalize real null keys or narrow
+    # the second use of a nullable formal. Fresh proof must emit the same C++.
+    for name in ("nullable_key_identity", "nullable_second_key_use"):
+        ir, config, output = saved[name]
+        expected_cpp = comparable_provenance(
+            host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout, ir)
+        for mode, options in (("default", ""), ("disabled", "optimize=false")):
+            for payload in ("bool", "string"):
+                forged_name = name + "-" + mode + "-forged-" + payload
+                forged = args.work / f"{forged_name}.mlir"
+                forged.write_text(forge_map_presence(ir.read_text(), payload))
+                failed = methods.refused(args, forged, forged_name + "-stale", config,
+                    options=options, reason="fingerprint mismatch", admitted=0)
+                check_call_preservation(forged.read_text(), failed.read_text(), forged_name + "-stale")
+                fresh = contract(args, forged, forged_name)
+                checked = owned.lower(args, forged, forged_name, fresh, options=options)
+                text = methods.census(checked, 6, forged_name, admitted=6)
+                if ("ctnative.host_owner_proved = true" not in text
+                        or comparable_provenance(
+                            host.run([args.translate, "--mlir-to-cpp", str(checked)]).stdout,
+                            forged) != expected_cpp):
+                    raise RuntimeError(f"{forged_name}: forged scalar tags changed nullable keys")
 
     ir, config, output = saved["ordinary"]
     boundary.native(args, ir, "no-manifest", 4)
@@ -325,7 +371,8 @@ def main():
                  "guarded_saved_bool", "guarded_saved_number", "guarded_saved_string_saved",
                  "shortcircuit_same_tag", "shortcircuit_false", "shortcircuit_zero",
                  "shortcircuit_string_saved", "nullable_normalized", "nullable_threeway",
-                 "nullable_string_saved"):
+                 "nullable_string_saved", "nullable_key_homogeneous", "nullable_key_identity",
+                 "nullable_original_key", "nullable_key_string_saved"):
         key_ir, key_config, _ = saved[name]
         rollback += check_budgets(args, key_ir, key_config, name,
                                   functions=RESULT_SIGNATURES[name][2])
@@ -472,6 +519,7 @@ def main():
         **guarded_saved_refusals(),
         **shortcircuit_refusals(),
         **nullable_result_refusals(),
+        **nullable_key_refusals(),
     }.items():
         js, rejected, count = boundary.prepare(args, name, source)
         if count != 6:
@@ -520,10 +568,8 @@ def main():
         js, rejected, count = boundary.prepare(args, name, source)
         if count != 6:
             raise RuntimeError(f"{name}: changed seeded carrier source denominator")
-        if name == "nullable_original_key" and len(source_calls(rejected.read_text())) != 18:
-            raise RuntimeError("nullable_original_key: changed the exact 18-call boundary")
-        if name == "nullable_second_key_use" and len(source_calls(rejected.read_text())) != 19:
-            raise RuntimeError("nullable_second_key_use: changed the exact 19-call refusal")
+        if name == "nullable_key_payload" and len(source_calls(rejected.read_text())) != 11:
+            raise RuntimeError("nullable_key_payload: changed the exact 11-call refusal")
         if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != f"trace={value}\n"
                 or host.run([str(reference), str(js)]).stdout != f"trace={value}\n"):
             raise RuntimeError(f"{name}: Node/interpreter observation mismatch")
@@ -641,7 +687,7 @@ def main():
                  "result_seeded_mixed_contents", "result_seeded_join_reseed",
                  "result_seeded_bool_string_contents", "result_seeded_mixed_string_saved",
                  *saved_read_sources(), *saved_join_sources(), *guarded_saved_sources(),
-                 *shortcircuit_sources(), *nullable_result_sources()):
+                 *shortcircuit_sources(), *nullable_result_sources(), *nullable_key_sources()):
         _, config, output = saved[name]
         functions = RESULT_SIGNATURES[name][2]
         rerun = owned.lower(args, output, name + "-rerun", config,
@@ -680,7 +726,10 @@ def main():
           f"{len(nullable_result_sources())} nullable result programs preserve String/null/undefined; "
           "future nullable getter and owning strings survive reentry and final Map release; "
           f"{len(nullable_result_refusals())} unknown/mixed/object/effect nullable refusals and "
-          f"{len(nullable_carrier_refusals())} unsupported nullable Map key carrier; "
+          f"{len(nullable_carrier_refusals())} unsupported nullable payload carrier; "
+          f"{len(nullable_key_sources())} nullable Map-key programs preserve all four key identities; "
+          f"{len(nullable_key_refusals())} mixed snapshot refusals and fresh/stale key forgeries; "
+          "saved owning keys survive caller mutation, deletion, reentry and final Map release; "
           f"{len(seeded_result_refusals())} seeded proof and "
           f"{len(seeded_carrier_refusals())} seeded carrier refusals; "
           f"{len(rollback)} speculative rollback cutoffs")

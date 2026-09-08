@@ -74,7 +74,8 @@ carrier carrierOf(mlir::Type type) {
         const auto string = llvm::dyn_cast<StrType>(key);
         const bool supportedKey =
             llvm::isa<BottomType, NumType, BoolType, ObjectIdentityType>(key) ||
-            (string && string.getEncoding() == StrEncoding::UTF8) || !mixedMapSpelling(key).empty();
+            (string && string.getEncoding() == StrEncoding::UTF8) ||
+            !mixedMapSpelling(key).empty() || !nullableMapKeySpelling(key).empty();
         const auto value = map.getValueType();
         const bool ownedValue =
             llvm::isa<BottomType, NumType, BoolType>(value) ||
@@ -141,7 +142,20 @@ llvm::StringRef mixedMapSpelling(mlir::Type type) {
     return {};
 }
 
+// Key-only storage: adding optional keys must not admit optional payloads,
+// mixed snapshots, or a new general scalar/signature carrier.
+llvm::StringRef nullableMapKeySpelling(mlir::Type type) {
+    auto optional = llvm::dyn_cast<OptType>(type);
+    if (!optional) { return {}; }
+    if (carrierOf(optional.getElementType()) == carrier::string) { return kNullableStringType; }
+    if (mixedMapSpelling(optional.getElementType()) == kBooleanStringType) {
+        return "std::variant<bool, ctnative::nullable_string>";
+    }
+    return {};
+}
+
 llvm::StringRef mapKeySpelling(mlir::Type type) {
+    if (auto nullable = nullableMapKeySpelling(type); !nullable.empty()) { return nullable; }
     if (auto mixed = mixedMapSpelling(type); !mixed.empty()) { return mixed; }
     if (llvm::isa<BottomType, NumType>(type)) { return "double"; }
     if (llvm::isa<BoolType>(type)) { return "bool"; }
@@ -163,9 +177,17 @@ std::string mapValueSpelling(mlir::Type type) {
 }
 
 bool mapNeedsString(MapType type) {
-    return llvm::isa<StrType>(type.getKeyType()) || llvm::isa<StrType>(type.getValueType()) ||
+    return llvm::isa<StrType>(type.getKeyType()) ||
+           !nullableMapKeySpelling(type.getKeyType()).empty() ||
+           llvm::isa<StrType>(type.getValueType()) ||
            (llvm::isa<MapType>(type.getValueType()) &&
             mapNeedsString(llvm::cast<MapType>(type.getValueType())));
+}
+
+bool mapNeedsNullableStringKey(MapType type) {
+    return !nullableMapKeySpelling(type.getKeyType()).empty() ||
+           (llvm::isa<MapType>(type.getValueType()) &&
+            mapNeedsNullableStringKey(llvm::cast<MapType>(type.getValueType())));
 }
 
 mlir::Type mapCarrierType(MapType type) {

@@ -761,15 +761,78 @@ def nullable_result_refusals():
     }
 
 
-def nullable_carrier_refusals():
+def nullable_key_sources():
+    normalized = nullable_result_sources()["nullable_homogeneous_key"][0]
+    homogeneous = normalized.replace("state.set(key || 'missing', true)", "state.set(key, true)")
+    identity = homogeneous.replace("var trace =",
+        "host.slot.set(void 0); host.slot.set(''); var trace =")
+    mixed = homogeneous.replace("state.delete('seed');",
+        "state.delete('seed'); state.set(false, true); state.delete(false);")
     saved = nullable_result_sources()["nullable_normalized"][0]
+    owning = homogeneous.replace("state.set('seed', 'future');",
+        f"state.set('seed', '{STRING_RESULT}');")
+    owning = owning.replace("state.delete('seed');",
+        "state.set('seed', 'overwritten'); state.delete('seed');")
+    owning = owning.replace("state.set(key, true);", "state.delete(key); state.set(key, true);")
+    owning = owning.replace(" host.slot.set(host.slot.get(true));", "")
+    owning = owning.replace("var trace =", "host.slot.set(void 0); var trace =")
     return {
+        # Keep the exact eleven-call boundary and its thirteen-call identity
+        # extension independent of Boolean keys and nullable stored payloads.
+        "nullable_key_homogeneous": (homogeneous, "host", 2),
+        "nullable_key_identity": (identity, "host", 4),
+        "nullable_key_identity_normalized": (identity.replace("state.set(key, true)",
+            "state.set(key || 'missing', true)"), "host", 2),
+        "nullable_key_second_use": (normalized.replace("state.set(key || 'missing', true)",
+            "state.set(key || 'missing', true); state.set(key, true)"), "host", 3),
+        "nullable_key_mixed": (mixed, "host", 2),
         "nullable_original_key": (saved.replace("state.set(key || 'missing', true)",
-            "state.set(key, true)"), 3),
+            "state.set(key, true)"), "host", 3),
         # The normalized first use proves its own String key. The original
-        # formal still includes null at the second use of that same SSA value.
+        # formal keeps null at the second use, widening only the Map schema.
         "nullable_second_key_use": (saved.replace("state.set(key || 'missing', true)",
-            "state.set(key || 'missing', true); state.set(key, true)"), 4),
+            "state.set(key || 'missing', true); state.set(key, true)"), "host", 4),
+        # False-only startup; later saved methods delete/reinsert all nullable
+        # key tags and retain owned bytes after the original caller mutates.
+        "nullable_key_string_saved": (owning, "host", 2),
+    }
+
+
+NULLABLE_KEY_CALLS = {
+    "nullable_key_homogeneous": 11,
+    "nullable_key_identity": 13,
+    "nullable_key_identity_normalized": 13,
+    "nullable_key_second_use": 12,
+    "nullable_key_mixed": 13,
+    "nullable_original_key": 18,
+    "nullable_second_key_use": 19,
+    "nullable_key_string_saved": 12,
+}
+
+NULLABLE_OBSERVATIONS.update({
+    name: [("false", "string", STRING_RESULT if name == "nullable_key_string_saved" else "future"),
+           ("true", "null_value", "")]
+    for name in nullable_key_sources()
+})
+
+
+def nullable_carrier_refusals():
+    source = nullable_key_sources()["nullable_key_homogeneous"][0]
+    return {
+        # Key support cannot authorize an optional stored payload. Ownership
+        # still succeeds, so refusal preserves the prepared producer edge.
+        "nullable_key_payload": (source.replace("state.set(key, true)", "state.set(key, key)"), 2),
+    }
+
+
+def nullable_key_refusals():
+    source = nullable_key_sources()["nullable_key_mixed"][0]
+    return {
+        # A supported key carrier does not expose mixed-key snapshots through
+        # the published method contract or manufacture an iterator proof.
+        "nullable_key_snapshot": (source.replace("state.set(key, true);",
+            "state.set(key, true); state.keys();"), 2,
+            "state.keys();", "state.size;", 2),
     }
 
 
@@ -843,7 +906,7 @@ RESULT_SIGNATURES = {
        for name in payload_result_sources()},
     **{name: (result, result, 6) for name, (result, _) in MIXED_RESULT_TYPES.items()},
     **{name: ("ctnative::nullable_string", "ctnative::nullable_string", 6)
-       for name in nullable_result_sources()},
+       for name in {**nullable_result_sources(), **nullable_key_sources()}},
 }
 
 
