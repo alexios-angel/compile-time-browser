@@ -199,6 +199,7 @@ if(STRICT)
   set(_object_copy_path_rows "")
   set(_object_switch_selector_rows "")
   set(_object_negation_rows "")
+  set(_object_total_unary_rows "")
   foreach(_line IN LISTS _recording_lines)
     if(_line MATCHES "^program ([0-9a-f]+) ")
       set(_program_hash "${CMAKE_MATCH_1}")
@@ -288,6 +289,16 @@ if(STRICT)
         message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
       endif()
       list(APPEND _object_negation_rows "${_row} ${CMAKE_MATCH_1}")
+    elseif(_function_name MATCHES "^objectFrame(Typeof|Void)Released$" AND _line MATCHES "^site ")
+      if(NOT _line MATCHES "^site ([0-9]+) kind obj made ([0-9]+) confined ([0-9]+) escaped ([0-9]+) unresolved ([0-9]+) unchecked ([0-9]+) routes ([^ ]+)$")
+        message(FATAL_ERROR "${_function_name}: unexpected total unary observation: ${_line}")
+      endif()
+      set(_pc "${CMAKE_MATCH_1}")
+      set(_row "${_function_name} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3} ${CMAKE_MATCH_4} ${CMAKE_MATCH_5} ${CMAKE_MATCH_6} ${CMAKE_MATCH_7}")
+      if(NOT _claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_pc} obj ([^\n]+)")
+        message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
+      endif()
+      list(APPEND _object_total_unary_rows "${_row} ${CMAKE_MATCH_1}")
     endif()
   endforeach()
   set(_expected_publication_rows
@@ -457,6 +468,25 @@ if(STRICT)
     message(FATAL_ERROR "imported logical negation evidence mismatch:\nexpected: ${_expected_object_negation_rows}\nobserved: ${_object_negation_rows}")
   endif()
   message(STATUS "imported logical negation: four sites, sixteen instances, twelve retained; live claims agree")
+
+  # Primitive String/Undefined results retain neither inspected child. The
+  # source void case also keeps its already-evaluated assignment observable;
+  # its raw import is constant Undefined, independently of ctjs.unary Void.
+  set(_expected_object_total_unary_rows
+      "objectFrameTypeofReleased 5 5 0 0 0 - confined"
+      "objectFrameTypeofReleased 5 0 5 0 0 temporaries:5 escapes:stored"
+      "objectFrameTypeofReleased 5 0 5 0 0 temporaries:5 escapes:stored"
+      "objectFrameTypeofReleased 5 0 5 0 0 temporaries:5 escapes:returned"
+      "objectFrameVoidReleased 2 2 0 0 0 - confined"
+      "objectFrameVoidReleased 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameVoidReleased 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameVoidReleased 2 0 2 0 0 temporaries:2 escapes:returned")
+  list(SORT _object_total_unary_rows)
+  list(SORT _expected_object_total_unary_rows)
+  if(NOT _object_total_unary_rows STREQUAL _expected_object_total_unary_rows)
+    message(FATAL_ERROR "imported total unary evidence mismatch:\nexpected: ${_expected_object_total_unary_rows}\nobserved: ${_object_total_unary_rows}")
+  endif()
+  message(STATUS "imported typeof/void: eight sites, twenty-eight instances, twenty-one retained; live claims agree")
 endif()
 if(NOT _pyrc EQUAL 0)
   message(FATAL_ERROR "${NAME}: the checker exited ${_pyrc}")

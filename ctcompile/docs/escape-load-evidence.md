@@ -871,3 +871,84 @@ source-switch mutations also continue to discriminate. Evidence:
 clang-format **22.1.8** passes all **745 files**; whitespace checks pass.
 No runtime behavior or native ownership admission changes. Other total unary
 producers, loops and native lifetime consumers remain separate work.
+
+## Noncapturing typeof and void
+
+This continues the next producer boundary in **`b3ecab58`**, the **`4f5e248d`**
+handoff and the **15:15:11** synchronization journal. Complete contents now
+admit `ctjs.unary typeof` and `ctjs.unary void` as independent primitive
+origins. TypeOf produces a String containing a type name; Void produces
+Undefined after its operand has already been evaluated. Neither result contains
+an object/array reference to the input, and neither operation invokes user code.
+Opaque inputs remain opaque for every other use.
+
+The TypeOf proof is deliberately narrower than a no-allocation or nonthrowing
+claim. `ctbrowser/lib/Script/vm/coerce.cpp::type_of` inspects tags and callable
+identity without property access or conversion. `vm/run_loop.cpp` allocates a
+fresh primitive String from that name. The opcode row marks allocation and the
+fatal allocation ceiling, with no JS reentry or catchable exception. Existing
+contents proofs already admit local allocation; admitting this primitive
+terminal neither elides its allocation nor proves that allocation succeeds.
+The String's bytes are not inferred, even for a literal operand. Its use as
+an own-property key still requires an independent exact-key proof and refuses
+here. Numeric array indices and copy/container endpoints also remain unproved.
+
+Void's ODS and boxed lowering contracts return Undefined from an already
+evaluated SSA operand. A preceding call, publication or unsupported producer
+still refuses the whole contents transaction. The real source compiler emits
+the operand's bytecode and then `load_undef`; source `void` therefore provides
+an execution control for discarded results and preserved effects, while the
+unit fixture independently exercises `ctjs.unary void` itself. No runtime or
+ODS behavior changes. Neg, Plus and BitNot remain refused because they can
+invoke conversion code. No result supplies an input alias, a branch-liveness
+fact, a known opaque value or native ownership admission.
+
+Each kind passes **twenty unit rows**, **twelve live mutation states**
+under forged completion/confinement markers, and a wide snapshot with 32 extra
+origins costing exactly **64 additional work units**. Every row and live
+state sweeps all incomplete contents/retention budgets and the exact endpoint.
+Controls cover primitive return/storage/rooting, local/opaque joins, retained
+saved reads, unsupported operand evaluation, opaque uses, unknown effects,
+invalid result keys/indices and a later retained structural arm. All 22
+historical logical-negation rows and eleven mutation states remain; their two
+TypeOf/Void rows and TypeOf mutation now expect the independently proved
+complete result instead of refusal. Each new kind passes **976 incomplete
+retention budgets**; the preserved negation family now passes **1,010** because
+those previously refused paths complete.
+
+Two separate executed-source functions add five TypeOf calls (Undefined, Null,
+Number, Boolean and String) and two Void calls. Both retain distinct original
+and copied containers and the selected alias, after deleting their old child
+fields. Void additionally returns a visible field write on the selected
+container and an Undefined result. The new source-coordinate family measures
+**eight sites, 28 instances and 21 retained instances**. All older source
+families, calls and exact claim expectations pass unchanged: the copy-path
+family stays **21 sites, 39 instances, 23 retained**; source switch stays
+**four sites, ten instances, three retained**; negation stays **four sites,
+sixteen instances, twelve retained**.
+
+All **eight escape CTests pass in 8.35 seconds**, and all four execution oracles
+report **zero soundness violations**. Expanded-fixture precision measures
+**39/51**, with zero partial or pending claims, versus the preceding **37/49**.
+The two new witnesses each add a proved-confined and an observed-confined site;
+these are additional coverage, not a precision gain on the historical fixture.
+Source Void already imported as constant Undefined, so its new witness does
+not measure a gain from admitting `ctjs.unary void`. Bootstrap/p5/Phaser
+precision remains **0/64, 0/16, 0/20**, including p5's existing single partial
+observation. Focused log: `/tmp/ctcompile-mixed-nullable-focused.log`.
+
+Local Node syntax and execution pass **22 combined fixture calls**, **32
+identity assertions** and three object-selector probes whose conversion
+counters stay zero. All **nineteen new observation mutations** discriminate
+wrong type names, lost/aliased identities, omitted deletion, a retained unary
+operand, omitted Void effects and writes to the wrong container. The eight
+historical copy-path, six source-switch and eight negation mutations continue
+to discriminate. Evidence: `/tmp/ctcompile-escape-total-unary-node.js` and its
+`.py` generator. Homebrew clang-format **22.1.8** passes all **745 files** in
+the parent's frozen snapshot, and whitespace checks pass.
+
+The final full-suite gate remains pending; the focused escape results do not
+establish a completed full gate or native Bootstrap progress. The next bounded
+producer candidate is the supported `ctjs.binary_static` family, requiring its
+own result/effect and refusal/budget
+evidence. Loops and native lifetime consumers remain separate work.

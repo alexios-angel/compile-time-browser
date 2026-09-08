@@ -2713,13 +2713,17 @@ void checkLogicalNegation(mlir::MLIRContext & context) {
         }
     };
     for (const auto & expected : rows) { parseAndCheck(expected); }
-    // Even total typeof/void need their own result proof; the three arithmetic
-    // kinds can coerce. No unary kind borrows the Boolean result contract.
-    const std::vector<std::string> refusedKinds = {"neg", "plus", "bitnot", "typeof", "void"};
-    for (const auto & kind : refusedKinds) {
-        parseAndCheck({.contents = {.what = "every other unary kind still refuses",
+    // Preserve all five historical controls. TypeOf/Void now have independent
+    // primitive-result proofs; no arithmetic kind borrows the Boolean proof.
+    const std::vector<std::string> otherKinds = {"neg", "plus", "bitnot", "typeof", "void"};
+    for (const auto & kind : otherKinds) {
+        const bool total = kind == "typeof" || kind == "void";
+        parseAndCheck({.contents = {.what = "other unary kinds require their own result proof",
                                     .body = values + "  %bad = ctjs.unary " + kind + " %p\n" + done,
-                                    .failure = ArrayContentsFailure::UnsupportedOperation}});
+                                    .failure = total ? ArrayContentsFailure::None
+                                                     : ArrayContentsFailure::UnsupportedOperation,
+                                    .arrays = total ? "a:[x]" : "",
+                                    .exit = total ? "zero -> {}" : ""}});
     }
 
     negation_row wide = rows.front();
@@ -2792,7 +2796,7 @@ void checkLogicalNegation(mlir::MLIRContext & context) {
         published.erase();
         inspect(ArrayContentsFailure::None);
         unary.setKindAttr(ctjs::UnaryKindAttr::get(&context, ctjs::UnaryKind::TypeOf));
-        inspect(ArrayContentsFailure::UnsupportedOperation);
+        inspect(ArrayContentsFailure::None);
         unary.setKindAttr(ctjs::UnaryKindAttr::get(&context, ctjs::UnaryKind::Not));
         inspect(ArrayContentsFailure::None);
     } else {
@@ -2801,7 +2805,237 @@ void checkLogicalNegation(mlir::MLIRContext & context) {
     }
     std::printf("logical negation: %zu rows, %u live states, one wide snapshot, "
                 "%zu retention budget cutoffs\n",
-                rows.size() + refusedKinds.size(), liveStates, budgets);
+                rows.size() + otherKinds.size(), liveStates, budgets);
+}
+
+void checkTotalUnaryProducers(mlir::MLIRContext & context) {
+    const std::string values =
+        "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
+        "  %x = ctjs.create_object {storage_test_id = \"x\"}\n"
+        "  %a = ctjs.create_array [%x] {storage_test_id = \"a\"}\n";
+    const std::string done = "  ctjs.return %zero\n";
+    const std::string overwrite = "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n";
+    const std::string branch =
+        "  %flag = ctjs.truthy %produced\n  cf.cond_br %flag, ^yes, ^no\n^yes:\n";
+    struct unary_row {
+        contents_row contents;
+        const char * discharged = "x";
+    };
+    for (const std::string kind : {"typeof", "void"}) {
+        const std::string operation = "  %produced = ctjs.unary " + kind;
+        const std::string produce = operation + " %p {storage_test_id = \"produced\"}\n";
+        const ctjs::UnaryKind originalKind =
+            kind == "typeof" ? ctjs::UnaryKind::TypeOf : ctjs::UnaryKind::Void;
+        const std::vector<unary_row> rows = {
+            {.contents = {.what = "total unary results do not prune either overwrite arm",
+                          .body = values + produce + branch + overwrite + "^no:\n" + overwrite,
+                          .arrays = "a:[zero] | a:[zero]",
+                          .exit = "a -> {a}; a -> {a}"}},
+            {.contents = {.what = "an opaque operand produces an independent primitive terminal",
+                          .body = values + produce + "  ctjs.return %produced\n",
+                          .arrays = "a:[x]",
+                          .exit = "produced -> {}"}},
+            {.contents = {.what = "a local operand is not retained by a unary result",
+                          .body = values + operation +
+                                  " %x {storage_test_id = \"produced\"}\n"
+                                  "  ctjs.return %produced\n",
+                          .arrays = "a:[x]",
+                          .exit = "produced -> {}"}},
+            {.contents = {.what = "stored total unary results carry no operand object identity",
+                          .body = values + produce +
+                                  "  ctjs.set_property %a[%zero], %produced\n  ctjs.return %a\n",
+                          .arrays = "a:[produced]",
+                          .exit = "a -> {a}"}},
+            {.contents = {.what = "a forwarded primitive may root while its opaque operand cannot",
+                          .body = "  %frame = ctjs.frame_enter 8\n" + values + produce +
+                                  "  cf.br ^next(%p, %produced : !ctjs.value, !ctjs.value)\n"
+                                  "^next(%opaque: !ctjs.value, %result: !ctjs.value):\n"
+                                  "  ctjs.root %result in %frame\n  ctjs.frame_exit %frame\n"
+                                  "  ctjs.return %result\n",
+                          .arrays = "a:[x]",
+                          .exit = "produced -> {}"}},
+            {.contents = {.what = "total unary observes a local or opaque join without aliasing it",
+                          .body = values +
+                                  "  %flag = ctjs.truthy %p\n"
+                                  "  cf.cond_br %flag, ^join(%x : !ctjs.value), "
+                                  "^join(%p : !ctjs.value)\n"
+                                  "^join(%selected: !ctjs.value):\n" +
+                                  operation +
+                                  " %selected {storage_test_id = \"produced\"}\n"
+                                  "  ctjs.return %produced\n",
+                          .arrays = "a:[x] | a:[x]",
+                          .exit = "produced -> {}; produced -> {}"}},
+            {.contents = {.what = "a saved child still retains its original identity",
+                          .body = values + "  %saved = ctjs.get_property %a[%zero]\n" + operation +
+                                  " %saved {storage_test_id = \"produced\"}\n"
+                                  "  ctjs.set_property %a[%zero], %produced\n"
+                                  "  ctjs.return %saved\n",
+                          .arrays = "a:[produced]",
+                          .reads = "a[0]=x",
+                          .exit = "x -> {x}"},
+             .discharged = ""},
+            {.contents = {.what = "a unary result is not an exact Number array index",
+                          .body = values + produce + "  %read = ctjs.get_property %a[%produced]\n" +
+                                  done,
+                          .failure = ArrayContentsFailure::UnknownIndex}},
+            {.contents = {.what = "a unary String or Undefined is not a proved own String key",
+                          .body = values + produce + "  ctjs.set_property %x[%produced], %zero\n" +
+                                  done,
+                          .failure = ArrayContentsFailure::UnknownPropertyKey}},
+            {.contents = {.what = "a unary result is not an own-data copy endpoint",
+                          .body = values + produce + "  ctjs.copy_props %produced into %x\n" + done,
+                          .failure = ArrayContentsFailure::UnsupportedOperation}},
+            {.contents = {.what = "a unary result is not a proved container",
+                          .body = values + produce +
+                                  "  %read = ctjs.get_property %produced[%zero]\n" + done,
+                          .failure = ArrayContentsFailure::UnknownArray}},
+            {.contents = {.what = "total unary does not authorize returning its opaque operand",
+                          .body = values + produce + "  ctjs.return %p\n",
+                          .failure = ArrayContentsFailure::UnknownValue}},
+            {.contents = {.what = "total unary does not authorize storing its opaque operand",
+                          .body = values + produce + "  ctjs.append %p to %a\n" + done,
+                          .failure = ArrayContentsFailure::UnknownValue}},
+            {.contents = {.what = "total unary does not authorize rooting its opaque operand",
+                          .body = "  %frame = ctjs.frame_enter 8\n" + values + produce +
+                                  "  ctjs.root %p in %frame\n  ctjs.frame_exit %frame\n" + done,
+                          .failure = ArrayContentsFailure::UnknownValue}},
+            {.contents = {.what = "discarding an unsupported operand producer cannot hide it",
+                          .body = values + "  %bad = \"test.value\"() : () -> !ctjs.value\n" +
+                                  operation + " %bad\n" + done,
+                          .failure = ArrayContentsFailure::UnsupportedOperation}},
+            {.contents = {.what = "a total result cannot authorize a later unknown effect",
+                          .body = values + produce +
+                                  "  \"test.effect\"(%produced) : (!ctjs.value) -> ()\n" + done,
+                          .failure = ArrayContentsFailure::UnsupportedOperation}},
+            {.contents = {.what = "void or typeof cannot erase an already-evaluated publication",
+                          .body = values + "  ctjs.store_global \"held\", %x\n" + produce + done,
+                          .failure = ArrayContentsFailure::UnsupportedOperation}},
+            {.contents = {.what = "total primitive truthiness cannot prune an unsupported arm",
+                          .body = values + operation + " %zero\n" + branch + done +
+                                  "^no:\n  ctjs.store_global \"held\", %a\n" + done,
+                          .failure = ArrayContentsFailure::UnsupportedOperation}},
+            {.contents = {.what = "a later retained arm prevents Stored refinement",
+                          .body =
+                              values + produce + branch + overwrite + "^no:\n  ctjs.return %a\n",
+                          .arrays = "a:[zero] | a:[x]",
+                          .exit = "a -> {a}; a -> {a,x}"},
+             .discharged = ""},
+            {.contents = {.what = "a literal operand does not infer the result property key",
+                          .body = values + operation +
+                                  " %zero\n"
+                                  "  ctjs.set_property %x[%produced], %zero\n" +
+                                  done,
+                          .failure = ArrayContentsFailure::UnknownPropertyKey}},
+        };
+        std::size_t budgets = 0;
+        const auto check = [&](mlir::ModuleOp module, const unary_row & expected) {
+            checkArrayContents(module, expected.contents);
+            const bool complete = expected.contents.failure == ArrayContentsFailure::None;
+            budgets +=
+                checkArrayRetention(module, {.what = expected.contents.what,
+                                             .body = expected.contents.body,
+                                             .discharged = complete ? expected.discharged : "",
+                                             .complete = complete});
+        };
+        const auto parse = [&](const unary_row & expected) {
+            return mlir::parseSourceString<mlir::ModuleOp>(
+                std::string{kPrologue} + expected.contents.body + "}\n", &context);
+        };
+        for (const auto & expected : rows) {
+            if (auto module = parse(expected)) {
+                check(*module, expected);
+            } else {
+                fail(row{.what = expected.contents.what,
+                         .body = expected.contents.body,
+                         .expected = ""},
+                     "the total unary fixture did not parse");
+            }
+        }
+        unary_row wide = rows.front();
+        std::string extras;
+        for (unsigned i = 0; i < 32; ++i) {
+            extras += "  %extra_" + std::to_string(i) + " = ctjs.unary " + kind + " %p\n";
+        }
+        wide.contents.body.insert(wide.contents.body.find("  %flag ="), extras);
+        auto narrowModule = parse(rows.front());
+        auto wideModule = parse(wide);
+        if (narrowModule && wideModule) {
+            const auto narrow = computeArrayContents(*narrowModule->getOps<ctjs::FuncOp>().begin());
+            const auto expanded = computeArrayContents(*wideModule->getOps<ctjs::FuncOp>().begin());
+            if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 64) {
+                fail(row{.what = "total unary snapshots charge every primitive origin",
+                         .body = wide.contents.body,
+                         .expected = ""},
+                     "32 extra unary results did not cost one producer and one snapshot each");
+            }
+            check(*wideModule, wide);
+        } else {
+            fail(row{.what = "wide total unary snapshot",
+                     .body = wide.contents.body,
+                     .expected = ""},
+                 "the total unary snapshot fixture did not parse");
+        }
+
+        unary_row mutation = rows.front();
+        mutation.contents.what = "live total unary edits defeat stale forged completion markers";
+        unsigned liveStates = 0;
+        if (auto module = parse(mutation)) {
+            ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+            ctjs::UnaryOp unary;
+            ctjs::CreateObjectOp child;
+            module->walk([&](ctjs::UnaryOp op) { unary = op; });
+            module->walk([&](ctjs::CreateObjectOp op) { child = op; });
+            mlir::OpBuilder builder(unary);
+            function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+            function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
+            child->setAttr("ctnative.confined", builder.getUnitAttr());
+            const auto inspect = [&](ArrayContentsFailure failure) {
+                mutation.contents.failure = failure;
+                check(*module, mutation);
+                ++liveStates;
+            };
+            inspect(ArrayContentsFailure::None);
+            for (const auto coercing :
+                 {ctjs::UnaryKind::Neg, ctjs::UnaryKind::Plus, ctjs::UnaryKind::BitNot}) {
+                unary.setKindAttr(ctjs::UnaryKindAttr::get(&context, coercing));
+                inspect(ArrayContentsFailure::UnsupportedOperation);
+            }
+            unary.setKindAttr(ctjs::UnaryKindAttr::get(&context, originalKind));
+            inspect(ArrayContentsFailure::None);
+            unary->setOperand(0, child.getResult());
+            inspect(ArrayContentsFailure::None);
+            mlir::Block & last = function.getBody().back();
+            auto store = llvm::cast<ctjs::SetPropertyOp>(&last.front());
+            const mlir::Value replacement = store.getValue();
+            store->setOperand(2, child.getResult());
+            mutation.contents.arrays = "a:[zero] | a:[x]";
+            mutation.contents.exit = "a -> {a}; a -> {a,x}";
+            mutation.discharged = "";
+            inspect(ArrayContentsFailure::None);
+            store->setOperand(2, function.getBody().front().getArgument(3));
+            inspect(ArrayContentsFailure::UnknownValue);
+            store->setOperand(2, replacement);
+            mutation.contents.arrays = rows.front().contents.arrays;
+            mutation.contents.exit = rows.front().contents.exit;
+            mutation.discharged = "x";
+            inspect(ArrayContentsFailure::None);
+            builder.setInsertionPoint(last.getTerminator());
+            auto published = ctjs::StoreGlobalOp::create(builder, function.getLoc(), "held",
+                                                         function.getBody().front().getArgument(3));
+            inspect(ArrayContentsFailure::UnsupportedOperation);
+            published.erase();
+            inspect(ArrayContentsFailure::None);
+            unary.setKindAttr(ctjs::UnaryKindAttr::get(&context, ctjs::UnaryKind::Not));
+            inspect(ArrayContentsFailure::None);
+        } else {
+            fail(
+                row{.what = mutation.contents.what, .body = mutation.contents.body, .expected = ""},
+                "the live total unary fixture did not parse");
+        }
+        std::printf("total unary %s: %zu rows, %u live states, one wide snapshot, "
+                    "%zu retention budget cutoffs\n",
+                    kind.c_str(), rows.size(), liveStates, budgets);
+    }
 }
 
 void checkArrayFrames(mlir::MLIRContext & context) {
@@ -3727,6 +3961,7 @@ int main() {
     checkOpaqueEntryTransport(context);
     checkSelectorProducers(context);
     checkLogicalNegation(context);
+    checkTotalUnaryProducers(context);
     checkArrayFrames(context);
     checkArrayConditionals(context);
     checkContainerSwitches(context);

@@ -253,6 +253,40 @@ H.push(objectFrameNegatedReleased(1));
 H.push(objectFrameNegatedReleased(""));
 H.push(objectFrameNegatedReleased("0"));
 
+// --- NONCAPTURING TYPEOF / VOID -------------------------------------------
+// Type names contain no reference to the inspected local or external value.
+// The undefined, null, Number, Boolean and String cases also distinguish
+// typeof from returning the input, a constant type name or a truthiness test.
+function objectFrameTypeofReleased(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var named = typeof choice, local = typeof child;
+    var selected = named === "undefined" ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target, named: named, local: local };
+}
+H.push(objectFrameTypeofReleased());
+H.push(objectFrameTypeofReleased(null));
+H.push(objectFrameTypeofReleased(0));
+H.push(objectFrameTypeofReleased(false));
+H.push(objectFrameTypeofReleased(""));
+
+// Source void imports as its evaluated assignment plus constant Undefined.
+// Keep the selected object's side effect observable in the returned graph;
+// discarding the unary result must not discard that prior assignment.
+function objectFrameVoidReleased(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var selected = choice ? source : target;
+    var discarded = void (selected.mark = 7);
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target, discarded: discarded };
+}
+H.push(objectFrameVoidReleased(false));
+H.push(objectFrameVoidReleased(true));
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());

@@ -1003,13 +1003,19 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 continue;
             }
             if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(&op)) {
-                // Logical not applies total ToBoolean and flips the result
-                // (Operators.td, VM logical_not/coerce.cpp). It neither calls
-                // user code nor captures its input, including an opaque entry.
-                // Keep an independent primitive origin; do not infer its value,
-                // lend an origin to the operand or prune either structural arm.
-                if (unary.getKind() != ctjs::UnaryKind::Not) {
-                    return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
+                // These three kinds never invoke user code or retain their
+                // already-evaluated operand (Operators.td, VM coerce.cpp).
+                // Not yields a Boolean; TypeOf yields a String; Void yields
+                // Undefined. TypeOf's VM String allocation may hit the fatal
+                // allocation ceiling, but carries no operand object identity.
+                // This is a contents proof, not a no-allocation/effect claim.
+                // Keep an independent primitive origin without a value, key,
+                // operand alias or structural-edge liveness fact.
+                switch (unary.getKind()) {
+                case ctjs::UnaryKind::Not:
+                case ctjs::UnaryKind::TypeOf:
+                case ctjs::UnaryKind::Void: break;
+                default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
                 state.origins[unary.getResult()] = unary.getResult();
                 continue;
