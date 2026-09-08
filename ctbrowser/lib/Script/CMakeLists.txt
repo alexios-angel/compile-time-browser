@@ -67,7 +67,14 @@ target_sources(ctbrowser-script
     # The interpreter. run_loop.cpp is the dispatch loop and stays whole: it is
     # ONE function, and the thing docs/history/computed-goto.md is about.
     vm/coerce.cpp
-    vm/objects.cpp
+    # Property lookup, storage and descriptors, the prototype chain, and the
+    # collector - vm/objects.cpp until 2026-09-08.
+    vm/objects/context.cpp
+    vm/objects/gc.cpp
+    vm/objects/lookup.cpp
+    vm/objects/store.cpp
+    vm/objects/chain.cpp
+    vm/objects/descriptors.cpp
     vm/call.cpp
     vm/run_loop.cpp
   PUBLIC
