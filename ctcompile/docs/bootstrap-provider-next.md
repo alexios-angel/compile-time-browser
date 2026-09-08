@@ -276,9 +276,14 @@ fallback, and saved future Strings survive final Map release. See
 
 Add `return result || null` to that accepted getter without changing its Map
 writes. This isolates a String/Null result from the separate nullable stored
-payload and key schemas. Local Node gives **3**; fresh interpreter/native
-measurements, including a normalized consumer-key control, are queued. The
-complete source and measurement status are in
+payload and key schemas. Node/interpreter give **3**, but both native modes
+remain **0/6**, with all eighteen calls retained and no host owner proof.
+Normalizing the consumer key
+still gives **0/6**. Both scalar controls remain **6/6** with trace **2**. The
+first missing proof is finite String/Null result and parameter transport in the
+host dependency worklist. Reuse the existing owning `nullable_string` carrier;
+stored-callable signatures and nullable Map keys are subsequent boundaries. The
+complete source and measured evidence are in
 [the Map boundary](native-owned-global-maps.md#next-boundary).
 
 The exact Bootstrap getter at vendor line 17 also needs nested/object payloads.

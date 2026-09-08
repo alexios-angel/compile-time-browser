@@ -579,7 +579,7 @@ never from its input attribute, a host result tag or the storage schema. A wider
 SCF temporary can therefore supply an independently proved exact scalar write.
 Bool/String temporaries use owning `std::variant<bool, std::string>` with a
 plain truthiness visitor and copied `std::get` extraction. Numeric intermediates
-reuse existing optional scalar carriers. General union function signatures,
+reuse existing optional scalar carriers. Bool/String function signatures,
 returns, captures, fields and coercions remain refused.
 
 The gate passes **103 complete programs**, eight new scalar short-circuit
@@ -601,7 +601,9 @@ Local mixed Maps pass **49 observations and 21 refusals** across both storage
 layouts, including inverted falsy refinement and a standalone local temporary.
 All seven targeted lit cases pass in **28.51 seconds**. Focused CTest passes
 **12/12 in 31.25 seconds**. Homebrew clang-format **22.1.8** passes **744 files**.
-The full generated gate is running; final results belong in [HANDOFF.md](HANDOFF.md).
+The full 252-step generated build succeeds, with **372/372 compiler CTests**
+and **165/165 lit cases** passing; overall **512/517** leaves only the five
+recorded browser failures. Final results are in [HANDOFF.md](HANDOFF.md).
 
 ## Next boundary
 
@@ -636,13 +638,27 @@ host.slot.set(host.slot.get(true));
 var trace = host.slot.size();
 ```
 
-Local Node gives **`trace=3`**. Fresh devbox measurements are queued for this
-source, a nullable ternary, a consumer that normalizes `key || 'missing'`,
-a directly stored `(has && get) || null` value and object payloads. The
-short-circuit and ternary controls give Node **2**. These new measurements must
-not be confused with the preceding guarded-ternary witnesses. Source is frozen
-in `/tmp/ctcompile-shortcircuit-next-sources/`; pending evidence is
-`/tmp/ctcompile-shortcircuit-boundary.json`.
+Node/interpreter agree on **`trace=3`**, but both native modes remain **0/6**,
+with all **eighteen calls retained** and no host owner proof. Removing only
+`|| null` restores **6/6**, eighteen source calls and trace **2**; the ternary
+control also remains **6/6** with trace **2**. A nullable ternary, normalized
+`key || 'missing'` setter and ordinary object payloads each remain **0/6**,
+eighteen calls and trace **3**. Directly storing `(has && get) || null` retains
+**seventeen calls** with the same trace and refusal. These measurements use the
+new short-circuit specimens, separately from the preceding guarded-ternary
+witnesses. Evidence: `/tmp/ctcompile-shortcircuit-boundary.json`; devbox source:
+`/tmp/ctcompile-shortcircuit-next/nullable_or.js`.
+
+The first host boundary is the final reduction of known String/Null alternatives
+to one optional tag in `HostContract/CapturedMapBody.cpp`. Without a result tag,
+the completed-body worklist in `HostContract/Values.cpp` cannot prove the
+consuming setter's parameter. Extend finite result/parameter evidence without
+allowing an unseeded dependency cycle to prove itself. The existing owning
+`nullable_string` carrier already represents String/Null, but stored-callable
+admission and `EmitC/MethodTables.cpp` lack its signature support. The original
+setter also stores a real null key; the normalized consumer separates that
+schema obligation from the result contract. Nullable stored payloads, object
+identity and general exports remain further work.
 
 Current-call proofs cannot authorize arbitrary future external arguments or
 establish an export ABI. Future external callers, mutable publication slots,

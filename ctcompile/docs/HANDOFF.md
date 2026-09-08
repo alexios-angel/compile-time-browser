@@ -26,8 +26,8 @@ scalar alternatives remain independent. A live native write proof rederives
 `ctnative.map_write_type`; a wider SCF temporary may supply a proved exact
 scalar write without narrowing its Map schema or trusting input annotations.
 Bool/String temporaries own `std::variant<bool, std::string>` values; a plain
-truthiness visitor and copied extraction preserve String lifetime. General
-union signatures, returns, captures, fields and coercions remain refused.
+truthiness visitor and copied extraction preserve String lifetime. Bool/String
+signatures, returns, captures, fields and coercions remain refused.
 
 The published gate passes **103 complete programs**, eight new short-circuit
 programs, nine new guard/effect/tag refusals and **twelve lifetime sanitizer
@@ -63,20 +63,36 @@ not a corpus precision improvement. Bootstrap/p5/Phaser remain **0/64, 0/16,
 source switches remain outside the complete contents proof. See
 `ctcompile/docs/escape-load-evidence.md` for the next bounded proof.
 
-The full **252-step generated devbox build succeeds**. Complete CTest is running
-at `/tmp/ctcompile-shortcircuit-full.log`; final totals, fresh corpus/native Data
-counts and `/tmp/ctcompile-shortcircuit-evidence.json` remain pending. The only
-failures observed before the compiler lit test are the five recorded browser
-baselines: `selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`.
-All **23 native code/test paths** match committed HEAD and frozen gate input.
+The full **252-step generated devbox build succeeds**. Final CTest is
+**512/517 in 953.39 seconds**: **372/372 compiler** and **140/145 browser** tests.
+Only the recorded `selectors`, `frames`, `element_attrs`, `vm_async` and
+`early_errors` failures remain. All **165/165 lit cases** pass (`ctcompile_lit`,
+**351.96 seconds**), and exception recovery passes in **1.19 seconds**. All four
+execution oracles again report zero violations, with precision **34/47, 0/64,
+0/16, 0/20** under their existing environment and execution coverage limits.
+Fresh native components remain **Bootstrap 19/574, p5 39/4754, Phaser 45/7725**
+in both modes with zero pruned. Exact Data remains **0/7 browser, 0/7 CommonJS,
+0/8 AMD**. Complete native Bootstrap initialization remains unfinished.
+Evidence: `/tmp/ctcompile-shortcircuit-full.log` and
+`/tmp/ctcompile-shortcircuit-evidence.json`.
+
+All **25 changed code/test paths** match committed HEAD, frozen gate input and
+final devbox source. The inspected String output retains live branches and
+owning saved results through subsequent writes/deletes, without Script symbols
+or an interpreter context. Checkpoint docs were committed as `c0741b1`; this
+update records the completed full gate. No browser or runtime semantics changed.
 
 **Exact next boundary:** add `return result || null` to the accepted short-circuit
 getter, keeping its existing Map writes and both standalone `set(get(flag))`
-calls followed by `size()`. Local Node gives **3**. Fresh interpreter/native
-measurements for this eighteen-call source, a nullable ternary, normalized
-consumer key, directly stored nullable result and object payloads are queued.
-Complete source is in `native-owned-global-maps.md` under "Next boundary" and
-frozen in `/tmp/ctcompile-shortcircuit-next-sources/`; pending evidence is
+calls followed by `size()`. Node/interpreter agree on **3**, but both native
+modes remain **0/6**, all **eighteen calls retained**, with no host owner proof.
+The accepted short-circuit and ternary controls both admit **6/6**, eighteen
+source calls, Node/interpreter **2**. Fresh nullable ternary, normalized
+`key || 'missing'` consumer and object-payload witnesses each remain **0/6**,
+eighteen calls, trace **3**. Directly storing `(has && get) || null` retains
+**seventeen calls** with the same trace and refusal. Complete next source is
+in `native-owned-global-maps.md` under "Next boundary", and on the devbox at
+`/tmp/ctcompile-shortcircuit-next/nullable_or.js`. Measured evidence:
 `/tmp/ctcompile-shortcircuit-boundary.json`.
 
 A read-only audit identifies the first proof boundary: the host body reduces

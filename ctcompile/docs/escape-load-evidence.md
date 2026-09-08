@@ -662,8 +662,12 @@ and six observed-confined sites in the new fixture. It measures the existing
 analysis on additional source witnesses; no production analysis changed and
 none of the corpus precision counts improved. Homebrew clang-format **22.1.8**
 passes all **744 files** in the gate snapshot, and whitespace checks pass.
-Log: `/tmp/ctcompile-shortcircuit-focused.log`. The full generated gate remains
-pending and will be recorded separately in [HANDOFF.md](HANDOFF.md).
+Log: `/tmp/ctcompile-shortcircuit-focused.log`. The full **252-step generated
+build succeeds**, with **372/372 compiler CTests** and **165/165 lit cases**
+passing. Overall **512/517 in 953.39 seconds** leaves only the five recorded
+browser failures. All four oracles repeat the same zero-violation measurements
+and precision counts. Final log: `/tmp/ctcompile-shortcircuit-full.log`;
+evidence: `/tmp/ctcompile-shortcircuit-evidence.json`. See [HANDOFF.md](HANDOFF.md).
 
 The next small source-boundary proof is exact transport of an external
 predicate through unused raw register arguments without treating that value as
