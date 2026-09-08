@@ -810,8 +810,19 @@ budgets **18043/18696/18804** pass **29/30/32 cutoffs**. Raw/prepared host tests
 add sixteen rows each and all **4727/4984/4899/5186** incomplete budgets.
 Four host/owner CTests pass **37.72 seconds**; seven local lit cases pass
 **43.80 seconds**. The corrected saved lifetime harness changes only its
-appended observer, preserving the generated helpers. Full **133-program,
-seventeen-lifetime** driver and whole-suite results are pending in HANDOFF.
+appended observer, preserving the generated helpers.
+
+The full **253-step generated build passes warning-free**. Initial CTest passes
+**511/517 in 1141.97 seconds**: the five established browser failures and a
+historical ownership-refusal expectation remain. Commit **`077328ae`** preserves
+that seventeen-call trace=3 source as a complete-owner/native-carrier refusal,
+with its exact eighteen-call trace=2 repair, original argument edges and forged
+report controls. The complete refusal tail passes. Corrected CTest lit passes
+**1/1 in 526.35 seconds**, all **165 lit cases in 526.28 seconds**, including the
+entire **133-program/seventeen-lifetime** driver. All **372 compiler tests** pass
+across the full run and corrected rerun; only five browser failures remain.
+Corpus counts are unchanged. All twelve code/test paths match committed HEAD,
+frozen input and final devbox sources; details are in [HANDOFF.md](HANDOFF.md).
 
 ## Next boundary
 
@@ -860,3 +871,28 @@ exports and future-call contracts remain unfinished. Complete both-mode
 measurements are in `/tmp/ctcompile-nullable-host-results-boundary.json` and
 devbox `/tmp/ctcompile-nullable-host-results-boundary/`; the exact nested source
 is a permanent refusal beside the acyclic positives in the published driver.
+
+A smaller host-proof control has four functions and one published setter:
+
+```js
+var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return { set(key) { state.set(key, key); return state.get(key); } };
+});
+host.slot.set(null);
+var trace = host.slot.set(host.slot.set('future'));
+```
+
+Its seven calls return String `"future"` in Node and the interpreter, but have
+no host owner and **0/4 native** in both modes. Removing the outer setter call
+reduces it to six calls and restores ownership. Removing the direct Null call
+instead gives a six-call all-String refusal; its five-call direct repair also
+restores ownership. The direct repairs still refuse native emission because
+String `trace` hits the separate numeric-global export restriction. Moving
+Null after the nested call retains the same census refusal. These are host-proof
+controls; the fifteen-call acyclic source above remains the admitted native
+control. Adding a numeric comparison observer to these smaller sources introduces
+another host-prefix obligation, so those probes do not replace the clean controls.
+Complete measured sources and diagnostics:
+`/tmp/ctcompile-nullable-host-results-next.json` and `-next.log`.

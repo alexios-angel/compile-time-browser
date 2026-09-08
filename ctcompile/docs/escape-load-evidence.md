@@ -1034,3 +1034,18 @@ mutations** continue to discriminate. Evidence:
 The next producer boundary is catchable BigInt outcomes, requiring a separate
 completion-path proof; it is not discharged by successful literal observations.
 Loops and native lifetime consumers remain separate work.
+
+The full **253-step generated build passes warning-free**. Its initial CTest
+run passes **511/517 in 1141.97 seconds**: **371/372 compiler** and **140/145
+browser** tests. The compiler failure was an old nullable short-circuit test
+expecting no host owner; test-only **`077328ae`** now requires the complete
+owner proof while preserving refusal of an unsupported native intermediate.
+The complete refusal tail passes, followed by the corrected `ctcompile_lit`
+CTest **1/1 in 526.35 seconds**, with **165/165 lit cases in 526.28 seconds**.
+All **372 compiler tests pass across those two runs**; the five established
+browser failures remain. Four escape oracles again report zero violations,
+fixture **40/54** and corpus **0/64, 0/16, 0/20**. Native counts remain
+Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725** in both modes, with
+zero pruned; exact Data stays **0/7 browser/CommonJS and 0/8 AMD**. Evidence:
+`/tmp/ctcompile-nullable-host-results-evidence.json` and
+`/tmp/ctcompile-nullable-host-results-lit-final-detail.log`.

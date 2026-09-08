@@ -347,8 +347,11 @@ or Presence annotation supplies host proof authority.
 Five programs pass both modes, explicit/deduced GCC/Clang, exact identities and
 saved-result lifetimes in **`fe867e6f`**. Four independent host refusals and their
 exact repairs pass, together with fresh/stale reports, reruns and budget
-cutoffs. Full 133-program/seventeen-lifetime and whole-suite measurements are
-pending; [HANDOFF.md](HANDOFF.md) records the focused gates and logs.
+cutoffs. The full 253-step build passes. Initial CTest is 511/517; after the
+test-only `077328ae` ownership/carrier correction, the complete lit rerun passes
+165/165, including all 133 programs and seventeen lifetime families. All 372
+compiler tests pass across both runs; five established browser failures remain.
+[HANDOFF.md](HANDOFF.md) records the separate measurements and logs.
 
 ## Next: same-method result dependencies
 

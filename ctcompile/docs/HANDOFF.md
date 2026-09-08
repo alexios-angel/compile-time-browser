@@ -60,13 +60,32 @@ family measures **twelve sites, twenty instances, fifteen retained**. Four
 escape oracles report zero violations. Expanded-fixture precision **40/54**
 adds coverage relative to **39/51**; Bootstrap/p5/Phaser stay **0/64, 0/16, 0/20**.
 
-The full devbox build/CTest gate is running in
-`/tmp/ctcompile-nullable-host-results-full.log`; final results are pending.
-The complete published driver is configured for **133 programs and seventeen
-lifetime families**, not yet measured as a whole in this session. Formatter
-**22.1.8** passes all **745 files**. All twelve code/test paths match the
-committed source and frozen gate input. The previous full gate was 512/517,
-with five recorded browser failures; this session has not changed those paths.
+The **253-step generated devbox build passes warning-free**. Initial CTest
+finishes **511/517 in 1141.97 seconds**: **371 compiler tests** and **140/145
+browser tests** pass. The five recorded browser failures remain, plus one old
+published-driver expectation: `shortcircuit_nullable` now has complete host
+ownership but still refuses its optional Bool/String `scf.if` intermediate.
+The driver had already passed all **133 positive programs, seventeen lifetime
+families and budget sweeps**. Its other **164 lit cases** passed.
+
+Commit **`077328ae`** corrects only that control, retaining the original
+seventeen-call trace=3 source, prepared result edges and exact native refusal.
+Its eighteen-call trace=2 repair admits **6/6** in both modes. The complete
+refusal tail passes all fresh/stale/rerun controls. The corrected CTest lit gate
+passes **1/1 in 526.35 seconds**, including **165/165 lit cases in 526.28 seconds**
+and the entire **133-program/seventeen-lifetime** driver. Across the full run
+and this corrected rerun, all **372 compiler tests** and **140/145 browser tests**
+pass. The five existing browser failures are `selectors`, `frames`,
+`element_attrs`, `vm_async` and `early_errors`; this is not a single 512/517 run.
+
+Formatter **22.1.8** passes all **745 files**. All twelve code/test paths match
+committed HEAD, frozen input and final devbox sources. Native corpus counts
+remain Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725** in both modes,
+zero pruned. Exact Data remains **0/7 browser/CommonJS, 0/8 AMD**. Exception
+recovery passes in **1.18 seconds**. The inspected saved-result C++ copies its
+nullable value before same-key Boolean overwrite/deletion and passes that
+owned result to `size(key)`. Both inspected C++ files contain no Script or VM
+context/value symbols. No browser/runtime source changed.
 
 **Exact next boundary: a setter result used by another call to the same setter.**
 The **fifteen-call**, trace=2 `set(set(get(false)))` source remains unowned and
@@ -80,12 +99,27 @@ The dual-nested local conditional retains its separate callee-identity refusal.
 Full Bootstrap Data, object identity/fields, browser API integration, general
 exports and native throwing-call admission remain unfinished.
 
+A smaller four-function host-proof control is now measured independently.
+`set(key) { state.set(key, key); return state.get(key); }`, a direct Null call,
+and `set(set('future'))` use **seven calls**, Node/interpreter String `"future"`,
+no owner and **0/4 native**. Removing the outer call gives six calls and complete
+ownership; removing the Null call gives an all-String **six/five-call** pair
+with the same ownership distinction. Both direct repairs still have **0/4
+native** because storing String to `trace` hits the separate numeric-global
+export restriction. Moving Null after the nested call does not repair the
+census. These isolate host proof only; the fifteen-call acyclic program remains
+the admitted native control. Sources and measurements are in
+`/tmp/ctcompile-nullable-host-results-next.json`.
+
 Evidence: `/tmp/ctcompile-nullable-host-results-host.log`, `-focused.log`,
 `-native.log`, `-corrected.log`, `-boundary.json`, `-format.log`,
-`-input-hashes.json`, `-snapshot.txt` and `-full.log`. The first native log
-preserves the obsolete lifetime-harness failure; the corrected log records the
-saved-result and all new refusal/repair/forgery/budget passes. Complete accepted
-and next sources are in `native-owned-global-maps.md` and the published driver.
+`-input-hashes.json`, `-snapshot.txt`, `-full.log`, `-evidence.json`,
+`-regate2.log`, `-lit-final.log`, `-lit-final-detail.log`, `-postgate.log`,
+`-final-hashes.json`, `-saved.cpp`, `-mixed.cpp` and `-next.json`. The first native
+log preserves the lifetime-harness failure; the first full log preserves the
+obsolete ownership expectation. Corrected focused and full lit gates pass.
+Complete accepted and next sources are in `native-owned-global-maps.md` and the
+published driver.
 
 ## Finite mixed Map read and total-unary checkpoint, 2026-09-08
 
