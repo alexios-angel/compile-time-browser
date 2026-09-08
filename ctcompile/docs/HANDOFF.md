@@ -6,6 +6,64 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Nullable host results and opaque-register checkpoint, 2026-09-08
+
+Commits **`6f13212`** and **`fa29d49`** resume the nullable-result and opaque
+entry-register threads left in flight in the **11:17:14 synchronization journal**
+and abandoned at **11:17:55**. The starting tree was clean. The old
+`codex-wip-20260907` CallDirectOp recovery was already gated in `5307abf` and
+its branch is an ancestor; no rebase or merge was needed. Three agents handled
+host controls, native execution tests and escape analysis while the root
+implemented the native/Bootstrap boundary. No browser or runtime source changed.
+
+The host worklist now retains finite primitive alternatives through completed
+producer results and the complete actual/formal census. Parameter facts widen
+truthiness within each category, preserving future branch behavior. It admits
+String with Null/Undefined only after the whole census; unknown producers,
+unsupported mixtures and unseeded dependency cycles still refuse. Host units
+pass the earlier **82 rows plus 32 nullable rows**, each in source/prepared form,
+every **3848/4001** nullable and **5150/5368** census budget cutoff, endpoints
+and live mutations. Focused CTest passes **12/12 in 34.43 seconds**.
+
+The escape proof transports exact opaque entry `!ctjs.value` register identities
+separately from known local origins through acyclic successor vectors. Opaque
+values cannot become keys, stored contents, roots, returned values or copy
+endpoints. Every entry visit and opaque snapshot spends budget. All eight
+escape CTests pass, including **19 rows, eight live mutations, 664 retention
+cutoffs** and the wide snapshot control. Four execution oracles report zero
+violations. Unchanged-fixture precision improves **34/47 -> 35/47**; corpus
+precision remains **0/64, 0/16, 0/20**. Source switches still need a separate
+comparison/Boolean-producer proof.
+
+**In flight:** native callable signatures use the existing owning
+`nullable_string`; independently rederived per-operation Map-key facts keep
+`key || 'missing'` String storage precise without narrowing the original SSA
+value or a second unnormalized use. The normalized eighteen-call nullable and
+ternary programs now admit **6/6 in both modes**, Node/interpreter **trace=3**,
+and pass explicit/deduced GCC/Clang execution. All seven nullable programs pass
+a quick admission check. Use `void 0` for the Undefined literal; bare `undefined`
+is an unproved global read under this contract. Their complete execution,
+forgery and lifetime gate is still pending in the full CTest run.
+
+The full generated gate is running from the frozen input recorded in
+`/tmp/ctcompile-nullable-native-snapshot.txt`, log
+`/tmp/ctcompile-nullable-full.log`. Refresh changed source timestamps when
+switching frozen inputs: the first native run reused older objects because
+restored source mtimes preceded them. An 83-step rebuild fixed that. The public
+alternatives header's explicit equality also avoids a C++20-extension warning
+in LLVM's C++17 analysis target. Formatter 22.1.8 and final full-gate counts are
+pending. Native implementation/tests are not yet committed at this checkpoint.
+
+**Exact next boundary:** the original nullable eighteen-call program now has a
+complete host owner proof but stays **0/6** in both modes, with all calls retained
+and **trace=3**. Its key type is `Opt<Variant<Bool, Str>>`. A smaller **eleven-call**
+String-key witness also stays **0/6**, with proved ownership, `Opt<Str>` keys and
+**trace=2**. Adding one temporary Boolean key gives **thirteen calls** and the
+mixed nullable key schema, still **0/6**, **trace=2**. This isolates key storage
+from nullable method signatures and payload storage. Evidence so far:
+`/tmp/ctcompile-nullable-boundary.json`; the null/undefined/empty String witness
+is being corrected to use the Undefined literal before its final measurement.
+
 ## Short-circuit Map and executed copy-path checkpoint, 2026-09-08
 
 Saved locally on `ctcompile-v1`: **`58decfe`**, scalar Map short-circuit

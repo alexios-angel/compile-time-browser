@@ -726,12 +726,14 @@ Bootstrap/p5/Phaser precision remains **0/64, 0/16, 0/20**, including p5's
 existing single partial observation. This is one fixture-site precision gain;
 the corpus precision counts do not improve.
 
-All **eight escape CTests pass** in `/tmp/ctcompile-nullable-focused.log`.
-The larger twelve-test run has two unrelated new host-test failures that the
-parent session is fixing; this does not claim a complete focused or full gate.
+Commit **`6f13212`** records the implementation and witnesses. All **eight escape
+CTests pass** in `/tmp/ctcompile-nullable-escape.log` (**8.07 seconds**).
+After correcting two new host fixtures, the combined focused CTest gate passes
+**12/12 in 34.43 seconds**, log `/tmp/ctcompile-nullable-native-focused.log`.
+The full generated CTest gate is still pending.
 Homebrew clang-format **22.1.8** passes all **745 files** in the frozen input.
 Node syntax, the eight-call copy-path observations, four identity assertions,
 eight discriminating mutations and whitespace checks also pass. The parent
-session owns the remaining serialized gates and commit. No runtime behavior
+session owns the remaining serialized gates. No runtime behavior
 or native ownership admission changes. Comparison/Boolean selector producers
 for real source switches remain the next bounded escape proof.
