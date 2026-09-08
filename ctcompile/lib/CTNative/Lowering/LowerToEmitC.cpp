@@ -144,7 +144,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                             // leaves, not their C++ representation. Rebuild the
                             // existing object/field use proof after Map actions
                             // are known, just as for an ordinary native source.
-                            prepareNativeObjectIdentities(*prepared);
+                            prepareNativeObjectIdentities(*prepared, &checked);
                             transformed.moduleSha256 = hostContractFingerprint(*prepared);
                         }
                         const OwnedGlobalRoots final(*prepared, transformed, hostMaxSteps);

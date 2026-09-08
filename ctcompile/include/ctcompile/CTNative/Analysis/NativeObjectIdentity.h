@@ -7,6 +7,8 @@
 
 namespace ctcompile::ctnative {
 
+class OwnedGlobalRoots;
+
 inline constexpr llvm::StringLiteral kNativeObjectIdentity = "ctnative.object_identity";
 inline constexpr llvm::StringLiteral kNativeObjectFieldGroup = "ctnative.object_field_group";
 
@@ -27,10 +29,13 @@ struct NativeObjectFieldPresence {
 NativeObjectFieldPresence queryNativeObjectFieldPresence(mlir::Operation * read,
                                                          uint64_t maxWork = 100000);
 
-// Prove owning identities in Map keys/values, closed calls/returns,
+// Prove owning identities in Map keys/values, strict comparisons, closed calls/returns,
 // immutable captures and structured flow. Map payloads can join exact scalars;
 // every object alias retains an owner. Ordinary scalar fields require separate
 // receiver/type admission; publication and outgoing ownership edges refuse.
-void prepareNativeObjectIdentities(mlir::ModuleOp module);
+// Comparison-only field families check their own closed source environment;
+// the optional live global-owner proof permits only its actual ordinary roots.
+void prepareNativeObjectIdentities(mlir::ModuleOp module,
+                                   const OwnedGlobalRoots * globals = nullptr);
 
 } // namespace ctcompile::ctnative
