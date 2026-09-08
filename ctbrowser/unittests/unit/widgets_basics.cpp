@@ -636,7 +636,7 @@ void test_window_is_an_object_too() {
                    //
                    // IT USED TO ASK ABOUT `HTMLVideoElement`, WHICH THIS ENGINE
                    // DOES HAVE - it is in the interface table in
-                   // bindings/element.cpp. The answer was `false` only because
+                   // bindings/element/interfaces.cpp. The answer was `false` only because
                    // the ninety interface objects were defined LAZILY, on the
                    // first `wrap()`, and this script runs before the page has
                    // touched an element. So the assertion was pinning the bug

@@ -16,7 +16,7 @@
 //
 // The DOM layer under them is `struct attribute`'s interned namespace and the
 // six lookups in dom/document.hpp; the binding layer is the block headed
-// "ATTRIBUTES AS NODES" in lib/Shell/bindings/element.cpp.
+// "ATTRIBUTES AS NODES" in lib/Shell/bindings/element/attributes.cpp.
 
 #include <ctbrowser.hpp>
 

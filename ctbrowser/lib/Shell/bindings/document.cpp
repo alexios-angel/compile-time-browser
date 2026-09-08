@@ -145,10 +145,10 @@ constexpr std::string_view doctype_name_breaks = "\t\n\f\r >";
 // and NO first-character rule: `"0"` and `":a"` are legal attribute names and
 // illegal element names, which is exactly the pair productions.js draws.
 //
-// NOT the rule `valid_attribute_name` in bindings/element.cpp applies to
+// NOT the rule `valid_attribute_name` in bindings/element/attributes.cpp applies to
 // `setAttribute` and `toggleAttribute` - that one is an ASCII approximation of
 // `Name` and refuses twelve of the thirteen above. The two disagree, this one
-// is the one the corpus scores, and reconciling them is element.cpp's to do.
+// is the one the corpus scores, and reconciling them is element/attributes.cpp's to do.
 constexpr std::string_view attribute_name_breaks = "\t\n\f\r /=>";
 
 [[nodiscard]] bool is_valid_attribute_name(std::string_view name) {

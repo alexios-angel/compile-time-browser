@@ -15,7 +15,21 @@ target_sources(ctbrowser-shell
     # webgl_bindings.cpp another 1,431, filed under page/ although it is the
     # same job as its five siblings here.
     bindings/document.cpp
-    bindings/element.cpp
+    # The element wrapper. element.cpp reached 5,442 lines and was split on
+    # 2026-09-08 into a directory of twelve, one concern each, sharing
+    # bindings/element/internal.hpp.
+    bindings/element/wrapper.cpp
+    bindings/element/declarations.cpp
+    bindings/element/views.cpp
+    bindings/element/attributes.cpp
+    bindings/element/dataset.cpp
+    bindings/element/methods.cpp
+    bindings/element/node_methods.cpp
+    bindings/element/control_methods.cpp
+    bindings/element/reflection.cpp
+    bindings/element/interfaces.cpp
+    bindings/element/character_data.cpp
+    bindings/element/shadow.cpp
     bindings/events.cpp
     # DOMException: the platform's error type, which is not an ECMAScript
     # Error and cannot be built by context::throw_error. Its own file because
@@ -24,7 +38,7 @@ target_sources(ctbrowser-shell
     # <iframe>: a nested browsing context, which here is a SECOND dom_bindings
     # over its own tree - the model createHTMLDocument already uses - plus the
     # bytes and the load event. Its own file because neither document.cpp nor
-    # element.cpp owns "a document inside a document".
+    # element/ owns "a document inside a document".
     bindings/frames.cpp
     # MutationObserver: its own file because it is not a binding over the DOM so
     # much as a diff of it - `mutated()` reports THAT the document changed and
@@ -34,7 +48,7 @@ target_sources(ctbrowser-shell
     # in css/css-values, and it is a binding over style/css/properties.hpp
     bindings/css.cpp
     # getComputedStyle: its own file because it is property dispatch over three
-    # sources, and element.cpp is already 1,100 lines.
+    # sources, and element.cpp was already 1,100 lines when this was written.
     bindings/computed_style.cpp
     # the CSSOM object model: document.styleSheets and everything under it. Its
     # own file because it is a SECOND parse of the author's sheets - the cascade

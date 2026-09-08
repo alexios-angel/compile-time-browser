@@ -79,7 +79,7 @@ above.
 **1. `el.style` is a WRITABLE data property.** CSSOM declares it
 `[PutForwards=cssText] readonly attribute CSSStyleDeclaration style`, so
 `el.style = ""` must forward to `el.style.cssText = ""`. In this engine
-`lib/Shell/bindings/element.cpp` installs it with `obj.set(...)`, so that
+`lib/Shell/bindings/element/views.cpp` installs it with `obj.set(...)`, so that
 assignment REPLACES the declaration object with the string. Every later
 `el.style[prop] = v` writes to a primitive and vanishes, and `getComputedStyle`
 reports the initial value forever.
@@ -276,7 +276,7 @@ and the ranked causes over both suites are dominated by two Shell-side gaps:
 | count | cause | where it lives |
 |---:|---|---|
 | 1,034 (`cssom`) | `getComputedStyle(el).someProperty` is `undefined` | `lib/Shell/bindings/computed_style.cpp` |
-| ~1,000 (`css-values`) | `e.style[prop] = v` then read back is the raw text | `lib/Shell/bindings/element.cpp` |
+| ~1,000 (`css-values`) | `e.style[prop] = v` then read back is the raw text | `lib/Shell/bindings/element/views.cpp` |
 
 Two specific things gate most of both suites:
 
@@ -504,7 +504,7 @@ reading twice.
   still ignored** (~37 subtests) because nothing generates those boxes.
 * **`getBoundingClientRect`, `offsetWidth` and `clientHeight` do not flush.**
   They have exactly the same staleness `getComputedStyle` had, in
-  `lib/Shell/bindings/element.cpp`. One shared flush hook on `dom_bindings` is
+  `lib/Shell/bindings/element/views.cpp`. One shared flush hook on `dom_bindings` is
   the shape, and the `getComputedStyle` wrapper is deliberately written so it can
   be deleted when that exists.
 

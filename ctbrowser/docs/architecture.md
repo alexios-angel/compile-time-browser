@@ -108,6 +108,11 @@ its header, and the header did not change:
   of one function: splitting it means splitting dispatch, which is what
   `docs/history/computed-goto.md` is about.
 - `ctbrowser/lib/Shell/bindings/` — seven, from 3,926 plus a stray 1,431 filed elsewhere.
+- `ctbrowser/lib/Shell/bindings/element/` — twelve, from a 5,442-line `element.cpp`
+  (2026-09-08), with `internal.hpp` beside them declaring the helpers more than one
+  file needs. Two ~900-line single functions were left whole; the 1,036-line
+  `install_element_methods` was split at three seams that shared nothing but a
+  three-line lambda, which each new function re-creates.
 - `ctbrowser/lib/Script/compile/` — eleven, from 3,845, with the class declared in
   `compiler_impl.hpp` beside them. See below; it was the hardest of the four.
 

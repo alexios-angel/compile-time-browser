@@ -352,6 +352,11 @@ private:
     [[nodiscard]] rect box_of(node_id id) const;
 
     void install_element_methods(context & cx, script::object_object & obj);
+    // The three files the rest of the method surface lives in - see
+    // lib/Shell/bindings/element/. Called from install_element_methods only.
+    void install_attribute_methods(context & cx, script::object_object & obj);
+    void install_node_methods(context & cx, script::object_object & obj);
+    void install_control_methods(context & cx, script::object_object & obj);
     void note_callback_fault(std::string_view source);
     // One reading of addEventListener's third argument, shared by the element,
     // document and window registrations - three copies is three chances for
@@ -466,13 +471,13 @@ private:
     // --- worked on at once without two of them editing the same lines here.
     // --- Each block below belongs to exactly one file in bindings/.
 
-    // BEGIN reflection (bindings/element.cpp)
+    // BEGIN reflection (bindings/element/reflection.cpp)
     //
     // THE INTERFACE OBJECTS, AND REFLECTION, WHICH ARE ONE THING.
     //
     // `HTMLDivElement.prototype -> HTMLElement.prototype -> Element.prototype ->
     // Node.prototype -> EventTarget.prototype` is a real chain here, built once
-    // per page from a static table in element.cpp, and every wrapper is linked
+    // per page from a static table in element/interfaces.cpp, and every wrapper is linked
     // into it by the tag it has. That is what `el instanceof HTMLBodyElement`
     // and `eventTarget.constructor.name` ask, and it is ALSO where the reflected
     // IDL attributes live: `id`, `href`, `disabled` and the ~270 others are
@@ -481,7 +486,7 @@ private:
     //
     // Reflection used to be twelve names installed on every element wrapper, so
     // `div.href` existed, `input.maxLength` did not, and neither of them parsed
-    // anything: ~6,400 subtests of `html/dom` say so. See element.cpp for the
+    // anything: ~6,400 subtests of `html/dom` say so. See element/reflection.cpp for the
     // table and for what each type does.
     void install_dom_interfaces(context & cx);
     // Build them if they are not built and the pieces they chain to exist yet.
@@ -497,7 +502,7 @@ private:
     // the interfaces are built, and undefined for a name that is not one.
     [[nodiscard]] value interface_prototype(std::string_view name) const;
     // ONE reflected IDL attribute, read and written. The row is a pointer into
-    // the static table in element.cpp and is `const void *` here for the reason
+    // the static table in element/reflection.cpp and is `const void *` here for the reason
     // the third-party-header invariant exists: the row type is one file's
     // business, and putting it in this header would make every consumer of the
     // engine parse a 270-row table's declaration to get at `document`.
@@ -527,7 +532,7 @@ private:
     [[nodiscard]] bool validate_and_extract(context & cx, std::string_view where,
                                             const std::string & ns, const std::string & qualified);
 
-    // Parallel to the static interface table in element.cpp: one prototype per
+    // Parallel to the static interface table in element/interfaces.cpp: one prototype per
     // row, in the same order, so a tag resolves to a prototype by index.
     std::vector<value> interface_prototypes_;
     // EVERY PROTOTYPE, IN ONE ARRAY THE COLLECTOR CAN SEE. Each interface's
@@ -550,7 +555,7 @@ private:
     // here and was one per text node in the shape install_element_methods uses.
     //
     // Every offset in them is a UTF-16 CODE UNIT and this engine stores UTF-8 -
-    // see the helpers above install_character_data in element.cpp, and the note
+    // see the helpers above install_character_data in element/character_data.cpp, and the note
     // there on what a surrogate pair costs.
     void install_character_data(context & cx);
     // `new Text("x")`, `new Comment("x")` and `new DocumentFragment()` - the
@@ -570,7 +575,7 @@ public:
     // WHAT `mutated()` HAS TO CALL, and the whole reason this is a diff.
     //
     // `mutated()` is the one funnel every DOM-changing native already goes
-    // through - 18 call sites in element.cpp, five in document.cpp - and it
+    // through - 18 call sites under element/, five in document.cpp - and it
     // takes no arguments because the funnel does not know WHAT changed. So the
     // records are reconstructed rather than reported: `observe()` takes a
     // snapshot of every observed node's children, attributes and text, and this
@@ -1547,7 +1552,7 @@ private:
     // answer: `style::engine::select` walks from `txn.root()` and a shadow root
     // is not reachable from there, and `element_matches` anchors its cursor at
     // depth 0 on the document node - so for a detached chain it measures the
-    // wrong element. See the definition in bindings/element.cpp for what this
+    // wrong element. See the definition in bindings/element/shadow.cpp for what this
     // costs and for the one-line change to `style::engine` that would retire it.
     [[nodiscard]] std::vector<node_id> select_in_subtree(std::string_view selector, node_id root,
                                                          bool first_only, bool * invalid = nullptr);

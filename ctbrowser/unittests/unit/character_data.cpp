@@ -18,7 +18,7 @@
 // corpus tests each of them by name.
 //
 // The bindings are the block headed "CharacterData" at the bottom of
-// lib/Shell/bindings/element.cpp.
+// lib/Shell/bindings/element/character_data.cpp.
 
 #include <ctbrowser.hpp>
 

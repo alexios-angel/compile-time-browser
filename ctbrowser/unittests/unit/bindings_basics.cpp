@@ -340,7 +340,7 @@ void test_reflection_rules() {
 // A REFLECTED URL IS RESOLVED, which is what makes `a.href` different from
 // `a.getAttribute('href')` - the first is absolute and the second is what the
 // author wrote. Resolution is against the document's own address; see the note
-// in element.cpp about there being no <base> support behind it.
+// in element/reflection.cpp about there being no <base> support behind it.
 void test_reflected_urls_resolve() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body><a id=a href="sub/page.html"></a><script>
@@ -1920,7 +1920,7 @@ void test_canvas_as_image_source() {
 //
 // The GETTERS are deliberately absent - reading either is `undefined` - because
 // innerText reads the rendered box tree and this engine lays out on a frame
-// rather than on demand. See the note in lib/Shell/bindings/element.cpp.
+// rather than on demand. See the note in lib/Shell/bindings/element/interfaces.cpp.
 void test_inner_text_and_outer_text_assign() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body><div id=d>old</div>

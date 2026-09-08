@@ -17,7 +17,7 @@
 // The second is that `shadowRoot.querySelector` answers AT ALL. The selector
 // engine walks from the document root, so a detached fragment is unreachable
 // from it; the cases below run a real selector against a subtree nothing else in
-// the engine can see. See subtree_matcher in lib/Shell/bindings/element.cpp for
+// the engine can see. See subtree_matcher in lib/Shell/bindings/element/shadow.cpp for
 // what that costs and for the change to lib/Style that would retire it.
 
 #include <ctbrowser.hpp>

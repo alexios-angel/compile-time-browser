@@ -903,7 +903,7 @@ void set_indexed(script::object_object & obj, std::span<const value> items) {
     // BOUNDED BEFORE THE CAST. `list.item(1e30)` is one keystroke, and a
     // float-to-integer conversion out of the destination's range is undefined
     // behaviour rather than a large number - the same hazard `el.style[1e30]`
-    // has in element.cpp, answered the same way.
+    // has in element/views.cpp, answered the same way.
     if (!(at >= 0) || at > 4294967294.0) { return value::null(); }
     const value * held = obj->find(std::to_string(static_cast<std::uint32_t>(at)));
     return held == nullptr ? value::null() : *held;

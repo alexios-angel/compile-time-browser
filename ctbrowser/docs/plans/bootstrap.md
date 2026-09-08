@@ -909,7 +909,7 @@ picture is better - 58 → 55 screen cells - and the mechanism is right.
 1. **`clientWidth` disagrees with the width layout actually used.**
    `browser::run_layout` re-runs layout at `width - scrollbar_width` when a page
    overflows (`ctbrowser/lib/Shell/browser.cpp`), but `documentElement.clientWidth` still
-   reports the full viewport (`ctbrowser/lib/Shell/bindings/element.cpp`). So the harness's
+   reports the full viewport (`ctbrowser/lib/Shell/bindings/element/`). So the harness's
    viewport cross-check passes — both engines say 1024 — while every `@x` and
    `@w` carries a 15px error. One of the two is wrong and they cannot both stay.
    Fold into **S7**, where the box model is already being touched.
