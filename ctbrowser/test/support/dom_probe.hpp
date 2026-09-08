@@ -1,7 +1,8 @@
 #pragma once
 // Asking a live page where something ENDED UP. Shared because it was copied.
 //
-// `find_id` and `box_of` were byte-identical in unittests/unit/chrome_basics.cpp and
+// `find_id` and `box_of` were byte-identical in unittests/unit/chrome_basics.cpp (now
+// control_editing.cpp and its siblings) and
 // unittests/unit/widgets_basics.cpp, and unittests/unit/bootstrap_layout.cpp wanted a
 // third copy. That is the trigger CLAUDE.md names: "small shared algorithms live
 // in core/algorithms.hpp - everything there had at least three copies before it

@@ -88,7 +88,7 @@ one, and neither may name the other: paint and raster sit downstream of layout.
 
 **font8x8 hides this bug**: it quantises 13px, 16px and 19px to the same 8x8
 cell, so all three have the same ascent and every alignment looks identical.
-`ctbrowser/unittests/unit/chrome_basics` therefore tests it with REAL fonts, and the test is
+`ctbrowser/unittests/unit/tables_and_markers` therefore tests it with REAL fonts, and the test is
 verified against BOTH wrong alignments — top and bottom each fail it.
 
 **`white-space: pre` breaks lines.** A preserved newline is a LINE BREAK, not a

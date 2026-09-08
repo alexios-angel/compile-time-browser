@@ -137,7 +137,28 @@ ctbrowser_test(unit/page_input)
 # observes. See lib/Shell/bindings/mutation.cpp.
 ctbrowser_test(unit/mutation_observer)
 ctbrowser_test(unit/widgets_basics)
-ctbrowser_test(unit/chrome_basics)
+# --- the chrome, five files since 2026-09-07 --------------------------------
+# chrome_basics was 2,299 lines. Its cases are these five, verbatim, grouped by
+# its own section comments; the helpers they share are unit/chrome_probe.hpp.
+#
+# Form controls as they LOOK and as they are EDITED: the caret in the drawing
+# face, clicks and arrows placing it, password bullets, disabled, the checkbox
+# tick, a textarea's lines and wraps, and what a script reads off a control.
+ctbrowser_test(unit/control_editing)
+# A field's VIEW: scrolling to keep the caret visible, the wheel over a field,
+# auto-scroll while drag-selecting, and the caret blink's wakeups.
+ctbrowser_test(unit/control_scrolling)
+# Tables, list markers, disclosure triangles, <details> and <select> - the
+# things a page puts on screen that are not boxes and text, which was the
+# original file's stated subject. Its header is here.
+ctbrowser_test(unit/tables_and_markers)
+# The browser's own chrome on a page: the scrollbar, the select popup, the
+# context menu, the clipboard, the cursor, and page-level text selection.
+ctbrowser_test(unit/page_chrome)
+# The listener-invocation rules dom/events was getting wrong, one assertion
+# apiece: the default passive value, the copied listener list, a throwing
+# listener, handleEvent, the bare EventTarget globals, and window.event.
+ctbrowser_test(unit/event_listeners)
 # The Bootstrap fixtures against test/baseline/. The Chrome half of that harness
 # is tools/check/css-parity.py and is deliberately not a ctest; this is the half
 # that catches a regression without a browser download. See docs/plans/bootstrap.md.
