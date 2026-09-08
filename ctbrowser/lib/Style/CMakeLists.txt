@@ -33,9 +33,13 @@ target_sources(ctbrowser-style
     css/calc/serialize.cpp
     css/calc/fold.cpp
     css/calc/simplify.cpp
-    # the property table, the value grammar and the canonical serialisation -
-    # what el.style, getComputedStyle and CSS.supports all three ask
-    css/properties.cpp
+    # properties/ - the property table, the value grammar and the canonical
+    # serialisation: what el.style, getComputedStyle and CSS.supports all three
+    # ask. One 1,155-line properties.cpp until 2026-09-08; the pieces share
+    # properties/internal.hpp and nothing about properties.hpp changed.
+    css/properties/table.cpp
+    css/properties/grammar.cpp
+    css/properties/declaration.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"

@@ -116,6 +116,10 @@ its header, and the header did not change:
   and every member is defined in its body. The `term` it computes over and the
   helpers more than one file needs are in `internal.hpp` beside them, in
   `ctbrowser::style::css::detail`.
+- `ctbrowser/lib/Style/css/properties/` — three, from 1,155, the same day and
+  the same shape: `table.cpp` is the property table, `grammar.cpp` the value
+  grammar, `declaration.cpp` is `check_declaration` and the `CSS.supports`
+  family over it. `properties.hpp` did not change.
 
 ### What splitting the compiler cost, measured
 
