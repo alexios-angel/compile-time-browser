@@ -147,16 +147,16 @@ browser baseline.
 `computeArrayContents` is a separate prerequisite that reads the current
 verified IR directly, without alias lattices, candidate links or trusted
 annotations. A successful result establishes exact dense own elements for
-fresh local arrays in an entry and a proved acyclic chain of unconditional
-branches. Constants and fresh property-free objects can be elements. Inline
+fresh local arrays on every path through a proved acyclic graph of `cf.br`
+and `cf.cond_br` branches. Constants and fresh property-free objects can be elements. Inline
 initializers, literal `ctjs.append`, initialized
 constant-index reads and overwrites are supported. A read resolves to the
 original constant or allocation; reading an array and writing through that alias
 updates the same array state.
 
 The result records every initializer/append/overwrite and its actual operand,
-every read's value at that point, the final slot contents, and every local
-allocation reachable from the return value. Earlier reads retain their original
+every read's value at that point, exact final slot contents per return path,
+and every local allocation reachable from each return value. Earlier reads retain their original
 values after replacement. Return reachability follows current slots, visits each
 allocation once, and handles self and mutual cycles. This identifies identities
 and edges; it does not select an owner, make a cycle collectable, or change the
@@ -171,13 +171,15 @@ or defining accessors refuses the entire result. Literal append uses the existin
 internal construction operation, not a call to a potentially modified `push`.
 
 Unknown values and bases, all calls and global accesses/publication, cells,
-unsupported carriers, joins, conditional branches, loops, nested regions, arguments/rest
-builders and suspension also refuse. Even a late unrelated call invalidates the
+unsupported carriers, loops, nested regions, arguments/rest builders and
+suspension also refuse. `ctjs.truthy` may observe an unknown external predicate:
+its total, noncapturing operation proves only an `i1`, never the input's contents.
+Both conditional edges are checked even when their predicate is constant. Even a late unrelated call invalidates the
 proof. `ctjs.throw` is excluded because uncaught diagnostic formatting may call
 `toString` and reenter JavaScript. Return is the only supported exit.
 
-The default budget is 100,000 operation, forwarded-argument, initializer-element
-and exit graph visits. Key parsing examines one Number or at most ten String
+The default budget is 100,000 operation, forwarded-argument, initializer-element,
+branch-state-copy and exit graph visits. Key parsing examines one Number or at most ten String
 digits. Only a completed function scan and return graph publish `complete=true`. Unsupported
 operations or exhausted work return a named failure and witness operation with
 **no proof records**, including when all reads were already checked. Every IR
@@ -255,21 +257,21 @@ these unit cases do not establish a Bootstrap gain.
 The complete query now checks the optional frame carried by raw imported
 functions. `ctjs.frame_enter` must be the first operation, with a nonnegative
 register count and no second frame. Every root must name that exact active
-frame and a value already proved by the contents query. A single matching
-`ctjs.frame_exit` must immediately precede the return. Missing, repeated, late
+frame and a value already proved by the contents query. A matching
+`ctjs.frame_exit` must immediately precede every return on its own path. Missing, repeated, late
 or foreign frame operations refuse the whole proof, as do unknown root values
 and unknown users of the frame handle. Refusal publishes no partial contents
 and preserves every original escape verdict.
 
-The current query follows an acyclic chain of `cf.br` operations from entry
-to the final return, with no nested regions. Every destination must have exactly
-one predecessor, and every forwarded argument must resolve to an already proved
-constant, allocation, earlier read or active frame handle. No entry parameter or
-external alternative is dropped even when the destination never uses it.
-Repeated blocks, structural joins, conditional branches and unknown successor
-semantics refuse. The final return proves every unvisited block unreachable
-directly from current IR, including the importer's default-return block after an
-explicit source return. Dead blocks contribute no contents, effects or return
+The current query follows every structural path through an acyclic graph of
+`cf.br` and `cf.cond_br` operations, with no nested regions. Every forwarded
+argument must resolve to an already proved constant, allocation, earlier read,
+truthy predicate or active frame handle. No external alternative is dropped even
+when the destination never uses it. A join keeps separate exact states for each
+incoming path; repeating a block within one path and unknown successor semantics
+refuse. The complete path scan proves every unvisited block unreachable directly
+from current IR, including the importer's default-return block after an explicit
+source return. Dead blocks contribute no contents, effects or return
 roots. No solver reachability flag or annotation supplies this exclusion.
 
 This is a retention proof, not an effect summary: frame entry still has its
@@ -306,7 +308,7 @@ reports zero soundness violations. Log: `/tmp/ctcompile-size-escape2.log`.
 The initial source run exposed the importer's dead fallback block; the final
 proof supports that shape without relaxing any source precision expectation.
 
-The next contents boundary is conditional/join/loop control flow, external
+The next contents boundary is loop control flow, external stored/returned
 values and other containers, with native ownership/type consumers still separate.
 Bootstrap/p5/Phaser observed precision remains **0/64, 0/16, 0/20** in these
 script-mode runs; this focused source improvement does not establish a corpus
@@ -330,3 +332,57 @@ report zero violations; fixture precision stays **22/33** and corpus precision
 is unchanged. Log: `/tmp/ctcompile-cardinality-focused2.log`. These results
 cover the unconditional-chain increment; the preceding measurements describe
 the entry-only proof. Native ownership consumers remain separate.
+
+## Acyclic conditional paths
+
+The conditional increment explores both `cf.cond_br` edges and replays a join
+separately for each incoming path. Each path owns its exact origin map, current
+array slots and frame state. A conditional target can therefore denote either
+of two arrays without an overwrite erasing a child from both arrays. Saved
+reads keep their earlier origins, and allocations at a shared successor retain
+their path-specific elements. The top-level array list inventories sites once;
+each exit carries the exact final contents and reachable allocations for that
+path. The same return operation may produce several exit records. Reads and
+writes include every visited alternative, including repeated successor operations.
+
+Retention unions reachable sites across all exits. An old child is discharged
+only when every supported path excludes it. The acyclicity requirement still
+uses the conservative union of all writes, including transient edges and edges
+from mutually exclusive paths. This increment does not select an owner for any
+cycle. An unsupported operation, unknown forwarded/stored value, missing own
+slot, invalid frame or loop on either edge discards all earlier path records.
+Even a constant predicate cannot hide an unsupported edge; no solver liveness
+flag or completion attribute supplies the proof.
+
+Path enumeration is bounded by the existing work limit. Before copying a branch
+state it charges every origin, visited block, array and stored element. This
+bounds the cost of a compact CFG with exponentially many paths. Exhaustion,
+including after earlier paths already returned, publishes no contents and
+leaves every original escape verdict intact.
+
+Controls add **17 conditional rows, five live mutation states and five
+path-explosion cutoffs**, alongside the existing **35 contents, 20 retention
+and 26 frame rows**. They check exact per-path slots/reads/returns, overwrite
+selection through duplicate successor edges, saved reads, successor-local and
+join-local allocations, imported frames, late effects, external alternatives,
+missing slots and conservative cycle refusal. Every conditional row and live
+state checks all incomplete contents/retention budgets and its exact endpoint.
+The live second-path edits keep forged markers while changing the actual
+replacement and inserting/removing publication. The exponential-path fixture
+checks both contents and unchanged retention at five bounded budgets.
+
+The combined devbox build and **12/12 focused CTests pass in 29.38 seconds**.
+All seventeen conditional rows and five live states pass, including **738
+retention budget cutoffs** and all five path-explosion cutoffs. Existing
+controls pass **35 contents rows, fourteen key controls and seven live contents
+states**; **20 retention rows, seven live states and 500 budget cutoffs**; and
+**26 frame rows, twelve live states and 387 budget cutoffs**. Log:
+`/tmp/ctcompile-payloads-focused.log`.
+
+All four execution oracles report zero violations. Fixture precision remains
+**22/33**; Bootstrap, p5 and Phaser remain **0/64, 0/16 and 0/20**, respectively.
+The p5 oracle retains its one partial observation, without a soundness violation.
+Existing source fixtures and precision expectations are unchanged; this unit
+precision increment does not establish a corpus gain. Homebrew clang-format
+22.1.8 and whitespace checks pass locally. The full generated CTest gate remains
+pending at this checkpoint, and native ownership consumers remain separate.

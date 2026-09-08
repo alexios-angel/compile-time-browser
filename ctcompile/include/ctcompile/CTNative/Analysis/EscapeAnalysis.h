@@ -341,6 +341,10 @@ struct ArrayElementRead {
 struct ArrayContentsExit {
     mlir::Operation * by = nullptr; // return
     mlir::Value value;
+    /// Exact final dense own elements on this path, including empty arrays.
+    /// A join is explored separately for each incoming path; the same return
+    /// may therefore have several records with different contents and roots.
+    llvm::MapVector<mlir::Operation *, llvm::SmallVector<mlir::Value, 4>> arrays;
     /// Every local object/array reachable from value at this exit, through
     /// current own elements, once each. Includes the root when it is local.
     /// Overwritten elements are absent unless another live path retains them.
@@ -360,9 +364,9 @@ enum class ArrayContentsFailure {
 };
 
 struct ArrayContentsEvidence {
-    /// Final dense own elements, including empty arrays. Exact read and write
-    /// records below preserve earlier states and overwritten values.
-    llvm::MapVector<mlir::Operation *, llvm::SmallVector<mlir::Value, 4>> arrays;
+    /// Every array site visited on any path, once each. Exact final contents
+    /// live on exits; writes/reads preserve all path-specific earlier states.
+    llvm::SmallVector<mlir::Operation *, 4> arrays;
     llvm::SmallVector<ArrayElementWrite, 0> writes;
     llvm::SmallVector<ArrayElementRead, 0> reads;
     llvm::SmallVector<ArrayContentsExit, 1> exits;
@@ -371,22 +375,24 @@ struct ArrayContentsEvidence {
     bool complete = false;
     ArrayContentsFailure failure = ArrayContentsFailure::None;
     mlir::Operation * refusedBy = nullptr;
-    /// Operation, forwarded-argument, initializer-element and exit graph
-    /// visits. Key parsing examines one number or ten canonical decimal digits.
+    /// Operation, forwarded-argument, initializer-element, branch-state-copy
+    /// and exit graph visits. Key parsing examines one number or ten digits.
     std::size_t work = 0;
 };
 
 /// Recompute from the CURRENT verified IR; needs neither trusted annotations
-/// nor alias lattices. An entry and unconditional branch chain may contain
+/// nor alias lattices. An acyclic cf.br/cf.cond_br graph may contain
 /// constants, fresh property-free objects/arrays, literal append, constant-index
-/// array reads/overwrites and return. Loaded array aliases share one
-/// contents state; cycles are visited once at exits. Unknown values/indices,
+/// array reads/overwrites, truthy and return. Loaded array aliases share one
+/// contents state per path; cycles are visited once at exits. Unknown values/indices,
 /// holes, calls, throws, publication, regions, prototypes and accessors refuse.
-/// Only cf.br with a single predecessor per target and exact forwarded values
-/// is supported. Repeated blocks, joins and other branches refuse. A final
-/// return proves all unvisited blocks unreachable independently of solver flags.
+/// Both conditional edges are explored, even with a constant predicate. Joins
+/// keep exact separate states rather than unioning overwrite targets. Truthy
+/// accepts an external value only as a noncapturing predicate, never an element.
+/// Exact forwarded values are required; revisiting a block on one path refuses
+/// loops. Unvisited blocks are unreachable independently of solver flags.
 /// An optional imported frame must enter first and exit immediately before
-/// return; roots name that active frame and an independently known value.
+/// every return; roots name that active frame and an independently known value.
 /// Checked branch arguments may forward the same frame handle.
 /// Entry failure precedes every tracked allocation, not a nonthrowing claim.
 ///

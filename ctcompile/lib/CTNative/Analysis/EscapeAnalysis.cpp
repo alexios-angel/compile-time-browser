@@ -327,9 +327,9 @@ void refineArrayRetention(EscapeVerdicts & verdicts, ctjs::FuncOp function, std:
     // and repeated writes without treating either as a cycle.
     llvm::DenseMap<mlir::Operation *, std::size_t> incoming;
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *, 2>> successors;
-    for (const auto & entry : contents.arrays) {
+    for (mlir::Operation * array : contents.arrays) {
         if (!spend()) { return; }
-        incoming.try_emplace(entry.first, 0);
+        incoming.try_emplace(array, 0);
     }
     for (const ArrayElementWrite & write : contents.writes) {
         if (!spend()) { return; }
@@ -340,9 +340,9 @@ void refineArrayRetention(EscapeVerdicts & verdicts, ctjs::FuncOp function, std:
         ++found->second;
     }
     llvm::SmallVector<mlir::Operation *, 8> pending;
-    for (const auto & entry : contents.arrays) {
+    for (mlir::Operation * array : contents.arrays) {
         if (!spend()) { return; }
-        if (incoming.lookup(entry.first) == 0) { pending.push_back(entry.first); }
+        if (incoming.lookup(array) == 0) { pending.push_back(array); }
     }
     std::size_t visited = 0;
     while (!pending.empty()) {
@@ -788,178 +788,221 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         failed.work = out.work;
         return failed;
     };
-    const auto spend = [&]() {
-        if (out.work == workLimit) { return false; }
-        ++out.work;
+    const auto spend = [&](std::size_t count = 1) {
+        if (count > workLimit - out.work) {
+            out.work = workLimit;
+            return false;
+        }
+        out.work += count;
         return true;
     };
-    if (function.getBody().empty()) {
+    if (function.getBody().empty() || function.getBody().front().empty()) {
         return refuse(ArrayContentsFailure::UnsupportedControlFlow, function);
     }
 
-    // Follow only a chain of unconditional branches with one predecessor
-    // per destination. Reject a repeated block before it could reuse an
-    // allocation identity. A final return proves every unvisited block dead,
-    // including the importer's default return after an explicit source return.
-    // No solver reachability flag or annotation supplies this proof.
-    // No uninitialized/external alternative is silently dropped: values enter
-    // this map only as exact constants, unique fresh instances, checked own
-    // reads or the active frame handle. Reject all other producers and effects.
-    // This avoids assuming that a call without an explicit array operand is
-    // harmless, or that a late region cannot retain a raw frame register.
-    llvm::DenseMap<mlir::Value, mlir::Value> origins;
-    const auto origin = [&](mlir::Value value) { return origins.lookup(value); };
-    ctjs::FrameEnterOp frame;
-    bool frameExited = false;
-    mlir::Block & entry = function.getBody().front();
-    if (entry.empty()) { return refuse(ArrayContentsFailure::UnsupportedControlFlow, function); }
-    llvm::SmallPtrSet<mlir::Block *, 8> visitedBlocks{&entry};
-    mlir::Operation * current = &entry.front();
-    while (current != nullptr) {
-        mlir::Operation & op = *current;
-        current = op.getNextNode();
-        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-        if (op.getNumRegions() != 0 ||
-            (op.getNumSuccessors() != 0 && !llvm::isa<mlir::cf::BranchOp>(&op))) {
-            return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
+    // Enumerate structural paths, never solver flags or annotations. A join
+    // keeps separate exact states: unioning array aliases before a strong
+    // overwrite would incorrectly erase an element of an unmodified array.
+    // Both conditional edges are visited, including a constant predicate's
+    // untaken edge. An operation unsupported on any path refuses everything.
+    struct State {
+        llvm::DenseMap<mlir::Value, mlir::Value> origins;
+        llvm::MapVector<mlir::Operation *, llvm::SmallVector<mlir::Value, 4>> arrays;
+        llvm::SmallPtrSet<mlir::Block *, 8> visited;
+        ctjs::FrameEnterOp frame;
+        bool frameExited = false;
+        mlir::Operation * current = nullptr;
+    };
+    State state;
+    state.visited.insert(&function.getBody().front());
+    state.current = &function.getBody().front().front();
+    llvm::SmallVector<State, 2> alternatives;
+    llvm::SmallPtrSet<mlir::Operation *, 8> arraySites;
+    const auto origin = [&](mlir::Value value) { return state.origins.lookup(value); };
+    const auto forward = [&](State & path, mlir::Block * next, mlir::ValueRange operands) {
+        if (next->getParent() != &function.getBody() || next->empty() ||
+            next->getNumArguments() != operands.size() || !path.visited.insert(next).second) {
+            return ArrayContentsFailure::UnsupportedControlFlow;
         }
-        if (auto entered = llvm::dyn_cast<ctjs::FrameEnterOp>(&op)) {
-            // The importer enters before seeding registers or allocating any
-            // tracked object. Its depth failure is real, but on that path no
-            // object from these sites exists. This is NOT an effect proof that
-            // permits erasing entry or treating it as pure/nonthrowing.
-            if (&op != &function.getBody().front().front() || frame ||
-                entered.getRegCountAttr().getInt() < 0) {
-                return refuse(ArrayContentsFailure::InvalidFrame, &op);
-            }
-            frame = entered;
-            origins[frame.getResult()] = frame.getResult();
-            continue;
+        for (auto [argument, value] : llvm::zip(next->getArguments(), operands)) {
+            if (!spend()) { return ArrayContentsFailure::WorkLimit; }
+            const mlir::Value exact = path.origins.lookup(value);
+            if (!exact) { return ArrayContentsFailure::UnknownValue; }
+            path.origins[argument] = exact;
         }
-        if (auto exited = llvm::dyn_cast<ctjs::FrameExitOp>(&op)) {
-            if (!frame || frameExited || origin(exited->getOperand(0)) != frame.getResult() ||
-                !llvm::isa_and_nonnull<ctjs::ReturnOp>(op.getNextNode())) {
-                return refuse(ArrayContentsFailure::InvalidFrame, &op);
-            }
-            frameExited = true;
-            continue;
-        }
-        if (auto root = llvm::dyn_cast<ctjs::RootOp>(&op)) {
-            // RootOp parks only in THIS frame's window (Frames.td). The exact
-            // matching exit kills that window; no call, suspension or unknown
-            // effect in this query can keep it or expose its contents.
-            if (!frame || frameExited || origin(root->getOperand(0)) != frame.getResult()) {
-                return refuse(ArrayContentsFailure::InvalidFrame, &op);
-            }
-            if (!origin(root.getValue())) {
-                return refuse(ArrayContentsFailure::UnknownValue, &op);
-            }
-            continue;
-        }
-        if (frameExited && !llvm::isa<ctjs::ReturnOp>(&op)) {
-            return refuse(ArrayContentsFailure::InvalidFrame, &op);
-        }
-        if (auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(&op)) {
-            mlir::Block * next = branch.getDest();
-            if (next->getParent() != &function.getBody() || next->empty() ||
-                next->getNumArguments() != branch.getDestOperands().size() ||
-                next->getSinglePredecessor() != op.getBlock() ||
-                !visitedBlocks.insert(next).second) {
+        path.current = &next->front();
+        return ArrayContentsFailure::None;
+    };
+    while (true) {
+        bool returned = false;
+        while (state.current != nullptr) {
+            mlir::Operation & op = *state.current;
+            state.current = op.getNextNode();
+            if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+            if (op.getNumRegions() != 0 ||
+                (op.getNumSuccessors() != 0 &&
+                 !llvm::isa<mlir::cf::BranchOp, mlir::cf::CondBranchOp>(&op))) {
                 return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
             }
-            for (auto [argument, value] :
-                 llvm::zip(next->getArguments(), branch.getDestOperands())) {
-                if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                const mlir::Value exact = origin(value);
-                if (!exact) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
-                origins[argument] = exact;
-            }
-            current = &next->front();
-            continue;
-        }
-        if (llvm::isa<ctjs::ConstantOp, ctjs::CreateObjectOp>(&op)) {
-            origins[op.getResult(0)] = op.getResult(0);
-            continue;
-        }
-        if (auto array = llvm::dyn_cast<ctjs::CreateArrayOp>(&op)) {
-            auto & elements = out.arrays[&op];
-            for (unsigned position = 0; position < array.getElements().size(); ++position) {
-                if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                const mlir::Value value = origin(array.getElements()[position]);
-                if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
-                elements.push_back(value);
-                out.writes.push_back({&op, position, &op, position, value});
-            }
-            origins[array.getResult()] = array.getResult();
-            continue;
-        }
-        if (llvm::isa<ctjs::AppendOp, ctjs::SetPropertyOp, ctjs::GetPropertyOp>(&op)) {
-            const mlir::Value base = origin(op.getOperand(0));
-            mlir::Operation * array = base ? base.getDefiningOp() : nullptr;
-            auto found = out.arrays.find(array);
-            if (found == out.arrays.end()) {
-                return refuse(ArrayContentsFailure::UnknownArray, &op);
-            }
-            auto & elements = found->second;
-            if (auto append = llvm::dyn_cast<ctjs::AppendOp>(&op)) {
-                const mlir::Value value = origin(append.getElement());
-                if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
-                if (elements.size() >= 4294967295ULL) {
-                    return refuse(ArrayContentsFailure::MissingElement, &op);
+            if (auto entered = llvm::dyn_cast<ctjs::FrameEnterOp>(&op)) {
+                // The importer enters before seeding registers or allocating any
+                // tracked object. Its depth failure is real, but on that path no
+                // object from these sites exists. This is NOT an effect proof that
+                // permits erasing entry or treating it as pure/nonthrowing.
+                if (&op != &function.getBody().front().front() || state.frame ||
+                    entered.getRegCountAttr().getInt() < 0) {
+                    return refuse(ArrayContentsFailure::InvalidFrame, &op);
                 }
-                out.writes.push_back({&op, 1, array, elements.size(), value});
-                elements.push_back(value);
+                state.frame = entered;
+                state.origins[state.frame.getResult()] = state.frame.getResult();
                 continue;
             }
-            const mlir::Value key = origin(op.getOperand(1));
-            const auto index = key ? ownArrayIndex(key) : std::nullopt;
-            if (!index) { return refuse(ArrayContentsFailure::UnknownIndex, &op); }
-            // Overwrite only. Extending with set_property can leave holes or
-            // consult a prototype setter; literal append has neither behavior.
-            if (*index >= elements.size()) {
-                return refuse(ArrayContentsFailure::MissingElement, &op);
-            }
-            if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(&op)) {
-                const mlir::Value value = origin(store.getValue());
-                if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
-                elements[*index] = value;
-                out.writes.push_back({&op, 2, array, *index, value});
-            } else {
-                origins[op.getResult(0)] = elements[*index];
-                out.reads.push_back({&op, array, *index, elements[*index]});
-            }
-            continue;
-        }
-        if (llvm::isa<ctjs::ReturnOp>(&op)) {
-            if (frame && !frameExited) { return refuse(ArrayContentsFailure::InvalidFrame, &op); }
-            const mlir::Value value = origin(op.getOperand(0));
-            if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
-            ArrayContentsExit exit;
-            exit.by = &op;
-            exit.value = value;
-            llvm::SmallVector<mlir::Value, 8> pending{value};
-            llvm::SmallPtrSet<mlir::Operation *, 8> visited;
-            while (!pending.empty()) {
-                if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                mlir::Operation * site = pending.pop_back_val().getDefiningOp();
-                if (!isTrackedSite(site) || !visited.insert(site).second) { continue; }
-                exit.reachableSites.push_back(site);
-                auto array = out.arrays.find(site);
-                if (array == out.arrays.end()) { continue; }
-                for (mlir::Value element : array->second) {
-                    if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                    pending.push_back(element);
+            if (auto exited = llvm::dyn_cast<ctjs::FrameExitOp>(&op)) {
+                if (!state.frame || state.frameExited ||
+                    origin(exited->getOperand(0)) != state.frame.getResult() ||
+                    !llvm::isa_and_nonnull<ctjs::ReturnOp>(op.getNextNode())) {
+                    return refuse(ArrayContentsFailure::InvalidFrame, &op);
                 }
+                state.frameExited = true;
+                continue;
             }
-            out.exits.push_back(std::move(exit));
-            continue;
+            if (auto root = llvm::dyn_cast<ctjs::RootOp>(&op)) {
+                // RootOp parks only in THIS frame's window (Frames.td). The exact
+                // matching exit kills that window; no call, suspension or unknown
+                // effect in this query can keep it or expose its contents.
+                if (!state.frame || state.frameExited ||
+                    origin(root->getOperand(0)) != state.frame.getResult()) {
+                    return refuse(ArrayContentsFailure::InvalidFrame, &op);
+                }
+                if (!origin(root.getValue())) {
+                    return refuse(ArrayContentsFailure::UnknownValue, &op);
+                }
+                continue;
+            }
+            if (state.frameExited && !llvm::isa<ctjs::ReturnOp>(&op)) {
+                return refuse(ArrayContentsFailure::InvalidFrame, &op);
+            }
+            if (auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(&op)) {
+                const auto failure = forward(state, branch.getDest(), branch.getDestOperands());
+                if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
+                continue;
+            }
+            if (auto branch = llvm::dyn_cast<mlir::cf::CondBranchOp>(&op)) {
+                if (!origin(branch.getCondition())) {
+                    return refuse(ArrayContentsFailure::UnknownValue, &op);
+                }
+                // Path enumeration can be exponential. Charge every copied value,
+                // visited block, array and element before allocating the snapshot.
+                if (!spend(state.origins.size()) || !spend(state.visited.size())) {
+                    return refuse(ArrayContentsFailure::WorkLimit, &op);
+                }
+                for (const auto & [array, elements] : state.arrays) {
+                    (void)array;
+                    if (!spend() || !spend(elements.size())) {
+                        return refuse(ArrayContentsFailure::WorkLimit, &op);
+                    }
+                }
+                State alternative = state;
+                auto failure =
+                    forward(alternative, branch.getFalseDest(), branch.getFalseDestOperands());
+                if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
+                failure = forward(state, branch.getTrueDest(), branch.getTrueDestOperands());
+                if (failure != ArrayContentsFailure::None) { return refuse(failure, &op); }
+                alternatives.push_back(std::move(alternative));
+                continue;
+            }
+            // Truthy is total, noncapturing and nonthrowing (Operators.td). An
+            // external input remains unknown for every other use; only its i1
+            // result can be carried as a predicate. Neither branch is pruned.
+            if (llvm::isa<ctjs::ConstantOp, ctjs::CreateObjectOp, ctjs::TruthyOp>(&op)) {
+                state.origins[op.getResult(0)] = op.getResult(0);
+                continue;
+            }
+            if (auto array = llvm::dyn_cast<ctjs::CreateArrayOp>(&op)) {
+                if (arraySites.insert(&op).second) { out.arrays.push_back(&op); }
+                auto & elements = state.arrays[&op];
+                for (unsigned position = 0; position < array.getElements().size(); ++position) {
+                    if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                    const mlir::Value value = origin(array.getElements()[position]);
+                    if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
+                    elements.push_back(value);
+                    out.writes.push_back({&op, position, &op, position, value});
+                }
+                state.origins[array.getResult()] = array.getResult();
+                continue;
+            }
+            if (llvm::isa<ctjs::AppendOp, ctjs::SetPropertyOp, ctjs::GetPropertyOp>(&op)) {
+                const mlir::Value base = origin(op.getOperand(0));
+                mlir::Operation * array = base ? base.getDefiningOp() : nullptr;
+                auto found = state.arrays.find(array);
+                if (found == state.arrays.end()) {
+                    return refuse(ArrayContentsFailure::UnknownArray, &op);
+                }
+                auto & elements = found->second;
+                if (auto append = llvm::dyn_cast<ctjs::AppendOp>(&op)) {
+                    const mlir::Value value = origin(append.getElement());
+                    if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
+                    if (elements.size() >= 4294967295ULL) {
+                        return refuse(ArrayContentsFailure::MissingElement, &op);
+                    }
+                    out.writes.push_back({&op, 1, array, elements.size(), value});
+                    elements.push_back(value);
+                    continue;
+                }
+                const mlir::Value key = origin(op.getOperand(1));
+                const auto index = key ? ownArrayIndex(key) : std::nullopt;
+                if (!index) { return refuse(ArrayContentsFailure::UnknownIndex, &op); }
+                // Overwrite only. Extending with set_property can leave holes or
+                // consult a prototype setter; literal append has neither behavior.
+                if (*index >= elements.size()) {
+                    return refuse(ArrayContentsFailure::MissingElement, &op);
+                }
+                if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(&op)) {
+                    const mlir::Value value = origin(store.getValue());
+                    if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
+                    elements[*index] = value;
+                    out.writes.push_back({&op, 2, array, *index, value});
+                } else {
+                    state.origins[op.getResult(0)] = elements[*index];
+                    out.reads.push_back({&op, array, *index, elements[*index]});
+                }
+                continue;
+            }
+            if (llvm::isa<ctjs::ReturnOp>(&op)) {
+                if (state.frame && !state.frameExited) {
+                    return refuse(ArrayContentsFailure::InvalidFrame, &op);
+                }
+                const mlir::Value value = origin(op.getOperand(0));
+                if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
+                ArrayContentsExit exit;
+                exit.by = &op;
+                exit.value = value;
+                llvm::SmallVector<mlir::Value, 8> pending{value};
+                llvm::SmallPtrSet<mlir::Operation *, 8> visited;
+                while (!pending.empty()) {
+                    if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                    mlir::Operation * site = pending.pop_back_val().getDefiningOp();
+                    if (!isTrackedSite(site) || !visited.insert(site).second) { continue; }
+                    exit.reachableSites.push_back(site);
+                    auto array = state.arrays.find(site);
+                    if (array == state.arrays.end()) { continue; }
+                    for (mlir::Value element : array->second) {
+                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                        pending.push_back(element);
+                    }
+                }
+                exit.arrays = std::move(state.arrays);
+                out.exits.push_back(std::move(exit));
+                returned = true;
+                continue;
+            }
+            // Throw is intentionally outside the subset: uncaught diagnostic
+            // formatting may reenter JavaScript through toString/prototype hooks.
+            return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
         }
-        // Throw is intentionally outside the subset: uncaught diagnostic
-        // formatting may reenter JavaScript through toString/prototype hooks.
-        return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
-    }
-    if (out.exits.size() != 1) {
-        return refuse(ArrayContentsFailure::UnsupportedControlFlow, function);
+        if (!returned) { return refuse(ArrayContentsFailure::UnsupportedControlFlow, function); }
+        if (alternatives.empty()) { break; }
+        state = alternatives.pop_back_val();
     }
     out.complete = true;
     return out;

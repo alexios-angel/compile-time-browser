@@ -54,14 +54,27 @@ void checkArrayContents(mlir::ModuleOp module, const contents_row & expected) {
         }
     } else {
         std::string arrays;
-        for (const auto & [array, elements] : contents.arrays) {
-            if (!arrays.empty()) { arrays += "; "; }
-            arrays += contentsLabel(array) + ":[";
-            for (std::size_t i = 0; i < elements.size(); ++i) {
-                if (i != 0) { arrays += ","; }
-                arrays += contentsLabel(elements[i].getDefiningOp());
+        std::vector<mlir::Operation *> arraySites;
+        for (const ArrayContentsExit & edge : contents.exits) {
+            if (!arrays.empty()) { arrays += " | "; }
+            bool first = true;
+            for (const auto & [array, elements] : edge.arrays) {
+                if (!first) { arrays += "; "; }
+                first = false;
+                arrays += contentsLabel(array) + ":[";
+                for (std::size_t i = 0; i < elements.size(); ++i) {
+                    if (i != 0) { arrays += ","; }
+                    arrays += contentsLabel(elements[i].getDefiningOp());
+                }
+                arrays += "]";
+                if (!llvm::is_contained(arraySites, array)) { arraySites.push_back(array); }
             }
-            arrays += "]";
+        }
+        if (contents.arrays.size() != arraySites.size() ||
+            !llvm::all_of(arraySites, [&](mlir::Operation * site) {
+                return llvm::count(contents.arrays, site) == 1;
+            })) {
+            fail(r, "the array inventory differs from the complete path snapshots");
         }
         std::string reads;
         for (const ArrayElementRead & read : contents.reads) {
@@ -71,6 +84,7 @@ void checkArrayContents(mlir::ModuleOp module, const contents_row & expected) {
         }
         std::string exit;
         for (const ArrayContentsExit & edge : contents.exits) {
+            if (!exit.empty()) { exit += "; "; }
             std::vector<std::string> sites;
             for (mlir::Operation * site : edge.reachableSites) {
                 sites.push_back(contentsLabel(site));
@@ -295,18 +309,20 @@ void checkArrayContents(mlir::MLIRContext & context) {
          .body = array + "  cf.br ^next\n^next:\n" + done,
          .arrays = "a:[x]",
          .exit = "zero -> {}"},
-        {.what = "contents refuses a structural join even when its second predecessor is dead",
+        {.what = "contents ignores a structural join's unreachable predecessor",
          .body = array + "  cf.br ^join\n^dead:\n  cf.br ^join\n^join:\n" + done,
-         .failure = ArrayContentsFailure::UnsupportedControlFlow},
+         .arrays = "a:[x]",
+         .exit = "zero -> {}"},
         {.what = "contents refuses opaque successor semantics",
          .body = array + "  \"test.branch\"()[^next] : () -> ()\n^next:\n" + done,
          .failure = ArrayContentsFailure::UnsupportedControlFlow},
-        {.what = "contents refuses conditional flow even when truthy has a constant input",
+        {.what = "contents checks both conditional edges even when truthy has a constant input",
          .body = array +
                  "  %condition = ctjs.truthy %zero\n"
                  "  cf.cond_br %condition, ^left, ^right\n^left:\n" +
                  done + "^right:\n" + done,
-         .failure = ArrayContentsFailure::UnsupportedOperation},
+         .arrays = "a:[x] | a:[x]",
+         .exit = "zero -> {}; zero -> {}"},
         {.what = "contents refuses a loop rather than collapsing repeated allocation instances",
          .body = "  cf.br ^loop\n^loop:\n  %a = ctjs.create_array []\n  cf.br ^loop\n",
          .failure = ArrayContentsFailure::UnsupportedControlFlow},
@@ -915,6 +931,277 @@ void checkArrayFrames(mlir::MLIRContext & context) {
                 rows.size(), budgets);
 }
 
+void checkArrayConditionals(mlir::MLIRContext & context) {
+    const std::string values =
+        "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
+        "  %one = ctjs.constant #ctjs.number<4607182418800017408> "
+        "{storage_test_id = \"one\"}\n"
+        "  %x = ctjs.create_object {storage_test_id = \"x\"}\n"
+        "  %y = ctjs.create_object {storage_test_id = \"y\"}\n"
+        "  %condition = ctjs.truthy %p\n";
+    const std::string array = values + "  %a = ctjs.create_array [%x] {storage_test_id = \"a\"}\n";
+    const std::string split = "  cf.cond_br %condition, ^left, ^right\n^left:\n";
+    const std::string done = "  ctjs.return %zero\n";
+    struct conditional_row {
+        contents_row contents;
+        const char * discharged = "";
+        bool acyclicWrites = true;
+    };
+    const std::vector<conditional_row> rows = {
+        {.contents = {.what = "a child retained on either return path stays Stored",
+                      .body = array + split +
+                              "  ctjs.set_property %a[%zero], %y\n"
+                              "  ctjs.return %a\n^right:\n  ctjs.return %a\n",
+                      .arrays = "a:[y] | a:[x]",
+                      .exit = "a -> {a,y}; a -> {a,x}"}},
+        {.contents = {.what = "both arms overwrite the old child before a shared return",
+                      .body = array + split +
+                              "  ctjs.set_property %a[%zero], %y\n"
+                              "  cf.br ^join\n^right:\n"
+                              "  ctjs.set_property %a[%zero], %zero\n"
+                              "  cf.br ^join\n^join:\n  ctjs.return %a\n",
+                      .arrays = "a:[y] | a:[zero]",
+                      .exit = "a -> {a,y}; a -> {a}"},
+         .discharged = "x"},
+        {.contents = {.what = "duplicate successor edges keep their own overwrite target",
+                      .body = array +
+                              "  %b = ctjs.create_array [%y] {storage_test_id = \"b\"}\n"
+                              "  %c = ctjs.create_array [%a, %b] {storage_test_id = \"c\"}\n"
+                              "  cf.cond_br %condition, ^join(%a : !ctjs.value), "
+                              "^join(%b : !ctjs.value)\n"
+                              "^join(%selected: !ctjs.value):\n"
+                              "  ctjs.set_property %selected[%zero], %zero\n"
+                              "  ctjs.return %c\n",
+                      .arrays = "a:[zero]; b:[y]; c:[a,b] | a:[x]; b:[zero]; c:[a,b]",
+                      .exit = "c -> {a,b,c,y}; c -> {a,b,c,x}"}},
+        {.contents = {.what = "each path's loaded alias retains its saved pre-overwrite child",
+                      .body = array + split +
+                              "  %saved = ctjs.get_property %a[%zero]\n"
+                              "  ctjs.set_property %a[%zero], %y\n"
+                              "  cf.br ^join(%saved : !ctjs.value)\n^right:\n"
+                              "  ctjs.set_property %a[%zero], %y\n"
+                              "  %later = ctjs.get_property %a[%zero]\n"
+                              "  cf.br ^join(%later : !ctjs.value)\n"
+                              "^join(%result: !ctjs.value):\n"
+                              "  ctjs.return %result\n",
+                      .arrays = "a:[y] | a:[y]",
+                      .reads = "a[0]=x; a[0]=y",
+                      .exit = "x -> {x}; y -> {y}"}},
+        {.contents = {.what = "successor-local allocations keep exact path-specific origins",
+                      .body = values + split +
+                              "  %a = ctjs.create_array [%x] "
+                              "{storage_test_id = \"a\"}\n"
+                              "  cf.br ^join(%a : !ctjs.value)\n^right:\n"
+                              "  %b = ctjs.create_array [%y] "
+                              "{storage_test_id = \"b\"}\n"
+                              "  cf.br ^join(%b : !ctjs.value)\n"
+                              "^join(%base: !ctjs.value):\n"
+                              "  ctjs.set_property %base[%zero], %zero\n"
+                              "  ctjs.return %base\n",
+                      .arrays = "a:[zero] | b:[zero]",
+                      .exit = "a -> {a}; b -> {b}"},
+         .discharged = "x,y"},
+        {.contents = {.what = "join-local allocation may contain a different exact value per path",
+                      .body = array +
+                              "  cf.cond_br %condition, ^join(%x : !ctjs.value), "
+                              "^join(%y : !ctjs.value)\n"
+                              "^join(%element: !ctjs.value):\n"
+                              "  %b = ctjs.create_array [%element] {storage_test_id = \"b\"}\n"
+                              "  ctjs.return %b\n",
+                      .arrays = "a:[x]; b:[x] | a:[x]; b:[y]",
+                      .exit = "b -> {b,x}; b -> {b,y}"}},
+        {.contents = {.what = "a missing own slot on one path refuses all earlier successful reads",
+                      .body = array + split +
+                              "  ctjs.append %y to %a\n"
+                              "  cf.br ^join\n^right:\n  cf.br ^join\n^join:\n"
+                              "  %read = ctjs.get_property %a[%one]\n"
+                              "  ctjs.return %read\n",
+                      .failure = ArrayContentsFailure::MissingElement}},
+        {.contents = {.what = "unknown unused values on either edge cannot disappear at a join",
+                      .body = array +
+                              "  cf.cond_br %condition, ^join(%a : !ctjs.value), "
+                              "^join(%p : !ctjs.value)\n"
+                              "^join(%unused: !ctjs.value):\n" +
+                              done,
+                      .failure = ArrayContentsFailure::UnknownValue}},
+        {.contents = {.what = "truthy observes an external predicate without proving its contents",
+                      .body =
+                          array + split + "  ctjs.append %p to %a\n" + done + "^right:\n" + done,
+                      .failure = ArrayContentsFailure::UnknownValue}},
+        {.contents = {.what = "a late publication on the second path invalidates the first return",
+                      .body = array + split + done +
+                              "^right:\n"
+                              "  ctjs.store_global \"held\", %a\n" +
+                              done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what = "a constant predicate cannot conceal an unsupported structural edge",
+                      .body = array +
+                              "  %constant = ctjs.truthy %zero\n"
+                              "  cf.cond_br %constant, ^left, ^right\n^left:\n"
+                              "  ctjs.store_global \"held\", %a\n" +
+                              done + "^right:\n" + done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what =
+                          "a loop on one conditional edge does not reuse an allocation identity",
+                      .body = array + split + done + "^right:\n  cf.br ^right\n",
+                      .failure = ArrayContentsFailure::UnsupportedControlFlow}},
+        {.contents = {.what = "a balanced frame is checked separately at both return paths",
+                      .body = "  %frame = ctjs.frame_enter 4\n" + array + split +
+                              "  ctjs.root %a in %frame\n  ctjs.frame_exit %frame\n" + done +
+                              "^right:\n  ctjs.root %x in %frame\n  ctjs.frame_exit %frame\n" +
+                              done,
+                      .arrays = "a:[x] | a:[x]",
+                      .exit = "zero -> {}; zero -> {}"},
+         .discharged = "x"},
+        {.contents = {.what = "frame and exact predicate forwarding survive a conditional join",
+                      .body = "  %frame = ctjs.frame_enter 4\n" + array +
+                              "  cf.cond_br %condition, ^join(%frame, %a, %condition : "
+                              "!ctjs.context, !ctjs.value, i1), ^join(%frame, %a, %condition : "
+                              "!ctjs.context, !ctjs.value, i1)\n"
+                              "^join(%active: !ctjs.context, %base: !ctjs.value, %test: i1):\n"
+                              "  ctjs.root %base in %active\n  ctjs.frame_exit %active\n" +
+                              done,
+                      .arrays = "a:[x] | a:[x]",
+                      .exit = "zero -> {}; zero -> {}"},
+         .discharged = "x"},
+        {.contents = {.what = "missing frame exit on one path refuses the complete retention proof",
+                      .body = "  %frame = ctjs.frame_enter 4\n" + array + split +
+                              "  ctjs.frame_exit %frame\n" + done + "^right:\n" + done,
+                      .failure = ArrayContentsFailure::InvalidFrame}},
+        {.contents = {.what = "unknown successor frame roots remain unsupported",
+                      .body = "  %frame = ctjs.frame_enter 4\n" + array + split +
+                              "  ctjs.frame_exit %frame\n" + done +
+                              "^right:\n"
+                              "  ctjs.root %p in %frame\n  ctjs.frame_exit %frame\n" +
+                              done,
+                      .failure = ArrayContentsFailure::UnknownValue}},
+        {.contents = {.what = "cycles in the all-path write union remain conservatively refused",
+                      .body = values +
+                              "  %a = ctjs.create_array [] {storage_test_id = \"a\"}\n"
+                              "  %b = ctjs.create_array [] {storage_test_id = \"b\"}\n" +
+                              split + "  ctjs.append %b to %a\n" + done +
+                              "^right:\n  ctjs.append %a to %b\n" + done,
+                      .arrays = "a:[b]; b:[] | a:[]; b:[a]",
+                      .exit = "zero -> {}; zero -> {}"},
+         .acyclicWrites = false},
+    };
+    std::size_t budgets = 0;
+    const auto check = [&](mlir::ModuleOp module, const conditional_row & expected) {
+        checkArrayContents(module, expected.contents);
+        budgets += checkArrayRetention(
+            module, {.what = expected.contents.what,
+                     .body = expected.contents.body,
+                     .discharged = expected.discharged,
+                     .complete = expected.contents.failure == ArrayContentsFailure::None &&
+                                 expected.acyclicWrites});
+    };
+    for (const auto & expected : rows) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(
+            std::string{kPrologue} + expected.contents.body + "}\n", &context);
+        if (!module) {
+            fail(
+                row{.what = expected.contents.what, .body = expected.contents.body, .expected = ""},
+                "the conditional fixture did not parse");
+            continue;
+        }
+        check(*module, expected);
+    }
+
+    // Rebuild from live IR after changing only the second path. The first path
+    // still returns the overwritten array; stale completion markers cannot
+    // erase the unchanged child's alternate retention or a later publication.
+    conditional_row mutation = rows[1];
+    mutation.contents.what = "live alternate-path mutations invalidate and restore every proof";
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + mutation.contents.body + "}\n", &context);
+    if (module) {
+        ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+        ctjs::SetPropertyOp changed;
+        module->walk([&](ctjs::SetPropertyOp op) { changed = op; });
+        const mlir::Value original = changed.getValue();
+        const mlir::Value base = changed.getObject();
+        const mlir::Value child = base.getDefiningOp<ctjs::CreateArrayOp>().getElements()[0];
+        mlir::OpBuilder builder(changed);
+        function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+        child.getDefiningOp()->setAttr("ctnative.confined", builder.getUnitAttr());
+        check(*module, mutation);
+        changed->setOperand(2, child);
+        mutation.contents.arrays = "a:[y] | a:[x]";
+        mutation.contents.exit = "a -> {a,y}; a -> {a,x}";
+        mutation.discharged = "";
+        check(*module, mutation);
+        changed->setOperand(2, function.getBody().front().getArgument(3));
+        mutation.contents.failure = ArrayContentsFailure::UnknownValue;
+        check(*module, mutation);
+        changed->setOperand(2, original);
+        auto publication = ctjs::StoreGlobalOp::create(builder, function.getLoc(), "held", base);
+        mutation.contents.failure = ArrayContentsFailure::UnsupportedOperation;
+        check(*module, mutation);
+        publication.erase();
+        mutation = rows[1];
+        check(*module, mutation);
+    } else {
+        fail(row{.what = mutation.contents.what, .body = mutation.contents.body, .expected = ""},
+             "the live conditional fixture did not parse");
+    }
+
+    // A short CFG may contain exponentially many paths. Work includes the
+    // snapshots themselves; exhaustion after completed earlier exits must
+    // return no proof and cannot refine even one original Stored verdict.
+    std::string expanding = array + "  cf.br ^b0\n";
+    for (unsigned i = 0; i < 16; ++i) {
+        const std::string next = "^b" + std::to_string(i + 1);
+        expanding +=
+            "^b" + std::to_string(i) + ":\n  cf.cond_br %condition, " + next + ", " + next + "\n";
+    }
+    expanding += "^b16:\n" + done;
+    auto explosion = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + expanding + "}\n", &context);
+    if (explosion) {
+        ctjs::FuncOp function = *explosion->getOps<ctjs::FuncOp>().begin();
+        mlir::DataFlowSolver solver;
+        solver.load<mlir::dataflow::DeadCodeAnalysis>();
+        solver.load<mlir::dataflow::SparseConstantPropagation>();
+        solver.load<EscapeAnalysis>();
+        if (failed(solver.initializeAndRun(*explosion))) {
+            fail(row{.what = "conditional path explosion is budgeted",
+                     .body = expanding,
+                     .expected = ""},
+                 "the path budget fixture's solver did not converge");
+            return;
+        }
+        const EscapeVerdicts original = computeVerdicts(solver, function, 0);
+        for (std::size_t limit : {0U, 1U, 32U, 128U, 1024U}) {
+            const auto result = computeArrayContents(function, limit);
+            const EscapeVerdicts refined = computeVerdicts(solver, function, limit);
+            if (result.complete || result.failure != ArrayContentsFailure::WorkLimit ||
+                result.work != limit || !result.arrays.empty() || !result.reads.empty() ||
+                !result.writes.empty() || !result.exits.empty() || refined.arrayRetentionComplete ||
+                refined.confinedStoredSites != 0 || refined.arrayRetentionWork != limit ||
+                !llvm::all_of(original.sites, [&](const auto & entry) {
+                    auto found = refined.sites.find(entry.first);
+                    return found != refined.sites.end() &&
+                           found->second.reason == entry.second.reason &&
+                           found->second.by == entry.second.by &&
+                           found->second.position == entry.second.position;
+                })) {
+                fail(row{.what = "conditional path explosion is budgeted",
+                         .body = expanding,
+                         .expected = ""},
+                     "bounded path enumeration published partial evidence");
+            }
+        }
+    } else {
+        fail(row{.what = "conditional path explosion is budgeted",
+                 .body = expanding,
+                 .expected = ""},
+             "the path budget fixture did not parse");
+    }
+    std::printf("array conditionals: %zu rows, five live states, %zu retention budget cutoffs, "
+                "five path-explosion cutoffs\n",
+                rows.size(), budgets);
+}
+
 } // namespace
 
 int main() {
@@ -930,6 +1217,7 @@ int main() {
     checkArrayContents(context);
     checkArrayRetention(context);
     checkArrayFrames(context);
+    checkArrayConditionals(context);
 
     if (failures != 0) {
         std::printf("\n%d check(s) failed\n", failures);
