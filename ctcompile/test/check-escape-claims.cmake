@@ -193,6 +193,7 @@ if(STRICT)
   file(READ "${_claims}" _claim_text)
   set(_publication_rows "")
   set(_spread_rows "")
+  set(_array_frame_rows "")
   foreach(_line IN LISTS _recording_lines)
     if(_line MATCHES "^program ([0-9a-f]+) ")
       set(_program_hash "${CMAKE_MATCH_1}")
@@ -221,6 +222,17 @@ if(STRICT)
       else()
         list(APPEND _spread_rows "${_row} unclaimed")
       endif()
+    elseif(_function_name MATCHES "^arrayFrame(Private|Returned|SavedRead|Overwrite|LoadedAlias|Published|Call|Cycle|TransientCycle)$" AND _line MATCHES "^site ")
+      if(NOT _line MATCHES "^site ([0-9]+) kind (obj|arr) made ([0-9]+) confined ([0-9]+) escaped ([0-9]+) unresolved ([0-9]+) unchecked ([0-9]+) routes ([^ ]+)$")
+        message(FATAL_ERROR "${_function_name}: unexpected array-frame observation: ${_line}")
+      endif()
+      set(_pc "${CMAKE_MATCH_1}")
+      set(_kind "${CMAKE_MATCH_2}")
+      set(_row "${_function_name} ${_kind} ${CMAKE_MATCH_3} ${CMAKE_MATCH_4} ${CMAKE_MATCH_5} ${CMAKE_MATCH_6} ${CMAKE_MATCH_7} ${CMAKE_MATCH_8}")
+      if(NOT _claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_pc} ${_kind} ([^\n]+)")
+        message(FATAL_ERROR "${_function_name}: no compiler claim for observed ${_kind} at pc ${_pc}")
+      endif()
+      list(APPEND _array_frame_rows "${_row} ${CMAKE_MATCH_1}")
     endif()
   endforeach()
   set(_expected_publication_rows
@@ -258,6 +270,37 @@ if(STRICT)
     message(FATAL_ERROR "spread argument evidence mismatch:\nexpected: ${_expected_spread_rows}\nobserved: ${_spread_rows}")
   endif()
   message(STATUS "spread arguments: six confined arrays, three retained literal objects, one unclaimed constructor site; live claims agree")
+
+  # These claims come from raw imported JavaScript, including frame_enter and
+  # frame_exit. Pin the precision witness as well as the retaining controls:
+  # returning a loaded child after overwrite keeps the OLD child reachable;
+  # a loaded array alias mutates the SAME array. Cycles stay conservative.
+  set(_expected_array_frame_rows
+      "arrayFramePrivate obj 2 2 0 0 0 - confined"
+      "arrayFramePrivate arr 2 2 0 0 0 - confined"
+      "arrayFrameReturned obj 1 0 1 0 0 temporaries:1 escapes:stored"
+      "arrayFrameReturned arr 1 0 1 0 0 temporaries:1 escapes:returned"
+      "arrayFrameSavedRead obj 1 0 1 0 0 temporaries:1 escapes:stored"
+      "arrayFrameSavedRead obj 1 1 0 0 0 - confined"
+      "arrayFrameSavedRead arr 1 1 0 0 0 - confined"
+      "arrayFrameOverwrite obj 1 1 0 0 0 - confined"
+      "arrayFrameOverwrite obj 1 0 1 0 0 temporaries:1 escapes:stored"
+      "arrayFrameOverwrite arr 1 0 1 0 0 temporaries:1 escapes:returned"
+      "arrayFrameLoadedAlias obj 1 1 0 0 0 - confined"
+      "arrayFrameLoadedAlias arr 1 0 1 0 0 temporaries:1 escapes:stored"
+      "arrayFrameLoadedAlias arr 1 0 1 0 0 temporaries:1 escapes:returned"
+      "arrayFramePublished obj 1 0 1 0 0 globals:1 escapes:stored"
+      "arrayFramePublished arr 1 0 1 0 0 globals:1 escapes:stored_global"
+      "arrayFrameCall obj 1 0 1 0 0 globals:1 escapes:stored"
+      "arrayFrameCall arr 1 0 1 0 0 globals:1 escapes:passed"
+      "arrayFrameCycle arr 1 1 0 0 0 - escapes:stored"
+      "arrayFrameTransientCycle arr 1 1 0 0 0 - escapes:stored")
+  list(SORT _array_frame_rows)
+  list(SORT _expected_array_frame_rows)
+  if(NOT _array_frame_rows STREQUAL _expected_array_frame_rows)
+    message(FATAL_ERROR "imported array-frame evidence mismatch:\nexpected: ${_expected_array_frame_rows}\nobserved: ${_array_frame_rows}")
+  endif()
+  message(STATUS "imported array frames: nineteen sites, twenty-one instances, eleven retained; live claims agree")
 endif()
 if(NOT _pyrc EQUAL 0)
   message(FATAL_ERROR "${NAME}: the checker exited ${_pyrc}")

@@ -355,7 +355,8 @@ enum class ArrayContentsFailure {
     UnknownArray,
     UnknownIndex,
     MissingElement,
-    WorkLimit
+    WorkLimit,
+    InvalidFrame
 };
 
 struct ArrayContentsEvidence {
@@ -376,11 +377,16 @@ struct ArrayContentsEvidence {
 };
 
 /// Recompute from the CURRENT verified IR; needs neither trusted annotations
-/// nor alias lattices. The initial subset has one block, constants, fresh
+/// nor alias lattices. The supported entry block has constants, fresh
 /// property-free objects/arrays, literal append, initialized constant-index
 /// array reads/overwrites and return. Loaded array aliases share one
 /// contents state; cycles are visited once at exits. Unknown values/indices,
 /// holes, calls, throws, publication, regions, prototypes and accessors refuse.
+/// No entry operation may have successors, so every other block is proved
+/// unreachable independently of solver flags and contributes no records.
+/// An optional imported frame must enter first and exit immediately before
+/// return; roots name that active frame and an independently known value.
+/// Entry failure precedes every tracked allocation, not a nonthrowing claim.
 ///
 /// This query changes no escape verdict itself. computeVerdicts independently
 /// recomputes it before its bounded Stored refinement; neither query proves

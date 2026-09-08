@@ -792,10 +792,15 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         ++out.work;
         return true;
     };
-    if (!function.getBody().hasOneBlock()) {
+    if (function.getBody().empty()) {
         return refuse(ArrayContentsFailure::UnsupportedControlFlow, function);
     }
 
+    // The entry must complete the no-successor/no-region scan and return
+    // below. Every other block is then structurally unreachable, including
+    // the importer's default return after an explicit source return. No
+    // solver reachability flag or annotation supplies this proof. A successor
+    // still refuses even if constant propagation would call its target dead.
     // No uninitialized/external alternative is silently dropped: values enter
     // this map only as exact constants, unique fresh instances or checked own
     // reads. Reject all other producers, including unrelated effectful ones.
@@ -803,10 +808,47 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
     // harmless, or that a late region cannot retain a raw frame register.
     llvm::DenseMap<mlir::Value, mlir::Value> origins;
     const auto origin = [&](mlir::Value value) { return origins.lookup(value); };
+    ctjs::FrameEnterOp frame;
+    bool frameExited = false;
     for (mlir::Operation & op : function.getBody().front()) {
         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
         if (op.getNumRegions() != 0 || op.getNumSuccessors() != 0) {
             return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
+        }
+        if (auto entered = llvm::dyn_cast<ctjs::FrameEnterOp>(&op)) {
+            // The importer enters before seeding registers or allocating any
+            // tracked object. Its depth failure is real, but on that path no
+            // object from these sites exists. This is NOT an effect proof that
+            // permits erasing entry or treating it as pure/nonthrowing.
+            if (&op != &function.getBody().front().front() || frame ||
+                entered.getRegCountAttr().getInt() < 0) {
+                return refuse(ArrayContentsFailure::InvalidFrame, &op);
+            }
+            frame = entered;
+            continue;
+        }
+        if (auto exited = llvm::dyn_cast<ctjs::FrameExitOp>(&op)) {
+            if (!frame || frameExited || exited->getOperand(0) != frame.getResult() ||
+                !llvm::isa_and_nonnull<ctjs::ReturnOp>(op.getNextNode())) {
+                return refuse(ArrayContentsFailure::InvalidFrame, &op);
+            }
+            frameExited = true;
+            continue;
+        }
+        if (auto root = llvm::dyn_cast<ctjs::RootOp>(&op)) {
+            // RootOp parks only in THIS frame's window (Frames.td). The exact
+            // matching exit kills that window; no call, suspension or unknown
+            // effect in this query can keep it or expose its contents.
+            if (!frame || frameExited || root->getOperand(0) != frame.getResult()) {
+                return refuse(ArrayContentsFailure::InvalidFrame, &op);
+            }
+            if (!origin(root.getValue())) {
+                return refuse(ArrayContentsFailure::UnknownValue, &op);
+            }
+            continue;
+        }
+        if (frameExited && !llvm::isa<ctjs::ReturnOp>(&op)) {
+            return refuse(ArrayContentsFailure::InvalidFrame, &op);
         }
         if (llvm::isa<ctjs::ConstantOp, ctjs::CreateObjectOp>(&op)) {
             origins[op.getResult(0)] = op.getResult(0);
@@ -862,6 +904,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             continue;
         }
         if (llvm::isa<ctjs::ReturnOp>(&op)) {
+            if (frame && !frameExited) { return refuse(ArrayContentsFailure::InvalidFrame, &op); }
             const mlir::Value value = origin(op.getOperand(0));
             if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
             ArrayContentsExit exit;

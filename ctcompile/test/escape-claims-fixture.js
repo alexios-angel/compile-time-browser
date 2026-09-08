@@ -38,6 +38,53 @@ function confinedLoopCarried(n) {
 }
 confinedObject(); confinedArray(); confinedForOf(); confinedPredicates(); confinedLoopCarried(5);
 
+// --- COMPLETE OWN-ARRAY RETENTION THROUGH REAL IMPORTED FRAMES ------------
+// Empty objects avoid named-field operations outside the complete subset.
+// Every case executes; returned containers/read values stay in H. The checker
+// joins each observed site to its independent claim by program/function/pc.
+function arrayFramePrivate() { var child = {}; var container = [child]; return 0; }
+arrayFramePrivate(); arrayFramePrivate();
+function arrayFrameReturned() { var child = {}; var container = [child]; return container; }
+H.push(arrayFrameReturned());
+function arrayFrameSavedRead() {
+    var child = {}, replacement = {};
+    var container = [child], saved = container[0];
+    container[0] = replacement;
+    return saved;
+}
+H.push(arrayFrameSavedRead());
+function arrayFrameOverwrite() {
+    var child = {}, replacement = {};
+    var container = [child];
+    container[0] = replacement;
+    return container;
+}
+H.push(arrayFrameOverwrite());
+function arrayFrameLoadedAlias() {
+    var child = {}, inner = [child], outer = [inner];
+    var alias = outer[0];
+    alias[0] = 0;
+    return outer;
+}
+H.push(arrayFrameLoadedAlias());
+// A late publication or call still invalidates the complete query, even when
+// the child's first legacy reason is Stored through its local container.
+function arrayFramePublished() { var child = {}; var container = [child]; G = container; return 0; }
+arrayFramePublished();
+function arrayFrameCall() { var child = {}; var container = [child]; hold(container); return 0; }
+arrayFrameCall();
+// Final and transient cycles both preserve Stored; this increment chooses no
+// graph owner even when the oracle observes every instance confined at exit.
+function arrayFrameCycle() { var container = [null]; container[0] = container; return 0; }
+arrayFrameCycle();
+function arrayFrameTransientCycle() {
+    var container = [null];
+    container[0] = container;
+    container[0] = null;
+    return 0;
+}
+arrayFrameTransientCycle();
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());

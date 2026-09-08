@@ -10,6 +10,8 @@
 
 #include "EscapeAnalysisHarness.h"
 
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+
 using namespace ctcompile::test::escape;
 
 namespace {
@@ -284,8 +286,13 @@ void checkArrayContents(mlir::MLIRContext & context) {
                  "  }\n" +
                  done,
          .failure = ArrayContentsFailure::UnsupportedControlFlow},
-        {.what = "contents refuses multiple blocks including an unreachable region",
+        {.what = "contents ignores retention in a structurally unreachable block",
          .body = array + read + done + "^dead:\n  %args = ctjs.make_arguments\n" + done,
+         .arrays = "a:[x]",
+         .reads = "a[0]=x",
+         .exit = "zero -> {}"},
+        {.what = "contents refuses an actual successor even with exact local values",
+         .body = array + "  cf.br ^next\n^next:\n" + done,
          .failure = ArrayContentsFailure::UnsupportedControlFlow},
         {.what = "contents refuses a loop rather than collapsing repeated allocation instances",
          .body = "  cf.br ^loop\n^loop:\n  %a = ctjs.create_array []\n  cf.br ^loop\n",
@@ -650,6 +657,183 @@ void checkArrayRetention(mlir::MLIRContext & context) {
                 budgets);
 }
 
+void checkArrayFrames(mlir::MLIRContext & context) {
+    const std::string enter = "  %frame = ctjs.frame_enter 4\n";
+    const std::string array =
+        "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
+        "  %x = ctjs.create_object {storage_test_id = \"x\"}\n"
+        "  %a = ctjs.create_array [] {storage_test_id = \"a\"}\n"
+        "  ctjs.append %x to %a\n";
+    const std::string root = "  ctjs.root %x in %frame\n  ctjs.root %a in %frame\n";
+    const std::string leave = "  ctjs.frame_exit %frame\n";
+    const std::string done = "  ctjs.return %zero\n";
+    const std::vector<contents_row> rows = {
+        {.what = "an imported frame with exact local roots discharges private elements",
+         .body = enter + array + root + leave + done,
+         .arrays = "a:[x]",
+         .exit = "zero -> {}"},
+        {.what = "matching frame exit does not discharge a returned container's child",
+         .body = enter + array + root + leave + "  ctjs.return %a\n",
+         .arrays = "a:[x]",
+         .exit = "a -> {a,x}"},
+        {.what = "a root of a saved read uses the checked original element",
+         .body = enter + array +
+                 "  %read = ctjs.get_property %a[%zero]\n"
+                 "  ctjs.root %read in %frame\n" +
+                 leave + done,
+         .arrays = "a:[x]",
+         .reads = "a[0]=x",
+         .exit = "zero -> {}"},
+        {.what = "raw import needs no explicit roots to balance its frame",
+         .body = enter + array + leave + done,
+         .arrays = "a:[x]",
+         .exit = "zero -> {}"},
+        {.what = "the imported unreachable default-return block keeps private children local",
+         .body = enter + array + leave + done +
+                 "^dead(%unused: !ctjs.value):\n"
+                 "  %undefined = ctjs.constant #ctjs.undefined\n" +
+                 leave + "  ctjs.return %undefined\n",
+         .arrays = "a:[x]",
+         .exit = "zero -> {}"},
+        {.what = "dead publication, raw-frame capture and unknown effects cannot run",
+         .body = enter + array + root + leave + done +
+                 "^dead:\n"
+                 "  ctjs.store_global \"held\", %a\n"
+                 "  %args = ctjs.make_arguments\n"
+                 "  \"test.retain_frame\"(%frame) : (!ctjs.context) -> ()\n" +
+                 leave + done,
+         .arrays = "a:[x]",
+         .exit = "zero -> {}"},
+        {.what = "a real edge to the publication block refuses independent contents",
+         .body = enter + array + root +
+                 "  cf.br ^next\n^next:\n"
+                 "  ctjs.store_global \"held\", %a\n" +
+                 leave + done,
+         .failure = ArrayContentsFailure::UnsupportedControlFlow},
+        {.what = "frame entry after an allocation cannot borrow the entry-failure proof",
+         .body = array + enter + root + leave + done,
+         .failure = ArrayContentsFailure::InvalidFrame},
+        {.what = "even a constant before frame entry stays outside the importer shape",
+         .body = "  %early = ctjs.constant #ctjs.undefined\n" + enter + array + leave + done,
+         .failure = ArrayContentsFailure::InvalidFrame},
+        {.what = "negative frame size refuses the complete query",
+         .body = "  %frame = ctjs.frame_enter -1\n" + array + leave + done,
+         .failure = ArrayContentsFailure::InvalidFrame},
+        {.what = "a second active frame is not this activation's root window",
+         .body = enter + array + "  %other = ctjs.frame_enter 4\n" + leave + done,
+         .failure = ArrayContentsFailure::InvalidFrame},
+        {.what = "an unclosed frame cannot discard its retained register window",
+         .body = enter + array + root + done,
+         .failure = ArrayContentsFailure::InvalidFrame},
+        {.what = "double exit cannot pop a caller frame",
+         .body = enter + array + leave + leave + done,
+         .failure = ArrayContentsFailure::InvalidFrame},
+        {.what = "a root cannot write a dead frame window",
+         .body = enter + array + leave + root + done,
+         .failure = ArrayContentsFailure::InvalidFrame},
+        {.what = "an operation after frame exit cannot allocate in a caller frame",
+         .body = enter + array + leave + "  %late = ctjs.create_object\n" + done,
+         .failure = ArrayContentsFailure::InvalidFrame},
+        {.what = "an unknown rooted value cannot borrow complete local contents",
+         .body = enter + array + "  ctjs.root %p in %frame\n" + leave + done,
+         .failure = ArrayContentsFailure::UnknownValue},
+        {.what = "an unknown frame-handle user may keep the whole root window",
+         .body = enter + array + root +
+                 "  \"test.retain_frame\"(%frame) : (!ctjs.context) -> ()\n" + leave + done,
+         .failure = ArrayContentsFailure::UnsupportedOperation},
+        {.what = "balanced roots do not excuse a late call",
+         .body = enter + array + root + "  %called = ctjs.call %p(%q)\n" + leave + done,
+         .failure = ArrayContentsFailure::UnsupportedOperation},
+        {.what = "balanced roots do not excuse implicit arguments retention",
+         .body = enter + array + root + "  %args = ctjs.make_arguments\n" + leave + done,
+         .failure = ArrayContentsFailure::UnsupportedOperation},
+    };
+    std::size_t budgets = 0;
+    const auto check = [&](mlir::ModuleOp module, const contents_row & expected) {
+        checkArrayContents(module, expected);
+        const bool complete = expected.failure == ArrayContentsFailure::None;
+        budgets += checkArrayRetention(
+            module,
+            {.what = expected.what,
+             .body = expected.body,
+             .discharged = complete && llvm::StringRef(expected.exit) == "zero -> {}" ? "x" : "",
+             .complete = complete});
+    };
+    for (const contents_row & expected : rows) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(
+            std::string{kPrologue} + expected.body + "}\n", &context);
+        if (module) {
+            check(*module, expected);
+        } else {
+            fail(row{.what = expected.what, .body = expected.body, .expected = ""},
+                 "the frame fixture did not parse");
+        }
+    }
+
+    // Rebuild both solver and queries after each live edit. Forged completion
+    // markers never supply a missing frame, root origin or retention proof.
+    contents_row mutation = rows.front();
+    mutation.what = "live imported frame, root and exit mutations rebuild every proof";
+    mutation.body += "^dead:\n  ctjs.store_global \"held\", %a\n" + done;
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + mutation.body + "}\n", &context);
+    if (module) {
+        ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+        ctjs::FrameEnterOp entered;
+        ctjs::FrameExitOp exited;
+        ctjs::RootOp rooted;
+        module->walk([&](ctjs::FrameEnterOp op) { entered = op; });
+        module->walk([&](ctjs::FrameExitOp op) { exited = op; });
+        module->walk([&](ctjs::RootOp op) { rooted = op; });
+        const mlir::Value value = rooted.getValue();
+        mlir::OpBuilder builder(exited);
+        function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+        value.getDefiningOp()->setAttr("ctnative.confined", builder.getUnitAttr());
+        check(*module, mutation);
+        rooted->setOperand(1, function.getBody().front().getArgument(3));
+        mutation.failure = ArrayContentsFailure::UnknownValue;
+        check(*module, mutation);
+        rooted->setOperand(1, value);
+        exited->moveBefore(rooted);
+        mutation.failure = ArrayContentsFailure::InvalidFrame;
+        check(*module, mutation);
+        exited->moveBefore(function.getBody().front().getTerminator());
+        entered->moveAfter(value.getDefiningOp());
+        check(*module, mutation);
+        entered->moveBefore(&function.getBody().front().front());
+        auto published = ctjs::StoreGlobalOp::create(builder, function.getLoc(), "held", value);
+        mutation.failure = ArrayContentsFailure::UnsupportedOperation;
+        check(*module, mutation);
+        published.erase();
+        mutation.failure = ArrayContentsFailure::None;
+        check(*module, mutation);
+
+        // Make the previously dead publication reachable in the same IR.
+        // Even with forged markers, the new edge must invalidate refinement.
+        mlir::Operation * returned = function.getBody().front().getTerminator();
+        const mlir::Value result = returned->getOperand(0);
+        mlir::Block & dead = function.getBody().back();
+        builder.setInsertionPoint(returned);
+        auto edge =
+            mlir::cf::BranchOp::create(builder, function.getLoc(), &dead, mlir::ValueRange{});
+        returned->erase();
+        exited->moveBefore(dead.getTerminator());
+        mutation.failure = ArrayContentsFailure::UnsupportedControlFlow;
+        check(*module, mutation);
+        builder.setInsertionPoint(edge);
+        auto restored = ctjs::ReturnOp::create(builder, function.getLoc(), result);
+        edge.erase();
+        exited->moveBefore(restored);
+        mutation.failure = ArrayContentsFailure::None;
+        check(*module, mutation);
+    } else {
+        fail(row{.what = mutation.what, .body = mutation.body, .expected = ""},
+             "the live frame mutation fixture did not parse");
+    }
+    std::printf("array frames: %zu rows, eight live states, %zu retention budget cutoffs\n",
+                rows.size(), budgets);
+}
+
 } // namespace
 
 int main() {
@@ -664,6 +848,7 @@ int main() {
 
     checkArrayContents(context);
     checkArrayRetention(context);
+    checkArrayFrames(context);
 
     if (failures != 0) {
         std::printf("\n%d check(s) failed\n", failures);

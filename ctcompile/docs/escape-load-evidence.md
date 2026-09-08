@@ -147,7 +147,7 @@ browser baseline.
 `computeArrayContents` is a separate prerequisite that reads the current
 verified IR directly, without alias lattices, candidate links or trusted
 annotations. A successful result establishes exact dense own elements for
-fresh local arrays in one straight-line block. Constants and fresh property-free
+fresh local arrays in one straight-line entry block. Constants and fresh property-free
 objects can be elements. Inline initializers, literal `ctjs.append`, initialized
 constant-index reads and overwrites are supported. A read resolves to the
 original constant or allocation; reading an array and writing through that alias
@@ -170,7 +170,7 @@ or defining accessors refuses the entire result. Literal append uses the existin
 internal construction operation, not a call to a potentially modified `push`.
 
 Unknown values and bases, all calls and global accesses/publication, cells,
-unsupported carriers, multiple blocks, loops, nested regions, arguments/rest
+unsupported carriers, reachable successor blocks, loops, nested regions, arguments/rest
 builders and suspension also refuse. Even a late unrelated call invalidates the
 proof. `ctjs.throw` is excluded because uncaught diagnostic formatting may call
 `toString` and reenter JavaScript. Return is the only supported exit.
@@ -249,9 +249,60 @@ still requires the plan's separate type, identity, cycle ownership and
 frame-lifetime obligations. Corpus precision improvements require measurement;
 these unit cases do not establish a Bootstrap gain.
 
-The next source-facing prerequisite is imported frame/root bookkeeping:
-`EscapeClaims` analyzes raw imported functions, whose entry includes
-`ctjs.frame_enter`, while the complete contents query currently refuses that
-operation. Supporting this boundary needs an explicit balanced-frame proof and
-an executed source/oracle witness; the hand-written local-array cases alone do
-not establish a precision gain on imported JavaScript.
+## Imported frame and root bookkeeping
+
+The complete query now checks the optional frame carried by raw imported
+functions. `ctjs.frame_enter` must be the first operation, with a nonnegative
+register count and no second frame. Every root must name that exact active
+frame and a value already proved by the contents query. A single matching
+`ctjs.frame_exit` must immediately precede the return. Missing, repeated, late
+or foreign frame operations refuse the whole proof, as do unknown root values
+and unknown users of the frame handle. Refusal publishes no partial contents
+and preserves every original escape verdict.
+
+The entry must finish with a return and no operation may have successors or
+nested regions. That proves every other block unreachable directly from the
+current IR, including the importer's default-return block after an explicit
+source return. Dead blocks contribute no contents, effects or return roots.
+No solver reachability flag or annotation supplies this exclusion; even a
+successor that constant propagation considers dead remains outside the query.
+
+This is a retention proof, not an effect summary: frame entry still has its
+depth-failure path. Its checked position establishes that no tracked allocation
+from this function exists on that path. Successful frame exit kills only this
+frame's roots; the independently computed return graph still retains every
+returned child. Calls, publication, raw arguments retention and the other
+unsupported effects cannot borrow this bookkeeping proof. Native admission
+does not consume it or acquire any dependency on interpreter frames.
+
+Nineteen frame controls and eight live mutation states exercise both the complete
+contents query and the default retention consumer, including every incomplete
+budget and its exact endpoint. Live edits move entry/exit, change a root to an
+unknown parameter, insert late publication and make a previously dead
+publication block reachable while forged completion markers remain present.
+Restoring the actual supported IR permits refinement again.
+
+The source fixture adds nine executed functions, with nineteen allocation
+sites and twenty-one measured instances. It covers private arrays called
+twice, returned containers, saved reads after overwrite, overwritten children,
+writes through loaded array aliases, late publication/calls, and final/transient
+cycles. The claims gate joins observations and claims by program, function and
+bytecode coordinate and checks exact retention routes. Its eleven
+retained instances must keep their escape claims; final and transient cycles
+stay conservatively `Stored` even when observed confined. The source checks
+also require the newly discharged private/overwritten children to be `Confined`,
+so disabling the imported-frame proof cannot pass vacuously.
+
+The serialized devbox gate passes **8/8 CTests in 8.45 seconds**: all four
+escape units and all four source/oracle comparisons. The frame controls cover
+**19 rows, eight live states and 248 retention budget cutoffs**; the existing
+contents and retention controls pass **32/18 rows**, respectively. Every oracle
+reports zero soundness violations. Log: `/tmp/ctcompile-size-escape2.log`.
+The initial source run exposed the importer's dead fallback block; the final
+proof supports that shape without relaxing any source precision expectation.
+
+The next contents boundary is reachable control flow, external values and
+other containers, with native ownership/type consumers still separate.
+Bootstrap/p5/Phaser observed precision remains **0/64, 0/16, 0/20** in these
+script-mode runs; this focused source improvement does not establish a corpus
+precision gain or full application coverage.
