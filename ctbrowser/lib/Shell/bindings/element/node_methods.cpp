@@ -109,9 +109,7 @@ void dom_bindings::install_node_methods(context & cx, script::object_object & ob
             const std::span<const node_id> kids = txn.children(self);
             return std::pair{self, kids.empty() ? node_id{} : kids.front()};
         }
-        if (where == "beforeend") {
-            return std::pair{self, node_id{}};
-        }
+        if (where == "beforeend") { return std::pair{self, node_id{}}; }
         const bool before = where == "beforebegin";
         if (!before && where != "afterend") {
             throw_dom_exception(c, "SyntaxError",

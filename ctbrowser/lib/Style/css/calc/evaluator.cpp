@@ -201,9 +201,7 @@ public:
 
     [[nodiscard]] math_answer run() {
         const std::optional<term> value = settle();
-        if (!value) {
-            return math_answer{outcome_, {}};
-        }
+        if (!value) { return math_answer{outcome_, {}}; }
         calc_result out;
         // A NUMBER IS AN ANSWER. `calc()` of a bare number used to be reported as
         // no answer at all, which the cascade read as an invalid declaration and
@@ -224,9 +222,7 @@ public:
     // `calc(10% + 10px + 1vmin)`.
     [[nodiscard]] std::pair<math_outcome, term> run_symbolic() {
         const std::optional<term> value = settle();
-        if (!value) {
-            return {outcome_, term{}};
-        }
+        if (!value) { return {outcome_, term{}}; }
         return {math_outcome::resolved, *value};
     }
 
