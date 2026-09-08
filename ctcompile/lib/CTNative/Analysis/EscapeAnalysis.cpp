@@ -827,6 +827,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
     // and a switch's default edge. Any unsupported path refuses everything.
     struct State {
         llvm::DenseMap<mlir::Value, mlir::Value> origins;
+        // Imported successors forward every raw register, including unused
+        // receiver/parameter values. Keep their exact entry identity separate:
+        // forwarding or testing one never proves its contents or retention.
+        llvm::DenseMap<mlir::Value, mlir::Value> opaqueOrigins;
         llvm::MapVector<mlir::Operation *, llvm::SmallVector<mlir::Value, 4>> arrays;
         llvm::MapVector<mlir::Operation *, ObjectOwnProperties> objects;
         llvm::SmallPtrSet<mlir::Block *, 8> visited;
@@ -835,6 +839,12 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         mlir::Operation * current = nullptr;
     };
     State state;
+    for (mlir::BlockArgument argument : function.getBody().front().getArguments()) {
+        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, function); }
+        if (llvm::isa<ctjs::ValueType>(argument.getType())) {
+            state.opaqueOrigins[argument] = argument;
+        }
+    }
     state.visited.insert(&function.getBody().front());
     state.current = &function.getBody().front().front();
     llvm::SmallVector<State, 2> alternatives;
@@ -849,8 +859,13 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         for (auto [argument, value] : llvm::zip(next->getArguments(), operands)) {
             if (!spend()) { return ArrayContentsFailure::WorkLimit; }
             const mlir::Value exact = path.origins.lookup(value);
-            if (!exact) { return ArrayContentsFailure::UnknownValue; }
-            path.origins[argument] = exact;
+            if (exact) {
+                path.origins[argument] = exact;
+            } else {
+                const mlir::Value opaque = path.opaqueOrigins.lookup(value);
+                if (!opaque) { return ArrayContentsFailure::UnknownValue; }
+                path.opaqueOrigins[argument] = opaque;
+            }
         }
         path.current = &next->front();
         return ArrayContentsFailure::None;
@@ -858,7 +873,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
     const auto alternative = [&](mlir::Block * next, mlir::ValueRange operands) {
         // Path enumeration can be exponential. Charge every copied value,
         // visited block, container and element before allocating the snapshot.
-        if (!spend(state.origins.size()) || !spend(state.visited.size())) {
+        if (!spend(state.origins.size()) || !spend(state.opaqueOrigins.size()) ||
+            !spend(state.visited.size())) {
             return ArrayContentsFailure::WorkLimit;
         }
         for (const auto & [array, elements] : state.arrays) {

@@ -139,7 +139,9 @@ H.push(objectFrameCopiedSavedRead());
 // --- OWN-DATA COPIES ACROSS EXECUTED CONDITIONAL AND SWITCH PATHS ---------
 // Erasing the selected alias must leave the other object's copied child
 // reachable. Both flags execute, so updating both possible targets would
-// incorrectly release a child on a path the oracle actually observes.
+// incorrectly release a child on a path the oracle actually observes. The
+// replacement dies on both paths: unused raw predicate registers may forward
+// without lending an origin to any unknown root, field or return value.
 function objectFrameCopiedConditionalAlias(selectSource) {
     var child = { id: 1 }, replacement = { id: 2 };
     var source = { held: child }, target = { ...source };
@@ -191,11 +193,10 @@ H.push(objectFrameCopiedSwitchSaved(0));
 H.push(objectFrameCopiedSwitchSaved(1));
 H.push(objectFrameCopiedSwitchSaved(2));
 
-// Raw imported dynamic conditions still forward unknown parameter registers,
-// and source switches include comparison operations outside complete contents.
+// Source switches still include comparison operations outside complete contents.
 // Their conservative Stored claims above are deliberate. This parameter-free
-// control reaches the existing conditional proof and releases the old child
-// on every structural arm, including the literal condition's untaken arm.
+// control independently releases the old child on every structural arm,
+// including the literal condition's untaken arm.
 function objectFrameCopiedLiteralOverwrite() {
     var child = { id: 1 }, replacement = { id: 2 };
     var source = { held: child }, target = { ...source };

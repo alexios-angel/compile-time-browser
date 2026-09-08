@@ -423,7 +423,7 @@ struct ArrayContentsEvidence {
     bool complete = false;
     ArrayContentsFailure failure = ArrayContentsFailure::None;
     mlir::Operation * refusedBy = nullptr;
-    /// Operation, forwarded-argument, initializer-element, branch-state-copy,
+    /// Entry-argument, operation, forwarded-argument, initializer-element, branch-state-copy,
     /// deletion-state-update, copy snapshot/field and exit graph visits. Array key validation
     /// examines one Number; object keys must be Strings of at most 256 bytes.
     std::size_t work = 0;
@@ -451,8 +451,12 @@ struct ArrayContentsEvidence {
 /// additional selector-producing operations or JS coercions are admitted. Joins
 /// keep exact separate states rather than unioning overwrite targets. Truthy
 /// accepts an external value only as a noncapturing predicate, never an element.
-/// Exact forwarded values are required; revisiting a block on one path refuses
-/// loops. Unvisited blocks are unreachable independently of solver flags.
+/// Exact entry !ctjs.value identities may travel through unused register arguments
+/// and truthy separately from known origins. They never authorize unknown roots,
+/// stored contents, returns, keys, copy endpoints or effects. Opaque seeding and
+/// path snapshots are charged to the same work budget. Other unknown forwarded
+/// values refuse; revisiting a block on one path refuses loops. Unvisited blocks
+/// are unreachable independently of solver flags.
 /// An optional imported frame must enter first and exit immediately before
 /// every return; roots name that active frame and an independently known value.
 /// Checked branch arguments may forward the same frame handle.

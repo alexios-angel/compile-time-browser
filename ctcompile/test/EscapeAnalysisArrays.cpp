@@ -2147,6 +2147,205 @@ void checkObjectCopies(mlir::MLIRContext & context) {
                 rows.size(), keys.size(), liveStates, budgets);
 }
 
+void checkOpaqueEntryTransport(mlir::MLIRContext & context) {
+    const std::string values =
+        "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
+        "  %key = ctjs.constant #ctjs.string<\"child\">\n"
+        "  %x = ctjs.create_object {storage_test_id = \"x\"}\n"
+        "  %a = ctjs.create_array [%x] {storage_test_id = \"a\"}\n";
+    const std::string forward =
+        "  cf.br ^next(%p, %q, %a : !ctjs.value, !ctjs.value, !ctjs.value)\n"
+        "^next(%opaque: !ctjs.value, %other: !ctjs.value, %base: !ctjs.value):\n";
+    const std::string done = "  ctjs.return %zero\n";
+    const std::vector<contents_row> rows = {
+        {.what = "opaque entry aliases survive two reordered raw register vectors",
+         .body = values + forward +
+                 "  cf.br ^last(%other, %opaque, %base : !ctjs.value, !ctjs.value, !ctjs.value)\n"
+                 "^last(%second: !ctjs.value, %first: !ctjs.value, %array: !ctjs.value):\n"
+                 "  %flag = ctjs.truthy %first\n"
+                 "  cf.cond_br %flag, ^yes, ^no\n^yes:\n" +
+                 done + "^no:\n" + done,
+         .arrays = "a:[x] | a:[x]",
+         .exit = "zero -> {}; zero -> {}"},
+        {.what = "a known and opaque join value may both be tested without merging heap origins",
+         .body = values +
+                 "  %flag = ctjs.truthy %p\n"
+                 "  cf.cond_br %flag, ^join(%x : !ctjs.value), "
+                 "^join(%q : !ctjs.value)\n"
+                 "^join(%selected: !ctjs.value):\n"
+                 "  %test = ctjs.truthy %selected\n" +
+                 done,
+         .arrays = "a:[x] | a:[x]",
+         .exit = "zero -> {}; zero -> {}"},
+        {.what = "forwarded opaque entries never become initializer contents",
+         .body = values + forward + "  %bad = ctjs.create_array [%opaque]\n" + done,
+         .failure = ArrayContentsFailure::UnknownValue},
+        {.what = "forwarded opaque entries never become appended contents",
+         .body = values + forward + "  ctjs.append %opaque to %base\n" + done,
+         .failure = ArrayContentsFailure::UnknownValue},
+        {.what = "forwarded opaque entries never become replacement contents",
+         .body = values + forward + "  ctjs.set_property %base[%zero], %opaque\n" + done,
+         .failure = ArrayContentsFailure::UnknownValue},
+        {.what = "forwarded opaque entries never become own-property contents",
+         .body = values + forward + "  ctjs.set_property %x[%key], %opaque\n" + done,
+         .failure = ArrayContentsFailure::UnknownValue},
+        {.what = "a forwarded opaque array base remains unknown",
+         .body = values + forward + "  %read = ctjs.get_property %opaque[%zero]\n" + done,
+         .failure = ArrayContentsFailure::UnknownArray},
+        {.what = "a forwarded opaque index remains unknown",
+         .body = values + forward + "  %read = ctjs.get_property %base[%opaque]\n" + done,
+         .failure = ArrayContentsFailure::UnknownIndex},
+        {.what = "a forwarded opaque property key remains unknown",
+         .body = values + forward + "  ctjs.set_property %x[%opaque], %zero\n" + done,
+         .failure = ArrayContentsFailure::UnknownPropertyKey},
+        {.what = "a forwarded opaque deletion key remains unknown",
+         .body = values + forward + "  ctjs.delete_property %x[%opaque]\n" + done,
+         .failure = ArrayContentsFailure::UnknownPropertyKey},
+        {.what = "a forwarded opaque copy source cannot lend own-data evidence",
+         .body = values + forward + "  ctjs.copy_props %opaque into %x\n" + done,
+         .failure = ArrayContentsFailure::UnsupportedOperation},
+        {.what = "a forwarded opaque copy target cannot borrow a local owner",
+         .body = values + forward + "  ctjs.copy_props %x into %opaque\n" + done,
+         .failure = ArrayContentsFailure::UnsupportedOperation},
+        {.what = "a forwarded opaque return remains outside complete retention",
+         .body = values + forward + "  ctjs.return %opaque\n",
+         .failure = ArrayContentsFailure::UnknownValue},
+        {.what = "a forwarded opaque root remains outside the matched frame proof",
+         .body = "  %frame = ctjs.frame_enter 8\n" + values + forward +
+                 "  ctjs.root %opaque in %frame\n  ctjs.frame_exit %frame\n" + done,
+         .failure = ArrayContentsFailure::UnknownValue},
+        {.what = "opaque forwarding does not authorize an unknown effect",
+         .body = values + forward + "  \"test.effect\"(%opaque) : (!ctjs.value) -> ()\n" + done,
+         .failure = ArrayContentsFailure::UnsupportedOperation},
+        {.what = "opaque forwarding does not authorize global publication",
+         .body = values + forward + "  ctjs.store_global \"held\", %opaque\n" + done,
+         .failure = ArrayContentsFailure::UnsupportedOperation},
+        {.what = "opaque forwarding does not authorize a call",
+         .body = values + forward + "  %called = ctjs.call %opaque(%base)\n" + done,
+         .failure = ArrayContentsFailure::UnsupportedOperation},
+        {.what = "an unsupported producer cannot mint an opaque forwarding origin",
+         .body = values +
+                 "  %bad = \"test.value\"() : () -> !ctjs.value\n"
+                 "  cf.br ^next(%bad : !ctjs.value)\n"
+                 "^next(%unused: !ctjs.value):\n" +
+                 done,
+         .failure = ArrayContentsFailure::UnsupportedOperation},
+        {.what = "an opaque branch alternative cannot borrow the known alternative's write",
+         .body = values +
+                 "  %flag = ctjs.truthy %p\n"
+                 "  cf.cond_br %flag, ^join(%x : !ctjs.value), "
+                 "^join(%q : !ctjs.value)\n"
+                 "^join(%selected: !ctjs.value):\n"
+                 "  ctjs.set_property %a[%zero], %selected\n" +
+                 done,
+         .failure = ArrayContentsFailure::UnknownValue},
+    };
+    std::size_t budgets = 0;
+    const auto check = [&](mlir::ModuleOp module, const contents_row & expected) {
+        checkArrayContents(module, expected);
+        const bool complete = expected.failure == ArrayContentsFailure::None;
+        budgets += checkArrayRetention(module, {.what = expected.what,
+                                                .body = expected.body,
+                                                .discharged = complete ? "x" : "",
+                                                .complete = complete});
+    };
+    for (const contents_row & expected : rows) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(
+            std::string{kPrologue} + expected.body + "}\n", &context);
+        if (module) {
+            check(*module, expected);
+        } else {
+            fail(row{.what = expected.what, .body = expected.body, .expected = ""},
+                 "the opaque forwarding fixture did not parse");
+        }
+    }
+
+    // Extra unused entry arguments cost one seed and one opaque entry in the
+    // only conditional snapshot. Pin both charges independently of whatever
+    // completion budget an accidentally uncharged implementation reports.
+    std::string widePrologue = kPrologue;
+    std::string extraArguments;
+    for (unsigned i = 0; i < 32; ++i) {
+        extraArguments += ", %unused_" + std::to_string(i) + ": !ctjs.value";
+    }
+    widePrologue.insert(widePrologue.find(") -> !ctjs.value"), extraArguments);
+    auto narrow = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + rows.front().body + "}\n", &context);
+    auto wide =
+        mlir::parseSourceString<mlir::ModuleOp>(widePrologue + rows.front().body + "}\n", &context);
+    if (narrow && wide) {
+        const auto narrowResult = computeArrayContents(*narrow->getOps<ctjs::FuncOp>().begin());
+        const auto wideResult = computeArrayContents(*wide->getOps<ctjs::FuncOp>().begin());
+        if (!narrowResult.complete || !wideResult.complete ||
+            wideResult.work != narrowResult.work + 64) {
+            fail(row{.what = "entry seeding and opaque snapshots charge every identity",
+                     .body = rows.front().body,
+                     .expected = ""},
+                 "32 additional opaque entries did not cost 64 work units");
+        }
+        check(*wide, rows.front());
+    } else {
+        fail(row{.what = "wide opaque snapshot", .body = rows.front().body, .expected = ""},
+             "the opaque snapshot charge fixture did not parse");
+    }
+
+    // Prove the live origin class after each edit, including edits to an edge
+    // after a previous successful query. Input annotations never repair it.
+    contents_row mutation{
+        .what = "live opaque and known origins stay separate under forged completion markers",
+        .body = "  %frame = ctjs.frame_enter 8\n" + values +
+                "  cf.br ^next(%p, %x : !ctjs.value, !ctjs.value)\n"
+                "^next(%opaque: !ctjs.value, %known: !ctjs.value):\n"
+                "  ctjs.root %known in %frame\n  ctjs.frame_exit %frame\n" +
+                done,
+        .arrays = "a:[x]",
+        .exit = "zero -> {}"};
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + mutation.body + "}\n", &context);
+    unsigned liveStates = 0;
+    if (module) {
+        ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+        mlir::Block & entry = function.getBody().front();
+        mlir::Block & next = function.getBody().back();
+        auto branch = llvm::cast<mlir::cf::BranchOp>(entry.getTerminator());
+        auto root = llvm::cast<ctjs::RootOp>(&next.front());
+        const mlir::Value original = branch.getDestOperands()[1];
+        mlir::OpBuilder builder(root);
+        function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+        function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
+        original.getDefiningOp()->setAttr("ctnative.confined", builder.getUnitAttr());
+        const auto inspect = [&](ArrayContentsFailure failure) {
+            mutation.failure = failure;
+            check(*module, mutation);
+            ++liveStates;
+        };
+        inspect(ArrayContentsFailure::None);
+        root->setOperand(1, next.getArgument(0));
+        inspect(ArrayContentsFailure::UnknownValue);
+        root->setOperand(1, next.getArgument(1));
+        inspect(ArrayContentsFailure::None);
+        branch->setOperand(1, entry.getArgument(3));
+        inspect(ArrayContentsFailure::UnknownValue);
+        branch->setOperand(1, original);
+        inspect(ArrayContentsFailure::None);
+        const mlir::Value returned = next.getTerminator()->getOperand(0);
+        next.getTerminator()->setOperand(0, next.getArgument(0));
+        inspect(ArrayContentsFailure::UnknownValue);
+        next.getTerminator()->setOperand(0, returned);
+        auto published =
+            ctjs::StoreGlobalOp::create(builder, function.getLoc(), "held", next.getArgument(0));
+        inspect(ArrayContentsFailure::UnsupportedOperation);
+        published.erase();
+        inspect(ArrayContentsFailure::None);
+    } else {
+        fail(row{.what = mutation.what, .body = mutation.body, .expected = ""},
+             "the live opaque forwarding fixture did not parse");
+    }
+    std::printf("opaque entry transport: %zu rows, %u live states, one wide snapshot, "
+                "%zu retention budget cutoffs\n",
+                rows.size(), liveStates, budgets);
+}
+
 void checkArrayFrames(mlir::MLIRContext & context) {
     const std::string enter = "  %frame = ctjs.frame_enter 4\n";
     const std::string array =
@@ -2204,12 +2403,13 @@ void checkArrayFrames(mlir::MLIRContext & context) {
          .arrays = "a:[x,x]",
          .reads = "a[0]=x",
          .exit = "zero -> {}"},
-        {.what = "an unknown forwarded value refuses even when its block argument is unused",
+        {.what = "an unused opaque entry value forwards without proving its contents",
          .body = enter + array +
                  "  cf.br ^next(%p : !ctjs.value)\n"
                  "^next(%unused: !ctjs.value):\n" +
                  leave + done,
-         .failure = ArrayContentsFailure::UnknownValue},
+         .arrays = "a:[x]",
+         .exit = "zero -> {}"},
         {.what = "frame exit before a branch cannot release roots used by a later block",
          .body = enter + array + leave + "  cf.br ^next\n^next:\n" + root + done,
          .failure = ArrayContentsFailure::InvalidFrame},
@@ -2358,7 +2558,9 @@ void checkArrayFrames(mlir::MLIRContext & context) {
         mutation.failure = ArrayContentsFailure::None;
         check(*module, mutation);
         edge->setOperand(0, function.getBody().front().getArgument(3));
-        mutation.failure = ArrayContentsFailure::UnknownValue;
+        // The successor no longer uses this forwarded value after its old
+        // publication was erased. It remains opaque, never a known root.
+        mutation.failure = ArrayContentsFailure::None;
         check(*module, mutation);
         edge->setOperand(0, value);
         mutation.failure = ArrayContentsFailure::None;
@@ -2467,13 +2669,15 @@ void checkArrayConditionals(mlir::MLIRContext & context) {
                               "  %read = ctjs.get_property %a[%one]\n"
                               "  ctjs.return %read\n",
                       .failure = ArrayContentsFailure::MissingElement}},
-        {.contents = {.what = "unknown unused values on either edge cannot disappear at a join",
+        {.contents = {.what = "an unused opaque alternative stays separate from local join values",
                       .body = array +
                               "  cf.cond_br %condition, ^join(%a : !ctjs.value), "
                               "^join(%p : !ctjs.value)\n"
                               "^join(%unused: !ctjs.value):\n" +
                               done,
-                      .failure = ArrayContentsFailure::UnknownValue}},
+                      .arrays = "a:[x] | a:[x]",
+                      .exit = "zero -> {}; zero -> {}"},
+         .discharged = "x"},
         {.contents = {.what = "truthy observes an external predicate without proving its contents",
                       .body =
                           array + split + "  ctjs.append %p to %a\n" + done + "^right:\n" + done,
@@ -2797,13 +3001,15 @@ void checkContainerSwitches(mlir::MLIRContext & context) {
                       .arrays = "a:[x] | a:[zero] | a:[x]",
                       .exit = "zero -> {}; zero -> {}; zero -> {}"},
          .acyclicWrites = false},
-        {.contents = {.what = "switch case operands cannot discard an unused external alternative",
+        {.contents = {.what = "switch forwarding retains an unused opaque alternative separately",
                       .body = array +
                               "  cf.switch %flag : i1, [default: ^join(%a : !ctjs.value), "
                               "0: ^join(%x : !ctjs.value), 1: ^join(%p : !ctjs.value)]\n"
                               "^join(%unused: !ctjs.value):\n" +
                               done,
-                      .failure = ArrayContentsFailure::UnknownValue}},
+                      .arrays = "a:[x] | a:[x] | a:[x]",
+                      .exit = "zero -> {}; zero -> {}; zero -> {}"},
+         .discharged = "x"},
         {.contents = {.what = "the last switch path cannot borrow an earlier path's appended slot",
                       .body = array + split +
                               "  ctjs.append %y to %a\n  cf.br ^join\n"
@@ -3060,6 +3266,7 @@ int main() {
     checkObjectContents(context);
     checkObjectDeletions(context);
     checkObjectCopies(context);
+    checkOpaqueEntryTransport(context);
     checkArrayFrames(context);
     checkArrayConditionals(context);
     checkContainerSwitches(context);

@@ -676,3 +676,62 @@ Comparison/Boolean selector producers for source switches are a separate
 increment. Both need refusal and budget controls before dynamic source claims
 can improve. No runtime behavior, production analysis or native ownership
 admission changes in this source-only increment.
+
+## Opaque entry-register transport
+
+The interrupted `codex-escape-predicate-transport` thread from the
+2026-09-08 **11:17:14** synchronization journal is resumed here. It left clean
+files and was explicitly abandoned by the **11:17:55** loop journal. The
+preceding source-only checkpoint identified unused raw parameter registers as
+the next boundary; this increment changes the complete contents query.
+
+Every entry `!ctjs.value` receives an opaque identity in a separate map.
+`cf.br`, `cf.cond_br` and `cf.switch` successor operands may carry that exact
+identity through any number of acyclic register vectors. The existing total,
+noncapturing `ctjs.truthy` may observe it. Known constants, local allocation
+identities, loaded origins and the active frame remain in the original map.
+Each structural path keeps both maps independently, so a local/opaque join
+cannot lend the local alternative's contents to the opaque one.
+
+Opaque entries never become initialized array elements, object fields, roots,
+return values, property keys, array indices or copy endpoints. Unknown effects,
+calls and publication still refuse the whole result, even when their only
+operand is opaque. Unknown producer operations cannot create transport
+evidence. Non-`!ctjs.value` entry arguments remain unproved, preserving the
+selector-origin controls. No new comparisons, Boolean conversions or source
+switch producers are admitted. Every failure discards all earlier proof
+records and preserves the original escape verdicts.
+
+The work limit charges every entry-argument visit, forwarded operand and
+opaque-map snapshot entry. The devbox unit suite passes **nineteen rows**,
+**eight live mutation states** with forged markers, and a wide snapshot whose
+32 extra unused entry arguments must cost exactly 64 additional work units:
+one seed and one snapshot visit per argument. Every row and live state sweeps
+all incomplete contents and retention budgets plus the exact endpoint. Three
+historical unused-forwarding rows now expect complete contents; their source
+graphs and all other historical rows remain. All **664 incomplete retention
+budgets** pass. Existing path-explosion controls also exercise the additional
+opaque-state charges.
+
+The executed source fixture keeps its four copy-path functions, eight calls,
+and existing observations. Its conditional-alias replacement now receives
+a `Confined` claim after replacement and deletion on either selected target;
+the old child still stays `Stored` because the other object retains it.
+Conditional-source children retain their existing path-dependent escape
+claims. Real source-switch claims remain conservative. Measured precision on
+the unchanged fixture improves **34/47 -> 35/47**, with zero partial or pending
+claims. Exact source-coordinate checks retain **21 sites, 39 instances and
+23 retained instances**. All four execution oracles report zero violations;
+Bootstrap/p5/Phaser precision remains **0/64, 0/16, 0/20**, including p5's
+existing single partial observation. This is one fixture-site precision gain;
+the corpus precision counts do not improve.
+
+All **eight escape CTests pass** in `/tmp/ctcompile-nullable-focused.log`.
+The larger twelve-test run has two unrelated new host-test failures that the
+parent session is fixing; this does not claim a complete focused or full gate.
+Homebrew clang-format **22.1.8** passes all **745 files** in the frozen input.
+Node syntax, the eight-call copy-path observations, four identity assertions,
+eight discriminating mutations and whitespace checks also pass. The parent
+session owns the remaining serialized gates and commit. No runtime behavior
+or native ownership admission changes. Comparison/Boolean selector producers
+for real source switches remain the next bounded escape proof.

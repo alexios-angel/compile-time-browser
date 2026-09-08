@@ -372,13 +372,14 @@ if(STRICT)
   endif()
   message(STATUS "imported object copy: ten sites, ten instances, five retained; live claims agree")
 
-  # Dynamic flags still carry unknown raw parameter registers and real source
-  # switches include unsupported comparisons. Preserve their conservative
-  # claims while checking every observed path and returned graph. The literal
-  # conditional is a complete-contents precision control: its old child dies.
+  # Dynamic flags carry opaque raw parameter identities separately from known
+  # contents. Only the alias case's deleted replacement gains confinement;
+  # the other object's child stays retained on both calls. Source switches
+  # retain unsupported comparisons and their existing conservative claims.
+  # The literal conditional independently checks its old child's confinement.
   set(_expected_object_copy_path_rows
       "objectFrameCopiedConditionalAlias 2 0 2 0 0 temporaries:2 escapes:stored"
-      "objectFrameCopiedConditionalAlias 2 2 0 0 0 - escapes:stored"
+      "objectFrameCopiedConditionalAlias 2 2 0 0 0 - confined"
       "objectFrameCopiedConditionalAlias 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameCopiedConditionalAlias 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameCopiedConditionalAlias 2 0 2 0 0 temporaries:2 escapes:returned"
