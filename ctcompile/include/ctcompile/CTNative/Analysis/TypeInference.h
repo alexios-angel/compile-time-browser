@@ -41,6 +41,7 @@
 #include "mlir/IR/Value.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
@@ -250,6 +251,9 @@ private:
     // Owning object families share a scalar field schema, not runtime identity.
     llvm::DenseMap<std::pair<int64_t, llvm::StringRef>, llvm::SmallVector<mlir::Value, 2>>
         identityFieldStores_;
+    // Fresh bounded per-read facts, reconstructed from this immutable module
+    // at initialize(), independently of schema groups and host reports.
+    llvm::DenseSet<mlir::Operation *> assignedIdentityFields_;
     /// PHASE 59 SLICE 2 STEP 3, THE FIELD HALF: the same key, indexed by the
     /// STORE'S OWN object value and holding the `ctjs.set_property` OPERATIONS
     /// rather than the values they wrote.
@@ -320,6 +324,8 @@ private:
     ///
     /// THE SEED IS ALL THIS DROPS. The join itself stays over the whole group:
     /// what the field may HOLD is still everything anyone ever stored in it.
+    /// Owning identity fields use the separate live allocation/Map-alias query
+    /// cached in initialize(); the schema group supplies no ordering evidence.
     bool fieldIsAssignedBefore(mlir::Value object, llvm::StringRef key, mlir::Operation * read);
 
     /// The type a carried binding holds: the join over its initial and every

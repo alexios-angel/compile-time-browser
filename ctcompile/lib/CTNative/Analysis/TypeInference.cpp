@@ -284,6 +284,7 @@ mlir::Type TypeInference::elementTypeOf(mlir::Operation * op, mlir::Value array)
 // for each are in TypeInference.h; this is the query.
 bool TypeInference::fieldIsAssignedBefore(mlir::Value object, llvm::StringRef key,
                                           mlir::Operation * read) {
+    if (nativeObjectFieldGroup(read) >= 0) { return assignedIdentityFields_.contains(read); }
     const auto sites = fieldStoreSites_.find({object, key});
     if (sites == fieldStoreSites_.end()) { return false; }
     auto * owner = read->getParentOfType<ctjs::FuncOp>().getOperation();
@@ -371,6 +372,7 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
     globalsAreDynamic_ = false;
     fieldStores_.clear();
     identityFieldStores_.clear();
+    assignedIdentityFields_.clear();
     fieldStoreSites_.clear();
     appends_.clear();
     cellStores_.clear();
@@ -431,6 +433,11 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
         }
         for (mlir::Value member : group->second) {
             fieldStores_[{member, key}].push_back(store.getValue());
+        }
+    });
+    top->walk([&](ctjs::GetPropertyOp read) {
+        if (nativeObjectFieldGroup(read) >= 0 && queryNativeObjectFieldPresence(read).assigned) {
+            assignedIdentityFields_.insert(read);
         }
     });
     // THE APPENDS INDEX, beside fieldStores_ and for the same reason: an
@@ -743,9 +750,12 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         const int64_t identityGroup = nativeObjectFieldGroup(op);
         if (identityGroup >= 0) {
             fieldKnown = true;
-            // A schema group can contain distinct allocations and missing
-            // fields. Never infer presence from a store on another alias/site.
-            field = absentType(c);
+            // The schema joins all stored value types, including explicit
+            // Undefined. Only an independent live per-read allocation and
+            // initialization proof can remove implicit field absence.
+            field = fieldIsAssignedBefore(get.getObject(), constantKey(get.getKey()), op)
+                        ? mlir::Type{}
+                        : absentType(c);
             const auto stores =
                 identityFieldStores_.find({identityGroup, constantKey(get.getKey())});
             if (stores != identityFieldStores_.end()) {
@@ -757,6 +767,10 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                     }
                 }
             }
+            // With absence proved impossible, stored-value lattices may all
+            // still be pending. Subscriptions above revisit this read; boxed
+            // here would irreversibly absorb the eventual scalar type.
+            if (field == nullptr) { return mlir::success(); }
         } else if (hasClosedShape(get.getObject())) {
             const llvm::StringRef key = constantKey(get.getKey());
             fieldKnown = true;
