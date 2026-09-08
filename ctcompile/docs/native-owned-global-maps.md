@@ -52,9 +52,19 @@ body/effect/use census publishes a result tag: `size` is numeric, `has`/`delete`
 are boolean, and literal or typed-formal returns retain their category. A
 consumer declared before its producer waits for a later worklist pass. No
 optimistic tag seeds a circular dependency, and no recursive `propertyCall`
-query supplies authority. `Map.get` remains untagged here: primitive contents
-alone do not establish a definite result type or presence. Unique initialized
-global actuals are checked against the full initialization proof.
+query supplies authority. A `Map.get` can now retain the last local `set`'s
+independent payload tag when its key is the same SSA value or equal primitive
+constant. Each invocation starts with unknown contents. Every later `set`
+replaces the fact; a delete clears it, including a delete with another key.
+The bounded proof deliberately forgets an earlier key after any later write.
+Only the complete method body and use census publishes its result tag.
+Unique initialized global actuals are checked against the full initialization proof.
+
+Native Map preparation separately rederives presence for these live published
+reads using its existing instance/key analysis. A proved read uses the Map's
+inferred payload type and `map_get_present`; other reads remain nullable.
+The host result tag supplies neither the Map schema nor presence annotations.
+Every source Map lookup, producing call and consuming argument remains runtime.
 
 This is an ownership/effects proof. Native admission must still prove supported
 key, value and result carriers; the gate uses numeric values and numeric, string
@@ -88,7 +98,40 @@ by value. Native output links neither the interpreter nor the collector. Escape
 analysis still reports global publication as `StoredGlobal`; general global
 loads remain external. The new owner does not require a weaker escape verdict.
 
-## Measured result gate, 2026-09-07
+## Measured seeded-result gate, 2026-09-07
+
+Commit `b2466a0` advances the seeded producer below from **0/5 to 5/5 native**,
+retaining Node/interpreter `trace=1`:
+
+```js
+get() { state.set(0, 1); return state.get(0); }
+// The entry retains host.slot.set(host.slot.get()) and the final getter.
+```
+
+The gate passes **40 complete native programs**: fifteen **4/4**, nineteen
+**5/5**, and six **6/6**, in explicit/deduced GCC and Clang forms. Five new
+producer cases cover the seed, repeated calls, overwrite, a runtime key and
+distinct formal actuals. The previously nullable-key specimen is now **4/4**:
+its local write independently proves the later lookup before using its result
+as a key. The sixth lifetime variant seeds from the current Map size and reads
+the new value after every call. Saved and fresh callables retain independent
+Maps through 1024 further invocations each, then free them; both forms pass
+ASan/UBSan, use-after-scope/return and leak checks.
+
+Seven new contents/presence refusals preserve every source call. Three further
+cases establish complete host ownership but refuse unsupported string, boolean
+or mixed Map payload carriers. Missing intrinsic identity, stale/fresh forged
+presence, reruns and work limits cannot bypass the live proofs.
+Source/prepared host proofs complete at **2075/2153** steps; the owner proofs
+complete at **5016/4899**. Every smaller budget withholds the complete family.
+The seeded native specimen first completes at **5558**, with **30** checked
+cutoffs; no natural speculative rollback interval is reached.
+
+The integrated focused gate passes **7/7 CTests in 18.26 seconds**, followed
+by the complete program/lifetime gate. Log: `/tmp/ctcompile-map-presence-integrated.log`.
+The full generated gate is recorded in [HANDOFF.md](HANDOFF.md).
+
+## Preceding result gate, 2026-09-07
 
 Commit `c18b94b` passes **34 complete native programs**: fourteen **4/4**,
 fifteen **5/5**, and five **6/6**, matching Node, the interpreter, and standalone
@@ -212,21 +255,17 @@ devbox build passes **475/475 CTests** in **652.00 seconds**, including
 
 ## Next boundary
 
-The retained `result_seeded_map_get` replaces the getter with
-`get() { state.set(0, 1); return state.get(0); }` and still calls
-`host.slot.set(host.slot.get())`. It remains **0/5 native**, retaining every
-source call, with fresh Node/interpreter `trace=1` and no owner proof. Its producer needs independent contents, presence and result-type
-evidence before the consuming formal can be admitted. The unseeded
-`get() { return state.get(0); }` stays refused too. Never infer a definite tag
-from the first observed invocation or from an incomplete family. Current-call
-proofs alone cannot authorize arbitrary future external arguments or establish
-an export ABI.
+The retained `seeded_earlier_key` adds `state.set(1, 2)` before the producer's
+`return state.get(0)`. It remains **0/5 native** with every source call intact:
+the last-write proof forgets key 0. The next contents increment needs bounded
+per-key facts and independent key-disjointness evidence, conservatively
+invalidating possibly aliasing writes and deletes. The unseeded
+`get() { return state.get(0); }` remains refused. Neither an earlier observed
+invocation nor an incomplete family establishes the result.
 
-Separately, `state.get(1)` used as a later key still infers a nullable numeric
-key, even after a local `set(1, 3)`. Its numeric observation is `trace=1` in both
-references, but native admission remains **0/4** with complete ownership and a
-named unsupported-carrier refusal. It needs presence/type evidence, not a
-weaker ownership check.
+String, boolean and mixed Map payload carriers remain separate **0/6**
+boundaries even after complete host proofs. Current-call proofs cannot authorize
+arbitrary future external arguments or establish an export ABI.
 
 Future external callers, a typed export ABI, mutable publication slots,
 general realm owners, reentry and throwing provider effects remain separate

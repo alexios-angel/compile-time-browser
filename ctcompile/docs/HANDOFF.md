@@ -6,7 +6,86 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Current Map-result and invocation-effects checkpoint, 2026-09-07
+## Current seeded-Map, contents and source-binding checkpoint, 2026-09-07
+
+Saved locally on `ctcompile-v1`: **`6986611`** (complete bounded local array
+contents), **`b2466a0`** (seeded Map.get results across published calls), and
+**`e4b2d5f`** (live source callee bindings before invocation recovery). The main
+native boundary and three disjoint agent workstreams were integrated. Two agents
+hit service limits after implementation; their work was retained and validated.
+No browser files were changed and no push was performed.
+
+The [published Map boundary](native-owned-global-maps.md) now accepts
+`get() { state.set(0, 1); return state.get(0); }` as the producer in
+`host.slot.set(host.slot.get())`, advancing **0/5 -> 5/5 native** with
+Node/interpreter `trace=1`. Each invocation begins with unknown contents. A
+bounded last-write fact connects an exact SSA/equal constant key to the payload's
+independently proved primitive tag. A later set replaces the fact; delete clears
+it. The complete body/use proof must finish before publishing a result tag.
+Native Map preparation separately proves instance/key presence and infers the
+whole Map schema. No lookup or call is evaluated away.
+
+The gate passes **40 complete native programs**: fifteen **4/4**, nineteen
+**5/5**, six **6/6**, matching Node/interpreter and explicit/deduced GCC/Clang
+execution with no linked interpreter symbols. Five new producer variants cover
+seeded reads, repetition, overwrites, growing runtime keys and distinct formal
+actuals. The old seeded local nullable-key boundary also advances **0/4 -> 4/4**.
+All **six lifetime variants** pass ASan/UBSan, use-after-scope/return and leak
+checks; the new growing getter exercises independent saved/fresh Maps through
+1024 further calls each. Seven new presence refusals retain all source calls;
+three carrier refusals keep complete ownership but reject string/boolean/mixed
+Map payloads. Fresh forged presence markers cannot authorize a result.
+
+Focused validation passes **7/7 CTests in 18.26 seconds**, then all forty native
+programs/lifetime variants. Log: `/tmp/ctcompile-map-presence-integrated.log`.
+The seeded source/prepared host proofs check every incomplete budget at
+**2075/2153** steps; source/prepared owner proofs at **5016/4899**. First native
+completion is **5558**, with **30** cutoffs and no natural speculative rollback
+interval. This does not claim a performance improvement.
+
+The separate [array contents prerequisite](escape-load-evidence.md) recomputes
+exact own elements/read origins/overwrites and return reachability for fresh
+local arrays in one straight-line block. It follows loaded array aliases and
+bounded cycles without choosing an owner. Unknown values, holes, calls, throws,
+publication, prototypes and control flow refuse with no proof records.
+**31 contents rows, 14 index controls and seven live mutation states** pass,
+including every incomplete budget, alongside the unchanged **209 escape rows**
+and all four zero-violation execution oracles. No escape verdict, type lattice
+or native admission consumes this new query yet.
+
+The [source invocation prerequisite](native-source-invocations.md) now proves
+initialized immutable source callee bindings before dropping their status edges
+in `EffectCheckedInvocations`. It checks all current declarations, loads, uses,
+call identities and module effects; bounded leaf completion facts preserve
+primitive payload and argument state. The three source cases recover
+**1/2/1 invokes** with **7/10/9 original checks** available for rollback, at
+**3521/6068/4875 steps**. All **3521** assignment-budget prefixes, **937**
+effect-budget prefixes, nineteen live binding mutations and uncalled-throw
+controls pass. Focused CTests pass **2/2 in 130.38 seconds**, including
+**163/163 lit cases**; log: `/tmp/ctcompile-map-presence-invocations.log`.
+Ordinary native throwing-call admission remains unchanged.
+
+The full frozen generated build/CTest gate is running. Its compiler bytes match
+the committed implementation. Browser bytes are committed `9b6c0d4` baseline
+content (unchanged since `7a755dd`), excluding Claude's unmerged WPT branch and
+ten browser carryover paths. Compiler formatting passes; the whole-tree check
+flags only untouched browser `style/selector.hpp`, `DOM/document.cpp` and
+`Style/css/selector.cpp`. Full results and fresh corpus/boundary measurements
+will replace this pending paragraph after completion.
+
+**Exact next native boundary:** `seeded_earlier_key` inserts
+`state.set(1, 2)` before the producer's `return state.get(0)`. The source gate
+retains every call and refuses **0/5 native** because the last-write fact forgets
+key 0. Extend to bounded per-key contents with independent key-disjointness
+proofs and conservative invalidation for possibly aliasing writes/deletes.
+Unseeded gets remain refused; string/boolean/mixed Map payload carriers remain
+separate **0/6** boundaries despite complete host proofs. Full Bootstrap Data,
+realm ownership and future external callers remain unfinished. Source invocation
+integration next needs complete native call-component admission and owning
+payload/state emission. The array query needs supported exposure/indirect
+retention consumers before it can change escape verdicts.
+
+## Preceding Map-result and invocation-effects checkpoint, 2026-09-07
 
 Saved locally on `ctcompile-v1`: **`0977572`** (live invocation effect validation)
 and **`c18b94b`** (published Map arguments from independent call results). Main

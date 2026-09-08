@@ -139,17 +139,28 @@ authority. All calls, publication and mutations remain runtime operations.
 The gate now passes **34 complete programs**, including nine result variants,
 and all five existing lifetime variants; see [the Map gate](native-owned-global-maps.md).
 
-## Next: definite Map.get results across the method boundary
+## Completed: locally seeded Map.get results
 
 The retained `result_seeded_map_get` uses
 `get() { state.set(0, 1); return state.get(0); }` with the same `set(get())`
-entry. It remains **0/5 native**, with source calls intact and fresh
-Node/interpreter `trace=1`. Closing primitive contents does not yet prove this result's presence and definite tag; provide
-live evidence for both before classifying the consuming parameter. The
-unseeded `Map.get` result stays refused. Nullable `Map.get` keys within one
-method remain a separate **0/4** carrier boundary. Exact Bootstrap Data remains
-**0/7** per mode; complete native
-initialization, realm owners and future-call contracts remain unfinished.
+entry. Commit `b2466a0` advances it **0/5 -> 5/5 native**, retaining
+Node/interpreter `trace=1` and every runtime call. A bounded local last-write
+fact supplies an independent result tag only after the complete method proof;
+native Map preparation separately proves instance/key presence and the schema.
+The seeded lookup used as a later key in one method also advances **0/4 -> 4/4**.
+The gate passes forty complete programs and six sanitizer lifetime variants.
+
+## Next: retain separate live Map entries
+
+`seeded_earlier_key` inserts `state.set(1, 2)` before `return state.get(0)`.
+It remains **0/5 native**: the local last-write fact deliberately forgets key 0.
+Extend to bounded per-key contents with independent key equality/disjointness
+and mutation effects. Possibly aliasing writes must invalidate earlier tags;
+prior invocation observations do not prove current contents. Unseeded gets
+remain refused. String/boolean/mixed Map payloads remain separate carrier
+boundaries at **0/6** despite completed host proofs. Exact Bootstrap Data stays
+**0/7** per mode; complete native initialization, realm owners and future-call
+contracts remain unfinished.
 
 Exceptions do not make a callback or allocation inert. Native try/catch covers
 one acyclic handler with homogeneous number, boolean or owning string throws
@@ -164,18 +175,20 @@ constructs those regions and connects the two completions to the enclosing try
 through a value-only tuple, retaining pre-call state on unwind. The default
 mode and all native throwing-call refusals remain. An additional
 `EffectCheckedInvocations` mode validates other status and continuation effects
-before adopting the recovered clone. It refuses source global callee lookups
-until their initialized, immutable binding and getter-free access are proved;
-normal result types cannot discharge those effects. Its focused gate passes
-all 924 incomplete work budgets and thirteen live effect mutations. Admission
-still needs these source binding proofs and the complete call component;
-target emission must consume the accepted invokes. Throwing callees, general
+before adopting the recovered clone. Commit `e4b2d5f` proves source global
+callee lookups from the complete live declaration/store/use and effect census,
+with separate bounded primitive completion facts. The three direct-call source
+specimens now recover in this internal mode, preserving assignment and argument
+state. The focused gate passes all 3521 source-binding budget cutoffs and 937
+effect cutoffs, nineteen live binding mutations and uncalled-throw controls.
+Native admission still needs the complete call component; target emission must
+consume the accepted invokes. Native throwing callees, general
 finally, reentry and object payloads require
 further work. The [source invocation gate](native-source-invocations.md) now
 retains four source programs, sixteen functions and eleven observations for
 assignment snapshots, prior normal calls, argument mutation and receiver/key/
 getter/argument order. All source throwing calls still refuse native lowering;
-the document identifies the required enclosing-try completion connection.
+the document identifies the remaining admission and emission obligations.
 Normal-return provider facts cannot authorize an exceptional continuation.
 
 Retain the eleven scenarios in
