@@ -126,6 +126,18 @@ A saved read keeps its own scalar tag after known mutations; branches intersect
 these SSA facts separately from entry contents. Unknown values never gain a tag
 from the Map schema, another invocation or input annotations.
 
+Commit `53b44b9` also propagates a scalar tag through `scf.if` results when both
+yielded values independently prove the same tag. The initial candidate census
+recognizes selected saved reads before monotone inference, but supplies no
+payload proof itself. Differing or missing arm results remain refused. Published
+captured Map methods now have a bounded structured body proof that checks every
+arm, including constant predicates and an implicit unchanged `else` path.
+The local mixed gate covers **27 observations and twelve refusals** across both
+storage implementations; the published gate covers **89 complete programs**
+and **ten lifetime sanitizer variants**. The next `has`-guarded read after
+conditional deletion needs separate membership and payload evidence; see
+[the current boundary](native-owned-global-maps.md#next-boundary).
+
 The read returns its exact scalar by value, preserving saved string ownership.
 Local read/write candidates must belong to the same proved Map family; arbitrary
 parameters remain excluded. Every stored alternative still participates in schema

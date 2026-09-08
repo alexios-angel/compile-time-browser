@@ -6,6 +6,84 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Conditional Map values and object-deletion checkpoint, 2026-09-08
+
+Saved locally on `ctcompile-v1`: **`53b44b9`**, saved scalar Map values across
+conditionals, and **`55be8e9`**, fixed own-field deletion contents and retention.
+This resumes `saved_join` from **`7a4ebf9`** and the **08:16:09 synchronization
+journal**. The tree started clean. Interrupted CallDirectOp recovery was already
+landed in `5307abf`; its old branch is an ancestor. No history was rewritten,
+browser source changed or push performed. Separate agents supplied execution
+checks, escape analysis and a host-proof audit with unit controls.
+
+The exact conditional specimen advances **0/6 -> 6/6 native** in both optimization
+modes, retaining all **sixteen calls** and Node/interpreter **`trace=3`**. The
+always-empty straight-line control gives **2**. Both arms of each captured-method
+`scf.if` are checked, including literal predicates. Mutable Map contents
+intersect across arms; saved scalar results get a tag only when both yields
+independently prove the same type. Zero-result conditionals include the implicit
+unchanged path. Publication and factory execution remain unconditional, raw
+multi-block bodies remain refused, and nesting is bounded to 32 levels.
+
+The host proof lives in `HostContract/CapturedMapBody.cpp`. Native preparation
+recognizes selected saved-read candidates before monotone inference, while
+independent presence/payload analysis supplies the actual type. The census
+alone authorizes no scalar fact. Missing results, differing tags, unknown
+actuals and input annotations remain insufficient.
+
+The published gate passes **89 complete programs**, including six conditional
+programs, four new missing/deleted/mixed-tag refusals and **ten lifetime sanitizer
+variants**. It checks both optimization modes, GCC/Clang explicit/deduced C++,
+all original calls and mutation observations. A long String case calls only
+`false` during startup; saved C++ callables later use both flags, preserve two
+independent strings across overwritten/deleted entries and final Map release,
+and survive independent reentry. First complete budgets for the four new probes
+are **17934/18476/18476/10166**, with **32/31/31/31** cutoffs and no natural
+speculative rollback interval. Log: `/tmp/ctcompile-conditional-native.log`.
+
+The local mixed-Map gate passes **27 observations and twelve refusals** under
+both storage layouts, Node/interpreter, GCC/Clang and ASan/UBSan. All **seven
+targeted lit cases pass in 28.11 seconds**. Host units pass **25 conditional rows
+per source/prepared form**, every **2501/2626** incomplete budget, exact endpoints
+and live forged-marker edits. The final host CTest passes in **3.22 seconds**.
+Logs: `/tmp/ctcompile-conditional-checkpoint3.log` and
+`/tmp/ctcompile-conditional-boundary.json`. The expanded local gate first exposed
+a missing selected-value candidate; its implementation is included in `53b44b9`.
+A mixed-tag write is rejected before the read, and its test checks that exact
+stage. No native program names Script symbols or an interpreter context.
+
+The parallel contents proof handles exact own String-field deletion on fresh
+objects, preserving saved reads and every historical cycle edge. It passes
+**30 deletion rows, eighteen key controls, fourteen live states, one missing-lattice
+control and 1663 retention cutoffs**. Three executed functions add five sites and
+two retained instances; the deleted self-cycle remains `Stored`. All four
+execution oracles report zero violations. Expanded-fixture precision is **24/36**;
+Bootstrap/p5/Phaser remain **0/64, 0/16, 0/20**. Combined focused CTest passes
+**12/12 in 29.32 seconds**. This changes no native ownership admission.
+
+Homebrew clang-format **22.1.8** passes **743 files** and whitespace checks pass.
+The full generated devbox build succeeds; the **517-test full gate is running**
+at `/tmp/ctcompile-conditional-full.log`. Its browser phase has only the five
+recorded `selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`
+failures. Final compiler totals and fresh corpus counts are still pending at
+this checkpoint; the previous component counts were 19/574 Bootstrap, 39/4754 p5
+and 45/7725 Phaser. Complete native Bootstrap initialization remains unfinished.
+
+**Exact next boundary:** after seeding `'' -> ''` and `'other' -> 'future'`, run
+`if (flag) state.delete('other');`, then select the saved value with
+`state.has('other') ? state.get('other') : state.get('')` and keep the existing
+write/read/delete chain. The two standalone `set(get(false))`, `set(get(true))`
+calls followed by `size()` give Node/interpreter **2**, but native remains **0/6**
+in both modes with **all eighteen calls retained** and no host owner proof.
+Replacing the conditional deletion with `state.has('other')` gives **3** and
+admits **6/6**. Source: `/tmp/ctcompile-conditional-next/guarded_saved_read.js`
+on the devbox. A constant-false ternary still checks its missing arm and is also
+refused; it is not a straight-line getter control. The next proof needs live
+`has`-guard membership plus a payload tag valid whenever that key is present,
+retained across deletion joins. Membership alone cannot establish that tag.
+Nullable results (`result || null`) and object identity payloads separately remain
+**0/6** with Node/interpreter **4** and **6**. Exact Bootstrap Data remains open.
+
 ## Saved Map read/write and switch-retention checkpoint, 2026-09-08
 
 Saved locally on `ctcompile-v1`: **`d9a4b04`**, independent scalar Map read/write

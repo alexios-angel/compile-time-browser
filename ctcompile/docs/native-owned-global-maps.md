@@ -486,18 +486,87 @@ succeeds, with **372/372 compiler CTests** and **165/165 lit cases** passing;
 overall **512/517** leaves only five existing browser failures. Final full-gate
 evidence is in [HANDOFF.md](HANDOFF.md).
 
+## Saved scalar values across conditionals, 2026-09-08
+
+Commit `53b44b9` advances `saved_join` from **0/6 to 6/6 native** in both modes,
+with Node/interpreter **`trace=3`** and all **sixteen calls preserved**. Its getter
+seeds two String entries, selects
+`flag ? state.get('other') : state.get('')`, then performs the saved
+write/read/delete chain. Replacing the selection with the empty String read
+gives **2** and remains **6/6**.
+
+`HostContract/CapturedMapBody.cpp` proves both arms of structured `scf.if`,
+including constant predicates and the implicit unchanged arm of a zero-result
+conditional without `else`. It intersects mutable contents and preserves a
+selected scalar tag only when both yields independently establish that tag.
+The owner census still checks every use and actual argument. Factory and
+publication execution remain unconditional; raw multi-block functions,
+unsupported effects, Map/callee yields and nesting beyond 32 levels refuse.
+Native preparation collects selected saved-read candidates before inference,
+but only independent presence/payload analysis establishes their scalar types.
+
+The gate passes **89 complete programs**, six new conditional programs, four
+missing/deleted/mixed-tag refusals and all **ten lifetime sanitizer variants**.
+It checks both optimization modes, GCC/Clang explicit/deduced output, forged
+markers, reruns and fifteen discriminating source changes. The long String
+case exercises only `false` during startup; the saved C++ getter later accepts
+both flags and returns owning strings after source overwrite/deletion and
+final Map release. Native budgets first complete at
+**17934/18476/18476/10166**, with **32/31/31/31** cutoffs checked.
+The local mixed gate passes **27 observations and twelve refusals** across both
+storage implementations, and all seven targeted lit cases pass in **28.11 s**.
+Host units cover **25 rows each in source and prepared forms**, all
+**2501/2626** incomplete budgets and live forged-marker edits. Logs:
+`/tmp/ctcompile-conditional-native.log` and
+`/tmp/ctcompile-conditional-checkpoint3.log`. Full results are in
+[HANDOFF.md](HANDOFF.md).
+
 ## Next boundary
 
-The next saved read crosses a conditional result: seed `''` with `''` and
-`'other'` with `'future'`, then select
-`flag ? state.get('other') : state.get('')` before the existing write/read/delete
-chain. Calling `set(get(false))` and `set(get(true))` yields Node/interpreter
-**`trace=3`**. It remains **0/6 native** in both modes with all **sixteen calls
-retained** and no host owner proof. Replacing the selection with `state.get('')`
-yields **2** and admits **6/6**. The host method body's live control-flow join
-needs proof before native scalar propagation can complete this case.
-Evidence: `/tmp/ctcompile-saved-boundary-final.json`; sources on the devbox:
-`/tmp/ctcompile-saved-next/saved_join.js` and `saved_join_always_empty.js`.
+The next getter conditionally deletes one seeded entry, then guards its read
+with `has`. This complete source retains the accepted publication shape:
+
+```js
+var host = {};
+(function(factory) {
+    host.slot = factory();
+})(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        get(flag) {
+            state.set('', '');
+            state.set('other', 'future');
+            if (flag) { state.delete('other'); }
+            const saved = state.has('other') ? state.get('other') : state.get('');
+            state.set(false, true);
+            state.set(false, saved);
+            const result = state.get(false);
+            state.delete(false);
+            return result;
+        },
+        set(key) { state.set(key, true); return state.size; }
+    };
+});
+host.slot.set(host.slot.get(false));
+host.slot.set(host.slot.get(true));
+var trace = host.slot.size();
+```
+
+Node/interpreter agree on **`trace=2`**. Both native modes remain **0/6** with
+**eighteen calls retained** and no host owner proof. Replacing the conditional
+deletion with `state.has('other')` gives **3** and admits **6/6**. Replacing only
+the ternary predicate with `false` gives **1** and still refuses: both arms must
+be proved, and the unused arm reads an entry that may have been deleted.
+Evidence: `/tmp/ctcompile-conditional-boundary.json`; source on the devbox:
+`/tmp/ctcompile-conditional-next/guarded_saved_read.js`.
+
+The next proof needs live `has`-guard membership and a payload tag valid whenever
+the key is present, preserved across the preceding deletion join. A membership
+fact alone cannot manufacture a payload type. Nullable saved results
+(`result || null`) and object identity payloads separately remain **0/6**, with
+Node/interpreter traces **4** and **6**. Keep observer calls as standalone
+statements; combining their results into arithmetic tests a separate boundary.
 The unseeded `get() { return state.get(0); }` also remains refused: neither an
 earlier observed invocation nor an incomplete family establishes its result.
 Raising the intentional size-witness cap does not address these barriers.

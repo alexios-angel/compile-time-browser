@@ -227,19 +227,34 @@ three missing/deleted refusals and all nine lifetime sanitizer variants.
 The local mixed gate passes 21 observations and ten refusals across both
 storage implementations. See [the Map checkpoint](native-owned-global-maps.md#saved-scalar-reads-through-writes-2026-09-08).
 
-## Next: a saved scalar selected across control flow
+## Completed: a saved scalar selected across control flow
 
-Seed two String entries, select a saved read with
-`flag ? state.get('other') : state.get('')`, then perform the proved
-write/read/delete chain. The fresh `saved_join` probe remains **0/6 native** in
-both modes, with all **sixteen calls retained** and no host owner proof.
-Node/interpreter agree on **`trace=3`** after `set(get(false))`, `set(get(true))`
-and `size()`. Replacing the selection with `state.get('')` yields **2** and
-admits **6/6**. Extend the live host method-body proof across that join before
-feeding independent scalar result facts into native preparation. Preserve all
-paths, operations, aliases, missing results and work-budget rollback; startup
-observations cannot authorize later callers.
-Evidence: `/tmp/ctcompile-saved-boundary-final.json`; exact sources are recorded in
+Commit `53b44b9` advances `saved_join` from **0/6 to 6/6 native** in both modes,
+with Node/interpreter **`trace=3`** and all **sixteen calls preserved**. The live
+host proof checks both structured conditional arms and intersects their mutable
+contents. A selected scalar gets a type only when both yielded values prove
+the same tag. Constant predicates cannot discard an arm. The gate passes
+**89 complete programs**, six new conditional programs, four new refusals and
+all **ten lifetime sanitizer variants**. Host units cover 25 conditional rows
+each in source/prepared form and all 2501/2626 incomplete budgets. The local
+mixed gate passes 27 observations and twelve refusals. See
+[the Map checkpoint](native-owned-global-maps.md#saved-scalar-values-across-conditionals-2026-09-08).
+
+## Next: a guarded saved read after conditional deletion
+
+Seed two String entries, conditionally delete `'other'`, then select
+`state.has('other') ? state.get('other') : state.get('')` before the saved
+write/read/delete chain. Node/interpreter give **`trace=2`** after the standalone
+`set(get(false))`, `set(get(true))` calls and `size()`. Both native modes remain
+**0/6**, with all **eighteen calls retained** and no host owner proof. Replacing
+the conditional deletion with `state.has('other')` gives **3** and admits **6/6**.
+
+Prove membership on the live `has` arm together with a payload tag valid whenever
+the key is present, including across the preceding deletion join. Membership
+alone cannot establish that tag. Preserve every arm, mutation, alias and budget
+rollback; startup observations cannot authorize later callers. Nullable saved
+results and object identity payloads are separate measured refusals.
+Evidence: `/tmp/ctcompile-conditional-boundary.json`; the complete source is in
 [the Map checkpoint](native-owned-global-maps.md#next-boundary).
 
 Exact Bootstrap Data, general realm owners and future-call contracts remain
