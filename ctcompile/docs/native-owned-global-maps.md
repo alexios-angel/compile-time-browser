@@ -473,7 +473,7 @@ key and returns the saved result. It remains **0/6 native** in both optimization
 modes with a complete host owner proof, **all 12 calls retained** and
 Node/interpreter **`trace=1`**. Replacing the saved write with `true` yields
 **`trace=2`**, while reading after deletion also yields **2** and loses the host
-result proof. Evidence: `/tmp/ctcompile-mixed-boundary.json`; reproducible source:
+result proof. Final evidence: `/tmp/ctcompile-mixed-boundary-final.json`; reproducible source:
 `/tmp/ctcompile-mixed-next/saved_read_write.js` on the devbox.
 The unseeded `get() { return state.get(0); }` also remains refused: neither an
 earlier observed invocation nor an incomplete family establishes its result.

@@ -17,6 +17,9 @@ rewritten, browser source changed or push performed.
 The parallel fixed own-property contents increment is saved as **`0a3000a`**.
 Two implementation agents and a separate audit supplied disjoint work; service
 interruptions were recovered before their results were integrated.
+Integration repairs are **`c0777fb`** (semantic Map tags remain usable by
+CTJS-only analysis callers) and **`2086c63`** (printing comparisons preserve
+genuine program headers).
 
 The three preceding `result_seeded_mixed_contents`, `result_seeded_join_reseed`
 and `result_seeded_bool_string_contents` probes advance **0/6 -> 6/6 native**,
@@ -42,11 +45,33 @@ Logs: `/tmp/ctcompile-mixed-native2.log`, `/tmp/ctcompile-mixed-checkpoint2.log`
 and `/tmp/ctcompile-mixed-lit-final.log`.
 
 The formatter passes **742 files** with Homebrew clang-format **22.1.8**.
-The final combined focused CTest gate passes **12/12 in 28.30 seconds**. All
-committed code/test paths byte-match the frozen snapshot. The full generated
-devbox build succeeds; the **517-test CTest gate is running** in
-`/tmp/ctcompile-mixed-full.log`. The previous complete baseline below remains
-**512/517** with five recorded browser failures.
+The final combined focused CTest gate passes **12/12 in 29.04 seconds**. All
+**29 changed code/test paths** byte-match committed and frozen input. The full
+**243-step generated devbox build succeeds**; CTest finishes **512/517 in
+832.07 seconds**, comprising **372/372 compiler** and **140/145 browser**.
+Only the same `selectors`, `frames`, `element_attrs`, `vm_async` and
+`early_errors` failures remain. All **165/165 lit cases** pass in **236.87
+seconds**, and exception recovery passes in **1.16 seconds**.
+Final log: `/tmp/ctcompile-mixed-full2.log`; extracted evidence:
+`/tmp/ctcompile-mixed-evidence.json`.
+
+The initial full run exposed native dialect loading in standalone binding-time
+and partial-evaluation callers. Payload proofs now retain semantic tags and
+create native types only during type inference. All seven failing cases and
+the new mixed test pass **8/8 in 10.02 seconds**, including valid forged tags.
+The printing gate removes only the include adjacent to the pin macro, retaining
+every genuine program include in its exact comparison. All **39/39 printing
+CTests** pass in **28.40 seconds**. Logs: `/tmp/ctcompile-mixed-fix.log` and
+`/tmp/ctcompile-print-gate.log`. The failed initial full run is retained as
+`/tmp/ctcompile-mixed-full.log`; it is superseded by the complete rerun above.
+
+Fresh native component coverage remains **19/574 Bootstrap**, **39/4754 p5**
+and **45/7725 Phaser** in both optimization modes, with zero pruned functions.
+Exact Data remains **0/7 browser**, **0/7 CommonJS**, **0/8 AMD**. Full native
+Bootstrap initialization remains unfinished. Final emitted C++ inspected at
+`/tmp/ctcompile-mixed-saved-string.cpp` copies a proved `std::string` from the
+finite variant, overwrites and deletes its source entry, then returns the
+owning saved value. No interpreter context, collector or Script symbols occur.
 
 **Exact next native boundary:** `saved_read_write` remains **0/6 native** in
 both optimization modes with complete host ownership, all **12 calls retained**
@@ -68,7 +93,7 @@ independent scalar facts through the saved read/write chain while retaining
 every mutation, alias invalidation and missing-result refusal. Replacing that
 write with `true` yields **2** and admits **6/6**; moving the second read after
 deletion also yields **2**, loses host result evidence and remains **0/6**.
-Evidence: `/tmp/ctcompile-mixed-boundary.json`; source on the devbox:
+Fresh final evidence: `/tmp/ctcompile-mixed-boundary-final.json`; source on the devbox:
 `/tmp/ctcompile-mixed-next/saved_read_write.js`.
 
 The independent contents query now tracks exact own String properties on fresh

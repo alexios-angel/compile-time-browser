@@ -225,7 +225,7 @@ and missing entries must continue to refuse. The fresh `saved_read_write`
 probe remains **0/6 native** in both modes with complete host ownership, all
 **12 calls retained** and Node/interpreter **`trace=1`**. Wrong-tag and
 deleted-result controls yield **2**. Evidence:
-`/tmp/ctcompile-mixed-boundary.json`; the exact source is recorded in
+`/tmp/ctcompile-mixed-boundary-final.json`; the exact source is recorded in
 [the Map checkpoint](native-owned-global-maps.md#next-boundary). Unseeded published
 reads still require result evidence across the complete call family; a recorded
 startup invocation cannot authorize later callers.

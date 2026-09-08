@@ -453,5 +453,8 @@ The final focused devbox gate passes **12/12 CTests in 28.30 seconds**, includin
 26 frame rows/444 cutoffs and 17 conditional rows/877 cutoffs with five
 path-explosion controls. All four execution oracles report zero violations.
 Fixture precision remains **22/33**; Bootstrap/p5/Phaser remains **0/64, 0/16,
-0/20**. Log: `/tmp/ctcompile-object-focused2.log`. The full generated gate is
-pending; its final result belongs in [HANDOFF.md](HANDOFF.md).
+0/20**. Log: `/tmp/ctcompile-object-focused2.log`. The complete generated rerun
+passes **372/372 compiler CTests**, including **165/165 lit cases**; overall
+**512/517** leaves only the five recorded browser failures. Final log:
+`/tmp/ctcompile-mixed-full2.log`; evidence: `/tmp/ctcompile-mixed-evidence.json`.
+The full checkpoint and next native boundary are in [HANDOFF.md](HANDOFF.md).
