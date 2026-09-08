@@ -291,9 +291,22 @@ void checkArrayContents(mlir::MLIRContext & context) {
          .arrays = "a:[x]",
          .reads = "a[0]=x",
          .exit = "zero -> {}"},
-        {.what = "contents refuses an actual successor even with exact local values",
+        {.what = "contents follows an unconditional successor with exact local values",
          .body = array + "  cf.br ^next\n^next:\n" + done,
+         .arrays = "a:[x]",
+         .exit = "zero -> {}"},
+        {.what = "contents refuses a structural join even when its second predecessor is dead",
+         .body = array + "  cf.br ^join\n^dead:\n  cf.br ^join\n^join:\n" + done,
          .failure = ArrayContentsFailure::UnsupportedControlFlow},
+        {.what = "contents refuses opaque successor semantics",
+         .body = array + "  \"test.branch\"()[^next] : () -> ()\n^next:\n" + done,
+         .failure = ArrayContentsFailure::UnsupportedControlFlow},
+        {.what = "contents refuses conditional flow even when truthy has a constant input",
+         .body = array +
+                 "  %condition = ctjs.truthy %zero\n"
+                 "  cf.cond_br %condition, ^left, ^right\n^left:\n" +
+                 done + "^right:\n" + done,
+         .failure = ArrayContentsFailure::UnsupportedOperation},
         {.what = "contents refuses a loop rather than collapsing repeated allocation instances",
          .body = "  cf.br ^loop\n^loop:\n  %a = ctjs.create_array []\n  cf.br ^loop\n",
          .failure = ArrayContentsFailure::UnsupportedControlFlow},
@@ -562,6 +575,17 @@ void checkArrayRetention(mlir::MLIRContext & context) {
         {.what = "a primitive loaded return cannot retain the overwritten object",
          .body = array + "  ctjs.set_property %a[%zero], %zero\n" + read + "  ctjs.return %read\n",
          .discharged = "x"},
+        {.what = "branch-carried saved reads retain the old child after a successor overwrite",
+         .body = array + read +
+                 "  cf.br ^next(%a, %read : !ctjs.value, !ctjs.value)\n"
+                 "^next(%base: !ctjs.value, %saved: !ctjs.value):\n"
+                 "  ctjs.set_property %base[%zero], %y\n  ctjs.return %saved\n",
+         .discharged = "y"},
+        {.what = "returning a successor-mutated array releases only its overwritten child",
+         .body = array + "  cf.br ^next(%a, %zero : !ctjs.value, !ctjs.value)\n"
+                         "^next(%base: !ctjs.value, %key: !ctjs.value):\n"
+                         "  ctjs.set_property %base[%key], %y\n  ctjs.return %base\n",
+         .discharged = "x"},
         {.what = "an unreturned self cycle does not select a shared graph owner",
          .body = array + "  ctjs.append %a to %a\n" + done,
          .complete = false},
@@ -688,6 +712,48 @@ void checkArrayFrames(mlir::MLIRContext & context) {
          .body = enter + array + leave + done,
          .arrays = "a:[x]",
          .exit = "zero -> {}"},
+        {.what = "a successor allocation still belongs to the entry's active frame",
+         .body = enter + "  cf.br ^next\n^next:\n" + array + root + leave + done,
+         .arrays = "a:[x]",
+         .exit = "zero -> {}"},
+        {.what = "a two-edge chain forwards the exact frame, array, loaded value and index",
+         .body = enter + array +
+                 "  cf.br ^next(%frame, %a, %zero : !ctjs.context, !ctjs.value, !ctjs.value)\n"
+                 "^next(%active: !ctjs.context, %base: !ctjs.value, %key: !ctjs.value):\n"
+                 "  %read = ctjs.get_property %base[%key]\n"
+                 "  ctjs.root %read in %active\n  ctjs.set_property %base[%key], %zero\n"
+                 "  cf.br ^exit(%read, %active : !ctjs.value, !ctjs.context)\n"
+                 "^exit(%saved: !ctjs.value, %closing: !ctjs.context):\n"
+                 "  ctjs.root %saved in %closing\n  ctjs.frame_exit %closing\n"
+                 "  ctjs.return %saved\n",
+         .arrays = "a:[zero]",
+         .reads = "a[0]=x",
+         .exit = "x -> {x}"},
+        {.what = "two forwarded aliases update one array even when block layout differs",
+         .body = enter + array + "  cf.br ^next(%a, %a : !ctjs.value, !ctjs.value)\n^exit:\n" +
+                 leave + done +
+                 "^next(%first: !ctjs.value, %second: !ctjs.value):\n"
+                 "  ctjs.append %x to %first\n  %read = ctjs.get_property %second[%zero]\n"
+                 "  ctjs.root %read in %frame\n  cf.br ^exit\n",
+         .arrays = "a:[x,x]",
+         .reads = "a[0]=x",
+         .exit = "zero -> {}"},
+        {.what = "an unknown forwarded value refuses even when its block argument is unused",
+         .body = enter + array +
+                 "  cf.br ^next(%p : !ctjs.value)\n"
+                 "^next(%unused: !ctjs.value):\n" +
+                 leave + done,
+         .failure = ArrayContentsFailure::UnknownValue},
+        {.what = "frame exit before a branch cannot release roots used by a later block",
+         .body = enter + array + leave + "  cf.br ^next\n^next:\n" + root + done,
+         .failure = ArrayContentsFailure::InvalidFrame},
+        {.what = "entry in a successor is too late for the frame-failure proof",
+         .body = "  cf.br ^next\n^next:\n" + enter + array + leave + done,
+         .failure = ArrayContentsFailure::InvalidFrame},
+        {.what = "a successor's late raw-frame capture invalidates the whole chain",
+         .body = enter + array + "  cf.br ^next\n^next:\n  %args = ctjs.make_arguments\n" + leave +
+                 done,
+         .failure = ArrayContentsFailure::UnsupportedOperation},
         {.what = "the imported unreachable default-return block keeps private children local",
          .body = enter + array + leave + done +
                  "^dead(%unused: !ctjs.value):\n"
@@ -709,7 +775,7 @@ void checkArrayFrames(mlir::MLIRContext & context) {
                  "  cf.br ^next\n^next:\n"
                  "  ctjs.store_global \"held\", %a\n" +
                  leave + done,
-         .failure = ArrayContentsFailure::UnsupportedControlFlow},
+         .failure = ArrayContentsFailure::UnsupportedOperation},
         {.what = "frame entry after an allocation cannot borrow the entry-failure proof",
          .body = array + enter + root + leave + done,
          .failure = ArrayContentsFailure::InvalidFrame},
@@ -814,11 +880,26 @@ void checkArrayFrames(mlir::MLIRContext & context) {
         const mlir::Value result = returned->getOperand(0);
         mlir::Block & dead = function.getBody().back();
         builder.setInsertionPoint(returned);
+        const mlir::Value argument = dead.addArgument(value.getType(), function.getLoc());
+        dead.front().setOperand(0, argument);
         auto edge =
-            mlir::cf::BranchOp::create(builder, function.getLoc(), &dead, mlir::ValueRange{});
+            mlir::cf::BranchOp::create(builder, function.getLoc(), &dead, mlir::ValueRange{value});
         returned->erase();
         exited->moveBefore(dead.getTerminator());
-        mutation.failure = ArrayContentsFailure::UnsupportedControlFlow;
+        mutation.failure = ArrayContentsFailure::UnsupportedOperation;
+        check(*module, mutation);
+        dead.front().erase();
+        mutation.failure = ArrayContentsFailure::None;
+        check(*module, mutation);
+        edge->setOperand(0, function.getBody().front().getArgument(3));
+        mutation.failure = ArrayContentsFailure::UnknownValue;
+        check(*module, mutation);
+        edge->setOperand(0, value);
+        mutation.failure = ArrayContentsFailure::None;
+        check(*module, mutation);
+        builder.setInsertionPointToStart(&dead);
+        ctjs::StoreGlobalOp::create(builder, function.getLoc(), "held", argument);
+        mutation.failure = ArrayContentsFailure::UnsupportedOperation;
         check(*module, mutation);
         builder.setInsertionPoint(edge);
         auto restored = ctjs::ReturnOp::create(builder, function.getLoc(), result);
@@ -830,7 +911,7 @@ void checkArrayFrames(mlir::MLIRContext & context) {
         fail(row{.what = mutation.what, .body = mutation.body, .expected = ""},
              "the live frame mutation fixture did not parse");
     }
-    std::printf("array frames: %zu rows, eight live states, %zu retention budget cutoffs\n",
+    std::printf("array frames: %zu rows, twelve live states, %zu retention budget cutoffs\n",
                 rows.size(), budgets);
 }
 

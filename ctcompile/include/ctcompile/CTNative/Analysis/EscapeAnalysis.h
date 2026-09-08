@@ -371,21 +371,23 @@ struct ArrayContentsEvidence {
     bool complete = false;
     ArrayContentsFailure failure = ArrayContentsFailure::None;
     mlir::Operation * refusedBy = nullptr;
-    /// Operation, initializer-element and exit graph visits. Key parsing is
-    /// bounded to one number or at most ten canonical decimal digits.
+    /// Operation, forwarded-argument, initializer-element and exit graph
+    /// visits. Key parsing examines one number or ten canonical decimal digits.
     std::size_t work = 0;
 };
 
 /// Recompute from the CURRENT verified IR; needs neither trusted annotations
-/// nor alias lattices. The supported entry block has constants, fresh
-/// property-free objects/arrays, literal append, initialized constant-index
+/// nor alias lattices. An entry and unconditional branch chain may contain
+/// constants, fresh property-free objects/arrays, literal append, constant-index
 /// array reads/overwrites and return. Loaded array aliases share one
 /// contents state; cycles are visited once at exits. Unknown values/indices,
 /// holes, calls, throws, publication, regions, prototypes and accessors refuse.
-/// No entry operation may have successors, so every other block is proved
-/// unreachable independently of solver flags and contributes no records.
+/// Only cf.br with a single predecessor per target and exact forwarded values
+/// is supported. Repeated blocks, joins and other branches refuse. A final
+/// return proves all unvisited blocks unreachable independently of solver flags.
 /// An optional imported frame must enter first and exit immediately before
 /// return; roots name that active frame and an independently known value.
+/// Checked branch arguments may forward the same frame handle.
 /// Entry failure precedes every tracked allocation, not a nonthrowing claim.
 ///
 /// This query changes no escape verdict itself. computeVerdicts independently

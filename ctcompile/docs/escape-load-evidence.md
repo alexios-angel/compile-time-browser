@@ -147,8 +147,9 @@ browser baseline.
 `computeArrayContents` is a separate prerequisite that reads the current
 verified IR directly, without alias lattices, candidate links or trusted
 annotations. A successful result establishes exact dense own elements for
-fresh local arrays in one straight-line entry block. Constants and fresh property-free
-objects can be elements. Inline initializers, literal `ctjs.append`, initialized
+fresh local arrays in an entry and a proved acyclic chain of unconditional
+branches. Constants and fresh property-free objects can be elements. Inline
+initializers, literal `ctjs.append`, initialized
 constant-index reads and overwrites are supported. A read resolves to the
 original constant or allocation; reading an array and writing through that alias
 updates the same array state.
@@ -170,14 +171,14 @@ or defining accessors refuses the entire result. Literal append uses the existin
 internal construction operation, not a call to a potentially modified `push`.
 
 Unknown values and bases, all calls and global accesses/publication, cells,
-unsupported carriers, reachable successor blocks, loops, nested regions, arguments/rest
+unsupported carriers, joins, conditional branches, loops, nested regions, arguments/rest
 builders and suspension also refuse. Even a late unrelated call invalidates the
 proof. `ctjs.throw` is excluded because uncaught diagnostic formatting may call
 `toString` and reenter JavaScript. Return is the only supported exit.
 
-The default budget is 100,000 operation, initializer-element and exit graph
-visits. Key parsing examines one Number or at most ten String digits. Only a
-completed function scan and return graph publish `complete=true`. Unsupported
+The default budget is 100,000 operation, forwarded-argument, initializer-element
+and exit graph visits. Key parsing examines one Number or at most ten String
+digits. Only a completed function scan and return graph publish `complete=true`. Unsupported
 operations or exhausted work return a named failure and witness operation with
 **no proof records**, including when all reads were already checked. Every IR
 mutation invalidates previous records; callers must recompute.
@@ -243,8 +244,8 @@ gate. The full frozen generated build passes **475/475 CTests in 720.98 seconds*
 including all four oracles; log: `/tmp/ctcompile-map-keyfacts-full.log`.
 Preceding measurements above describe the prerequisite only.
 
-No native admission consumes these verdicts. Complete contents for control flow,
-external values and other containers remain unfinished. Native automatic storage
+No native admission consumes these verdicts. Complete contents for general control
+flow, external values and other containers remain unfinished. Native automatic storage
 still requires the plan's separate type, identity, cycle ownership and
 frame-lifetime obligations. Corpus precision improvements require measurement;
 these unit cases do not establish a Bootstrap gain.
@@ -260,12 +261,16 @@ or foreign frame operations refuse the whole proof, as do unknown root values
 and unknown users of the frame handle. Refusal publishes no partial contents
 and preserves every original escape verdict.
 
-The entry must finish with a return and no operation may have successors or
-nested regions. That proves every other block unreachable directly from the
-current IR, including the importer's default-return block after an explicit
-source return. Dead blocks contribute no contents, effects or return roots.
-No solver reachability flag or annotation supplies this exclusion; even a
-successor that constant propagation considers dead remains outside the query.
+The current query follows an acyclic chain of `cf.br` operations from entry
+to the final return, with no nested regions. Every destination must have exactly
+one predecessor, and every forwarded argument must resolve to an already proved
+constant, allocation, earlier read or active frame handle. No entry parameter or
+external alternative is dropped even when the destination never uses it.
+Repeated blocks, structural joins, conditional branches and unknown successor
+semantics refuse. The final return proves every unvisited block unreachable
+directly from current IR, including the importer's default-return block after an
+explicit source return. Dead blocks contribute no contents, effects or return
+roots. No solver reachability flag or annotation supplies this exclusion.
 
 This is a retention proof, not an effect summary: frame entry still has its
 depth-failure path. Its checked position establishes that no tracked allocation
@@ -293,7 +298,7 @@ stay conservatively `Stored` even when observed confined. The source checks
 also require the newly discharged private/overwritten children to be `Confined`,
 so disabling the imported-frame proof cannot pass vacuously.
 
-The serialized devbox gate passes **8/8 CTests in 8.45 seconds**: all four
+The preceding serialized devbox gate passes **8/8 CTests in 8.45 seconds**: all four
 escape units and all four source/oracle comparisons. The frame controls cover
 **19 rows, eight live states and 248 retention budget cutoffs**; the existing
 contents and retention controls pass **32/18 rows**, respectively. Every oracle
@@ -301,8 +306,27 @@ reports zero soundness violations. Log: `/tmp/ctcompile-size-escape2.log`.
 The initial source run exposed the importer's dead fallback block; the final
 proof supports that shape without relaxing any source precision expectation.
 
-The next contents boundary is reachable control flow, external values and
-other containers, with native ownership/type consumers still separate.
+The next contents boundary is conditional/join/loop control flow, external
+values and other containers, with native ownership/type consumers still separate.
 Bootstrap/p5/Phaser observed precision remains **0/64, 0/16, 0/20** in these
 script-mode runs; this focused source improvement does not establish a corpus
 precision gain or full application coverage.
+
+The unconditional-chain increment adds controls for exact branch argument order,
+duplicate array aliases, saved reads across later overwrites, successor-local
+allocations, transported frame handles and block layout differing from execution
+order. Negative controls retain joins with dead predecessors, loops, conditional
+flow, opaque successors, unused external arguments, late entry/early exit and
+successor-frame capture. Twelve live frame/control-flow states move a publication
+block onto the reachable chain, remove/reinsert its publication and replace an
+exact forwarded array with an external parameter while forged markers persist.
+Every contents and retention case checks all incomplete budgets and the exact
+endpoint. Source fixtures and their existing precision assertions are unchanged.
+The combined serialized devbox gate passes **12/12 focused CTests in 28.45
+seconds**. Array controls pass **35 contents rows, 20 retention rows and 26
+frame rows**, with **12 live frame/control-flow states**, **500 retention
+budget cutoffs** and **387 frame budget cutoffs**. All four execution oracles
+report zero violations; fixture precision stays **22/33** and corpus precision
+is unchanged. Log: `/tmp/ctcompile-cardinality-focused2.log`. These results
+cover the unconditional-chain increment; the preceding measurements describe
+the entry-only proof. Native ownership consumers remain separate.

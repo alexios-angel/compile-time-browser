@@ -26,6 +26,7 @@
 #include "ctcompile/CTJS/IR/CTJSTypes.h"
 
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Location.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -796,23 +797,30 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         return refuse(ArrayContentsFailure::UnsupportedControlFlow, function);
     }
 
-    // The entry must complete the no-successor/no-region scan and return
-    // below. Every other block is then structurally unreachable, including
-    // the importer's default return after an explicit source return. No
-    // solver reachability flag or annotation supplies this proof. A successor
-    // still refuses even if constant propagation would call its target dead.
+    // Follow only a chain of unconditional branches with one predecessor
+    // per destination. Reject a repeated block before it could reuse an
+    // allocation identity. A final return proves every unvisited block dead,
+    // including the importer's default return after an explicit source return.
+    // No solver reachability flag or annotation supplies this proof.
     // No uninitialized/external alternative is silently dropped: values enter
-    // this map only as exact constants, unique fresh instances or checked own
-    // reads. Reject all other producers, including unrelated effectful ones.
+    // this map only as exact constants, unique fresh instances, checked own
+    // reads or the active frame handle. Reject all other producers and effects.
     // This avoids assuming that a call without an explicit array operand is
     // harmless, or that a late region cannot retain a raw frame register.
     llvm::DenseMap<mlir::Value, mlir::Value> origins;
     const auto origin = [&](mlir::Value value) { return origins.lookup(value); };
     ctjs::FrameEnterOp frame;
     bool frameExited = false;
-    for (mlir::Operation & op : function.getBody().front()) {
+    mlir::Block & entry = function.getBody().front();
+    if (entry.empty()) { return refuse(ArrayContentsFailure::UnsupportedControlFlow, function); }
+    llvm::SmallPtrSet<mlir::Block *, 8> visitedBlocks{&entry};
+    mlir::Operation * current = &entry.front();
+    while (current != nullptr) {
+        mlir::Operation & op = *current;
+        current = op.getNextNode();
         if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-        if (op.getNumRegions() != 0 || op.getNumSuccessors() != 0) {
+        if (op.getNumRegions() != 0 ||
+            (op.getNumSuccessors() != 0 && !llvm::isa<mlir::cf::BranchOp>(&op))) {
             return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
         }
         if (auto entered = llvm::dyn_cast<ctjs::FrameEnterOp>(&op)) {
@@ -825,10 +833,11 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 return refuse(ArrayContentsFailure::InvalidFrame, &op);
             }
             frame = entered;
+            origins[frame.getResult()] = frame.getResult();
             continue;
         }
         if (auto exited = llvm::dyn_cast<ctjs::FrameExitOp>(&op)) {
-            if (!frame || frameExited || exited->getOperand(0) != frame.getResult() ||
+            if (!frame || frameExited || origin(exited->getOperand(0)) != frame.getResult() ||
                 !llvm::isa_and_nonnull<ctjs::ReturnOp>(op.getNextNode())) {
                 return refuse(ArrayContentsFailure::InvalidFrame, &op);
             }
@@ -839,7 +848,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             // RootOp parks only in THIS frame's window (Frames.td). The exact
             // matching exit kills that window; no call, suspension or unknown
             // effect in this query can keep it or expose its contents.
-            if (!frame || frameExited || root->getOperand(0) != frame.getResult()) {
+            if (!frame || frameExited || origin(root->getOperand(0)) != frame.getResult()) {
                 return refuse(ArrayContentsFailure::InvalidFrame, &op);
             }
             if (!origin(root.getValue())) {
@@ -849,6 +858,24 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         }
         if (frameExited && !llvm::isa<ctjs::ReturnOp>(&op)) {
             return refuse(ArrayContentsFailure::InvalidFrame, &op);
+        }
+        if (auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(&op)) {
+            mlir::Block * next = branch.getDest();
+            if (next->getParent() != &function.getBody() || next->empty() ||
+                next->getNumArguments() != branch.getDestOperands().size() ||
+                next->getSinglePredecessor() != op.getBlock() ||
+                !visitedBlocks.insert(next).second) {
+                return refuse(ArrayContentsFailure::UnsupportedControlFlow, &op);
+            }
+            for (auto [argument, value] :
+                 llvm::zip(next->getArguments(), branch.getDestOperands())) {
+                if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                const mlir::Value exact = origin(value);
+                if (!exact) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
+                origins[argument] = exact;
+            }
+            current = &next->front();
+            continue;
         }
         if (llvm::isa<ctjs::ConstantOp, ctjs::CreateObjectOp>(&op)) {
             origins[op.getResult(0)] = op.getResult(0);
