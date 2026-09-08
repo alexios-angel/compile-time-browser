@@ -6,6 +6,84 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Finite mixed Map read and total-unary checkpoint, 2026-09-08
+
+Saved locally on `ctcompile-v1`: **`c4d6bf07`**, finite nullable payload facts
+for mixed Maps, and **`a539c3fa`**, TypeOf/Void escape origins. This resumes the
+exact readback boundary in **`4f5e248d`** and the **15:15:11 synchronization
+journal**. The starting tree was clean. `codex-wip-20260907` is an ancestor;
+its interrupted recovery was already gated in `5307abf`. Three agents handled
+published execution controls, independent local tests and escape analysis.
+No browser/runtime source changed. No history was rewritten or push performed.
+
+The exact **fourteen-call**, trace=2 and **nineteen-call**, trace=3 witnesses
+advance **0/6 -> 6/6 native** in both modes. Per-instance/key payload facts now
+retain finite String/Null/Undefined alternatives through writes and joins.
+A present read seeds `Opt<Str>` before monotone inference can widen it to the
+whole Boolean/nullable String schema. Conditional/saved writes remain candidates
+without a direct literal String set. The existing owning extraction copies
+bytes and preserves tags; no new runtime carrier was added. Unknown payloads,
+missing presence and unrepresented mixed results still refuse.
+
+All **four new published programs** pass both modes, explicit/deduced GCC/Clang,
+Node/interpreter/native identity and the saved-payload sanitizer harness.
+The latter preserves a nullable read through same-key Boolean overwrite,
+deletion, caller/result mutation, both future flags, independent reentry and
+final Map destruction. Three direct missing/deleted/aliasing controls retain
+complete host ownership but refuse native admission; their exact repairs
+restore the accepted fourteen-call program, **6/6** in both modes. Source traces
+are **0/2, 0/2, 3/2** for refusal/repair. Fresh/stale scalar and nullable
+forgeries and reruns pass. Budgets **17773/20330/30183/13049** pass
+**30/32/31/31 cutoffs**, with no natural speculative rollback interval.
+
+The local gate passes **69 observations and 39 refusals**, including both
+layouts, isolated helper emission, fresh/stale CTJS-only proof rederivation
+and ASan/UBSan. The first run passed six other lit cases but exposed a separate
+callee-identity limit: two nested conditional method lookups merge into an
+`scf.if` result. That original source remains a refusal. The positive uses an
+initial write plus conditional overwrite, preserving the payload join under
+test. The corrected local case passes in **42.63 seconds**. Four host/owner
+CTests pass in **27.85 seconds**. Formatter **22.1.8** passes all **745 files**;
+the local pinned formatter 23 disagrees on preexisting files. Fifteen code/test
+paths match committed HEAD and the frozen gate input.
+
+Eight escape CTests pass in **8.35 seconds**. Each new TypeOf/Void family
+passes **twenty rows, twelve live states and 976 retention cutoffs**, plus a
+wide snapshot's exact **64 additional work units**. The new source family
+measures **eight sites, 28 instances, 21 retained**; prior copy **21/39/23**,
+switch **4/10/3** and negation **4/16/12** families stay unchanged. Four oracles
+report zero violations. Expanded-fixture precision **39/51** adds coverage
+relative to **37/49**; corpus precision stays **0/64, 0/16, 0/20**. TypeOf's
+primitive String allocation is not claimed inert; source Void already imports
+as Undefined. Coercing unary kinds, loops and native lifetime consumers remain
+separate work.
+
+The full devbox gate is running in `/tmp/ctcompile-mixed-nullable-full.log`.
+Its **128-program published driver and sixteen lifetime families** are not yet
+measured as a complete run. The previous native corpus counts were Bootstrap
+**19/574**, p5 **39/4754**, Phaser **45/7725** in both modes, zero pruned;
+exact Data was **0/7 browser/CommonJS, 0/8 AMD**. Fresh final counts are pending.
+
+**Exact next boundary: a nullable Map read used by another published method.**
+The acyclic **fifteen-call** `get -> set -> size(key)` program has Node/interpreter
+**trace=1** but **0/6 native** and no host owner proof in both modes.
+`CapturedMapBody.cpp::entry_fact` retains only one tag, losing the setter's
+finite nullable result before the complete actual/formal worklist reaches
+`size(key)`. Preserve those alternatives in the host body's own bounded proof;
+native Presence facts cannot stand in for that independent proof. A nested
+`set(set(...))` fifteen-call, trace=2 source additionally has a self-dependent
+method census and is a separate boundary. The eleven-call object-payload case
+still has no owner proof, trace=2 and **0/6**. Full Bootstrap Data, browser
+integration, general exports and native throwing-call admission are unfinished.
+
+Evidence: `/tmp/ctcompile-mixed-nullable-compile.log`, `-focused.log`, `-local.log`,
+`-positives.log`, `-controls.log`, `-next.json`, `-input-hashes.json` and
+`-snapshot.txt`. The first local failure remains in `-focused.log`; corrected
+local and direct owner/refusal controls pass separately. Complete next sources
+are in `native-owned-global-maps.md` and devbox
+`/tmp/ctcompile-mixed-nullable-next/`. SSH interrupted after the focused gate
+when the home IP rotated; starting the box and refreshing `allow-ip` restored it.
+
 ## Nullable Map payload and logical-negation checkpoint, 2026-09-08
 
 Saved locally on `ctcompile-v1`: **`6e150949`**, owning nullable Map payloads,

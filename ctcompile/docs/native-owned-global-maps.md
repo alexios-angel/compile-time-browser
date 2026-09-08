@@ -752,11 +752,39 @@ the complete corrected published driver. Corpus and exact Data native counts
 remain unchanged. Final evidence: `/tmp/ctcompile-nullable-payloads-full.log`,
 `-evidence.json` and `-postgate.log`; see [HANDOFF.md](HANDOFF.md).
 
+## Finite nullable reads from mixed storage, 2026-09-08
+
+Commit **`c4d6bf07`** resumes the exact fourteen-call and nineteen-call sources
+from **`4f5e248d`**. Both now admit **6/6 native** in both modes, with
+Node/interpreter/native **trace=2/3**. The sixteen-call identity and fourteen-call
+saved-read programs also pass, preserving all four nullable tags and owning
+String bytes through overwrite/deletion, caller mutation, reentry and final
+Map release. The saved read survives a same-key Boolean overwrite.
+
+`Presence.cpp` keeps finite primitive alternatives per instance/key. Writes
+replace exact facts or join possibly aliased payloads; conditional joins retain
+their finite subset while intersecting membership. Only independent definite
+presence permits the `nullable_string` read annotation. Inference seeds
+`Opt<Str>` before the storage union can widen it, and the existing owning
+extraction returns a copy. The candidate census also considers nonliteral
+writes, so String alternatives need not occur in a direct literal set.
+Unknown/missing/mixed read facts still refuse. No new runtime carrier is needed.
+
+Focused validation passes all four new programs under both modes and
+explicit/deduced GCC/Clang, including identity and lifetime checks. Three
+complete-owner refusals and their exact admitted repairs pass, as do fresh/stale
+forgeries, reruns and budgets **17773/20330/30183/13049** with **30/32/31/31**
+cutoffs. The local gate passes **69 observations/39 refusals** under both layouts,
+isolated helper emission, CTJS-only proof rederivation and sanitizers.
+An original dual-nested branch source remains a callee-identity refusal; the
+positive tests an initial nullable write plus conditional overwrite. Full
+suite and 128-program driver results are pending in [HANDOFF.md](HANDOFF.md).
+
 ## Next boundary
 
-The next obligation is **finite nullable payload evidence for a mixed Map
-read**, independent of its broader storage schema. The small accepted
-readback becomes refused after adding one temporary Boolean payload:
+The next obligation is **finite nullable payload evidence in the independent
+host method-result proof**. This acyclic chain consumes a nullable Map read
+through a different published method:
 
 ```js
 var host = {};
@@ -765,7 +793,7 @@ var host = {};
 })(function() {
     const state = new Map();
     return {
-        size() { return state.size; },
+        size(key) { state.set(key, key); return state.size; },
         get(flag) {
             state.set('seed', 'future');
             const result = flag ? '' : state.get('seed');
@@ -781,26 +809,29 @@ var host = {};
     };
 });
 host.slot.set(host.slot.get(false));
-host.slot.set(host.slot.get(true));
-var trace = host.slot.size();
+var trace = host.slot.size(host.slot.set(host.slot.get(false)));
 ```
 
-This retains **fourteen calls**, complete host ownership and Node/interpreter
-**trace=2**, but remains **0/6 native** in both modes. The original mixed
-nineteen-call readback likewise retains complete ownership, **trace=3** and
-**0/6**. `Presence.cpp::write` currently reduces the independently known
-String/Null alternatives to `Unknown`. Carry that finite payload fact through
-the exact instance/key write and read, and seed `OptStr` before monotone type
-inference widens to the full storage union. A method signature alone cannot
-supply the evidence. The existing
-`map_get_present_nullable_as<nullable_string>` can copy the proved subset;
-a general optional Bool/String scalar carrier is not required for this case.
-Retain aliasing-write, deletion, missing-read, stale-marker and budget controls.
+It retains **fifteen calls**, Node/interpreter **trace=1**, but has **no host
+owner proof** and remains **0/6 native** in both modes. `CapturedMapBody.cpp`
+still stores only `entry_fact.tag`, so its setter return loses the finite
+String/Null alternatives before `capturedMapParameters` can prove `size(key)`.
+Keep those alternatives through exact writes, possible-alias joins, conditional
+joins and definitely present reads in this separately budgeted host proof.
+The native Map schema and its Presence facts cannot supply the host evidence.
+Node controls replacing the setter return with Null, Undefined, empty String
+or Boolean produce trace=2, making this source discriminating.
 
-An ordinary object payload `{value: 'instance'}` keeps eleven calls and
-trace=2 but has **no host owner proof**, remaining **0/6** in both modes. Object
-identity/fields, full native Bootstrap Data, browser API integration and general
-exports remain separate obligations. Current-call proofs establish no arbitrary
-future-call ABI. Complete sources and measurements are in
-`/tmp/ctcompile-nullable-payloads-boundary.json` and on the devbox under
-`/tmp/ctcompile-nullable-payloads-next/`.
+A fifteen-call `set(set(get(false)))` program also remains unowned and **0/6**,
+trace=2, but adds a separate worklist self-dependency: the setter's complete
+argument census waits for its own result. Fixing host entry payloads alone
+cannot admit it. The original dual-nested local conditional has a separate
+merged-callee identity boundary, preserved as a refusal in `native-map-mixed.mlir`.
+An object payload `{value: 'instance'}` still has eleven calls, trace=2, no host
+owner and **0/6**. Full Bootstrap Data, object identity/fields, browser API
+integration, general exports and future-call contracts remain unfinished.
+
+Complete source and both-mode measurements:
+`/tmp/ctcompile-mixed-nullable-next.json` and devbox
+`/tmp/ctcompile-mixed-nullable-next/`. The preceding accepted fourteen/nineteen
+sources are permanent positives in `nullable_payload_sources()`.

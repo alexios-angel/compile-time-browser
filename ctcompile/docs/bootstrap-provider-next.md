@@ -322,17 +322,26 @@ The full 124-program driver and all 165 lit cases pass. Final CTest is
 512/517, all 372 compiler tests, with only the five recorded browser failures;
 see [the payload checkpoint](native-owned-global-maps.md#owning-nullable-payloads-2026-09-08).
 
-## Next: independent nullable payload facts in mixed storage
+## Completed: finite nullable read facts in mixed storage
 
-Adding a temporary Boolean write to the twelve-call readback produces a
-**fourteen-call**, trace=2 witness with complete ownership but **0/6 native**.
-The original mixed nineteen-call readback has the same boundary, trace=3.
-Preserve the independently known String/Null payload alternatives through the
-exact instance/key write and read, before type inference widens its result
-to the whole Map schema. The existing owning extraction supports the subset;
-an arbitrary mixed signature is a separate obligation. An ordinary object
-payload still has no host ownership proof. Complete sources and both-mode
-measurements are in [the Map boundary](native-owned-global-maps.md#next-boundary).
+Commit **`c4d6bf07`** advances the exact fourteen/nineteen-call readbacks to
+**6/6 native** in both modes, retaining trace=2/3. Per-instance/key payload
+alternatives seed `Opt<Str>` independently of the Boolean/nullable storage
+schema. All four new published programs pass explicit/deduced GCC/Clang,
+identity and saved-payload lifetime checks. Three complete-owner refusals and
+their exact admitted repairs, fresh/stale forgeries, four budget families and
+the 69-observation/39-refusal local gate pass. The full suite is still running.
+
+## Next: nullable payload facts in the host result worklist
+
+An acyclic fifteen-call `get -> set -> size(key)` source returns trace=1 in
+Node and the interpreter, but remains **0/6 native** in both modes with no host
+owner proof. `CapturedMapBody.cpp::entry_fact.tag` drops the setter's finite
+nullable return before the next method's complete parameter census. Preserve
+the finite alternatives in that independent, budgeted host proof. A nested
+setter-result argument also introduces a separate self-dependent census;
+object payloads remain unowned. Complete measured sources and repair controls
+are in [the Map boundary](native-owned-global-maps.md#next-boundary).
 
 The exact Bootstrap getter at vendor line 17 also needs nested/object payloads.
 Exact Bootstrap Data, general realm owners and future-call contracts remain
