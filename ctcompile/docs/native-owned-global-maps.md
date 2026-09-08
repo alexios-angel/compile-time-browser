@@ -33,8 +33,8 @@ one immutable capture binding and one standard Map allocation, initially empty.
 The returned table has distinct fixed methods, each with a current call using
 its actual table receiver. A complete family census follows every closure that
 captures the same binding, checks its publication and body, and retains every
-Map read and call. All methods must use primitive keys/contents and exact
-method receivers and arities. An uncalled or unsafe sibling withholds the
+Map read and call. Methods use primitive keys, primitive or independently checked method-local
+leaf payloads, and exact receivers and arities. An uncalled or unsafe sibling withholds the
 complete owning plan. Separate Map allocations cannot inherit a shared owner.
 Repeated capture loads and fluent `set` returns alias the same Map. Publication
 and the entire source function chain remain; allocation, mutations, calls and the
@@ -878,12 +878,13 @@ CTest is **512/517 in 1170.30 seconds**, all **372 compiler tests** and
 All twelve code/test paths match HEAD, frozen input and final devbox sources;
 see [HANDOFF.md](HANDOFF.md).
 
-## Next boundary
+## Method-local leaf object ownership, 2026-09-08
 
-The smallest measured continuation isolates **published method-local leaf
-object ownership**. This source has **seven calls and five functions**;
-Node/interpreter give **trace=2**, while both modes remain unowned and
-**0/5 native**:
+Commit **`e9f8e33c`** resumes the isolated seven-call/five-function boundary
+from `e533a865`. The exact `{}` and `{value: 1}` sources now admit **5/5 native**
+in both modes with trace=2. The Number and String primitive controls retain
+5/5, and the historical four-function object payload now admits 4/4 with its
+original source and trace=1.
 
 ```js
 var host = {};
@@ -898,19 +899,32 @@ host.slot.set('x'); host.slot.set('x'); host.slot.set('y');
 var trace = host.slot.size();
 ```
 
-Changing only `const item = {};` to `const item = {value: 1};` preserves that
-refusal and observation. The exact repairs `const item = 1;` and
-`const item = 'instance';` each admit **5/5** in both modes, with the same seven
-calls and trace=2. No object crosses a published formal or return; all keys
-are String and method results are numeric.
+The bounded host body admits fresh local leaf allocations and fixed ordinary
+own writes of independently proved Number, Boolean, Null or Undefined values.
+Every object use must be a checked own-field receiver, captured Map.set value,
+or inert root operation. Object keys, object-valued fields, reads, public
+arguments/results and unsupported operations still refuse. Allocation/write
+records are source handles from the final complete body census, excluding
+provisional invocation records. The environment and ordinary owner proofs use
+these exact handles; the entry-only provider object query never authorizes them.
 
-The host captured-body proof currently rejects `ctjs.create_object` and object
-Map payloads. Start with bounded ordinary leaf-owner eligibility for the
-setter-local allocation, retaining the complete call/sibling census and
-primitive key/formal/result boundary. Reuse existing `NativeObjectIdentity`,
-closed value flow, native Map storage and fixed scalar field checks. No new
-heap/value model is needed. Provider object tokens prove only entry allocations
-in one executed startup trace; they cannot authorize this future local owner.
+Before any invocation proof, the complete family is scanned for object
+allocations. Unknown Map.get results then lose the primitive-only guarantee,
+including in siblings that allocate no object. Definite locally written
+primitive payload alternatives remain usable; possible aliases join to unknown.
+The final native preparation runs existing Map and object identity/field
+analyses before another live ownership query. It introduces no new carrier
+or emitter logic. Generated C++ uses the existing owning leaf object and Map
+storage, with no Script/VM context or value symbols.
+
+All four host/owner CTests and both-mode GCC/Clang execution pass. The new host
+family has 25 rows per form and exhaustive cutoffs 3227/3460/3298/3531; owner
+cutoffs are 7730/7969/7506/7745. Exact source vectors, sibling reads, unsafe
+fields/uses and forged reports are independently checked. Complete source
+lifetime/refusal/budget and full generated gates are pending; current evidence
+is in [HANDOFF.md](HANDOFF.md).
+
+## Next boundary
 
 A separate identity continuation stores `{value: 1}`, saves `state.get(key)`,
 overwrites with a distinct `{value: 1}`, deletes the key and returns
@@ -939,11 +953,10 @@ var host = {};
 host.slot.set(host.slot.get(false)); host.slot.set(host.slot.get(true)); var trace = host.slot.size();
 ```
 
-Besides local object ownership, this Map mixes object and String payloads,
+Local leaf ownership is now implemented. This Map also mixes object and String payloads,
 while the existing `object_value` union excludes String. Its owning `value`
 field is also String; existing owning identity fields accept nullable scalar
-leaves. Those extensions require independent proofs after the isolated
-property-free/Number-field step. Preserve ordinary owning C++ storage and
+leaves. Those extensions still require independent proofs. Preserve ordinary owning C++ storage and
 exact identities, with no provider report or boxed fallback as authority.
 
 The earlier four-function nested String-trace controls now all prove host

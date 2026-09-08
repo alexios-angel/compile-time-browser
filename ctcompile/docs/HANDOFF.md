@@ -6,6 +6,79 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Method-local leaf object ownership and equality checkpoint, 2026-09-08
+
+Saved locally on `ctcompile-v1`: **`e9f8e33c`**, method-local leaf object
+ownership in published Maps, and **`5e2cb6b2`**, primitive loose-equality escape
+origins. This resumes the exact seven-call object boundary in **`e533a865`**
+and the **18:56:37 synchronization journal**. The initial tree/index was clean;
+`codex-wip-20260907` was already recovered, gated and merged. Three agents
+handled independent host tests, execution/lifetimes and escape proofs. No
+browser/runtime source changed, history was rewritten or push performed.
+
+The exact seven-call `{}` and `{value: 1}` setter programs advance **0/5 ->
+5/5 native** in both modes with Node/interpreter/native **trace=2**. The old
+four-function empty-object payload refusal now admits **4/4**, trace=1, with
+its source unchanged. All three pass standalone GCC/Clang and the no-VM-symbol
+check. Every invocation allocates its actual leaf; source keys, field writes,
+Map mutations, calls and numeric results remain runtime operations.
+
+The host proof independently checks fresh method-local objects and ordinary
+fixed fields containing Number, Boolean, Null or Undefined. The only longer
+lived owner is the captured Map. Object keys, fields containing objects,
+object-valued public arguments/results, dynamic/prototype/accessor operations
+and object reads remain outside this proof. Before proving any invocation,
+the complete sibling census disables the primitive-only unknown-read guarantee
+if a sibling allocates an object. A definite local primitive write can still
+prove its own read. Exact allocation/write records reach the environment and
+owner censuses; provider entry tokens supply no authority. Native preparation
+reruns the existing object identity/field proof after Map recognition and
+before its final live owner query. No emission code or runtime carrier changed.
+
+All four host/owner CTests pass in the combined focused gate. New host tests
+have **25 rows per raw/prepared form**, with exhaustive cutoffs
+**3227/3460/3298/3531**. Owner families have exhaustive cutoffs
+**7730/7969/7506/7745**, exact operation vectors and fresh/stale source mutations.
+The initial integration rebuild caught LLVM's default SmallVector size limit;
+its richer live callable record now uses explicit zero inline storage.
+
+The escape increment permits Eq only with two independently proved primitive
+non-BigInt original origins. **70 rows, 34 live states, 3017 retention cutoffs**
+and a wide snapshot's exact **64 work units** pass. The initial focused run is
+**11/12 in 71.88 seconds**: one new source used global `undefined`, which
+correctly withheld confinement. That source is preserved as a refusal; a
+separate `void 0` repair passes. The corrected **2/2 CTest rerun in 0.26 seconds**
+checks **24 sites, 44 instances, 33 retained**, zero violations and fixture
+precision **44/64**, adding coverage to **42/58**. All eight escape CTests
+pass across those two runs; corpus precision remains **0/64, 0/16, 0/20**.
+A source audit qualifies prior Neg/Plus evidence: the recursion guard can
+throw an unrelated RangeError. This whole-frame retention proof supplies no
+normal-completion or no-throw/effect contract to future native consumers.
+
+Formatter **22.1.8** passes all **745 files**. The new complete execution,
+identity/refusal/budget and saved-callable lifetime gate is in progress; its
+first four object programs already pass both modes and explicit/deduced
+GCC/Clang. A test-only temporary strong reference caused lifetime exit 93;
+field reads now end before overwrite/deletion expiry checks. The corrected
+execution gate and full generated CTest gate remain pending at this checkpoint.
+
+**Exact next boundary: method-local object readback and identity.** The
+unchanged eight-call saved-read source stores `{value: 1}`, reads it back,
+overwrites/deletes the Map entry and compares the saved value with its original
+object. Node/interpreter give trace=1, but both modes remain unowned **0/5**.
+A distinct equal-field comparison is trace=0 with eight calls; a fresh read
+after deletion is trace=0 with nine calls. These require independently proved
+object result origins, presence and identity without authorizing object-valued
+public arguments/returns. Fixed own-field reads remain a separate small gap.
+The old nested leaf-writing sibling now has complete ownership but remains
+**0/6 native** at its mixed Object/String Map carrier. String fields, the
+original eleven-call object/String witness, exact Bootstrap Data, browser API
+integration, general exports and native throwing-call admission remain unfinished.
+
+Evidence: `/tmp/ctcompile-leaf-object-{compile,host,host2,native-prep,focused,
+escape-rerun,smoke,execution,execution2}.log`, `-boundary.json`, `-saved.cpp`,
+`-root-hashes.json`, `-snapshot.txt` and `-format.log`.
+
 ## Nested published Map results and arithmetic unary checkpoint, 2026-09-08
 
 Saved locally on `ctcompile-v1`: **`d7148fcf`**, per-invocation results before

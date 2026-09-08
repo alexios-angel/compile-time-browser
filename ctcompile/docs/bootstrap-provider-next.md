@@ -368,24 +368,37 @@ with CTest **512/517**, all 372 compiler tests and 140/145 browser tests, leavin
 only the five established browser failures; [HANDOFF.md](HANDOFF.md) records
 the measurements.
 
-## Next: published method-local leaf object ownership
+## Completed: published method-local leaf object ownership
 
-The isolated **seven-call/five-function** source uses String keys, creates `{}`
-inside `set(key)`, stores it to the captured Map and returns numeric size.
-Node/interpreter give trace=2 but both modes remain unowned **0/5 native**.
-A `{value: 1}` payload gives the same refusal. Exact Number and String primitive
-repairs admit **5/5**, retaining the seven calls and trace. Start with bounded
-ordinary local owner eligibility in the host body, reusing existing native
-object identity, value flow and Map/field machinery. Published object arguments
-and returns are separate; provider entry tokens cannot authorize future local
-allocations.
+Commit **`e9f8e33c`** advances the exact seven-call `{}` and `{value: 1}`
+programs **0/5 -> 5/5 native** in both modes, retaining trace=2. The body proof
+checks every future local leaf allocation and fixed scalar write; exact source
+operations reach the host and owner censuses. An object-writing sibling removes
+unknown Map reads' primitive guarantee before any invocation result is proved.
+The existing native object identity pass now runs in host Map preparation too,
+followed by the final live owner proof. No carrier or emitter code changed.
+The old four-function empty-object refusal advances to 4/4, trace=1.
 
-The original eleven-call `{value: 'instance'}` source remains unowned **0/6**,
-trace=2, and additionally needs mixed object/String Map values and owning String
-fields. Saved-object identity has a separate measured eight-call trace=1 case
-and distinct/re-read trace=0 controls, all **0/5**. Full sources, exact primitive
-repairs and proof boundaries are in [the Map boundary](native-owned-global-maps.md#next-boundary)
-and `/tmp/ctcompile-nested-method-object-next.json`.
+All four host/owner CTests and both-mode GCC/Clang execution pass. Full execution,
+saved-callable lifetime and generated CTest gates are pending at this checkpoint;
+see [HANDOFF.md](HANDOFF.md) for measured results and preserved failures.
+
+## Next: method-local object readback and identity
+
+The eight-call saved-object source stores `{value: 1}`, saves a Map.get,
+overwrites/deletes the entry and compares exact identities. It gives
+Node/interpreter trace=1 and remains unowned **0/5 native** in both modes.
+The distinct equal-field eight-call control and fresh-read-after-delete nine-call
+control give trace=0 and retain the same refusal. Prove the local object origin,
+presence and identity without treating a public object result as already owned.
+The next own-field read also needs explicit body proof. Complete sources are in
+[the Map boundary](native-owned-global-maps.md#next-boundary).
+
+String fields and Object/String Map payload carriers remain separate. The
+historical nested leaf-writing sibling now has complete ownership but stays
+0/6 at that mixed carrier; the original eleven-call `{value: 'instance'}` source
+remains unowned0/6, trace=2. Provider entry tokens cannot authorize future local
+objects, and ordinary ownership supplies no throwing-call or general export ABI.
 
 The exact Bootstrap getter at vendor line 17 also needs nested/object payloads.
 Exact Bootstrap Data, general realm owners and future-call contracts remain
