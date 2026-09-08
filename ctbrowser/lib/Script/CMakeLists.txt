@@ -52,7 +52,12 @@ target_sources(ctbrowser-script
     builtins/collections/array_iteration.cpp
     builtins/collections/keyed.cpp
     builtins/collections/typed_arrays.cpp
-    builtins/text.cpp
+    # String, btoa/atob and structuredClone, RegExp, Symbol - four files, from
+    # one of 1,333 lines (2026-09-08), sharing nothing but builtins/internal.hpp.
+    builtins/text/string.cpp
+    builtins/text/globals.cpp
+    builtins/text/regexp.cpp
+    builtins/text/symbol.cpp
     # Object, the errors, Proxy/Reflect and Function - five files, from one of
     # 1,429 lines (2026-09-08); builtins/objects/internal.hpp declares the four
     # abstract operations Object and Reflect share.
