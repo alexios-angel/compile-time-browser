@@ -21,9 +21,18 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     auto & body = function.getBody().front();
     const auto firstRead = result.reads.size();
     const auto firstUpvalue = result.upvalues.size();
-    llvm::DenseSet<mlir::Value> maps, primitives, flags, objects;
-    llvm::DenseSet<mlir::Operation *> objectWrites, objectStores;
+    llvm::DenseSet<mlir::Value> maps, primitives, flags;
+    // A saved read names its allocation, not the current Map entry. These SSA
+    // origins never change when that entry is overwritten or deleted.
+    llvm::DenseMap<mlir::Value, mlir::Value> objects;
+    llvm::DenseSet<mlir::Operation *> objectWrites, objectReads, objectStores, identities;
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> alternatives;
+    struct field_fact {
+        mlir::Value object;
+        llvm::StringRef key;
+        PrimitiveAlternatives payload;
+    };
+    llvm::SmallVector<field_fact> fields;
     // All checked capture loads/fluent returns denote this one runtime Map.
     // Each invocation starts with unknown contents. A set preserves presence
     // even when its key may alias an earlier entry. In that case the payload
@@ -37,6 +46,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         mlir::Value key;
         PrimitiveAlternatives payload;
         bool present = true;
+        mlir::Value object;
     };
     llvm::SmallVector<entry_fact> entries;
     llvm::DenseSet<mlir::Operation *> observations;
@@ -47,7 +57,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     const auto keyEvidence = [&](mlir::Value key) {
         return PrimitiveMapKeyEvidence{primitiveTag(key), sizeBounds.lookup(key)};
     };
-    const auto mutate = [&](mlir::Value key, bool erase, PrimitiveAlternatives payload = {}) {
+    const auto mutate = [&](mlir::Value key, bool erase, PrimitiveAlternatives payload = {},
+                            mlir::Value object = {}) {
         for (auto it = entries.begin(); it != entries.end();) {
             if (!step()) { return false; }
             const auto relation =
@@ -64,6 +75,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 // new one wins if they compare equal. Unknown joined with any
                 // finite set remains unknown, including after further writes.
                 it->payload = it->payload.joined(payload);
+                if (it->object != object) { it->object = {}; }
                 ++it;
             }
         }
@@ -79,7 +91,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 }
             }
         }
-        if (!erase) { entries.push_back({key, payload}); }
+        if (!erase) { entries.push_back({key, payload, true, object}); }
         return true;
     };
     const auto learn = [&](mlir::Value condition, bool branch) {
@@ -102,7 +114,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 return true;
             }
         }
-        entries.push_back({key, {}});
+        entries.push_back({key, {}, true, {}});
         return true;
     };
     llvm::DenseSet<mlir::Operation *> reads, calls, upvalues;
@@ -140,7 +152,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 if (!llvm::isa<mlir::IntegerAttr>(constant.getValue())) { return false; }
                 if (constant.getType().isInteger(1)) { flags.insert(constant.getResult()); }
             } else if (auto made = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
-                objects.insert(made.getResult());
+                objects.try_emplace(made.getResult(), made.getResult());
                 result.leafObjects.push_back(made);
             } else if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
                 const auto payload = alternatives.lookup(write.getValue());
@@ -155,6 +167,40 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 }
                 objectWrites.insert(write);
                 result.leafWrites.push_back(write);
+                const auto origin = objects.lookup(write.getObject());
+                const auto key = keyOf(write.getKey());
+                bool found = false;
+                for (auto & field : fields) {
+                    if (!step()) { return false; }
+                    if (field.object == origin && field.key == key) {
+                        field.payload = payload;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) { fields.push_back({origin, key, payload}); }
+            } else if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(operation)) {
+                if (compare.getKind() != ctjs::CompareKind::StrictEq ||
+                    (!primitives.contains(compare.getLhs()) &&
+                     !objects.contains(compare.getLhs())) ||
+                    (!primitives.contains(compare.getRhs()) &&
+                     !objects.contains(compare.getRhs()))) {
+                    return false;
+                }
+                identities.insert(compare);
+                primitives.insert(compare.getResult());
+                alternatives.try_emplace(
+                    compare.getResult(),
+                    PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::BooleanAttr>()));
+            } else if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation)) {
+                if (unary.getKind() != ctjs::UnaryKind::Not ||
+                    !primitives.contains(unary.getOperand())) {
+                    return false;
+                }
+                primitives.insert(unary.getResult());
+                alternatives.try_emplace(
+                    unary.getResult(),
+                    PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::BooleanAttr>()));
             } else if (auto truthy = llvm::dyn_cast<ctjs::TruthyOp>(operation)) {
                 if (!primitives.contains(truthy.getValue())) { return false; }
                 flags.insert(truthy.getResult());
@@ -190,12 +236,18 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                     (void)value;
                     if (!step()) { return false; }
                 }
+                for (const auto & field : fields) {
+                    (void)field;
+                    if (!step()) { return false; }
+                }
                 const auto incoming = entries;
+                const auto incomingFields = fields;
                 const auto incomingObservations = observations;
                 const auto incomingAlternatives = alternatives;
                 if (!learn(branch.getCondition(), true)) { return false; }
                 if (!self(self, branch.getThenRegion().front(), depth + 1)) { return false; }
                 auto thenEntries = std::move(entries);
+                auto thenFields = std::move(fields);
                 auto thenObservations = std::move(observations);
                 auto thenAlternatives = std::move(alternatives);
                 for (const auto & entry : incoming) {
@@ -210,7 +262,12 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                     (void)value;
                     if (!step()) { return false; }
                 }
+                for (const auto & field : incomingFields) {
+                    (void)field;
+                    if (!step()) { return false; }
+                }
                 entries = incoming;
+                fields = incomingFields;
                 observations = incomingObservations;
                 alternatives = incomingAlternatives;
                 if (!learn(branch.getCondition(), false)) { return false; }
@@ -228,11 +285,24 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                         }
                         left.payload = left.payload.joined(right.payload);
                         left.present &= right.present;
+                        if (left.object != right.object) { left.object = {}; }
                         joined.push_back(left);
                         break;
                     }
                 }
                 entries = std::move(joined);
+                llvm::SmallVector<field_fact> joinedFields;
+                for (auto left : thenFields) {
+                    if (!step()) { return false; }
+                    for (const auto & right : fields) {
+                        if (!step()) { return false; }
+                        if (left.object != right.object || left.key != right.key) { continue; }
+                        left.payload = left.payload.joined(right.payload);
+                        joinedFields.push_back(left);
+                        break;
+                    }
+                }
+                fields = std::move(joinedFields);
                 for (auto * observed : llvm::make_early_inc_range(observations)) {
                     if (!step()) { return false; }
                     if (!thenObservations.contains(observed)) { observations.erase(observed); }
@@ -267,6 +337,26 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 maps.insert(load.getResult());
             } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
                 const auto key = keyOf(read.getKey());
+                if (auto origin = objects.lookup(read.getObject())) {
+                    if (!ordinaryKey(key)) { return false; }
+                    PrimitiveAlternatives payload;
+                    for (const auto & field : fields) {
+                        if (!step()) { return false; }
+                        if (field.object == origin && field.key == key) {
+                            payload = field.payload;
+                            break;
+                        }
+                    }
+                    // Only a definitely initialized own field avoids prototype
+                    // lookup. Saved scalar values keep their read-time facts;
+                    // later writes through any alias update the allocation.
+                    if (!payload.known) { return false; }
+                    primitives.insert(read.getResult());
+                    alternatives.try_emplace(read.getResult(), payload);
+                    objectReads.insert(read);
+                    result.leafReads.push_back(read);
+                    continue;
+                }
                 if (!maps.contains(read.getObject()) ||
                     (key != "size" && key != "set" && key != "get" && key != "has" &&
                      key != "delete")) {
@@ -321,7 +411,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 if (key == "set") {
                     maps.insert(invoke.getResult());
                     if (!mutate(invoke.getArgs()[0], false,
-                                alternatives.lookup(invoke.getArgs()[1]))) {
+                                alternatives.lookup(invoke.getArgs()[1]),
+                                objects.lookup(invoke.getArgs()[1]))) {
                         return false;
                     }
                 } else {
@@ -341,6 +432,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                                 if (entry.present && entry.payload.known) {
                                     primitives.insert(invoke.getResult());
                                     alternatives.try_emplace(invoke.getResult(), entry.payload);
+                                } else if (entry.present && entry.object) {
+                                    objects.try_emplace(invoke.getResult(), entry.object);
                                 }
                                 break;
                             }
@@ -398,11 +491,18 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     // possible longer-lived owner. Check every use, including uses outside the
     // walked body. Neither native markers nor provider allocation tokens can
     // authorize a field, alias, escape or future invocation here.
-    for (mlir::Value object : objects) {
+    for (const auto & [object, origin] : objects) {
+        (void)origin;
         for (mlir::OpOperand & use : object.getUses()) {
             if (!step()) { return false; }
+            // Live analysis queries may follow edits before MLIR verification.
+            // A then-only allocation/read cannot authorize an else or outer
+            // use merely because its immutable origin was visited first.
+            if (!dominance.dominates(object, use.getOwner())) { return false; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
                 (objectWrites.contains(use.getOwner()) && use.getOperandNumber() == 0) ||
+                (objectReads.contains(use.getOwner()) && use.getOperandNumber() == 0) ||
+                (identities.contains(use.getOwner()) && use.getOperandNumber() < 2) ||
                 (objectStores.contains(use.getOwner()) && use.getOperandNumber() == 3)) {
                 continue;
             }

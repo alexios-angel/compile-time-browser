@@ -97,7 +97,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                          edge.capturedMap->reads != capture->reads ||
                          edge.capturedMap->calls != capture->calls ||
                          edge.capturedMap->leafObjects != capture->leafObjects ||
-                         edge.capturedMap->leafWrites != capture->leafWrites)) ||
+                         edge.capturedMap->leafWrites != capture->leafWrites ||
+                         edge.capturedMap->leafReads != capture->leafReads)) ||
             edge.call->getParentOfType<ctjs::FuncOp>() != entry) {
             reject("owned global method table has another environment or invocation context");
             return;
@@ -206,7 +207,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         }
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
             if (!llvm::is_contained(slot.reads, read) && !methodReads.contains(read) &&
-                (!capture || !llvm::is_contained(capture->reads, read))) {
+                (!capture || (!llvm::is_contained(capture->reads, read) &&
+                              !llvm::is_contained(capture->leafReads, read)))) {
                 reject("owned global method field read lacks a complete live callable edge");
             }
         }

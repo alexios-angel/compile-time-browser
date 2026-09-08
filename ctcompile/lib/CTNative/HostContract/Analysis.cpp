@@ -46,6 +46,9 @@ std::string analyzer::environmentProblem() {
             for (ctjs::SetPropertyOp write : capture.leafWrites) {
                 if (step()) { capturedOperations.insert(write); }
             }
+            for (ctjs::GetPropertyOp read : capture.leafReads) {
+                if (step()) { capturedOperations.insert(read); }
+            }
         });
     }
     module.walk([&](mlir::Operation * operation) {

@@ -88,6 +88,7 @@ struct HostCapturedMap {
     std::vector<ctjs::CallOp> calls;
     std::vector<ctjs::CreateObjectOp> leafObjects;
     std::vector<ctjs::SetPropertyOp> leafWrites;
+    std::vector<ctjs::GetPropertyOp> leafReads;
     ctjs::LoadUpvalueOp argument;
 };
 

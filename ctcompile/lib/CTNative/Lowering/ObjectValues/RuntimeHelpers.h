@@ -43,6 +43,13 @@ template <class K> object_value map_get(
     if (found != map->end()) { return found->second; }
     return {};
 }
+template <class K> std::shared_ptr<identity_object> map_get_present_identity(
+    const std::shared_ptr<map_storage<K, object_value>> & map, const K & key) {
+    const auto found = map->find(key);
+    if (found != map->end() && found->second.object) { return found->second.object; }
+    // Both presence and the object result type were independently proved.
+    std::terminate();
+}
 } // namespace ctnative
 )cpp";
 } // namespace ctcompile::ctnative::lowering_detail

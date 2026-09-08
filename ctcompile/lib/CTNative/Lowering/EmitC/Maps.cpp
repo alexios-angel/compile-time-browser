@@ -118,7 +118,14 @@ bool lowering::replaceMap(mlir::Operation * o) {
         const auto helper = o->hasAttr(kNativeMapPresent) ? "get_present" : action;
         std::string helperName = ("ctnative::map_" + helper).str();
         if (action == "get" && map) {
-            if (!mixedMapSpelling(map.getValueType()).empty()) {
+            if (isObjectValueType(map.getValueType()) &&
+                llvm::isa<ObjectIdentityType>(typeOf(o->getResult(0))) &&
+                o->hasAttr(kNativeMapPresent)) {
+                // Storage carries the family's finite object/scalar union;
+                // this read independently proves a present object. Copy its
+                // owner so the saved identity survives replacement/deletion.
+                helperName = "ctnative::map_get_present_identity";
+            } else if (!mixedMapSpelling(map.getValueType()).empty()) {
                 helperName = "ctnative::map_get_present_as<" +
                              mapValueSpelling(typeOf(o->getResult(0))) + ">";
             } else if (!nullableMapSpelling(map.getValueType()).empty() &&
