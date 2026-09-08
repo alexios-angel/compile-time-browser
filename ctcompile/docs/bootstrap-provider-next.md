@@ -335,16 +335,29 @@ sixteen lifetime families and all 165 lit cases pass. Final CTest is 512/517,
 all 372 compiler tests, with only the five recorded browser failures; native
 corpus and exact Bootstrap Data counts remain unchanged.
 
-## Next: nullable payload facts in the host result worklist
+## Completed: finite nullable host-result alternatives
 
-An acyclic fifteen-call `get -> set -> size(key)` source returns trace=1 in
-Node and the interpreter, but remains **0/6 native** in both modes with no host
-owner proof. `CapturedMapBody.cpp::entry_fact.tag` drops the setter's finite
-nullable return before the next method's complete parameter census. Preserve
-the finite alternatives in that independent, budgeted host proof. A nested
-setter-result argument also introduces a separate self-dependent census;
-object payloads remain unowned. Complete measured sources and repair controls
-are in [the Map boundary](native-owned-global-maps.md#next-boundary).
+Commit **`ed1a833c`** advances the exact fifteen-call `get -> set -> size(key)`
+source **0/6 -> 6/6 native** in both modes, preserving trace=1. The independent
+host body proof keeps finite payload alternatives through live writes, joins
+and reads, then the complete actual/formal census supplies the next method's
+nullable input. Saved read evidence survives later mutation. No native schema
+or Presence annotation supplies host proof authority.
+
+Five programs pass both modes, explicit/deduced GCC/Clang, exact identities and
+saved-result lifetimes in **`fe867e6f`**. Four independent host refusals and their
+exact repairs pass, together with fresh/stale reports, reruns and budget
+cutoffs. Full 133-program/seventeen-lifetime and whole-suite measurements are
+pending; [HANDOFF.md](HANDOFF.md) records the focused gates and logs.
+
+## Next: same-method result dependencies
+
+The fifteen-call `set(set(get(false)))` source remains unowned and **0/6** in
+both modes, trace=2. Its setter argument census waits for that same setter's
+result before its body may be checked. Resolve this dependency with independent
+evidence and a final complete census, without substituting the first startup
+call's observations for future calls. Object payloads remain a separate owner
+boundary. Exact sources are in [the Map boundary](native-owned-global-maps.md#next-boundary).
 
 The exact Bootstrap getter at vendor line 17 also needs nested/object payloads.
 Exact Bootstrap Data, general realm owners and future-call contracts remain

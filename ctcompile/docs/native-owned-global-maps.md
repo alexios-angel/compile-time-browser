@@ -784,11 +784,39 @@ all **372 compiler tests**, with only the five recorded browser failures.
 Corpus and exact Data counts remain unchanged. Fifteen code/test paths match
 committed HEAD, frozen input and final devbox source; see [HANDOFF.md](HANDOFF.md).
 
+## Finite nullable host-result proof, 2026-09-08
+
+Commit **`ed1a833c`** closes the exact acyclic host-result boundary recorded in
+**`ae8e021a`**. This program retains all fifteen calls and advances **0/6 -> 6/6
+native** in both modes, preserving Node/interpreter/native **trace=1**:
+
+```
+
+`CapturedMapBody.cpp` now keeps finite primitive alternatives per live key.
+Exact writes replace payload evidence; possible aliases and branches join it.
+Reads require independently proved presence and keep their own immutable SSA
+alternatives after later overwrite/deletion. This is a separate bounded host
+proof; native Map schema, Presence facts and report attributes cannot supply it.
+The complete actual/formal census still generalizes future input categories.
+
+Commit **`fe867e6f`** gates five sources with **15/15/19/16/18 calls** and
+**1/2/4/2/1 traces**. All pass explicit/deduced GCC/Clang, both compiler modes,
+Node/interpreter/native identity and the new saved-result lifetime harness.
+The latter keeps owning bytes and all four tags through owner release,
+overwrite/deletion, caller/result mutation, reentry and final Map destruction.
+Four independent unknown/missing/deleted/aliasing refusals restore exact admitted
+sources with traces **2/1, 2/1, 1/2, 2/1**. Fresh/stale forgeries and reruns pass;
+budgets **18043/18696/18804** pass **29/30/32 cutoffs**. Raw/prepared host tests
+add sixteen rows each and all **4727/4984/4899/5186** incomplete budgets.
+Four host/owner CTests pass **37.72 seconds**; seven local lit cases pass
+**43.80 seconds**. The corrected saved lifetime harness changes only its
+appended observer, preserving the generated helpers. Full **133-program,
+seventeen-lifetime** driver and whole-suite results are pending in HANDOFF.
+
 ## Next boundary
 
-The next obligation is **finite nullable payload evidence in the independent
-host method-result proof**. This acyclic chain consumes a nullable Map read
-through a different published method:
+This same-method result dependency still has **fifteen calls**, trace=2,
+no host owner proof and **0/6 native** in both modes:
 
 ```js
 var host = {};
@@ -797,7 +825,7 @@ var host = {};
 })(function() {
     const state = new Map();
     return {
-        size(key) { state.set(key, key); return state.size; },
+        size() { return state.size; },
         get(flag) {
             state.set('seed', 'future');
             const result = flag ? '' : state.get('seed');
@@ -812,30 +840,23 @@ var host = {};
         }
     };
 });
-host.slot.set(host.slot.get(false));
-var trace = host.slot.size(host.slot.set(host.slot.get(false)));
+host.slot.set(host.slot.set(host.slot.get(false)));
+host.slot.set(host.slot.get(true));
+var trace = host.slot.size();
 ```
 
-It retains **fifteen calls**, Node/interpreter **trace=1**, but has **no host
-owner proof** and remains **0/6 native** in both modes. `CapturedMapBody.cpp`
-still stores only `entry_fact.tag`, so its setter return loses the finite
-String/Null alternatives before `capturedMapParameters` can prove `size(key)`.
-Keep those alternatives through exact writes, possible-alias joins, conditional
-joins and definitely present reads in this separately budgeted host proof.
-The native Map schema and its Presence facts cannot supply the host evidence.
-Node controls replacing the setter return with Null, Undefined, empty String
-or Boolean produce trace=2, making this source discriminating.
+`Values.cpp` requires the entire setter argument census before checking its
+body. One actual is that same setter's unpublished result, so the complete
+method dependency worklist cannot progress. A next proof must resolve that
+dependency independently, retaining the final complete census and future input
+categories. The first startup call cannot authorize every later call.
+The distinct-method control above proves nullable storage/results themselves.
 
-A fifteen-call `set(set(get(false)))` program also remains unowned and **0/6**,
-trace=2, but adds a separate worklist self-dependency: the setter's complete
-argument census waits for its own result. Fixing host entry payloads alone
-cannot admit it. The original dual-nested local conditional has a separate
-merged-callee identity boundary, preserved as a refusal in `native-map-mixed.mlir`.
-An object payload `{value: 'instance'}` still has eleven calls, trace=2, no host
-owner and **0/6**. Full Bootstrap Data, object identity/fields, browser API
-integration, general exports and future-call contracts remain unfinished.
-
-Complete source and both-mode measurements:
-`/tmp/ctcompile-mixed-nullable-next.json` and devbox
-`/tmp/ctcompile-mixed-nullable-next/`. The preceding accepted fourteen/nineteen
-sources are permanent positives in `nullable_payload_sources()`.
+The original dual-nested local conditional has a separate merged-callee identity
+boundary, preserved in `native-map-mixed.mlir`. An object payload
+`{value: 'instance'}` still has eleven calls, trace=2, no host owner and **0/6**.
+Full Bootstrap Data, object identity/fields, browser API integration, general
+exports and future-call contracts remain unfinished. Complete both-mode
+measurements are in `/tmp/ctcompile-nullable-host-results-boundary.json` and
+devbox `/tmp/ctcompile-nullable-host-results-boundary/`; the exact nested source
+is a permanent refusal beside the acyclic positives in the published driver.

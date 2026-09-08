@@ -6,6 +6,87 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Finite host Map results and static-binary checkpoint, 2026-09-08
+
+Saved locally on `ctcompile-v1`: **`ed1a833c`**, finite nullable host Map
+results; **`ac3d0d43`**, non-BigInt static binary escape origins; and
+**`fe867e6f`**, published result execution/lifetime controls. This resumes the
+exact acyclic host-result boundary in **`ae8e021a`** and the **16:28:03
+synchronization journal**. The initial shared tree/index was clean.
+`codex-wip-20260907` is already merged; its recovery was gated in `5307abf`.
+Three agents handled independent host tests, published execution controls and
+escape analysis. No browser/runtime source changed, history rewrite or push.
+
+The exact **fifteen-call**, trace=1 `get -> set -> size(key)` witness advances
+**0/6 -> 6/6 native** in both modes. The separate host body proof now retains
+finite primitive payload alternatives through exact writes, possible-alias
+writes and conditional joins. Only definite presence supplies read evidence;
+saved SSA results survive later overwrite/deletion. The complete method census
+still generalizes formal categories for future calls and checks every body.
+It uses no native schema or Presence annotation as host proof authority.
+The existing owning nullable String carrier suffices; emission code is unchanged.
+
+All **five new source programs** pass both modes, explicit/deduced GCC/Clang,
+Node/interpreter/native identity and the saved-result sanitizer harness. Their
+call counts are **15/15/19/16/18**, with traces **1/2/4/2/1**. The saved value
+reaches a typed nullable `size` callable after Boolean overwrite/deletion,
+caller/result mutation, owner release, independent reentry and final Map release.
+The initial lifetime harness rewrite incorrectly changed `map->size()` inside
+a generated helper; it now transforms only the appended observer. The corrected
+saved case passes. Four independent unknown/missing/deleted/aliasing host
+refusals preserve their original calls and reject fresh/stale forged reports;
+exact repairs restore admitted sources with traces **2/1, 2/1, 1/2, 2/1**.
+The nested setter control remains separately refused. Five positive forgery
+families and three budget sweeps pass: **18043/18696/18804** work units and
+**29/30/32 cutoffs**, with no natural speculative rollback interval.
+
+Four host/owner CTests pass in **37.72 seconds**. The seeded test's corrected
+rerun and all eight escape CTests pass together in **21.62 seconds**; seven
+local Map lit cases pass in **43.80 seconds**. Host tests add **sixteen rows
+per raw/prepared form**, exhaustive cutoffs **4727/4984/4899/5186**, and fresh/
+stale mutations. Three owner families independently cover nullable reads,
+possible aliases and saved results. Two old expectations now retain literal
+truthiness: a false payload takes its Number fallback, while an exact empty
+String becomes Null. A paired truthy-Boolean refusal remains. This does not
+specialize future formal categories to startup observations.
+
+Each of the seven static binary kinds passes **31 rows, eighteen live states
+and 1283 retention cutoffs**, plus a wide snapshot's exact **64 work units**.
+Both current operand origins must independently exclude BigInt; opaque and
+BigInt inputs still refuse. The result supplies a Number origin, never an
+inferred value or branch choice. String conversion can allocate ordinary C++
+temporaries, so no absence/success-of-allocation claim is made. The new source
+family measures **twelve sites, twenty instances, fifteen retained**. Four
+escape oracles report zero violations. Expanded-fixture precision **40/54**
+adds coverage relative to **39/51**; Bootstrap/p5/Phaser stay **0/64, 0/16, 0/20**.
+
+The full devbox build/CTest gate is running in
+`/tmp/ctcompile-nullable-host-results-full.log`; final results are pending.
+The complete published driver is configured for **133 programs and seventeen
+lifetime families**, not yet measured as a whole in this session. Formatter
+**22.1.8** passes all **745 files**. All twelve code/test paths match the
+committed source and frozen gate input. The previous full gate was 512/517,
+with five recorded browser failures; this session has not changed those paths.
+
+**Exact next boundary: a setter result used by another call to the same setter.**
+The **fifteen-call**, trace=2 `set(set(get(false)))` source remains unowned and
+**0/6 native** in both modes. `Values.cpp` requires every actual before checking
+a method body; one setter actual is its own unpublished result, so the complete
+method worklist stalls. Nullable payload storage/results are now proved for
+the distinct-method control. A next increment needs independent evidence for
+this dependency without treating the first startup call as the entire census.
+The eleven-call object-payload source also remains unowned, trace=2 and **0/6**.
+The dual-nested local conditional retains its separate callee-identity refusal.
+Full Bootstrap Data, object identity/fields, browser API integration, general
+exports and native throwing-call admission remain unfinished.
+
+Evidence: `/tmp/ctcompile-nullable-host-results-host.log`, `-focused.log`,
+`-native.log`, `-corrected.log`, `-boundary.json`, `-format.log`,
+`-input-hashes.json`, `-snapshot.txt` and `-full.log`. The first native log
+preserves the obsolete lifetime-harness failure; the corrected log records the
+saved-result and all new refusal/repair/forgery/budget passes. Complete accepted
+and next sources are in `native-owned-global-maps.md` and the published driver.
+
 ## Finite mixed Map read and total-unary checkpoint, 2026-09-08
 
 Saved locally on `ctcompile-v1`: **`c4d6bf07`**, finite nullable payload facts
