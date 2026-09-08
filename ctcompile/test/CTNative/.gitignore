@@ -1,0 +1,3 @@
+# The Python test drivers here import each other, and CPython caches bytecode
+# beside the source. Never anything to commit.
+__pycache__/
