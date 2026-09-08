@@ -909,7 +909,7 @@ CT_OPCODE(/* name */ iterable, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ 
  * assign_through_accessor (vm/objects/store.cpp) both carry a depth-64 cap.
  * Silently a no-op when a is a closure/array/proxy/native - and it
  * therefore cannot do what Object.setPrototypeOf does for a closure
- * (builtins/objects.cpp:225-231 also writes closure_object::proto_link). */
+ * (builtins/objects/object.cpp Object.setPrototypeOf also writes closure_object::proto_link). */
 CT_OPCODE(/* name */ set_proto, /* a_kind */ reg, /* b_kind */ reg, /* c_kind */ unused, /* writes_a */ 0,
           /* allocates */ 0, /* may_throw */ 0, /* may_reenter */ 0, /* is_safepoint */ 0,
           /* may_suspend */ 0, /* resumable */ 0, /* impl */ "inline")

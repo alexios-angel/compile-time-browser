@@ -590,7 +590,7 @@ lowering together, because one without the other has happened four times.
 and correct the two paragraphs that are false.** No row's signature changes. See
 the citations section for the list. `helper_count` is derived and does not move.
 
-**3 — `ctbrowser/lib/Script/aot_bridge.cpp`: four statics and four `extern "C"`
+**3 — `ctbrowser/lib/Script/aot_bridge/calls.cpp`: four statics and four `extern "C"`
 wrappers.** Each delegates to its Step 1 member against `frame_of(f).ctx`.
 
 * `module_import_cell` and `module_namespace` return the value plainly, with no
@@ -813,7 +813,7 @@ exactly like a guard that fired.
 | fill `ctjs.module_import_cell` in READING order — specifier from `b`, export name from `c` | `BytecodeImport.cpp` | **RED, all 12 checks**: ``module `default` was not loaded`` |
 | read `in.b` instead of `in.bx()` for `bind_export` | `BytecodeImport.cpp` | **RED on 3**: `own export` both modes, and `adopted cell` answers `undefined` — the predicted symptom exactly. `no module` stays green, correctly: with no record the name is irrelevant |
 | hand `ct_aot_module_namespace` `specifier.size() - 1` | `CTJSToEmitC.cpp` | **RED, all 12**: ``module `./dep.j` was not loaded`` |
-| drop the referrer the bridge reads off the frame | `aot_bridge.cpp` | **RED on 1**: `dynamic import` in the ALL-entries mode only — `>./dep.js` against `main>./dep.js` |
+| drop the referrer the bridge reads off the frame | `aot_bridge/calls.cpp` | **RED on 1**: `dynamic import` in the ALL-entries mode only — `>./dep.js` against `main>./dep.js` |
 | stop seeding `ct_aot_module_export_cell`'s out-slot with `$current` | `CTJSToEmitC.cpp` | **RED on 1**: `no module` answers `undefined` |
 
 **The last two are the interesting ones.** The referrer mutation is invisible

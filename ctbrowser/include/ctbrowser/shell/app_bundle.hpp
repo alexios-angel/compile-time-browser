@@ -16,7 +16,7 @@
 // the failure is a silent recompile, which is the one this project treats as
 // worst because nothing reports it.
 //
-// EVERYTHING IS LITTLE-ENDIAN AND EXPLICIT, for the reason program_image.cpp
+// EVERYTHING IS LITTLE-ENDIAN AND EXPLICIT, for the reason program_image/internal.hpp
 // gives at length: a struct written by memcpy carries its padding, and padding
 // differs between builds of the writer. Every field here is written a byte at a
 // time.

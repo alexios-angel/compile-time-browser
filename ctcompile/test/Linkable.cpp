@@ -2,7 +2,7 @@
 //
 // Nothing else in the suite asks. Every EmitC lit test compiles what the
 // backend emits with -fsyntax-only, which cannot tell a helper that exists from
-// one that is only declared - and aot.hpp declares all 69 while aot_bridge.cpp
+// one that is only declared - and aot.hpp declares all 69 while lib/Script/aot_bridge/
 // defines 32. A call to one of the other 37 compiles perfectly and fails at
 // link, which is how ct_aot_global_get and ct_aot_negate were emitted for two
 // commits with a green suite.

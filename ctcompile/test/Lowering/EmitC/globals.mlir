@@ -1,7 +1,7 @@
 // GLOBALS, AND THE ESCAPE THAT IS A REAL BUG IF IT IS A HEX ONE.
 //
 // This file was a REFUSAL test one commit ago, and the reason is worth keeping:
-// aot.hpp declares all 69 ABI rows and aot_bridge.cpp defined 32 of them, so
+// aot.hpp declares all 69 ABI rows and lib/Script/aot_bridge/ defined 32 of them, so
 // emitting a call to ct_aot_global_get COMPILED PERFECTLY and failed at link.
 // It now has a body, so the lowering is enabled and this asserts what it emits.
 //

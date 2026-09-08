@@ -108,7 +108,7 @@
 //     inside a bundle - 21 such sites in bootstrap, 42 in p5, 50 in phaser.
 //
 //     The eval-like case is real here too: `Function(...)` compiles and runs a
-//     NEW program (builtins/objects.cpp, install_dynamic_function), whose body
+//     NEW program (builtins/objects/function.cpp, install_dynamic_function), whose body
 //     can set_global anything, so a load of "Function" or "eval" also resolves
 //     nothing, as does ctjs.dynamic_import. Measured on the corpora, that is
 //     not hypothetical: it is the REASON PRINTED for all 72 of phaser's rows -

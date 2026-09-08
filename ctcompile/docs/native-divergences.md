@@ -135,7 +135,7 @@ ECMA-262 has `WeakRef`, `FinalizationRegistry`, and the weakly-keyed
 * there is no `WeakRef` global and no `FinalizationRegistry` anywhere under
   `ctbrowser/lib/Script` — `typeof WeakRef` is `"undefined"`;
 * `WeakMap` and `WeakSet` **are** `Map` and `Set` — the same heap objects under
-  a second name (`ctbrowser/lib/Script/builtins/collections.cpp`, the two
+  a second name (`ctbrowser/lib/Script/builtins/collections/keyed.cpp`, the two
   `define_global` lines at the end of `install_collections`), so
   `WeakMap === Map` is `true` and an entry keeps its key alive. The engine
   calls this out itself: *"the difference is a leak, not a wrong answer."*

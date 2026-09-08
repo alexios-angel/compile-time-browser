@@ -215,7 +215,7 @@ arena_outcome ring_local_arena(int n) {
 // one place, `context::invoke`'s entry (vm/call/invoke.cpp, the `safepoint()`
 // below
 // the argument copy) - every C++ entry into JavaScript, which
-// `Function.prototype.call` is (builtins/objects.cpp: `c.call(self, rest,
+// `Function.prototype.call` is (builtins/objects/function.cpp: `c.call(self, rest,
 // ...)`). An interpreted JS-to-JS call pushes its frame in the run loop and is
 // NOT one. So `walk(keep, 9)` from inside a driver never collects, and
 // `walk.call(null, keep, 9)` collects once, at entry, with the ring reachable
@@ -526,7 +526,7 @@ int main() {
     // Option 3 - weak links only where the SOURCE says `WeakRef` or `WeakMap`
     // - is vacuous here, and the VM is asked rather than told: there is no
     // `WeakRef` global at all, and `WeakMap`/`WeakSet` are the strong `Map`/
-    // `Set` under other names (builtins/collections.cpp).
+    // `Set` under other names (builtins/collections/keyed.cpp).
     probe_expect("(e) ND-2: typeof WeakRef === \"undefined\"", "typeof WeakRef === \"undefined\"",
                  "true");
     probe_expect("(e) ND-2: WeakMap === Map", "WeakMap === Map", "true");

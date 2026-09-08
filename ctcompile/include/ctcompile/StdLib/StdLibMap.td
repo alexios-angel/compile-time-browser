@@ -170,7 +170,7 @@ def Math_LOG10E : Exact<"Math.LOG10E", "std::numbers::log10e", "<numbers>",
 //===----------------------------------------------------------------------===//
 
 // The interpreter now decodes the ECMAScript WhiteSpace + LineTerminator set
-// without a locale (builtins/text.cpp, 61416fc). The core helper still trims
+// without a locale (builtins/text/string.cpp, 61416fc). The core helper still trims
 // only the ASCII six. Its former exact classification no longer holds.
 def String_trim : Divergent<"String.prototype.trim",
     "ctbrowser::trim(s, ctbrowser::js_whitespace)",

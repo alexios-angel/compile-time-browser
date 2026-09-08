@@ -10,7 +10,7 @@
 #include <system_error>
 
 // The format, in one file so the writer and the reader cannot drift - the same
-// rule program_image.cpp states and for the same reason.
+// rule program_image/internal.hpp states and for the same reason.
 //
 //   header   magic 'CTAP', format version, engine fingerprint, entry count,
 //            payload offset, payload length

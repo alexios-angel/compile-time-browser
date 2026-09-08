@@ -3,7 +3,7 @@
 namespace ctcompile::ctjs::emitc_detail {
 // THE HELPERS THE RUNTIME DECLARES BUT DOES NOT DEFINE.
 //
-// aot_helpers.def declares 69 rows and aot_bridge.cpp defines 32 of them. The
+// aot_helpers.def declares 69 rows and lib/Script/aot_bridge/ defines 32 of them. The
 // other 37 have prototypes in aot.hpp and no body anywhere, so a call to one
 // COMPILES PERFECTLY and fails at link.
 //

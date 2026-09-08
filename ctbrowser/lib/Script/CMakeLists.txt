@@ -13,10 +13,19 @@
 add_library(ctbrowser-script)
 target_sources(ctbrowser-script
   PRIVATE
-    aot_bridge.cpp
+    # The AOT ABI's bodies. struct aot_bridge is declared in aot_bridge/internal.hpp
+    # and each member is defined beside the extern "C" row that calls it - four
+    # files, from one of 1,586 lines (2026-09-08).
+    aot_bridge/frames.cpp
+    aot_bridge/operators.cpp
+    aot_bridge/properties.cpp
+    aot_bridge/calls.cpp
     dispatch.cpp
     aot_contract.cpp
-    program_image.cpp
+    # The program image: the writer and the reader, from one file of 1,156 lines
+    # (2026-09-08); program_image/internal.hpp holds what both must agree on.
+    program_image/write.cpp
+    program_image/read.cpp
     # The compiler. compile.cpp is `compiler::compile()` alone; the class is
     # declared in compile/compiler_impl.hpp and its bodies live beside it.
     # compile.hpp still declares exactly one function.
@@ -54,13 +63,31 @@ target_sources(ctbrowser-script
     # loop is one null test; everything it does lives here.
     type_record.cpp
     # The standard library. builtins.cpp is now just install_builtins() calling
-    # the five files beside it; builtins/internal.hpp is private to them and is
+    # the files beside it - two of them, and three directories where a file
+    # outgrew 1,000 lines; builtins/internal.hpp is private to all of them and is
     # deliberately in NO file set - builtins.hpp still declares one function.
     builtins.cpp
     builtins/values.cpp
-    builtins/collections.cpp
-    builtins/text.cpp
-    builtins/objects.cpp
+    # Array, the keyed collections and the typed arrays - four files, from one
+    # of 1,824 lines (2026-09-08); builtins/collections/internal.hpp is theirs.
+    builtins/collections/array.cpp
+    builtins/collections/array_iteration.cpp
+    builtins/collections/keyed.cpp
+    builtins/collections/typed_arrays.cpp
+    # String, btoa/atob and structuredClone, RegExp, Symbol - four files, from
+    # one of 1,333 lines (2026-09-08), sharing nothing but builtins/internal.hpp.
+    builtins/text/string.cpp
+    builtins/text/globals.cpp
+    builtins/text/regexp.cpp
+    builtins/text/symbol.cpp
+    # Object, the errors, Proxy/Reflect and Function - five files, from one of
+    # 1,429 lines (2026-09-08); builtins/objects/internal.hpp declares the four
+    # abstract operations Object and Reflect share.
+    builtins/objects/operations.cpp
+    builtins/objects/object.cpp
+    builtins/objects/errors.cpp
+    builtins/objects/proxy.cpp
+    builtins/objects/function.cpp
     builtins/async.cpp
     bigint.cpp
     number_format.cpp

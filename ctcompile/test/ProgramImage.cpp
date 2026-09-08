@@ -110,7 +110,7 @@ void must_refuse(std::string_view what, std::vector<std::byte> bytes,
     }
 }
 
-// AND REFUSED FOR THE STATED REASON. Two decisions in program_image.cpp rest on
+// AND REFUSED FOR THE STATED REASON. Two decisions in program_image/ rest on
 // which check runs first - the source hash algorithm is tagged into the
 // FINGERPRINT rather than the version because the layout did not change, and
 // dropping `nested` bumped the VERSION because it did. Neither is worth
@@ -403,7 +403,7 @@ int main() {
 
     // --- WHAT THE COMPILER EMITS, NOT ONLY WHICH OPCODES EXIST -----------
     // `image_fingerprint()` folds a codegen identity: the canary in
-    // program_image.cpp is compiled and its bytecode hashed, so a change to
+    // program_image/write.cpp is compiled and its bytecode hashed, so a change to
     // what the compiler EMITS moves the fingerprint even though every opcode
     // stayed the same. It exists because that happened - `finally` was
     // rewritten on 2026-08-21 from two copies of the block to a completion

@@ -71,7 +71,7 @@ instruction and inserts checks around the resulting control flow.
 The boxed backend already uses `ct_aot_throw`, `ct_aot_catch_land` and the
 `caught`/`unwound`/`failed` status protocol. See
 [Status.cpp](../lib/CTJS/Lowering/EmitC/Status.cpp) and
-[aot_bridge.cpp](../../ctbrowser/lib/Script/aot_bridge.cpp). This protocol is
+[aot_bridge/frames.cpp](../../ctbrowser/lib/Script/aot_bridge/frames.cpp). This protocol is
 not a native C++ exception implementation and must remain compatible with
 interpreted callers. Generic CFG structuring rejects the effectful
 `push_handler` and `check` terminators; the existing

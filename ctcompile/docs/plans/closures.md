@@ -22,7 +22,7 @@ top level declares anything is skipped whole.
 * **`call_frame::closure` is GC root 4** (`GCRoots.def:31`), so once a compiled
   frame has one the collector traces it with no further work.
 * **`pending_new_target_` is the pattern to copy** — GC root 3, set by a caller,
-  consumed and cleared by `ct_aot_enter` (`aot_bridge.cpp:176-184`) and by
+  consumed and cleared by `ct_aot_enter` (`aot_bridge/frames.cpp`, `aot_bridge::enter`) and by
   `context::invoke` (`vm/call/invoke.cpp`). Its comment already documents the exact
   ordering hazard: push the frame *before* clearing the root, or the value is
   reachable from nothing in the gap.

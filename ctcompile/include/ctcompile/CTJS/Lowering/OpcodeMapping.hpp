@@ -1,7 +1,7 @@
 #pragma once
 // WHICH BYTECODE OPCODE A CTJS KIND MEANS.
 //
-// `uint32_t op_kind` in the ABI is a `ctbrowser::script::op` - aot_bridge.cpp
+// `uint32_t op_kind` in the ABI is a `ctbrowser::script::op` - aot_bridge/operators.cpp
 // does `static_cast<op>(op_kind)` and dispatches the interpreter's own switch on
 // it. So this file is the difference between a compiler that calls the right
 // operator and one that calls whatever `op(5)` happens to be.

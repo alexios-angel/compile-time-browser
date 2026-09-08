@@ -358,7 +358,7 @@ endif()
 
 # --- and does any of it LINK? -------------------------------------------------
 #
-# aot.hpp declares 69 helpers and aot_bridge.cpp defines 32. A call to one of
+# aot.hpp declares 69 helpers and lib/Script/aot_bridge/ defines 32. A call to one of
 # the other 37 compiles perfectly and fails at link - which is exactly how
 # ct_aot_global_get and ct_aot_negate were emitted for two commits with a green
 # suite, because every EmitC lit test uses -fsyntax-only.

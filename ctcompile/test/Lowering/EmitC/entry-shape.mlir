@@ -23,7 +23,7 @@
 //   no prototype, so the translation unit includes aot.hpp and calls what the
 //   header declares. Emitting func.func private instead would re-declare the
 //   helpers at global scope with C++ linkage - undefined symbols against
-//   aot_bridge.cpp - and emitc.declare_func drops parameter types outright in
+//   lib/Script/aot_bridge/ - and emitc.declare_func drops parameter types outright in
 //   this LLVM.
 //
 //   ct_aot_enter FAILS WITH A NULL POINTER, NOT A STATUS. Its row returns
