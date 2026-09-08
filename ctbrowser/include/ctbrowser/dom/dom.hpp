@@ -18,3 +18,4 @@
 #include <ctbrowser/dom/node.hpp>
 #include <ctbrowser/dom/tokenizer.hpp>
 #include <ctbrowser/dom/treebuilder.hpp>
+#include <ctbrowser/dom/xml.hpp>

@@ -23,6 +23,10 @@ void browser::use_renderer(renderer r) {
 }
 
 void browser::load_html(std::string_view html) {
+    load_document(html, source_kind::html);
+}
+
+void browser::load_document(std::string_view html, source_kind kind) {
     // A NAVIGATION FROM INSIDE A SCRIPT IS QUEUED, NOT PERFORMED. `element.click()`
     // reaches `browser::activate`, which calls the embedder's navigate hook, and
     // an embedder's hook calls this - ctbrowse's does - so this function can be
@@ -42,30 +46,47 @@ void browser::load_html(std::string_view html) {
     // nothing is running on the context it is about to destroy.
     if (loading_) {
         pending_load_ = std::string{html};
+        pending_kind_ = kind;
         return;
     }
     loading_ = true;
-    load_one_page(html);
+    load_one_page(html, kind);
     loading_ = false;
     // A queued navigation, and any it queues in turn. A page that navigates on
     // load forever is a page that hangs in a real browser too, so there is no
     // cap here that a real one does not also lack.
     while (pending_load_) {
         std::string next = std::move(*pending_load_);
+        const source_kind next_kind = pending_kind_;
         pending_load_.reset();
         loading_ = true;
-        load_one_page(next);
+        load_one_page(next, next_kind);
         loading_ = false;
     }
 }
 
-void browser::load_one_page(std::string_view html) {
+void browser::load_one_page(std::string_view html, source_kind kind) {
     source_html_ = html; // what location.reload() re-runs
+    source_kind_ = kind;
     // Both the document and the cascade are rebuilt. Keeping the old style
     // engine would accumulate every page's <style> rules across navigations,
     // which shows up as the previous page bleeding into the next one.
     reset_document();
-    const parse_result parsed = parse_html(*doc_, html);
+    // XML AND HTML ARE TWO FRONT ENDS, not one with a flag. See dom/xml.hpp:
+    // nothing is implied, every tag may self-close, case is preserved, and a
+    // `<script>` written as `<![CDATA[ ... ]]>` is code rather than code with
+    // a marked section on the front. A malformed XML document does not
+    // recover - there is nothing to recover to - so the error is kept and the
+    // partial tree is loaded, which is what lets an embedder show it.
+    xml_error_.clear();
+    parse_result parsed;
+    if (kind == source_kind::xml) {
+        xml_parse_result read = parse_xml(*doc_, html);
+        parsed = std::move(read.tree);
+        xml_error_ = std::move(read.error);
+    } else {
+        parsed = parse_html(*doc_, html);
+    }
     title_ = extract_title();
     scroll_y_ = 0;
     author_sheet_loaded_ = false;
@@ -354,6 +375,11 @@ std::size_t browser::tick(double elapsed_ms) {
     // and both are dispatched BEFORE this tick's timers, so a handler that
     // schedules `setTimeout(f, 0)` gets f on the very next tick rather than one
     // further out. testharness.js does exactly that.
+    // THE FRAMES FIRST, and this is the ordering the corpus turns on: a page's
+    // `load` handler is where WPT reads `frame.contentDocument`, so a frame
+    // whose document is built with the timers - after that event - is a frame
+    // that was never there when it was looked for. See bindings/frames.cpp.
+    bindings_->reconcile_frames();
     if (load_event_pending_) {
         load_event_pending_ = false;
         (void)bindings_->dispatch("DOMContentLoaded", node_id{});
@@ -384,7 +410,8 @@ std::size_t browser::tick(double elapsed_ms) {
 
 void browser::reload() {
     const std::string source = source_html_;
-    load_html(source); // by value: load_html clears source_html_'s referent
+    // by value: load_document clears source_html_'s referent
+    load_document(source, source_kind_);
 }
 
 void browser::set_alert_hook(std::function<void(const std::string &)> hook) {

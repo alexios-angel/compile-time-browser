@@ -263,8 +263,12 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
 
         VM_CASE(get_global) do {
             {
+                // The hit path is the one map lookup it always was; a MISS asks
+                // the embedder, which is where named access on the window lives.
+                // See context::set_undeclared_name_hook.
                 const auto it = globals_.find(vm_proto->names[in.bx()]);
-                reg(in.a) = it == globals_.end() ? value::undefined() : it->second;
+                reg(in.a) =
+                    it != globals_.end() ? it->second : global_or_named(vm_proto->names[in.bx()]);
                 break;
             }
         }

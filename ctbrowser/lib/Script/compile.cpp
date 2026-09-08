@@ -2,8 +2,32 @@
 //
 // The compiler itself is in compile/compiler_impl.hpp and the files beside it.
 #include "compile/compiler_impl.hpp"
+#include "compile/early_errors.hpp"
 
 namespace ctbrowser::script {
+
+namespace {
+
+// A byte offset, as the `line:column` every diagnostic in this engine ends
+// with. Shared by the parser's failure and the early errors' - they are the
+// same kind of answer about the same source and there is no reason for them to
+// be spelled differently.
+[[nodiscard]] std::string position_in(std::string_view source, std::size_t offset) {
+    std::size_t line = 1;
+    std::size_t column = 1;
+    const std::size_t stopped = std::min(offset, source.size());
+    for (std::size_t i = 0; i < stopped; ++i) {
+        if (source[i] == '\n') {
+            ++line;
+            column = 1;
+        } else {
+            ++column;
+        }
+    }
+    return " - at " + std::to_string(line) + ":" + std::to_string(column);
+}
+
+} // namespace
 
 program compiler::compile(std::string_view source, script_kind kind) {
     const vp::ast tree = vp::parse(source);
@@ -23,19 +47,27 @@ program compiler::compile(std::string_view source, script_kind kind) {
         // because the source is right there and none of them have it in a
         // convenient form. The shape matches what the ratchets' tooling already
         // greps for - `<name>:<line>:<column>`.
-        std::size_t line = 1;
-        std::size_t column = 1;
-        const std::size_t stopped = std::min(tree.error_offset, source.size());
-        for (std::size_t i = 0; i < stopped; ++i) {
-            if (source[i] == '\n') {
-                ++line;
-                column = 1;
-            } else {
-                ++column;
-            }
+        out.error =
+            "parse error: " + std::string{tree.error} + position_in(source, tree.error_offset);
+        return out;
+    }
+    // THE EARLY ERRORS, BEFORE A SINGLE INSTRUCTION IS EMITTED. Clause 17 says
+    // they are reported "prior to the first evaluation of the source text", and
+    // the only way to promise that is to answer before the compiler starts.
+    //
+    // Reported with the parser's own prefix, and that is not cosmetic: an early
+    // error IS a SyntaxError in the source text, indistinguishable to a caller
+    // from one the grammar caught, and `parse error:` is the only thing this
+    // engine says that means "this source is a SyntaxError". `ct262` reads
+    // exactly that prefix to decide between phase `parse` and phase `refusal` -
+    // a refusal being "the compiler does not implement this", which an early
+    // error is emphatically not. See lib/Script/compile/early_errors.hpp.
+    if (const auto early = detail::find_early_error(tree, source)) {
+        out.ok = false;
+        out.error = "parse error: " + early->message;
+        if (early->offset != detail::early_error::nowhere) {
+            out.error += position_in(source, early->offset);
         }
-        out.error = "parse error: " + std::string{tree.error} + " - at " + std::to_string(line) +
-                    ":" + std::to_string(column);
         return out;
     }
     out.source = std::string{source};

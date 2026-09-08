@@ -576,6 +576,26 @@ value context::iterable_values(value v) {
         }
         return out;
     }
+    // A PROXY IS ARRAY-LIKE THROUGH ITS TRAPS, and this is not a nicety. Every
+    // LIVE DOM collection is a proxy - `el.children`,
+    // `getElementsByTagName`, `getElementsByClassName`, `document.images` -
+    // because a collection has no fixed set of properties and its `length` is
+    // a walk of the document rather than a stored number. A proxy is not
+    // `is_object()`, so it fell off the end of this function and
+    // `for (const x of el.children)` and `[...el.children]` each read an EMPTY
+    // list: not an error, a wrong answer. `length` and each index come from the
+    // `get` trap, which is exactly where the walk lives.
+    if (v.is_kind(heap_kind::proxy)) {
+        const value length = lookup_property(v, "length");
+        if (!length.is_number()) { return make_array(); }
+        value out = make_array();
+        auto * items = static_cast<array_object *>(out.as_heap());
+        const auto count = static_cast<std::size_t>(std::max(0.0, to_number(length)));
+        for (std::size_t i = 0; i < count && i < 1u << 24; ++i) {
+            items->items.push_back(lookup_property(v, std::to_string(i)));
+        }
+        return out;
+    }
     if (!v.is_object()) { return make_array(); }
     auto * obj = static_cast<object_object *>(v.as_heap());
     // A GENERATOR IS DRAINED BY RUNNING IT. There is no `length` to loop over

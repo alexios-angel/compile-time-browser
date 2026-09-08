@@ -140,6 +140,25 @@ public:
     // one case where that is the honest answer.
     void load_html(std::string_view html);
 
+    // WHICH FRONT END PARSES THE SOURCE, and it is the CALLER's to decide -
+    // never sniffed. `<?xml ...?>` is optional in XML 1.0 and turns up in
+    // plenty of documents served as text/html, so guessing from the bytes gets
+    // both directions wrong. A file gets it from its extension
+    // (`is_xml_extension`) and a fetch from its content type.
+    enum class source_kind : std::uint8_t {
+        html,
+        xml
+    };
+
+    // The same load, told what it is reading. `load_html(s)` is
+    // `load_document(s, source_kind::html)`.
+    void load_document(std::string_view source, source_kind kind);
+
+    // Why the last XML parse failed, empty when it did not or when the last
+    // document was HTML. XML is draconian - there is no recovery - so this is
+    // the difference between a document and an error page.
+    [[nodiscard]] const std::string & xml_error() const noexcept { return xml_error_; }
+
     // --- script ----------------------------------------------------------
 
     // PAGE-LEVEL TEXT SELECTION.
@@ -593,7 +612,7 @@ private:
     // than a blank window.
     // The body of one load. load_html wraps it so that a navigation asked for
     // by a script is queued rather than performed under that script's feet.
-    void load_one_page(std::string_view html);
+    void load_one_page(std::string_view html, source_kind kind);
     void run_scripts();
 
     // Every <img src> in the document, decoded once. A missing or undecodable
@@ -1660,6 +1679,10 @@ private:
     std::function<void(const std::string &)> navigate_hook_;
     std::function<void(script::program &, std::string_view)> script_prepared_hook_;
     std::string source_html_;
+    // Which front end read `source_html_`, so `location.reload()` re-reads it
+    // the same way it was read the first time.
+    source_kind source_kind_ = source_kind::html;
+    std::string xml_error_;
     std::size_t layouts_ = 0;
     frame_timing timing_;
     double caret_clock_ms_ = 0;
@@ -1724,6 +1747,7 @@ private:
     // context the asking script is running on.
     bool loading_ = false;
     std::optional<std::string> pending_load_;
+    source_kind pending_kind_ = source_kind::html;
     // THE DOCUMENT FINISHED LOADING AND NOBODY HAS BEEN TOLD YET. Set when a
     // page's scripts have run, cleared by the first tick that fires
     // `DOMContentLoaded` and `load` at the window.

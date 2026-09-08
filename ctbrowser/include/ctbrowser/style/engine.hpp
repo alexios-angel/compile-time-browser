@@ -1249,6 +1249,223 @@ private:
     [[nodiscard]] atom id_name() const { return atoms_->intern("id"); }
     [[nodiscard]] atom class_name() const { return atoms_->intern("class"); }
 
+public:
+    // --- `:lang()` and `:dir()` -----------------------------------------------
+    //
+    // THE LANGUAGE OF AN ELEMENT, per HTML §3.2.6. The nearest ancestor-or-self
+    // carrying a `lang` attribute wins, and an EMPTY value wins too: `lang=""`
+    // means "unknown", so it stops the search rather than being skipped over.
+    //
+    // `xml:lang` is deliberately consulted only OUTSIDE the HTML namespace. In an
+    // HTML document the parser's foreign-attribute adjustment does not run on an
+    // HTML element, so `<html xml:lang="ko">` holds an attribute whose qualified
+    // name is literally `xml:lang` in no namespace and which sets no language at
+    // all - which is exactly what `the-lang-attribute-002.html` asserts by
+    // expecting `:lang(ko)` to MISS.
+    //
+    // With nothing on the chain the document default applies: the pragma set by
+    // `<meta http-equiv="content-language">`, which beats the HTTP header.
+    //
+    // COST. This walks to the root per candidate compound rather than inheriting a
+    // fact down the traversal, because `:lang()` appears in no sheet in the corpora
+    // and a rule carrying one is filed under its rightmost compound - so only the
+    // handful of elements that already match the rest of it ever ask. If a real
+    // sheet ever puts `:lang()` on a bare type selector, the fix is an inherited
+    // atom in element_facts, not a cache here.
+    [[nodiscard]] std::string_view language_of(const read_txn & txn, node_id node) const {
+        const atom lang = atoms_->intern("lang");
+        for (node_id at = node; at; at = txn.parent(at)) {
+            if (txn.kind(at).value_or(node_kind::text) != node_kind::element) { break; }
+            if (const attribute * a = txn.find_attribute(at, lang)) { return a->value; }
+            if (txn.element_ns(at) != node_ns::html) {
+                if (const attribute * a =
+                        txn.find_attribute_ns(at, "http://www.w3.org/XML/1998/namespace", "lang")) {
+                    return a->value;
+                }
+            }
+        }
+        return pragma_language(txn);
+    }
+
+    // The pragma-set default language. Memoised on the document VERSION, because a
+    // page with `:lang()` and no `lang` attribute anywhere would otherwise rescan
+    // the head once per candidate element.
+    //
+    // Only `<head>`'s children are scanned. The spec processes the pragma wherever
+    // the meta is inserted, so a `<meta http-equiv>` in the body would count too;
+    // no such page exists and scanning the whole document per miss would not be
+    // worth what it buys. A value containing a comma is IGNORED rather than split -
+    // HTML §4.2.5.3 says a Content-Language pragma naming more than one language
+    // sets no default at all.
+    [[nodiscard]] std::string_view pragma_language(const read_txn & txn) const {
+        const std::uint64_t version = txn.version();
+        if (pragma_language_version_ == version) { return pragma_language_; }
+        pragma_language_version_ = version;
+        pragma_language_.clear();
+        const atom head_tag = atoms_->intern("head");
+        const atom equiv = atoms_->intern("http-equiv");
+        const atom content = atoms_->intern("content");
+        for (const node_id top : txn.children(txn.root())) {
+            if (txn.kind(top).value_or(node_kind::text) != node_kind::element) { continue; }
+            for (const node_id child : txn.children(top)) {
+                if (txn.tag(child).value_or(atom{}) != head_tag) { continue; }
+                for (const node_id meta : txn.children(child)) {
+                    if (!ascii_iequals(txn.attribute_value(meta, equiv), "content-language")) {
+                        continue;
+                    }
+                    const std::string_view value = txn.attribute_value(meta, content);
+                    if (value.find(',') != std::string_view::npos) { continue; }
+                    const std::string_view tag = first_word(value);
+                    // Each meta sets the pragma as it is processed, so a later one
+                    // replaces an earlier one - hence no early exit.
+                    if (!tag.empty()) { pragma_language_ = tag; }
+                }
+            }
+        }
+        return pragma_language_;
+    }
+
+    // RFC 4647 §3.3.2 extended filtering, which is what Selectors 4 §7.2 says
+    // `:lang()` compares with. It is NOT string equality and it is not a prefix
+    // test either: `de` matches `de-DE`, `*-CH` matches `de-CH`, and a one-letter
+    // subtag in the language is a singleton that ends the match rather than being
+    // skipped past.
+    [[nodiscard]] static bool language_matches(std::string_view range, std::string_view lang) {
+        if (lang.empty() || range.empty()) { return false; }
+        std::size_t ri = 0;
+        std::size_t li = 0;
+        const std::string_view first_range = next_subtag(range, ri);
+        const std::string_view first_lang = next_subtag(lang, li);
+        if (first_range != "*" && !ascii_iequals(first_range, first_lang)) { return false; }
+        while (ri <= range.size()) {
+            const std::string_view want = next_subtag(range, ri);
+            if (want.empty()) { return true; }
+            if (want == "*") { continue; }
+            for (;;) {
+                if (li > lang.size()) { return false; }
+                const std::string_view have = next_subtag(lang, li);
+                if (have.empty()) { return false; }
+                if (ascii_iequals(want, have)) { break; }
+                if (have.size() == 1) { return false; } // a singleton subtag
+            }
+        }
+        return true;
+    }
+
+    // `:dir()`, Selectors 4 §7.1 over HTML §3.2.6's directionality. The nearest
+    // ancestor-or-self with a `dir` of `ltr` or `rtl` decides; `auto` and `<bdi>`
+    // resolve from the first STRONG character of the subtree's text, and the
+    // default with nothing found at all is `ltr`.
+    //
+    // The strong-character scan classifies UTF-8 by RANGE rather than by a Unicode
+    // bidi table: the right-to-left scripts are contiguous blocks, so the ranges
+    // are exact for them, and everything outside is treated as left-to-right or as
+    // neutral. That is the whole of the difference from a full bidi implementation
+    // and it is enough for `dir=auto` on real text.
+    [[nodiscard]] bool direction_is_rtl(const read_txn & txn, node_id node) const {
+        const atom dir = atoms_->intern("dir");
+        for (node_id at = node; at; at = txn.parent(at)) {
+            if (txn.kind(at).value_or(node_kind::text) != node_kind::element) { break; }
+            const std::string_view value = txn.attribute_value(at, dir);
+            if (ascii_iequals(value, "rtl")) { return true; }
+            if (ascii_iequals(value, "ltr")) { return false; }
+            const bool bdi = txn.tag(at).value_or(atom{}) == atoms_->intern("bdi") &&
+                             txn.element_ns(at) == node_ns::html;
+            if (ascii_iequals(value, "auto") || bdi) {
+                // Nothing strong anywhere in the subtree leaves `rtl` false, which
+                // is the spec's answer too: `dir=auto` over digits alone is ltr.
+                bool rtl = false;
+                (void)first_strong(txn, at, rtl);
+                return rtl;
+            }
+        }
+        return false;
+    }
+
+private:
+    // The first character of `node`'s text with a strong direction, depth first.
+    // Returns whether one was found, so the walk can stop at it.
+    [[nodiscard]] static bool first_strong(const read_txn & txn, node_id node, bool & rtl) {
+        const node_kind kind = txn.kind(node).value_or(node_kind::comment);
+        if (kind == node_kind::text) { return first_strong_in(txn.text(node), rtl); }
+        if (kind != node_kind::element) { return false; }
+        for (const node_id child : txn.children(node)) {
+            if (first_strong(txn, child, rtl)) { return true; }
+        }
+        return false;
+    }
+
+    // The same question of one run of UTF-8. Decoding is by lead byte: only the
+    // code point's VALUE matters, and the right-to-left scripts sit in blocks that
+    // a range test answers exactly.
+    [[nodiscard]] static bool first_strong_in(std::string_view text, bool & rtl) {
+        for (std::size_t i = 0; i < text.size();) {
+            const auto lead = static_cast<unsigned char>(text[i]);
+            std::size_t width = 1;
+            std::uint32_t cp = lead;
+            if (lead >= 0xF0) {
+                width = 4;
+                cp = lead & 0x07u;
+            } else if (lead >= 0xE0) {
+                width = 3;
+                cp = lead & 0x0Fu;
+            } else if (lead >= 0xC0) {
+                width = 2;
+                cp = lead & 0x1Fu;
+            }
+            if (i + width > text.size()) { return false; } // truncated: nothing strong left
+            for (std::size_t k = 1; k < width; ++k) {
+                cp = (cp << 6) | (static_cast<unsigned char>(text[i + k]) & 0x3Fu);
+            }
+            i += width;
+            // Hebrew, Arabic, Syriac, Thaana, NKo, Samaritan and Mandaic; then the
+            // Arabic Extended, presentation and supplement blocks; then the RTL
+            // planes - Cypriot through Adlam - in the SMP.
+            const bool is_rtl = (cp >= 0x0590 && cp <= 0x08FF) || (cp >= 0xFB1D && cp <= 0xFDFF) ||
+                                (cp >= 0xFE70 && cp <= 0xFEFF) ||
+                                (cp >= 0x10800 && cp <= 0x10FFF) ||
+                                (cp >= 0x1E800 && cp <= 0x1EFFF);
+            if (is_rtl) {
+                rtl = true;
+                return true;
+            }
+            // Strong left-to-right is every letter that is not one of the above.
+            // Digits, punctuation and whitespace are neutral and keep the scan
+            // going, which is the entire point of `dir=auto`.
+            const bool is_ltr =
+                (cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z') || cp >= 0x00C0;
+            if (is_ltr) {
+                rtl = false;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Everything up to the first ASCII whitespace, leading whitespace skipped.
+    [[nodiscard]] static std::string_view first_word(std::string_view text) {
+        const std::size_t begin = text.find_first_not_of(" \t\n\f\r");
+        if (begin == std::string_view::npos) { return {}; }
+        const std::size_t end = text.find_first_of(" \t\n\f\r", begin);
+        return text.substr(begin, end == std::string_view::npos ? end : end - begin);
+    }
+    // The subtag beginning at `at`, advancing `at` past its separator. An `at` of
+    // one past the end means the previous subtag was the last one.
+    [[nodiscard]] static std::string_view next_subtag(std::string_view tag, std::size_t & at) {
+        if (at > tag.size()) { return {}; }
+        const std::size_t dash = tag.find('-', at);
+        const std::size_t end = dash == std::string_view::npos ? tag.size() : dash;
+        const std::string_view out = tag.substr(at, end - at);
+        at = end + 1;
+        return out;
+    }
+
+    // The pragma-set default language and the document version it was read at.
+    // Mutable because matching is const and this is a cache, not a fact about the
+    // engine - see pragma_language.
+    mutable std::string pragma_language_;
+    mutable std::uint64_t pragma_language_version_ = 0;
+
     void split_classes(std::string_view list, boost::container::small_vector<atom, 4> & out) const;
 
     template <typename Map>

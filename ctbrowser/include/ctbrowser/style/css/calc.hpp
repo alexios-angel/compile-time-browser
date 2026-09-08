@@ -71,6 +71,15 @@ enum class numeric_type : std::uint8_t {
     time,       // canonical s
     frequency,  // canonical Hz
     resolution, // canonical dppx
+    // `<flex>`, canonical fr. It has NO basis and never will have one here - a
+    // flex is resolved by grid track sizing and by nothing else - but it is a
+    // TYPE, and that is why it is in this list rather than left unresolved:
+    // `min(1px, 0fr)` is not "a comparison this engine cannot decide", it is
+    // `1px + 2` with different spelling, and `css/css-values` says so in six
+    // files at once (`minmax-{length,number,percentage,time}-invalid`,
+    // `exp-log-invalid`). Naming the type is what turns those from a value kept
+    // verbatim into the syntax error they are.
+    flex,
 };
 
 // The canonical unit's spelling, or an empty view for a `<number>`. This is what
@@ -143,7 +152,13 @@ enum class math_context : std::uint8_t {
     any,
     // The whole value is a length, a percentage, or a list of them: a bare
     // number cannot appear in it and one that does is a syntax error.
-    length
+    length,
+    // The whole value is an `<integer>`. A math function may still answer with a
+    // fraction - `z-index: calc(3 / 2)` is perfectly valid CSS - and CSS Values 4
+    // §10.10 says the COMPUTED value rounds it, so this is the context that says
+    // to. It is a context rather than a post-pass because rounding has to happen
+    // once, at the end of the conversion: `calc(calc(1 / 3) * 3)` is 1, not 0.
+    integer
 };
 
 // Which of the two a property is. Deliberately a SHORT list of properties whose
@@ -216,6 +231,31 @@ struct folded_value {
 // `--custom: calc-ish-name` costs one wasted parse and nothing else.
 [[nodiscard]] bool may_have_math(std::string_view value) noexcept;
 
+// EVERY MATH FUNCTION IN A SPECIFIED VALUE, REPLACED BY ITS SIMPLIFIED FORM.
+// CSS Values 4 §10.12, and the words that matter are "every" and "specified".
+//
+// EVERY: a math function is simplified WHEREVER IT SITS, not only when it is the
+// whole value. `transform: rotate(acos(1))` is `rotate(calc(0deg))` and
+// `background-image: image-set(url("") calc(1x * NaN))` is `image-set(url("")
+// calc(NaN * 1dppx))` in every browser. Testing "is the whole value one math
+// function" instead left ~290 `css/css-values` assertions reading back the
+// author's text: the corpus tests these functions through `transform`,
+// `background-image` and `scale`, which are properties whose grammar this engine
+// does not model at all - so the simplification has to be independent of it.
+//
+// SPECIFIED: the answer keeps a `calc()` around it, because that is what
+// distinguishes `width: calc(96px)` from `width: 96px` after the fact.
+// `serialize_calc` writes the COMPUTED form, where a bare `96px` is the whole
+// of it. And a `calc()` whose entire body is one other math function loses that
+// redundant layer: `calc(clamp(1px, 1em, 1vh))` is `clamp(1px, 1em, 1vh)`.
+//
+// A FUNCTION THAT CANNOT BE SIMPLIFIED HERE KEEPS THE AUTHOR'S BYTES. There are
+// no bases at specified-value time, so anything mentioning `em`, `vw`, `lh`,
+// `cqw`, `fr` or a percentage is left exactly as written - §10.11 says
+// `calc(10px + 1em)` keeps both terms - as is a function this file cannot
+// evaluate and one whose comparison has no answer until layout.
+[[nodiscard]] std::string simplify_math(std::string_view value);
+
 // IS EVERY MATH FUNCTION IN THIS VALUE WELL FORMED? Not "does it fold" - a
 // `min(10px, 5%)` has no answer until layout and is perfectly well formed - but
 // "would a browser drop the declaration on sight". `round(nearest, 1px)` is
@@ -233,6 +273,18 @@ struct folded_value {
 // "I cannot parse it" and "it is invalid" are different answers and only the
 // second one may delete a declaration.
 [[nodiscard]] bool math_syntax_ok(std::string_view value);
+
+// IS THERE A PERCENTAGE INSIDE A MATH FUNCTION HERE? Not a percentage anywhere -
+// `hsl(calc(1deg) 82% 43%)` writes two that are channels and not lengths - but
+// one that a calculation would have to resolve.
+//
+// The question belongs to the CALLER, because the answer does: §10.11's
+// calculation context is the property's, so `text-indent: min(1px, 0%)`
+// resolves against a containing block and `border-left-width: min(1px, 0%)` has
+// nothing to resolve against and is a syntax error. This file knows where the
+// math functions are and the property table knows which properties take a
+// percentage; neither can answer alone.
+[[nodiscard]] bool math_uses_percentage(std::string_view value);
 
 // ONE already-folded length in text form to pixels: `12px`, `1.5rem`, `2em`, or a
 // bare number. `nullopt` for a percentage, a keyword, a calc that did not fold, or

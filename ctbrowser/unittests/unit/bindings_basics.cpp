@@ -972,9 +972,14 @@ void test_document_implementation() {
                     ',' + (typeof impl.hasFeature.apply));
         var dt = impl.createDocumentType('html', '', '');
         console.log('doctype=' + dt.name + ',' + (dt.publicId === '') + ',' + dt.nodeType);
-        // Named absences, so a page can detect them rather than get a lie.
-        console.log('absent=' + (impl.createHTMLDocument === undefined) +
-                    ',' + (impl.createDocument === undefined));
+        // BOTH OF THESE USED TO BE ABSENT, and this line asserted the absence
+        // by name. A second Document exists now - see unit/second_document -
+        // so the same line asserts that the two are functions and that the
+        // document each returns is not this one.
+        var made = impl.createHTMLDocument('m');
+        console.log('second=' + (typeof impl.createHTMLDocument) +
+                    ',' + (typeof impl.createDocument) +
+                    ',' + (made !== document) + ',' + made.title);
       </script></body></html>)");
     check(page.script_error().empty(), "the implementation script ran: " + page.script_error());
     const auto & log = log_of(page);
@@ -982,8 +987,8 @@ void test_document_implementation() {
     check(log[0] == "feature=true,true,true,function", "hasFeature is always true: " + log[0]);
     check(log[1] == "doctype=html,true,10",
           "createDocumentType carries its three strings: " + log[1]);
-    check(log[2] == "absent=true,true",
-          "the two that need a second Document are absent: " + log[2]);
+    check(log[2] == "second=function,function,true,m",
+          "createHTMLDocument makes a SECOND document: " + log[2]);
 }
 
 // `createElementNS`, and the round trip that has to survive it: the exact
@@ -1904,6 +1909,69 @@ void test_canvas_as_image_source() {
     }
 }
 
+// `innerText` AND `outerText` ASSIGN TEXT AND LINE BREAKS, which is the half of
+// those two properties that does not need layout.
+//
+// The assigned string is cut at every CR, LF or CRLF pair: each run of other
+// characters becomes a Text node and each break becomes a <br> ELEMENT. That is
+// what separates it from `textContent`, which would have stored the newline as
+// a character and rendered nothing, and from `innerHTML`, which would have read
+// `<` as a tag and turned a U+0000 into U+FFFD.
+//
+// The GETTERS are deliberately absent - reading either is `undefined` - because
+// innerText reads the rendered box tree and this engine lays out on a frame
+// rather than on demand. See the note in lib/Shell/bindings/element.cpp.
+void test_inner_text_and_outer_text_assign() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body><div id=d>old</div>
+        <ul><li id=host>A <span id=target>B</span> C</li></ul>
+        <script>
+        const d = document.getElementById('d');
+        d.innerText = 'abc';
+        console.log('plain=' + d.childNodes.length + ',' + d.firstChild.nodeType + ',' +
+                    d.firstChild.data);
+        d.innerText = 'abc\ndef';
+        console.log('newline=' + d.innerHTML);
+        d.innerText = 'a\r\nb\r\rc';
+        console.log('crlf=' + d.innerHTML);
+        // Text, and only text: no escape, no parse, no character lost.
+        d.innerText = 'abc<def&';
+        console.log('literal=' + d.childNodes.length + ',' + d.firstChild.data);
+        // [LegacyNullToEmptyString] on one side and ToString on the other.
+        d.innerText = null;
+        const cleared = d.childNodes.length;
+        d.innerText = undefined;
+        console.log('nullish=' + cleared + ',' + d.firstChild.data);
+        // outerText replaces the ELEMENT, and merges the text it lands between.
+        const target = document.getElementById('target');
+        const host = document.getElementById('host');
+        target.outerText = 'Replaced';
+        console.log('outer=' + host.innerHTML + ',' + host.childNodes.length);
+        // A detached element has nothing to replace it in, and says so.
+        try {
+            document.createElement('span').outerText = 'x';
+            console.log('detached=no throw');
+        } catch (e) { console.log('detached=' + e.name); }
+        // On HTMLElement, so an <svg> has neither - assigning one there stores a
+        // property and leaves the element empty, which is what a browser does.
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.innerText = 'abc';
+        console.log('svg=' + svg.childNodes.length);
+        </script></body></html>)");
+    check(page.script_error().empty(), "the script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log[0] == "plain=1,3,abc", "one new text node replaces the children: " + log[0]);
+    check(log[1] == "newline=abc<br>def", "a newline is a <br> element: " + log[1]);
+    check(log[2] == "crlf=a<br>b<br><br>c", "CRLF is one break and CR CR is two: " + log[2]);
+    check(log[3] == "literal=1,abc<def&", "the text is stored, not parsed: " + log[3]);
+    check(log[4] == "nullish=0,undefined", "null empties and undefined writes: " + log[4]);
+    check(log[5] == "outer=A Replaced C,1",
+          "outerText replaces the element and merges the text around it: " + log[5]);
+    check(log[6] == "detached=NoModificationAllowedError",
+          "outerText on a parentless element throws: " + log[6]);
+    check(log[7] == "svg=0", "innerText is HTMLElement's, not Element's: " + log[7]);
+}
+
 // `insertAdjacentHTML` - a fragment parse at one of four places relative to the
 // element. Same parser and same copy as innerHTML; only where the nodes land
 // differs.
@@ -1927,6 +1995,52 @@ void test_insert_adjacent_html() {
     const auto & log = log_of(page);
     check(log[0] == "outer=before mid after", "beforebegin and afterend place siblings: " + log[0]);
     check(log[1] == "inner=in-first in-last", "afterbegin and beforeend place children: " + log[1]);
+}
+
+// THE OTHER TWO SPELLINGS OF THE SAME ALGORITHM. `insertAdjacentElement` and
+// `insertAdjacentText` take a node rather than markup and are otherwise
+// `insertAdjacentHTML` exactly, which is why all three go through one
+// "insert adjacent" now - and why `afterend` is the case worth a test: it used
+// to APPEND to the parent, so a node placed after an element with a later
+// sibling landed at the end of the list instead of beside it.
+void test_insert_adjacent_element_and_text() {
+    browser page{browser_options{300, 200}};
+    page.load_html(R"(<html><body><div id=box><span id=a>a</span><span id=z>z</span></div>
+        <i id=moved>m</i><script>
+        const a = document.getElementById('a');
+        a.insertAdjacentElement('afterend', document.getElementById('moved'));
+        const box = document.getElementById('box');
+        let order = '';
+        for (const kid of box.children) { order += kid.id + ' '; }
+        console.log('order=' + order.trim());
+        const back = a.insertAdjacentElement('beforebegin', document.getElementById('moved'));
+        console.log('returned=' + back.id);
+        a.insertAdjacentText('afterbegin', 'T');
+        console.log('text=' + a.firstChild.nodeValue + ',' + a.textContent);
+        let threw = '';
+        try { a.insertAdjacentText('nowhere', 'x'); } catch (e) { threw = e.name; }
+        let rooted = '';
+        try {
+            document.documentElement.insertAdjacentText('beforebegin', 'x');
+        } catch (e) { rooted = e.name; }
+        console.log('threw=' + threw + ',' + rooted);
+        // An element with no parent has nowhere to put a sibling, and that is
+        // a null rather than a throw.
+        console.log('detached=' +
+                    (document.createElement('div')
+                         .insertAdjacentElement('afterend', document.createElement('b')) === null));
+    </script></body></html>)");
+    check(page.script_error().empty(), "the insert-adjacent script ran: " + page.script_error());
+    const auto & log = log_of(page);
+    check(log.size() > 4, "every insert-adjacent case logged");
+    if (log.size() <= 4) { return; }
+    check(log[0] == "order=a moved z",
+          "afterend places the node BESIDE, not at the end: " + log[0]);
+    check(log[1] == "returned=moved", "insertAdjacentElement answers with the node: " + log[1]);
+    check(log[2] == "text=T,Ta", "insertAdjacentText makes a Text node: " + log[2]);
+    check(log[3] == "threw=SyntaxError,HierarchyRequestError",
+          "an unknown position and the document element's sibling both throw: " + log[3]);
+    check(log[4] == "detached=true", "an element with no parent answers null: " + log[4]);
 }
 
 void test_clip() {
@@ -3208,7 +3322,9 @@ int main() {
     test_fetch_abort();
     test_control_value_is_live();
     test_canvas_as_image_source();
+    test_inner_text_and_outer_text_assign();
     test_insert_adjacent_html();
+    test_insert_adjacent_element_and_text();
     test_clip();
     test_inner_html();
     test_listener_options();

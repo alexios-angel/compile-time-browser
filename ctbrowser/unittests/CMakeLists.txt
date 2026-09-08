@@ -57,10 +57,35 @@ ctbrowser_test(unit/cssom)
 # script gets back when it matches with it - which used to be a second, weaker
 # matcher entirely.
 ctbrowser_test(unit/selectors)
+# The document as a Node. Its own file rather than more of bindings_basics
+# because every case in it turns on ONE structural fact - this tree builder has
+# no Document node above `<html>` - so what the cases pin down is a MODEL being
+# consistent with itself, including where it honestly refuses. See the block
+# above install_document_as_node in lib/Shell/bindings/document.cpp.
+ctbrowser_test(unit/document_node)
+# `document.title`, the eight HTML collections and named access. Its own file
+# because every case in it is the same shape - write and read back in ONE
+# statement - and that shape is what the accessors exist for.
+ctbrowser_test(unit/tree_accessors)
+# createHTMLDocument and createDocument. Its own file because what it pins down
+# is a MODEL - a second Document is a second dom_bindings over its own tree -
+# and two of its cases assert that something deliberately does NOT work.
+ctbrowser_test(unit/second_document)
+# The XML front end. Its own file because what it pins down is a SECOND parser
+# - nothing implied, every tag self-closing, case preserved, CDATA as character
+# data and well-formedness fatal - and every case in it is a place where the
+# HTML tree builder gives a different, and for an .xhtml file wrong, answer.
+ctbrowser_test(unit/xml_parse)
+# The same front end from the bindings' side: a page loaded as XML, its
+# contentType and compatMode, a <script> in a marked section that RUNS, and a
+# tag whose case survives to `tagName`.
+ctbrowser_test(unit/xml_document)
 ctbrowser_test(unit/layout_basics)
 # The flex formatting context. Its own file rather than more of layout_basics:
 # S9.7's freeze loop has more cases than the other three contexts together.
 ctbrowser_test(unit/flex_basics)
+# <iframe>: a second document inside the first. See lib/Shell/bindings/frames.cpp.
+ctbrowser_test(unit/frames)
 # Positioning, which is the one part of layout where a box's place is decided
 # by an ancestor rather than by its parent - see layout/position.hpp.
 ctbrowser_test(unit/position_basics)
@@ -83,6 +108,24 @@ ctbrowser_test(unit/chrome_basics)
 # is tools/check/css-parity.py and is deliberately not a ctest; this is the half
 # that catches a regression without a browser download. See docs/plans/bootstrap.md.
 ctbrowser_test(unit/bootstrap_layout)
+# The attribute API on Element. Its own file rather than more of
+# bindings_basics because every case in it turns on a DISTINCTION - the
+# qualified lookup against the namespaced one, an HTML element against a
+# foreign one, a name that SERIALISES against a name that parses - and each of
+# those used to have one answer where two belong.
+ctbrowser_test(unit/element_attrs)
+# CharacterData and the constructible node interfaces. Its own file because
+# every offset in it is a UTF-16 CODE UNIT and this engine stores UTF-8 - a
+# byte offset answers `substringData(39, 2)` wrongly only once the text stops
+# being ASCII, which is exactly the case the corpus tests and a suite of
+# English fixtures never would.
+ctbrowser_test(unit/character_data)
+# attachShadow and the shadow root. Its own file because half of what it asserts
+# is what a shadow tree is NOT: the host gains no children, `document.
+# querySelector` finds nothing in it, and the light DOM keeps the shape every
+# other test in this directory measures. A rung that makes a shadow tree render
+# has to keep those true.
+ctbrowser_test(unit/shadow_dom)
 
 # The language, against V8. The nine per-type suites were carved out of
 # vm_basics and share js_expect.hpp; number_format and obfuscated ask the
@@ -160,3 +203,26 @@ ctbrowser_test(js/error_types)
 # reason the two above have one, and it also covers the seven Array.prototype
 # methods that did not exist at all.
 ctbrowser_test(js/array_generics)
+# --- JSON, the whole of 25.5 ------------------------------------------------
+# `stringify` had no replacer, no `space`, no `toJSON` and no stack - so a
+# self-referential object recursed until the C++ stack ran out where the
+# specification has a TypeError - and `parse` accepted source no other reader
+# will and answered `undefined` instead of throwing where it could not. Its own
+# file for the same reason the four above have one: it asks what a value
+# SERIALISES to and what text is REFUSED, not what an expression computes.
+ctbrowser_test(js/json_basics)
+# --- the early errors, the largest gap test262 had left ---------------------
+# 2,812 tests asserted that source text is a SyntaxError while this engine
+# parsed it, ran it, and reported whatever happened next. Its own file for the
+# same reason the five above have one: every case asks whether source is
+# REFUSED rather than what an expression computes - and each refusal is paired
+# with the valid near-miss that must still run, which is the half that stops a
+# rule growing into a false positive that would stop a page loading.
+ctbrowser_test(js/early_errors)
+# --- the four Promise statics that were missing -----------------------------
+# `withResolvers` is the one WPT asked for by name; `allSettled`, `any` and
+# `race` were absent beside it. Its own file because every case has to WAIT -
+# a combinator's reaction is a microtask, so what it produced is only readable
+# after the turn drains, and each one is exercised over an input that is still
+# pending when the combinator is called.
+ctbrowser_test(js/promise_combinators)

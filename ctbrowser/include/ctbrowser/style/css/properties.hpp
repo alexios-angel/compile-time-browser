@@ -49,9 +49,20 @@ enum class value_kind : std::uint8_t {
     number,
     integer,
     number_percentage, // opacity: <number> | <percentage>
-    number_length,     // line-height, tab-size: <number> | <length-percentage>
+    number_length,     // tab-size: <number> | <length>
+    // line-height, which is `<number> | <length-percentage>` and is the reason
+    // the two are not one kind: `line-height: 50%` is half the font size and
+    // `tab-size: 50%` is nothing at all, so a percentage inside a math function
+    // is a syntax error for one of them and a value for the other.
+    number_length_percentage,
     angle,
     time,
+    // `<position>`, CSS Values 5 §position. The only kind here whose value is
+    // more than one component, and the only one whose canonical form REORDERS
+    // what the author wrote: `bottom right` serialises as `right bottom`,
+    // because a position is a horizontal half and a vertical half in that order
+    // however they were spelled.
+    position,
 };
 
 // One longhand. `keywords` is a space-separated set, matched ASCII

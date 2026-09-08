@@ -68,7 +68,6 @@
 #include <vector>
 
 #include <ctbrowser/core/algorithms.hpp>
-#include <ctbrowser/style/css/media_fwd.hpp>
 #include <ctbrowser/style/css/parser.hpp>
 #include <ctbrowser/style/css/properties.hpp>
 #include <ctbrowser/style/css/value.hpp>
@@ -105,9 +104,26 @@ constexpr std::uint32_t media_rule = 4;
 constexpr std::uint32_t font_face_rule = 5;
 constexpr std::uint32_t page_rule = 6;
 constexpr std::uint32_t keyframes_rule = 7;
+constexpr std::uint32_t keyframe_rule = 8;
 constexpr std::uint32_t namespace_rule = 10;
 constexpr std::uint32_t counter_style_rule = 11;
 constexpr std::uint32_t supports_rule = 12;
+
+// WHAT AN AT-RULE'S BLOCK CONTAINS - the one thing the at-keyword decides that
+// nothing else can, and the reason a rule's contents can be modelled at all
+// rather than kept as the author's bytes. There are exactly three answers:
+// a list of RULES, a list of DECLARATIONS, or no block, and getting it wrong
+// means reporting `@page`'s margins as child rules or `@media`'s rules as
+// declarations. Anything not named here keeps its bytes and says nothing.
+[[nodiscard]] bool at_rule_holds_rules(std::string_view name) {
+    return name == "media" || name == "supports" || name == "container" || name == "keyframes" ||
+           name == "-webkit-keyframes" || name == "scope" || name == "starting-style";
+}
+
+[[nodiscard]] bool at_rule_holds_declarations(std::string_view name) {
+    return name == "font-face" || name == "page" || name == "counter-style" || name == "property" ||
+           name == "font-palette-values" || name == "view-transition";
+}
 
 // A SECOND COPY OF browser.cpp's rel test, and it has to be one: that function
 // is in an anonymous namespace in a file this rung does not own, and the CSSOM
@@ -138,16 +154,6 @@ constexpr std::uint32_t supports_rule = 12;
 // the author's ordering within a compound (`a.b#c` and `a#c.b` compile the
 // same), so this emits the canonical order the specification asks for: type,
 // then id, then classes, then attributes, then pseudo-classes.
-
-[[nodiscard]] std::string number_text(double v) {
-    // Shortest form, like every other number the CSSOM serialises: `768` rather
-    // than `768.000000`.
-    std::string out = std::to_string(v);
-    if (out.find('.') == std::string::npos) { return out; }
-    while (!out.empty() && out.back() == '0') { out.pop_back(); }
-    if (!out.empty() && out.back() == '.') { out.pop_back(); }
-    return out.empty() ? std::string{"0"} : out;
-}
 
 // A CSS string, quoted and escaped. An attribute selector's value is serialised
 // as a string whatever the author wrote it as - `[a=b]` comes back `[a="b"]`.
@@ -213,20 +219,56 @@ void append_compound(std::string & out, const style::compound & part, const atom
     return out;
 }
 
+// IS THE COMPILED FORM THE WHOLE OF WHAT THE AUTHOR WROTE?
+//
+// `never_matches` is how the selector compiler records a construct it can PARSE
+// and cannot MATCH: a pseudo-element, a namespace prefix, a pseudo-class it does
+// not model. Nothing of that compound survives into the compiled form, so
+// `append_compound` finds an empty compound and emits `*` for it - and that does
+// not merely look wrong. `author_style_text` hands these selectors back to the
+// cascade, so an inserted `::before { color: red }` serialised as `*` would
+// paint every element on the page red. Wherever the author's bytes are still to
+// hand they are the honest answer, and this is the question that decides.
+[[nodiscard]] bool representable(std::span<const style::compiled_selector> list) {
+    const auto compound_ok = [](auto && self, const style::compound & part) -> bool {
+        if (part.never_matches) { return false; }
+        for (const style::pseudo_ref & pseudo : part.pseudos) {
+            for (const style::compiled_selector & inner : pseudo.args) {
+                for (const style::compound & nested : inner.parts) {
+                    if (!self(self, nested)) { return false; }
+                }
+            }
+        }
+        return true;
+    };
+    for (const style::compiled_selector & sel : list) {
+        for (const style::compound & part : sel.parts) {
+            if (!compound_ok(compound_ok, part)) { return false; }
+        }
+    }
+    return !list.empty();
+}
+
 void append_compound(std::string & out, const style::compound & part, const atom_table & atoms) {
     const std::size_t was = out.size();
-    if (part.tag) { out += atoms.text(part.tag); }
+    // EVERY NAME IS AN IDENTIFIER, and CSSOM §6.7 says each is serialised by
+    // §2.1's "serialize an identifier" - the same algorithm `CSS.escape` is.
+    // The tokenizer DECODES escapes, so `[\30 zonk]` reaches the compiled form
+    // as the name `0zonk`; printing that back unescaped produces a selector that
+    // is not a selector, because an identifier may not begin with a digit.
+    const auto ident = &dom_bindings::serialize_css_identifier;
+    if (part.tag) { out += ident(atoms.text(part.tag)); }
     if (part.id) {
         out += '#';
-        out += atoms.text(part.id);
+        out += ident(atoms.text(part.id));
     }
     for (const atom cls : part.classes) {
         out += '.';
-        out += atoms.text(cls);
+        out += ident(atoms.text(cls));
     }
     for (const style::attribute_match & attribute : part.attributes) {
         out += '[';
-        out += atoms.text(attribute.name);
+        out += ident(atoms.text(attribute.name));
         switch (attribute.op) {
         case style::attr_op::present: break;
         case style::attr_op::exact: out += '='; break;
@@ -305,6 +347,23 @@ void append_compound(std::string & out, const style::compound & part, const atom
         case style::pseudo_kind::where_:
             out += ":where(" + serialize_selector_list(pseudo.args, atoms) + ")";
             break;
+        // `:lang()` AND `:dir()` KEEP THEIR ARGUMENT AS WRITTEN, because a
+        // language RANGE is not an identifier: `*-Latn` is a legal one, and
+        // `:lang(de, fr)` is a comma-separated list of them. They used to
+        // compile to nothing at all, so a rule carrying one serialised as `*` -
+        // eight of `css/cssom/selectorSerialize.html`'s twenty-three.
+        case style::pseudo_kind::lang:
+        case style::pseudo_kind::dir: {
+            out += pseudo.kind == style::pseudo_kind::lang ? ":lang(" : ":dir(";
+            bool first = true;
+            for (const std::string & range : pseudo.ranges) {
+                if (!first) { out += ", "; }
+                first = false;
+                out += range;
+            }
+            out += ')';
+            break;
+        }
         }
     }
     // "If there is only one simple selector in the compound selector which is a
@@ -314,80 +373,488 @@ void append_compound(std::string & out, const style::compound & part, const atom
     if (out.size() == was) { out += '*'; }
 }
 
-// --- serialising a media query list ----------------------------------------
+// A `@media` PRELUDE IS THE AUTHOR'S BYTES, always.
 //
-// BEST EFFORT, and it is the one serialisation in this file that is not
-// reconstructible exactly. A `media_query` is an AST - a type, a negation and a
-// conjunction of features whose values are floats - so `(min-width: 48em)` comes
-// back in the unit the parser resolved it to. The STRUCTURE is exact, which is
-// what `cssRules` and the rule types depend on; only the condition TEXT is a
-// reconstruction, and it says so here rather than being discovered.
+// There used to be a second serialiser here, over the compiled `media_query`
+// AST, for the one caller that had no source text: a `@media` recovered from
+// `style::css::parse_stylesheet`, which keeps a rule's condition as a compiled
+// index and no span back to the bytes. It was lossy and said so - `(min-width:
+// 48em)` came back in px, `speech` came back as `all`, and a feature the
+// cascade does not model came back as nothing - so a `@media` from a `<style>`
+// and the same one from `insertRule` serialised two different ways.
+//
+// `parse_sheet_rules` reads the source now, so that caller is gone and with it
+// the only reason to reconstruct a prelude from an AST at all.
 
-[[nodiscard]] std::string_view media_feature_name(style::css::media_feature::name which) {
-    using name = style::css::media_feature::name;
-    switch (which) {
-    case name::width: return "width";
-    case name::height: return "height";
-    case name::orientation: return "orientation";
-    case name::prefers_color_scheme: return "prefers-color-scheme";
-    case name::prefers_reduced_motion: return "prefers-reduced-motion";
-    case name::resolution: return "resolution";
-    case name::hover: return "hover";
-    case name::any_hover: return "any-hover";
-    case name::pointer: return "pointer";
-    case name::any_pointer: return "any-pointer";
-    case name::monochrome: return "monochrome";
-    case name::color: return "color";
-    case name::unknown: break;
-    }
-    return "unknown";
-}
+// --- a media query list, as CSSOM asks for it ------------------------------
+//
+// MEDIA QUERIES 4 §"serializing a media query list", over the query's TEXT
+// rather than over the compiled `media_query`. The AST is what the CASCADE needs
+// and it is deliberately narrow - three media types, twelve features, one float
+// per value - so it answers `all` for `speech`, `768px` for `48em` and nothing
+// at all for a feature this engine does not model. Every one of those is a
+// string `css/cssom/serialize-media-rule.html` compares byte for byte, so the
+// object model normalises the text instead and never consults the AST when it
+// has the author's bytes.
+//
+// The normalisation is exactly the specification's and no more: lowercase the
+// `not`/`only`, the media type and each feature NAME; put one space after a
+// feature's colon; drop an `all` that has features after it and keep a negated
+// one; and preserve the order and the multiplicity of the features, because
+// `(max-width: 23px) and (max-width: 45px)` is a query a page may have written
+// on purpose and de-duplicating it is an open CSSWG issue.
 
-[[nodiscard]] std::string serialize_media_feature(const style::css::media_feature & feature) {
-    using compare = style::css::media_feature::compare;
-    const std::string_view base = media_feature_name(feature.which);
-    if (feature.op == compare::boolean) { return std::string{base}; }
+[[nodiscard]] std::string collapse_whitespace(std::string_view text) {
     std::string out;
-    if (feature.op == compare::at_least) { out += "min-"; }
-    if (feature.op == compare::at_most) { out += "max-"; }
-    out += base;
-    out += ": ";
-    if (!feature.keyword.empty()) {
-        out += feature.keyword;
-        return out;
+    bool space = false;
+    for (const char c : trim(text, html_whitespace)) {
+        if (html_whitespace.find(c) != std::string_view::npos) {
+            space = true;
+            continue;
+        }
+        if (space && !out.empty()) { out += ' '; }
+        space = false;
+        out += c;
     }
-    out += number_text(static_cast<double>(feature.value));
-    using name = style::css::media_feature::name;
-    if (feature.which == name::width || feature.which == name::height) { out += "px"; }
-    if (feature.which == name::resolution) { out += "dppx"; }
     return out;
 }
 
-[[nodiscard]] std::string serialize_media_queries(
-    std::span<const style::css::media_query> queries) {
-    std::string out;
-    for (const style::css::media_query & query : queries) {
-        if (!out.empty()) { out += ", "; }
-        if (query.malformed) {
-            out += "not all";
+// The top-level commas of a media query list. Top-level because a feature's
+// parentheses may hold one - `(width >= calc(1px, 2px))` does not exist, but a
+// `url()` in a `@supports` prelude does, and this splitter is used for both.
+[[nodiscard]] std::vector<std::string_view> split_on_commas(std::string_view text) {
+    std::vector<std::string_view> out;
+    std::size_t depth = 0;
+    std::size_t start = 0;
+    char quote = '\0';
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const char c = text[i];
+        if (quote != '\0') {
+            if (c == '\\') {
+                ++i;
+            } else if (c == quote) {
+                quote = '\0';
+            }
             continue;
         }
-        std::string one;
-        const bool typed =
-            query.negated || query.type != style::css::media_type::all || query.features.empty();
-        if (query.negated) { one += "not "; }
-        if (typed) {
-            switch (query.type) {
-            case style::css::media_type::screen: one += "screen"; break;
-            case style::css::media_type::print: one += "print"; break;
-            case style::css::media_type::all: one += "all"; break;
+        if (c == '"' || c == '\'') {
+            quote = c;
+        } else if (c == '(') {
+            ++depth;
+        } else if (c == ')' && depth != 0) {
+            --depth;
+        } else if (c == ',' && depth == 0) {
+            out.push_back(text.substr(start, i - start));
+            start = i + 1;
+        }
+    }
+    out.push_back(text.substr(start));
+    return out;
+}
+
+// `(name)` or `(name: value)`, with the parentheses already on it.
+[[nodiscard]] std::string serialize_media_feature_text(std::string_view part) {
+    const std::string_view inside = part.substr(1, part.size() - 2);
+    const std::size_t colon = inside.find(':');
+    if (colon == std::string_view::npos) {
+        return "(" + ascii_lower_copy(collapse_whitespace(inside)) + ")";
+    }
+    // THE NAME IS FOLDED AND THE VALUE IS NOT. A feature name is an identifier
+    // and `(Color)` and `(color)` are one feature; a value may be a string, a
+    // `url()` or a number with a unit, none of which fold.
+    return "(" + ascii_lower_copy(collapse_whitespace(inside.substr(0, colon))) + ": " +
+           collapse_whitespace(inside.substr(colon + 1)) + ")";
+}
+
+// One query. An unparseable one is `not all`, which is what Media Queries says a
+// query a browser does not understand means - never true, and never an error.
+[[nodiscard]] std::string serialize_media_query_text(std::string_view text) {
+    static constexpr std::string_view not_all = "not all";
+    // The parts: `not`/`only`, a type, and parenthesised features joined by
+    // `and`. A feature is ATOMIC - its parentheses may contain spaces - which is
+    // why this is a scan and not a split on whitespace.
+    std::vector<std::string> parts;
+    std::size_t at = 0;
+    while (at < text.size()) {
+        while (at < text.size() && html_whitespace.find(text[at]) != std::string_view::npos) {
+            ++at;
+        }
+        if (at >= text.size()) { break; }
+        const std::size_t start = at;
+        if (text[at] == '(') {
+            std::size_t depth = 0;
+            bool closed = false;
+            for (; at < text.size(); ++at) {
+                if (text[at] == '(') {
+                    ++depth;
+                } else if (text[at] == ')') {
+                    --depth;
+                    if (depth == 0) {
+                        ++at;
+                        closed = true;
+                        break;
+                    }
+                }
+            }
+            if (!closed) { return std::string{not_all}; }
+            parts.push_back(std::string{text.substr(start, at - start)});
+            continue;
+        }
+        while (at < text.size() && text[at] != '(' &&
+               html_whitespace.find(text[at]) == std::string_view::npos) {
+            ++at;
+        }
+        parts.push_back(std::string{text.substr(start, at - start)});
+    }
+    if (parts.empty()) { return {}; }
+
+    std::size_t i = 0;
+    std::string prefix;
+    if (parts[i].front() != '(' &&
+        (ascii_iequals(parts[i], "not") || ascii_iequals(parts[i], "only"))) {
+        prefix = ascii_lower_copy(parts[i]) + " ";
+        ++i;
+    }
+    std::string type;
+    if (i < parts.size() && parts[i].front() != '(') {
+        // A MEDIA TYPE IS AN IDENTIFIER, so `@media 42` and `@media .x` are
+        // queries this cannot serialise rather than types it has not heard of -
+        // and the two have to be told apart, `speech` and `projection` being
+        // perfectly good types that this engine does not model.
+        const auto ident_char = [](unsigned char c, bool start) {
+            if (c >= 0x80 || c == '_' || c == '-' || (c >= 'a' && c <= 'z') ||
+                (c >= 'A' && c <= 'Z')) {
+                return true;
+            }
+            return !start && c >= '0' && c <= '9';
+        };
+        const std::string & word = parts[i];
+        bool ident = !word.empty();
+        for (std::size_t c = 0; c < word.size() && ident; ++c) {
+            ident = ident_char(static_cast<unsigned char>(word[c]), c == 0);
+        }
+        if (!ident || ascii_iequals(word, "and")) { return std::string{not_all}; }
+        type = ascii_lower_copy(word);
+        ++i;
+    }
+    std::vector<std::string> features;
+    bool first = true;
+    while (i < parts.size()) {
+        // Everything after the media type - and everything after the first
+        // feature - is joined to what precedes it by `and`. `not (color)` has
+        // neither, and is a query with one feature and no type.
+        if (!first || !type.empty()) {
+            if (!ascii_iequals(parts[i], "and")) { return std::string{not_all}; }
+            ++i;
+            if (i >= parts.size()) { return std::string{not_all}; }
+        }
+        if (parts[i].front() != '(') { return std::string{not_all}; }
+        features.push_back(serialize_media_feature_text(parts[i]));
+        ++i;
+        first = false;
+    }
+
+    std::string out = prefix;
+    // "If the query is `all and <features>`, omit the `all and`" - but only for
+    // a query that is not negated: `not all and (color)` is a query that is
+    // false whenever `(color)` is true, and dropping the type inverts it.
+    const bool omit_all = type == "all" && prefix.empty() && !features.empty();
+    if (!type.empty() && !omit_all) { out += type; }
+    for (const std::string & feature : features) {
+        if (!out.empty() && out.back() != ' ') { out += " and "; }
+        out += feature;
+    }
+    return out;
+}
+
+[[nodiscard]] std::vector<std::string> parse_media_query_list(std::string_view text) {
+    std::vector<std::string> out;
+    if (trim(text, html_whitespace).empty()) { return out; }
+    for (const std::string_view one : split_on_commas(text)) {
+        std::string query = serialize_media_query_text(one);
+        if (query.empty()) { query = "not all"; }
+        out.push_back(std::move(query));
+    }
+    return out;
+}
+
+// "To serialize a comma-separated list, concatenate all items while separating
+// them by a COMMA followed by a SPACE" - CSSOM §2.
+[[nodiscard]] std::string serialize_media_query_list(std::span<const std::string> list) {
+    std::string out;
+    for (const std::string & query : list) {
+        if (!out.empty()) { out += ", "; }
+        out += query;
+    }
+    return out;
+}
+
+// --- splitting one rule into a prelude and a block -------------------------
+//
+// QUOTE-AWARE AND NOTHING ELSE, which is the whole trick: `[title="{"]` is a
+// selector with a brace in it, and a scanner that did not know about strings
+// would cut the rule in half there. That is the same defect the CSS front end
+// was written to fix (a `;` inside a string ending a declaration), answered the
+// same way one level up.
+
+[[nodiscard]] std::size_t brace_at(std::string_view text) {
+    char quote = '\0';
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const char c = text[i];
+        if (quote != '\0') {
+            if (c == '\\') {
+                ++i;
+            } else if (c == quote) {
+                quote = '\0';
+            }
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            quote = c;
+        } else if (c == '{') {
+            return i;
+        }
+    }
+    return std::string_view::npos;
+}
+
+[[nodiscard]] std::size_t block_end(std::string_view text, std::size_t open) {
+    char quote = '\0';
+    std::size_t depth = 0;
+    for (std::size_t i = open; i < text.size(); ++i) {
+        const char c = text[i];
+        if (quote != '\0') {
+            if (c == '\\') {
+                ++i;
+            } else if (c == quote) {
+                quote = '\0';
+            }
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            quote = c;
+        } else if (c == '{') {
+            ++depth;
+        } else if (c == '}') {
+            --depth;
+            if (depth == 0) { return i; }
+        }
+    }
+    return std::string_view::npos;
+}
+
+// --- an at-rule's prelude ---------------------------------------------------
+//
+// `@import` and `@namespace` have no block, so their prelude is the WHOLE rule
+// and the interface reports its pieces one by one: `href`, `media`,
+// `supportsText`, `prefix`, `namespaceURI`. Answering those from the author's
+// bytes is not possible - `@import url(a.css)` and `@import "a.css"` are the
+// same URL spelled two ways, and CSSOM serialises both as `url("a.css")`.
+
+// The next whitespace-delimited component of a prelude, with any bracketed part
+// of it kept whole: `supports((display: flex) or (a: b))` is ONE component, and
+// so is `url("a b.css")`.
+[[nodiscard]] std::string_view next_component(std::string_view text, std::size_t & at) {
+    while (at < text.size() && html_whitespace.find(text[at]) != std::string_view::npos) { ++at; }
+    const std::size_t start = at;
+    std::size_t depth = 0;
+    char quote = '\0';
+    while (at < text.size()) {
+        const char c = text[at];
+        if (quote != '\0') {
+            if (c == '\\') {
+                ++at;
+            } else if (c == quote) {
+                quote = '\0';
+            }
+        } else if (c == '"' || c == '\'') {
+            quote = c;
+        } else if (c == '(' || c == '[') {
+            ++depth;
+        } else if ((c == ')' || c == ']') && depth > 0) {
+            --depth;
+        } else if (depth == 0 && html_whitespace.find(c) != std::string_view::npos) {
+            break;
+        }
+        ++at;
+    }
+    return text.substr(start, at - start);
+}
+
+// The VALUE of a `<url>`, whichever of the three spellings the author used:
+// `url("x")`, `url(x)` and a bare `"x"` are one URL and CSSOM reports the
+// string, not the token. A `url()` unquoted inside is NOT unescaped further -
+// the tokenizer has already done that to the pool this came from.
+[[nodiscard]] std::string url_value(std::string_view text) {
+    std::string_view inner = trim(text, html_whitespace);
+    if (inner.size() >= 5 && ascii_iequals(inner.substr(0, 4), "url(") && inner.back() == ')') {
+        inner = trim(inner.substr(4, inner.size() - 5), html_whitespace);
+    }
+    if (inner.size() >= 2 && (inner.front() == '"' || inner.front() == '\'') &&
+        inner.back() == inner.front()) {
+        std::string out;
+        for (std::size_t i = 1; i + 1 < inner.size(); ++i) {
+            if (inner[i] == '\\' && i + 2 < inner.size()) { ++i; }
+            out += inner[i];
+        }
+        return out;
+    }
+    return std::string{inner};
+}
+
+// CSSOM §2.1's "serialize a URL": the keyword, the value as a STRING, and the
+// closing parenthesis. `url(a.css)` comes back `url("a.css")` from every engine.
+[[nodiscard]] std::string serialize_url(std::string_view value) {
+    return "url(" + quoted_string(value) + ")";
+}
+
+// CSS Paged Media 3 §3's `<page-selector>`: an optional identifier followed by
+// any number of `:left`, `:right`, `:first` or `:blank`, with NO whitespace
+// anywhere in it - `named :first` is two selectors and therefore not one.
+//
+// The name keeps the author's case and the pseudo-pages are lowercased, which
+// is the split `css/cssom/cssom-pagerule.html` asserts by writing `:First` and
+// demanding `:first` back. `ok` is false for a selector this grammar refuses,
+// and CSSOM 6.4.5 says a refused one leaves the rule alone.
+[[nodiscard]] std::string serialize_page_selector(std::string_view text, bool & ok) {
+    ok = true;
+    const std::string_view one = trim(text, html_whitespace);
+    if (one.empty()) { return {}; }
+    if (one.find_first_of(html_whitespace) != std::string_view::npos) {
+        ok = false;
+        return {};
+    }
+    const auto ident_char = [](char c, bool first) {
+        const auto u = static_cast<unsigned char>(c);
+        if (u >= 0x80 || c == '_' || c == '-' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+            return true;
+        }
+        return !first && c >= '0' && c <= '9';
+    };
+    std::size_t at = 0;
+    std::string out;
+    while (at < one.size() && one[at] != ':') {
+        if (!ident_char(one[at], at == 0)) {
+            ok = false;
+            return {};
+        }
+        out += one[at];
+        ++at;
+    }
+    while (at < one.size()) {
+        const std::size_t next = one.find(':', at + 1);
+        const std::string_view pseudo =
+            one.substr(at + 1, (next == std::string_view::npos ? one.size() : next) - at - 1);
+        if (!ascii_iequals(pseudo, "left") && !ascii_iequals(pseudo, "right") &&
+            !ascii_iequals(pseudo, "first") && !ascii_iequals(pseudo, "blank")) {
+            ok = false;
+            return {};
+        }
+        out += ':';
+        out += ascii_lower_copy(pseudo);
+        at = next == std::string_view::npos ? one.size() : next;
+    }
+    return out;
+}
+
+// --- the top level of a sheet, as source spans ------------------------------
+//
+// CSS Syntax 3 §5.4's "consume a list of rules", stopping at the SPAN of bytes
+// each rule occupies rather than parsing what is in it.
+//
+// It exists because the style front end's `css::stylesheet` has nowhere to put
+// most of them. It models qualified rules, `@media` and `@font-face` and
+// DISCARDS every other at-rule, so a CSSOM assembled from that structure does
+// not report an `@import`, an `@namespace`, a `@page` or a `@keyframes` at all -
+// and the damage is not the missing rule, it is that `cssRules[0]` is then the
+// wrong rule and every index after it is off by one. It also drops a qualified
+// rule with an EMPTY block, which is what `@media all { * {} }` is made of and
+// what every fixture in `css/cssom/CSSGroupingRule-*.html` builds.
+//
+// Splitting here and handing each span to `parse_one_rule` gives a sheet and
+// `insertRule` ONE answer to what a rule is - the same reason `insertRule` does
+// not have a parser of its own.
+//
+// COMMENT-, STRING- AND BRACKET-AWARE, which is the whole trick: `[title="{"]`
+// is a selector with a brace in it and `@media (a:1);` has a semicolon inside
+// parentheses. A scanner that knew about none of the three would cut a rule in
+// half at each, which is the same defect the CSS front end was written to fix
+// one level down.
+[[nodiscard]] std::vector<std::string_view> split_top_level_rules(std::string_view css) {
+    std::vector<std::string_view> out;
+    std::size_t at = 0;
+    while (at < css.size()) {
+        // Whitespace, comments, and the CDO/CDC pair `<!--` `-->`, which §5.4
+        // drops at the top level and which a `<style>` inside old HTML has.
+        if (html_whitespace.find(css[at]) != std::string_view::npos) {
+            ++at;
+            continue;
+        }
+        if (css.compare(at, 2, "/*") == 0) {
+            const std::size_t close = css.find("*/", at + 2);
+            at = close == std::string_view::npos ? css.size() : close + 2;
+            continue;
+        }
+        if (css.compare(at, 4, "<!--") == 0) {
+            at += 4;
+            continue;
+        }
+        if (css.compare(at, 3, "-->") == 0) {
+            at += 3;
+            continue;
+        }
+        const std::size_t start = at;
+        // ONLY AN AT-RULE ENDS AT A SEMICOLON. A `;` in a qualified rule's
+        // prelude is part of the prelude - the spec keeps consuming to the
+        // block - so treating one as a terminator would split `a;b { }` into two
+        // rules where the sheet parser sees one bad one.
+        const bool at_rule = css[start] == '@';
+        char quote = '\0';
+        std::size_t brackets = 0;
+        std::size_t braces = 0;
+        bool block = false;
+        std::size_t end = css.size();
+        for (std::size_t i = start; i < css.size(); ++i) {
+            const char c = css[i];
+            if (quote != '\0') {
+                if (c == '\\') {
+                    ++i;
+                } else if (c == quote) {
+                    quote = '\0';
+                }
+                continue;
+            }
+            if (c == '/' && i + 1 < css.size() && css[i + 1] == '*') {
+                const std::size_t close = css.find("*/", i + 2);
+                i = close == std::string_view::npos ? css.size() : close + 1;
+                continue;
+            }
+            if (c == '"' || c == '\'') {
+                quote = c;
+            } else if (c == '\\') {
+                ++i;
+            } else if (c == '(' || c == '[') {
+                ++brackets;
+            } else if ((c == ')' || c == ']') && brackets > 0) {
+                --brackets;
+            } else if (brackets > 0) {
+                continue;
+            } else if (c == '{') {
+                ++braces;
+                block = true;
+            } else if (c == '}') {
+                if (braces > 0) { --braces; }
+                if (braces == 0 && block) {
+                    end = i + 1;
+                    break;
+                }
+            } else if (c == ';' && at_rule && braces == 0) {
+                end = i + 1;
+                break;
             }
         }
-        for (const style::css::media_feature & feature : query.features) {
-            if (!one.empty()) { one += " and "; }
-            one += "(" + serialize_media_feature(feature) + ")";
-        }
-        out += one;
+        out.push_back(trim(css.substr(start, end - start), html_whitespace));
+        at = end;
     }
     return out;
 }
@@ -497,129 +964,148 @@ bool store_declaration(std::vector<dom_bindings::css_declaration> & block,
 
 } // namespace
 
+// CSSOM §2.1. Shared with `CSS.escape` in bindings/css.cpp, which is the same
+// algorithm asked for by a page rather than by a serialiser.
+std::string dom_bindings::serialize_css_identifier(std::string_view text) {
+    std::string out;
+    const auto hex_escape = [&out](unsigned char c) {
+        static constexpr char digits[] = "0123456789abcdef";
+        out += '\\';
+        if (c >= 16) { out += digits[c >> 4]; }
+        out += digits[c & 0xF];
+        out += ' ';
+    };
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const auto c = static_cast<unsigned char>(text[i]);
+        // NULL is not escaped, it is REPLACED - §2.1 step 3, the same U+FFFD
+        // substitution the CSS tokenizer does to its input.
+        if (c == 0) {
+            out += "\xEF\xBF\xBD";
+            continue;
+        }
+        if (c <= 0x1F || c == 0x7F) {
+            hex_escape(c);
+            continue;
+        }
+        // A LEADING DIGIT, or a digit after a leading `-`, would make the
+        // identifier a number: both are escaped numerically rather than with a
+        // backslash, because `\1` is not a valid identifier start either.
+        if (c >= '0' && c <= '9' && (i == 0 || (i == 1 && text[0] == '-'))) {
+            hex_escape(c);
+            continue;
+        }
+        if (c == '-' && text.size() == 1) {
+            out += "\\-";
+            continue;
+        }
+        if (c >= 0x80 || c == '-' || c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z')) {
+            out += static_cast<char>(c);
+            continue;
+        }
+        out += '\\';
+        out += static_cast<char>(c);
+    }
+    return out;
+}
+
 // --- the record store -------------------------------------------------------
 
 std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
-    if (rule.type == style_rule) {
+    // A PRELUDE AND A DECLARATION BLOCK. A keyframe's prelude is its keyText and
+    // a style rule's is its selector; neither carries an at-keyword.
+    if (rule.type == style_rule || rule.type == keyframe_rule) {
         const std::string block = serialize_block(rule.declarations);
         if (block.empty()) { return rule.selector + " { }"; }
         return rule.selector + " { " + block + " }";
     }
-    if (rule.type == font_face_rule) {
-        const std::string block = serialize_block(rule.declarations);
-        return block.empty() ? std::string{"@font-face { }"} : "@font-face { " + block + " }";
-    }
-    // AN AT-RULE THIS ENGINE DOES NOT MODEL answers with the author's bytes.
-    // `@keyframes`, `@page` and `@supports` have their block consumed and
-    // discarded by the front end, so there is nothing to reconstruct and an
-    // `@keyframes anim { }` would be a claim about a rule nobody read.
+    // AN AT-RULE THIS ENGINE DOES NOT MODEL answers with the author's bytes: an
+    // `@layer a, b;` reconstructed from a prelude nobody parsed would be a claim
+    // about a rule nobody read. `verbatim` is cleared exactly when the block WAS
+    // read, so this is the test for which of the two a record is.
     if (!rule.verbatim.empty()) { return rule.verbatim; }
-    // A grouping rule prints its children, which is the only place in this file
-    // a serialisation is recursive.
+    // THE TWO WITH NO BLOCK AT ALL. CSSOM 6.4.7 and 6.4.9, and both serialise
+    // their URL as a `url()` whatever the author wrote: `@import "a.css"` comes
+    // back `@import url("a.css");` from every engine.
+    if (rule.type == import_rule) {
+        std::string out = "@import " + serialize_url(rule.selector);
+        if (!rule.prelude.empty()) { out += " " + rule.prelude; }
+        const std::string media = serialize_media_query_list(rule.media_queries);
+        if (!media.empty()) { out += " " + media; }
+        return out + ";";
+    }
+    if (rule.type == namespace_rule) {
+        std::string out = "@namespace ";
+        if (!rule.selector.empty()) { out += rule.selector + " "; }
+        return out + serialize_url(rule.prelude) + ";";
+    }
+    // AN AT-RULE WHOSE BLOCK IS DECLARATIONS - `@font-face`, `@page`,
+    // `@counter-style`. The prelude is `@page`'s page selector and empty for
+    // most of them, and CSSOM 6.4.5 puts a SPACE on each side of the block
+    // whether or not there is anything in it: `@page { }`, not `@page {}`.
+    if (at_rule_holds_declarations(rule.at_name)) {
+        std::string out = "@" + rule.at_name;
+        if (!rule.prelude.empty()) { out += " " + rule.prelude; }
+        const std::string block = serialize_block(rule.declarations);
+        return block.empty() ? out + " { }" : out + " { " + block + " }";
+    }
+    // A GROUPING RULE IS THE ONE MULTI-LINE SERIALISATION IN THE CSSOM, and it
+    // is not a style choice - CSSOM 6.4.1 spells it out for CSSMediaRule: the
+    // at-keyword, a SPACE, the media query list, a SPACE, `{`, a newline, then
+    // each child rule indented by two spaces and followed by a newline, then
+    // `}`. `css/cssom/serialize-media-rule.html` compares the result byte for
+    // byte, including the DOUBLE space an empty query list leaves in
+    // `@media  {` - one after the at-keyword and one before the brace.
     std::string out = "@" + rule.at_name;
-    if (!rule.prelude.empty()) { out += " " + rule.prelude; }
-    out += " {";
+    if (rule.type == media_rule) {
+        out += " " + serialize_media_query_list(rule.media_queries);
+    } else if (!rule.prelude.empty()) {
+        out += " " + rule.prelude;
+    }
+    out += " {\n";
     for (const std::size_t child : rule.children) {
         if (child >= css_rule_store_.size()) { continue; }
-        out += " " + rule_css_text(*css_rule_store_[child]);
+        // TWO SPACES ON EVERY LINE of the child rather than on its first, so a
+        // nested group indents cumulatively - which is what the recursion means
+        // and what a single leading indent would get wrong.
+        out += "  ";
+        for (const char c : rule_css_text(*css_rule_store_[child])) {
+            out += c;
+            if (c == '\n') { out += "  "; }
+        }
+        out += '\n';
     }
-    out += " }";
+    out += '}';
     return out;
 }
 
+// THE SOURCE, RULE BY RULE, through the same entry point `insertRule` uses.
+//
+// It used to be built from `style::css::parse_stylesheet`'s output, which meant
+// the CSSOM could only report the three rule shapes the CASCADE needs: a
+// qualified rule, `@media` and `@font-face`. Everything else the author wrote -
+// `@import`, `@namespace`, `@page`, `@keyframes`, `@supports`,
+// `@counter-style` - was not a rule with less in it, it was not there, so
+// `cssRules[0]` was the wrong rule and every index after it was off by one.
+// `css/cssom/cssom-ruleTypeAndOrder.html` asserts exactly that indexing over
+// seven sheets. The front end also drops a qualified rule whose block is empty,
+// which is what `@media all { * {} }` is made of and what the setup of every
+// `css/cssom/CSSGroupingRule-*.html` fixture asserts before it tests anything.
+//
+// `split_top_level_rules` walks the bytes and `parse_one_rule` is asked about
+// each span, so a rule from a `<style>` and the same rule from `insertRule`
+// cannot be spelled - or typed, or counted - two different ways.
 void dom_bindings::parse_sheet_rules(std::size_t sheet, std::string_view css) {
     if (sheet >= css_sheets_.size()) { return; }
     css_sheets_[sheet]->rules.clear();
-    if (trim(css, html_whitespace).empty()) { return; }
-    const style::css::stylesheet parsed = style::css::parse_stylesheet(css, *atoms_);
-
-    // The rules and the @font-face blocks INTERLEAVED, by source order. Neither
-    // list records its position in the other, but every declaration carries an
-    // `order` counted across the whole sheet, so the first declaration of each
-    // is exactly the key that puts them back in the order they were written.
-    struct entry {
-        std::int32_t order = 0;
-        bool font_face = false;
-        std::size_t at = 0;
-    };
-    std::vector<entry> entries;
-    for (std::size_t i = 0; i < parsed.rules.size(); ++i) {
-        const style::css::raw_rule & r = parsed.rules[i];
-        if (r.first_declaration >= parsed.declarations.size()) { continue; }
-        entries.push_back(entry{parsed.declarations[r.first_declaration].order, false, i});
-    }
-    for (std::size_t i = 0; i < parsed.font_faces.size(); ++i) {
-        const style::css::font_face & f = parsed.font_faces[i];
-        if (f.first_declaration >= parsed.declarations.size()) { continue; }
-        entries.push_back(entry{parsed.declarations[f.first_declaration].order, true, i});
-    }
-    std::stable_sort(entries.begin(), entries.end(),
-                     [](const entry & a, const entry & b) { return a.order < b.order; });
-
-    const auto collect = [&](std::span<const style::css::raw_declaration> from) {
-        std::vector<css_declaration> block;
-        for (const style::css::raw_declaration & d : from) {
-            const std::string name{atoms_->text(d.property)};
-            // THROUGH THE SAME GRAMMAR the cascade and `el.style` use. A value
-            // it refuses is one the cascade drops, so publishing it here would
-            // advertise a declaration that does not apply.
-            const style::css::value_check checked =
-                check_declaration(name, parsed.text_of(d), false);
-            if (!checked.valid) { continue; }
-            block.push_back(css_declaration{name, checked.serialized, d.important});
-        }
-        return block;
-    };
-    const auto add_record = [&]() -> std::size_t {
-        css_rule_store_.push_back(std::make_unique<css_rule_record>());
-        css_rule_store_.back()->sheet = sheet;
-        return css_rule_store_.size() - 1;
-    };
-
-    // A `@media` block is FLATTENED by the front end - its rules come back at
-    // the top level carrying a condition index - so the group is rebuilt here.
-    // A run of rules sharing a condition becomes one CSSMediaRule; a nested
-    // `@media` has a condition of its own and therefore becomes a sibling group
-    // rather than a nested one, which is the one structural deviation in this
-    // file and is not worth a tree walk until something asks for it.
-    std::uint32_t group_condition = 0;
-    std::size_t group_rule = no_index;
-    for (const entry & each : entries) {
-        if (each.font_face) {
-            group_condition = 0;
-            group_rule = no_index;
-            const std::size_t at = add_record();
-            css_rule_store_[at]->type = font_face_rule;
-            css_rule_store_[at]->at_name = "font-face";
-            css_rule_store_[at]->declarations =
-                collect(parsed.declarations_of(parsed.font_faces[each.at]));
-            css_sheets_[sheet]->rules.push_back(at);
-            continue;
-        }
-        const style::css::raw_rule & r = parsed.rules[each.at];
-        if (r.condition != group_condition) {
-            group_condition = r.condition;
-            group_rule = no_index;
-            if (r.condition != 0 && r.condition < parsed.conditions.size()) {
-                const std::size_t at = add_record();
-                css_rule_store_[at]->type = media_rule;
-                css_rule_store_[at]->at_name = "media";
-                css_rule_store_[at]->prelude =
-                    serialize_media_queries(parsed.conditions[r.condition].queries);
-                css_sheets_[sheet]->rules.push_back(at);
-                group_rule = at;
-            }
-        }
-        const std::size_t at = add_record();
-        css_rule_store_[at]->type = style_rule;
-        css_rule_store_[at]->selector = serialize_selector_list(parsed.selectors_of(r), *atoms_);
-        css_rule_store_[at]->declarations = collect(parsed.declarations_of(r));
-        if (group_rule != no_index) {
-            css_rule_store_[at]->parent = group_rule;
-            css_rule_store_[group_rule]->children.push_back(at);
-        } else {
-            css_sheets_[sheet]->rules.push_back(at);
-        }
+    for (const std::string_view span : split_top_level_rules(css)) {
+        std::string error;
+        const std::size_t at = parse_one_rule(sheet, span, error);
+        // A SPAN THAT IS NOT A RULE IS DROPPED AND THE SHEET CONTINUES, which is
+        // §5.4's recovery and is the difference between a stylesheet with a
+        // mistake in it and a broken one.
+        if (at == no_index) { continue; }
+        css_sheets_[sheet]->rules.push_back(at);
     }
 }
 
@@ -635,13 +1121,50 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
     css_rule_record & made = *css_rule_store_[at];
     made.sheet = sheet;
 
+    // THE DECLARATIONS OF A BLOCK, through the two entry points that exist for
+    // exactly this - `parse_declaration_list`, which a `style` attribute uses,
+    // and `check_declaration`, which `el.style` writes through. A value the
+    // grammar refuses is one the cascade drops, so publishing it would advertise
+    // a declaration that does not apply.
+    const auto collect_into = [this](css_rule_record & into, std::string_view body) {
+        const style::css::stylesheet parsed = style::css::parse_declaration_list(body, *atoms_);
+        for (const style::css::raw_declaration & d : parsed.declarations) {
+            const std::string property{atoms_->text(d.property)};
+            const style::css::value_check checked =
+                check_declaration(property, parsed.text_of(d), false);
+            if (!checked.valid) { continue; }
+            into.declarations.push_back(css_declaration{property, checked.serialized, d.important});
+        }
+    };
+
+    // ONE KEYFRAME. `0%, to { opacity: 0 }` is a qualified rule whose prelude is
+    // a `<keyframe-selector>#` and NOT a selector, so `parse_selector_text`
+    // refuses it and treating a `@keyframes` block as a list of ordinary rules
+    // would empty it. CSSOM 6.4.10's keyText is that list, comma-separated;
+    // `from` and `to` keep the spelling the author used.
+    const auto make_keyframe = [this, sheet, &collect_into](std::string_view span) -> std::size_t {
+        const std::string_view one = trim(span, html_whitespace);
+        const std::size_t brace = brace_at(one);
+        const std::size_t shut = brace == std::string_view::npos ? brace : block_end(one, brace);
+        if (brace == std::string_view::npos || shut == std::string_view::npos) { return no_index; }
+        css_rule_store_.push_back(std::make_unique<css_rule_record>());
+        css_rule_record & frame = *css_rule_store_.back();
+        frame.sheet = sheet;
+        frame.type = keyframe_rule;
+        for (const std::string_view part : split_on_commas(one.substr(0, brace))) {
+            if (!frame.selector.empty()) { frame.selector += ", "; }
+            frame.selector += collapse_whitespace(part);
+        }
+        collect_into(frame, one.substr(brace + 1, shut - brace - 1));
+        return css_rule_store_.size() - 1;
+    };
+
     if (trimmed.front() == '@') {
-        // AN AT-RULE, TAKEN VERBATIM. This front end keeps the CONTENTS of
-        // `@media` and `@font-face` and discards every other at-rule's block, so
-        // reporting a reconstruction would report an empty one. The name decides
-        // the type, which is what `instanceof CSSMediaRule` asks; the text is
-        // the author's, which is the honest answer to `cssText` for a rule
-        // nothing here has modelled.
+        // AN AT-RULE. The name decides the type, which is what `instanceof
+        // CSSMediaRule` asks; what happens to its BLOCK depends on which of the
+        // three shapes the rule is - a list of rules, a list of declarations, or
+        // neither, in which case the author's bytes are the honest answer to
+        // `cssText` for a rule nothing here has modelled.
         const std::size_t name_end = trimmed.find_first_of(std::string{html_whitespace} + "{;", 1);
         const std::string_view name =
             trimmed.substr(1, (name_end == std::string_view::npos ? trimmed.size() : name_end) - 1);
@@ -676,68 +1199,174 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
         } else {
             made.type = 0;
         }
-        // A `@media` whose block this front end CAN read gets its children, so
-        // an inserted media rule is a real grouping rule rather than a string.
+
+        // The block, if there is one. `@import` and `@namespace` end at a `;`
+        // and have none at all.
+        const std::size_t open = brace_at(trimmed);
+        const std::size_t close = open == std::string_view::npos ? open : block_end(trimmed, open);
+        const std::string_view body =
+            open == std::string_view::npos || close == std::string_view::npos
+                ? std::string_view{}
+                : trimmed.substr(open + 1, close - open - 1);
+
         if (made.type == media_rule) {
-            const style::css::stylesheet parsed = style::css::parse_stylesheet(trimmed, *atoms_);
-            for (const style::css::raw_rule & r : parsed.rules) {
-                css_rule_store_.push_back(std::make_unique<css_rule_record>());
-                const std::size_t child = css_rule_store_.size() - 1;
-                css_rule_store_[child]->sheet = sheet;
-                css_rule_store_[child]->type = style_rule;
+            // THE AUTHOR'S BYTES, which is the whole reason a media rule made
+            // here serialises exactly and one recovered from a sheet does not.
+            made.media_queries = parse_media_query_list(made.prelude);
+            made.prelude.clear();
+        } else if (made.type == import_rule) {
+            // `<url> <layer>? <supports()>? <media-query-list>?`. The URL and
+            // the media list get fields of their own because the interface has
+            // a reader for each; `layer` and `supports()` stay in `prelude` in
+            // the order the author wrote them, which is the only order CSS
+            // Cascade 5 allows.
+            const std::string written = made.prelude;
+            std::size_t after = 0;
+            const std::string href = url_value(next_component(written, after));
+            std::string extra;
+            for (std::size_t probe = after;;) {
+                const std::string_view part = next_component(written, probe);
+                if (part.empty()) { break; }
+                const bool layer =
+                    ascii_iequals(part, "layer") || ascii_iequals(part.substr(0, 6), "layer(");
+                if (!layer && !ascii_iequals(part.substr(0, 9), "supports(")) { break; }
+                if (!extra.empty()) { extra += ' '; }
+                extra += collapse_whitespace(part);
+                after = probe;
+            }
+            if (!href.empty()) {
+                made.selector = href;
+                made.media_queries = parse_media_query_list(written.substr(after));
+                made.prelude = extra;
+                made.verbatim.clear();
+            }
+        } else if (made.type == namespace_rule) {
+            // `[<prefix>]? <url>`, and the prefix is optional - a default
+            // namespace has none, which is not the same as having an empty one.
+            const std::string written = made.prelude;
+            std::size_t after = 0;
+            const std::string_view first = next_component(written, after);
+            const std::string_view second = next_component(written, after);
+            const std::string uri = url_value(second.empty() ? first : second);
+            if (!uri.empty()) {
+                made.selector = second.empty() ? std::string{} : std::string{first};
+                made.prelude = uri;
+                made.verbatim.clear();
+            }
+        } else if (made.type == page_rule) {
+            bool ok = false;
+            made.prelude = serialize_page_selector(made.prelude, ok);
+        }
+        if (at_rule_holds_rules(made.at_name)) {
+            // RECURSIVELY, THROUGH THIS SAME FUNCTION, rather than through the
+            // sheet parser: the sheet parser drops a qualified rule with an
+            // empty block, and `@media all { * {} }` is nothing but one. The
+            // record store holds `unique_ptr`s, so the reference above stays
+            // valid however far the recursion pushes the vector about.
+            for (const std::string_view span : split_top_level_rules(body)) {
+                std::string ignored;
+                const std::size_t child = made.type == keyframes_rule
+                                              ? make_keyframe(span)
+                                              : parse_one_rule(sheet, span, ignored);
+                if (child == no_index) { continue; }
                 css_rule_store_[child]->parent = at;
-                css_rule_store_[child]->selector =
-                    serialize_selector_list(parsed.selectors_of(r), *atoms_);
-                for (const style::css::raw_declaration & d : parsed.declarations_of(r)) {
-                    const std::string property{atoms_->text(d.property)};
-                    const style::css::value_check checked =
-                        check_declaration(property, parsed.text_of(d), false);
-                    if (!checked.valid) { continue; }
-                    css_rule_store_[child]->declarations.push_back(
-                        css_declaration{property, checked.serialized, d.important});
-                }
-                css_rule_store_[at]->children.push_back(child);
+                made.children.push_back(child);
             }
             // Reconstructible from here on, so the author's bytes are dropped
             // and `cssText` serialises the group and its children.
-            css_rule_store_[at]->verbatim.clear();
+            made.verbatim.clear();
+        } else if (at_rule_holds_declarations(made.at_name) && open != std::string_view::npos &&
+                   close != std::string_view::npos) {
+            collect_into(made, body);
+            made.verbatim.clear();
         }
         return at;
     }
 
-    const style::css::stylesheet parsed = style::css::parse_stylesheet(trimmed, *atoms_);
-    if (parsed.rules.size() != 1) {
-        // Zero means the text is not a rule - or is a rule with an EMPTY block,
-        // which this front end drops on the ground that it can never contribute
-        // to the cascade. More than one means the caller passed a sheet where
-        // CSSOM asks for a rule.
+    // A QUALIFIED RULE, SPLIT AT THE BRACE rather than run through the sheet
+    // parser, and the reason is the EMPTY BLOCK. `consume_qualified_rule` keeps
+    // a rule only when it has both a selector and a declaration, so `div { }`
+    // came back as no rule at all and `insertRule` answered SyntaxError for text
+    // that is perfectly good CSS. That is not an edge case in this suite: it is
+    // what `addRule()` with no arguments produces (`undefined { }`, asserted in
+    // `css/cssom/CSSStyleSheet.html`) and it is what every `@media all { * {} }`
+    // fixture in `CSSGroupingRule-*.html` is made of.
+    //
+    // The two halves go through the two entry points that exist for exactly
+    // them - `parse_selector_text`, which `querySelector` uses, and
+    // `parse_declaration_list`, which a `style` attribute uses - so nothing is
+    // parsed here by a rule of its own.
+    const std::size_t open = brace_at(trimmed);
+    const std::size_t close = open == std::string_view::npos ? open : block_end(trimmed, open);
+    if (open == std::string_view::npos || close == std::string_view::npos ||
+        !trim(trimmed.substr(close + 1), html_whitespace).empty()) {
+        // No block at all, an unterminated one, or a second rule after the
+        // first - CSSOM asks for exactly one rule and all three are the same
+        // answer.
         css_rule_store_.pop_back();
         error = "SyntaxError";
         return no_index;
     }
-    const style::css::raw_rule & r = parsed.rules.front();
-    made.type = style_rule;
-    made.selector = serialize_selector_list(parsed.selectors_of(r), *atoms_);
-    for (const style::css::raw_declaration & d : parsed.declarations_of(r)) {
-        const std::string property{atoms_->text(d.property)};
-        const style::css::value_check checked =
-            check_declaration(property, parsed.text_of(d), false);
-        if (!checked.valid) { continue; }
-        made.declarations.push_back(css_declaration{property, checked.serialized, d.important});
+    bool bad = false;
+    const std::string_view prelude = trim(trimmed.substr(0, open), html_whitespace);
+    const style::css::stylesheet selectors = style::css::parse_selector_text(prelude, *atoms_, bad);
+    if (bad || selectors.selectors.empty()) {
+        css_rule_store_.pop_back();
+        error = "SyntaxError";
+        return no_index;
     }
+    made.type = style_rule;
+    // The canonical serialisation when the compiled form IS the selector, and
+    // the author's bytes when it is not - see `representable`. Whitespace is
+    // collapsed either way, so `span  div  ` is `span div` in both.
+    made.selector = representable(selectors.selectors)
+                        ? serialize_selector_list(selectors.selectors, *atoms_)
+                        : collapse_whitespace(prelude);
+    collect_into(made, trimmed.substr(open + 1, close - open - 1));
     return at;
 }
 
 std::string dom_bindings::author_style_text() {
+    // THE DOCUMENT'S OWN SHEETS ARE COLLECTED LAZILY, on a read of
+    // `document.styleSheets` - so a page that adopted a constructed sheet
+    // without ever touching `document.styleSheets` had `css_document_sheets_`
+    // empty here, and its `<style>` element vanished from the serialisation
+    // while the adopted sheets survived. Syncing first is what makes this the
+    // FINAL list of style sheets CSSOM defines rather than whatever the page
+    // happened to have asked for.
+    if (cx_ != nullptr) { sync_style_sheets(*cx_); }
     std::string out;
-    for (const std::size_t at : css_document_sheets_) {
-        if (at >= css_sheets_.size()) { continue; }
+    const auto emit = [&](std::size_t at) {
+        if (at >= css_sheets_.size()) { return; }
         const std::unique_ptr<css_sheet_record> & sheet = css_sheets_[at];
-        if (sheet->disabled) { continue; }
+        if (sheet->disabled) { return; }
         for (const std::size_t rule : sheet->rules) {
             if (rule >= css_rule_store_.size()) { continue; }
             out += rule_css_text(*css_rule_store_[rule]);
             out += '\n';
+        }
+    };
+    for (const std::size_t at : css_document_sheets_) { emit(at); }
+    // AND THE ADOPTED SHEETS, AFTER THEM AND IN THEIR OWN ORDER.
+    //
+    // They were in the object model and in nothing else: `adoptedStyleSheets`
+    // held an array, `document.styleSheets` correctly did not include it (a
+    // constructed sheet is not a document sheet), and so a sheet a page adopted
+    // reached the cascade through no route at all. CSSOM puts them LAST in the
+    // final list of style sheets, which is what makes
+    // `adoptedStyleSheets = [red, green]` green and `[green, red]` red -
+    // `adoptedstylesheets-cascade-order.html` asserts exactly that pair, and
+    // then asserts it again for a rotation, which only an ordered walk of the
+    // array can answer.
+    //
+    // Read from the ARRAY rather than from a mirror kept beside it, because the
+    // page owns that array and a mirror updated only on assignment would be a
+    // second answer to what has been adopted.
+    if (script::object_object * internals = as_object(cssom_internals_)) {
+        if (const value * held = internals->find("adopted"); held != nullptr && held->is_array()) {
+            for (const value each : static_cast<script::array_object *>(held->as_heap())->items) {
+                emit(slot_index(as_object(each), sheet_key));
+            }
         }
     }
     return out;
@@ -875,7 +1504,15 @@ void dom_bindings::sync_style_sheets(context & cx) {
         }
         css_sheet_record & record = *css_sheets_[at];
         record.title = each.title;
-        record.media = each.media;
+        // THE ATTRIBUTE IS RE-READ, THE LIST IS NOT. This walk runs on every
+        // read of `document.styleSheets`, and a MediaList is mutable - a page
+        // that has called `appendMedium` must not have it undone by the next
+        // property access. So the query list is re-derived only when the
+        // element's `media` attribute has actually changed under it.
+        if (fresh || record.media != each.media) {
+            record.media = each.media;
+            record.media_queries = parse_media_query_list(record.media);
+        }
         if (each.linked) {
             // A `<link>`'s bytes come from the asset registry, exactly as
             // load_author_styles resolves them, and only when the href changes -
@@ -945,6 +1582,66 @@ dom_bindings::css_rule_record * dom_bindings::receiver_rule(context & cx) {
     return at < css_rule_store_.size() ? css_rule_store_[at].get() : nullptr;
 }
 
+std::vector<std::string> * dom_bindings::receiver_media(context & cx) {
+    // A RULE FIRST, because a media rule's own object carries both private slots
+    // - `rule_key` and the `sheet_key` that says which sheet it came from - and
+    // the sheet's list is not the rule's. A MediaList itself carries exactly one.
+    if (css_rule_record * rule = receiver_rule(cx)) { return &rule->media_queries; }
+    if (css_sheet_record * sheet = receiver_sheet(cx)) { return &sheet->media_queries; }
+    return nullptr;
+}
+
+value dom_bindings::media_list_object(context & cx, script::object_object & owner) {
+    // [SameObject]: `sheet.media === sheet.media`, and a page's expando on one
+    // survives - so the list is cached on its owner under a private key and
+    // REFRESHED rather than rebuilt.
+    if (const value * held = owner.find(media_key)) {
+        refresh_media_list(cx, *held);
+        return *held;
+    }
+    const value list = cx.make_object();
+    script::object_object * obj = as_object(list);
+    if (obj == nullptr) { return list; }
+    if (script::object_object * internals = cssom_internals(cx)) {
+        if (const value * proto = internals->find("MediaList.prototype")) {
+            obj->prototype = *proto;
+        }
+    }
+    // THE OWNER'S SLOT, COPIED ONTO THE LIST. It is how every method below finds
+    // the vector it is a view of: a MediaList has no owner pointer of its own,
+    // and re-deriving one from the JS object graph would need a back-reference
+    // the collector would then have to know about.
+    if (const value * rule = owner.find(rule_key)) {
+        obj->define(rule_key, *rule, script::attr_none);
+    } else if (const value * sheet = owner.find(sheet_key)) {
+        obj->define(sheet_key, *sheet, script::attr_none);
+    }
+    obj->define("length", value::number(0), script::attr_none);
+    owner.define(media_key, list, script::attr_none);
+    refresh_media_list(cx, list);
+    return list;
+}
+
+void dom_bindings::refresh_media_list(context & cx, value list) {
+    script::object_object * obj = as_object(list);
+    if (obj == nullptr) { return; }
+    const std::vector<std::string> * queries = nullptr;
+    {
+        const std::size_t rule = slot_index(obj, rule_key);
+        const std::size_t sheet = slot_index(obj, sheet_key);
+        if (rule < css_rule_store_.size()) {
+            queries = &css_rule_store_[rule]->media_queries;
+        } else if (sheet < css_sheets_.size()) {
+            queries = &css_sheets_[sheet]->media_queries;
+        }
+    }
+    if (queries == nullptr) { return; }
+    std::vector<value> items;
+    items.reserve(queries->size());
+    for (const std::string & query : *queries) { items.push_back(cx.string(query)); }
+    set_indexed(*obj, items);
+}
+
 value dom_bindings::make_rule_list(context & cx, std::span<const std::size_t> rules) {
     const value list = cx.make_object();
     script::object_object * obj = as_object(list);
@@ -1008,6 +1705,18 @@ value dom_bindings::make_rule_object(context & cx, std::size_t rule) {
             interface = "CSSFontFaceRule.prototype";
         } else if (record.type == import_rule) {
             interface = "CSSImportRule.prototype";
+        } else if (record.type == supports_rule) {
+            interface = "CSSSupportsRule.prototype";
+        } else if (record.type == page_rule) {
+            interface = "CSSPageRule.prototype";
+        } else if (record.type == keyframes_rule) {
+            interface = "CSSKeyframesRule.prototype";
+        } else if (record.type == keyframe_rule) {
+            interface = "CSSKeyframeRule.prototype";
+        } else if (record.type == namespace_rule) {
+            interface = "CSSNamespaceRule.prototype";
+        } else if (record.type == counter_style_rule) {
+            interface = "CSSCounterStyleRule.prototype";
         }
         if (const value * proto = internals->find(interface)) { obj->prototype = *proto; }
     }
@@ -1129,25 +1838,86 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     };
 
     // --- MediaList
+    //
+    // A VIEW OF A RECORD'S QUERY LIST, not a list of its own. `mediaText`,
+    // `appendMedium` and `deleteMedium` all write through to the sheet or the
+    // media rule the object came from, which is what makes
+    // `rule.media.appendMedium('print')` change `rule.cssText` - the two are one
+    // list read two ways rather than two lists that have to be kept in step.
     script::object_object * media_proto = interface("MediaList", nullptr, nullptr);
     method(media_proto, "item",
            [](context & c, std::span<value> a) { return collection_item(c, a); });
-    getter(media_proto, "mediaText", [](context & c, std::span<value>) {
-        script::object_object * self = as_object(c.current_this());
-        if (self == nullptr) { return c.string(""); }
-        std::string out;
-        std::size_t count = 0;
-        if (const value * held = self->find("length"); held != nullptr && held->is_number()) {
-            const double n = held->as_number();
-            if (n > 0) { count = static_cast<std::size_t>(n); }
+    accessor(
+        media_proto, "mediaText",
+        [this](context & c, std::span<value>) {
+            const std::vector<std::string> * queries = receiver_media(c);
+            return c.string(queries == nullptr ? std::string{}
+                                               : serialize_media_query_list(*queries));
+        },
+        [this](context & c, std::span<value> a) {
+            std::vector<std::string> * queries = receiver_media(c);
+            if (queries == nullptr) { return value::undefined(); }
+            // [LegacyNullToEmptyString]: `media.mediaText = null` EMPTIES the
+            // list rather than parsing the string "null", which
+            // `css/cssom/MediaList.html` asserts by name.
+            const std::string text = a.empty() || a[0].is_null() || a[0].is_undefined()
+                                         ? std::string{}
+                                         : c.to_string(a[0]);
+            *queries = parse_media_query_list(text);
+            refresh_media_list(c, c.current_this());
+            style_sheets_changed();
+            return value::undefined();
+        });
+    // The stringifier. `media.toString()` and `'' + media` are both `mediaText`.
+    method(media_proto, "toString", [](context & c, std::span<value>) {
+        return c.lookup_property(c.current_this(), "mediaText");
+    });
+    method(media_proto, "appendMedium", [this](context & c, std::span<value> a) {
+        std::vector<std::string> * queries = receiver_media(c);
+        if (queries == nullptr) { return value::undefined(); }
+        // "Parse A MEDIA QUERY" - singular. `appendMedium("screen, print")` is
+        // not two appends and it is not one query called `screen, print`
+        // either: the parse returns null, and step 1 says return. A top-level
+        // comma is the whole test for it.
+        const std::string one = arg_string(c, a, 0);
+        if (split_on_commas(one).size() != 1) { return value::undefined(); }
+        const std::string added = serialize_media_query_text(one);
+        if (added.empty()) { return value::undefined(); }
+        // "If comparing medium with any of the media queries in the collection
+        // returns true, then return" - appending a medium twice is a no-op.
+        if (std::find(queries->begin(), queries->end(), added) != queries->end()) {
+            return value::undefined();
         }
-        for (std::size_t i = 0; i < count; ++i) {
-            if (const value * held = self->find(std::to_string(i))) {
-                if (!out.empty()) { out += ", "; }
-                out += c.to_string(*held);
-            }
+        queries->push_back(added);
+        refresh_media_list(c, c.current_this());
+        style_sheets_changed();
+        return value::undefined();
+    });
+    method(media_proto, "deleteMedium", [this](context & c, std::span<value> a) {
+        std::vector<std::string> * queries = receiver_media(c);
+        if (queries == nullptr) { return value::undefined(); }
+        // A REQUIRED ARGUMENT, so calling it with none is a TypeError and not a
+        // NotFoundError about the empty string - `medialist-interfaces-002.html`
+        // asserts which of the two by name.
+        if (a.empty()) {
+            c.throw_error("TypeError", "deleteMedium requires a medium");
+            return value::undefined();
         }
-        return c.string(out);
+        const std::string wanted = serialize_media_query_text(c.to_string(a[0]));
+        // "Remove ALL media queries in the collection that match" - a list may
+        // hold the same query twice (`screen, print, screen`) and removing only
+        // the first leaves one behind that the page has just asked to be rid of.
+        const auto gone = std::remove(queries->begin(), queries->end(), wanted);
+        if (wanted.empty() || gone == queries->end()) {
+            // "If nothing was removed, then throw a NotFoundError" - the one
+            // place in the CSSOM where deleting something absent is an error.
+            throw_dom_exception(c, "NotFoundError", "that medium is not in the list");
+            return value::undefined();
+        }
+        queries->erase(gone, queries->end());
+        refresh_media_list(c, c.current_this());
+        style_sheets_changed();
+        return value::undefined();
     });
 
     // --- StyleSheetList
@@ -1186,39 +1956,20 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         }
         return c.string(sheet->title);
     });
-    getter(base_proto, "media", [this](context & c, std::span<value>) {
-        script::object_object * self = as_object(c.current_this());
-        const css_sheet_record * sheet = receiver_sheet(c);
-        if (self == nullptr || sheet == nullptr) { return value::undefined(); }
-        value list = value::undefined();
-        if (const value * held = self->find(media_key)) { list = *held; }
-        if (!list.is_object()) {
-            list = c.make_object();
-            if (script::object_object * obj = as_object(list)) {
-                if (script::object_object * held = cssom_internals(c)) {
-                    if (const value * proto = held->find("MediaList.prototype")) {
-                        obj->prototype = *proto;
-                    }
-                }
-                obj->define("length", value::number(0), script::attr_none);
-            }
-            self->define(media_key, list, script::attr_none);
-        }
-        std::vector<value> queries;
-        std::size_t at = 0;
-        while (at < sheet->media.size()) {
-            const std::size_t comma = sheet->media.find(',', at);
-            const std::string_view one =
-                trim(std::string_view{sheet->media}.substr(
-                         at, comma == std::string::npos ? std::string::npos : comma - at),
-                     html_whitespace);
-            if (!one.empty()) { queries.push_back(c.string(std::string{one})); }
-            if (comma == std::string::npos) { break; }
-            at = comma + 1;
-        }
-        if (script::object_object * obj = as_object(list)) { set_indexed(*obj, queries); }
-        return list;
-    });
+    accessor(
+        base_proto, "media",
+        [this](context & c, std::span<value>) {
+            script::object_object * self = as_object(c.current_this());
+            if (self == nullptr || receiver_sheet(c) == nullptr) { return value::undefined(); }
+            return media_list_object(c, *self);
+        },
+        [](context & c, std::span<value> a) {
+            // [PutForwards=mediaText]: `sheet.media = 'print'` assigns to the
+            // MediaList's mediaText and the list object itself never changes.
+            const value list = c.lookup_property(c.current_this(), "media");
+            c.store_property(list, "mediaText", a.empty() ? c.string("") : a[0]);
+            return value::undefined();
+        });
     accessor(
         base_proto, "disabled",
         [this](context & c, std::span<value>) {
@@ -1249,6 +2000,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                 auto * options = static_cast<script::object_object *>(args[0].as_heap());
                 if (const value * media = options->find("media")) {
                     css_sheets_[at]->media = c.to_string(*media);
+                    css_sheets_[at]->media_queries = parse_media_query_list(css_sheets_[at]->media);
                 }
                 if (const value * disabled = options->find("disabled")) {
                     css_sheets_[at]->disabled = context::truthy(*disabled);
@@ -1288,7 +2040,15 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             return value::undefined();
         }
         const std::string text = c.to_string(args[0]);
-        const double asked = args.size() > 1 ? context::to_number(args[1]) : 0;
+        // `insertRule(text)` and `insertRule(text, undefined)` ARE THE SAME
+        // CALL. `index` is an optional unsigned long defaulting to 0, and Web
+        // IDL says an `undefined` passed for an optional argument means the
+        // default was not supplied - it is not `ToNumber(undefined)`, which is
+        // NaN and was answering IndexSizeError for a perfectly ordinary
+        // insertion. `insertRule-no-index.html` and its four siblings are one
+        // subtest each of exactly that.
+        const double asked =
+            args.size() > 1 && !args[1].is_undefined() ? context::to_number(args[1]) : 0;
         if (!(asked >= 0) || asked > static_cast<double>(sheet->rules.size())) {
             throw_dom_exception(c, "IndexSizeError", "the index is past the end of the sheet");
             return value::undefined();
@@ -1303,10 +2063,60 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                                 "the text is not a single CSS rule");
             return value::undefined();
         }
-        if (css_rule_store_[made]->type == import_rule && sheet->constructed) {
+        const std::uint32_t kind = css_rule_store_[made]->type;
+        if (kind == import_rule && sheet->constructed) {
             // "@import rules are not allowed in a constructed stylesheet."
             throw_dom_exception(c, "SyntaxError", "@import is not allowed here");
             return value::undefined();
+        }
+        // WHAT MAY PRECEDE WHAT - CSSOM 6.3.3 steps 4 and 5, and the two steps
+        // answer different questions. Step 4 is about the POSITION: `@import`
+        // may only go where everything before it is `@charset`, `@layer` or
+        // another `@import`, `@namespace` may additionally follow those, and
+        // everything else may only go after all of them. Step 5 is about the
+        // WHOLE LIST: a `@namespace` may not be added to a sheet that already
+        // has a style rule in it at all, wherever the insertion point is,
+        // because the namespace would change what the existing selectors mean.
+        // `at-namespace.html` is one assertion of exactly that and says so in
+        // its title.
+        const auto rule_type = [this, sheet](std::size_t i) {
+            const std::size_t which = sheet->rules[i];
+            return which < css_rule_store_.size() ? css_rule_store_[which]->type : 0;
+        };
+        const auto before_ok = [&](std::uint32_t allowed_a, std::uint32_t allowed_b) {
+            for (std::size_t i = 0; i < at; ++i) {
+                const std::uint32_t each = rule_type(i);
+                if (each != allowed_a && each != allowed_b) { return false; }
+            }
+            return true;
+        };
+        bool allowed = true;
+        if (kind == import_rule) {
+            allowed = before_ok(import_rule, import_rule);
+        } else if (kind == namespace_rule) {
+            allowed = before_ok(import_rule, namespace_rule);
+        } else {
+            // Nothing else may be inserted BEFORE an `@import` or a
+            // `@namespace`, so every rule from the insertion point on must be
+            // neither.
+            for (std::size_t i = at; i < sheet->rules.size(); ++i) {
+                const std::uint32_t each = rule_type(i);
+                if (each == import_rule || each == namespace_rule) { allowed = false; }
+            }
+        }
+        if (!allowed) {
+            throw_dom_exception(c, "HierarchyRequestError", "that rule may not go there");
+            return value::undefined();
+        }
+        if (kind == namespace_rule) {
+            for (std::size_t i = 0; i < sheet->rules.size(); ++i) {
+                const std::uint32_t each = rule_type(i);
+                if (each != import_rule && each != namespace_rule) {
+                    throw_dom_exception(c, "InvalidStateError",
+                                        "the sheet already has rules a namespace would change");
+                    return value::undefined();
+                }
+            }
         }
         sheet->rules.insert(sheet->rules.begin() + static_cast<std::ptrdiff_t>(at), made);
         style_sheets_changed();
@@ -1323,6 +2133,21 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         if (!(asked >= 0) || asked >= static_cast<double>(sheet->rules.size())) {
             throw_dom_exception(c, "IndexSizeError", "there is no rule at that index");
             return value::undefined();
+        }
+        // THE MIRROR OF THE INSERT RULE, CSSOM 6.3.4: removing a `@namespace`
+        // from a sheet that has anything but `@import` and `@namespace` in it
+        // would change what the remaining selectors mean, so it is refused.
+        const std::size_t going = sheet->rules[static_cast<std::size_t>(asked)];
+        if (going < css_rule_store_.size() && css_rule_store_[going]->type == namespace_rule) {
+            for (const std::size_t each : sheet->rules) {
+                const std::uint32_t kind =
+                    each < css_rule_store_.size() ? css_rule_store_[each]->type : 0;
+                if (kind != import_rule && kind != namespace_rule) {
+                    throw_dom_exception(c, "InvalidStateError",
+                                        "the sheet has rules that namespace would change");
+                    return value::undefined();
+                }
+            }
         }
         sheet->rules.erase(sheet->rules.begin() + static_cast<std::ptrdiff_t>(asked));
         style_sheets_changed();
@@ -1349,28 +2174,38 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         (void)c.call(method_value, forwarded, self);
         return value::number(-1);
     });
+    // The two differ in HOW they refuse, not in what they refuse: `replaceSync`
+    // THROWS a NotAllowedError and `replace` returns a promise REJECTED with
+    // one. `CSSStyleSheet-constructable-replace-on-regular-sheet.html` asserts
+    // both halves separately, and a throw out of `replace` fails that test with
+    // an uncaught exception rather than the rejection it is waiting for.
     const auto replace_rules = [this](context & c, std::span<value> args) -> bool {
         css_sheet_record * sheet = receiver_sheet(c);
-        if (sheet == nullptr || !sheet->constructed) {
-            throw_dom_exception(c, "NotAllowedError",
-                                "replace is only allowed on a constructed stylesheet");
-            return false;
-        }
+        if (sheet == nullptr || !sheet->constructed) { return false; }
         const std::size_t at = slot_index(as_object(c.current_this()), sheet_key);
         parse_sheet_rules(at, args.empty() ? std::string{} : c.to_string(args[0]));
         style_sheets_changed();
         return true;
     };
-    method(sheet_proto, "replaceSync", [replace_rules](context & c, std::span<value> args) {
-        (void)replace_rules(c, args);
+    method(sheet_proto, "replaceSync", [this, replace_rules](context & c, std::span<value> args) {
+        if (!replace_rules(c, args)) {
+            throw_dom_exception(c, "NotAllowedError",
+                                "replace is only allowed on a constructed stylesheet");
+        }
         return value::undefined();
     });
-    method(sheet_proto, "replace", [replace_rules](context & c, std::span<value> args) {
+    method(sheet_proto, "replace", [this, replace_rules](context & c, std::span<value> args) {
         // The work is synchronous - there is no subresource to fetch, `@import`
-        // being ignored - so the promise is already resolved. What matters to a
-        // page is that it IS a promise and that it resolves with the sheet.
+        // being ignored - so the promise is already settled. What matters to a
+        // page is that it IS a promise, that it resolves with the sheet, and
+        // that a refusal arrives as a rejection.
         const value self = c.current_this();
-        if (!replace_rules(c, args)) { return value::undefined(); }
+        if (!replace_rules(c, args)) {
+            return c.make_promise(make_dom_exception(c, "NotAllowedError",
+                                                     "replace is only allowed on a "
+                                                     "constructed stylesheet"),
+                                  true);
+        }
         return c.make_promise(self, false);
     });
 
@@ -1428,45 +2263,63 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         [this](context & c, std::span<value> a) {
             css_rule_record * rule = receiver_rule(c);
             if (rule == nullptr) { return value::undefined(); }
-            // Re-COMPILED and re-serialised rather than stored as written, so a
-            // selector the matcher cannot represent cannot be advertised. An
-            // unparseable one leaves the rule exactly as it was, which is what
-            // CSSOM says.
+            // "Parse the given value; if it returns failure, do nothing" -
+            // CSSOM 6.4.2, and the whole of that test is the difference between
+            // a selector that is WRONG and one this engine merely cannot match.
+            // `parse_selector_text` is the entry point that tells them apart,
+            // and it is the same one `querySelector` uses: its out parameter is
+            // a SYNTAX error, so `::gibberish` leaves the rule alone while
+            // `::before` replaces it and simply matches nothing. It replaced a
+            // probe that appended `{--ctbrowser-probe:1}` and ran the SHEET
+            // parser, which could not tell the two apart at all and which a `{`
+            // inside an attribute value could derail.
             const std::string text = arg_string(c, a, 0);
+            bool bad = false;
             const style::css::stylesheet parsed =
-                style::css::parse_stylesheet(text + "{--ctbrowser-probe:1}", *atoms_);
-            if (parsed.rules.size() != 1) { return value::undefined(); }
-            rule->selector =
-                serialize_selector_list(parsed.selectors_of(parsed.rules.front()), *atoms_);
+                style::css::parse_selector_text(text, *atoms_, bad);
+            if (bad || parsed.selectors.empty()) { return value::undefined(); }
+            rule->selector = representable(parsed.selectors)
+                                 ? serialize_selector_list(parsed.selectors, *atoms_)
+                                 : collapse_whitespace(text);
             style_sheets_changed();
             return value::undefined();
         });
-    accessor(
-        style_rule_proto, "style",
-        [this](context & c, std::span<value>) {
-            // [SameObject], and LAZY. The declaration object is where the ~290
-            // property accessors are reachable from, and a sheet with three
-            // thousand rules in it would otherwise build three thousand of them
-            // for a page that never reads one.
-            script::object_object * self = as_object(c.current_this());
-            if (self == nullptr) { return value::undefined(); }
-            if (const value * held = self->find(style_key)) {
-                refresh_declaration_object(c, *held);
-                return *held;
-            }
-            const std::size_t at = slot_index(self, rule_key);
-            const value made = declaration_object(c, at);
-            self->define(style_key, made, script::attr_none);
-            return made;
-        },
-        [](context & c, std::span<value> a) {
-            // [PutForwards=cssText]: `rule.style = "margin: 42px"` assigns to
-            // `rule.style.cssText` and the object itself never changes.
-            const value self = c.current_this();
-            const value declarations = c.lookup_property(self, "style");
-            c.store_property(declarations, "cssText", a.empty() ? c.string("") : a[0]);
-            return value::undefined();
-        });
+    // `.style`, ON EVERY RULE WHOSE BLOCK IS DECLARATIONS - which is five of
+    // them and was one. CSSOM gives a CSSStyleDeclaration to CSSStyleRule,
+    // CSSFontFaceRule, CSSPageRule, CSSKeyframeRule and CSSCounterStyleRule
+    // alike; `css/cssom/property-accessors.html` reaches for
+    // `document.styleSheets[0].cssRules[0].style` where rule zero is a
+    // `@font-face`, and nine of its nine subtests died on `getPropertyValue is
+    // undefined` rather than on anything it set out to test.
+    const auto declaration_accessor = [&](script::object_object * on) {
+        accessor(
+            on, "style",
+            [this](context & c, std::span<value>) {
+                // [SameObject], and LAZY. The declaration object is where the
+                // ~290 property accessors are reachable from, and a sheet with
+                // three thousand rules in it would otherwise build three
+                // thousand of them for a page that never reads one.
+                script::object_object * self = as_object(c.current_this());
+                if (self == nullptr) { return value::undefined(); }
+                if (const value * held = self->find(style_key)) {
+                    refresh_declaration_object(c, *held);
+                    return *held;
+                }
+                const std::size_t at = slot_index(self, rule_key);
+                const value made = declaration_object(c, at);
+                self->define(style_key, made, script::attr_none);
+                return made;
+            },
+            [](context & c, std::span<value> a) {
+                // [PutForwards=cssText]: `rule.style = "margin: 42px"` assigns
+                // to `rule.style.cssText` and the object itself never changes.
+                const value self = c.current_this();
+                const value declarations = c.lookup_property(self, "style");
+                c.store_property(declarations, "cssText", a.empty() ? c.string("") : a[0]);
+                return value::undefined();
+            });
+    };
+    declaration_accessor(style_rule_proto);
 
     script::object_object * grouping_proto = interface("CSSGroupingRule", "CSSRule", nullptr);
     getter(grouping_proto, "cssRules", [this](context & c, std::span<value>) {
@@ -1481,16 +2334,281 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         self->define(rules_key, list, script::attr_none);
         return list;
     });
+    // insertRule/deleteRule ON THE GROUP, which is the same pair of methods
+    // CSSStyleSheet has and NOT the same list: a rule inserted here becomes a
+    // child of the group and never a sibling of it. `@media print {}` followed
+    // by `rule.insertRule(...)` is how `css/cssom/serialize-media-rule.html`
+    // builds every one of its fixtures.
+    method(grouping_proto, "insertRule", [this](context & c, std::span<value> args) {
+        css_rule_record * rule = receiver_rule(c);
+        if (rule == nullptr) { return value::undefined(); }
+        if (args.empty()) {
+            c.throw_error("TypeError", "insertRule requires a rule");
+            return value::undefined();
+        }
+        const std::string text = c.to_string(args[0]);
+        // `undefined` for an optional argument is the DEFAULT, not
+        // `ToNumber(undefined)` - see the sheet's `insertRule`.
+        const double asked =
+            args.size() > 1 && !args[1].is_undefined() ? context::to_number(args[1]) : 0;
+        // THE INDEX IS CHECKED BEFORE THE TEXT IS PARSED, which is the order
+        // CSSOM 6.4.3 gives and which `CSSGroupingRule-insertRule.html` asserts
+        // by passing a deliberate syntax error at an out-of-range index and
+        // demanding the IndexSizeError.
+        if (!(asked >= 0) || asked > static_cast<double>(rule->children.size())) {
+            throw_dom_exception(c, "IndexSizeError", "the index is past the end of the rule");
+            return value::undefined();
+        }
+        const std::size_t self = slot_index(as_object(c.current_this()), rule_key);
+        std::string error;
+        const std::size_t made = parse_one_rule(rule->sheet, text, error);
+        if (made == no_index) {
+            throw_dom_exception(c, error.empty() ? std::string{"SyntaxError"} : error,
+                                "the text is not a single CSS rule");
+            return value::undefined();
+        }
+        // "If new rule cannot be inserted at index because the rule is not
+        // allowed there, throw a HierarchyRequestError." `@import` and
+        // `@namespace` are top-level rules and a grouping rule is not the top
+        // level. The record is dropped rather than orphaned - it was appended a
+        // moment ago and nothing else has seen it.
+        const std::uint32_t kind = css_rule_store_[made]->type;
+        if (kind == import_rule || kind == namespace_rule) {
+            if (made + 1 == css_rule_store_.size()) { css_rule_store_.pop_back(); }
+            throw_dom_exception(c, "HierarchyRequestError",
+                                "that rule is not allowed inside a grouping rule");
+            return value::undefined();
+        }
+        css_rule_store_[made]->parent = self;
+        rule->children.insert(rule->children.begin() + static_cast<std::ptrdiff_t>(asked), made);
+        style_sheets_changed();
+        return value::number(asked);
+    });
+    method(grouping_proto, "deleteRule", [this](context & c, std::span<value> args) {
+        css_rule_record * rule = receiver_rule(c);
+        if (rule == nullptr) { return value::undefined(); }
+        if (args.empty()) {
+            c.throw_error("TypeError", "deleteRule requires an index");
+            return value::undefined();
+        }
+        const double asked = context::to_number(args[0]);
+        if (!(asked >= 0) || asked >= static_cast<double>(rule->children.size())) {
+            throw_dom_exception(c, "IndexSizeError", "there is no rule at that index");
+            return value::undefined();
+        }
+        rule->children.erase(rule->children.begin() + static_cast<std::ptrdiff_t>(asked));
+        style_sheets_changed();
+        return value::undefined();
+    });
     script::object_object * condition_proto =
         interface("CSSConditionRule", "CSSGroupingRule", nullptr);
     getter(condition_proto, "conditionText", [this](context & c, std::span<value>) {
         const css_rule_record * rule = receiver_rule(c);
+        if (rule == nullptr) { return c.string(""); }
+        // "The conditionText of a CSSMediaRule is its media's mediaText" -
+        // CSSOM 6.4.4. Only `@supports` answers from `prelude`, its condition
+        // being a `<supports-condition>` and not a media query list.
+        if (rule->type == media_rule) {
+            return c.string(serialize_media_query_list(rule->media_queries));
+        }
+        return c.string(rule->prelude);
+    });
+    script::object_object * media_rule_proto =
+        interface("CSSMediaRule", "CSSConditionRule", nullptr);
+    accessor(
+        media_rule_proto, "media",
+        [this](context & c, std::span<value>) {
+            script::object_object * self = as_object(c.current_this());
+            if (self == nullptr || receiver_rule(c) == nullptr) { return value::undefined(); }
+            return media_list_object(c, *self);
+        },
+        [](context & c, std::span<value> a) {
+            const value list = c.lookup_property(c.current_this(), "media");
+            c.store_property(list, "mediaText", a.empty() ? c.string("") : a[0]);
+            return value::undefined();
+        });
+    (void)interface("CSSSupportsRule", "CSSConditionRule", nullptr);
+    declaration_accessor(interface("CSSFontFaceRule", "CSSRule", nullptr));
+
+    // --- CSSImportRule, CSSOM 6.4.7
+    //
+    // `styleSheet` IS NULL AND THAT IS THE HONEST ANSWER: nothing here fetches
+    // an `@import`, and a page reading `rule.styleSheet.cssRules` must find out
+    // that there is no sheet rather than find an empty one that claims the
+    // import succeeded. `cssimportrule.html` asserts a CSSStyleSheet there and
+    // that subtest stays red until the loader does the fetch.
+    script::object_object * import_proto = interface("CSSImportRule", "CSSRule", nullptr);
+    getter(import_proto, "href", [this](context & c, std::span<value>) {
+        const css_rule_record * rule = receiver_rule(c);
+        return c.string(rule == nullptr ? std::string{} : rule->selector);
+    });
+    getter(import_proto, "styleSheet", [](context &, std::span<value>) { return value::null(); });
+    accessor(
+        import_proto, "media",
+        [this](context & c, std::span<value>) {
+            script::object_object * self = as_object(c.current_this());
+            if (self == nullptr || receiver_rule(c) == nullptr) { return value::undefined(); }
+            return media_list_object(c, *self);
+        },
+        [](context & c, std::span<value> a) {
+            const value list = c.lookup_property(c.current_this(), "media");
+            c.store_property(list, "mediaText", a.empty() ? c.string("") : a[0]);
+            return value::undefined();
+        });
+    // `layerName` and `supportsText` are NULL when the import has neither,
+    // which is the difference CSSOM draws between "no layer" and "an anonymous
+    // one" - `@import url(a) layer` has a layer whose name is the empty string.
+    const auto import_part = [this](context & c, std::string_view keyword, bool bare) {
+        const css_rule_record * rule = receiver_rule(c);
+        if (rule == nullptr) { return value::null(); }
+        std::size_t at = 0;
+        while (true) {
+            const std::string_view part = next_component(rule->prelude, at);
+            if (part.empty()) { return value::null(); }
+            if (bare && ascii_iequals(part, keyword)) { return c.string(""); }
+            if (part.size() > keyword.size() + 1 &&
+                ascii_iequals(part.substr(0, keyword.size() + 1), std::string{keyword} + "(") &&
+                part.back() == ')') {
+                return c.string(
+                    std::string{part.substr(keyword.size() + 1, part.size() - keyword.size() - 2)});
+            }
+        }
+    };
+    getter(import_proto, "layerName",
+           [import_part](context & c, std::span<value>) { return import_part(c, "layer", true); });
+    getter(import_proto, "supportsText", [import_part](context & c, std::span<value>) {
+        return import_part(c, "supports", false);
+    });
+
+    // --- CSSNamespaceRule, CSSOM 6.4.9. A DEFAULT namespace has no prefix, and
+    // the empty string is how CSSOM reports that - not `null`.
+    script::object_object * namespace_proto = interface("CSSNamespaceRule", "CSSRule", nullptr);
+    getter(namespace_proto, "prefix", [this](context & c, std::span<value>) {
+        const css_rule_record * rule = receiver_rule(c);
+        return c.string(rule == nullptr ? std::string{} : rule->selector);
+    });
+    getter(namespace_proto, "namespaceURI", [this](context & c, std::span<value>) {
+        const css_rule_record * rule = receiver_rule(c);
         return c.string(rule == nullptr ? std::string{} : rule->prelude);
     });
-    (void)interface("CSSMediaRule", "CSSConditionRule", nullptr);
-    script::object_object * font_face_proto = interface("CSSFontFaceRule", "CSSRule", nullptr);
-    (void)font_face_proto;
-    (void)interface("CSSImportRule", "CSSRule", nullptr);
+
+    // --- CSSPageRule. A grouping rule in CSSOM's current draft and a plain
+    // CSSRule in the 2011 one; the draft is what Chrome exposes.
+    script::object_object * page_proto = interface("CSSPageRule", "CSSGroupingRule", nullptr);
+    declaration_accessor(page_proto);
+    accessor(
+        page_proto, "selectorText",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            return c.string(rule == nullptr ? std::string{} : rule->prelude);
+        },
+        [this](context & c, std::span<value> a) {
+            css_rule_record * rule = receiver_rule(c);
+            if (rule == nullptr) { return value::undefined(); }
+            // "If the parse failed, do nothing" - and `named :first` is a parse
+            // failure rather than two selectors, because a `<page-selector>`
+            // has no whitespace in it anywhere.
+            bool ok = false;
+            const std::string parsed = serialize_page_selector(arg_string(c, a, 0), ok);
+            if (!ok) { return value::undefined(); }
+            rule->prelude = parsed;
+            style_sheets_changed();
+            return value::undefined();
+        });
+
+    // --- CSSKeyframesRule and CSSKeyframeRule
+    script::object_object * keyframes_proto = interface("CSSKeyframesRule", "CSSRule", nullptr);
+    accessor(
+        keyframes_proto, "name",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            return c.string(rule == nullptr ? std::string{} : rule->prelude);
+        },
+        [this](context & c, std::span<value> a) {
+            css_rule_record * rule = receiver_rule(c);
+            if (rule == nullptr) { return value::undefined(); }
+            rule->prelude = collapse_whitespace(arg_string(c, a, 0));
+            style_sheets_changed();
+            return value::undefined();
+        });
+    getter(keyframes_proto, "cssRules", [this](context & c, std::span<value>) {
+        script::object_object * self = as_object(c.current_this());
+        const css_rule_record * rule = receiver_rule(c);
+        if (self == nullptr || rule == nullptr) { return value::undefined(); }
+        if (const value * held = self->find(rules_key)) {
+            refresh_rule_list(c, *held, rule->children);
+            return *held;
+        }
+        const value list = make_rule_list(c, rule->children);
+        self->define(rules_key, list, script::attr_none);
+        return list;
+    });
+    getter(keyframes_proto, "length", [this](context & c, std::span<value>) {
+        const css_rule_record * rule = receiver_rule(c);
+        return value::number(rule == nullptr ? 0 : static_cast<double>(rule->children.size()));
+    });
+    // `appendRule` takes a whole keyframe and `deleteRule`/`findRule` take a
+    // keyText - NOT an index, which is what makes this trio different from
+    // every other insert/delete pair in the CSSOM.
+    method(keyframes_proto, "appendRule", [this](context & c, std::span<value> a) {
+        css_rule_record * rule = receiver_rule(c);
+        if (rule == nullptr) { return value::undefined(); }
+        const std::size_t self = slot_index(as_object(c.current_this()), rule_key);
+        std::string error;
+        const std::size_t made =
+            parse_one_rule(rule->sheet, "@keyframes _ {" + arg_string(c, a, 0) + "}", error);
+        if (made == no_index || css_rule_store_[made]->children.empty()) {
+            return value::undefined();
+        }
+        const std::size_t frame = css_rule_store_[made]->children.front();
+        css_rule_store_[frame]->parent = self;
+        rule->children.push_back(frame);
+        style_sheets_changed();
+        return value::undefined();
+    });
+    const auto keyframe_at = [this](context & c, const std::string & key) -> std::size_t {
+        const css_rule_record * rule = receiver_rule(c);
+        if (rule == nullptr) { return no_index; }
+        for (std::size_t i = rule->children.size(); i > 0; --i) {
+            const std::size_t child = rule->children[i - 1];
+            if (child < css_rule_store_.size() && css_rule_store_[child]->selector == key) {
+                return i - 1;
+            }
+        }
+        return no_index;
+    };
+    method(keyframes_proto, "findRule", [this, keyframe_at](context & c, std::span<value> a) {
+        css_rule_record * rule = receiver_rule(c);
+        // "Return the LAST rule that matches", which is why the search above
+        // walks backwards: a keyframes rule may name the same key twice.
+        const std::size_t found = keyframe_at(c, collapse_whitespace(arg_string(c, a, 0)));
+        if (rule == nullptr || found == no_index) { return value::null(); }
+        return make_rule_object(c, rule->children[found]);
+    });
+    method(keyframes_proto, "deleteRule", [this, keyframe_at](context & c, std::span<value> a) {
+        css_rule_record * rule = receiver_rule(c);
+        const std::size_t found = keyframe_at(c, collapse_whitespace(arg_string(c, a, 0)));
+        if (rule == nullptr || found == no_index) { return value::undefined(); }
+        rule->children.erase(rule->children.begin() + static_cast<std::ptrdiff_t>(found));
+        style_sheets_changed();
+        return value::undefined();
+    });
+    script::object_object * keyframe_proto = interface("CSSKeyframeRule", "CSSRule", nullptr);
+    declaration_accessor(keyframe_proto);
+    accessor(
+        keyframe_proto, "keyText",
+        [this](context & c, std::span<value>) {
+            const css_rule_record * rule = receiver_rule(c);
+            return c.string(rule == nullptr ? std::string{} : rule->selector);
+        },
+        [this](context & c, std::span<value> a) {
+            css_rule_record * rule = receiver_rule(c);
+            if (rule == nullptr) { return value::undefined(); }
+            rule->selector = collapse_whitespace(arg_string(c, a, 0));
+            style_sheets_changed();
+            return value::undefined();
+        });
+    declaration_accessor(interface("CSSCounterStyleRule", "CSSRule", nullptr));
 
     // --- CSSStyleDeclaration
     //

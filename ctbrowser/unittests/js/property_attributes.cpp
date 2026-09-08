@@ -724,5 +724,47 @@ int main() {
     js_expect("Reflect.has({x: undefined}, 'x')", "true");
     js_expect("Reflect.ownKeys([1]).join(',')", "0,length");
 
+    // ================================================================
+    // 17. A NATIVE METHOD IS AN ORDINARY FUNCTION OBJECT
+    // ================================================================
+    //
+    // WPT's `dom/nodes/Element-classlist.html` calls every one of its 1,404
+    // subtests through `list[funcName].apply(list, args)`, and 855 of them
+    // reported ``TypeError: `apply` is undefined``. THE OBVIOUS READING - that
+    // a native, installed by `method()` or straight out of a DOM binding, does
+    // not reach Function.prototype - IS WRONG, and this section is what says
+    // so without needing a browser to ask: `lookup_property`'s native arm falls
+    // through to Function.prototype and then to Object.prototype, and has since
+    // functions were given the chain numbers and strings already had.
+    //
+    // What that file actually hits is one writable property: `classList` is
+    // installed as a plain data property, its first subtest is
+    // `e.classList = "foo"`, and [[Set]] on a writable slot takes the write -
+    // so every later subtest asks a STRING for `add`. That is a binding to fix
+    // in lib/Shell, not a chain to fix here, and the two are indistinguishable
+    // from the message alone. Pinned so the question is not answered wrongly a
+    // second time.
+    js_expect("typeof Object.keys", "function");
+    js_expect("Object.getPrototypeOf(Object.keys) === Function.prototype", "true");
+    js_expect("Object.keys instanceof Function", "true");
+    js_expect("typeof Object.keys.call", "function");
+    js_expect("typeof Object.keys.apply", "function");
+    js_expect("typeof Object.keys.bind", "function");
+    js_expect("Object.keys.name", "keys");
+    js_expect("Object.keys.length", "1");
+    // ...and Object.prototype behind it, which is Function.prototype's own
+    // [[Prototype]]. `assert_own_property` in WPT's harness is exactly this
+    // call on an arbitrary object.
+    js_expect("typeof Object.keys.hasOwnProperty", "function");
+    js_expect("Object.keys.hasOwnProperty('name')", "true");
+    // THE HARNESS'S OWN SHAPE, spelled out: the method comes off the object
+    // through a COMPUTED key, is detached from it, and is called back with the
+    // object as its receiver.
+    js_expect("(function(){var o=Math,n='max';return o[n].apply(o,[1,2]);})()", "2");
+    js_expect("(function(){var f=Object.keys;return f.apply(null,[{a:1,b:2}]).join(',');})()",
+              "a,b");
+    js_expect("(function(){var f=Math.max;return f.call(null,3,4);})()", "4");
+    js_expect("(function(){var f=Math.max.bind(null,5);return f(1);})()", "5");
+
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

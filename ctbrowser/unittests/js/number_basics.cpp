@@ -11,6 +11,14 @@
 
 #include "js_expect.hpp"
 
+// `e.name` for whatever the expression threw, or "no" when it did not throw at
+// all. Every RangeError case below is one of these: what is asserted is WHICH
+// error, and js_expect's flattened "THREW" cannot say.
+[[nodiscard]] static std::string threw(std::string_view source) {
+    return "(function () { try { " + std::string{source} +
+           "; return 'no'; } catch (e) { return e.name; } })()";
+}
+
 int main() {
     // --- the type ------------------------------------------------------------
     js_expect("typeof 1", "number");
@@ -109,6 +117,63 @@ int main() {
     js_expect("(1.5).toFixed(2)", "1.50");
     js_expect("(1234.5).toPrecision(2)", "1.2e+3");
     js_expect("(1.5).toExponential(1)", "1.5e+0");
+
+    // --- A DIGIT COUNT OUT OF RANGE IS A RangeError, NOT A CLAMP --------------
+    // 21.1.3.3 step 4, 21.1.3.2 step 5 and 21.1.3.5 step 5. All three clamped,
+    // which is wrong in both directions: a negative count answered a plausible
+    // string instead of throwing, and the ceiling was 20 where the
+    // specification's is 100, so `(3).toFixed(50)` was silently 20 places.
+    js_expect("(3).toFixed(-0)", "3");
+    js_expect(threw("(3).toFixed(-1)"), "RangeError");
+    js_expect(threw("(3).toFixed(101)"), "RangeError");
+    js_expect("(3).toFixed(100).length", "102"); // "3." and a hundred zeros
+    js_expect(threw("(3).toExponential(-1)"), "RangeError");
+    js_expect(threw("(3).toExponential(101)"), "RangeError");
+    js_expect("(3).toExponential(100).length", "105"); // "3.", 100 zeros, "e+0"
+    js_expect(threw("(3).toPrecision(0)"), "RangeError");
+    js_expect(threw("(3).toPrecision(-10)"), "RangeError");
+    js_expect(threw("(3).toPrecision(101)"), "RangeError");
+    js_expect("(3).toPrecision(100).length", "101"); // "3." and 99 more digits
+    // An INFINITE count is out of range rather than a very large one, which is
+    // why the coercion preserves infinity instead of clamping it.
+    js_expect(threw("(3).toFixed(Infinity)"), "RangeError");
+    // The count coerces through the receiver's own valueOf - it used to go
+    // through the STATIC ToNumber, which answers NaN for every object, and a
+    // NaN then clamped to zero.
+    js_expect("(1.567).toFixed({valueOf: function () { return 2; }})", "1.57");
+    // A NON-FINITE RECEIVER answers before the range check in two of the three
+    // and after it in toFixed - the specification orders those steps
+    // differently, and the difference is asserted rather than smoothed over.
+    js_expect("NaN.toExponential(Infinity)", "NaN");
+    js_expect("Infinity.toPrecision(1000)", "Infinity");
+    js_expect(threw("NaN.toFixed(101)"), "RangeError");
+    // ...and the argument is still coerced first in every one of them.
+    js_expect("(function () { var n = 0;"
+              " NaN.toPrecision({valueOf: function () { n++; return Infinity; }});"
+              " return n; })()",
+              "1");
+
+    // --- toString's radix goes through ToIntegerOrInfinity --------------------
+    // `static_cast<int>` of a NaN is undefined behaviour, and that is what this
+    // was: 7.1.5 makes NaN zero, and zero is out of range.
+    js_expect(threw("(1).toString(NaN)"), "RangeError");
+    js_expect(threw("(1).toString(Infinity)"), "RangeError");
+    js_expect(threw("(1).toString(1)"), "RangeError");
+    js_expect(threw("(1).toString(37)"), "RangeError");
+    js_expect("(255).toString(16.9)", "ff"); // truncates toward zero
+    js_expect("(255).toString(undefined)", "255");
+    // The radix is coerced even when the receiver cannot use one - NaN is
+    // answered AFTER the radix, not instead of it.
+    js_expect("(function () { var n = 0;"
+              " NaN.toString({valueOf: function () { n++; return 16; }}); return n; })()",
+              "1");
+
+    // --- toLocaleString, which was simply absent ------------------------------
+    // 21.1.3.4 with no ECMA-402 present is ToString of the number, and the
+    // difference from not having it at all is "1000" against "not a function".
+    js_expect("(1000).toLocaleString()", "1000");
+    js_expect("(1.5).toLocaleString()", "1.5");
+    js_expect("typeof Number.prototype.toLocaleString", "function");
 
     // --- JSON, where non-finite numbers become null ---------------------------
     // NaN and the infinities are not representable in JSON, so 25.5.2

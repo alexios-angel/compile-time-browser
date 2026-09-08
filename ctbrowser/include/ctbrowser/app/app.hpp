@@ -59,6 +59,14 @@ enum class renderer_preference : std::uint8_t {
 
 struct app_options {
     std::string title = "ctbrowser";
+
+    // PARSE THE SOURCE AS XML, not HTML. `run_app_file` sets it from the
+    // extension - `.xhtml`, `.xht`, `.xml` - because a file on disk has no
+    // content type and the extension is the only signal there is. Never
+    // sniffed from the bytes: `<?xml ...?>` is optional in XML 1.0 and turns
+    // up in documents served as text/html. See dom/xml.hpp for what the two
+    // front ends actually disagree about.
+    bool xml = false;
     int width = 1024;
     int height = 768;
 

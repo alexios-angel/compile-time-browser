@@ -86,6 +86,11 @@ public:
         : doc_(&doc), atoms_(&atoms), canvases_(&canvases), forms_(&forms),
           on_mutation_(std::move(on_mutation)), on_focus_(std::move(on_focus)) {}
 
+    // OUT OF LINE, because `secondary_documents_` below is a vector of
+    // unique_ptr to THIS class and the deleter has to be instantiated where the
+    // class is complete.
+    ~dom_bindings();
+
     // Where loadImage() and fetch() look. Both are owned by the browser, which
     // hands them over before scripts run; without them the page still runs and
     // every load simply fails.
@@ -188,6 +193,20 @@ public:
     // Run the timers that are due, then the animation callbacks. Returns how
     // many ran, so an event loop can tell whether it needs another frame.
     std::size_t run_due_callbacks();
+
+    // --- NESTED BROWSING CONTEXTS (bindings/frames.cpp) --------------------
+    //
+    // Bring the `<iframe>`s in this document into step with the tree: load the
+    // ones that appeared, reload the ones whose `src` changed, forget the ones
+    // that went away. Called from the browser's tick BEFORE the window's `load`
+    // event, because a page's `load` handler is where WPT reads
+    // `frame.contentDocument` and it must already be there.
+    //
+    // A FRAME IS A SECOND DOCUMENT, which is a model this class already has -
+    // see `make_html_document`. What a frame adds to it is the bytes: the src
+    // is resolved through the asset registry, so a frame loads from wherever
+    // the page's other subresources load from and reaches no socket of its own.
+    void reconcile_frames();
 
     [[nodiscard]] std::size_t pending_timers() const noexcept { return timers_.size(); }
     // When the next callback is due, in milliseconds from now. Infinity when
@@ -484,6 +503,30 @@ private:
     // engine parse a 270-row table's declaration to get at `document`.
     [[nodiscard]] value reflected_get(context & cx, const void * row);
     [[nodiscard]] value reflected_set(context & cx, const void * row, std::span<value> args);
+
+    // --- attributes as nodes: Attr, and the NamedNodeMap over them ---------
+    //
+    // A qualified name as THIS element would have stored it: lowercased for an
+    // HTML element and left exactly as written for anything else. It is the
+    // only difference between `getAttribute` and `getAttributeNS`, and it is
+    // why `svg.setAttribute("viewBox", ...)` must not fold.
+    [[nodiscard]] atom attribute_key(const read_txn & txn, node_id id,
+                                     std::string_view qualified) const;
+    // ONE Attr, LIVE: `value`, `nodeValue` and `textContent` read and write the
+    // element's attribute rather than a string captured when it was made.
+    [[nodiscard]] value attribute_object(context & cx, node_id owner, const attribute & held);
+    // `element.attributes`, refilled in place so the map keeps its identity.
+    void refresh_attribute_map(context & cx, script::object_object & map, node_id id);
+    // `element.dataset` - a DOMStringMap over the `data-*` attributes. Its own
+    // function rather than more of install_element_views because it is
+    // CONDITIONAL: only an HTML, SVG or MathML element has one.
+    void install_dataset(context & cx, script::object_object & obj, node_id id);
+    // DOM 4.9 "validate and extract", shared by setAttributeNS and
+    // setNamedItemNS. False HAVING ALREADY THROWN - InvalidCharacterError for a
+    // name that is not a QName, NamespaceError for the four prefix rules.
+    [[nodiscard]] bool validate_and_extract(context & cx, std::string_view where,
+                                            const std::string & ns, const std::string & qualified);
+
     // Parallel to the static interface table in element.cpp: one prototype per
     // row, in the same order, so a tag resolves to a prototype by index.
     std::vector<value> interface_prototypes_;
@@ -498,6 +541,28 @@ private:
     // Set once the chain is built AND linked to `event_target_prototype_`,
     // which install_event_interfaces publishes after the first wrapper exists.
     bool interfaces_linked_ = false;
+
+    // --- CharacterData workstream ---
+    //
+    // `CharacterData.prototype` AND `Text.prototype`, filled in once the
+    // interface chain exists. On the PROTOTYPES rather than on every wrapper,
+    // for the reason reflection is: `substringData` is one function per page
+    // here and was one per text node in the shape install_element_methods uses.
+    //
+    // Every offset in them is a UTF-16 CODE UNIT and this engine stores UTF-8 -
+    // see the helpers above install_character_data in element.cpp, and the note
+    // there on what a surrogate pair costs.
+    void install_character_data(context & cx);
+    // `new Text("x")`, `new Comment("x")` and `new DocumentFragment()` - the
+    // three node interfaces a page may construct. The other eighty-eight throw
+    // "Illegal constructor", which is what a browser does too; these three make
+    // a node owned by this document and NOT in its tree.
+    [[nodiscard]] value construct_node_interface(context & cx, std::string_view which,
+                                                 std::span<value> args);
+    // `Node.prototype.isEqualNode` - the DOM's structural comparison, in which
+    // two elements' attributes are UNORDERED SETS compared by (namespace, local
+    // name, value) and the prefix takes no part.
+    [[nodiscard]] bool nodes_are_equal(const read_txn & txn, node_id left, node_id right) const;
     // END reflection
 
     // BEGIN mutation observers (bindings/mutation.cpp)
@@ -639,6 +704,11 @@ public:
         // alternative is serialising an empty block that is not what the sheet
         // says. Empty for everything the CSSOM can reconstruct.
         std::string verbatim;
+        // `@media`'s query list, ALREADY SERIALISED, one entry per query - which
+        // is what a MediaList is a view of. It is not `prelude` because a
+        // MediaList is MUTABLE (`appendMedium`, `deleteMedium`, `mediaText`) and
+        // a comma-separated string would have to be re-split on every one.
+        std::vector<std::string> media_queries;
         std::vector<css_declaration> declarations;
         std::vector<std::size_t> children; // into css_rule_store_
         std::size_t parent = static_cast<std::size_t>(-1);
@@ -648,10 +718,14 @@ public:
         node_id owner; // the <style>/<link>; unset for a constructed sheet
         std::string href;
         std::string title;
-        std::string media;
+        std::string media;  // the `media` ATTRIBUTE as last seen on the owner
         std::string source; // what was last parsed, so a <style> edit re-parses
         bool disabled = false;
         bool constructed = false;
+        // The same list as a rule's, and the reason it is not re-derived from
+        // `media` on every read: a script that has called `appendMedium` must
+        // not have it undone by the next walk of the DOM.
+        std::vector<std::string> media_queries;
         std::vector<std::size_t> rules; // into css_rule_store_
     };
 
@@ -679,6 +753,14 @@ public:
     // the CSSOM has since done to it.
     [[nodiscard]] std::string author_style_text();
 
+    // CSSOM §2.1, "serialize an identifier". `CSS.escape` IS this algorithm and
+    // so is every name in a serialised selector - a type, an id, a class and an
+    // attribute's name all go through it - so it is one function rather than
+    // two: escaping too little produces a selector that means something else and
+    // escaping too much produces one that matches nothing, and having the two
+    // callers disagree about which is which is the bug this shape prevents.
+    [[nodiscard]] static std::string serialize_css_identifier(std::string_view text);
+
 private:
     // The document's sheets, re-derived from the DOM. Cheap and idempotent: an
     // owner node that already has a record keeps it, which is what makes
@@ -705,6 +787,14 @@ private:
     void style_sheets_changed();
     [[nodiscard]] css_sheet_record * receiver_sheet(context & cx);
     [[nodiscard]] css_rule_record * receiver_rule(context & cx);
+    // The media query list `this` is a view of - a sheet's or a media rule's.
+    // One function for both because a MediaList carries whichever private slot
+    // names its owner and CSSOM gives the two the same interface.
+    [[nodiscard]] std::vector<std::string> * receiver_media(context & cx);
+    // A MediaList over one of those lists, cached on `owner` under a private
+    // slot so that `sheet.media === sheet.media` - which is [SameObject].
+    [[nodiscard]] value media_list_object(context & cx, script::object_object & owner);
+    void refresh_media_list(context & cx, value list);
     [[nodiscard]] std::string rule_css_text(const css_rule_record & rule) const;
 
     // unique_ptr rather than a bare vector because a record is addressed by
@@ -745,6 +835,37 @@ private:
     [[nodiscard]] style::engine & selector_engine();
     style::engine * selector_engine_ = nullptr;
     std::unique_ptr<style::engine> own_selector_engine_;
+
+    // --- THE DOCUMENT AS A NODE (bindings/document.cpp) -------------------
+    //
+    // There is NO Document node in this tree: `txn.root()` is the `<html>`
+    // element and `document` is a plain script object carrying no handle at
+    // all. Every Node and ParentNode member below therefore answers as if
+    // there were a Document whose one child is `documentElement`. The whole of
+    // that decision, and what it makes impossible, is written down above
+    // `install_document_as_node` in bindings/document.cpp - read it before
+    // adding to any of these.
+    void install_document_as_node(context & cx, script::object_object & doc);
+
+    // Is this value the `document` object itself? By IDENTITY, because shape
+    // cannot tell: the Document is the one node-like object with no handle
+    // property, so `handle_of` reports the same empty handle for it as for a
+    // number or a plain object.
+    [[nodiscard]] bool is_the_document(value v) const;
+
+    // DOM 4.4, "locate a namespace", run at an ELEMENT. `prefix` is the null
+    // prefix when the pointer is null, which is what `lookupNamespaceURI(null)`
+    // and `isDefaultNamespace` both ask for. An empty answer IS the null
+    // namespace and reports as `null`.
+    [[nodiscard]] std::string locate_namespace(node_id element, const std::string * prefix);
+    // DOM 4.4, "locate a namespace prefix". Empty means no prefix was found.
+    [[nodiscard]] std::string locate_namespace_prefix(node_id element, const std::string & ns);
+
+    // `normalize()`: merge adjacent Text children and drop empty ones, over a
+    // whole subtree. Reads the shape out first and mutates afterwards - a
+    // structural write inside a live read_txn is a shape nothing else in these
+    // bindings has.
+    void normalize_subtree(node_id root);
     // END selectors
 
     [[nodiscard]] node_id id_or_nothing(context & c) { return receiver(c); }
@@ -873,6 +994,31 @@ private:
         value promise; // decode()'s promise; undefined for a plain src assignment
     };
     std::vector<pending_image> image_loads_;
+
+    // A FRAME WHOSE `load` HAS NOT BEEN ANNOUNCED YET. The document is built
+    // synchronously - the bytes are already on disk or in the registry - but
+    // the EVENT is not, for the same reason an image's is not: `document.body
+    // .appendChild(frame)` is followed by `frame.onload = f` often enough that
+    // firing from the insertion would fire at nothing.
+    struct pending_frame {
+        node_id id;
+        bool ok = false; // false when the src resolved to no bytes
+    };
+    std::vector<pending_frame> frame_loads_;
+    // Which frames are loaded, and from what. The `src` is kept as WRITTEN
+    // rather than resolved, because that is the string the next reconcile
+    // compares against - a page that assigns the same src twice must not
+    // reload, and one that assigns a different one must.
+    std::vector<std::pair<std::uint64_t, std::string>> frames_;
+    // Set by `mutated()` and by the first tick after a parse. Without it the
+    // reconcile walks the whole tree on every frame of an idle page, which is
+    // exactly what "a frame runs only what changed" forbids.
+    bool frames_dirty_ = true;
+    void load_frame(context & cx, node_id id, const std::string & src);
+    void settle_frame(context & cx, const pending_frame & waiting);
+    // The content type a path implies, since there is no server here to send
+    // one. Empty for a name this engine has no type for.
+    [[nodiscard]] static std::string_view mime_for_path(std::string_view path);
 
     // A FileReader's read, which finishes on a LATER TURN for the same reason an
     // image load does: a page assigns `onload` after calling readAsText, so a
@@ -1033,6 +1179,19 @@ private:
     // `cancelable` are the two flags that change what dispatch does.
     [[nodiscard]] value make_event_object(context & cx, std::string_view type, bool bubbles,
                                           bool cancelable);
+    // WHAT `passive` MEANS WHEN THE PAGE DID NOT SAY -
+    // https://dom.spec.whatwg.org/#default-passive-value. The member has no
+    // default in the IDL: a listener for one of the four SCROLL-BLOCKING types
+    // registered on the window, the document, the document element or the body
+    // is passive unless the page asked for otherwise, and passive everywhere
+    // else means only what was asked for. It is not a hint - the canceled flag
+    // is not set while such a listener runs - so getting it wrong makes
+    // `preventDefault` work where it must not.
+    [[nodiscard]] bool default_passive_value(std::string_view type, const path_step & target);
+    // The `error` event a faulting callback produces, carrying the VALUE the
+    // throw left behind beside its text. `dispatch_error` is this with no value,
+    // which is what a fault that was never an exception has to hand a page.
+    bool dispatch_error_value(std::string_view message, value error);
     // `Event`, `CustomEvent` and `EventTarget` as globals, and the prototype an
     // event object is linked to so `instanceof` and the phase constants work.
     void install_event_interfaces(context & cx);
@@ -1076,6 +1235,84 @@ private:
     // `name`, in document order. HTML only: `document.getElementsByName` is an
     // HTML method and an SVG element carrying `name=` is not one of its answers.
     [[nodiscard]] std::vector<node_id> all_by_name(std::string_view name);
+
+    // --- THE HTML TREE ACCESSORS (bindings/document.cpp) ------------------
+    //
+    // `find_by_tag` matches on the TAG ATOM, and that is the wrong question for
+    // anything HTML defines: `<title>` inside `<svg>` interns to the same atom
+    // as the document's own, and the tokenizer keeps foreign content's case so
+    // an SVG `<clipPath>` is a different atom from an HTML one. Everything HTML
+    // names - the title element, the head, `document.images` - is a LOCAL NAME
+    // in the HTML NAMESPACE, so these two ask that instead.
+    //
+    // The local name is what follows the first colon, because
+    // `createElementNS(HTML, "blah:title")` really is a title element: DOM
+    // "validate and extract" puts the prefix before the colon and the local
+    // name after it, and HTML's definitions are all in terms of the latter.
+    [[nodiscard]] node_id first_html_element(std::string_view local);
+    [[nodiscard]] std::vector<node_id> all_html_elements(std::string_view local);
+    // "THE TITLE ELEMENT", which is not simply the first `<title>`: in a
+    // document whose root is an SVG `<svg>` it is that root's first SVG
+    // `<title>` CHILD, and in every other document it is the first HTML title
+    // element anywhere in tree order. Empty when there is none.
+    [[nodiscard]] node_id title_element();
+    // "The body element": the first child of the DOCUMENT ELEMENT that is a
+    // `body` or a `frameset`. Not the first `<body>` anywhere.
+    [[nodiscard]] node_id body_element();
+
+    // --- A SECOND DOCUMENT (bindings/document.cpp) -------------------------
+    //
+    // `createHTMLDocument` and `createDocument` return one, and the note that
+    // used to sit where they are installed said what a second Document would
+    // cost: a document handle beside the node handle in every key, `doc_`
+    // becoming an argument rather than a member, across ~90 uses in six files.
+    //
+    // THIS IS THE OTHER ANSWER, and it costs none of that: a second Document is
+    // a SECOND dom_bindings over its own tree, in the same realm. Every key it
+    // uses - `wrappers_`, `namespaces_`, `mirrors_` - is already a member, so a
+    // second instance has a second set of them and the collision the note
+    // describes cannot arise. What it shares with the primary is what a second
+    // document genuinely shares: the atom table, the script context, and the
+    // INTERFACE OBJECTS, so that `otherDoc.createElement("div") instanceof
+    // HTMLDivElement` is true against the one `HTMLDivElement` a page can see.
+    //
+    // WHAT IT DOES NOT DO, said plainly: `importNode` and `adoptNode` still do
+    // not cross between two documents, and a node of one passed to the other is
+    // REFUSED rather than misread - see `handle_of`, which now checks that the
+    // wrapper it was given is one of ours. That is the honest failure; the one
+    // the old note was avoiding was `getElementById` on one document handing
+    // back the other's element.
+    [[nodiscard]] value make_html_document(context & cx, const std::string * title);
+    [[nodiscard]] value make_xml_document(context & cx, std::string_view ns,
+                                          std::string_view qualified_name);
+    // The realm has ONE external-roots callback - `set_external_roots` replaces
+    // rather than appends - so the primary's walks itself and then every
+    // secondary. A secondary never registers.
+    void mark_roots(const script::context::root_visitor & mark) const;
+    // Take the primary's interface prototypes rather than building a second set
+    // of globals: `install_dom_interfaces` DEFINES `HTMLDivElement` and its
+    // ninety neighbours, and running it twice would leave two of each and break
+    // every `instanceof` taken across the two documents.
+    void adopt_interfaces_of(const dom_bindings & primary);
+    // "Strip and collapse ASCII whitespace", Infra - leading and trailing
+    // removed, every interior run replaced by ONE space. It is applied by
+    // `document.title`'s GETTER and not by its setter, which is why
+    // `document.title = "two  spaces"` reads back as "two spaces" while the
+    // attribute node still holds what was written.
+    [[nodiscard]] static std::string strip_and_collapse(std::string_view text);
+    // `document.title`, `document.images` and the seven collections beside it,
+    // all as ACCESSORS - see the definition for why not one of them can be a
+    // property refreshed on the tick.
+    void install_tree_accessors(context & cx, script::object_object & doc);
+    // HTML's "named access on the Document object" - the named elements with a
+    // given name, in tree order. `embed`, `form`, `iframe`, `img` and `object`
+    // by their `name`; `object` by its `id`; and `img` by its `id` ONLY when it
+    // also carries a non-empty `name`, which is the asymmetry
+    // `nameditem-01.html` tests by removing one attribute at a time.
+    [[nodiscard]] std::vector<node_id> named_document_items(std::string_view name);
+    // The Proxy a page sees as `document`. Installs the `get` and `has` traps
+    // over `document_target_` and returns it.
+    [[nodiscard]] value make_document_proxy(context & cx, value target);
     // The DOM's ORDERED SET PARSER: split on ASCII whitespace - space, tab, LF,
     // FF and CR, all five - and drop duplicates. `split` above splits on spaces
     // alone, which is right for nothing in particular and wrong for a class
@@ -1087,8 +1324,15 @@ private:
     // new number. An array cannot answer that, so this is a Proxy whose `get`
     // and `has` traps re-run `members` on every read - the same mechanism the
     // `window` proxy already uses, and the reason a second one is cheap.
+    //
+    // WHICH INTERFACE it claims to be is a parameter, because two of the DOM's
+    // live collections are the same object with different names on it:
+    // `getElementsByTagName` is an HTMLCollection and `getElementsByName` is a
+    // NodeList, and `document.getElementsByName-liveness.html` asserts
+    // `e instanceof NodeList` before it checks a single length.
     [[nodiscard]] value make_live_collection(context & cx,
-                                             std::function<std::vector<node_id>()> members);
+                                             std::function<std::vector<node_id>()> members,
+                                             std::string_view interface_name = "HTMLCollection");
     // `querySelectorAll`, on the real Selectors engine - see the definition.
     //
     // `invalid` comes back true when the text is not a selector at all, which is
@@ -1139,8 +1383,41 @@ private:
     // the global and `CSS.supports` must still be the same function afterwards.
     value css_interface_;
     value location_;
+    // THE DOCUMENT IS TWO VALUES, and which one a caller wants is not a detail.
+    //
+    // `document_` is what a PAGE holds: a Proxy, because HTML's named access
+    // (`document.someImgName`) has to answer for a name nobody ever defined as
+    // a property and has to STOP answering the moment the attribute behind it
+    // is removed. It is therefore what `ownerDocument`, `getRootNode` and every
+    // identity comparison must use, or a page's `document` and the engine's
+    // are two different objects.
+    //
+    // `document_target_` is the object BEHIND it, which is where every property
+    // the bindings install actually lives. `document_object()` returns it, so
+    // everything that writes a property on the document keeps working
+    // unchanged; the proxy falls through to it for every name that is not a
+    // named element.
     value document_;
+    value document_target_;
     value window_;
+    // A DOCUMENT THIS ONE MADE, and the bindings over it. Only ever non-empty
+    // on the primary; a secondary makes no further documents because
+    // `document.implementation` is not installed on one.
+    std::vector<std::unique_ptr<document>> owned_documents_;
+    std::vector<std::unique_ptr<dom_bindings>> secondary_documents_;
+    // Is this the bindings for a document a page MADE? It changes three things
+    // and nothing else: no `document` global, no `location`/`defaultView`, and
+    // no `document.implementation` - a document from createHTMLDocument has a
+    // null browsing context, so all three are what the DOM already says.
+    bool secondary_ = false;
+    // --- XML document workstream ---
+    // `document.contentType`, WHEN IT IS NOT DERIVABLE. A parsed document
+    // answers from `document::xml()` and needs nothing here; `createDocument`
+    // does not, because DOM 4.5.1 makes the string depend on the NAMESPACE it
+    // was given - "application/xml", "application/xhtml+xml" or
+    // "image/svg+xml" - and the namespace is an argument that is gone by the
+    // time the property is installed. Empty means "derive it".
+    std::string content_type_;
     // The first fault a timer or animation frame raised, and how many there
     // were. A page whose draw loop throws every frame has ONE bug, not a
     // thousand, and the first message is the one that names it.
@@ -1214,6 +1491,66 @@ private:
     std::vector<value> animation_callbacks_;
     std::vector<std::string> console_;
     std::uint32_t next_timer_id_ = 0;
+
+    // --- shadow DOM workstream ---
+    //
+    // A SHADOW ROOT IS A DocumentFragment AND TWO FACTS, and that is why this is
+    // a bindings change rather than a DOM one. `node_kind` already has a
+    // document_fragment - a parentless bag of nodes - which is exactly the shape
+    // DOM 4.8 gives a shadow root; what a fragment does not carry is its HOST
+    // and its MODE, and neither belongs on `node`, which is the most replicated
+    // object in the engine and pays for every field in every document.
+    //
+    // So they live here, in the two maps every other per-node fact in this class
+    // lives in - `wrappers_`, `namespaces_`, `mirrors_` - keyed on pack(node_id)
+    // the same way.
+    //
+    // WHAT A SHADOW TREE DELIBERATELY DOES NOT DO: it does not RENDER. The
+    // fragment is detached, so style, layout and paint never see it, and a
+    // `<div>` inside a shadow root has no box, no computed style and no pixels.
+    // That is a real gap and it is named here rather than left to be discovered:
+    // flattening the shadow tree into the box tree is the slot-assignment
+    // (flat-tree) problem, and every test this was built for asserts about the
+    // TREE, about events, or about getComputedStyle on a LIGHT-DOM element.
+    struct shadow_tree {
+        node_id host;
+        // `mode: "open"` - the only thing that decides whether `host.shadowRoot`
+        // answers with the root or with null. A closed root is not hidden from
+        // anything else here: `getRootNode()` on a node inside one still returns
+        // it, which is what the specification says and what a page relies on.
+        bool open = true;
+    };
+    // pack(host) -> the shadow root, and pack(root) -> the host and its mode.
+    // Two maps rather than one because both directions are asked for on the hot
+    // path: `element.shadowRoot` walks one way and `getRootNode({composed:true})`
+    // the other.
+    flat_map<std::uint64_t, node_id> shadow_roots_;
+    flat_map<std::uint64_t, shadow_tree> shadow_hosts_;
+
+    [[nodiscard]] node_id shadow_root_of(node_id host) const;
+    [[nodiscard]] const shadow_tree * shadow_tree_of(node_id root) const;
+    // `element.attachShadow(init)`, DOM 4.8. Answers the ShadowRoot, or
+    // undefined HAVING ALREADY THROWN - a TypeError for a missing or unknown
+    // `mode`, a NotSupportedError for a second attach or for an element that
+    // cannot host one.
+    [[nodiscard]] value attach_shadow(context & cx, node_id host, std::span<value> args);
+    // The members a ShadowRoot has that an ordinary DocumentFragment does not.
+    // Installed from wrap(), AFTER install_element_methods, so the two it
+    // replaces - querySelector and querySelectorAll, which have to search a
+    // DETACHED subtree - overwrite the general ones rather than race them.
+    void install_shadow_root_members(context & cx, script::object_object & obj, node_id root);
+    // "Shadow-including root", DOM 4.4: the top of the tree `from` is in, and
+    // with `composed` the walk continues through each shadow host rather than
+    // stopping at the ShadowRoot.
+    [[nodiscard]] node_id root_of_tree(const read_txn & txn, node_id from, bool composed) const;
+    // `querySelectorAll` INSIDE A DETACHED SUBTREE, which `query()` cannot
+    // answer: `style::engine::select` walks from `txn.root()` and a shadow root
+    // is not reachable from there, and `element_matches` anchors its cursor at
+    // depth 0 on the document node - so for a detached chain it measures the
+    // wrong element. See the definition in bindings/element.cpp for what this
+    // costs and for the one-line change to `style::engine` that would retire it.
+    [[nodiscard]] std::vector<node_id> select_in_subtree(std::string_view selector, node_id root,
+                                                         bool first_only, bool * invalid = nullptr);
 };
 
 } // namespace ctbrowser::shell

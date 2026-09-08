@@ -309,6 +309,42 @@ private:
     // traversal that answers everything else here has not visited them yet - so it
     // would need a second pass over the subtree rather than a lookup. Bootstrap uses
     // none. It stays unmatchable rather than silently wrong.
+    // The argument list of `:lang()` - `[ <ident> | <string> ]#` - and of `:dir()`,
+    // which is one bare ident. Written out rather than reusing the value parser
+    // because neither argument is a CSS VALUE: they are compared as text, and
+    // `:lang("*-Latn")` has a wildcard in it that no ident may hold.
+    //
+    // A `:dir()` keyword this engine does not know is accepted and simply never
+    // matches, which is what Selectors 4 §7.2 asks for; a malformed argument makes
+    // the compound unmatchable rather than reporting a syntax error, on the same
+    // reading `:nth-child(of S)` is refused under.
+    [[nodiscard]] bool parse_text_arguments(std::span<const component_value> inner, bool single,
+                                            std::vector<std::string> & out) const {
+        bool want_argument = true;
+        for (const component_value & v : inner) {
+            if (v.kind != cv_kind::token) { return false; }
+            const css_token & t = token(v);
+            if (t.type == token_type::whitespace) { continue; }
+            if (t.type == token_type::comma) {
+                if (single || want_argument) { return false; } // `:lang(,)`, `:lang(a,,b)`
+                want_argument = true;
+                continue;
+            }
+            if (!want_argument) { return false; } // two arguments with no comma
+            std::string_view body = text(v);
+            if (t.type == token_type::string) {
+                if (body.size() < 2) { return false; }
+                body = body.substr(1, body.size() - 2);
+            } else if (t.type != token_type::ident) {
+                return false;
+            }
+            if (body.empty()) { return false; }
+            out.push_back(ascii_lower_copy(body));
+            want_argument = false;
+        }
+        return !want_argument && !(single && out.size() != 1);
+    }
+
     [[nodiscard]] bool parse_functional(std::string_view name, const component_value & fn,
                                         building & into, bool & invalid) {
         pseudo_ref ref;
@@ -333,12 +369,24 @@ private:
             into.part.pseudos.push_back(std::move(ref));
             return true;
         }
+        // `:lang()` and `:dir()` carry TEXT rather than a selector or an An+B: a
+        // language range is not an identifier (`*-Latn` is a legal one) and a
+        // direction keyword is answered from an ancestor's attribute, not from
+        // anything the compound already knows about this element.
+        if (ascii_iequals(name, "lang") || ascii_iequals(name, "dir")) {
+            const bool want_dir = ascii_iequals(name, "dir");
+            if (!parse_text_arguments(inner, want_dir, ref.ranges)) { return false; }
+            ref.kind = want_dir ? pseudo_kind::dir : pseudo_kind::lang;
+            ++into.classes; // a pseudo-class is class-level
+            into.part.pseudos.push_back(std::move(ref));
+            return true;
+        }
         const bool is_not = ascii_iequals(name, "not");
         const bool is_is = ascii_iequals(name, "is");
         const bool is_where = ascii_iequals(name, "where");
-        // An unrecognised functional pseudo-class is NOT reported as invalid. `:has()`,
-        // `:lang()` and `:dir()` are real CSS this engine cannot answer, and there is no
-        // way from here to tell one of those from a name nobody has ever defined.
+        // An unrecognised functional pseudo-class is NOT reported as invalid. `:has()`
+        // is real CSS this engine cannot answer, and there is no way from here to tell
+        // one of those from a name nobody has ever defined.
         if (!is_not && !is_is && !is_where) { return false; }
         ref.kind = is_not ? pseudo_kind::not_ : is_is ? pseudo_kind::is_ : pseudo_kind::where_;
 
@@ -428,9 +476,9 @@ private:
                     // reports one.
                     bool namespaced = false;
                     for (const component_value & inner : sheet_->children_of(v)) {
-                        namespaced = namespaced || (inner.kind == cv_kind::token &&
-                                                    token(inner).type == token_type::delim &&
-                                                    text(inner) == "|");
+                        namespaced = namespaced ||
+                                     (inner.kind == cv_kind::token &&
+                                      token(inner).type == token_type::delim && text(inner) == "|");
                     }
                     dead = true;
                     invalid_ = invalid_ || !namespaced;

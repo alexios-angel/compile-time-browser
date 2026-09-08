@@ -21,6 +21,10 @@ target_sources(ctbrowser-script
     # declared in compile/compiler_impl.hpp and its bodies live beside it.
     # compile.hpp still declares exactly one function.
     compile.cpp
+    # The static semantics: the source text a conforming implementation must
+    # REFUSE. It runs before the compiler and shares nothing with it but the
+    # AST, which is why it is a file rather than a pass inside one.
+    compile/early_errors.cpp
     compile/ast.cpp
     compile/limits.cpp
     compile/entry.cpp

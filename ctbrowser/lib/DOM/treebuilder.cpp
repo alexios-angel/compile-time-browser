@@ -112,9 +112,7 @@ bool tree_builder::is_text_content_element(std::string_view tag) {
 }
 
 tree_builder::insertion_point tree_builder::where_to_insert() const {
-    if (!foster_parenting()) {
-        return insertion_point{current(), node_id{}};
-    }
+    if (!foster_parenting()) { return insertion_point{current(), node_id{}}; }
     for (std::size_t i = open_.size(); i-- > 0;) {
         if (open_[i].tag == "table") {
             return insertion_point{i > 0 ? open_[i - 1].id : root_, open_[i].id};

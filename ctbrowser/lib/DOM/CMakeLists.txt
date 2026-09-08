@@ -15,6 +15,7 @@ target_sources(ctbrowser-dom
     document.cpp
     tokenizer.cpp
     treebuilder.cpp
+    xml.cpp
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
@@ -25,6 +26,7 @@ target_sources(ctbrowser-dom
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/dom/tokenizer.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/dom/treebuilder.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/dom/html.hpp"
+        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/dom/xml.hpp"
         "${CTBROWSER_INCLUDE_DIR}/ctbrowser/dom/entities.hpp")
 target_compile_features(ctbrowser-dom PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-dom)

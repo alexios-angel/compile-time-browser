@@ -110,11 +110,32 @@ void test_the_things_that_must_survive() {
     ok("width", "clamp(1rem, 2vw, 3rem)", "clamp(1rem, 2vw, 3rem)");
     // THE AUTHOR'S BYTES for anything the grammar does not model, spacing and
     // all. `test_valid_value` asserts the round-trip exactly, and normalising a
-    // value whose grammar is unknown turned two passing `css-values` files into
-    // failing ones on 2026-09-07.
-    ok("width", "min(10px,5%)", "min(10px,5%)");
+    // value whose grammar is UNKNOWN turned two passing `css-values` files into
+    // failing ones on 2026-09-07. A math function's grammar is known, so its
+    // argument list is re-serialised and `min(10px,5%)` gains its space.
+    ok("width", "min(10px, 5%)", "min(10px, 5%)");
+    ok("width", "min(10px,5%)", "min(10px, 5%)");
     ok("font-family", "random-item(auto ,serif)", "random-item(auto ,serif)");
     ok("font-family", "\"Helvetica Neue\", sans-serif", "\"Helvetica Neue\", sans-serif");
+    // AN ARBITRARY SUBSTITUTION FUNCTION IS A VALUE FOR ANY PROPERTY, CSS
+    // Values 5: what its arguments mean is decided after parsing, so a length
+    // grammar has no business refusing one.
+    ok("width", "random-item(auto, 1px, 2px, 3px)", "random-item(auto, 1px, 2px, 3px)");
+    ok("left", "inherit(--x)", "inherit(--x)");
+    ok("left", "inherit(--x,)", "inherit(--x,)");
+    ok("view-transition-name", "ident( myident)", "ident( myident)"); // and NOT respaced
+    ok("view-transition-name", "ident(rgb(1, 2, 3))", "ident(rgb(1, 2, 3))");
+    // ...but its ARGUMENT LIST is known now, and two of them have one worth
+    // checking. `ident( <declaration-value> )` takes one argument and not an
+    // empty one; `inherit()` takes a custom property name and an optional
+    // fallback after a comma.
+    bad("view-transition-name", "ident()");
+    bad("view-transition-name", "ident( )");
+    bad("view-transition-name", "ident({})");
+    bad("view-transition-name", "ident(a, b)");
+    bad("left", "inherit(, foo)");
+    bad("left", "inherit(!!, foo)");
+
     // An UNKNOWN property is stored, not refused: CSSOM lets a page set one.
     ok("-webkit-line-clamp", "3", "3");
     ok("scroll-snap-type", "x mandatory", "x mandatory");
@@ -130,9 +151,11 @@ void test_what_a_math_function_may_not_be() {
     // AN UNTERMINATED FUNCTION IS CLOSED BY EOF, CSS Syntax 3 §5.4.9, so these
     // are VALUES and refusing them deleted the declaration. It is not a corner
     // case: `css/css-values/minmax-length-computed` writes the second one four
-    // times over and expects 40px.
+    // times over and expects 40px. The paren EOF added is the author's by the
+    // time anything here sees it, so it belongs in the serialisation -
+    // `calc-complex-unresolved-serialize` asks for it on all six of its values.
     ok("width", "calc(1px", "calc(1px)");
-    ok("width", "calc(min(1em, 21px) * 2", "calc(min(1em, 21px) * 2");
+    ok("width", "calc(min(1em, 21px) * 2", "calc(min(1em, 21px) * 2)");
 
     // THE ARITY IS PART OF THE GRAMMAR. `round-mod-rem-invalid` and
     // `calc-invalid-parsing` are one assertion per line and this is what they
@@ -142,6 +165,17 @@ void test_what_a_math_function_may_not_be() {
     bad("width", "clamp(1px, 2px)");
     bad("width", "mod(1px)");
     ok("width", "round(nearest, 10px, 6px)", "calc(12px)");
+
+    // EITHER OF clamp()'S BOUNDS MAY BE `none`, CSS Values 4 §10.3, and an
+    // absent bound is an unbounded side rather than a missing argument:
+    // `clamp(none, 33px, 30px)` is `min(33px, 30px)`. It was a syntax error here
+    // and the declaration went with it - `clamp-length-serialize` is six
+    // assertions of exactly this shape. The MIDDLE argument is still required.
+    ok("width", "clamp(none, 33px, 30px)", "calc(30px)");
+    ok("width", "clamp(33px, 30px, none)", "calc(33px)");
+    ok("width", "clamp(none, 30px, none)", "calc(30px)");
+    bad("width", "clamp(none, none, none)");
+    bad("width", "clamp(1px, none, 2px)");
 
     // ...AND SO IS THE TYPE ALGEBRA, CSS Values 4 §10.2. Every one of these is
     // `calc-unit-analysis` verbatim.
@@ -162,12 +196,29 @@ void test_what_a_math_function_may_not_be() {
     bad("width", "calc(2 * 3)");
     bad("rotate", "calc(1s)");
     bad("transition-duration", "calc(1px)");
-    bad("letter-spacing", "calc(10%)"); // <length>, not <length-percentage>
+    bad("border-left-width", "calc(10%)"); // <length>, not <length-percentage>
     ok("text-indent", "calc(10%)", "calc(10%)");
+    ok("letter-spacing", "calc(100%)", "calc(100%)"); // CSS Text 4 gave it a percentage
     ok("rotate", "calc(45deg + 45deg)", "calc(90deg)");
     ok("transition-duration", "calc(1s / 2)", "calc(0.5s)");
     ok("opacity", "calc(2 / 4)", "calc(0.5)");
     ok("z-index", "calc(1 + 1)", "calc(2)");
+
+    // A `<flex>` IS A TYPE, NOT AN UNRESOLVED LENGTH. `fr` has no basis here and
+    // never will - a flex is sized by grid track resolution and by nothing else -
+    // but treating it as "a unit I cannot resolve" made `min(1px, 0fr)` a value
+    // that survived, where it is `1px + 2` with different spelling. Six corpus
+    // files say so at once: `minmax-{length,number,percentage,time}-invalid`,
+    // `minmax-length-percent-invalid` and `exp-log-invalid`.
+    bad("width", "min(0fr)");
+    bad("width", "min(1px, 0fr)");
+    bad("opacity", "max(1, 0fr)");
+    bad("opacity", "exp(0fr)");
+    bad("transition-delay", "min(1s, 0fr)");
+    bad("margin-left", "calc(1px + 1fr)");
+    // ...and two flexes add up perfectly well - the family was what was missing,
+    // not the arithmetic - but their sum is still not a length.
+    bad("margin-left", "calc(1fr + 1fr)");
 
     // A BAD CALC ANYWHERE IN THE VALUE, not only when it is the whole of it.
     // `transform` has no grammar in this table at all, and the corpus still
@@ -210,6 +261,28 @@ void test_the_rest_of_the_math_functions() {
     // which is the whole difference between them - §10.6.
     ok("opacity", "mod(-18, 5)", "calc(2)");
     ok("opacity", "rem(-18, 5)", "calc(-3)");
+    // progress( [no-clamp]? A, B, C ), CSS Values 5. Three arguments of one type
+    // and a <number> out. AN EMPTY RANGE IS NEITHER AN ERROR NOR A NaN: the
+    // unclamped form keeps the numerator's sign and the clamped one is nought
+    // whichever way it points, because there is no range to be anywhere in.
+    ok("opacity", "progress(100px, 0px, 100px)", "calc(1)");
+    ok("opacity", "progress(1%, (10% - 10%), 100%)", "calc(0.01)"); // a ratio of two of them
+    ok("opacity", "progress(-100px, 0px, 100px)", "calc(0)");       // clamped into [0, 1]
+    ok("opacity", "progress(no-clamp -100px, 0px, 100px)", "calc(-1)");
+    ok("opacity", "progress(2rad, 1rad, 1rad)", "calc(0)");
+    ok("opacity", "progress(no-clamp 2rad, 1rad, 1rad)", "calc(infinity)");
+    ok("opacity", "progress(no-clamp 1rad, 1rad, 1rad)", "calc(0)");
+    ok("opacity", "progress(no-clamp 0rad, 1rad, 1rad)", "calc(-infinity)");
+    ok("opacity", "progress(10em, 0px, 10em)", "progress(10em, 0px, 10em)"); // no basis yet
+    bad("opacity", "progress(1)");
+    bad("opacity", "progress(0, 1,)");
+    bad("opacity", "progress(no-clamp, 1, 0 1)");
+    bad("opacity", "progress(1 no-clamp, 0, 1)");
+    bad("opacity", "progress(5, 0deg, 8deg)");
+    // A MIXED PERCENTAGE IS A TYPE ERROR HERE and not an undecidable comparison:
+    // three arguments that do not agree on what they measure have no ratio.
+    bad("opacity", "progress(5%, 0px, 10px)");
+    bad("letter-spacing", "calc(1px * progress(10deg, 0, 10))");
     // A CONSTANT IS NOT A VALUE ON ITS OWN. `infinity` and `NaN` are not
     // <number-token>s, which is the whole reason §10.9 spells them as keywords
     // usable only inside a math function. It is asked of `opacity` rather than
@@ -224,18 +297,222 @@ void test_the_rest_of_the_math_functions() {
     ok("left", "calc(1px * sibling-index())", "calc(1px * sibling-index())");
     ok("left", "calc(inherit(--x) + 1px)", "calc(inherit(--x) + 1px)");
     ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
-    // A SIMPLIFIED SPECIFIED VALUE ONLY WHERE EVERY UNIT IS CONTEXT-FREE. CSS
-    // Values 4 §10.11 keeps `1em` and `5%` as written because neither has a
-    // basis yet, and this file has one evaluator rather than two, so it declines
-    // to simplify at all when either appears. `calc(1px + 2px)` above is the
-    // case that DOES simplify.
+    // A UNIT WITH NO BASIS KEEPS ITS TERM, AND ITS TERM KEEPS ITS PLACE. CSS
+    // Values 4 §10.11 does not resolve `1em` or `5%` here, so both survive to
+    // the specified value; §10.13 says what order they survive in.
     ok("width", "calc(1em + 10px)", "calc(1em + 10px)");
     ok("width", "calc(100% - 10px)", "calc(100% - 10px)");
-    // ...and neither is a unit the specification names and this engine has no
-    // basis for. `1cqw` needs a container and `1lh` a line box; both are values.
-    ok("width", "calc(1px + 3cqw)", "calc(1px + 3cqw)");
-    ok("width", "calc(1px + 1lh)", "calc(1px + 1lh)");
+    // ...and a unit the specification names and this engine has no basis for is
+    // the same case: `1cqw` needs a container and `1lh` a line box.
+    ok("width", "calc(1px + 3cqw)", "calc(3cqw + 1px)");
+    ok("width", "calc(1px + 1lh)", "calc(1lh + 1px)");
     bad("width", "calc(1px + 1nonsense)"); // a typo is not a unit
+}
+
+// CSS Values 4 §10.12: A MATH FUNCTION'S SPECIFIED VALUE IS ITS SIMPLIFIED FORM,
+// wherever the function sits.
+//
+// "Wherever" is the half that was missing, and it is not a corner: the corpus
+// tests every one of the sixteen functions through `transform`,
+// `background-image` and `scale`, which are properties whose grammar this table
+// does not model at all - so it asked "is the WHOLE value one math function",
+// answered no, and handed back the author's text. That is ~290 assertions across
+// `acos-asin-atan-atan2-serialize`, `sin-cos-tan-serialize`, `exp-log-serialize`,
+// `hypot-pow-sqrt-serialize`, `round-mod-rem-serialize`, `signs-abs-serialize`,
+// `minmax-number-serialize` and three of the `calc-infinity-nan-serialize-*`.
+void test_a_math_function_is_simplified_wherever_it_sits() {
+    // Inside a function of a property with no grammar here at all.
+    ok("transform", "rotate(acos(1))", "rotate(calc(0deg))");
+    ok("transform", "rotate(calc(1deg * NaN))", "rotate(calc(NaN * 1deg))");
+    ok("transform", "scale(min(.3, .2, .1))", "scale(calc(0.1))");
+    ok("transform", "translate(calc(1px + 2px), calc(2px * 2))", "translate(calc(3px), calc(4px))");
+    ok("scale", "calc(sin(30deg) + cos(60deg))", "calc(1)");
+    // Beside other values, and beside a quoted string whose parentheses must not
+    // end the expression early.
+    ok("border", "calc(calc(10px)) solid pink", "calc(10px) solid pink");
+    ok("background-image", "image-set(url(\"a)b\") calc(1x * 2))",
+       "image-set(url(\"a)b\") calc(2dppx))");
+
+    // A calc() AROUND ONE OTHER calc() IS REDUNDANT and loses exactly one layer,
+    // which is what §10.12's simplification does with a lone child.
+    ok("margin-top", "calc(calc(0px + clamp(1px, 1em, 1vh)))", "calc(0px + clamp(1px, 1em, 1vh))");
+    ok("width", "calc(calc(calc(10px)))", "calc(10px)");
+    // ...AND SO IS A calc() AROUND A LONE COMPARISON. `min()`, `max()` and
+    // `clamp()` are NODES of the calculation tree (§10.9), so simplifying
+    // `calc(clamp(a, b, c))` leaves a tree whose root IS the Clamp node - and
+    // §10.13 serialises a Clamp root as `clamp(...)`, with no calc() anywhere.
+    // `clamp-length-serialize` runs every one of its values twice, bare and
+    // wrapped in one more calc(), and asserts the two serialise the same.
+    ok("margin-top", "calc(clamp(1px, 1em, 1vh))", "clamp(1px, 1em, 1vh)");
+    ok("margin-top", "calc(clamp(-18px, 3vw, -3vw))", "clamp(-18px, 3vw, -3vw)");
+    ok("margin-top", "calc(min(10px, 5%))", "min(10px, 5%)");
+    ok("margin-top", "calc(clamp(30px, 100px, 20px))", "calc(30px)");
+    // ...AND A calc() AROUND ANY OTHER MATH FUNCTION IS NOT, which is where the
+    // rule stops. `pow()` is not a node type - it is a leaf this file could not
+    // evaluate - and a leaf inside a calc() keeps its calc():
+    // `calc-complex-unresolved-serialize` wants the outer function back on all
+    // six of its values, and the two files disagree only if the distinction is
+    // "any math function".
+    ok("orphans", "calc(pow(2, sign(1em - 18px)))", "calc(pow(2, sign(1em - 18px)))");
+    ok("orphans", "calc(pow(2, sibling-index())", "calc(pow(2, sibling-index()))");
+    // A comparison that is not ALONE inside the calc keeps it too: the root is
+    // then a sum, not a Clamp.
+    ok("margin-top", "calc(0px + clamp(1px, 1em, 1vh))", "calc(0px + clamp(1px, 1em, 1vh))");
+    ok("width", "calc(min(1em, 21px) * 2", "calc(min(1em, 21px) * 2)");
+
+    // ...AND EVERYTHING ELSE KEEPS THE AUTHOR'S BYTES. A function with no answer
+    // until layout, one whose units have no basis yet, and one this file cannot
+    // evaluate are all left exactly as written - which is where they were before
+    // this rule existed, so nothing that works today can start failing.
+    ok("transform", "translate(min(10px, 5%))", "translate(min(10px, 5%))");
+    ok("transform", "rotate(calc(1deg + 1cqw))", "rotate(calc(1deg + 1cqw))");
+    ok("transform", "scale(calc(1 * sibling-index()))", "scale(calc(1 * sibling-index()))");
+    ok("width", "calc-size(10px, sign(size) * size)", "calc-size(10px, sign(size) * size)");
+    ok("font-family", "\"calc(1px + 1px)\"", "\"calc(1px + 1px)\""); // inside a string
+}
+
+// A PERCENTAGE SIMPLIFIES; COMPARING TWO OF THEM DOES NOT. The two halves are
+// separate rules and they used to be one over-cautious rule ("no percentage
+// anywhere, ever").
+void test_the_percentage_half_of_simplification() {
+    // The value model carries a percentage BESIDE the pixels rather than
+    // resolving it, so these need no basis and nothing is guessed.
+    ok("left", "calc(50px + calc(40%))", "calc(40% + 50px)");
+    ok("width", "calc(100% * 0.5)", "calc(50%)");
+    ok("text-indent", "min(1% + 1px)", "calc(1% + 1px)"); // one argument is not a comparison
+    // AN ABSENT COMPONENT IS NOT A ZERO ONE. `10%` has no length in it, and IEEE
+    // makes `0 * infinity` a NaN, so scaling one by an infinity used to invent a
+    // NaN length beside the right answer. A zero the AUTHOR wrote still does.
+    ok("width", "calc(1% * infinity)", "calc(infinity * 1%)");
+    ok("width", "calc(1% * NaN)", "calc(NaN * 1%)");
+    ok("width", "calc(1% / 0)", "calc(infinity * 1%)");
+    ok("width", "calc(0px * infinity)", "calc(NaN * 1px)");
+
+    // ...AND THE COMPARISON HALF. `min(1%, 2%)` looks decidable and is not: a
+    // percentage resolves against a basis that may be NEGATIVE, and then 2% is
+    // the smaller. `minmax-percentage-serialize` asks for both functions back.
+    ok("text-indent", "min(1%, 2%)", "min(1%, 2%)");
+    ok("text-indent", "max(3%, 4%)", "max(3%, 4%)");
+    ok("text-indent", "clamp(1%, 2%, 3%)", "clamp(1%, 2%, 3%)");
+    ok("text-indent", "min(10px, 5%)", "min(10px, 5%)"); // and the mixed case, as before
+}
+
+// A PERCENTAGE HAS TO BE A PERCENTAGE OF SOMETHING, CSS Values 4 §10.11. The
+// only calculation context this engine ever supplies is a length - no property
+// resolves a percentage into an angle or a time - so an expression that answers
+// with one of those and mentions a percentage is a syntax error, not a value
+// waiting for layout. `percentage-without-context` is twelve of these and every
+// one folded here by reading the percentage's own digits as its magnitude.
+void test_a_percentage_needs_a_context() {
+    bad("transform", "rotate(calc(sign(50%) * 1deg))");
+    bad("filter", "hue-rotate(calc(sign(50%) * 1deg))");
+    bad("font-style", "oblique calc(sign(50%) * 1deg)");
+    bad("color", "hsl(calc(sign(50%) * 1deg) 82% 43%)");
+    bad("animation-duration", "calc(sign(50%) * 1s)");
+    bad("transition-delay", "calc(sign(50%) * 1s)");
+    // ...INCLUDING FOR A PROPERTY THIS TABLE HAS NEVER HEARD OF. An unknown name
+    // is stored rather than refused, but the math in it is still math: these two
+    // are `percentage-without-context`'s last pair and both used to be kept
+    // because `offset-rotate` is not in the table.
+    bad("offset-rotate", "calc(sign(50%) * 1deg)");
+    bad("offset-path", "ray(calc(sign(50%) * 1deg))");
+    ok("offset-rotate", "calc(45deg + 45deg)", "calc(90deg)"); // ...and simplified, too
+
+    // A <number> ANSWER IS NOT COVERED and must not be: there the percentage
+    // sits in a length context that the property does supply.
+    ok("width", "calc(1px * pow(tan(atan2(50%, 1px)), 1))",
+       "calc(1px * pow(tan(atan2(50%, 1px)), 1))");
+    ok("width", "calc(50% + 1px)", "calc(50% + 1px)");
+}
+
+// A MATH FUNCTION IS TYPED BY WHERE IT SITS, and `rotate()` is the one position
+// this file can say so from without a grammar for `transform` or `filter`.
+// `minmax-angle-invalid`, `sin-cos-tan-invalid` and `acos-asin-atan-atan2-invalid`
+// end on these sixteen assertions between them, one shape each: a rotation by a
+// length, by a number, and by a ratio with a percentage in it.
+void test_the_angle_functions_take_an_angle() {
+    bad("transform", "rotate(min(0px))");
+    bad("transform", "rotate(min(0))");
+    bad("transform", "rotate(max(0fr))");
+    bad("transform", "rotate(tan(45deg ))"); // tan() answers with a <number>
+    bad("transform", "rotate(atan2(90px, 100%))");
+    bad("transform", "skew(min(1px), 45deg)");
+    bad("filter", "hue-rotate(min(1px))");
+
+    // <zero> IS WHY ONLY A MATH FUNCTION IS JUDGED. `rotate( [ <angle> | <zero> ] )`
+    // is CSS Transforms 1's own spelling, so a literal `0` is a rotation.
+    ok("transform", "rotate(0)", "rotate(0)");
+    ok("transform", "rotate(45deg)", "rotate(45deg)");
+    ok("transform", "rotate(calc(45deg + 45deg))", "rotate(calc(90deg))");
+    ok("transform", "rotate(atan2(1, 1))", "rotate(calc(45deg))");
+    ok("filter", "hue-rotate(90deg)", "hue-rotate(90deg)");
+    // ...and a function with no answer here is not a function with a wrong type.
+    ok("transform", "rotate(calc(1deg + 1cqw))", "rotate(calc(1deg + 1cqw))");
+    // Nothing outside the angle-only functions is touched by the rule.
+    ok("transform", "translate(min(10px, 5%))", "translate(min(10px, 5%))");
+}
+
+// A SUM THAT COULD NOT BE FOLDED IS STILL SIMPLIFIED. Its terms have no single
+// magnitude before there is a font size, a viewport and a containing block, and
+// §10.12's simplified form is not the author's bytes but one term per unit in
+// §10.13's order: the percentage first, then the units sorted ASCII
+// case-insensitively - `px` among them in its alphabetical place, not first for
+// being the canonical one. `calc-serialization` is six of these and
+// `calc-dimension-serialization-order` walks all forty-four relative units.
+void test_a_sum_that_cannot_fold_still_has_an_order() {
+    ok("width", "calc(10px + 1vmin + 10%)", "calc(10% + 10px + 1vmin)");
+    ok("width", "calc(10px + 1vmin)", "calc(10px + 1vmin)");
+    ok("width", "calc(10px + 1em)", "calc(1em + 10px)");
+    ok("width", "calc(1vmin - 10px)", "calc(-10px + 1vmin)");
+    ok("width", "calc(-10px + 1em)", "calc(1em - 10px)");
+    ok("height", "calc(1ch + 1cap)", "calc(1cap + 1ch)");
+    ok("height", "calc(1rcap + 1px)", "calc(1px + 1rcap)"); // px sorts, it does not lead
+    ok("height", "calc(1lvw + 1px)", "calc(1lvw + 1px)");
+    ok("width", "calc(3 * (1em + 1px))", "calc(3em + 3px)"); // a coefficient scales every term
+    // A UNIT WITH NO BASIS IS NOT A UNIT WITH NO ARITHMETIC. `fr` converts to
+    // nothing and never will, which is a different fact from `1fr + 1fr`.
+    ok("grid-template-rows", "calc(1fr + 1fr)", "calc(2fr)");
+
+    // ...AND A COMPARISON STILL CANNOT BE DECIDED. `min(1em, 1px)` has no order
+    // before a font size, exactly as `min(10px, 5%)` has none before a
+    // containing block - but each SIDE of it is a calculation like any other and
+    // simplifies like any other, which is what `minmax-length-percent-serialize`
+    // and `calc-infinity-nan-serialize-length` end on.
+    ok("width", "min(1em, 1px)", "min(1em, 1px)");
+    ok("width", "min(10% + 30px, 5em + 5%)", "min(10% + 30px, 5% + 5em)");
+    ok("width", "calc(1 * min(NaN * 2px, NaN * 4em))", "calc(1 * min(NaN * 1px, NaN * 1em))");
+    ok("width", "clamp(1rem, 2vw, 3rem)", "clamp(1rem, 2vw, 3rem)");
+    ok("width", "min(1em)", "calc(1em)"); // ...one argument is not a comparison
+}
+
+// ...AND THE OTHER HALF OF §10.11'S CALCULATION CONTEXT IS THE PROPERTY'S.
+// `text-indent: min(1px, 0%)` resolves against a containing block and
+// `border-left-width: min(1px, 0%)` has nothing to resolve against, so the two
+// look alike and only one of them is a value. These are the last failures of
+// `minmax-length-invalid` and `signs-abs-invalid`.
+void test_a_percentage_needs_a_property_that_takes_one() {
+    bad("border-left-width", "min(1px, 0%)");
+    bad("border-left-width", "max(1px, 0%)");
+    bad("font-weight", "sign(10%)");
+    bad("outline-width", "calc(10%)");
+    ok("text-indent", "min(1px, 0%)", "min(1px, 0%)");
+    ok("width", "calc(50% - 10px)", "calc(50% - 10px)");
+    // A FREEFORM PROPERTY ANSWERS YES and has to: the grammar is not modelled,
+    // so a guess would lose two values that are perfectly ordinary.
+    ok("transform", "translate(50%)", "translate(50%)");
+    ok("background-position", "calc(50% - 1px)", "calc(50% - 1px)");
+    // ...and a percentage OUTSIDE a math function is not this rule's business.
+    ok("color", "hsl(calc(1deg) 82% 43%)", "hsl(calc(1deg) 82% 43%)");
+
+    // `line-height` and `tab-size` are why the two <number>-and-<length> kinds
+    // are two: `line-height: 50%` is half the font size and `tab-size: 50%` is
+    // nothing at all. CSS Text 4 writes `<number [0,inf]> | <length [0,inf]>`.
+    ok("line-height", "50%", "50%");
+    ok("line-height", "calc(50% + 1px)", "calc(50% + 1px)");
+    bad("tab-size", "50%");
+    bad("tab-size", "abs(10%)");
+    ok("tab-size", "4", "4");
+    ok("tab-size", "10px", "10px");
 }
 
 void test_important_and_the_empty_value() {
@@ -365,6 +642,155 @@ void test_css_supports() {
     CHECK(check_declaration("content", "attr(data-foo)").uses_unknown_function);
 }
 
+// AN `<integer>` PROPERTY ROUNDS ITS MATH, and CSS Values 4 §10.10 says which
+// way. `z-index: calc(3 / 2)` is valid CSS whose computed value is 2, and this
+// engine reported `1.5` - a number no `<integer>` property has ever taken.
+//
+// The direction is the whole of the difference: a value exactly halfway goes
+// toward POSITIVE INFINITY, so `calc(-3 / 2)` is -1 and not -2. `std::round`
+// would have got every negative half wrong, and
+// `css/css-values/calc-z-index-fractions-001.html` is six subtests of nothing
+// else. `calc-integer.html` is the other three.
+void test_an_integer_property_rounds_its_math() {
+    using ctbrowser::style::css::fold_math;
+    using ctbrowser::style::css::length_context;
+    using ctbrowser::style::css::math_context;
+    using ctbrowser::style::css::math_context_of;
+
+    const length_context ctx;
+    const auto whole = [&](std::string_view value) {
+        return fold_math(value, ctx, math_context::integer).text;
+    };
+    CHECK(math_context_of("z-index") == math_context::integer);
+    CHECK(math_context_of("order") == math_context::integer);
+
+    CHECK_EQ(whole("calc(2)"), std::string{"2"});
+    CHECK_EQ(whole("calc(4 / 2)"), std::string{"2"});
+    CHECK_EQ(whole("calc(1 / 2)"), std::string{"1"}); // a half rounds UP
+    CHECK_EQ(whole("calc(0.5)"), std::string{"1"});
+    CHECK_EQ(whole("calc(1 / 3)"), std::string{"0"}); // ...and a third rounds down
+    CHECK_EQ(whole("calc(6 / 2.0)"), std::string{"3"});
+    // The six of calc-z-index-fractions-001, and the four negatives are the
+    // ones that say "toward positive infinity" rather than "away from zero".
+    CHECK_EQ(whole("calc(2.5 / 2)"), std::string{"1"});
+    CHECK_EQ(whole("calc(3 / 2)"), std::string{"2"});
+    CHECK_EQ(whole("calc(3.5 / 2)"), std::string{"2"});
+    CHECK_EQ(whole("calc(-2.5 / 2)"), std::string{"-1"});
+    CHECK_EQ(whole("calc(-3 / 2)"), std::string{"-1"});
+    CHECK_EQ(whole("calc(-3.5 / 2)"), std::string{"-2"});
+    // ONLY THE FINISHED CONVERSION ROUNDS. A nested calc is an intermediate and
+    // rounding it would make this 0.
+    CHECK_EQ(whole("calc(calc(1 / 3) * 3)"), std::string{"1"});
+    // Nothing else moves: the context is per-property, so the same expression in
+    // `opacity` keeps its fraction.
+    CHECK_EQ(fold_math("calc(1 / 2)", ctx, math_context::any).text, std::string{"0.5"});
+    // A specified value is NOT rounded - CSS Values 4 §10.12 keeps the function
+    // as written, and `el.style.zIndex` reads back the simplified form.
+    ok("z-index", "calc(3 / 2)", "calc(1.5)");
+    ok("z-index", "2", "2");
+    bad("z-index", "1.5");
+}
+
+// `random-item( <declaration-value>, [ <declaration-value>? ]# )`, CSS Values 5.
+// The function is an arbitrary substitution one, so only its ARGUMENT LIST is
+// decided at parse time - but it is decided, and `random-item-invalid` is
+// fourteen assertions of exactly that.
+void test_the_random_item_argument_list() {
+    // The key is required, and so is the comma after it.
+    bad("font-family", "random-item()");
+    bad("font-family", "random-item( )");
+    bad("font-family", "random-item(auto)");
+    bad("font-family", "random-item(, serif, sans-serif)");
+    // `<declaration-value>` forbids a top-level `;` or `!`.
+    bad("font-family", "random-item(auto, !)");
+    bad("font-family", "random-item(auto, ;)");
+    // AN UNMATCHED BRACKET, which is why this MATCHES brackets rather than
+    // counting them: `{serif)` closes a brace with a paren, and a depth counter
+    // reads that as balanced.
+    bad("font-family", "random-item(auto, })");
+    bad("font-family", "random-item(auto, ])");
+    bad("font-family", "random-item(auto, {serif)");
+    bad("font-family", "random-item(auto, serif})");
+    bad("font-family", "random-item(auto, {Times, serif)");
+    bad("font-family", "random-item({auto, serif, sans-serif)");
+    // A `{}` block is how an ITEM containing a comma is written, so it is the
+    // whole item or it is not an item at all.
+    bad("font-family", "random-item(auto, {Times, serif} extra)");
+    bad("font-family", "random-item(auto, extra {Times, serif})");
+
+    // ...and every one of these must still SURVIVE, spacing and all.
+    ok("font-family", "random-item(auto ,serif)", "random-item(auto ,serif)");
+    ok("width", "random-item(auto, 1px, 2px, 3px)", "random-item(auto, 1px, 2px, 3px)");
+    ok("font-family", "random-item(auto,)", "random-item(auto,)"); // an item may be EMPTY
+    ok("font-family", "random-item(fixed 0, rgb(4, 5, 6), blue)",
+       "random-item(fixed 0, rgb(4, 5, 6), blue)");
+    ok("font-family", "random-item(auto, {Times, serif}, sans-serif)",
+       "random-item(auto, {Times, serif}, sans-serif)");
+    // EOF CLOSES EVERY OPEN BLOCK, CSS Syntax 3 §5.4.9, so an unterminated one
+    // is a value and not a parse error.
+    ok("font-family", "random-item(auto, serif", "random-item(auto, serif");
+}
+
+// `interpolate-size` is a real property with a real two-keyword grammar. As an
+// UNKNOWN one `el.style` stored `interpolate-size: 100%` and `getComputedStyle`
+// did not publish the property at all - which is the two assertions of
+// `calc-size/interpolate-size-computed.html` and three of `-parsing.html`.
+void test_interpolate_size_is_a_property() {
+    ok("interpolate-size", "numeric-only", "numeric-only");
+    ok("interpolate-size", "allow-keywords", "allow-keywords");
+    bad("interpolate-size", "auto");
+    bad("interpolate-size", "none");
+    bad("interpolate-size", "100%");
+    CHECK(find_property("interpolate-size") != nullptr);
+    CHECK(supports_declaration("interpolate-size", "numeric-only"));
+    CHECK(!supports_declaration("interpolate-size", "auto"));
+}
+
+// `<position>`, CSS Values 5 - the one multi-component value this table models,
+// and the only one whose canonical form REORDERS what the author wrote.
+void test_the_position_grammar() {
+    // ONE COMPONENT names one axis and the other is `center`, which is why a
+    // per-token matcher cannot produce this: `top` is `center top` and `10%` is
+    // `10% center`.
+    ok("object-position", "10%", "10% center");
+    ok("object-position", "left", "left center");
+    ok("object-position", "top", "center top");
+    ok("object-position", "center", "center center");
+    ok("object-position", "x-start", "x-start center"); // level 5's logical keywords
+    ok("object-position", "y-start", "center y-start");
+    // TWO COMPONENTS are horizontal then vertical, and the `&&` branch lets two
+    // KEYWORDS arrive the other way round - but only keywords, so `bottom right`
+    // is a position and `10px right` is not.
+    ok("object-position", "30px center", "30px center");
+    ok("object-position", "40px top", "40px top");
+    ok("object-position", "bottom right", "right bottom");
+    ok("object-position", "center left", "left center");
+    ok("object-position", "top center", "center top");
+    ok("object-position", "10px y-start", "10px y-start");
+    bad("object-position", "left right"); // two horizontals
+    bad("object-position", "bottom 10%"); // a vertical keyword in the first slot
+    // FOUR COMPONENTS are two `<side> <offset>` pairs, one per axis, in either
+    // order - and `center` takes no offset, so it cannot appear in this form.
+    ok("object-position", "right 30% top 60px", "right 30% top 60px");
+    ok("object-position", "bottom 10% right 20%", "right 20% bottom 10%");
+    ok("object-position", "y-end 20% left 10px", "left 10px y-end 20%");
+    bad("object-position", "bottom 10% top 20%"); // both pairs vertical
+    // THE THREE-VALUE FORM IS GONE in level 5. `left 4px top` is still a valid
+    // `background-position` and is no longer a `<position>`, which is eight of
+    // `position/position-invalid.tentative`'s twenty-one assertions.
+    bad("object-position", "left 4px top");
+    bad("object-position", "center left 1px");
+    bad("object-position", "right 3% center");
+    bad("object-position", "bottom right 8%");
+    bad("object-position", "1px 2px 3px");
+    bad("object-position", "auto");
+    bad("object-position", "garbage left top");
+    bad("object-position", "left 10px top 10px garbage");
+    // ...and a math function anywhere in it keeps the author's bytes rather than
+    // being refused: this reader does not evaluate the components.
+    ok("object-position", "calc(50% - 1px) center", "calc(50% - 1px) center");
+}
+
 } // namespace
 
 int main() {
@@ -374,10 +800,20 @@ int main() {
     test_the_things_that_must_survive();
     test_what_a_math_function_may_not_be();
     test_the_rest_of_the_math_functions();
+    test_a_math_function_is_simplified_wherever_it_sits();
+    test_the_percentage_half_of_simplification();
+    test_a_percentage_needs_a_context();
+    test_the_angle_functions_take_an_angle();
+    test_a_sum_that_cannot_fold_still_has_an_order();
+    test_a_percentage_needs_a_property_that_takes_one();
     test_important_and_the_empty_value();
     test_a_custom_property_takes_anything_that_tokenises();
     test_the_two_spellings_of_one_property();
     test_the_property_table_itself();
     test_css_supports();
+    test_an_integer_property_rounds_its_math();
+    test_the_random_item_argument_list();
+    test_interpolate_size_is_a_property();
+    test_the_position_grammar();
     REPORT("css_values");
 }

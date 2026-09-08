@@ -10,6 +10,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <ctbrowser/core/algorithms.hpp>
@@ -29,14 +30,41 @@ struct term {
     double value = 0.0;
     double percent = 0.0;
     bool has_percent = false;
+    // THE DIMENSIONS THAT COULD NOT BE ADDED TOGETHER, one entry per unit, in
+    // the order they were first written.
+    //
+    // Empty in the ordinary evaluation, where every unit has a basis and every
+    // length is a number of pixels. A SPECIFIED value has no bases at all, and
+    // there `calc(1em + 1cap)` is two terms for good - which is not a failure to
+    // simplify but the simplified form itself, CSS Values 4 §10.12. Sorted only
+    // when it is printed, because §10.13's order is a serialisation rule and the
+    // arithmetic does not care.
+    std::vector<std::pair<std::string, double>> symbols;
 
     [[nodiscard]] bool is_number() const noexcept { return type == numeric_type::number; }
 };
+
+// `unit`'s coefficient in `into`, created at the end if it is not there yet.
+// Linear because a sum has a handful of distinct units and the write order is
+// what keeps a serialisation stable before it is sorted.
+void add_symbol(term & into, std::string_view unit, double coefficient) {
+    for (auto & [name, value] : into.symbols) {
+        if (name == unit) {
+            value += coefficient;
+            return;
+        }
+    }
+    into.symbols.emplace_back(unit, coefficient);
+}
 
 // A term whose whole magnitude is in ONE slot, so a non-linear function can be
 // applied to it. `10px` and `10%` both qualify; `calc(10px + 10%)` does not,
 // because `abs()` of it depends on a containing block nobody has yet.
 [[nodiscard]] bool is_scalar(const term & t) noexcept {
+    // A SYMBOLIC SUM IS NEVER ONE. `min(1em, 1px)` cannot be ordered before a
+    // font size exists, exactly as `min(10px, 5%)` cannot be ordered before a
+    // containing block does, and the two undecidable cases answer the same way.
+    if (!t.symbols.empty()) { return false; }
     return !t.has_percent || t.value == 0.0;
 }
 [[nodiscard]] double scalar_of(const term & t) noexcept {
@@ -59,6 +87,10 @@ struct term {
     out.value = a.value + sign * b.value;
     out.percent = a.percent + sign * b.percent;
     out.has_percent = a.has_percent || b.has_percent;
+    out.symbols = a.symbols;
+    for (const auto & [unit, coefficient] : b.symbols) {
+        add_symbol(out, unit, sign * coefficient);
+    }
     return out;
 }
 
@@ -69,8 +101,20 @@ struct term {
     const term & dim = a.is_number() ? b : a;
     const double scale = a.is_number() ? a.value : b.value;
     term out = dim;
-    out.value = dim.value * scale;
-    out.percent = dim.percent * scale;
+    // AN ABSENT COMPONENT IS NOT A ZERO ONE. `10%` carries its magnitude in
+    // `percent` and a zero `value`, and that zero means "there is no length in
+    // this term" rather than "the length is nought". IEEE makes `0 * infinity` a
+    // NaN, so scaling a bare percentage by an infinity invented a NaN LENGTH
+    // beside the right answer and `calc(1% * infinity)` printed as `calc(NaN *
+    // 1px)` where it is `calc(infinity * 1%)`. `calc(0px * infinity)` IS a NaN
+    // and still is: there the zero is a length the author wrote.
+    //
+    // A SYMBOLIC TERM IS THE SAME CASE: `1em` carries its magnitude in `symbols`
+    // and leaves `value` at nought, and there is no length there either.
+    const bool no_plain_part = (dim.has_percent || !dim.symbols.empty()) && dim.value == 0.0;
+    out.value = no_plain_part ? 0.0 : dim.value * scale;
+    out.percent = dim.has_percent ? dim.percent * scale : 0.0;
+    for (auto & [unit, coefficient] : out.symbols) { coefficient *= scale; }
     return out;
 }
 
@@ -84,8 +128,12 @@ struct term {
     // nothing here to special-case.
     if (!b.is_number()) { return std::nullopt; }
     term out = a;
-    out.value = a.value / b.value;
-    out.percent = a.percent / b.value;
+    // The same absent-component rule multiply() carries, and for the same
+    // reason: `calc(1% / 0)` is `calc(infinity * 1%)` and not a NaN length.
+    const bool no_plain_part = (a.has_percent || !a.symbols.empty()) && a.value == 0.0;
+    out.value = no_plain_part ? 0.0 : a.value / b.value;
+    out.percent = a.has_percent ? a.percent / b.value : 0.0;
+    for (auto & [unit, coefficient] : out.symbols) { coefficient /= b.value; }
     return out;
 }
 
@@ -107,6 +155,20 @@ constexpr std::string_view known_units[] = {
 
 [[nodiscard]] bool is_known_unit(std::string_view unit) noexcept {
     for (const std::string_view one : known_units) {
+        if (ascii_iequals(one, unit)) { return true; }
+    }
+    return false;
+}
+
+// THE UNITS WHOSE VALUE IS THE SAME EVERYWHERE. An absolute length, an angle, a
+// time, a frequency and a resolution all convert to their canonical unit by a
+// constant; `em`, `vw`, `lh`, `cqw`, `fr` and `%` do not, and a SPECIFIED value
+// is written before any of their bases exist.
+[[nodiscard]] bool context_free_unit(std::string_view unit) noexcept {
+    static constexpr std::string_view units[] = {"px",  "cm",   "mm",   "q",    "in", "pt", "pc",
+                                                 "deg", "grad", "rad",  "turn", "s",  "ms", "hz",
+                                                 "khz", "dpi",  "dpcm", "dppx", "x"};
+    for (const std::string_view one : units) {
         if (ascii_iequals(one, unit)) { return true; }
     }
     return false;
@@ -138,6 +200,11 @@ constexpr std::string_view known_units[] = {
         {"x", numeric_type::resolution, 1.0},
         {"dpi", numeric_type::resolution, 1.0 / 96.0},
         {"dpcm", numeric_type::resolution, 2.54 / 96.0},
+        // `fr` converts to itself and to nothing else. It is here for its TYPE,
+        // not for a basis: what a flex is worth is a grid track sizing question
+        // and no expression can answer it, but `1fr + 1fr` is 2fr and `1px +
+        // 1fr` is a type error, and both need the family named.
+        {"fr", numeric_type::flex, 1.0},
     };
     for (const fixed & one : table) {
         if (ascii_iequals(one.unit, unit)) {
@@ -160,6 +227,32 @@ constexpr std::string_view known_units[] = {
         return out;
     }
     return std::nullopt;
+}
+
+// ONE DIMENSION WITH NO BASES AVAILABLE, which is what a SPECIFIED value is
+// written against. A unit whose value is the same everywhere folds into its
+// family's canonical unit exactly as it always did; one that needs a font size,
+// a viewport or a container becomes a term of its OWN, keyed by the unit the
+// author wrote. `nullopt` for a typo, which is a syntax error at any stage.
+//
+// `fr` is here rather than in `context_free_unit` because the two questions
+// differ: a flex converts to nothing and never will, so `calc(1fr + 1fr)` may
+// not be FOLDED against a basis - but it is still two terms of one unit and
+// `calc(2fr)` is their sum.
+[[nodiscard]] std::optional<term> symbolic_term(double value, std::string_view unit) {
+    if (context_free_unit(unit)) {
+        const std::optional<term> fixed = canonical_term(value, unit, length_context{});
+        if (!fixed) { return std::nullopt; }
+        term out;
+        out.type = fixed->type;
+        add_symbol(out, canonical_unit(out.type), fixed->value);
+        return out;
+    }
+    if (!is_known_unit(unit)) { return std::nullopt; }
+    term out;
+    out.type = ascii_iequals(unit, "fr") ? numeric_type::flex : numeric_type::length;
+    add_symbol(out, ascii_lower_copy(unit), value);
+    return out;
 }
 
 // --- the non-linear functions, CSS Values 4 §10.4-§10.8 ------------------
@@ -224,27 +317,50 @@ enum class round_to : std::uint8_t {
     return std::fmod(a, b);
 }
 
+// CSS Values 5 §progress: how far `a` lies from `b` to `c`, as a <number>.
+//
+// AN EMPTY RANGE IS NEITHER AN ERROR NOR A NaN. `progress(1rad, 1rad, 1rad)` is
+// nought over nought, which IEEE calls NaN and the specification calls no
+// progress at all. The unclamped form keeps the numerator's SIGN, so
+// `progress(no-clamp 2rad, 1rad, 1rad)` is an infinity and
+// `progress(no-clamp 0rad, 1rad, 1rad)` its negative; the clamped form is nought
+// whichever way it points, because there is no range to be anywhere in.
+// `progress-serialize` asserts all six of those.
+[[nodiscard]] double progress_one(bool clamped, double a, double b, double c) {
+    if (c == b) {
+        if (clamped || a == b) { return 0.0; }
+        return a > b ? std::numeric_limits<double>::infinity()
+                     : -std::numeric_limits<double>::infinity();
+    }
+    const double how_far = (a - b) / (c - b);
+    if (!clamped || std::isnan(how_far)) { return how_far; }
+    return std::min(std::max(how_far, 0.0), 1.0);
+}
+
+// WHAT A DIMENSION IS MEASURED AGAINST. Two answers, and the second is what a
+// SPECIFIED value needs: there are no bases yet when one is written, so `1em`
+// and `1cqw` are terms in their own right rather than numbers of pixels.
+enum class basis : std::uint8_t {
+    // `ctx` supplies a font size and a viewport and every length becomes pixels.
+    // This is the computed-value evaluation and the only one that ever answers
+    // with a `calc_result`.
+    against_context,
+    // Nothing is supplied and nothing is guessed. `calc(10px + 1vmin + 10%)` is
+    // three terms, and printing them in §10.13's order is the whole answer.
+    symbolic,
+};
+
 // A recursive-descent parser over the token stream, one instance per expression.
 // `ok_` latches false on the first error so every level can stop checking.
 class evaluator {
 public:
-    evaluator(const token_stream & tokens, const length_context & ctx) : t_(tokens), ctx_(ctx) {}
+    evaluator(const token_stream & tokens, const length_context & ctx,
+              basis measure = basis::against_context)
+        : t_(tokens), ctx_(ctx), basis_(measure) {}
 
     [[nodiscard]] math_answer run() {
-        const std::optional<term> value = sum();
-        skip_whitespace();
-        // UNRESOLVED WINS OVER INVALID. A comparison that could not be decided
-        // here stopped the parse the same way an error does, so the latch has to
-        // be read before the missing value is: `min(10px, 5%)` is a valid
-        // declaration and reporting it as a syntax error would delete it.
-        if (unresolved_) {
-            return math_answer{math_outcome::unresolved, {}};
-        }
-        // A trailing token means the expression did not consume its input -
-        // `calc(1px 2px)` - which is an error and not a partial answer.
-        if (!ok_ || !value || !at_end()) {
-            return math_answer{math_outcome::invalid, {}};
-        }
+        const std::optional<term> value = settle();
+        if (!value) { return math_answer{outcome_, {}}; }
         calc_result out;
         // A NUMBER IS AN ANSWER. `calc()` of a bare number used to be reported as
         // no answer at all, which the cascade read as an invalid declaration and
@@ -260,7 +376,59 @@ public:
         return math_answer{math_outcome::resolved, out};
     }
 
+    // The SYMBOLIC evaluation's answer, which is the term itself: a
+    // `calc_result` carries one magnitude and a percentage and cannot hold
+    // `calc(10% + 10px + 1vmin)`.
+    [[nodiscard]] std::pair<math_outcome, term> run_symbolic() {
+        const std::optional<term> value = settle();
+        if (!value) { return {outcome_, term{}}; }
+        return {math_outcome::resolved, *value};
+    }
+
 private:
+    // The whole expression, parsed and ruled on. `nullopt` leaves the reason in
+    // `outcome_`, which is what both entry points above report.
+    [[nodiscard]] std::optional<term> settle() {
+        const std::optional<term> value = sum();
+        skip_whitespace();
+        // UNRESOLVED WINS OVER INVALID. A comparison that could not be decided
+        // here stopped the parse the same way an error does, so the latch has to
+        // be read before the missing value is: `min(10px, 5%)` is a valid
+        // declaration and reporting it as a syntax error would delete it.
+        if (unresolved_) {
+            outcome_ = math_outcome::unresolved;
+            return std::nullopt;
+        }
+        // A trailing token means the expression did not consume its input -
+        // `calc(1px 2px)` - which is an error and not a partial answer.
+        if (!ok_ || !value || !at_end()) {
+            outcome_ = math_outcome::invalid;
+            return std::nullopt;
+        }
+        // A PERCENTAGE HAS TO BE A PERCENTAGE OF SOMETHING. CSS Values 4 §10.11
+        // calls it the calculation context, and the only one this engine ever
+        // supplies is a length: no property resolves a percentage into an angle,
+        // a time, a frequency or a resolution, so a percentage in an expression
+        // that answers with one has nothing to be measured against and the
+        // expression is a syntax error rather than a value waiting for layout.
+        // `animation-duration: calc(sign(50%) * 1s)` and
+        // `transform: rotate(calc(sign(50%) * 1deg))` are two of the twelve
+        // `percentage-without-context` writes, and every one of them folded to a
+        // number here by reading the percentage's own digits as its magnitude.
+        //
+        // A <number> ANSWER IS NOT COVERED and must not be: `progress(1%, (10% -
+        // 10%), 100%)` is `calc(0.01)` and `calc(1px * pow(tan(atan2(50%, 1px)),
+        // 1))` is a valid width, because there the percentages sit in a length
+        // context that the property does supply.
+        if (saw_percent_ && value->type != numeric_type::number &&
+            value->type != numeric_type::length) {
+            outcome_ = math_outcome::invalid;
+            return std::nullopt;
+        }
+        outcome_ = math_outcome::resolved;
+        return value;
+    }
+
     [[nodiscard]] const css_token & peek() const noexcept { return t_.tokens[at_]; }
     [[nodiscard]] bool at_end() const noexcept { return peek().type == token_type::eof; }
     void skip_whitespace() noexcept {
@@ -334,6 +502,7 @@ private:
         }
         case token_type::percentage: {
             ++at_;
+            saw_percent_ = true;
             term out;
             // A percentage has no type of its own until the property says what it
             // is a percentage OF, and every property this engine resolves one
@@ -346,7 +515,9 @@ private:
         }
         case token_type::dimension: {
             const std::string_view unit = t_.unit_of(tok);
-            const std::optional<term> one = canonical_term(tok.number, unit, ctx_);
+            const std::optional<term> one = basis_ == basis::symbolic
+                                                ? symbolic_term(tok.number, unit)
+                                                : canonical_term(tok.number, unit, ctx_);
             if (!one) {
                 // A unit the specification names and this engine has no basis
                 // for - `1lh`, `1cqw` - is UNRESOLVED, not invalid. A typo is
@@ -400,8 +571,7 @@ private:
 
     enum class compare : std::uint8_t {
         smallest,
-        largest,
-        clamped
+        largest
     };
 
     // A comma-separated argument list, the function token already consumed and
@@ -448,6 +618,17 @@ private:
                 return false;
             }
         }
+        // ...AND A PERCENTAGE CANNOT BE COMPARED WITH ANYTHING, including another
+        // percentage. `min(1%, 2%)` looks decidable and is not: a percentage
+        // resolves against a basis that MAY BE NEGATIVE, and then 2% is the
+        // smaller. `minmax-percentage-serialize` is explicit about it - it asks
+        // for `calc(min(1%, 2%) + max(3%, 4%) + 10%)` back with both functions
+        // still in it. One argument is not a comparison and is unaffected, which
+        // is what keeps `min(1%)` simplifying to `calc(1%)`.
+        if (args.size() > 1 && args.front().has_percent) {
+            unresolved_ = true;
+            return false;
+        }
         return true;
     }
 
@@ -459,12 +640,13 @@ private:
         if (named("calc(")) { return nested(); }
         if (named("min(")) { return comparison(compare::smallest); }
         if (named("max(")) { return comparison(compare::largest); }
-        if (named("clamp(")) { return comparison(compare::clamped); }
+        if (named("clamp(")) { return clamping(); }
         if (named("round(")) { return rounding(); }
         if (named("mod(")) { return stepped(false); }
         if (named("rem(")) { return stepped(true); }
         if (named("abs(")) { return sign_or_abs(false); }
         if (named("sign(")) { return sign_or_abs(true); }
+        if (named("progress(")) { return progress_of(); }
         if (named("hypot(")) { return hypot_of(); }
         if (named("sqrt(")) {
             return numeric(1, 1, [](double a, double) { return std::sqrt(a); });
@@ -513,7 +695,7 @@ private:
         return unresolvable();
     }
 
-    // min( sum [, sum]* ) | max( sum [, sum]* ) | clamp( sum, sum, sum )
+    // min( sum [, sum]* ) | max( sum [, sum]* )
     //
     // CSS Values 4 §10.3. Two things make this more than a fold over `sum()`:
     //
@@ -528,24 +710,15 @@ private:
     // a declaration deleted. `min(10%, 20%)` is decidable and is not affected.
     [[nodiscard]] std::optional<term> comparison(compare kind) {
         ++at_; // the function token, `(` included
-        const std::optional<std::vector<term>> args =
-            arguments(1, kind == compare::clamped ? 3 : ~std::size_t{0});
+        const std::optional<std::vector<term>> args = arguments(1, ~std::size_t{0});
         if (!args) { return std::nullopt; }
-        if (kind == compare::clamped && args->size() != 3) { return fail(); }
+        // ONE ARGUMENT IS NOT A COMPARISON. `min(X)` is X whatever X is, so the
+        // uniformity check below - which exists to say when two arguments cannot
+        // be ORDERED - has nothing to ask. Running it anyway made `min(1% + 1px)`
+        // undecidable, where `minmax-length-percent-serialize` wants
+        // `calc(1% + 1px)`.
+        if (args->size() == 1) { return args->front(); }
         if (!uniform(*args)) { return std::nullopt; }
-        if (kind == compare::clamped) {
-            // clamp(low, value, high) is max(low, min(value, high)) - and the
-            // spec's order matters when low > high: the LOW bound wins, because
-            // the min is taken first. A NaN anywhere poisons the result, which
-            // std::min/std::max do NOT do on their own.
-            const double low = scalar_of((*args)[0]);
-            const double mid = scalar_of((*args)[1]);
-            const double high = scalar_of((*args)[2]);
-            if (std::isnan(low) || std::isnan(mid) || std::isnan(high)) {
-                return with_scalar((*args)[1], std::nan(""));
-            }
-            return with_scalar((*args)[1], std::max(low, std::min(mid, high)));
-        }
         double best = scalar_of(args->front());
         for (const term & one : *args) {
             const double v = scalar_of(one);
@@ -556,6 +729,53 @@ private:
             best = kind == compare::smallest ? std::min(best, v) : std::max(best, v);
         }
         return with_scalar(args->front(), best);
+    }
+
+    // clamp( [<calc-sum> | none], <calc-sum>, [<calc-sum> | none] )
+    //
+    // §10.3, and it has its own function rather than a third case of the one
+    // above because of `none`: EITHER BOUND MAY BE ABSENT, and an absent one is
+    // not a missing argument but an unbounded side. `clamp(none, 33px, 30px)` is
+    // `min(33px, 30px)` and is 30px, which is what `clamp-length-serialize` asks
+    // for six times; before this it was a syntax error and the declaration went.
+    //
+    // An absent bound is spelled as the infinity it means, which keeps the NaN
+    // rule and the low-beats-high rule below in one place each.
+    [[nodiscard]] std::optional<term> clamping() {
+        ++at_; // the function token, `(` included
+        constexpr double huge = std::numeric_limits<double>::infinity();
+        std::vector<term> present; // for the type check, which `none` sits out of
+        double bound[3] = {-huge, 0.0, huge};
+        std::optional<term> middle;
+        for (int i = 0; i < 3; ++i) {
+            skip_whitespace();
+            const bool may_be_none = i != 1;
+            if (may_be_none && peek().type == token_type::ident &&
+                ascii_iequals(t_.text_of(peek()), "none")) {
+                ++at_;
+            } else {
+                const std::optional<term> one = sum();
+                if (!one) { return std::nullopt; }
+                present.push_back(*one);
+                if (i == 1) { middle = one; }
+                bound[i] = scalar_of(*one);
+            }
+            skip_whitespace();
+            if (i == 2) { break; }
+            if (peek().type != token_type::comma) { return fail(); }
+            ++at_;
+        }
+        if (!at_close()) { return fail(); }
+        take_close();
+        if (!uniform(present)) { return std::nullopt; }
+        // clamp(low, value, high) is max(low, min(value, high)) - and the spec's
+        // order matters when low > high: the LOW bound wins, because the min is
+        // taken first. A NaN anywhere poisons the result, which std::min and
+        // std::max do NOT do on their own.
+        if (std::isnan(bound[0]) || std::isnan(bound[1]) || std::isnan(bound[2])) {
+            return with_scalar(*middle, std::nan(""));
+        }
+        return with_scalar(*middle, std::max(bound[0], std::min(bound[1], bound[2])));
     }
 
     // round( <rounding-strategy>?, A, B )
@@ -615,6 +835,40 @@ private:
         // A ZERO KEEPS ITS SIGN. `sign(-0px)` is -0 and not 0, which is
         // observable through `1 / sign(x)` - the corpus's own way of asking.
         out.value = std::isnan(a) ? a : (a > 0.0 ? 1.0 : (a < 0.0 ? -1.0 : a));
+        return out;
+    }
+
+    // progress( [no-clamp]? A, B, C ), CSS Values 5 §progress. Three arguments
+    // of ONE type and a <number> out - the fraction of the way A lies from B to
+    // C - with the keyword, when it is there, sitting before the first argument
+    // and taking no comma of its own.
+    [[nodiscard]] std::optional<term> progress_of() {
+        ++at_; // the function token, `(` included
+        skip_whitespace();
+        bool clamped = true;
+        if (peek().type == token_type::ident && ascii_iequals(t_.text_of(peek()), "no-clamp")) {
+            ++at_;
+            clamped = false;
+        }
+        const std::optional<std::vector<term>> args = arguments(3, 3);
+        if (!args) { return std::nullopt; }
+        // ONE TYPE FOR ALL THREE, THE PERCENTAGE INCLUDED - and this is where it
+        // parts company with `uniform()`. A RATIO of percentages is decidable
+        // because the basis cancels, so `progress(1%, 0%, 100%)` is `calc(0.01)`
+        // with nothing left to resolve; but `progress(5%, 0px, 10px)` does not
+        // have three arguments that agree on what they measure, and that is a
+        // type error rather than a comparison awaiting layout.
+        for (const term & one : *args) {
+            if (one.type != args->front().type || one.has_percent != args->front().has_percent) {
+                return fail();
+            }
+        }
+        for (const term & one : *args) {
+            if (!is_scalar(one)) { return unresolvable(); }
+        }
+        term out;
+        out.value = progress_one(clamped, scalar_of((*args)[0]), scalar_of((*args)[1]),
+                                 scalar_of((*args)[2]));
         return out;
     }
 
@@ -713,9 +967,16 @@ private:
 
     const token_stream & t_;
     const length_context & ctx_;
+    basis basis_ = basis::against_context;
+    math_outcome outcome_ = math_outcome::invalid;
     std::size_t at_ = 0;
     bool ok_ = true;
     bool unresolved_ = false;
+    // Whether a <percentage-token> was read ANYWHERE in the expression, which is
+    // not the same question as whether the ANSWER carries one: `sign(50%)` is a
+    // plain number and has nothing left to resolve, but the percentage was still
+    // written and still had to mean something.
+    bool saw_percent_ = false;
 };
 
 // Trailing zeros off a double, so a folded `12px` is not `12.000000px`. CSS
@@ -730,6 +991,63 @@ private:
     return text;
 }
 
+// One expression with NO bases at all - which is what a specified value is
+// written against - and its answer as a term rather than as a `calc_result`,
+// because a sum of units that could not be added has no single magnitude.
+[[nodiscard]] std::pair<math_outcome, term> evaluate_symbolic(std::string_view expression) {
+    const token_stream tokens = tokenize(expression);
+    const length_context none; // deliberately unused: nothing is measured here
+    evaluator run{tokens, none, basis::symbolic};
+    return run.run_symbolic();
+}
+
+// THE INSIDE OF A SYMBOLIC calc(), in CSS Values 4 §10.13's order: the
+// percentage first, then one term per unit sorted ASCII case-insensitively by
+// unit name. `calc(10px + 1vmin + 10%)` is `calc(10% + 10px + 1vmin)` in every
+// browser, and `calc-dimension-serialization-order` walks all forty-four
+// relative units to say so - `px` among them, in its alphabetical place between
+// `lvw` and `rcap` rather than first for being the canonical one.
+//
+// AN INFINITY OR A NaN MOVES ITS UNIT OUT TO A MULTIPLIER, exactly as
+// `serialize_calc` does it and for the same reason: `NaNem` is not a token.
+// It is only spellable when the whole sum is that one term - `NaN * 1em + 1px`
+// has no canonical form and there is no case for one - so anything else comes
+// back EMPTY, which means "print the author's bytes instead" and is never a
+// reason to condemn a declaration. A plain number sitting beside the symbols is
+// the other such shape, and this file does not build it.
+[[nodiscard]] std::string serialize_symbolic(const term & value) {
+    if (value.value != 0.0) { return {}; }
+    const std::size_t parts = value.symbols.size() + (value.has_percent ? 1 : 0);
+    const bool finite =
+        std::isfinite(value.percent) && std::ranges::all_of(value.symbols, [](const auto & one) {
+            return std::isfinite(one.second);
+        });
+    if (!finite) {
+        if (parts != 1) { return {}; }
+        const double lead = value.has_percent ? value.percent : value.symbols.front().second;
+        const std::string unit = value.has_percent ? "%" : value.symbols.front().first;
+        const std::string word = std::isnan(lead) ? "NaN" : (lead > 0 ? "infinity" : "-infinity");
+        return word + " * 1" + unit;
+    }
+    std::vector<std::pair<std::string, double>> sorted = value.symbols;
+    std::ranges::sort(sorted, [](const auto & a, const auto & b) { return a.first < b.first; });
+    std::string out;
+    // The sign is folded into the operator the way every engine prints it:
+    // `calc(100% - 12px)`, never `calc(100% + -12px)`.
+    const auto append = [&out](double n, std::string_view unit) {
+        if (out.empty()) {
+            out += format_number(n);
+        } else {
+            out += n < 0.0 ? " - " : " + ";
+            out += format_number(n < 0.0 ? -n : n);
+        }
+        out += unit;
+    };
+    if (value.has_percent) { append(value.percent, "%"); }
+    for (const auto & [unit, coefficient] : sorted) { append(coefficient, unit); }
+    return out;
+}
+
 } // namespace
 
 std::string_view canonical_unit(numeric_type type) noexcept {
@@ -740,6 +1058,7 @@ std::string_view canonical_unit(numeric_type type) noexcept {
     case numeric_type::time: return "s";
     case numeric_type::frequency: return "hz";
     case numeric_type::resolution: return "dppx";
+    case numeric_type::flex: return "fr";
     }
     return {};
 }
@@ -876,6 +1195,13 @@ math_context math_context_of(std::string_view property) noexcept {
     for (const std::string_view one : lengths) {
         if (ascii_iequals(one, property)) { return math_context::length; }
     }
+    // THE PROPERTIES WHOSE WHOLE VALUE IS AN `<integer>`, which is the same list
+    // `properties.cpp` marks `k::integer` - kept here rather than asked of that
+    // table because this file must not depend on it, and two names are cheaper to
+    // repeat than a dependency is to add. Adding a third belongs in both.
+    if (ascii_iequals(property, "z-index") || ascii_iequals(property, "order")) {
+        return math_context::integer;
+    }
     return math_context::any;
 }
 
@@ -962,10 +1288,10 @@ namespace {
 //
 // `calc-size()` is deliberately ABSENT although CSS Values 5 lists it as a math
 // function: this file cannot evaluate it, and a name here is a promise to try.
-constexpr std::string_view math_names[] = {"clamp(", "atan2(", "hypot(", "round(", "sqrt(", "asin(",
-                                           "acos(",  "atan(",  "sign(",  "calc(",  "min(",  "max(",
-                                           "mod(",   "rem(",   "abs(",   "pow(",   "log(",  "exp(",
-                                           "sin(",   "cos(",   "tan("};
+constexpr std::string_view math_names[] = {
+    "progress(", "clamp(", "atan2(", "hypot(", "round(", "sqrt(", "asin(", "acos(",
+    "atan(",     "sign(",  "calc(",  "min(",   "max(",   "mod(",  "rem(",  "abs(",
+    "pow(",      "log(",   "exp(",   "sin(",   "cos(",   "tan("};
 
 // A `(`-terminated function name AT `at`, or an empty view. The boundary test is
 // the whole point: `-webkit-calc(` and a custom property called `--my-calc` both
@@ -976,12 +1302,41 @@ constexpr std::string_view math_names[] = {"clamp(", "atan2(", "hypot(", "round(
            c == '_';
 }
 
-[[nodiscard]] std::string_view math_name_at(std::string_view value, std::size_t at) noexcept {
+[[nodiscard]] std::string_view name_at(std::string_view value, std::size_t at,
+                                       std::span<const std::string_view> names) noexcept {
     if (at != 0 && is_name_char(value[at - 1])) { return {}; }
-    for (const std::string_view name : math_names) {
+    for (const std::string_view name : names) {
         if (ascii_iequals(value.substr(at, name.size()), name)) { return name; }
     }
     return {};
+}
+
+[[nodiscard]] std::string_view math_name_at(std::string_view value, std::size_t at) noexcept {
+    return name_at(value, at, math_names);
+}
+
+// ONE PAST THE END OF THE STRING THAT STARTS AT `at`, or `at` itself when no
+// string does. A QUOTED RUN IS NOT CODE: `content: "calc(1px + 1px)"` and
+// `font-family: "round()"` are strings whose bytes happen to spell a function,
+// and reading one as arithmetic either rewrites what the page says or - for
+// `round()` - deletes the declaration for a syntax error inside a literal.
+// `span_of` already skips quotes while it matches parentheses; every scan that
+// looks for a NAME has to as well, and all three of them below do.
+//
+// An unterminated string runs to the end of the value, CSS Syntax 3 §4.3.5.
+[[nodiscard]] std::size_t end_of_string_at(std::string_view value, std::size_t at) noexcept {
+    const char quote = value[at];
+    if (quote != '"' && quote != '\'') { return at; }
+    std::size_t scan = at + 1;
+    while (scan < value.size()) {
+        if (value[scan] == '\\' && scan + 1 < value.size()) {
+            ++scan;
+        } else if (value[scan] == quote) {
+            return scan + 1;
+        }
+        ++scan;
+    }
+    return value.size();
 }
 
 } // namespace
@@ -1045,9 +1400,283 @@ struct function_span {
     return value.substr(from, span.end - from - (span.closed ? 1 : 0));
 }
 
+// Can this text be simplified WHERE IT STANDS - before a font size, a viewport
+// or a containing block exists?
+//
+// CSS Values 4 §10.11 is exact about what may NOT be simplified: `calc(10px +
+// 1em)` keeps both terms because the em has no length yet. This file's evaluator
+// has one mode, which resolves an `em` against whatever context it is handed, so
+// the test is deliberately narrow - every dimension in the text converts by a
+// constant. Anything else is reported as the author wrote it, which is where it
+// was before and cannot be a regression.
+//
+// A PERCENTAGE IS NOT AN OBSTACLE, and excluding it was over-caution: the value
+// model carries a percentage term BESIDE the pixels rather than resolving it, so
+// `calc(50px + calc(40%))` simplifies to `calc(40% + 50px)` with nothing
+// guessed. What genuinely cannot be decided here is COMPARING two of them - the
+// basis may be negative, so `min(1%, 2%)` has no answer - and that is the
+// comparison functions' own business, not this one's.
+[[nodiscard]] bool context_free(std::string_view text) {
+    const token_stream ts = tokenize(text);
+    for (const css_token & t : ts.tokens) {
+        if (t.type == token_type::dimension && !context_free_unit(ts.unit_of(t))) { return false; }
+    }
+    return true;
+}
+
+// A simplified math function as a SPECIFIED value: `calc()` around the answer,
+// always. `serialize_calc` writes a COMPUTED value, where a bare `96px` is the
+// whole of it; a specified one keeps the function, which is how a page can tell
+// `width: calc(96px)` from `width: 96px` after the fact - and what every
+// `test_specified_serialization` in the corpus compares against.
+[[nodiscard]] std::string specified_math(const calc_result & value) {
+    const std::string text = serialize_calc(value);
+    // An infinity or a NaN already carries its own calc(), because there is no
+    // way to write one without a function around it.
+    if (text.starts_with("calc(")) { return text; }
+    return "calc(" + text + ")";
+}
+
+// Is `body` exactly ONE `calc()` and nothing else? That is the test for
+// §10.12's redundant-calc rule below.
+//
+// ONE calc() INSIDE ANOTHER, and not one math function inside another, which is
+// where this was and was too wide. `clamp-length-serialize` asks for
+// `calc(calc(0px + clamp(1px, 1em, 1vh)))` back as `calc(0px + clamp(1px, 1em,
+// 1vh))` - a calc in a calc - four times over, and generalising that to every
+// function read the same rule out of `calc(pow(2, sign(1em - 18px)))`, which
+// `calc-complex-unresolved-serialize` wants back WITH its outer calc() on all
+// six of its values. A math function that is not a calc() is a term like any
+// other and the calc() around it is the author's, not this file's to remove.
+[[nodiscard]] bool is_lone_calc(std::string_view body) {
+    constexpr std::string_view calc = "calc(";
+    if (!ascii_iequals(body.substr(0, calc.size()), calc)) { return false; }
+    return span_of(body, 0, calc).end == body.size();
+}
+
+// Is `text` exactly one math function and nothing else, and which one?
+[[nodiscard]] std::string_view lone_math_function(std::string_view text) {
+    const std::string_view name = math_name_at(text, 0);
+    if (name.empty() || span_of(text, 0, name).end != text.size()) { return {}; }
+    return name;
+}
+
+// THE FUNCTIONS WHOSE EVERY ARGUMENT IS AN <angle>, and the one place this file
+// can type a math function by WHERE IT SITS rather than by what is in it.
+//
+// A math function's type has to fit its surroundings and nothing here models the
+// grammar of `transform` or `filter`, so all three of `rotate(min(0px))` -
+// turning by a length - `rotate(tan(45deg))` - turning by a number - and
+// `rotate(atan2(90px, 100%))` - turning by a ratio whose percentage has nothing
+// to resolve against - were stored as written. They are sixteen assertions and,
+// between them, the LAST failure in each of `minmax-angle-invalid`,
+// `sin-cos-tan-invalid` and `acos-asin-atan-atan2-invalid`.
+//
+// <zero> IS WHY ONLY A MATH FUNCTION IS JUDGED. CSS Transforms 1 spells it
+// `rotate( [ <angle> | <zero> ] )`, so `rotate(0)` is a rotation by nothing and
+// `rotate(min(0))` is a syntax error, and the difference is exactly whether a
+// function was written.
+//
+// `rotate3d()` is deliberately absent: three of its four arguments are numbers
+// and only the last is an angle, so it is a different rule and not this one.
+constexpr std::string_view angle_functions[] = {"rotate(", "rotatex(", "rotatey(", "rotatez(",
+                                                "skew(",   "skewx(",   "skewy(",   "hue-rotate("};
+
+// Every comma-separated argument of `body`, at bracket depth zero and with
+// quoted runs skipped.
+[[nodiscard]] std::vector<std::string_view> top_level_arguments(std::string_view body) {
+    std::vector<std::string_view> args;
+    std::size_t start = 0;
+    int depth = 0;
+    for (std::size_t i = 0; i < body.size(); ++i) {
+        if (const std::size_t quoted = end_of_string_at(body, i); quoted != i) {
+            i = quoted - 1;
+            continue;
+        }
+        if (body[i] == '(') { ++depth; }
+        if (body[i] == ')') { --depth; }
+        if (depth == 0 && body[i] == ',') {
+            args.push_back(body.substr(start, i - start));
+            start = i + 1;
+        }
+    }
+    args.push_back(body.substr(start));
+    return args;
+}
+
+[[nodiscard]] bool has_percentage(std::string_view text) {
+    const token_stream ts = tokenize(text);
+    for (const css_token & t : ts.tokens) {
+        if (t.type == token_type::percentage) { return true; }
+    }
+    return false;
+}
+
+[[nodiscard]] bool angle_arguments_ok(std::string_view value) {
+    const length_context ctx;
+    std::size_t at = 0;
+    while (at < value.size()) {
+        if (const std::size_t quoted = end_of_string_at(value, at); quoted != at) {
+            at = quoted;
+            continue;
+        }
+        const std::string_view name = name_at(value, at, angle_functions);
+        if (name.empty()) {
+            ++at;
+            continue;
+        }
+        const function_span span = span_of(value, at, name);
+        const std::size_t from = at + name.size();
+        const std::string_view body = value.substr(from, span.end - from - (span.closed ? 1 : 0));
+        for (const std::string_view arg : top_level_arguments(body)) {
+            const std::string_view one = trim(arg, html_whitespace);
+            if (lone_math_function(one).empty()) { continue; }
+            // A percentage would have to be a percentage of an angle, and there
+            // is no such thing. This is the same rule the evaluator applies to a
+            // percentage in an expression that ANSWERS with an angle; here the
+            // expression need not have an answer at all - `atan2(90px, 100%)`
+            // has none - and the position alone settles it.
+            if (has_percentage(one)) { return false; }
+            const math_answer answer = evaluate_math(one, ctx);
+            if (answer.outcome == math_outcome::resolved &&
+                answer.value.type != numeric_type::angle) {
+                return false;
+            }
+        }
+        at = span.end;
+    }
+    return true;
+}
+
+// A FUNCTION WITH NO ANSWER STILL HAS ARGUMENTS, and every one of them is a
+// calculation in its own right. `min(1em, 1px)` cannot be ordered, but
+// `min(10% + 30px, 5em + 5%)` is `min(10% + 30px, 5% + 5em)` - the comparison is
+// undecidable and each side of it is still a sum with a canonical order.
+// `minmax-length-percent-serialize` and `calc-infinity-nan-serialize-length` ask
+// for exactly that, the second one through `min(NaN * 2px, NaN * 4em)`.
+//
+// An argument with no simplified form of its own - `none`, `nearest`,
+// `sibling-index()` - is handed back to `simplify_math`, which copies what it
+// cannot answer for and closes what EOF closed. That recursion terminates
+// because `inner` is always shorter than the function it came out of.
+[[nodiscard]] std::string simplified_arguments(std::string_view name, std::string_view inner) {
+    std::string out{name};
+    bool first = true;
+    for (const std::string_view argument : top_level_arguments(inner)) {
+        if (!first) { out += ", "; }
+        first = false;
+        const std::string_view one = trim(argument, html_whitespace);
+        std::string text;
+        if (const auto [outcome, sum] = evaluate_symbolic(one); outcome == math_outcome::resolved) {
+            text = serialize_symbolic(sum);
+        }
+        out += text.empty() ? simplify_math(one) : text;
+    }
+    out += ')';
+    return out;
+}
+
 } // namespace
 
+std::string simplify_math(std::string_view value) {
+    // The bases do not exist yet - that is what makes this the SPECIFIED value -
+    // so `context_free` above is what decides whether a function may be touched
+    // at all, and this context is only ever handed expressions that need none.
+    const length_context ctx;
+    std::string out;
+    std::size_t at = 0;
+    while (at < value.size()) {
+        // A MATH FUNCTION WITH ITS OWN VOCABULARY IS COPIED OVER WHOLE, for the
+        // same reason `math_syntax_ok` steps over it: `calc-size(10px, sign(size)
+        // * size)` redefines `size` inside itself, so the `sign()` in there is
+        // not the ordinary one and simplifying it would be answering a question
+        // this file was not asked.
+        if (ascii_iequals(value.substr(at, 10), "calc-size(") &&
+            (at == 0 || !is_name_char(value[at - 1]))) {
+            const std::size_t end = span_of(value, at, "calc-size(").end;
+            out.append(value.substr(at, end - at));
+            at = end;
+            continue;
+        }
+        if (const std::size_t quoted = end_of_string_at(value, at); quoted != at) {
+            out.append(value.substr(at, quoted - at));
+            at = quoted;
+            continue;
+        }
+        const std::string_view name = math_name_at(value, at);
+        if (name.empty()) {
+            out.push_back(value[at]);
+            ++at;
+            continue;
+        }
+        const function_span span = span_of(value, at, name);
+        const std::string_view whole = value.substr(at, span.end - at);
+        const std::string_view body = body_of(value, at, name, span);
+        // The argument list alone, which is `body` for a `calc()` and `body`
+        // with the name and the closing paren taken off for everything else.
+        const std::size_t from = at + name.size();
+        const std::string_view inner = value.substr(from, span.end - from - (span.closed ? 1 : 0));
+        at = span.end;
+        // A calc() AROUND ONE OTHER calc() IS REDUNDANT. §10.12's simplification
+        // returns a lone child rather than wrapping it, so
+        // `calc(calc(0px + clamp(...)))` loses exactly one layer.
+        // `clamp-length-serialize` asserts that four times.
+        //
+        // ...AND SO IS A calc() AROUND A LONE COMPARISON, for a sharper reason.
+        // `min()`, `max()` and `clamp()` are NODES OF THE CALCULATION TREE (CSS
+        // Values 4 §10.9), not opaque leaves: simplifying `calc(clamp(1px, 1em,
+        // 1vh))` leaves a tree whose root IS the Clamp node, and §10.13
+        // serialises a Clamp root as `clamp(...)` with no calc() anywhere.
+        //
+        // That is exactly why the rule stops at the three of them. `pow()` is
+        // not a node type - it is a leaf this file could not evaluate - and a
+        // leaf inside a calc() keeps its calc(), which is what
+        // `calc-complex-unresolved-serialize` asks for on all six of its values.
+        // The two files disagree only if the distinction is "any math function".
+        if (ascii_iequals(name, "calc(")) {
+            const std::string_view trimmed = trim(body, html_whitespace);
+            const std::string_view lone = lone_math_function(trimmed);
+            if (is_lone_calc(trimmed) || ascii_iequals(lone, "min(") ||
+                ascii_iequals(lone, "max(") || ascii_iequals(lone, "clamp(")) {
+                out.append(simplify_math(trimmed));
+                continue;
+            }
+        }
+        const math_answer answer = evaluate_math(body, ctx);
+        if (answer.outcome == math_outcome::resolved && context_free(whole)) {
+            out.append(specified_math(answer.value));
+            continue;
+        }
+        // A SUM THAT COULD NOT BE FOLDED IS STILL SIMPLIFIED. `calc(10px + 1vmin
+        // + 10%)` has no single magnitude before there is a viewport and a
+        // containing block, and §10.12's simplified form is not the author's
+        // bytes but the three terms in §10.13's canonical order -
+        // `calc(10% + 10px + 1vmin)`. There is nothing to guess: the terms are
+        // added per unit and printed, and a comparison whose arguments cannot be
+        // ORDERED still says so and falls through below.
+        if (const auto [outcome, sum] = evaluate_symbolic(body);
+            outcome == math_outcome::resolved) {
+            if (const std::string text = serialize_symbolic(sum); !text.empty()) {
+                out.append("calc(").append(text).append(")");
+                continue;
+            }
+        }
+        // ...AND A FUNCTION WITH NO ANSWER AT ALL STILL HAS ARGUMENTS. §10.11
+        // says a comparison that cannot be ORDERED is its own computed value -
+        // `min(10px, 5%)`, `min(1em, 1px)` - and says nothing about the two
+        // sides of it, which are calculations like any other and simplify like
+        // any other. What genuinely has no simplified form here comes back
+        // through this same function and keeps the author's bytes, which is
+        // where `sibling-index()` and `nearest` land.
+        out.append(simplified_arguments(name, inner));
+    }
+    return out;
+}
+
 bool math_syntax_ok(std::string_view value) {
+    // ...AND OF THE RIGHT KIND FOR WHERE IT SITS, which for the angle-only
+    // functions is a question about position rather than about contents.
+    if (!angle_arguments_ok(value)) { return false; }
     // The bases do not matter to a syntax question - `1em` is well formed at any
     // font size - so this asks with the defaults rather than making every caller
     // invent a context it has no use for.
@@ -1067,6 +1696,10 @@ bool math_syntax_ok(std::string_view value) {
             at = span_of(value, at, "calc-size(").end;
             continue;
         }
+        if (const std::size_t quoted = end_of_string_at(value, at); quoted != at) {
+            at = quoted;
+            continue;
+        }
         const std::string_view name = math_name_at(value, at);
         if (name.empty()) {
             ++at;
@@ -1083,11 +1716,35 @@ bool math_syntax_ok(std::string_view value) {
     return true;
 }
 
+bool math_uses_percentage(std::string_view value) {
+    std::size_t at = 0;
+    while (at < value.size()) {
+        if (const std::size_t quoted = end_of_string_at(value, at); quoted != at) {
+            at = quoted;
+            continue;
+        }
+        const std::string_view name = math_name_at(value, at);
+        if (name.empty()) {
+            ++at;
+            continue;
+        }
+        const function_span span = span_of(value, at, name);
+        if (has_percentage(value.substr(at, span.end - at))) { return true; }
+        at = span.end;
+    }
+    return false;
+}
+
 folded_value fold_math(std::string_view value, const length_context & ctx, math_context accepts) {
     std::string out;
     bool ok = true;
     std::size_t at = 0;
     while (at < value.size()) {
+        if (const std::size_t quoted = end_of_string_at(value, at); quoted != at) {
+            out.append(value.substr(at, quoted - at));
+            at = quoted;
+            continue;
+        }
         const std::string_view name = math_name_at(value, at);
         if (name.empty()) {
             out.push_back(value[at]);
@@ -1105,7 +1762,21 @@ folded_value fold_math(std::string_view value, const length_context & ctx, math_
         const bool wrong_kind = answer.outcome == math_outcome::resolved &&
                                 answer.value.is_number && accepts == math_context::length;
         if (answer.outcome == math_outcome::resolved && !wrong_kind) {
-            out.append(serialize_calc(answer.value));
+            calc_result computed = answer.value;
+            // AN `<integer>` PROPERTY ROUNDS ITS ANSWER, and CSS Values 4 §10.10
+            // says which way: to the nearest integer, with a value exactly halfway
+            // going toward POSITIVE INFINITY. That is `floor(x + 0.5)` and not
+            // `std::round`, which rounds a half away from zero - the two disagree
+            // on every negative half, so `z-index: calc(-3 / 2)` is -1 and not -2.
+            //
+            // Rounding HERE and not in the evaluator is what makes
+            // `calc(calc(1 / 3) * 3)` come out as 1: only the finished conversion
+            // rounds, never an intermediate.
+            if (accepts == math_context::integer && computed.is_number &&
+                std::isfinite(computed.px)) {
+                computed.px = std::floor(computed.px + 0.5);
+            }
+            out.append(serialize_calc(computed));
             at = span.end;
             continue;
         }

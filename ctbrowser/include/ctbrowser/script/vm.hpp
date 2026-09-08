@@ -402,6 +402,32 @@ public:
     // Every global, for a window that enumerates itself.
     [[nodiscard]] const string_flat_map<value> & globals() const noexcept { return globals_; }
 
+    // WHAT AN UNDECLARED NAME MEANS, when the embedder has an answer.
+    //
+    // A bare identifier resolves against the global OBJECT, and in a browser
+    // that object has named properties nothing ever declared: HTML 7.3.3 says
+    // an element with an `id` is reachable as `id` with no `window.` in front
+    // of it, and web-platform-tests leans on it constantly - `getComputedStyle
+    // (target1)` with `target1` written nowhere but in the markup. Without a
+    // hook the VM answers `undefined` for those, and every read off them is
+    // `undefined` in turn, which is how six `css/cssom` files fail on a
+    // property comparison that never happened.
+    //
+    // A HOOK RATHER THAN A LOOK AT `window`, deliberately. Going through the
+    // window proxy would also inherit Object.prototype, so a bare `toString`
+    // would stop being undefined - correct for a browser and a much larger
+    // change than this is. The shell installs a function that answers named
+    // elements and nothing else. Consulted ONLY when the name is not a global,
+    // so the declared path is one map lookup exactly as before.
+    void set_undeclared_name_hook(std::function<value(std::string_view)> hook) {
+        undeclared_name_ = std::move(hook);
+    }
+    [[nodiscard]] value global_or_named(std::string_view name) {
+        const auto it = globals_.find(name);
+        if (it != globals_.end()) { return it->second; }
+        return undeclared_name_ ? undeclared_name_(name) : value::undefined();
+    }
+
     // The realm's script receiver is independent of the writable globalThis
     // binding. An embedder selects its host object before running scripts;
     // assigning globalThis in JavaScript never changes this identity.
@@ -2199,6 +2225,9 @@ private:
     // docs/performance.md measured at -47% on object_object::find, and this map
     // is the one the whole shell binding layer reads through.
     string_flat_map<value> globals_;
+    // See set_undeclared_name_hook. Empty in a bare VM, which is what
+    // `unittests/js` and `ct262` run.
+    std::function<value(std::string_view)> undeclared_name_;
     value global_this_ = value::undefined();
     std::vector<value> registers_;
     std::vector<call_frame> frames_;

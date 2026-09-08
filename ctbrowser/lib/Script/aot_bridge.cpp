@@ -914,18 +914,17 @@ struct aot_bridge {
 
     // ct_aot_global_get. THE ABSENCE IS LOAD-BEARING and the row says so: an
     // undeclared global does NOT throw a ReferenceError in this runtime, it
-    // reads `undefined`. context::global already has exactly that behaviour -
-    // `globals_.find(name)`, undefined when absent - which is the same two
-    // lines VM_CASE(get_global) runs (run_loop.cpp:226-231), so the two tiers
-    // cannot drift.
+    // reads `undefined` - or whatever the embedder's undeclared-name hook says,
+    // which is how an element with an `id` answers to a bare identifier.
+    // `context::global_or_named` is exactly what VM_CASE(get_global) runs, so
+    // the two tiers cannot drift.
     //
-    // NO FRAME IS TOUCHED beyond finding the context, and nothing here can
-    // throw, allocate or re-enter - which is why the row is (0, 0, 0) and why
-    // the compiled form is a single call with no status and no edge.
+    // THE CONTEXT IS NO LONGER const, because the hook may allocate a wrapper.
+    // It still touches no frame beyond finding the context.
     static std::uint64_t global_get(aot::ct_aot_frame * f, const char * name,
                                     std::uint32_t name_len) {
-        const context & cx = *frame_of(f).ctx;
-        return cx.global(std::string_view{name, name_len}).bits();
+        context & cx = *frame_of(f).ctx;
+        return cx.global_or_named(std::string_view{name, name_len}).bits();
     }
 
     // ct_aot_global_set. VM_CASE(set_global) is

@@ -719,7 +719,8 @@ int run_app(std::string_view html, app_options options) {
             return script::value::boolean(audio.play(page.assets(), name, volume));
         });
 
-    page.load_html(html);
+    page.load_document(html, options.xml ? shell::browser::source_kind::xml
+                                         : shell::browser::source_kind::html);
     // DID THE PACKAGING ACTUALLY WORK? An image that matches no script on this
     // page is not refused by anything - it is simply never looked up, and the
     // page compiles from source and runs correctly. That is the silent failure
@@ -968,6 +969,10 @@ int run_app_file(const std::filesystem::path & path, app_options options) {
     buffer << in.rdbuf();
     if (options.title == "ctbrowser") { options.title = path.filename().string(); }
     if (options.asset_path.empty()) { options.asset_path = path.parent_path(); }
+    // The extension, and only the extension. A caller that already knows -
+    // because it fetched the bytes and has a content type - sets `options.xml`
+    // itself and this leaves it alone.
+    if (!options.xml) { options.xml = is_xml_extension(path.filename().string()); }
     return run_app(buffer.str(), std::move(options));
 }
 

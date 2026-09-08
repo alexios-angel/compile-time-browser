@@ -21,6 +21,11 @@ target_sources(ctbrowser-shell
     # Error and cannot be built by context::throw_error. Its own file because
     # every binding throws through it and none of them owns it.
     bindings/exceptions.cpp
+    # <iframe>: a nested browsing context, which here is a SECOND dom_bindings
+    # over its own tree - the model createHTMLDocument already uses - plus the
+    # bytes and the load event. Its own file because neither document.cpp nor
+    # element.cpp owns "a document inside a document".
+    bindings/frames.cpp
     # MutationObserver: its own file because it is not a binding over the DOM so
     # much as a diff of it - `mutated()` reports THAT the document changed and
     # never what, so the records are reconstructed from a snapshot.

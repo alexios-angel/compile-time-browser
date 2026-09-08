@@ -1300,12 +1300,12 @@ void install_function(context & cx) {
                    attr_configurable);
         return value::object(fn);
     });
-    // TODO: return the REAL source. p5's Friendly Error System parses a sketch
-    // with `f.toString()` and gets "[native code]", which is where the ratchet
-    // stops. Needs a source span on function_proto - the ctjs node's `text` is
-    // a string_view INTO the source, so the offset is a subtraction - plus the
-    // program keeping its source string. Error.stack wants the same thing, and
-    // would get real line numbers from it.
+    // The TODO that stood here - "return the REAL source" - is DONE, and the
+    // body below is what does it: `function_proto` carries the span and
+    // `program::source` keeps the bytes. `context::to_string` reaches this now
+    // too, so `String(f)` and `f.toString()` are one answer rather than two.
+    // What is still owed from the same two integers is `Error.stack`, which
+    // would get real line numbers out of them.
     method(cx, function_proto, "toString", 0, [](context & c, std::span<value>) {
         // THE REAL SOURCE, when there is any. A closure knows which program its
         // protos came from, and the program kept the text - so this is a

@@ -14,7 +14,107 @@ them moves.
     tools/wpt/run-wpt.py --selftest            prove the harness works
     tools/wpt/run-wpt.py --dir dom/nodes       one directory, one table
 
-## The baseline — 2026-09-07
+## The baseline — 2026-09-07, night
+
+**369 of the 1,090 tests that ran, which is 33.9%**, and still not one crash.
+Measured on the devbox against WPT `3f6b09ae`, four workers, a 4 GB `ulimit -v`
+per driver, `CTBROWSER_GL_DRIVER=deterministic`, engine at commit `f7e0912` on
+`ctbrowser-wpt`.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 114 | 148 | 32 | 0 | 15 | 53 | 362 |
+| `dom/events` | 56 | 24 | 8 | 0 | 3 | 85 | 176 |
+| `html/dom` | 76 | 130 | 10 | 0 | 11 | 138 | 365 |
+| `css/cssom` | 54 | 116 | 6 | 0 | 16 | 29 | 221 |
+| `css/css-values` | 69 | 181 | 3 | 0 | 18 | 237 | 508 |
+| **total** | **369** | **599** | **59** | **0** | **63** | **542** | **1,632** |
+
+Subtests: **13,553 PASS, 10,868 FAIL, 726 NOTRUN, 111 TIMEOUT.**
+
+`f7e0912` is the tip of the branch after the previous session's four subagent
+merges landed — the XML front end, the live collections, the CSS value grammar,
+the CSSOM object model, the reflection work, `attachShadow`, `document.fonts`
+and the ECMAScript early errors. Those merges are the +34 files over the
+`636f1b3` row below; the table under it is what each of them was for.
+
+### And what the same commit says about the SUITE
+
+**The engine's own CTest gate was RED at `f7e0912`, 112 of 119**, and it had
+been red since those merges landed: `page_scripts`, `selectors`,
+`widgets_basics`, `shadow_dom`, `vm_basics` and `promise_combinators` failed and
+`early_errors` **hung** — killed at 1,500 s. Every one of them predates this
+measurement.
+
+That is worth writing down beside a number that went up, because the two facts
+are the same fact: four branches were merged without the suite being run over
+them, so the WPT score moved and six unit tests and one hang moved with it. The
+instrument is not the gate. `tools/remote-build.sh` is the gate, and a WPT
+measurement taken without it is a measurement of an engine nobody has checked.
+
+## The previous baseline — 2026-09-07, evening
+
+**335 of the 1,090 tests that ran, which is 30.7%**, and still not one crash.
+Measured on the devbox against WPT `3f6b09ae`, four workers,
+`CTBROWSER_GL_DRIVER=deterministic`, engine at commit `636f1b3` on
+`ctbrowser-wpt`.
+
+| suite | PASS | FAIL | TIMEOUT | CRASH | HARNESS_ERROR | SKIP | files |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dom/nodes` | 106 | 157 | 31 | 0 | 15 | 53 | 362 |
+| `dom/events` | 56 | 24 | 8 | 0 | 3 | 85 | 176 |
+| `html/dom` | 71 | 135 | 10 | 0 | 11 | 138 | 365 |
+| `css/cssom` | 54 | 115 | 6 | 0 | 17 | 29 | 221 |
+| `css/css-values` | 48 | 199 | 3 | 0 | 21 | 237 | 508 |
+| **total** | **335** | **630** | **58** | **0** | **67** | **542** | **1,632** |
+
+Subtests: **13,168 PASS, 11,165 FAIL, 726 NOTRUN, 109 TIMEOUT.**
+
+**Test by test against the run below it: 74 files gained and NOT ONE lost.**
+That is the number worth reading twice, because the previous session's table has
+a column of six regressions in it and this one does not. HARNESS_ERROR fell
+90 -> 67 and TIMEOUT 60 -> 58, both of which mean tests that could not start now
+start.
+
+Two measurements were taken this session and both are here, because the first
+one is what makes the second attributable:
+
+| date | commit | PASS | of 1,090 | what it measures |
+|---|---|---:|---:|---|
+| 2026-09-07 (day) | — | 197 | 18.1% | the session in the table further down |
+| 2026-09-07 (eve) | `a790941` | 261 | 23.9% | three DOM commits carried over from an interrupted session: a namespaced `attribute`, the document answering as a Node, and the computed passive default |
+| 2026-09-07 (eve) | `636f1b3` | **335** | **30.7%** | the session below |
+
+### What moved, and what it cost
+
+| change | measured effect |
+|---|---|
+| **an XML front end** — `dom/xml.hpp` and `lib/DOM/xml.cpp`, a real XML 1.0 parser, because an `.xhtml` file handed to the HTML tree builder gets a `<script>` whose body still has `<![CDATA[` on the front | twelve `dom/nodes` files reported `parse error: expression - at 1:1` and ran no assertion at all. All 80 `.xhtml`/`.xht`/`.xml` files in the corpus were parsed with it and 76 are well-formed by it; the four that are not are each correct, and named in the header |
+| **the interface table is built before it is adopted** — `interface_prototypes_` is built lazily on the first `wrap()`, and `createHTMLDocument`, `make_live_collection` and `documentElement` all read it before anything had wrapped a node | four unit tests, and the shape of the bug is worth naming: `instanceof HTMLDivElement` was FALSE for a page whose first statement made a document and TRUE for one that had touched an element first |
+| **a collection is live, an HTMLCollection, and read-only by index** — `getElementsByTagName` built an array-shaped plain object and `Element.children` a plain Array | `dom/nodes` 75 -> 106 with the two below |
+| **`instanceof` follows a proxy to its target** — 7.3.21 calls `[[GetPrototypeOf]]`, which a proxy forwards; this engine read a `prototype` field a `proxy_object` does not have | every live collection and `window` answered false. It is also what `document.links`, `document.scripts` and `getElementsByName` assert first |
+| **`el.style` follows the `style` attribute** — the declaration store was seeded once at wrapper construction and `setAttribute("style", …)` never touched the proxy | `serialize-values.html` is 697 subtests of exactly that shape, and `css-style-attr-decl-block.html` names it in a subtest title |
+| **an undeclared name asks the embedder** — HTML 7.3.3 makes an element with an `id` a named property of the global object, and a bare identifier resolves against that object | six `css/cssom` files address their subject as `getComputedStyle(target1)` with `target1` written nowhere but in the markup, and every read off it was `undefined` |
+| **CharacterData**, `Text.splitText`, `new Text()`/`new Comment()`/`new DocumentFragment()`, `isEqualNode`/`isSameNode`, and a detached `Attr` that keeps the value it was removed with | `dom/nodes` again; offsets are UTF-16 code units over UTF-8 bytes, which is the part a shortcut gets wrong |
+| **the CSS value grammar and canonical serialization** — §10.13 sum ordering, the calculation context a property imposes, `progress()`, `ident()`, `inherit()`, `random-item()`, and a percentage with no context being a syntax error | `css/css-values` 29 -> 48 |
+| **CSSOM's `getComputedStyle`** — a pseudo-element argument is not the element, the automatic minimum size for a grid item and for an `aspect-ratio`, and a computed `font-family` that keeps its case | `css/cssom` 39 -> 54 |
+| **the CSSOM object model** — constructable sheets, `insertRule` on a grouping rule, a MediaList that is a view of its text, adopted sheets reaching the author CSS | `css/cssom`, with the row above |
+| **reflection, `dataset`, ARIA, `insertAdjacent*`, the namespaced attribute API** | `html/dom` 62 -> 71 |
+
+### And one regression, caused and fixed inside the session
+
+Making `getElementsByTagName` and `Element.children` live turned them into
+PROXIES, and `context::iterable_values` had no proxy case — so
+`for (const x of el.children)` and `[...collection]` silently read an **empty
+list**. Not an error: a wrong answer. `unittests/unit/bindings_basics` caught it
+on the devbox before the measurement above was taken.
+
+`getElementsByClassName` and the eight document collections were already proxies
+and already iterated as nothing, so the defect predates the change that exposed
+it — which is the argument for a suite that runs on every build rather than a
+number that only moves forward.
+
+## The previous baseline — 2026-09-07, day
 
 **1,632 tests, 232.1 s, four workers, and still not one crash.** Measured on the
 devbox against WPT `3f6b09ae`, engine at this branch.
@@ -119,8 +219,28 @@ engine.
 
 ## What is standing in front of the most tests now
 
-Every entry is a count from the 2026-09-07 run and names a piece of work rather
-than a symptom. This is the handoff.
+Every entry is a count from the **2026-09-07 evening** run at `636f1b3` and
+names a piece of work rather than a symptom. This is the handoff.
+
+| what | where | what it is worth, counted |
+|---|---|---:|
+| **`attachShadow` and the shadow root** | `lib/Shell/bindings/element.cpp`, and it is a BINDINGS change: `node_kind` already has `document_fragment`, which is the shape of a shadow root | **34 files**, across all four suites, and most of them are not ABOUT shadow DOM - they attach a shadow tree as scaffolding and assert something else. Several are whole-file HARNESS_ERRORs, so they report nothing at all today |
+| **`customElements.define`** | new, `lib/Shell/bindings/` | 11 files |
+| **`document.fonts`**, even as a `FontFaceSet` whose `ready` is already resolved | `lib/Shell/bindings/document.cpp` | 10 files die on `` `then` is undefined `` before their first assertion |
+| **`assert_implements`** — the feature-detection helper reports `undefined` | mostly `html/dom/render-blocking/`, which needs `blocking=` on `<link>`/`<script>` | 11 files |
+| **Web Animations** — `element.animate`, `getAnimations`, `KeyframeEffect` | new | 6 files in `css/css-values`, plus the interpolation ones behind them |
+| **`<script type="module">`** | `lib/Shell` script loading | the seven `css/cssom/getComputedStyle-insets-*` files import their fixture as a module |
+| **the reflection tables** | `lib/Shell/bindings/element.cpp` | the largest SUBTEST cluster left: `html/dom` has 2,468 failing subtests and the eight `reflection-*.html` files are most of them. Note the file yield is low - they time out regardless - and the subtest yield is enormous |
+| **`css/css-values` has 4,541 failing subtests** and `dom/nodes` 4,203 | — | the two suites where the remaining work is deepest rather than widest |
+
+### The earlier handoff, from the 2026-09-07 day run
+
+Kept because several of its rows are now done and the ones that are not have not
+moved. `querySelector` on the Selectors engine, reflection as a table, a second
+Document, MutationObserver, the CSSOM object model, interface objects for node
+types and attribute namespaces have all landed since it was written; shadow DOM
+and named access on the Window are the two that had not, and named access landed
+in the evening run above.
 
 | what | where | what it is worth |
 |---|---|---|
