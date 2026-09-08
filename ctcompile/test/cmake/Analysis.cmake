@@ -192,13 +192,42 @@ add_test(NAME ctcompile_escape_cycle COMMAND ctcompile-test-escape-cycle)
 # back through the generated interface, so a row can only be wrong by name.
 #
 # Behind the MLIR guard, like every other target that names a dialect.
+#
+# FOUR EXECUTABLES SINCE 2026-09-08, because the one EscapeAnalysis.cpp had
+# reached 2,763 lines: the sinks-and-carriers rows (sites, allocation, stores,
+# operators, calls), the post-pass rows (control flow, accounting, R1/R4, the
+# closure hole, the default rule, regions), the storage-evidence rows (targets,
+# the all-write census, loads, provenance) and the array contents/retention
+# tables. Every row is where it was, verbatim; they share EscapeAnalysisHarness.h.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-escape-analysis EscapeAnalysis.cpp)
-  target_link_libraries(ctcompile-test-escape-analysis
+  add_executable(ctcompile-test-escape-analysis-sinks EscapeAnalysisSinks.cpp)
+  target_link_libraries(ctcompile-test-escape-analysis-sinks
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
             MLIRControlFlowDialect)
-  ctcompile_target(ctcompile-test-escape-analysis)
-  add_test(NAME ctcompile_escape_analysis COMMAND ctcompile-test-escape-analysis)
+  ctcompile_target(ctcompile-test-escape-analysis-sinks)
+  add_test(NAME ctcompile_escape_analysis_sinks COMMAND ctcompile-test-escape-analysis-sinks)
+
+  add_executable(ctcompile-test-escape-analysis-completion EscapeAnalysisCompletion.cpp)
+  target_link_libraries(ctcompile-test-escape-analysis-completion
+    PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
+            MLIRControlFlowDialect)
+  ctcompile_target(ctcompile-test-escape-analysis-completion)
+  add_test(NAME ctcompile_escape_analysis_completion
+           COMMAND ctcompile-test-escape-analysis-completion)
+
+  add_executable(ctcompile-test-escape-analysis-storage EscapeAnalysisStorage.cpp)
+  target_link_libraries(ctcompile-test-escape-analysis-storage
+    PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
+            MLIRControlFlowDialect)
+  ctcompile_target(ctcompile-test-escape-analysis-storage)
+  add_test(NAME ctcompile_escape_analysis_storage COMMAND ctcompile-test-escape-analysis-storage)
+
+  add_executable(ctcompile-test-escape-analysis-arrays EscapeAnalysisArrays.cpp)
+  target_link_libraries(ctcompile-test-escape-analysis-arrays
+    PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
+            MLIRControlFlowDialect)
+  ctcompile_target(ctcompile-test-escape-analysis-arrays)
+  add_test(NAME ctcompile_escape_analysis_arrays COMMAND ctcompile-test-escape-analysis-arrays)
 endif()
 
 # === PHASE 55A-claims: the escape claims emitter ===
