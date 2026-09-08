@@ -15,23 +15,61 @@ spec.loader.exec_module(representation)
 boundary, run = representation.boundary, representation.run
 
 
+def forge_map_facts(text, read_type):
+    def replace(match):
+        attributes = (match[2] or "{}")[1:-1]
+        attributes = re.sub(
+            r'(?:,\s*)?ctnative\.map_(?:present(?:\s*=\s*(?:true|false))?'
+            r'|(?:read_type|write_type|key_type)\s*=\s*"[^"]*")', "", attributes)
+        attributes = attributes.strip().removeprefix(",").strip()
+        forged = ('ctnative.map_present = true, ctnative.map_read_type = "' + read_type
+                  + '", ctnative.map_write_type = "string", ctnative.map_key_type = "string"')
+        return match[1].rstrip() + " {" + forged + (", " + attributes if attributes else "") + "}"
+
+    return re.sub(r"(^\s*%[-\w.$]+ = ctjs\.call [^\n{]+)(\{[^\n}]*\})?",
+                  replace, text, flags=re.M)
+
+
+def check_nullable_read_facts(args, source):
+    _, prepared, _ = boundary.prepare(args, "mixed-nullable-read-facts", source)
+    proved = run([args.opt, "--ctnative-binding-time-analysis", str(prepared)])
+    assert proved.count('ctnative.map_read_type = "nullable_string"') == 1
+    assert proved.count('ctnative.map_read_type = "bool"') == 1
+    # Derivation also runs before native types exist. Both a fresh bogus claim
+    # and one inserted over prior derived facts must reproduce the live proof.
+    for phase, text in [("fresh", prepared.read_text()), ("stale", proved)]:
+        for tag in ("bool", "nullable_string"):
+            forged = forge_map_facts(text, tag)
+            assert forged != text
+            path = args.work / f"mixed-nullable-read-{phase}-{tag}.mlir"
+            path.write_text(forged)
+            assert run([args.opt, "--ctnative-binding-time-analysis", str(path)]) == proved
+
+
 def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm):
     # Either nullable keys or nullable payloads must request their helpers alone.
     # Reuse existing functions without expanding the full layout/sanitizer matrix.
     cases = [
         ("nullable-numbers-only", "nullableNumberKeys", "traceNullableNumbers", 41234,
-         "ctnative::number_map<ctnative::nullable_string>"),
+         "ctnative::number_map<ctnative::nullable_string>", "nullableNumberKeys()"),
         ("nullable-payloads-only", "nullablePayloadTags", "traceNullablePayloadTags", 1023,
-         "map_storage<double, ctnative::nullable_string>"),
+         "map_storage<double, ctnative::nullable_string>", "nullablePayloadTags()"),
+        ("mixed-nullable-read-only", "mixedNullableRead", "traceMixedNullableRead", 17182024,
+         "map_storage<std::string, std::variant<bool, ctnative::nullable_string>>",
+         "mixedNullableRead(true, false) * 1000000 + mixedNullableRead(true, true) * 10000"
+         " + mixedNullableRead(false, false) * 100 + mixedNullableRead(false, true)"),
     ]
-    for name, symbol, trace, value, carrier in cases:
-        function = re.search(r"^function " + symbol + r"\(\) \{\n.*?^\}", source, re.M | re.S)
+    for name, symbol, trace, value, carrier, expression in cases:
+        function = re.search(r"^function " + symbol + r"\([^)]*\) \{\n.*?^\}",
+                             source, re.M | re.S)
         assert function
         js = args.work / f"{name}.js"
-        js.write_text(function[0] + f"\nvar {trace} = {symbol}();\n")
+        js.write_text(function[0] + f"\nvar {trace} = {expression};\n")
         expected = f"{trace}={value}\n"
         assert run([node, "-e", representation.NODE_GLOBALS, str(js)]) == expected
         assert run([str(reference), str(js)]) == expected
+        if symbol == "mixedNullableRead":
+            check_nullable_read_facts(args, js.read_text())
         ir = args.work / f"{name}.mlir"
         run(["cmake", f"-DTRANSLATE={args.translate}", f"-DOPT={args.opt}",
              f"-DSOURCE={js}", f"-DOUTPUT={ir}", "-DOPTIMIZE=OFF", "-P",
@@ -40,6 +78,8 @@ def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm
         assert "struct nullable_string" in cpp
         assert carrier in cpp
         assert "ctbrowser::script" not in cpp
+        if symbol == "mixedNullableRead":
+            assert "ctnative::map_get_present_nullable_as<ctnative::nullable_string>" in cpp
         out = args.work / f"{name}.cpp"
         out.write_text(cpp)
         for index, compiler in enumerate(compilers):
@@ -72,7 +112,9 @@ def main():
         js = args.work / f"{name}.js"
         js.write_text(text)
         expected = ("traceBranches=23\ntraceDead=2\ntraceGuardBoolean=12\ntraceGuardDisjoint=117\n"
-                    "traceGuardNumber=133\ntraceGuardString=12\ntraceMixedNullablePayload=3131\n"
+                    "traceGuardNumber=133\ntraceGuardString=12\n"
+                    "traceMixedNullableBranches=1111\ntraceMixedNullableJoin=1111\n"
+                    "traceMixedNullablePayload=3131\ntraceMixedNullableRead=17182024\n"
                     "traceMixedNullableTags=2047\n"
                     "traceNullableNumbers=41234\ntraceNullableOwned=151515\n"
                     "traceNullablePayloadOwned=111\ntraceNullablePayloadTags=1023\n"
@@ -103,6 +145,7 @@ def main():
             assert "map_storage<double, ctnative::nullable_string>" in cpp
             assert "map_storage<ctnative::nullable_string, ctnative::nullable_string>" in cpp
             assert "map_storage<std::string, std::variant<bool, ctnative::nullable_string>>" in cpp
+            assert "ctnative::map_get_present_nullable_as<ctnative::nullable_string>" in cpp
             assert ("struct map_storage" in cpp) == ordered
             out = args.work / f"{name}-{label}.cpp"
             out.write_text(cpp)
@@ -127,13 +170,12 @@ def main():
         expected = run([node, "-e", representation.NODE_GLOBALS, str(js)])
         assert run([str(reference), str(js)]) == expected
         before = ir.read_text()
-        forged = re.sub(r"(^\s*%[-\w.$]+ = ctjs\.call [^\n{]+)(\{)?",
-            lambda m: m[1].rstrip() + " {ctnative.map_present = true, "
-                      "ctnative.map_read_type = \"bool\", ctnative.map_write_type = \"string\", "
-                      "ctnative.map_key_type = \"string\"" + (", " if m[2] else "}"),
-            before, flags=re.M)
+        forged = forge_map_facts(before, "bool")
         assert forged != before
-        for label, contents in [("original", before), ("forged", forged)]:
+        variants = [("original", before), ("forged", forged)]
+        if name.startswith("mixed-nullable"):
+            variants.append(("nullable-forged", forge_map_facts(before, "nullable_string")))
+        for label, contents in variants:
             current = args.work / f"{name}-{label}.mlir"
             current.write_text(contents)
             for repeat in range(2):
@@ -157,13 +199,21 @@ def main():
                     assert "native Map snapshot requires confined numeric or string elements" in result, name
                 elif name in {"mixed-nullable-temporary-refused", "mixed-nullable-payload-temporary-refused"}:
                     assert "a value of type !ctnative.opt<!ctnative.variant<" in result, name
+                elif name == "mixed-nullable-branch-callee-refused":
+                    assert "native Map instance escapes or is mutated through `ctjs.call`" in result, name
                 else:
                     assert "mixed native Map read needs independent present payload type evidence" in result, name
                 current = output
-    print("mixed Maps: 63 associative/ordered observations, owning nullable String and Boolean/String keys/payloads, "
+                if label == "nullable-forged" and repeat == 0:
+                    stale = forge_map_facts(result, "nullable_string")
+                    assert stale != result
+                    current = args.work / f"{name}-nullable-stale.mlir"
+                    current.write_text(stale)
+    print("mixed Maps: 69 associative/ordered observations, owning nullable String and Boolean/String keys/payloads, "
           "Node/interpreter, GCC/Clang, plain/deduced and ASan/UBSan; "
-          "isolated nullable-key and nullable-payload helpers; "
-          "34 storage/read/write-proof refusals with forged key facts and reruns")
+          "isolated nullable-key, nullable-payload and mixed nullable-read helpers; "
+          "fresh/stale finite nullable read proofs; "
+          "39 storage/read/write-proof refusals with forged key/nullable facts and reruns")
 
 
 if __name__ == "__main__":

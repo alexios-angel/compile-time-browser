@@ -343,7 +343,8 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
             }
             // These are current semantic actual/formal facts from the complete
             // host body worklist, not solver types or input annotations. They
-            // may seed primitive truthiness, never membership or payload tags.
+            // may seed primitive alternatives. Only a checked write of that
+            // value can establish a payload fact, never the signature alone.
             for (const HostMethodParameters & method : root.methodTable->capturedMap->parameters) {
                 auto function = method.function;
                 auto & body = function.getBody().front();
@@ -403,11 +404,13 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
             return true;
         };
         bool primitive = true, boolean = false, number = false, string = false;
+        bool nonliteral = false;
         for (ctjs::CallOp call : candidate.calls) {
             auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
             if (keyOf(method.getKey()) != "set") { continue; }
             auto constant = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
             if (!constant) {
+                nonliteral = true;
                 primitive &= publishedCalls.contains(call) ||
                              scalarCandidate(scalarCandidate, call.getArgs()[1], 0);
                 continue;
@@ -419,7 +422,10 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
             primitive &= llvm::isa<ctjs::BooleanAttr, ctjs::NumberAttr, ctjs::StringAttr,
                                    ctjs::NullAttr, ctjs::UndefinedAttr>(value);
         }
-        const bool mixed = primitive && boolean && (number != string);
+        // A conditional or saved value may supply every String/absent
+        // alternative without a direct literal set. Such a family can need
+        // an exact read seed too; only Presence establishes that seed.
+        const bool mixed = primitive && (nonliteral || (boolean && (number != string)));
         for (ctjs::CallOp read : candidate.calls) {
             auto method = read.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
             if (keyOf(method.getKey()) != "get") { continue; }

@@ -832,6 +832,11 @@ def nullable_payload_sources():
         "state.set(key, 'overwritten'); state.delete(key); return saved; }")
     saved = saved.replace(" host.slot.set(host.slot.get(true));", "")
     saved = saved.replace("var trace =", "host.slot.set(void 0); var trace =")
+    mixed_readback = readback.replace("set(key) { state.set(key, key);",
+        "set(key) { state.set('extra', true); state.delete('extra'); state.set(key, key);")
+    original_mixed_readback = nullable_key_sources()["nullable_original_key"][0].replace(
+        "set(key) { state.set(key, true); return state.size; }",
+        "set(key) { state.set(key, key); return state.get(key); }")
     return {
         # Preserve both exact sources from 1c7985a5 before adding observations.
         "nullable_payload_write": (write, "host", 2),
@@ -848,6 +853,18 @@ def nullable_payload_sources():
         # Startup sees only false; saved methods later run both flags and
         # return an owning payload copied before overwrite and deletion.
         "nullable_payload_saved": (saved, "host", 0),
+        # The exact fourteen-call checkpoint broadens storage with a Boolean
+        # while each later get retains its independent nullable payload fact.
+        "nullable_payload_mixed_readback": (mixed_readback, "host", 2),
+        # Preserve the former nineteen-call refusal unchanged: its actual
+        # String/Null result is a supported subset of the full Map schema.
+        "nullable_mixed_payload_readback": (original_mixed_readback, "host", 3),
+        "nullable_payload_mixed_identity": (mixed_readback.replace("var trace =",
+            "host.slot.set(void 0); host.slot.set(''); var trace ="), "host", 4),
+        # Broader storage and a subsequent same-key Boolean overwrite cannot
+        # widen a saved nullable read or leave it borrowing the old entry.
+        "nullable_payload_mixed_saved": (saved.replace("state.set(key, 'overwritten');",
+            "state.set(key, true);"), "host", 0),
     }
 
 
@@ -858,6 +875,10 @@ NULLABLE_PAYLOAD_CALLS = {
     "nullable_payload_identity": 14,
     "nullable_payload_mixed": 18,
     "nullable_payload_saved": 14,
+    "nullable_payload_mixed_readback": 14,
+    "nullable_mixed_payload_readback": 19,
+    "nullable_payload_mixed_identity": 16,
+    "nullable_payload_mixed_saved": 14,
 }
 
 NULLABLE_PAYLOAD_READBACKS = {
@@ -867,7 +888,9 @@ NULLABLE_PAYLOAD_READBACKS = {
     **{name: [(argument, tag, value, tag, value) for argument, tag, value in (
         (repr(STRING_RESULT), "string", STRING_RESULT), ("null", "null_value", ""),
         ("void 0", "undefined", ""), ("''", "string", ""))]
-       for name in ("nullable_payload_identity", "nullable_payload_saved")},
+       for name in ("nullable_payload_identity", "nullable_payload_saved",
+                    "nullable_payload_mixed_readback", "nullable_mixed_payload_readback",
+                    "nullable_payload_mixed_identity", "nullable_payload_mixed_saved")},
     "nullable_payload_deleted": [(argument, tag, value, "undefined", "")
         for argument, tag, value in ((repr(STRING_RESULT), "string", STRING_RESULT),
                                     ("null", "null_value", ""), ("void 0", "undefined", ""),
@@ -875,7 +898,8 @@ NULLABLE_PAYLOAD_READBACKS = {
 }
 
 NULLABLE_OBSERVATIONS.update({
-    name: [("false", "string", STRING_RESULT if name == "nullable_payload_saved" else "future"),
+    name: [("false", "string", STRING_RESULT if name in {
+        "nullable_payload_saved", "nullable_payload_mixed_saved"} else "future"),
            ("true", "null_value", "")]
     for name in nullable_payload_sources()
 })
@@ -900,14 +924,22 @@ def nullable_payload_refusals():
     }
 
 
-def nullable_carrier_refusals():
-    source = nullable_payload_sources()["nullable_payload_mixed"][0]
+def mixed_nullable_payload_refusals():
+    source = nullable_payload_sources()["nullable_payload_mixed_readback"][0]
     return {
-        # A full optional Bool/String read needs an implemented scalar carrier;
-        # a nullable String method signature cannot narrow its Map schema.
-        "nullable_mixed_payload_readback": (source.replace(
-            "set(key) { state.set(key, key); return state.size; }",
-            "set(key) { state.set(key, key); return state.get(key); }"), 3),
+        # Ownership and the actual census stay complete. A missing entry has
+        # no independent nullable read proof, even though its key is typed.
+        "nullable_mixed_read_missing": (source.replace("state.set(key, key);",
+            "state.has(key);"), 0,
+            "state.has(key);", "state.set(key, key);", 2),
+        "nullable_mixed_read_deleted": (source.replace("return state.get(key);",
+            "state.delete(key); return state.get(key);"), 0,
+            "state.delete(key); ", "", 2),
+        # A possibly-equal key really overwrites the String arm with Boolean.
+        # The independent live return is then mixed and has no native carrier.
+        "nullable_mixed_read_aliasing": (source.replace("return state.get(key);",
+            "state.set(key || 'fallback', true); return state.get(key);"), 3,
+            "state.set(key || 'fallback', true); ", "", 2),
     }
 
 

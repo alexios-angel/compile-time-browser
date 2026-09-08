@@ -36,7 +36,7 @@ enum class payloadKind {
 struct fact {
     mlir::Value instance;
     mlir::Value key;
-    payloadKind payload = payloadKind::Unknown;
+    PrimitiveAlternatives payload;
     // Payload is valid whenever present, independently of definite membership.
     // Deletion cannot change a surviving value, so it clears only this flag.
     bool present = true;
@@ -89,7 +89,7 @@ struct state {
         for (fact & value : entries) {
             const auto found = llvm::find_if(
                 other.entries, [&](const fact & candidate) { return value.matches(candidate); });
-            if (value.payload != found->payload) { value.payload = {}; }
+            value.payload = value.payload.joined(found->payload);
             value.present &= found->present;
         }
         for (mlir::Operation * op : llvm::make_early_inc_range(observations)) {
@@ -128,7 +128,8 @@ struct presenceAnalysis {
     llvm::DenseMap<mlir::Operation *, llvm::StringRef> actions;
     llvm::DenseMap<mlir::Operation *, effects> summaries;
     llvm::DenseSet<mlir::Operation *> proved;
-    llvm::DenseMap<mlir::Operation *, payloadKind> payloads, writes, keys;
+    llvm::DenseMap<mlir::Operation *, PrimitiveAlternatives> payloads;
+    llvm::DenseMap<mlir::Operation *, payloadKind> writes, keys;
     llvm::DenseSet<mlir::Operation *> sizes;
     llvm::function_ref<mlir::Value(mlir::Value)> familyOf;
     const llvm::DenseSet<mlir::Operation *> & snapshotCopies;
@@ -251,12 +252,13 @@ struct presenceAnalysis {
         }
     }
 
-    // Literal and saved scalar tags do not depend on Map schema inference or
-    // prior invocations. Every write still invalidates possible aliases; an
-    // unproved payload clears their type evidence. has never supplies a tag.
+    // Literal, parameter and saved scalar alternatives do not depend on Map
+    // schema inference or prior invocations. Keep a finite nullable payload
+    // independently of the broader storage union. Every possible alias joins
+    // its alternatives; an unproved write clears them. has supplies no tag.
     void write(state & current, ctjs::CallOp call) const {
         fact added = entry(call);
-        added.payload = current.scalar(call.getArgs()[1]);
+        added.payload = current.alternatives(call.getArgs()[1]).categories();
         for (fact & previous : current.entries) {
             if (familyOf(previous.instance) != familyOf(added.instance)) { continue; }
             const auto relation = comparePrimitiveMapKeys(
@@ -266,8 +268,8 @@ struct presenceAnalysis {
             if (previous.instance == added.instance && relation == PrimitiveMapKeyRelation::Same) {
                 previous.payload = added.payload;
                 previous.present = true;
-            } else if (previous.payload != added.payload) {
-                previous.payload = {};
+            } else {
+                previous.payload = previous.payload.joined(added.payload);
             }
         }
         current.add(added);
@@ -390,14 +392,9 @@ struct presenceAnalysis {
                 for (const fact & value : current.entries) {
                     if (!value.present || !value.matches(wanted)) { continue; }
                     proved.insert(op);
-                    if (value.payload != payloadKind::Unknown) {
+                    if (value.payload.known) {
                         payloads[op] = value.payload;
-                        const auto tag = value.payload == payloadKind::Boolean
-                                             ? mlir::TypeID::get<ctjs::BooleanAttr>()
-                                         : value.payload == payloadKind::Number
-                                             ? mlir::TypeID::get<ctjs::NumberAttr>()
-                                             : mlir::TypeID::get<ctjs::StringAttr>();
-                        current.scalars[call.getResult()] = PrimitiveAlternatives::forTag(tag);
+                        current.scalars[call.getResult()] = value.payload;
                     }
                 }
             } else if (action == "delete") {
@@ -459,10 +456,20 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
         read->setAttr(kNativeMapPresent, mlir::UnitAttr::get(read.getContext()));
     }
     for (ctjs::CallOp read : typedReads) {
-        if (auto kind = analysis.payloads.lookup(read); kind != payloadKind::Unknown) {
-            const auto tag = kind == payloadKind::Boolean  ? "bool"
-                             : kind == payloadKind::Number ? "number"
-                                                           : "string";
+        const auto alternatives = analysis.payloads.lookup(read);
+        if (!alternatives.known) { continue; }
+        const auto mask = alternatives.truthy | alternatives.falsy;
+        using Primitive = PrimitiveAlternatives;
+        llvm::StringRef tag;
+        if (mask == Primitive::Boolean) { tag = "bool"; }
+        if (mask == Primitive::Number) { tag = "number"; }
+        if (mask == Primitive::String) { tag = "string"; }
+        if ((mask & Primitive::String) != 0 &&
+            (mask & (Primitive::Null | Primitive::Undefined)) != 0 &&
+            (mask & ~(Primitive::String | Primitive::Null | Primitive::Undefined)) == 0) {
+            tag = "nullable_string";
+        }
+        if (!tag.empty()) {
             read->setAttr(kNativeMapReadType, mlir::StringAttr::get(read.getContext(), tag));
             // Dead-code inference may remove an alternative from the final
             // schema. Its homogeneous read still has definite membership.

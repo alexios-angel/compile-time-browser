@@ -48,9 +48,10 @@ unless an independent per-operation proof has established that it is a String.
 Optional numeric/Boolean storage and unrepresented scalar temporaries
 remain refused, as do nullable snapshots. A homogeneous nullable payload read
 returns its full owning carrier, with Undefined for a missing entry. A mixed
-nullable payload read still requires independent presence and an exact String
-or Boolean tag; the schema supplies no narrower result. The selected String is
-copied out of its nullable alternative after checking the tag. Saved results
+nullable payload read requires independent presence and an exact String or
+Boolean tag, or a finite String/Null/Undefined subset. The schema supplies no
+narrower result. The selected String or nullable carrier is copied out of its
+alternative after checking the tag. Saved results
 survive subsequent replacement, deletion and destruction of their source Map.
 Payload-only modules request the nullable helper independently of their key type.
 
@@ -91,7 +92,7 @@ for its numeric payload, whose underlying type remains `double`.
 |---|---|
 | `new Map()` | Empty owning allocation; constructor arguments are refused |
 | `set(key, value)` | Replace in place or append; return the same Map identity |
-| `get(key)` | Homogeneous scalar value or absent; a child Map requires presence; a mixed payload requires independent presence and an exact scalar type |
+| `get(key)` | Homogeneous scalar value or absent; a child Map requires presence; a mixed payload requires independent presence and a represented scalar or nullable String subset |
 | `has(key)` | Boolean membership test |
 | `delete(key)` | Remove the entry and report whether it existed |
 | `clear()` | Remove all entries and return absent |
@@ -138,12 +139,14 @@ optional Boolean composition. Other optional stored values, Number/String or
 larger unions, mixed snapshots and general object keys remain
 refused. A mixed `get` is admitted only when the live structured must-analysis
 independently proves both membership and the payload type from the last write
-on every reaching path. A write takes its tag from a literal or an independently
-proved saved scalar read. `has` adds no payload evidence. Possible aliasing
-writes, callee effects and loops invalidate contents conservatively. Deletion
-clears definite membership while retaining the payload tag valid whenever
+on every reaching path. A write takes its finite alternatives from a literal,
+an independently proved saved scalar read or a complete host parameter census.
+`has` adds no payload evidence. Possible aliasing writes join the old and new
+payload alternatives; unknown writes, callee effects and loops invalidate
+contents conservatively. Deletion clears definite membership while retaining
+the payload alternatives valid whenever
 present. A live same-instance/same-key `has` arm can restore membership, but
-never supplies a tag. Record keys and equal tags still intersect across arms;
+never supplies a tag. Record keys intersect and payload alternatives join across arms;
 a missing record is unknown prior contents, not proof of absence.
 A saved read keeps its own scalar alternatives after known mutations; branches
 join these SSA facts separately from entry contents. Unknown values never gain a tag
@@ -157,6 +160,15 @@ SSA value is refined. Literals supply their actual truthiness, unknown inputs
 remain unknown, and every structural arm's effects are checked, including
 constant predicates and an implicit unchanged `else` path. The initial
 candidate census supplies no payload proof itself.
+
+Finite nullable payload facts now survive the same exact instance/key writes,
+conditional joins and saved reads. `ctnative.map_read_type = "nullable_string"`
+seeds `Opt<Str>` before monotone inference can widen the result to the whole
+Boolean/nullable String storage union. Conditional or saved writes remain
+candidates even when no direct literal String write exists. All facts are
+cleared and rederived on each preparation, including CTJS-only binding-time
+analysis. Unknown contents, missing presence and a Boolean joined into that
+nullable read still refuse. This adds no general mixed optional scalar carrier.
 
 The independent write proof publishes `ctnative.map_write_type`, cleared and
 rederived with the other Map facts on every run. It can prove one actual tag

@@ -43,7 +43,8 @@ def check_result_calls(cpp, name, mode):
                        for argument in actuals]
             literal_key = name in {"nullable_key_identity", "nullable_key_identity_normalized",
                                    "nullable_key_string_saved", "nullable_payload_identity",
-                                   "nullable_payload_saved"} \
+                                   "nullable_payload_saved", "nullable_payload_mixed_identity",
+                                   "nullable_payload_mixed_saved"} \
                 and not pending and len(actuals) == 1
             if not literal_key and (not pending or actuals != pending):
                 raise RuntimeError(f"{name}/{mode}: setter lost live producing-call operands/order")
@@ -88,6 +89,8 @@ def check_result_calls(cpp, name, mode):
         "nullable_key_string_saved": ["get", "set", "set", "size"],
         "nullable_payload_identity": ["get", "set", "get", "set", "set", "set", "size"],
         "nullable_payload_saved": ["get", "set", "set", "size"],
+        "nullable_payload_mixed_identity": ["get", "set", "get", "set", "set", "set", "size"],
+        "nullable_payload_mixed_saved": ["get", "set", "set", "size"],
         "saved_read_write_repeated": ["get", "set", "get", "set", "size"],
         "seeded_dynamic_overwrite": ["get", "set", "get", "set"],
         "seeded_dynamic_repeated": ["get", "set", "get", "set", "get"],
@@ -111,7 +114,7 @@ def check_result_calls(cpp, name, mode):
     if name in {"result_seeded_string_saved", "result_seeded_mixed_string_saved",
                 "saved_read_write_string_saved", "saved_join_string_saved",
                 "guarded_saved_string_saved", "shortcircuit_string_saved", "nullable_string_saved",
-                "nullable_key_string_saved", "nullable_payload_saved"} \
+                "nullable_key_string_saved", "nullable_payload_saved", "nullable_payload_mixed_saved"} \
             and "ctnative::map_delete(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: dropped the saved string's source deletion")
     mixed = {**mixed_result_sources(), **saved_read_sources(), **saved_join_sources(),
@@ -133,7 +136,7 @@ def check_result_calls(cpp, name, mode):
         if name in nullable_key_sources():
             branches = 4 if name in {"nullable_original_key", "nullable_second_key_use"} else 2
         if name in nullable_payload_sources():
-            branches = 4 if name == "nullable_payload_mixed" else 2
+            branches = 4 if name in {"nullable_payload_mixed", "nullable_mixed_payload_readback"} else 2
         # Canonicalization can use ?: for the pure Null/Undefined selection.
         # The executed identity observer also checks both results separately.
         if not getter or len(re.findall(r"\bif\s*\(|\?", getter[1])) != branches:
@@ -789,8 +792,11 @@ def standalone(args, output, name, value, compilers, nm):
             payload = "std::variant<bool, std::string>"
             if name in nullable_payload_sources():
                 key = payload = "ctnative::nullable_string"
-                if name == "nullable_payload_mixed":
+                if name in {"nullable_payload_mixed", "nullable_mixed_payload_readback"}:
                     key = payload = "std::variant<bool, ctnative::nullable_string>"
+                elif name in {"nullable_payload_mixed_readback", "nullable_payload_mixed_identity",
+                              "nullable_payload_mixed_saved"}:
+                    payload = "std::variant<bool, ctnative::nullable_string>"
             if f"std::shared_ptr<ctnative::map_storage<{key}, {payload}>>" not in cpp:
                 raise RuntimeError(f"{name}/{mode}: nullable signature changed the exact Map schema")
             source = args.work / f"{name}.{mode}.identity.cpp"
@@ -814,7 +820,7 @@ def standalone(args, output, name, value, compilers, nm):
             nullable_payload_lifetime(args, cpp, name, mode, compilers[1])
         if name == "nullable_key_string_saved":
             nullable_key_lifetime(args, cpp, name, mode, compilers[1])
-        if name == "nullable_payload_saved":
+        if name in {"nullable_payload_saved", "nullable_payload_mixed_saved"}:
             nullable_stored_payload_lifetime(args, cpp, name, mode, compilers[1])
 
 
@@ -845,12 +851,16 @@ def check_prepared_result_calls(text, original, name):
 
 
 def forge_map_presence(text, payload="bool"):
-    if payload not in {"bool", "string"}:
-        raise ValueError("forged presence needs a valid scalar tag")
+    if payload not in {"bool", "string", "nullable_string"}:
+        raise ValueError("forged presence needs a valid read tag")
+    # Nullable alternatives are a read proof, not a scalar write/key proof.
+    # Forge each accepted vocabulary independently, so parsing cannot reject
+    # the control before its live read/presence evidence is rederived.
+    scalar = "string" if payload == "nullable_string" else payload
     marked, count = re.subn(r"(^\s*%[-\w.$]+ = ctjs\.call [^\n{]+)(\{)?",
         lambda match: match[1].rstrip() + " {ctnative.map_present = true, ctnative.map_read_type = \""
-                      + payload + "\", ctnative.map_write_type = \"" + payload + "\""
-                      + ", ctnative.map_key_type = \"" + payload + "\""
+                      + payload + "\", ctnative.map_write_type = \"" + scalar + "\""
+                      + ", ctnative.map_key_type = \"" + scalar + "\""
                       + (", " if match[2] else "}"), methods.forge_reports(text), flags=re.M)
     if count == 0:
         raise RuntimeError("forged-presence control lost every live Map call")

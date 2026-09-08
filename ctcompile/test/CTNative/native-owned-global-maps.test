@@ -102,7 +102,7 @@
 # readback sources. A fourteen-call identity witness observes String, Null,
 # Undefined and empty String through the setter's Map read; tags and bytes are
 # checked separately from size. Optional Bool/String storage keeps independent
-# scalar getter evidence. A full optional mixed read remains unrepresented.
+# scalar getter evidence. Unproved optional mixed reads remain unrepresented.
 # Fresh/stale read/write/key forgeries, reruns and incomplete budgets cannot
 # invent a payload tag or narrow the storage schema. Deleted nullable reads
 # preserve the thirteen-call source and return Undefined for String, Null,
@@ -112,3 +112,15 @@
 # its entry. Saved callables later run both flags, copy every nullish/String tag
 # and own long String bytes through caller/result mutation, independent reentry
 # and final release of both Maps under ASan/UBSan.
+# Finite per-entry String/Null/Undefined facts preserve the exact fourteen-call
+# trace-2 and nineteen-call trace-3 mixed-storage readbacks. A sixteen-call
+# witness checks all four nullable tags independently from the Map size and
+# incoming key. Broader Boolean storage and a later same-key Boolean overwrite
+# cannot widen a saved owning read; its bytes and tag survive entry deletion,
+# caller/result mutation, both future flags, reentry and final Map destruction.
+# Missing/deleted reads and possibly-aliasing Boolean payload writes retain
+# complete host ownership but refuse native output with every prepared call
+# and producer/consumer operand intact. Each repair restores the exact admitted
+# fourteen-call source in both modes. Fresh/stale nullable read
+# markers are rederived independently from scalar write/key markers; reruns and
+# measured budget cutoffs cannot manufacture presence or narrow a live union.

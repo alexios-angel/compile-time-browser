@@ -166,9 +166,13 @@ bool admission::op(mlir::Operation * o) {
                               "Boolean alternative with an owning carrier");
             }
             const auto element = llvm::cast<OptType>(map.getValueType()).getElementType();
+            const auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapReadType);
+            const bool nullableRead =
+                proof && proof.getValue() == "nullable_string" &&
+                carrierOf(typeOf(call.getResult())) == carrier::nullableString;
             if (action == "get" && !mixedMapSpelling(element).empty() &&
-                (!o->hasAttr(kNativeMapReadType) ||
-                 !scalarAlternative(element, call.getResult()))) {
+                (!proof || !o->hasAttr(kNativeMapPresent) ||
+                 (!nullableRead && !scalarAlternative(element, call.getResult())))) {
                 return refuse(
                     "mixed native Map read needs independent present payload type evidence");
             }

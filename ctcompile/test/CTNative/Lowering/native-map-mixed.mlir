@@ -386,6 +386,45 @@ function mixedNullablePayload(flag) {
         + (copied === saved ? 2 : 0) + (rewritten === 'replacement' ? 4 : 0)
         + (!boolean && !copiedBoolean ? 8 : 0) + (removed && map.size === 0 ? 16 : 0);
 }
+function mixedNullableRead(flag, empty) {
+    const map = new Map();
+    map.set('flag', false);
+    let value = flag ? (empty ? '' : 'exact-nullable-read-with-owned-\0-bytes')
+        : (empty ? void 0 : null);
+    map.set('value', value);
+    value = 'replaced-input';
+    const result = map.get('value');
+    const present = map.has('value');
+    map.delete('value');
+    return (result === 'exact-nullable-read-with-owned-\0-bytes' ? 1 : 0)
+        + (result === '' ? 2 : 0) + (result === null ? 4 : 0)
+        + (result === void 0 ? 8 : 0) + (present && !map.get('flag') ? 16 : 0);
+}
+function mixedNullableJoin(left, flag) {
+    const map = new Map();
+    map.set('flag', false);
+    map.set('left', flag ? 'saved-nullable-join-with-owned-\0-bytes' : null);
+    map.set('right', flag ? '' : void 0);
+    const selected = left ? map.get('left') : map.get('right');
+    map.set('left', false);
+    map.delete('right');
+    map.set('saved', selected);
+    const result = map.get('saved');
+    map.set('saved', true);
+    map.clear();
+    return result;
+}
+function mixedNullableBranches(left, flag) {
+    const map = new Map();
+    map.set('flag', false);
+    map.set('value', flag ? 'branch-nullable-with-owned-\0-bytes' : null);
+    if (!left) { map.set('value', flag ? '' : void 0); }
+    const result = map.get('value');
+    map.set('value', true);
+    map.delete('value');
+    map.clear();
+    return result;
+}
 var traceNumbers = numberKeys();
 var traceSaved = savedString();
 var traceBranches = branch(true) * 10 + branch(false);
@@ -430,6 +469,19 @@ var traceNullablePayloadOwned = (nullablePayloadOwned(true, false)
     + (nullablePayloadOwned(false, false) === null ? 10 : 0)
     + (nullablePayloadOwned(false, true) === void 0 ? 1 : 0);
 var traceMixedNullablePayload = mixedNullablePayload(true) * 100 + mixedNullablePayload(false);
+var traceMixedNullableRead = mixedNullableRead(true, false) * 1000000
+    + mixedNullableRead(true, true) * 10000 + mixedNullableRead(false, false) * 100
+    + mixedNullableRead(false, true);
+var traceMixedNullableJoin = (mixedNullableJoin(true, true)
+        === 'saved-nullable-join-with-owned-\0-bytes' ? 1000 : 0)
+    + (mixedNullableJoin(true, false) === null ? 100 : 0)
+    + (mixedNullableJoin(false, true) === '' ? 10 : 0)
+    + (mixedNullableJoin(false, false) === void 0 ? 1 : 0);
+var traceMixedNullableBranches = (mixedNullableBranches(true, true)
+        === 'branch-nullable-with-owned-\0-bytes' ? 1000 : 0)
+    + (mixedNullableBranches(true, false) === null ? 100 : 0)
+    + (mixedNullableBranches(false, true) === '' ? 10 : 0)
+    + (mixedNullableBranches(false, false) === void 0 ? 1 : 0);
 
 //--- snapshot.js
 function snapshot() {
@@ -542,6 +594,24 @@ function run(flag) {
     return map.get(false) ? 1 : 0;
 }
 var trace = run(true) * 10 + run(false);
+
+//--- mixed-nullable-branch-callee-refused.js
+function mixedNullableBranches(left, flag) {
+    const map = new Map();
+    map.set('flag', false);
+    if (left) { map.set('value', flag ? 'branch-nullable-with-owned-\0-bytes' : null); }
+    else { map.set('value', flag ? '' : void 0); }
+    const result = map.get('value');
+    map.set('value', true);
+    map.delete('value');
+    map.clear();
+    return result;
+}
+var trace = (mixedNullableBranches(true, true)
+        === 'branch-nullable-with-owned-\0-bytes' ? 1000 : 0)
+    + (mixedNullableBranches(true, false) === null ? 100 : 0)
+    + (mixedNullableBranches(false, true) === '' ? 10 : 0)
+    + (mixedNullableBranches(false, false) === void 0 ? 1 : 0);
 
 //--- saved-join-missing-refused.js
 function run(flag) {
@@ -799,3 +869,49 @@ function run(flag, other) {
     return map.size;
 }
 var trace = run(true, false) + run(false, true) + run(false, false);
+
+//--- mixed-nullable-unknown-payload-refused.js
+function payload(flag) { return flag ? 'unproved-return' : null; }
+function run(flag) {
+    const map = new Map();
+    map.set('flag', false);
+    map.set('nullable', null);
+    map.set('key', payload(flag));
+    return map.get('key') === null ? 1 : 2;
+}
+var trace = run(true) * 10 + run(false);
+
+//--- mixed-nullable-instance-refused.js
+function read(a, b, flag) {
+    a.set('flag', false);
+    a.set('key', flag ? 'value' : null);
+    b.set('key', false);
+    return a.get('key') === null ? 1 : 2;
+}
+function run(alias) {
+    const a = new Map();
+    const b = new Map();
+    return alias ? read(a, a, false) : read(a, b, false);
+}
+var trace = run(true) * 10 + run(false);
+
+//--- mixed-nullable-presence-refused.js
+function run(flag) {
+    const map = new Map();
+    map.set('flag', false);
+    map.set('key', flag ? 'value' : null);
+    if (flag) { map.delete('key'); }
+    return map.get('key') === null ? 1 : 2;
+}
+var trace = run(true) * 10 + run(false);
+
+//--- mixed-nullable-call-refused.js
+function mutate(map, flag) { map.set('key', flag ? 'after' : null); }
+function run(flag) {
+    const map = new Map();
+    map.set('flag', false);
+    map.set('key', flag ? 'before' : null);
+    mutate(map, flag);
+    return map.get('key') === null ? 1 : 2;
+}
+var trace = run(true) * 10 + run(false);

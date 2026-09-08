@@ -610,7 +610,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                 mapAnswer = call->hasAttr(kNativeMapPresent)
                                 ? map.getValueType()
                                 : meet(absentType(c), map.getValueType());
-                // This literal result is independent of the family schema,
+                // This finite result is independent of the family schema,
                 // including unvisited writes that depend on this same read.
                 // Seed it immediately: widening first cannot be undone by a
                 // later iteration of the monotone solver.
@@ -619,6 +619,9 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                     if (tag == "bool") { mapAnswer = BoolType::get(c); }
                     if (tag == "number") { mapAnswer = NumType::getDouble(c); }
                     if (tag == "string") { mapAnswer = StrType::get(c, StrEncoding::UTF8); }
+                    if (tag == "nullable_string") {
+                        mapAnswer = OptType::get(c, StrType::get(c, StrEncoding::UTF8));
+                    }
                 }
             } else if (action == "clear") {
                 mapAnswer = absentType(c);
