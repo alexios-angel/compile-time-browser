@@ -61,7 +61,7 @@ ctbrowser_test(unit/selectors)
 # because every case in it turns on ONE structural fact - this tree builder has
 # no Document node above `<html>` - so what the cases pin down is a MODEL being
 # consistent with itself, including where it honestly refuses. See the block
-# above install_document_as_node in lib/Shell/bindings/document.cpp.
+# above install_document_as_node in lib/Shell/bindings/document/as_node.cpp.
 ctbrowser_test(unit/document_node)
 # `document.title`, the eight HTML collections and named access. Its own file
 # because every case in it is the same shape - write and read back in ONE

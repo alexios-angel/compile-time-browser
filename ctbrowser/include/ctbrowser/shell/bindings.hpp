@@ -540,7 +540,7 @@ private:
     // page may delete a global, after which a prototype this object still
     // points at could be swept. So every constructor `retains` this one array,
     // and all 70-odd of them would have to be deleted before any prototype
-    // became unreachable. (`register_roots` in bindings/document.cpp marking it
+    // became unreachable. (`register_roots` in bindings/document/entry.cpp marking it
     // would be stronger still, but that file belongs to another concern.)
     value interface_keeper_;
     // Set once the chain is built AND linked to `event_target_prototype_`,
@@ -575,7 +575,7 @@ public:
     // WHAT `mutated()` HAS TO CALL, and the whole reason this is a diff.
     //
     // `mutated()` is the one funnel every DOM-changing native already goes
-    // through - 18 call sites under element/, five in document.cpp - and it
+    // through - 18 call sites under element/, five in document/ - and it
     // takes no arguments because the funnel does not know WHAT changed. So the
     // records are reconstructed rather than reported: `observe()` takes a
     // snapshot of every observed node's children, attributes and text, and this
@@ -653,7 +653,7 @@ private:
     // The observer's index, or npos when the value is not one of ours.
     [[nodiscard]] std::size_t mutation_observer_index(value v) const;
     // WHAT KEEPS ALL THIS ALIVE. `register_roots` belongs to bindings/
-    // document.cpp and there is one external-roots hook, so these hang off the
+    // document/entry.cpp and there is one external-roots hook, so these hang off the
     // `MutationObserver` interface object's `retained` list instead - see
     // script::native_object::retained. Refilled whenever the set changes,
     // which is rare and tiny.
@@ -673,7 +673,7 @@ private:
     bool mutation_delivery_queued_ = false;
     // END mutation observers
 
-    // BEGIN style sheets (bindings/stylesheets.cpp)
+    // BEGIN style sheets (bindings/stylesheets/)
 public:
     // THE CSSOM'S OWN COPY OF THE AUTHOR'S SHEETS, and why it is a copy.
     //
@@ -749,7 +749,7 @@ public:
     // (`author_sheet_loaded_`) and re-running the cascade is its business, not
     // the bindings'. So the bindings publish the new text and the browser
     // decides: with no hook installed the object model is still correct and the
-    // RENDER simply does not move. See bindings/stylesheets.cpp.
+    // RENDER simply does not move. See bindings/stylesheets/internal.hpp.
     void set_author_styles_hook(std::function<void(std::string)> hook) {
         on_author_styles_ = std::move(hook);
     }
@@ -822,7 +822,7 @@ private:
     std::function<void(std::string)> on_author_styles_;
     // END style sheets
 
-    // BEGIN selectors (bindings/document.cpp)
+    // BEGIN selectors (bindings/document/tree_ops.cpp)
 public:
     // THE CASCADE'S OWN ENGINE, so that a selector cannot mean one thing in a
     // stylesheet and another in a script. `query()` runs `style::engine::select`,
@@ -841,14 +841,14 @@ private:
     style::engine * selector_engine_ = nullptr;
     std::unique_ptr<style::engine> own_selector_engine_;
 
-    // --- THE DOCUMENT AS A NODE (bindings/document.cpp) -------------------
+    // --- THE DOCUMENT AS A NODE (bindings/document/as_node.cpp) -----------
     //
     // There is NO Document node in this tree: `txn.root()` is the `<html>`
     // element and `document` is a plain script object carrying no handle at
     // all. Every Node and ParentNode member below therefore answers as if
     // there were a Document whose one child is `documentElement`. The whole of
     // that decision, and what it makes impossible, is written down above
-    // `install_document_as_node` in bindings/document.cpp - read it before
+    // `install_document_as_node` in bindings/document/as_node.cpp - read it before
     // adding to any of these.
     void install_document_as_node(context & cx, script::object_object & doc);
 
@@ -1241,7 +1241,7 @@ private:
     // HTML method and an SVG element carrying `name=` is not one of its answers.
     [[nodiscard]] std::vector<node_id> all_by_name(std::string_view name);
 
-    // --- THE HTML TREE ACCESSORS (bindings/document.cpp) ------------------
+    // --- THE HTML TREE ACCESSORS (bindings/document/collections.cpp) ------
     //
     // `find_by_tag` matches on the TAG ATOM, and that is the wrong question for
     // anything HTML defines: `<title>` inside `<svg>` interns to the same atom
@@ -1265,7 +1265,7 @@ private:
     // `body` or a `frameset`. Not the first `<body>` anywhere.
     [[nodiscard]] node_id body_element();
 
-    // --- A SECOND DOCUMENT (bindings/document.cpp) -------------------------
+    // --- A SECOND DOCUMENT (bindings/document/second_document.cpp) ---------
     //
     // `createHTMLDocument` and `createDocument` return one, and the note that
     // used to sit where they are installed said what a second Document would

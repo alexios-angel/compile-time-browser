@@ -98,7 +98,7 @@ subtests:** `round-mod-rem-computed` (243), `signs-abs-computed` (233),
 clean: `computed-testcommon.js` never writes `el.style = …` and its 15 files are
 an ordinary mix of pass and fail.
 
-`lib/Shell/bindings/stylesheets.cpp` already installs `rule.style` as an
+`lib/Shell/bindings/stylesheets/prototypes.cpp` already installs `rule.style` as an
 accessor with a forwarding setter and is the template. **How many of the 1,339
 then PASS is not measured** — behind the block is the math serialization, which
 is a separate question.

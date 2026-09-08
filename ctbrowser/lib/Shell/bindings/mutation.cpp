@@ -605,7 +605,7 @@ void dom_bindings::install_mutation_observer(context & cx) {
         node_id target = handle_of(args[0]);
         bool whole_document = false;
         // `is_object_like`, because `document` is a Proxy and `is_object()` is
-        // false for one - see make_document_proxy in bindings/document.cpp.
+        // false for one - see make_document_proxy in bindings/document/named_access.cpp.
         if (!target && args[0].is_object_like() && document_.is_object_like() &&
             args[0].bits() == document_.bits()) {
             target = doc_->root();

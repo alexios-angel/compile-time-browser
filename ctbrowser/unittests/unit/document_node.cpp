@@ -11,7 +11,7 @@
 // and `document` is a plain script object with no handle at all, so every case
 // below is asking whether a Document that does not exist is being modelled
 // consistently - not whether a method returns the right number. The block above
-// `install_document_as_node` in lib/Shell/bindings/document.cpp is the decision
+// `install_document_as_node` in lib/Shell/bindings/document/as_node.cpp is the decision
 // these cases pin down; the ones that assert a THROW pin down its limits, which
 // is the half that would otherwise drift into a quiet wrong answer.
 

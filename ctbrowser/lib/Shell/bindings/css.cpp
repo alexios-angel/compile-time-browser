@@ -50,8 +50,8 @@ void dom_bindings::install_css_interface(context & cx) {
         if (args.empty()) { return c.string(std::string{"undefined"}); }
         // CSSOM §2.1's "serialize an identifier", which is exactly what a
         // selector's type, id, class and attribute names are serialised with
-        // too - so it lives on dom_bindings and bindings/stylesheets.cpp owns
-        // it. Two copies of an escape are two answers to "what is a valid
+        // too - so it lives on dom_bindings and bindings/stylesheets/rules.cpp
+        // owns it. Two copies of an escape are two answers to "what is a valid
         // identifier", and a page building `'#' + CSS.escape(id)` and this
         // engine printing that same rule back must agree.
         return c.string(dom_bindings::serialize_css_identifier(c.to_string(args[0])));

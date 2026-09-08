@@ -2,7 +2,8 @@
 //
 // WHY THIS IS ONE FILE AND NOT A PROJECT. A second Document already exists here
 // - `document.implementation.createHTMLDocument()` returns one, and the block
-// above `adopt_interfaces_of` in bindings/document.cpp is the model: a second
+// above `adopt_interfaces_of` in bindings/document/second_document.cpp is the
+// model: a second
 // `dom_bindings` over its own tree, sharing the atom table, the script context
 // and the interface objects with the page's own. A frame is that same second
 // document with two things added, and both of them are small:
