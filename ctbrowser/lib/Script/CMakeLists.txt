@@ -46,7 +46,12 @@ target_sources(ctbrowser-script
     # deliberately in NO file set - builtins.hpp still declares one function.
     builtins.cpp
     builtins/values.cpp
-    builtins/collections.cpp
+    # Array, the keyed collections and the typed arrays - four files, from one
+    # of 1,824 lines (2026-09-08); builtins/collections/internal.hpp is theirs.
+    builtins/collections/array.cpp
+    builtins/collections/array_iteration.cpp
+    builtins/collections/keyed.cpp
+    builtins/collections/typed_arrays.cpp
     builtins/text.cpp
     builtins/objects.cpp
     builtins/async.cpp
