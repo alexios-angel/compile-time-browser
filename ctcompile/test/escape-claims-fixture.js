@@ -193,10 +193,10 @@ H.push(objectFrameCopiedSwitchSaved(0));
 H.push(objectFrameCopiedSwitchSaved(1));
 H.push(objectFrameCopiedSwitchSaved(2));
 
-// Source switches still include comparison operations outside complete contents.
-// Their conservative Stored claims above are deliberate. This parameter-free
-// control independently releases the old child on every structural arm,
-// including the literal condition's untaken arm.
+// The switch's strict comparisons now have a complete noncapturing proof,
+// but every Stored site above remains retained on at least one structural arm.
+// This parameter-free control independently releases the old child on every
+// arm, including the literal condition's untaken arm.
 function objectFrameCopiedLiteralOverwrite() {
     var child = { id: 1 }, replacement = { id: 2 };
     var source = { held: child }, target = { ...source };
@@ -207,6 +207,33 @@ function objectFrameCopiedLiteralOverwrite() {
     return replacement;
 }
 H.push(objectFrameCopiedLiteralOverwrite());
+
+// --- NONCAPTURING SOURCE-SWITCH SELECTORS ----------------------------------
+// The old child dies on every arm, while the returned container changes by
+// case. String "0" must take default: selector equality never coerces it.
+// Keep this family separate from the unchanged copy-path observations above.
+function objectFrameSwitchReleased(choice) {
+    var child = { id: 1 };
+    var source = { held: child, side: "source" }, target = { ...source };
+    target.side = "target";
+    switch (choice) {
+    case 0:
+        delete source.held;
+        delete target.held;
+        return target;
+    case 1:
+        delete target.held;
+        delete source.held;
+        return source;
+    default:
+        delete source.held;
+        delete target.held;
+        return { side: "default" };
+    }
+}
+H.push(objectFrameSwitchReleased(0));
+H.push(objectFrameSwitchReleased(1));
+H.push(objectFrameSwitchReleased("0"));
 
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }

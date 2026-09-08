@@ -979,6 +979,29 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 state.origins[op.getResult(0)] = op.getResult(0);
                 continue;
             }
+            if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(&op)) {
+                // Strict equality reads primitive contents or object identity;
+                // it cannot coerce, call, throw or retain either operand
+                // (Operators.td, value::strict_equals). The independent Boolean
+                // result is known even when an operand is an opaque entry.
+                // No value or liveness fact is inferred, and no other comparison
+                // kind borrows this proof: those may reenter through coercion.
+                if (compare.getKind() != ctjs::CompareKind::StrictEq) {
+                    return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
+                }
+                state.origins[compare.getResult()] = compare.getResult();
+                continue;
+            }
+            if (auto convert = llvm::dyn_cast<ctjs::ConvertOp>(&op)) {
+                // ToBoolean, like Truthy, is total and noncapturing, but returns
+                // a !ctjs.value Boolean. Its primitive result carries no heap
+                // alias; this does not turn its input into a known origin.
+                if (convert.getKind() != ctjs::ConvertKind::ToBoolean) {
+                    return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
+                }
+                state.origins[convert.getResult()] = convert.getResult();
+                continue;
+            }
             if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(&op)) {
                 if (objectSites.insert(&op).second) { out.objects.push_back(&op); }
                 state.objects.try_emplace(&op);

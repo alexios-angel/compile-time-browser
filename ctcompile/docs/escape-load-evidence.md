@@ -744,3 +744,65 @@ against committed HEAD, frozen input and final devbox source. This escape
 increment changes neither runtime behavior nor native ownership admission.
 Comparison/Boolean selector producers for real source switches remain the next
 bounded escape proof.
+
+## Noncapturing source-switch producers
+
+This continues the exact next boundary in **`178f65e9`** and the **13:07:05**
+synchronization journal after opaque entry transport landed in **`6f13212`**.
+The complete contents query now admits only `ctjs.compare strict_eq` and
+`ctjs.convert to_boolean` from their respective operation families.
+Strict equality reads primitive contents or object identity without conversion;
+ToBoolean inspects a tag without invoking `valueOf` or `toString`.
+Both produce an independent primitive Boolean. Neither records its input as a
+known origin, retains an input object, proves a comparison value or prunes an
+edge. Loose equality, every relation and every other conversion still refuse,
+even when another analysis or an input attribute claims a safe type.
+
+The Boolean result can be forwarded, stored, returned or parked in a matched
+local frame as a primitive terminal. Its opaque input still cannot become a
+stored value, root, return value, property key or copy endpoint. A Boolean
+producer is not a literal Number array index or an own String property key.
+All structural arms, path-specific contents, historical cycle edges and
+complete refusal behavior remain in force. The result origin uses the existing
+budgeted map: every producer visit and every copied origin costs work. No
+runtime behavior or native ownership admission changes.
+
+The devbox unit family passes **28 rows**, **eleven live mutation states**
+under forged completion/confinement markers, and a wide snapshot with 32 extra
+Boolean origins costing exactly **64 additional work units**. Controls
+cover primitive results, local and opaque operands, raw forwarding and roots,
+all ten refused comparison/conversion kinds, unknown producers/effects,
+retained final arms and forbidden uses of the original opaque value. Every
+row and live state sweeps all incomplete contents and retention budgets and
+the exact endpoint. All **1,079 incomplete retention budgets** pass.
+
+The preceding four-function copy-path source family and its **eight calls**
+are unchanged. Its source switch becomes supported, but every `Stored` site
+there still has a retaining arm. The existing exact expectations remain
+**21 sites, 39 instances and 23 retained instances**. A separate source
+function deletes the original and copied child fields on every case/default
+arm and returns a different container from each. Calls with `0`, `1` and
+String `"0"` distinguish strict equality from a coercing comparison. Its new
+source-coordinate checks observe **four sites, ten instances and three
+retained instances**, with the old child confined on all three calls.
+
+Local Node syntax and execution checks pass the combined **eleven fixture
+calls**, the four historical and two new identity assertions, and an extra
+object selector whose `valueOf`/`toString` counters stay **zero**. All eight
+historical observation mutations and six new switch mutations fail their
+expected observations. Evidence: `/tmp/ctcompile-escape-selectors-node.js`.
+
+All **eight escape CTests pass in 8.35 seconds**, with all four execution
+oracles reporting **zero soundness violations**. The expanded fixture measures
+**36/48** precision, with zero partial or pending claims, versus the preceding
+**35/47**. The new source witness contributes the additional proved-confined
+site and observed-confined site; the historical source families and their
+claims remain unchanged. This is additional fixture coverage, not a measured
+precision gain on the old fixture. Bootstrap/p5/Phaser precision remains
+**0/64, 0/16, 0/20**, including p5's existing single partial observation.
+Focused gate: `/tmp/ctcompile-nullable-keys-escape.log`. These measurements do
+not claim a completed full-suite gate.
+
+The next bounded proof remains outside coercing comparisons: logical negation
+and other total selector producers need their own effect, primitive-result,
+refusal and budget evidence.

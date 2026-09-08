@@ -2346,6 +2346,251 @@ void checkOpaqueEntryTransport(mlir::MLIRContext & context) {
                 rows.size(), liveStates, budgets);
 }
 
+void checkSelectorProducers(mlir::MLIRContext & context) {
+    const std::string values =
+        "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
+        "  %x = ctjs.create_object {storage_test_id = \"x\"}\n"
+        "  %a = ctjs.create_array [%x] {storage_test_id = \"a\"}\n";
+    const std::string compare =
+        "  %same = ctjs.compare strict_eq %p, %q {storage_test_id = \"same\"}\n";
+    const std::string boolean =
+        "  %boolean = ctjs.convert to_boolean %same {storage_test_id = \"boolean\"}\n";
+    const std::string done = "  ctjs.return %zero\n";
+    const std::string overwrite = "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n";
+    const std::string branch =
+        "  %flag = ctjs.truthy %boolean\n  cf.cond_br %flag, ^yes, ^no\n^yes:\n";
+    struct selector_row {
+        contents_row contents;
+        const char * discharged = "x";
+    };
+    const std::vector<selector_row> rows = {
+        {.contents = {.what = "source selector producers discharge only after both overwrites",
+                      .body =
+                          values + compare + boolean + branch + overwrite + "^no:\n" + overwrite,
+                      .arrays = "a:[zero] | a:[zero]",
+                      .exit = "a -> {a}; a -> {a}"}},
+        {.contents = {.what = "strict comparison observes object identity without retaining it",
+                      .body = values + "  %same = ctjs.compare strict_eq %x, %p "
+                                       "{storage_test_id = \"same\"}\n  ctjs.return %same\n",
+                      .arrays = "a:[x]",
+                      .exit = "same -> {}"}},
+        {.contents = {.what = "ToBoolean returns a primitive without proving an opaque input",
+                      .body = values + "  %boolean = ctjs.convert to_boolean %p "
+                                       "{storage_test_id = \"boolean\"}\n  ctjs.return %boolean\n",
+                      .arrays = "a:[x]",
+                      .exit = "boolean -> {}"}},
+        {.contents = {.what = "a stored comparison Boolean carries no operand heap origin",
+                      .body = values + compare +
+                              "  ctjs.set_property %a[%zero], %same\n  ctjs.return %a\n",
+                      .arrays = "a:[same]",
+                      .exit = "a -> {a}"}},
+        {.contents = {.what = "a stored ToBoolean result carries no local operand heap origin",
+                      .body = values +
+                              "  %boolean = ctjs.convert to_boolean %x "
+                              "{storage_test_id = \"boolean\"}\n"
+                              "  ctjs.set_property %a[%zero], %boolean\n  ctjs.return %a\n",
+                      .arrays = "a:[boolean]",
+                      .exit = "a -> {a}"}},
+        {.contents = {.what = "the derived Boolean may root while opaque registers only forward",
+                      .body = "  %frame = ctjs.frame_enter 8\n" + values + compare + boolean +
+                              "  cf.br ^next(%p, %boolean : !ctjs.value, !ctjs.value)\n"
+                              "^next(%opaque: !ctjs.value, %test: !ctjs.value):\n"
+                              "  ctjs.root %test in %frame\n  ctjs.frame_exit %frame\n"
+                              "  ctjs.return %test\n",
+                      .arrays = "a:[x]",
+                      .exit = "boolean -> {}"}},
+        {.contents = {.what = "a selector on known and opaque joins keeps operand origins apart",
+                      .body = values + compare +
+                              "  %flag = ctjs.truthy %same\n"
+                              "  cf.cond_br %flag, ^join(%x : !ctjs.value), "
+                              "^join(%p : !ctjs.value)\n"
+                              "^join(%selected: !ctjs.value):\n"
+                              "  %boolean = ctjs.convert to_boolean %selected\n" +
+                              done,
+                      .arrays = "a:[x] | a:[x]",
+                      .exit = "zero -> {}; zero -> {}"}},
+        {.contents = {.what = "the final selector arm preserves its retained child",
+                      .body = values + compare + boolean + branch + overwrite +
+                              "^no:\n  ctjs.return %a\n",
+                      .arrays = "a:[zero] | a:[x]",
+                      .exit = "a -> {a}; a -> {a,x}"},
+         .discharged = ""},
+        {.contents = {.what = "self equality cannot prune an unsupported structural arm",
+                      .body = values + "  %same = ctjs.compare strict_eq %x, %x\n" + boolean +
+                              branch + done + "^no:\n  ctjs.store_global \"held\", %a\n" + done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what = "a comparison Boolean is not an exact array index",
+                      .body = values + compare + "  %read = ctjs.get_property %a[%same]\n" + done,
+                      .failure = ArrayContentsFailure::UnknownIndex}},
+        {.contents = {.what = "a converted Boolean is not an exact own String key",
+                      .body = values + compare + boolean +
+                              "  ctjs.set_property %x[%boolean], %zero\n" + done,
+                      .failure = ArrayContentsFailure::UnknownPropertyKey}},
+        {.contents = {.what = "a comparison Boolean cannot become a container",
+                      .body =
+                          values + compare + "  %read = ctjs.get_property %same[%zero]\n" + done,
+                      .failure = ArrayContentsFailure::UnknownArray}},
+        {.contents = {.what = "a converted Boolean cannot become a copy endpoint",
+                      .body = values + compare + boolean + "  ctjs.copy_props %boolean into %x\n" +
+                              done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what = "a comparison never authorizes returning its opaque operand",
+                      .body = values + compare + "  ctjs.return %p\n",
+                      .failure = ArrayContentsFailure::UnknownValue}},
+        {.contents = {.what = "ToBoolean never authorizes storing its opaque operand",
+                      .body = values +
+                              "  %boolean = ctjs.convert to_boolean %p\n"
+                              "  ctjs.append %p to %a\n" +
+                              done,
+                      .failure = ArrayContentsFailure::UnknownValue}},
+        {.contents = {.what = "ToBoolean never authorizes rooting its opaque operand",
+                      .body = "  %frame = ctjs.frame_enter 8\n" + values +
+                              "  %boolean = ctjs.convert to_boolean %p\n"
+                              "  ctjs.root %p in %frame\n  ctjs.frame_exit %frame\n" +
+                              done,
+                      .failure = ArrayContentsFailure::UnknownValue}},
+        {.contents = {.what = "a primitive Boolean does not authorize unknown effects",
+                      .body = values + compare + boolean +
+                              "  \"test.effect\"(%boolean) : (!ctjs.value) -> ()\n" + done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+        {.contents = {.what = "safe selectors cannot conceal an unsupported operand producer",
+                      .body = values +
+                              "  %bad = \"test.value\"() : () -> !ctjs.value\n"
+                              "  %same = ctjs.compare strict_eq %bad, %p\n" +
+                              done,
+                      .failure = ArrayContentsFailure::UnsupportedOperation}},
+    };
+    std::size_t budgets = 0;
+    const auto check = [&](mlir::ModuleOp module, const selector_row & expected) {
+        checkArrayContents(module, expected.contents);
+        const bool complete = expected.contents.failure == ArrayContentsFailure::None;
+        budgets += checkArrayRetention(module, {.what = expected.contents.what,
+                                                .body = expected.contents.body,
+                                                .discharged = complete ? expected.discharged : "",
+                                                .complete = complete});
+    };
+    const auto parseAndCheck = [&](const selector_row & expected) {
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(
+            std::string{kPrologue} + expected.contents.body + "}\n", &context);
+        if (module) {
+            check(*module, expected);
+        } else {
+            fail(
+                row{.what = expected.contents.what, .body = expected.contents.body, .expected = ""},
+                "the selector producer fixture did not parse");
+        }
+    };
+    for (const auto & expected : rows) { parseAndCheck(expected); }
+    // Inspect every other enum kind, including apparently harmless primitive
+    // cases: this increment proves no loose equality or coercion behavior.
+    const std::vector<std::string> comparisons = {"eq", "lt", "le", "gt", "ge"};
+    for (const auto & kind : comparisons) {
+        parseAndCheck(
+            {.contents = {.what = "all coercing comparison kinds refuse local and opaque values",
+                          .body = values + "  %bad = ctjs.compare " + kind + " %x, %p\n" + done,
+                          .failure = ArrayContentsFailure::UnsupportedOperation}});
+    }
+    const std::vector<std::string> conversions = {"to_number", "to_string", "to_primitive",
+                                                  "to_property_key", "to_object"};
+    for (const auto & kind : conversions) {
+        parseAndCheck(
+            {.contents = {.what = "all non-Boolean conversions refuse opaque values",
+                          .body = values + "  %bad = ctjs.convert " + kind + " %p\n" + done,
+                          .failure = ArrayContentsFailure::UnsupportedOperation}});
+    }
+
+    // Every additional primitive origin costs its producer visit and its
+    // copied entry in the one path snapshot, even when no later use needs it.
+    selector_row wide = rows.front();
+    std::string extras;
+    for (unsigned i = 0; i < 32; ++i) {
+        extras +=
+            "  %extra_" + std::to_string(i) +
+            (i % 2 == 0 ? " = ctjs.compare strict_eq %p, %q\n" : " = ctjs.convert to_boolean %p\n");
+    }
+    wide.contents.body.insert(wide.contents.body.find("  %flag ="), extras);
+    auto narrowModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + rows.front().contents.body + "}\n", &context);
+    auto wideModule = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + wide.contents.body + "}\n", &context);
+    if (narrowModule && wideModule) {
+        const auto narrow = computeArrayContents(*narrowModule->getOps<ctjs::FuncOp>().begin());
+        const auto expanded = computeArrayContents(*wideModule->getOps<ctjs::FuncOp>().begin());
+        if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 64) {
+            fail(row{.what = "selector producers and snapshots charge every primitive origin",
+                     .body = wide.contents.body,
+                     .expected = ""},
+                 "32 extra Boolean origins did not cost 64 work units");
+        }
+        check(*wideModule, wide);
+    } else {
+        fail(row{.what = "wide selector snapshot", .body = wide.contents.body, .expected = ""},
+             "the selector snapshot charge fixture did not parse");
+    }
+
+    selector_row mutation = rows.front();
+    mutation.contents.what = "live selector kinds and uses defeat stale forged completion markers";
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(
+        std::string{kPrologue} + mutation.contents.body + "}\n", &context);
+    unsigned liveStates = 0;
+    if (module) {
+        ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+        ctjs::CompareOp comparison;
+        ctjs::ConvertOp conversion;
+        ctjs::CreateObjectOp child;
+        module->walk([&](ctjs::CompareOp op) { comparison = op; });
+        module->walk([&](ctjs::ConvertOp op) { conversion = op; });
+        module->walk([&](ctjs::CreateObjectOp op) { child = op; });
+        mlir::OpBuilder builder(comparison);
+        function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+        function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
+        child->setAttr("ctnative.confined", builder.getUnitAttr());
+        const auto inspect = [&](ArrayContentsFailure failure) {
+            mutation.contents.failure = failure;
+            check(*module, mutation);
+            ++liveStates;
+        };
+        inspect(ArrayContentsFailure::None);
+        comparison.setKindAttr(ctjs::CompareKindAttr::get(&context, ctjs::CompareKind::Eq));
+        inspect(ArrayContentsFailure::UnsupportedOperation);
+        comparison.setKindAttr(ctjs::CompareKindAttr::get(&context, ctjs::CompareKind::StrictEq));
+        inspect(ArrayContentsFailure::None);
+        conversion.setKindAttr(ctjs::ConvertKindAttr::get(&context, ctjs::ConvertKind::ToNumber));
+        inspect(ArrayContentsFailure::UnsupportedOperation);
+        conversion.setKindAttr(ctjs::ConvertKindAttr::get(&context, ctjs::ConvertKind::ToBoolean));
+        inspect(ArrayContentsFailure::None);
+        comparison->setOperand(0, child.getResult());
+        inspect(ArrayContentsFailure::None);
+        mlir::Block & last = function.getBody().back();
+        auto store = llvm::cast<ctjs::SetPropertyOp>(&last.front());
+        const mlir::Value replacement = store.getValue();
+        store->setOperand(2, child.getResult());
+        mutation.contents.arrays = "a:[zero] | a:[x]";
+        mutation.contents.exit = "a -> {a}; a -> {a,x}";
+        mutation.discharged = "";
+        inspect(ArrayContentsFailure::None);
+        store->setOperand(2, function.getBody().front().getArgument(3));
+        inspect(ArrayContentsFailure::UnknownValue);
+        store->setOperand(2, replacement);
+        mutation.contents.arrays = rows.front().contents.arrays;
+        mutation.contents.exit = rows.front().contents.exit;
+        mutation.discharged = "x";
+        inspect(ArrayContentsFailure::None);
+        builder.setInsertionPoint(last.getTerminator());
+        auto published = ctjs::StoreGlobalOp::create(builder, function.getLoc(), "held",
+                                                     function.getBody().front().getArgument(3));
+        inspect(ArrayContentsFailure::UnsupportedOperation);
+        published.erase();
+        inspect(ArrayContentsFailure::None);
+    } else {
+        fail(row{.what = mutation.contents.what, .body = mutation.contents.body, .expected = ""},
+             "the live selector producer fixture did not parse");
+    }
+    std::printf("selector producers: %zu rows, %u live states, one wide snapshot, "
+                "%zu retention budget cutoffs\n",
+                rows.size() + comparisons.size() + conversions.size(), liveStates, budgets);
+}
+
 void checkArrayFrames(mlir::MLIRContext & context) {
     const std::string enter = "  %frame = ctjs.frame_enter 4\n";
     const std::string array =
@@ -3267,6 +3512,7 @@ int main() {
     checkObjectDeletions(context);
     checkObjectCopies(context);
     checkOpaqueEntryTransport(context);
+    checkSelectorProducers(context);
     checkArrayFrames(context);
     checkArrayConditionals(context);
     checkContainerSwitches(context);

@@ -322,8 +322,9 @@ struct LoadProvenanceEvidence {
                                                            std::size_t workLimit = 100000);
 
 /// Independent complete own-element/field evidence, not the candidate graph above.
-/// Values name their original constant or fresh allocation, following exact
-/// earlier reads. Each write keeps its actual operand position as a witness.
+/// Values name their original constant, independent Boolean producer or fresh
+/// allocation, following exact earlier reads. Each write keeps its actual
+/// operand position as a witness.
 struct ArrayElementWrite {
     mlir::Operation * by = nullptr;
     unsigned position = 0;
@@ -432,7 +433,8 @@ struct ArrayContentsEvidence {
 /// Recompute from the CURRENT verified IR; needs neither trusted annotations
 /// nor alias lattices. An acyclic cf.br/cf.cond_br/cf.switch graph may contain
 /// constants, fresh objects/arrays, literal append, constant-Number-index array
-/// reads/overwrites, own String-property object writes/reads/deletes/copies, truthy and return.
+/// reads/overwrites, own String-property object writes/reads/deletes/copies,
+/// strict equality, ToBoolean, truthy and return.
 /// Object reads require an earlier own write; keys longer than 256 bytes and
 /// __proto__ refuse. Named/computed object deletions erase only the current own
 /// property; absent deletion is a no-op, absent reads still refuse. All earlier
@@ -447,13 +449,15 @@ struct ArrayContentsEvidence {
 /// are visited once at exits. Unknown values/keys,
 /// holes, calls, throws, publication, regions, prototypes and accessors refuse.
 /// Every conditional/switch edge is explored, including default and statically
-/// untaken cases. Switch flags must have an independently known origin; no
-/// additional selector-producing operations or JS coercions are admitted. Joins
+/// untaken cases. Switch flags must have an independently known origin. Strict
+/// equality and ToBoolean produce independent, noncapturing primitive Booleans;
+/// they infer no operand value, alias or branch liveness. Every other comparison
+/// and conversion kind refuses, including those that may coerce objects. Joins
 /// keep exact separate states rather than unioning overwrite targets. Truthy
 /// accepts an external value only as a noncapturing predicate, never an element.
 /// Exact entry !ctjs.value identities may travel through unused register arguments
-/// and truthy separately from known origins. They never authorize unknown roots,
-/// stored contents, returns, keys, copy endpoints or effects. Opaque seeding and
+/// and these noncapturing tests separately from known origins. They never authorize
+/// unknown roots, stored contents, returns, keys, copy endpoints or effects. Opaque seeding and
 /// path snapshots are charged to the same work budget. Other unknown forwarded
 /// values refuse; revisiting a block on one path refuses loops. Unvisited blocks
 /// are unreachable independently of solver flags.
