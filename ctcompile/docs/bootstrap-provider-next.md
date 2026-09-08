@@ -9,8 +9,12 @@ trace=1. Four programs agree across Node, the interpreter and standalone
 explicit/deduced GCC/Clang, with fresh allocations, field writes and runtime
 comparisons intact and no Script/VM symbols. Four lifetime families pass future
 calls, reentry, Map/owner release and distinct retained-leaf ASan/UBSan/leak checks.
-The focused CTest gate is **15/15**. Full CTest/lit and fresh corpus counts are
-pending after a warning-free 245-step build.
+The focused CTest gate is **15/15**. First full CTest is **511/517** after a
+warning-free 245-step build: the same five browser failures plus an existing
+specific-diagnostic assertion. `8e603ce5` restores that diagnostic; rebuilt type
+and exact diagnostic tests pass, complete lit rerun pending. The published Map
+gate passes **172 programs/25 lifetimes**. Native Bootstrap stays **19/574**;
+exact Data stays **0/7 browser/CommonJS and 0/8 AMD**.
 
 The unchanged local/historical fresh post-delete controls (**five functions,
 seven/nine calls, trace=0**) still stay unowned **0/5**, with all calls intact.

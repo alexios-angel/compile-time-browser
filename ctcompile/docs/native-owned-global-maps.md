@@ -20,8 +20,12 @@ live/fresh states**. Four lifetime families check 128 future calls, owner/table
 release, replacement/deletion, reentry, distinct retained leaves and final release
 under ASan/UBSan/leak checks. Budget sweeps finish at **3790/4542**, with **32/29
 cutoffs**. All 297 current helper sources and six previous continuation sources
-preserve bytes. The full warning-free 245-step build has completed; CTest/lit and
-configured **172 programs/25 lifetime families** remain pending.
+preserve bytes. The full warning-free 245-step build completes at **511/517
+CTests**: the five existing browser failures and one diagnostic lit failure.
+The published Map test passes all **172 programs/25 lifetime families**.
+`8e603ce5` preserves the earlier closure census's specific refusal sentence;
+its rebuilt type test and original diagnostic lit pass, with no source/expectation
+changes. The complete lit rerun is pending.
 
 Next, the exact seven/nine-call post-delete controls still remain unowned **0/5**.
 They require definite absence independently of possible absence; `present=false`

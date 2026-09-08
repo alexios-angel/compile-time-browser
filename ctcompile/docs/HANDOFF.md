@@ -66,19 +66,34 @@ sources or expectations. Independent review found unsupported region yields and
 unrelated malformed field operands missing from the new census; both were fixed
 and regression-tested before committing. Formatter **22.1.8 passes all 745 files**;
 `tools/format.sh --check` with bundled development 23 retains the nine existing
-unrelated differences. All **thirteen code/test hashes** match frozen gate input.
-The full **245-step generated build passes with zero warnings**. Full CTest is
-running, with only the same five browser failures so far; complete lit and fresh
-corpus counts remain pending. Configured publication coverage is **172 programs
-and 25 lifetime families** until that full run completes.
+unrelated differences. All **thirteen code/test hashes** match the corrected committed gate input.
+The full **245-step generated build passes with zero warnings**. Initial CTest
+finishes **511/517 in 1313.13 seconds**: **371/372 compiler** and **140/145 browser**
+tests pass. Lit is **164/165 in 658.70 seconds** (CTest **658.90 seconds**); its
+published Map test passes all **172 programs and 25 lifetime families**. The sole
+compiler failure is an existing diagnostic assertion: blanket clearing of
+`ctnative.object_reason` erased the earlier closure argument census's specific
+refusal. **`8e603ce5`** clears only this new comparison census's reason prefix.
+The original source/test expectations remain unchanged. Its warning-free four-step
+rebuild, type CTest (**0.04 seconds**) and exact diagnostic lit (**0.10 seconds**)
+pass; the complete lit rerun is pending. The five established browser failures
+remain `selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`.
+ExceptionRecovery passes in **1.18 seconds**. Fresh native corpus counts remain
+Bootstrap **19/574**, p5 **39/4754** and Phaser **45/7725** in both modes, zero
+pruned; exact Data remains **0/7 browser/CommonJS and 0/8 AMD**. Actual emitted
+C++ retains three fresh leaves, three numeric field writes, the saved owning Map
+read and live strict comparison without Script/VM symbols.
 
 **Next boundary: exact-key definite absence in the host method proof.** The
 unchanged local/historical post-delete comparisons still remain unowned **0/5**.
 `present=false` means possible absence as well as absence, so it cannot authorize
 Undefined. Track known absence separately across exact-key deletion, potentially
 aliasing writes and branch joins; saved earlier reads must keep their old values.
-Thirty-one independent source probes are queued after the full gate to separate
-this from clear support and representation boundaries. Entry numeric addition,
+Thirty-one independent source probes separate this from clear support and
+representation boundaries. Their first run exposed a temporary runner count
+assumption: LiftToSCF merges identical branch blocks, so eight syntactic calls
+can become seven prepared calls. Sources remain unchanged; the corrected runner
+records syntactic/raw/prepared counts separately and awaits the lit rerun. Entry numeric addition,
 String/object carriers, exact Bootstrap Data, full native Bootstrap initialization
 and direct browser API integration remain unfinished. No full-bundle coverage
 gain is claimed.
