@@ -397,6 +397,13 @@ if(CTCOMPILE_ENABLE_MLIR)
   target_link_libraries(ctcompile-test-owned-global-methods PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-owned-global-methods)
   add_test(NAME ctcompile_owned_global_methods COMMAND ctcompile-test-owned-global-methods)
+  # checkSharedMap - the shared two- and three-method Map family and its refusals -
+  # has been its own executable since 2026-09-08, when OwnedGlobalMethods.cpp
+  # reached 1,099 lines. Same fixtures (OwnedGlobalMethodsFixtures.h).
+  add_executable(ctcompile-test-owned-global-shared-map OwnedGlobalSharedMap.cpp)
+  target_link_libraries(ctcompile-test-owned-global-shared-map PRIVATE CTNativeAnalysis MLIRParser)
+  ctcompile_target(ctcompile-test-owned-global-shared-map)
+  add_test(NAME ctcompile_owned_global_shared_map COMMAND ctcompile-test-owned-global-shared-map)
 endif()
 
 # Private provider transactions preserve JS Map equality and withhold partial state.
