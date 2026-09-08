@@ -194,8 +194,10 @@ The focused devbox gate passes **31 contents rows, 14 index controls and seven
 live mutation states**, alongside the unchanged **209 escape rows**. All four
 existing execution oracles pass with zero violations. The integrated seven-test
 gate, including host and ownership units, passes in **18.26 seconds**; log:
-`/tmp/ctcompile-map-presence-integrated.log`. The full generated gate follows
-integration; these measurements do not claim a corpus precision increase.
+`/tmp/ctcompile-map-presence-integrated.log`. The full generated devbox gate
+passes **475/475 CTests in 693.86 seconds**, including all four oracles; log:
+`/tmp/ctcompile-map-presence-full.log`. These measurements do not claim a corpus
+precision increase.
 
 No native admission consumes this query. Complete contents for control flow,
 external values and other containers remain unfinished. Any future escape

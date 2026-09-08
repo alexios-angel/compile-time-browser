@@ -65,18 +65,32 @@ controls pass. Focused CTests pass **2/2 in 130.38 seconds**, including
 **163/163 lit cases**; log: `/tmp/ctcompile-map-presence-invocations.log`.
 Ordinary native throwing-call admission remains unchanged.
 
-The full frozen generated build/CTest gate is running. Its compiler bytes match
-the committed implementation. Browser bytes are committed `9b6c0d4` baseline
-content (unchanged since `7a755dd`), excluding Claude's unmerged WPT branch and
-ten browser carryover paths. Compiler formatting passes; the whole-tree check
-flags only untouched browser `style/selector.hpp`, `DOM/document.cpp` and
-`Style/css/selector.cpp`. Full results and fresh corpus/boundary measurements
-will replace this pending paragraph after completion.
+The full frozen generated devbox build passes **475/475 CTests in 693.86
+seconds**: **367 compiler / 108 browser**, including **163/163 lit cases in
+130.49 seconds**. Log: `/tmp/ctcompile-map-presence-full.log`. Its compiler bytes
+match the committed implementation. Browser bytes are committed `9b6c0d4`
+baseline content (unchanged since `7a755dd`), excluding Claude's unmerged WPT
+branch and ten browser carryover paths. Compiler formatting passes; the
+whole-tree check flags only untouched browser `style/selector.hpp`,
+`DOM/document.cpp` and `Style/css/selector.cpp`.
+
+Fresh native component counts remain **19/574 Bootstrap**, **39/4754 p5** and
+**45/7725 Phaser**, in both optimization modes with zero pruned functions.
+The exact Data probes remain **0/7 CommonJS**, **0/7 browser** and **0/8 AMD**;
+AMD includes the delayed-factory registration function. These are component
+counts, not complete native applications. Evidence:
+`/tmp/ctcompile-map-presence-evidence.json` and
+`/tmp/ctcompile-map-presence-bootstrap.json`. The emitted
+`/tmp/ctcompile-map-presence-parameter.cpp` was reviewed: `map_get_present`
+produces a typed numeric result passed to the runtime setter; the seed, lookup,
+setter and final getter remain calls on the same owned Map. No interpreter
+symbols or VM context appear.
 
 **Exact next native boundary:** `seeded_earlier_key` inserts
 `state.set(1, 2)` before the producer's `return state.get(0)`. The source gate
-retains every call and refuses **0/5 native** because the last-write fact forgets
-key 0. Extend to bounded per-key contents with independent key-disjointness
+retains every call and refuses **0/5 native** with no owner proof because the
+last-write fact forgets key 0. Fresh Node/interpreter runs both produce
+`trace=1`. Extend to bounded per-key contents with independent key-disjointness
 proofs and conservative invalidation for possibly aliasing writes/deletes.
 Unseeded gets remain refused; string/boolean/mixed Map payload carriers remain
 separate **0/6** boundaries despite complete host proofs. Full Bootstrap Data,

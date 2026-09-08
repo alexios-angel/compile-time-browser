@@ -153,14 +153,17 @@ The gate passes forty complete programs and six sanitizer lifetime variants.
 ## Next: retain separate live Map entries
 
 `seeded_earlier_key` inserts `state.set(1, 2)` before `return state.get(0)`.
-It remains **0/5 native**: the local last-write fact deliberately forgets key 0.
+It remains **0/5 native** with no owner proof; fresh Node/interpreter runs both
+produce `trace=1`. The local last-write fact deliberately forgets key 0.
 Extend to bounded per-key contents with independent key equality/disjointness
 and mutation effects. Possibly aliasing writes must invalidate earlier tags;
 prior invocation observations do not prove current contents. Unseeded gets
 remain refused. String/boolean/mixed Map payloads remain separate carrier
 boundaries at **0/6** despite completed host proofs. Exact Bootstrap Data stays
-**0/7** per mode; complete native initialization, realm owners and future-call
-contracts remain unfinished.
+**0/7** in CommonJS/browser and **0/8** in AMD (the extra function registers the
+delayed factory); complete native initialization, realm owners and future-call
+contracts remain unfinished. The full devbox gate passes **475/475 CTests**;
+see [the current handoff](HANDOFF.md) for corpus counts and evidence.
 
 Exceptions do not make a callback or allocation inert. Native try/catch covers
 one acyclic handler with homogeneous number, boolean or owning string throws

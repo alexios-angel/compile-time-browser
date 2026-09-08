@@ -129,7 +129,9 @@ cutoffs; no natural speculative rollback interval is reached.
 
 The integrated focused gate passes **7/7 CTests in 18.26 seconds**, followed
 by the complete program/lifetime gate. Log: `/tmp/ctcompile-map-presence-integrated.log`.
-The full generated gate is recorded in [HANDOFF.md](HANDOFF.md).
+The full generated devbox gate passes **475/475 CTests in 693.86 seconds**,
+including **163/163 lit cases**. Log: `/tmp/ctcompile-map-presence-full.log`;
+corpus and boundary measurements are recorded in [HANDOFF.md](HANDOFF.md).
 
 ## Preceding result gate, 2026-09-07
 
@@ -256,8 +258,9 @@ devbox build passes **475/475 CTests** in **652.00 seconds**, including
 ## Next boundary
 
 The retained `seeded_earlier_key` adds `state.set(1, 2)` before the producer's
-`return state.get(0)`. It remains **0/5 native** with every source call intact:
-the last-write proof forgets key 0. The next contents increment needs bounded
+`return state.get(0)`. It remains **0/5 native** with every source call intact
+and no owner proof; fresh Node/interpreter runs both produce `trace=1`.
+The last-write proof forgets key 0. The next contents increment needs bounded
 per-key facts and independent key-disjointness evidence, conservatively
 invalidating possibly aliasing writes and deletes. The unseeded
 `get() { return state.get(0); }` remains refused. Neither an earlier observed
