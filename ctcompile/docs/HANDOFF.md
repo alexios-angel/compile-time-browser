@@ -6,6 +6,84 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Nullable Map payload and logical-negation checkpoint, 2026-09-08
+
+Saved locally on `ctcompile-v1`: **`6e150949`**, owning nullable Map payloads,
+and **`b3ecab58`**, bounded logical-negation escape producers. This continues
+the exact payload boundary in **`1c7985a5`** and the **14:07:41 synchronization
+journal**. The starting tree was clean; `codex-wip-20260907` is an ancestor and
+its interrupted recovery was already gated in `5307abf`. Three agents handled
+published execution/lifetime tests, independent local tests and escape analysis.
+No browser source, runtime semantics or branch history changed; no push occurred.
+
+The eleven-call `state.set(key, key)` and twelve-call readback witnesses
+advance **0/6 -> 6/6 native** in both modes, retaining Node/interpreter trace=2.
+Nullable payloads own `nullable_string`; closed Boolean composition uses
+`std::variant<bool, ctnative::nullable_string>`. Both layouts preserve String,
+Null, Undefined and empty String. An ordinary nullable read returns Undefined
+on a miss; exact mixed reads require independent presence and payload facts.
+Saved String reads copy their bytes before overwrite/deletion. Payload-only
+helper emission is checked without a nullable-key function in the same module.
+Other optional storage, unrepresented temporaries and nullable/mixed snapshots
+remain refused. The eighteen-call mixed write admits **6/6**, trace=3;
+the fourteen-call payload identity case admits **6/6**, trace=4.
+
+The first published driver passed all **123 positives and fifteen lifetime
+families**, then found a deleted-read fixture incorrectly expecting refusal.
+That read now compiles and correctly returns Undefined. The corrected
+**thirteen-call**, trace=0 positive checks all four input tags independently
+from its return tag. All **six payload programs** pass both modes,
+explicit/deduced GCC/Clang, Node/interpreter/native identity checks and the
+saved-payload sanitizer harness. It keeps Strings alive through caller-buffer
+mutation, overwrite/deletion, both future flags, independent reentry and final
+Map destruction. Three host refusals and the mixed full-schema read refusal
+pass both modes and fresh forged facts. The final complete driver now has
+**124 programs**; its full-suite result remains pending.
+
+Fresh/stale payload forgeries and budgets **17270/20256/13049** pass
+**31/30/31 cutoffs**, with no natural speculative rollback interval. The local
+gate passes **63 observations and 34 refusals** under both layouts, including
+isolated payload helpers and ASan/UBSan. Four host/owner CTests pass in
+**26.44 seconds**; seven targeted lit cases pass in **37.98 seconds**. The
+local test now clears its own split output so a removed refusal cannot persist.
+Formatter **22.1.8** passes all **745 files**. All **eighteen session code/test
+paths** match frozen gate input. The full **247-step generated build succeeds
+without warnings**. CTest is running in `/tmp/ctcompile-nullable-payloads-full.log`;
+only the five recorded browser failures have appeared so far. This checkpoint
+does not claim a completed full gate or fresh corpus counts.
+
+The independent escape proof adds only total `LogicalNot` as a noncapturing
+Boolean origin. It proves no input value or branch liveness. Eight escape
+CTests pass in **8.23 seconds**, including **22 rows, eleven live mutation
+states, 946 retention cutoffs** and a wide snapshot's exact additional budget.
+Four execution oracles report zero violations. The separate negation family
+measures **four sites, sixteen instances, twelve retained**; earlier copy
+**21/39/23** and switch **4/10/3** families stay unchanged. Expanded-fixture
+precision **37/49** adds coverage relative to **36/48**, with no corpus gain:
+Bootstrap/p5/Phaser remain **0/64, 0/16, 0/20**. Other total unary producers,
+loops and native lifetime consumers remain separate work.
+
+**Exact next boundary: finite nullable payload facts in mixed storage.** Add
+one temporary Boolean write/delete to the accepted readback. The resulting
+**fourteen-call**, trace=2 source has complete host ownership but remains
+**0/6 native** in both modes. The original mixed nineteen-call readback has
+the same boundary, trace=3. `Presence.cpp::write` collapses the independently
+known String/Null alternatives to `Unknown`, so the read inherits the broad
+storage union. Preserve the finite per-instance/key payload evidence and seed
+`OptStr` before monotone inference widens it. The existing owning extraction
+can return the proved subset; a general mixed optional scalar carrier is not
+required for these witnesses. An object payload still has no owner proof,
+eleven calls, trace=2 and **0/6**. Full Bootstrap Data, browser integration,
+general exports and native throwing-call admission remain unfinished.
+
+Evidence: `/tmp/ctcompile-nullable-payloads-compile.log`, `-focused.log`,
+`-native.log`, `-controls.log`, `-boundary.json` and `-full.log`. The first
+published-driver failure is retained in `-native.log`; the corrected focused
+gate passes in `-controls.log`. Snapshot input and hashes are recorded in
+`-snapshot.txt` and `-input-hashes.json`. Inspected `-saved.cpp` owns its Strings
+and emits no Script symbol or VM context. Complete next sources are in
+`native-owned-global-maps.md` and devbox `/tmp/ctcompile-nullable-payloads-next/`.
+
 ## Nullable Map-key and switch-selector checkpoint, 2026-09-08
 
 Saved locally on `ctcompile-v1`: **`5e63d993`**, owning nullable Map keys, and

@@ -304,18 +304,34 @@ unsupported snapshots still refuse. Local native/VM/compiler and sanitizer
 tests pass, as do all 118 published positives and fourteen lifetime families;
 final whole-suite results are recorded in [HANDOFF.md](HANDOFF.md).
 
-## Next: nullable Map payload storage
+## Completed: owning nullable Map payload storage
 
-Change the small accepted setter from `state.set(key, true)` to
-`state.set(key, key)`. Its **eleven-call**, **trace=2** program retains complete
-host ownership but stays **0/6 native** in both modes: the payload schema is
-now `Opt<Str>`. Returning `state.get(key)` instead of size yields a **twelve-call**
-variant with the same owner, trace and refusal. Nullable String payload storage,
-followed by Boolean composition and independent nullable read evidence, is the
-next bounded carrier obligation. An ordinary object payload keeps eleven calls
-and trace=2 but has no host ownership proof, separating that larger identity
-boundary. Complete sources and measured controls are in
-[the Map boundary](native-owned-global-maps.md#next-boundary).
+Commit `6e150949` admits the eleven-call nullable write and twelve-call
+readback at **6/6 native** in both modes, preserving Node/interpreter trace=2.
+Owning `nullable_string` storage preserves Null, Undefined and empty String;
+closed Boolean composition reuses `std::variant<bool, nullable_string>`.
+Mixed reads still require independent payload facts. The original eighteen-call
+mixed write admits **6/6**, trace=3. A deleted read correctly returns Undefined;
+saved results survive later writes, deletion and final Map destruction.
+
+The first driver passed all 123 positives and fifteen lifetime families.
+After promoting the deleted-read case, all six new payload programs and the
+remaining refusal controls pass focused checks. Seven targeted lit cases,
+four host/owner CTests and the 63-observation/34-refusal local gate pass.
+The full 124-program driver and repository gate are pending; see
+[the payload checkpoint](native-owned-global-maps.md#owning-nullable-payloads-2026-09-08).
+
+## Next: independent nullable payload facts in mixed storage
+
+Adding a temporary Boolean write to the twelve-call readback produces a
+**fourteen-call**, trace=2 witness with complete ownership but **0/6 native**.
+The original mixed nineteen-call readback has the same boundary, trace=3.
+Preserve the independently known String/Null payload alternatives through the
+exact instance/key write and read, before type inference widens its result
+to the whole Map schema. The existing owning extraction supports the subset;
+an arbitrary mixed signature is a separate obligation. An ordinary object
+payload still has no host ownership proof. Complete sources and both-mode
+measurements are in [the Map boundary](native-owned-global-maps.md#next-boundary).
 
 The exact Bootstrap getter at vendor line 17 also needs nested/object payloads.
 Exact Bootstrap Data, general realm owners and future-call contracts remain

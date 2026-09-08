@@ -2,7 +2,8 @@
 
 The native backend can lower standard `Map` instances with primitive or proved
 identity-only object keys and number, boolean, owning-string, closed
-Bool/Number or Bool/String alternatives, or finite acyclic Map values, including
+Bool/Number or Bool/String alternatives, nullable String (optionally composed
+with Boolean), or finite acyclic Map values, including
 closed function parameters, returns and lifted captures. A returned handle
 owns its storage after the factory frame ends. Monomorphic
 [returned closures](native-returned-closures.md) can also own
@@ -37,15 +38,21 @@ the alternative, then applies its ordinary scalar equality: false and zero are
 distinct keys, while numeric NaNs and signed zeros still use SameValueZero.
 The final read's type never narrows the storage schema or removes other writes.
 
-Optional String keys use the existing owning `ctnative::nullable_string`.
-Combining Boolean keys with them uses
-`std::variant<bool, ctnative::nullable_string>`. These are key-only storage
+Optional String keys and payloads use the existing owning `ctnative::nullable_string`.
+Combining Boolean with them uses
+`std::variant<bool, ctnative::nullable_string>`. These are closed storage
 schemas. Null, Undefined, empty String, `"null"` and `"undefined"` stay distinct;
 both storage layouts compare the tag before the owned text. Conversions copy
 String bytes and retain absent tags. A key is never coerced through `string_text`
 unless an independent per-operation proof has established that it is a String.
-Optional numeric/Boolean key schemas and unrepresented scalar temporaries
-remain refused, as do nullable payloads and nullable-key snapshots.
+Optional numeric/Boolean storage and unrepresented scalar temporaries
+remain refused, as do nullable snapshots. A homogeneous nullable payload read
+returns its full owning carrier, with Undefined for a missing entry. A mixed
+nullable payload read still requires independent presence and an exact String
+or Boolean tag; the schema supplies no narrower result. The selected String is
+copied out of its nullable alternative after checking the tag. Saved results
+survive subsequent replacement, deletion and destruction of their source Map.
+Payload-only modules request the nullable helper independently of their key type.
 
 When no admitted native Map operation observes iteration order, the module
 uses `std::map<K, V, map_key_less<K>>`. Lookup helpers call `map->find(key)`;
@@ -125,9 +132,10 @@ a saved result. String value snapshots also copy every element and retain
 insertion order independently of later Map mutation. Boolean value snapshots
 still refuse because this tier has no boolean-vector carrier.
 
-Stored primitive values must be definite: numbers, including NaN, booleans,
-UTF-8 strings, or the two closed mixed schemas above. Optional stored values,
-Number/String or larger unions, mixed snapshots and general object keys remain
+Stored primitive values may be numbers, including NaN, booleans,
+UTF-8 strings, the two closed mixed schemas above, or nullable String with
+optional Boolean composition. Other optional stored values, Number/String or
+larger unions, mixed snapshots and general object keys remain
 refused. A mixed `get` is admitted only when the live structured must-analysis
 independently proves both membership and the payload type from the last write
 on every reaching path. A write takes its tag from a literal or an independently

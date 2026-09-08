@@ -703,11 +703,55 @@ all **745 files**; all **nineteen code/test paths** match committed HEAD, frozen
 input and final devbox source. Corpus and exact Data counts remain unchanged;
 see [HANDOFF.md](HANDOFF.md) for the measurements and logs.
 
+## Owning nullable payloads, 2026-09-08
+
+Commit **`6e150949`** continues the exact nullable payload boundary recorded
+in **`1c7985a5`** and the **14:07:41 synchronization journal**. The eleven-call
+`state.set(key, key)` witness and twelve-call readback now advance **0/6 -> 6/6
+native** in both modes, preserving Node/interpreter **trace=2**. The original
+mixed eighteen-call program admits **6/6**, trace=3. A fourteen-call payload
+identity witness distinguishes String, Null, Undefined and empty String, with
+trace=4. All source calls and runtime mutations remain.
+
+Both Map layouts use owning `nullable_string` payloads, or
+`std::variant<bool, ctnative::nullable_string>` for closed Boolean composition.
+The ordinary nullable read copies its full carrier and returns Undefined on a
+miss. An exact mixed read requires independent presence and payload evidence,
+then checks the selected tag and copies the String. The storage census accepts
+absent literals without treating them as exact scalar facts. Payload-only
+modules request their helper independently of nullable keys. Other optional
+storage, unrepresented temporaries and mixed/nullable snapshots still refuse.
+
+All **123 original positive programs** and **fifteen lifetime families** passed
+the first published driver. It then stopped on a new deleted-read refusal that
+correctly admitted native output. This case is now a **thirteen-call**, trace=0
+positive, returning Undefined for String, Null, Undefined and empty inputs.
+The corrected **six payload programs** pass both modes, explicit/deduced
+GCC/Clang, exact Node/interpreter/native identity observations and saved-payload
+sanitizers. The saved setter sees only false at startup; future calls use both
+flags, caller-buffer mutation, overwrite/deletion, independent reentry and
+final Map destruction. Input tags and expected return tags are checked
+independently. The complete driver now contains **124 programs**; its final
+full-suite result is pending rather than inferred from the focused checks.
+
+The three missing-result/object/snapshot host refusals and mixed full-schema
+read refusal pass both modes and fresh forged facts. New budgets
+**17270/20256/13049** pass **31/30/31 cutoffs**, with no natural speculative
+rollback interval. The local gate passes **63 observations and 34 refusals**
+under both layouts, including isolated nullable-payload helpers and
+ASan/UBSan. Four host/owner CTests pass in **26.44 seconds**; seven targeted lit
+cases pass in **37.98 seconds**. The first local rerun found a removed split
+fixture left on disk; the test now clears its own output before extraction.
+Construction diagnostic wording remains compatible with existing checks.
+Formatter **22.1.8** passes all **745 files**. All thirteen native code/test
+paths match the frozen gate. The full 247-step generated build succeeds without warnings. CTest is running
+in `/tmp/ctcompile-nullable-payloads-full.log`.
+
 ## Next boundary
 
-Nullable stored payloads remain separate from the now-supported nullable keys.
-The smallest measured continuation changes only the setter payload from `true`
-to its nullable parameter:
+The next obligation is **finite nullable payload evidence for a mixed Map
+read**, independent of its broader storage schema. The small accepted
+readback becomes refused after adding one temporary Boolean payload:
 
 ```js
 var host = {};
@@ -723,7 +767,12 @@ var host = {};
             state.delete('seed');
             return result || null;
         },
-        set(key) { state.set(key, key); return state.size; }
+        set(key) {
+            state.set('extra', true);
+            state.delete('extra');
+            state.set(key, key);
+            return state.get(key);
+        }
     };
 });
 host.slot.set(host.slot.get(false));
@@ -731,20 +780,22 @@ host.slot.set(host.slot.get(true));
 var trace = host.slot.size();
 ```
 
-This retains **eleven calls**, complete ownership and Node/interpreter
-**trace=2**, but stays **0/6 native** in both modes with `Opt<Str>` key and
-payload schemas. Changing the setter return to `state.get(key)` retains
-**twelve calls**, complete ownership and the same trace/refusal. Restoring the
-`true` payload admits **6/6**. The corresponding original mixed-key program
-will also need nullable Bool/String payload storage, without using the schema
-to invent an exact read tag or admitting unrepresented snapshots.
+This retains **fourteen calls**, complete host ownership and Node/interpreter
+**trace=2**, but remains **0/6 native** in both modes. The original mixed
+nineteen-call readback likewise retains complete ownership, **trace=3** and
+**0/6**. `Presence.cpp::write` currently reduces the independently known
+String/Null alternatives to `Unknown`. Carry that finite payload fact through
+the exact instance/key write and read, and seed `OptStr` before monotone type
+inference widens to the full storage union. A method signature alone cannot
+supply the evidence. The existing
+`map_get_present_nullable_as<nullable_string>` can copy the proved subset;
+a general optional Bool/String scalar carrier is not required for this case.
+Retain aliasing-write, deletion, missing-read, stale-marker and budget controls.
 
-An ordinary object payload `{value: 'instance'}` instead retains eleven calls
-and trace=2 but has **no host owner proof**, and stays **0/6**. That is a separate
-identity/field proof obligation needed for Bootstrap component instances.
-Full native Bootstrap Data, browser API integration and general exports remain
-unfinished. Current-call proofs do not establish an arbitrary future-call ABI.
-Complete sources and both-mode measurements are saved in
-`/tmp/ctcompile-nullable-keys-boundary.json` and on the devbox under
-`/tmp/ctcompile-nullable-keys-next/`. The nullable payload carrier refusal is
-also committed in `native_owned_global_maps/sources.py`.
+An ordinary object payload `{value: 'instance'}` keeps eleven calls and
+trace=2 but has **no host owner proof**, remaining **0/6** in both modes. Object
+identity/fields, full native Bootstrap Data, browser API integration and general
+exports remain separate obligations. Current-call proofs establish no arbitrary
+future-call ABI. Complete sources and measurements are in
+`/tmp/ctcompile-nullable-payloads-boundary.json` and on the devbox under
+`/tmp/ctcompile-nullable-payloads-next/`.
