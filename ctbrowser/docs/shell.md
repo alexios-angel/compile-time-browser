@@ -298,7 +298,7 @@ box looked unchecked. The tick is a staircase of 1px rows, the same way the
 `<select>`'s arrow is built: `paint_op` has fills, ellipses, text, images and
 clips and nothing else, so a 45° stroke is not expressible and a stack of short
 rows is what a diagonal *is* here. Not a glyph either — the goldens render with
-font8x8, which has no U+2713. And not `fill_ellipse`: `chrome_basics` asserts a
+font8x8, which has no U+2713. And not `fill_ellipse`: `control_editing` asserts a
 checkbox draws none, which is what keeps it from looking like a radio.
 
 ## WHAT A REAL BROWSER DOES DIFFERENTLY (2026-07-28)
@@ -530,7 +530,7 @@ Three things the SDL layer was missing and now has:
   coordinates under letterboxed presentation. invaders is 320x240 in a 960x720
   window, so every pointer event arrived at three times its true position.
 
-`ctbrowser/unittests/unit/bindings_basics` drives all of it, and finishes by holding a key
+`ctbrowser/unittests/unit/page_input` drives all of it, and finishes by holding a key
 through MDN's breakout and asserting the frames differ — with a key the page
 ignores as the control, so "the frames differ" cannot pass by nondeterminism.
 

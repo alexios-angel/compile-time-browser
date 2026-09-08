@@ -71,16 +71,22 @@ ctbrowser_test(unit/style_calc)
 ctbrowser_test(unit/css_syntax)
 ctbrowser_test(unit/css_values)
 # The CSSOM object model - document.styleSheets and the objects under it. Its
-# own file rather than more of css_values: that one asks what a VALUE is worth,
-# this one asks what the object model SERIALISES to, and every case in it is a
-# string a `css/cssom` test compares byte for byte.
-ctbrowser_test(unit/cssom)
+# own files rather than more of css_values: that one asks what a VALUE is worth,
+# these ask what the object model SERIALISES to, and every case in them is a
+# string a `css/cssom` test compares byte for byte. Two files since 2026-09-07,
+# when the one (cssom.cpp) passed 1,000 lines, sharing unit/cssom_probe.hpp:
+# the RULES - CSSRuleList, CSSStyleRule, the grouping and media rules, every
+# rule type a sheet carries and where one may be inserted - and the SHEETS -
+# constructed, adopted, an element's, and the declaration blocks
+# getComputedStyle and el.style hand a script.
+ctbrowser_test(unit/cssom_rules)
+ctbrowser_test(unit/cssom_sheets)
 # `querySelector` and the Selectors engine behind it. Its own file rather than
 # more of css_syntax: that one asks what the parser BUILDS, and this asks what a
 # script gets back when it matches with it - which used to be a second, weaker
 # matcher entirely.
 ctbrowser_test(unit/selectors)
-# The document as a Node. Its own file rather than more of bindings_basics
+# The document as a Node. Its own file rather than more of node_methods
 # because every case in it turns on ONE structural fact - this tree builder has
 # no Document node above `<html>` - so what the cases pin down is a MODEL being
 # consistent with itself, including where it honestly refuses. See the block
@@ -135,21 +141,76 @@ ctbrowser_test(unit/fonts_basics)
 ctbrowser_test(unit/svg_basics)
 ctbrowser_test(unit/pipeline_basics)
 ctbrowser_test(unit/shell_basics)
-ctbrowser_test(unit/bindings_basics)
-# MutationObserver. Its own file rather than more of bindings_basics because
+# --- the DOM bindings, eight files since 2026-09-07 -------------------------
+# bindings_basics was 3,365 lines, and every carve-out in this file had named it
+# as the file it was NOT more of. It is gone: its cases are these eight,
+# verbatim, grouped the way its own section comments grouped them, sharing
+# unit/page_probe.hpp. Each line says what its file asks that the others do not.
+#
+# Script WRITING to the document and the pixels following - classList and
+# style, the document API and the document's own properties, a stale handle
+# staying inert - and the two robustness cases. The original's header is here.
+ctbrowser_test(unit/dom_mutation)
+# The shape a wrapper has before a method is called on it: the window as the
+# global object, HTML 2.6 reflection, and the interface objects and their chain.
+ctbrowser_test(unit/dom_interfaces)
+# The Node and Element METHOD surface: tree walking, the live collections, the
+# constructible DOM, querySelector on an element, and the four ways of putting
+# markup or text into one.
+ctbrowser_test(unit/node_methods)
+# Event dispatch: the whole path, EventTarget, the interface hierarchy, what
+# dispatchEvent refuses, the listener options and the handler properties. The
+# listener-invocation RULES are event_listeners, below, from the chrome side.
+ctbrowser_test(unit/event_dispatch)
+# The canvas contexts as a SCRIPT sees them - paths, text alignment, the fill
+# rule, compositing, ImageData, clip, and WebGL constructing and refusing.
+# widgets_basics asks the same canvas what it draws.
+ctbrowser_test(unit/canvas_context)
+# What happens on a later TURN: await, fetch, collection running on its own,
+# timers and animation frames. Every case needs an event loop.
+ctbrowser_test(unit/page_async)
+# Leaving the page: location and cookies, alert, reload, a link handed to the
+# embedder - and the three cases that drive run_app, which is why the SDL
+# suppressions below are set on this test and no other.
+ctbrowser_test(unit/navigation)
+# Input reaching script, with the legacy keyCode and which, and real pages -
+# breakout, pong, the invaders page - played by injecting input.
+ctbrowser_test(unit/page_input)
+# MutationObserver. Its own file rather than more of dom_mutation because
 # what it asks about is a DIFF - records reconstructed from a snapshot rather
 # than reported by the mutation - and every case in it is about the SHAPE of a
 # record and about WHEN the callback runs, neither of which any other test
 # observes. See lib/Shell/bindings/mutation.cpp.
 ctbrowser_test(unit/mutation_observer)
 ctbrowser_test(unit/widgets_basics)
-ctbrowser_test(unit/chrome_basics)
+# --- the chrome, five files since 2026-09-07 --------------------------------
+# chrome_basics was 2,299 lines. Its cases are these five, verbatim, grouped by
+# its own section comments; the helpers they share are unit/chrome_probe.hpp.
+#
+# Form controls as they LOOK and as they are EDITED: the caret in the drawing
+# face, clicks and arrows placing it, password bullets, disabled, the checkbox
+# tick, a textarea's lines and wraps, and what a script reads off a control.
+ctbrowser_test(unit/control_editing)
+# A field's VIEW: scrolling to keep the caret visible, the wheel over a field,
+# auto-scroll while drag-selecting, and the caret blink's wakeups.
+ctbrowser_test(unit/control_scrolling)
+# Tables, list markers, disclosure triangles, <details> and <select> - the
+# things a page puts on screen that are not boxes and text, which was the
+# original file's stated subject. Its header is here.
+ctbrowser_test(unit/tables_and_markers)
+# The browser's own chrome on a page: the scrollbar, the select popup, the
+# context menu, the clipboard, the cursor, and page-level text selection.
+ctbrowser_test(unit/page_chrome)
+# The listener-invocation rules dom/events was getting wrong, one assertion
+# apiece: the default passive value, the copied listener list, a throwing
+# listener, handleEvent, the bare EventTarget globals, and window.event.
+ctbrowser_test(unit/event_listeners)
 # The Bootstrap fixtures against test/baseline/. The Chrome half of that harness
 # is tools/check/css-parity.py and is deliberately not a ctest; this is the half
 # that catches a regression without a browser download. See docs/plans/bootstrap.md.
 ctbrowser_test(unit/bootstrap_layout)
 # The attribute API on Element. Its own file rather than more of
-# bindings_basics because every case in it turns on a DISTINCTION - the
+# node_methods because every case in it turns on a DISTINCTION - the
 # qualified lookup against the namespaced one, an HTML element against a
 # foreign one, a name that SERIALISES against a name that parses - and each of
 # those used to have one answer where two belong.
@@ -231,16 +292,17 @@ if(SDL3_FOUND)
     "CTBROWSER_FONT_PATH=${PROJECT_SOURCE_DIR}/resources/fonts;SDL_VIDEODRIVER=offscreen;TSAN_OPTIONS=suppressions=${CTBROWSER_TEST_SUPPORT_DIR}/tsan.supp")
 endif()
 
-# bindings_basics drives run_app, which initialises SDL - and SDL reaches
-# libdbus, whose own lock order TSan reports as an inversion. Same suppression
-# file, same rule: by LIBRARY, so a real one in our code is still caught.
+# navigation drives run_app (bindings_basics did, until it was split), which
+# initialises SDL - and SDL reaches libdbus, whose own lock order TSan reports
+# as an inversion. Same suppression file, same rule: by LIBRARY, so a real one
+# in our code is still caught.
 # ...and its offscreen video driver initialises EGL without releasing it, which
 # LeakSanitizer reports. Both suppressed by LIBRARY - see the files.
 #
 # Set HERE rather than beside the corpus properties in test/: set_tests_properties
 # resolves a test name in the directory scope that created it, so a property for
 # a unittest belongs in this file.
-set_tests_properties(bindings_basics PROPERTIES ENVIRONMENT
+set_tests_properties(navigation PROPERTIES ENVIRONMENT
   "CTBROWSER_FONT_PATH=${PROJECT_SOURCE_DIR}/resources/fonts;SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;TSAN_OPTIONS=suppressions=${CTBROWSER_TEST_SUPPORT_DIR}/tsan.supp;LSAN_OPTIONS=suppressions=${CTBROWSER_TEST_SUPPORT_DIR}/lsan.supp")
 
 # --- the three crash classes test262 found, 2026-09-02 (append-only) ---------

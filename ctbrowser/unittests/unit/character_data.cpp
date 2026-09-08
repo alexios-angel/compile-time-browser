@@ -2,7 +2,7 @@
 // is measured in UTF-16 CODE UNITS while this engine stores UTF-8.
 //
 // That is the whole reason this file exists rather than being more of
-// element_attrs or bindings_basics. Every offset in `CharacterData` and in
+// element_attrs or node_methods. Every offset in `CharacterData` and in
 // `Text.splitText` is a `unsigned long` counting UTF-16 code units:
 // `substringData(39, 2)` on a string with CJK in it and `replaceData(5, 8, ..)`
 // on one with an astral character in it are the two shapes of the same

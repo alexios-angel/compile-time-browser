@@ -86,7 +86,7 @@ collection checks assert that collections actually ran. The entry tests cover
 direct and reentrant execution with interpreted and compiled bodies, checking
 both the AOT receiver argument and the `ct_aot_this` result.
 
-[`bindings_basics`](../../ctbrowser/unittests/unit/bindings_basics.cpp) checks
+[`dom_interfaces`](../../ctbrowser/unittests/unit/dom_interfaces.cpp) checks
 that Shell supplies its Window identity and that changing `globalThis` does
 not change a script's receiver. The six standalone script/module fixtures
 agree with Node. Five focused devbox runtime tests pass. The unchanged 11-scenario

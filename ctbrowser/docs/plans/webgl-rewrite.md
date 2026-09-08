@@ -366,7 +366,7 @@ confirm with the ratchet rather than the call count.
 
 The ANGLE build compiles clean and runs. Thirteen failures, all WebGL-dependent:
 the four render tests, webgl2/babylon/p5 ratchets and API probes, plus
-bindings_basics and widgets_basics.
+bindings_basics (its WebGL case is canvas_context now) and widgets_basics.
 
 MOST LIKELY CAUSE, and it is a consequence of a deliberate change rather than a
 mystery: `driver::fastest` now asks for ANGLE's own device selection, where the

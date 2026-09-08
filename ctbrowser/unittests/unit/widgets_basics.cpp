@@ -715,7 +715,7 @@ void test_getcontext_only_answers_for_2d() {
         // because this canvas already has a `webgl` context two lines above,
         // and A CANVAS HAS ONE CONTEXT TYPE FOR EVER - asking for a different
         // id returns null rather than converting it or handing back the one it
-        // has under the wrong name. unittests/unit/bindings_basics.cpp asserts the other
+        // has under the wrong name. unittests/unit/canvas_context.cpp asserts the other
         // side of that rule, on a canvas that takes webgl2 first.
         check(log[2] == "webgl2 true", "webgl2 is null on a canvas that already took webgl");
         // Anything ELSE is still null - that is what an unknown context type

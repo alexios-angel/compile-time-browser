@@ -99,14 +99,14 @@ the examples. A shipped exe still ships `fonts/` beside itself and needs nothing
 
 `ENVIRONMENT` is one CMake property, not a list that accumulates, so the three
 places that set it for other reasons — the ANGLE suppressions, `gpu_basics`,
-`bindings_basics` — name the font path again. That is stated in each of them,
+`navigation` — name the font path again. That is stated in each of them,
 because the failure it prevents is silent.
 
 **Test properties are directory-scoped.** `set_tests_properties` resolves a test
 name in the directory that created it, so splitting the suite three ways meant
 each property had to move to the file that registers its test. The ANGLE
 suppression loop stayed with the corpus in `test/`; `gpu_basics` and
-`bindings_basics` went with the unit tests. A property set from the wrong scope
+`bindings_basics` (now `navigation`) went with the unit tests. A property set from the wrong scope
 does not warn.
 
 ### The gate
