@@ -120,6 +120,13 @@ its header, and the header did not change:
   profiler, the file and bundle entry points). The `host` interface both need
   moved verbatim to `internal.hpp`, and `make_host` lost its `inline` because it
   is declared there and defined in one file. `app.hpp` did not change.
+- `ctbrowser/lib/Raster/gl/` — four, from 1,162, on 2026-09-08. gl.cpp was one
+  `#if CTBROWSER_WITH_ANGLE` branch and its `#else` stub; the branch is
+  `context.cpp` (EGL, the context, per-context state), `objects.cpp` (shaders,
+  programs, buffers, attributes, textures, framebuffers) and `draw.cpp`, each
+  under the same `#if`, and the stub is `stub.cpp` under `#if !`. Both
+  definitions of `device::impl` sit in `internal.hpp` under that guard, because
+  every file reaches through it. `gl.hpp` did not change.
 
 ### What splitting the compiler cost, measured
 

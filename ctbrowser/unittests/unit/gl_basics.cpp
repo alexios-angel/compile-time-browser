@@ -114,7 +114,7 @@ int main() {
         // GL's numbers, spelled out. `raster::gl::device` takes plain ints on
         // purpose - the values a page passes arrive from JavaScript already as
         // integers - so a caller needs the constants and no GLES header may
-        // appear outside lib/Raster/gl.cpp.
+        // appear outside lib/Raster/gl/.
         constexpr int gl_vertex_shader = 0x8B31;
         constexpr int gl_fragment_shader = 0x8B30;
         constexpr int gl_array_buffer = 0x8892;

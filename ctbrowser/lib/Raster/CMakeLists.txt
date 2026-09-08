@@ -14,8 +14,13 @@ target_sources(ctbrowser-raster
   PRIVATE
     # the primitives: a surface, its tiles, and the command painter
     draw.cpp
-    # the GL device
-    gl.cpp
+    # the GL device. gl.cpp was 1,162 lines - an ANGLE branch and a stub branch
+    # of one #if - and is four files now, the pimpl both branches define in
+    # gl/internal.hpp with the includes it had.
+    gl/context.cpp
+    gl/objects.cpp
+    gl/draw.cpp
+    gl/stub.cpp
     svg.cpp
     # the backends and the machinery that drives a frame through one
     backend/software.cpp
