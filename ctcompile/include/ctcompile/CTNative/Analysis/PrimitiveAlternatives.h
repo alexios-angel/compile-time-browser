@@ -23,7 +23,9 @@ struct PrimitiveAlternatives {
     unsigned falsy = 0;
     bool known = false;
 
-    bool operator==(const PrimitiveAlternatives &) const = default;
+    bool operator==(const PrimitiveAlternatives & other) const {
+        return truthy == other.truthy && falsy == other.falsy && known == other.known;
+    }
 
     // A formal parameter records the categories supplied by every current
     // call, not the truth value of any startup argument. Future calls retain
