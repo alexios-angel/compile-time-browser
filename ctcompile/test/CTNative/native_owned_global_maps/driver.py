@@ -14,6 +14,7 @@ from .sources import (
     RESULT_SIGNATURES, refusal_sources, parameter_refusals, result_refusals,
     seeded_result_refusals, size_result_sources, size_result_refusals,
     payload_result_sources, payload_result_refusals, mixed_result_sources, mixed_result_refusals,
+    saved_read_sources, saved_read_refusals,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
@@ -82,6 +83,7 @@ def main():
         **size_result_sources(),
         **payload_result_sources(),
         **mixed_result_sources(),
+        **saved_read_sources(),
     }
     saved = {}
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
@@ -113,6 +115,21 @@ def main():
         ("result_seeded_mixed_empty_key", "state.set(false, false);", ("state.set('', false);",)),
         ("result_seeded_mixed_string_saved", "return saved;",
          ("return state.get('seed');", "return false;")),
+        ("saved_read_write", "state.set(false, saved);",
+         ("state.has(false);", "state.set(false, true);")),
+        ("saved_read_write", "state.delete(false);", ("state.has(false);",)),
+        ("saved_read_write_false", "state.set('', saved);",
+         ("state.has('');", "state.set('', state.get(false));")),
+        ("saved_read_write_number", "state.set(false, saved);",
+         ("state.has(false);", "state.set(false, state.get(1));")),
+        ("saved_read_write_repeated", "state.set(false, saved);", ("state.has(false);",)),
+        ("saved_read_write_string_saved", "state.set(false, saved);", ("state.has(false);",)),
+        ("saved_read_write_string_saved", "return result;", ("return state.get(false);",)),
+        ("saved_read_write_string_saved", "state.delete(false);", ("state.has(false);",)),
+        ("saved_read_write_wrong_tag", "state.set(false, true); const result",
+         ("state.set(false, saved); const result",)),
+        ("saved_read_write_overwritten", "state.set(false, true); const result",
+         ("const result",)),
     ):
         live_source, _, live_value = positives[name]
         if live_source.count(old) != 1:
@@ -128,6 +145,8 @@ def main():
                      else 6 if name == "shared_three" else 5 if name.startswith("shared") else 4)
         if count != functions:
             raise RuntimeError(f"{name}: lost the {functions}-function source chain")
+        if name == "saved_read_write" and len(source_calls(ir.read_text())) != 12:
+            raise RuntimeError("saved_read_write: changed the exact 12-call boundary")
         if name == "already_resolved":
             ir = resolve_getter(args, ir)
         if name.startswith("legacy_"):
@@ -144,6 +163,10 @@ def main():
             raise RuntimeError(f"{name}: lost live owning proof")
         if ir.read_text() != original or config.read_text() != manifest:
             raise RuntimeError(f"{name}: changed supplied source or manifest")
+        if name in saved_read_sources():
+            disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")
+            if disabled.read_text() != output.read_text():
+                raise RuntimeError(f"{name}: saved scalar proof depends on optimization policy")
         standalone(args, output, name, value, compilers, nm)
         saved[name] = ir, config, output
 
@@ -192,7 +215,9 @@ def main():
                  "seeded_size_two_entries", "seeded_size_two_saved_empty",
                  "result_seeded_bool", "result_seeded_string", "result_seeded_string_saved",
                  "result_seeded_mixed_contents", "result_seeded_join_reseed",
-                 "result_seeded_bool_string_contents", "result_seeded_mixed_string_saved"):
+                 "result_seeded_bool_string_contents", "result_seeded_mixed_string_saved",
+                 "saved_read_write", "saved_read_write_false", "saved_read_write_number",
+                 "saved_read_write_string_saved"):
         key_ir, key_config, _ = saved[name]
         rollback += check_budgets(args, key_ir, key_config, name,
                                   functions=RESULT_SIGNATURES[name][2])
@@ -333,6 +358,43 @@ def main():
         check_call_preservation(forged.read_text(), failed.read_text(), forged_name)
         rerun = methods.refused(args, failed, forged_name + "-rerun", forged_config, admitted=0)
         check_call_preservation(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
+    for name, (source, value, old, replacement) in saved_read_refusals().items():
+        js, rejected, count = boundary.prepare(args, name, source)
+        if count != 6:
+            raise RuntimeError(f"{name}: changed saved-read refusal source denominator")
+        expected = f"trace={value}\n"
+        if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != expected
+                or host.run([str(reference), str(js)]).stdout != expected):
+            raise RuntimeError(f"{name}: Node/interpreter observation mismatch")
+        if source.count(old) != 1:
+            raise RuntimeError(f"{name}: lost the saved-read refusal observation")
+        blind = args.work / f"{name}-blinded.js"
+        blind.write_text(source.replace(old, replacement))
+        if host.run([node, "-e", boundary.NODE, str(blind)]).stdout != "trace=1\n":
+            raise RuntimeError(f"{name}: saved scalar cannot distinguish the missing read")
+        fresh = contract(args, rejected, name)
+        for mode, options in (("default", ""), ("disabled", "optimize=false")):
+            mode_name = name + "-" + mode
+            failed = methods.refused(args, rejected, mode_name, fresh, options=options, admitted=0)
+            check_call_preservation(rejected.read_text(), failed.read_text(), mode_name)
+            # Both are valid serialized tags. Neither a compatible String nor
+            # a wrong Boolean marker may manufacture presence for a missing get.
+            for payload in ("bool", "string"):
+                forged_name = mode_name + "-forged-" + payload
+                forged = args.work / f"{forged_name}.mlir"
+                forged.write_text(forge_map_presence(rejected.read_text(), payload))
+                failed = methods.refused(args, forged, forged_name + "-stale", fresh,
+                    options=options, reason="fingerprint mismatch", admitted=0)
+                check_call_preservation(forged.read_text(), failed.read_text(), forged_name + "-stale")
+                forged_config = contract(args, forged, forged_name)
+                failed = methods.refused(args, forged, forged_name, forged_config,
+                                         options=options, admitted=0)
+                if "fingerprint mismatch" in failed.read_text():
+                    raise RuntimeError(f"{forged_name}: forgery skipped live saved-value reanalysis")
+                check_call_preservation(forged.read_text(), failed.read_text(), forged_name)
+                rerun = methods.refused(args, failed, forged_name + "-rerun", forged_config,
+                                        options=options, admitted=0)
+                check_call_preservation(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
     # A definite get tag does not narrow the whole Map's storage schema. The
     # Number/String refusal keeps its complete owner proof and runtime edge.
     for name, (source, value) in seeded_carrier_refusals().items():
@@ -448,7 +510,8 @@ def main():
     for name in ("seeded_size_two_entries", "seeded_size_two_saved_empty",
                  "result_seeded_bool", "result_seeded_string", "result_seeded_string_saved",
                  "result_seeded_mixed_contents", "result_seeded_join_reseed",
-                 "result_seeded_bool_string_contents", "result_seeded_mixed_string_saved"):
+                 "result_seeded_bool_string_contents", "result_seeded_mixed_string_saved",
+                 *saved_read_sources()):
         _, config, output = saved[name]
         functions = RESULT_SIGNATURES[name][2]
         rerun = owned.lower(args, output, name + "-rerun", config,
@@ -473,6 +536,8 @@ def main():
           f"{len(payload_result_refusals())} missing-payload refusals distinguish false/empty; "
           f"{len(mixed_result_sources())} closed mixed Map programs and saved-string lifetime; "
           f"{len(mixed_result_refusals())} mixed deleted-result refusals preserve calls; "
+          f"{len(saved_read_sources())} saved-read/write programs in both optimization modes; "
+          f"{len(saved_read_refusals())} saved-read missing/deleted refusals and saved-string lifetime; "
           f"{len(seeded_result_refusals())} seeded proof and "
           f"{len(seeded_carrier_refusals())} seeded carrier refusals; "
           f"{len(rollback)} speculative rollback cutoffs")

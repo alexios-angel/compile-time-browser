@@ -118,19 +118,26 @@ Stored primitive values must be definite: numbers, including NaN, booleans,
 UTF-8 strings, or the two closed mixed schemas above. Optional stored values,
 Number/String or larger unions, mixed snapshots and general object keys remain
 refused. A mixed `get` is admitted only when the live structured must-analysis
-independently proves both membership and the payload type from the last literal
-write on every reaching path. `has` adds no payload evidence. Possible aliasing
-writes, callee effects, deletion and loops invalidate facts conservatively.
-The read returns its exact scalar by value, preserving saved string ownership.
-Nonliteral write payloads currently clear the type evidence even if an earlier
-read had a known tag. All input annotations are cleared and rederived. See
-the nested-Map document for its additional presence and containment proofs.
+independently proves both membership and the payload type from the last write
+on every reaching path. A write takes its tag from a literal or an independently
+proved saved scalar read. `has` adds no payload evidence. Possible aliasing
+writes, callee effects, deletion and loops invalidate contents conservatively.
+A saved read keeps its own scalar tag after known mutations; branches intersect
+these SSA facts separately from entry contents. Unknown values never gain a tag
+from the Map schema, another invocation or input annotations.
 
-`native-map-mixed.mlir` checks nine observations across associative and
-insertion-ordered modules with Node/interpreter, GCC/Clang, explicit/deduced
-output and ASan/UBSan. Seven negative programs cover branch tags, possible alias
-writes, direct callee writes, `has`, deletion and nonliteral payloads, including
-forged presence/type facts and reruns. Neither mode emits Script symbols.
+The read returns its exact scalar by value, preserving saved string ownership.
+Local read/write candidates must belong to the same proved Map family; arbitrary
+parameters remain excluded. Every stored alternative still participates in schema
+inference. All input annotations are cleared and rederived. See the nested-Map
+document for its additional presence and containment proofs.
+
+`native-map-mixed.mlir` checks saved Bool/Number/String chains across associative
+and insertion-ordered modules with Node/interpreter, GCC/Clang, explicit/deduced
+output and ASan/UBSan. Negative programs cover branch tags, possible alias
+writes, direct callee writes, `has`, deletion and unproved nonliteral payloads,
+including missing reads written back into storage, forged presence/type facts
+and reruns. Neither mode emits Script symbols.
 
 ## Proof boundary
 

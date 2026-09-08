@@ -50,6 +50,18 @@ struct state {
     // Bounds on already-read SSA numbers survive known mutations. They are
     // acquired only from a checked size read with exact-instance presence.
     llvm::DenseMap<mlir::Value, unsigned> sizeBounds{};
+    // A scalar get result owns its value. Unlike membership and entry tags,
+    // its type remains true after the source entry is overwritten or erased.
+    llvm::DenseMap<mlir::Value, payloadKind> scalars{};
+
+    payloadKind scalar(mlir::Value value) const {
+        if (auto constant = value.getDefiningOp<ctjs::ConstantOp>()) {
+            if (llvm::isa<ctjs::BooleanAttr>(constant.getValue())) { return payloadKind::Boolean; }
+            if (llvm::isa<ctjs::NumberAttr>(constant.getValue())) { return payloadKind::Number; }
+            if (llvm::isa<ctjs::StringAttr>(constant.getValue())) { return payloadKind::String; }
+        }
+        return scalars.lookup(value);
+    }
 
     bool contains(fact value) const {
         return llvm::any_of(present, [&](const fact & old) { return old.matches(value); });
@@ -74,6 +86,9 @@ struct state {
             } else {
                 bound.second = std::min(bound.second, otherBound);
             }
+        }
+        for (auto & [value, kind] : llvm::make_early_inc_range(scalars)) {
+            if (other.scalars.lookup(value) != kind) { scalars.erase(value); }
         }
     }
 };
@@ -213,20 +228,12 @@ struct presenceAnalysis {
         }
     }
 
-    // Literal payload tags do not depend on Map schema inference or prior
-    // invocations. A nonliteral write still proves presence, but clears type
-    // evidence wherever it may overwrite an entry. has never supplies a tag.
+    // Literal and saved scalar tags do not depend on Map schema inference or
+    // prior invocations. Every write still invalidates possible aliases; an
+    // unproved payload clears their type evidence. has never supplies a tag.
     void write(state & current, ctjs::CallOp call) const {
         fact added = entry(call);
-        if (auto constant = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>()) {
-            if (llvm::isa<ctjs::BooleanAttr>(constant.getValue())) {
-                added.payload = payloadKind::Boolean;
-            } else if (llvm::isa<ctjs::NumberAttr>(constant.getValue())) {
-                added.payload = payloadKind::Number;
-            } else if (llvm::isa<ctjs::StringAttr>(constant.getValue())) {
-                added.payload = payloadKind::String;
-            }
-        }
+        added.payload = current.scalar(call.getArgs()[1]);
         for (fact & previous : current.present) {
             if (familyOf(previous.instance) != familyOf(added.instance)) { continue; }
             const auto relation = comparePrimitiveMapKeys(
@@ -325,7 +332,10 @@ struct presenceAnalysis {
                 for (const fact & value : current.present) {
                     if (!value.matches(wanted)) { continue; }
                     proved.insert(op);
-                    if (value.payload != payloadKind::Unknown) { payloads[op] = value.payload; }
+                    if (value.payload != payloadKind::Unknown) {
+                        payloads[op] = value.payload;
+                        current.scalars[call.getResult()] = value.payload;
+                    }
                 }
             } else if (action == "delete") {
                 eraseKey(current, call);

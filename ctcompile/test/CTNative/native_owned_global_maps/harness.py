@@ -12,7 +12,7 @@ import subprocess
 from .sources import (
     methods, owned, boundary, host, parameter_sources, seeded_result_sources, key_fact_sources,
     joined_result_sources, size_result_sources, payload_result_sources, STRING_RESULT,
-    RESULT_SIGNATURES, mixed_result_sources, MIXED_RESULT_TYPES,
+    RESULT_SIGNATURES, mixed_result_sources, MIXED_RESULT_TYPES, saved_read_sources,
 )
 
 
@@ -61,6 +61,8 @@ def check_result_calls(cpp, name, mode):
         **{name: ["get", "set", "get"] for name in size_result_sources()},
         **{name: ["get", "set", "size"] for name in payload_result_sources()},
         **{name: ["get", "set", "size"] for name in mixed_result_sources()},
+        **{name: ["get", "set", "size"] for name in saved_read_sources()},
+        "saved_read_write_repeated": ["get", "set", "get", "set", "size"],
         "seeded_dynamic_overwrite": ["get", "set", "get", "set"],
         "seeded_dynamic_repeated": ["get", "set", "get", "set", "get"],
         "seeded_dynamic_formal": ["get", "set", "get", "set", "size"],
@@ -72,16 +74,19 @@ def check_result_calls(cpp, name, mode):
     if sequence != expected or "ctnative::map_set(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: lost runtime getter/mutation/final observation calls")
     seeded = {**seeded_result_sources(), **key_fact_sources(), **joined_result_sources(),
-              **size_result_sources(), **payload_result_sources(), **mixed_result_sources()}
+              **size_result_sources(), **payload_result_sources(), **mixed_result_sources(),
+              **saved_read_sources()}
     if name in seeded and not re.search(r"ctnative::map_get(?:_\w+)?(?:<[^>]+>)?\(", cpp):
         raise RuntimeError(f"{name}/{mode}: replaced the live seeded Map lookup with a summary")
     if name in size_result_sources() and "ctnative::map_delete(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: dropped the live size-keyed deletion")
-    if name in {"result_seeded_string_saved", "result_seeded_mixed_string_saved"} \
+    if name in {"result_seeded_string_saved", "result_seeded_mixed_string_saved",
+                "saved_read_write_string_saved"} \
             and "ctnative::map_delete(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: dropped the saved string's source deletion")
-    if name in mixed_result_sources():
-        source = mixed_result_sources()[name][0]
+    mixed = {**mixed_result_sources(), **saved_read_sources()}
+    if name in mixed:
+        source = mixed[name][0]
         for method in ("set", "get", "has", "delete"):
             source_count = len(re.findall(rf"\bstate\.{method}\(", source))
             native_count = len(re.findall(rf"\bctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(", cpp))
@@ -413,7 +418,8 @@ def standalone(args, output, name, value, compilers, nm):
             lifetime(args, cpp, name, mode, value, compilers[1])
         if name in {"shared_growing", "shared_parameter"}:
             shared_lifetime(args, cpp, name, mode, compilers[1])
-        if name in {"result_seeded_string_saved", "result_seeded_mixed_string_saved"}:
+        if name in {"result_seeded_string_saved", "result_seeded_mixed_string_saved",
+                    "saved_read_write_string_saved"}:
             string_payload_lifetime(args, cpp, name, mode, compilers[1])
 
 
@@ -434,9 +440,12 @@ def check_prepared_result_calls(text, original, name):
         raise RuntimeError(f"{name}: carrier refusal lost the prepared live result edge")
 
 
-def forge_map_presence(text):
+def forge_map_presence(text, payload="bool"):
+    if payload not in {"bool", "string"}:
+        raise ValueError("forged presence needs a valid scalar tag")
     marked, count = re.subn(r"(^\s*%[-\w.$]+ = ctjs\.call [^\n{]+)(\{)?",
-        lambda match: match[1].rstrip() + " {ctnative.map_present = true, ctnative.map_read_type = \"bool\""
+        lambda match: match[1].rstrip() + " {ctnative.map_present = true, ctnative.map_read_type = \""
+                      + payload + "\""
                       + (", " if match[2] else "}"), methods.forge_reports(text), flags=re.M)
     if count == 0:
         raise RuntimeError("forged-presence control lost every live Map call")

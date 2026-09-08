@@ -36,10 +36,74 @@ function deadAlternative() {
     map.set(false, 2);
     return map.get(false);
 }
+function savedRewrite() {
+    const map = new Map();
+    map.set(false, false);
+    map.set('keep', 'saved-string-with-embedded-\0-bytes');
+    const saved = map.get('keep');
+    map.set('keep', true);
+    map.delete('keep');
+    map.set(false, saved);
+    const result = map.get(false);
+    map.set(false, false);
+    map.clear();
+    return result === 'saved-string-with-embedded-\0-bytes' ? 1 : 0;
+}
+function savedNumber() {
+    const map = new Map();
+    map.set(false, false);
+    map.set(0, 41);
+    const saved = map.get(0);
+    map.delete(0);
+    map.set(false, saved);
+    return map.get(false) + 1;
+}
+function savedBoolean() {
+    const map = new Map();
+    map.set(false, false);
+    map.set(0, 41);
+    const saved = map.get(false);
+    map.set(false, 99);
+    map.set(0, saved);
+    return map.get(0) ? 0 : 1;
+}
+function savedBranch(flag) {
+    const map = new Map();
+    map.set(false, 'saved');
+    const saved = map.get(false);
+    if (flag) { map.set(false, true); } else { map.delete(false); }
+    map.set(false, saved);
+    return map.get(false) === 'saved' ? 1 : 0;
+}
+function clearSaved(map) { map.clear(); }
+function savedCall() {
+    const map = new Map();
+    map.set(false, false);
+    map.set('keep', 'call');
+    const saved = map.get('keep');
+    clearSaved(map);
+    map.set(false, saved);
+    return map.get(false) === 'call' ? 1 : 0;
+}
+function savedAlias(key) {
+    const map = new Map();
+    map.set(false, false);
+    map.set(0, 41);
+    const saved = map.get(0);
+    map.set(key, false);
+    map.set(0, saved);
+    return map.get(0);
+}
 var traceNumbers = numberKeys();
 var traceSaved = savedString();
 var traceBranches = branch(true) * 10 + branch(false);
 var traceDead = deadAlternative();
+var traceRewrite = savedRewrite();
+var traceSavedNumber = savedNumber();
+var traceSavedBoolean = savedBoolean();
+var traceSavedBranch = savedBranch(true) * 10 + savedBranch(false);
+var traceSavedCall = savedCall();
+var traceSavedAlias = savedAlias(0) + savedAlias(1);
 
 //--- snapshot.js
 function snapshot() {
@@ -118,3 +182,37 @@ function run(value) {
     return map.get(false) ? 1 : 0;
 }
 var trace = run(2);
+
+//--- saved-missing-refused.js
+function run() {
+    const map = new Map();
+    map.set(false, false);
+    map.set(0, 2);
+    map.delete(0);
+    const saved = map.get(0);
+    map.set(false, saved);
+    return map.get(false) ? 1 : 0;
+}
+var trace = run();
+
+//--- saved-alias-refused.js
+function run(key) {
+    const map = new Map();
+    map.set(false, false);
+    map.set(0, 2);
+    const saved = map.get(0);
+    map.set(key, saved);
+    return map.get(false) ? 1 : 0;
+}
+var trace = run(false) * 10 + run(true);
+
+//--- saved-branch-refused.js
+function run(flag) {
+    const map = new Map();
+    map.set(false, false);
+    map.set(0, 2);
+    const saved = map.get(0);
+    if (flag) { map.set(false, saved); }
+    return map.get(false) ? 1 : 0;
+}
+var trace = run(true) * 10 + run(false);

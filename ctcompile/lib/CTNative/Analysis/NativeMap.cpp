@@ -348,14 +348,22 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
         // solver starts. Otherwise an early broad/optional result would
         // permanently pollute a read whose last literal write is exact.
         // Nonliteral published writes already have an independent primitive
-        // body/actual proof; arbitrary local parameters do not.
+        // body/actual proof. A local get is also a candidate, but its scalar
+        // tag must be proved from exact contents below; neither this census
+        // nor the schema supplies the tag. Arbitrary parameters stay excluded.
+        llvm::DenseSet<mlir::Value> savedReads;
+        for (ctjs::CallOp call : candidate.calls) {
+            auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+            if (keyOf(method.getKey()) == "get") { savedReads.insert(call.getResult()); }
+        }
         bool primitive = true, boolean = false, number = false, string = false;
         for (ctjs::CallOp call : candidate.calls) {
             auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
             if (keyOf(method.getKey()) != "set") { continue; }
             auto constant = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
             if (!constant) {
-                primitive &= publishedCalls.contains(call);
+                primitive &=
+                    publishedCalls.contains(call) || savedReads.contains(call.getArgs()[1]);
                 continue;
             }
             auto value = constant.getValue();

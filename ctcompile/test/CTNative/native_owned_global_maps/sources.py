@@ -372,6 +372,70 @@ def mixed_result_refusals():
     }
 
 
+def saved_read_sources():
+    boolean = payload_result_sources()["result_seeded_bool"][0]
+    getter = "state.set(false, true); return state.get(false);"
+    saved = boolean.replace(getter,
+        "state.set('', ''); const saved = state.get(''); state.set(false, true); "
+        "state.set(false, saved); const result = state.get(false); "
+        "state.delete(false); return result;")
+    number = mixed_result_sources()["result_seeded_mixed_contents"][0].replace(
+        "state.set(0, true); state.set(0, 1); return state.get(0);",
+        "state.set(1, 1); const saved = state.get(1); state.set(1, true); "
+        "state.set(false, true); state.set(false, saved); const result = state.get(false); "
+        "state.delete(false); return result;")
+    return {
+        # Exact next boundary from HANDOFF: an empty String read passes through
+        # a nonliteral write into mixed storage and remains a present String.
+        "saved_read_write": (saved, "host", 1),
+        # The payload's old scalar value survives mutation of its source entry;
+        # its SSA tag must not be recovered from the entry's later contents.
+        "saved_read_write_false": (boolean.replace(getter,
+            "state.set('', 'old'); state.set(false, false); const saved = state.get(false); "
+            "state.set(false, true); state.set('', saved); const result = state.get(''); "
+            "state.delete(''); return result;"), "host", 1),
+        "saved_read_write_number": (number, "host", 1),
+        "saved_read_write_repeated": (saved.replace("host.slot.set(host.slot.get());",
+            "host.slot.set(host.slot.get()); host.slot.set(host.slot.get());"), "host", 1),
+        # Both intermediate reads must own their String. The first source entry
+        # is overwritten and deleted before the saved value is written back;
+        # the second is overwritten and deleted before the method returns.
+        "saved_read_write_string_saved": (boolean.replace(getter,
+            f"state.set('seed', '{STRING_RESULT}'); state.set('{STRING_RESULT}', 'stored'); "
+            "const saved = state.get('seed'); state.set('seed', false); state.delete('seed'); "
+            "state.set(false, true); state.set(false, saved); const result = state.get(false); "
+            "state.set(false, false); state.delete(false); return result;"), "host", 1),
+        # Valid Boolean results must keep their actual tag, even after a saved
+        # String read exists or has briefly been stored at the same key.
+        "saved_read_write_wrong_tag": (saved.replace("state.set(false, saved);",
+            "state.set(false, true);"), "host", 2),
+        "saved_read_write_overwritten": (saved.replace("const result = state.get(false);",
+            "state.set(false, true); const result = state.get(false);"), "host", 2),
+    }
+
+
+def saved_read_refusals():
+    saved = saved_read_sources()["saved_read_write"][0]
+    return {
+        # A later read after deletion is missing even though an earlier read
+        # of another key still carries the same saved scalar tag.
+        "saved_read_write_deleted": (saved.replace(
+            "const result = state.get(false); state.delete(false);",
+            "state.delete(false); const result = state.get(false);"), 2,
+            "return result;", "return saved;"),
+        "saved_read_write_missing_key": (saved.replace("const result = state.get(false);",
+            "const result = state.get(true);"), 2,
+            "const result = state.get(true);", "const result = state.get(false);"),
+        # Unknown must not become String merely because the Map also stores
+        # Strings. Reseeding the empty key in the setter makes undefined differ
+        # from the real empty String in the final size observation.
+        "saved_read_write_missing_source": (saved.replace(
+            "const saved = state.get('');", "state.delete(''); const saved = state.get('');")
+            .replace("state.set(key, true)", "state.set('', true); state.set(key, true)"), 2,
+            "state.delete('');", "state.has('');"),
+    }
+
+
 def seeded_carrier_refusals():
     return {
         "result_seeded_number_string_contents": (mixed_result_sources()[
@@ -388,6 +452,13 @@ MIXED_RESULT_TYPES = {
     "result_seeded_mixed_false": ("bool", "double"),
     "result_seeded_mixed_empty_key": ("std::string", "std::string"),
     "result_seeded_mixed_string_saved": ("std::string", "std::string"),
+    "saved_read_write": ("std::string", "std::string"),
+    "saved_read_write_false": ("bool", "std::string"),
+    "saved_read_write_number": ("js_num", "double"),
+    "saved_read_write_repeated": ("std::string", "std::string"),
+    "saved_read_write_string_saved": ("std::string", "std::string"),
+    "saved_read_write_wrong_tag": ("bool", "std::string"),
+    "saved_read_write_overwritten": ("bool", "std::string"),
 }
 
 
