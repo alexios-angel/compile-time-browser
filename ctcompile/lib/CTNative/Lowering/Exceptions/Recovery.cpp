@@ -61,6 +61,8 @@ struct recovery {
     llvm::DenseMap<mlir::Operation *, ctjs::CallDirectOp> invocations;
     llvm::DenseMap<mlir::StringAttr, ctjs::FuncOp> bindings;
     llvm::DenseSet<mlir::Operation *> boundTargets;
+    llvm::DenseSet<mlir::Operation *> boundCalls;
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> boundCallers;
 
     recovery(ctjs::FuncOp function, unsigned maxSteps, ExceptionRecoveryMode mode)
         : function(function), module(function->getParentOfType<mlir::ModuleOp>()),
@@ -314,11 +316,45 @@ struct recovery {
                 knownCalls.insert(call);
             }
         }
+        llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::FuncOp>> callees;
+        llvm::DenseMap<mlir::Operation *, unsigned> incoming;
         for (auto call : calls) {
             if (!spend()) { return false; }
             if (!knownCalls.contains(call)) {
                 return bindingFailure("a direct-call symbol lacks live callee identity");
             }
+            auto target = module.lookupSymbol<ctjs::FuncOp>(call.getCallee());
+            auto current =
+                llvm::cast<ctjs::CallDirectOp>(copies.lookupOrDefault(call.getOperation()));
+            boundCalls.insert(current);
+            boundCallers[target].push_back(current);
+            callees[call->getParentOfType<ctjs::FuncOp>()].push_back(target);
+            ++incoming[target];
+        }
+        // Completion operands may cross more than one call. Establish the
+        // entire live source call graph before following formals backwards or
+        // payloads forwards: a recursive family cannot borrow a primitive
+        // seed from one of its nonrecursive actuals. Include unused bodies and
+        // repeated call edges; neither a prior summary nor reachability trims
+        // this proof's obligations.
+        llvm::SmallVector<ctjs::FuncOp> ready;
+        for (auto [index, body] : functions) {
+            (void)index;
+            if (!spend()) { return false; }
+            if (incoming.lookup(body) == 0) { ready.push_back(body); }
+        }
+        unsigned visited = 0;
+        while (!ready.empty()) {
+            if (!spend()) { return false; }
+            auto body = ready.pop_back_val();
+            ++visited;
+            for (auto target : callees[body]) {
+                if (!spend()) { return false; }
+                if (--incoming[target] == 0) { ready.push_back(target); }
+            }
+        }
+        if (visited != functions.size()) {
+            return bindingFailure("the source call component is recursive");
         }
         for (auto [index, body] : functions) {
             if (!spend()) { return false; }
@@ -342,25 +378,12 @@ struct recovery {
             auto * op = copies.lookupOrDefault(original);
             if (auto thrown = llvm::dyn_cast<ctjs::ThrowOp>(op)) {
                 // Throw diagnostics may coerce the payload. Prove every
-                // actual input to a leaf formal too; an uncalled body with
+                // actual input through the whole call family too; an uncalled body with
                 // an unknown payload cannot borrow a represented invoke's
                 // primitive payload fact.
                 if (primitive(thrown.getValue())) { continue; }
                 if (!refusal.empty()) { return false; }
-                auto body = thrown->getParentOfType<ctjs::FuncOp>();
-                bool called = false;
-                for (auto sourceCall : calls) {
-                    if (!spend()) { return false; }
-                    if (sourceCall.getCallee() != body.getSymName()) { continue; }
-                    called = true;
-                    auto call = llvm::cast<ctjs::CallDirectOp>(
-                        copies.lookupOrDefault(sourceCall.getOperation()));
-                    if (!primitive(thrown.getValue(), call)) {
-                        return bindingFailure("a throw payload may reenter while being observed");
-                    }
-                }
-                if (!called) { return bindingFailure("an uncalled throw has an unknown payload"); }
-                continue;
+                return bindingFailure("a throw payload has an unknown actual or uncalled formal");
             }
             if (llvm::isa<ctjs::CreateClosureOp, ctjs::CallDirectOp, ctjs::FrameEnterOp,
                           ctjs::PushHandlerOp>(op)) {
@@ -382,64 +405,121 @@ struct recovery {
         return true;
     }
 
-    using primitiveInput = std::pair<mlir::Value, ctjs::CallDirectOp>;
+    using primitiveInput = std::pair<mlir::Value, unsigned>;
 
-    bool completionInputs(ctjs::CallDirectOp call, bool thrown,
-                          llvm::SmallVectorImpl<primitiveInput> & inputs) {
-        // A bounded leaf completion query over current source operands. It
-        // does not prove the call nonthrowing or license native carriers.
-        auto target = module ? module.lookupSymbol<ctjs::FuncOp>(call.getCallee()) : ctjs::FuncOp{};
-        if (!target || !boundTargets.contains(target) || target.getBody().empty() ||
-            target.getUpvalueCount() != 0 ||
-            target.getBody().front().getNumArguments() != call.getNumOperands() ||
-            mlir::SymbolTable::getSymbolVisibility(target) !=
-                mlir::SymbolTable::Visibility::Private) {
-            return false;
+    struct completionContext {
+        ctjs::CallDirectOp call;
+        unsigned parent = 0;
+        unsigned depth = 0;
+    };
+
+    struct primitiveContexts {
+        llvm::SmallVector<completionContext> frames{completionContext{}};
+        llvm::DenseMap<std::pair<mlir::Operation *, unsigned>, unsigned> indices;
+    };
+
+    std::optional<unsigned> contextFor(ctjs::CallDirectOp call, unsigned parent,
+                                       primitiveContexts & contexts) {
+        if (!spend()) { return {}; }
+        auto key = std::pair{call.getOperation(), parent};
+        if (auto found = contexts.indices.find(key); found != contexts.indices.end()) {
+            return found->second;
         }
+        if (contexts.frames[parent].depth >= 32) {
+            reject("native invocation completion call depth exceeds 32");
+            return {};
+        }
+        for (unsigned ancestor = parent; ancestor != 0;
+             ancestor = contexts.frames[ancestor].parent) {
+            if (!spend()) { return {}; }
+            if (contexts.frames[ancestor].call.getCallee() == call.getCallee()) {
+                reject("native invocation completion call component is recursive");
+                return {};
+            }
+        }
+        const unsigned index = static_cast<unsigned>(contexts.frames.size());
+        contexts.frames.push_back({call, parent, contexts.frames[parent].depth + 1});
+        contexts.indices.try_emplace(key, index);
+        return index;
+    }
+
+    bool completionInputs(ctjs::CallDirectOp call, bool thrown, unsigned parent,
+                          primitiveContexts & contexts,
+                          llvm::SmallVectorImpl<primitiveInput> & inputs) {
+        // A bounded source call-family query, separate from carrier and
+        // native admission. Returns belong only to the invoked body, whereas
+        // an uncaught throw in any descendant can complete its unwind. Keep
+        // the exact chain of actual operands for every such completion.
+        auto initial = contextFor(call, parent, contexts);
+        if (!initial) { return false; }
+        llvm::SmallVector<unsigned> pending{*initial};
+        llvm::DenseSet<unsigned> seen;
         bool found = false;
-        for (mlir::Block & block : target.getBody()) {
-            if (!spend(uint64_t(1) + block.getNumArguments())) { return false; }
-            for (mlir::Operation & operation : block) {
-                if (!spend(uint64_t(1) + operation.getNumOperands())) { return false; }
-                if (auto exit = llvm::dyn_cast<ctjs::ThrowOp>(operation)) {
-                    if (thrown) {
-                        inputs.emplace_back(exit.getValue(), call);
-                        found = true;
+        while (!pending.empty()) {
+            if (!spend()) { return false; }
+            const unsigned context = pending.pop_back_val();
+            if (!seen.insert(context).second) { continue; }
+            call = contexts.frames[context].call;
+            auto target =
+                module ? module.lookupSymbol<ctjs::FuncOp>(call.getCallee()) : ctjs::FuncOp{};
+            if (!target || !boundTargets.contains(target) || !boundCalls.contains(call) ||
+                target.getBody().empty() || target.getUpvalueCount() != 0 ||
+                target.getBody().front().getNumArguments() != call.getNumOperands() ||
+                mlir::SymbolTable::getSymbolVisibility(target) !=
+                    mlir::SymbolTable::Visibility::Private) {
+                return false;
+            }
+            for (mlir::Block & block : target.getBody()) {
+                if (!spend(uint64_t(1) + block.getNumArguments())) { return false; }
+                for (mlir::Operation & operation : block) {
+                    if (!spend(uint64_t(1) + operation.getNumOperands())) { return false; }
+                    if (auto exit = llvm::dyn_cast<ctjs::ThrowOp>(operation)) {
+                        if (thrown) {
+                            inputs.emplace_back(exit.getValue(), context);
+                            found = true;
+                        }
+                    } else if (auto exit = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
+                        if (!thrown && context == *initial) {
+                            inputs.emplace_back(exit.getValue(), context);
+                            found = true;
+                        }
+                    } else if (auto nested = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) {
+                        auto child = contextFor(nested, context, contexts);
+                        if (!child) { return false; }
+                        pending.push_back(*child);
+                    } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
+                        if (!bindings.contains(load.getNameAttr())) { return false; }
+                    } else if (operation.getNumRegions() != 0 ||
+                               (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
+                                           mlir::cf::BranchOp, mlir::cf::CondBranchOp>(operation) &&
+                                (!mlir::isPure(&operation) ||
+                                 operation.hasTrait<ctjs::CTJSMayThrow>() ||
+                                 operation.hasTrait<ctjs::CTJSMayReenterJS>() ||
+                                 operation.hasTrait<ctjs::CTJSMaySuspend>()))) {
+                        return false;
                     }
-                } else if (auto exit = llvm::dyn_cast<ctjs::ReturnOp>(operation)) {
-                    if (!thrown) {
-                        inputs.emplace_back(exit.getValue(), call);
-                        found = true;
-                    }
-                } else if (operation.getNumRegions() != 0 ||
-                           (!llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
-                                       mlir::cf::BranchOp, mlir::cf::CondBranchOp>(operation) &&
-                            (!mlir::isPure(&operation) ||
-                             operation.hasTrait<ctjs::CTJSMayThrow>() ||
-                             operation.hasTrait<ctjs::CTJSMayReenterJS>() ||
-                             operation.hasTrait<ctjs::CTJSMaySuspend>()))) {
-                    return false;
                 }
             }
         }
         return found;
     }
 
-    bool primitive(mlir::Value value, ctjs::CallDirectOp invocation = {}) {
+    bool primitive(mlir::Value value) {
         // This source CFG has already passed the acyclic-tail check. Follow
         // every predecessor operand, including status unwind state: a value
         // joining a primitive and an unknown never proves conversion safe.
         // staticResultType supplies only unconditional normal-result facts;
         // its producer's effects are checked separately below. No cached
         // dataflow state or user-supplied native marker is consulted.
-        llvm::SmallVector<primitiveInput> pending{{value, invocation}};
-        llvm::DenseSet<std::pair<mlir::Value, mlir::Operation *>> seen;
+        primitiveContexts contexts;
+        llvm::SmallVector<primitiveInput> pending{{value, 0}};
+        llvm::DenseSet<primitiveInput> seen;
         bool hasDefinition = false;
         while (!pending.empty()) {
             if (!spend()) { return false; }
-            auto [current, call] = pending.pop_back_val();
+            auto [current, context] = pending.pop_back_val();
             value = current;
-            if (!seen.insert({value, call.getOperation()}).second) { continue; }
+            if (!seen.insert({value, context}).second) { continue; }
             if (auto * definition = value.getDefiningOp()) {
                 const auto type = staticResultType(definition);
                 if (llvm::isa_and_nonnull<NumType, BoolType, StrType>(type) ||
@@ -449,35 +529,61 @@ struct recovery {
                     continue;
                 }
                 if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(definition)) {
-                    if (call || !completionInputs(direct, false, pending)) { return false; }
+                    if (!completionInputs(direct, false, context, contexts, pending)) {
+                        return false;
+                    }
                     continue;
                 }
                 if (definition == landing.getOperation() && value == landing.getThrown()) {
-                    if (call || invocations.empty() || throws != 0) { return false; }
+                    if (context != 0 || invocations.empty() || throws != 0) { return false; }
                     for (auto [check, direct] : invocations) {
                         (void)check;
-                        if (!spend() || !completionInputs(direct, true, pending)) { return false; }
+                        if (!spend() || !completionInputs(direct, true, 0, contexts, pending)) {
+                            return false;
+                        }
                     }
                     continue;
                 }
                 if (llvm::isa<ctjs::BinaryOp, ctjs::BinaryStaticOp, ctjs::UnaryOp>(definition)) {
                     for (auto operand : definition->getOperands()) {
-                        pending.emplace_back(operand, call);
+                        pending.emplace_back(operand, context);
                     }
                     continue;
                 }
                 return false;
             }
             auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
-            if (argument && argument.getOwner()->isEntryBlock() && call) {
+            if (argument && argument.getOwner()->isEntryBlock()) {
                 auto owner = argument.getOwner()->getParentOp();
                 auto body = llvm::dyn_cast<ctjs::FuncOp>(owner);
-                if (!body || body.getSymName() != call.getCallee() ||
-                    argument.getArgNumber() >= call.getNumOperands()) {
+                if (!body) { return false; }
+                if (context != 0) {
+                    auto frame = contexts.frames[context];
+                    if (body.getSymName() != frame.call.getCallee() ||
+                        argument.getArgNumber() >= frame.call.getNumOperands()) {
+                        return false;
+                    }
+                    pending.emplace_back(frame.call->getOperand(argument.getArgNumber()),
+                                         frame.parent);
+                    continue;
+                }
+                // No selected invocation: a body-wide effect proof needs all
+                // live actuals, including callers outside the protected try.
+                // The complete acyclic census above prevents optimistic
+                // recursion through a formal with one known incoming value.
+                auto target =
+                    module ? module.lookupSymbol<ctjs::FuncOp>(body.getSymName()) : ctjs::FuncOp{};
+                auto callers = boundCallers.find(target);
+                if (!target || !boundTargets.contains(target) || callers == boundCallers.end() ||
+                    callers->second.empty()) {
                     return false;
                 }
-                pending.emplace_back(call->getOperand(argument.getArgNumber()),
-                                     ctjs::CallDirectOp{});
+                for (auto call : callers->second) {
+                    if (!spend() || argument.getArgNumber() >= call.getNumOperands()) {
+                        return false;
+                    }
+                    pending.emplace_back(call->getOperand(argument.getArgNumber()), 0);
+                }
                 continue;
             }
             if (!argument || argument.getOwner()->isEntryBlock() ||
@@ -492,7 +598,7 @@ struct recovery {
                 auto operands = branch.getSuccessorOperands(pred.getSuccessorIndex());
                 const unsigned index = argument.getArgNumber();
                 if (index >= operands.size() || operands.isOperandProduced(index)) { return false; }
-                pending.emplace_back(operands[index], call);
+                pending.emplace_back(operands[index], context);
             }
         }
         return hasDefinition;

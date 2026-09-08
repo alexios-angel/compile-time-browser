@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <optional>
 #include <string>
+#include <tuple>
 
 namespace {
 namespace ctjs = ctcompile::ctjs;
@@ -479,6 +480,16 @@ void testBindings(mlir::MLIRContext & context, llvm::StringRef source) {
             ctjs::GetPropertyOp::create(at, where, type, helper.getBody().front().getArgument(0),
                                         key);
         }
+        if (mutation == 11 || mutation == 12) {
+            // Live caller operands now prove the original boolean formal.
+            // Keep an unknown alternative for the coercion/payload control;
+            // one known caller cannot supply the whole family's fact.
+            entry.walk([&](ctjs::CallDirectOp actual) {
+                if (actual.getCallee() == candidate.getSymName()) {
+                    actual->setOperand(3, entry.getBody().front().getArgument(0));
+                }
+            });
+        }
         // The entire proof must be rebuilt after real IR changes, even when
         // forged summaries agree with its previous successful conclusion.
         load->setAttr("ctnative.nothrow", at.getUnitAttr());
@@ -509,6 +520,203 @@ void testBindings(mlir::MLIRContext & context, llvm::StringRef source) {
         check(printed(*current) == unchanged,
               "uncalled throw effect proof preserves every source function and operation");
     }
+}
+
+std::string nestedSource(llvm::StringRef source, unsigned depth, bool payload) {
+    std::string text = source.str();
+    if (depth < 2) { return text; }
+    text.replace(text.find("function choose("), std::string("function choose").size(),
+                 "function leaf");
+    const auto name = [](unsigned index) {
+        return index == 0 ? std::string("choose") : "forward" + std::to_string(index);
+    };
+    const std::string parameters = payload ? "flag, payload" : "flag";
+    for (unsigned index = 0; index < depth - 1; ++index) {
+        const auto target = index == depth - 2 ? std::string("leaf") : name(index + 1);
+        text += "\nfunction " + name(index) + "(" + parameters + ") { return " + target + "(" +
+                parameters + "); }\n";
+    }
+    return text;
+}
+
+ctjs::FuncOp named(mlir::ModuleOp module, llvm::StringRef prefix) {
+    for (auto function : module.getOps<ctjs::FuncOp>()) {
+        if (function.getSymName().starts_with((prefix + "$").str())) { return function; }
+    }
+    return {};
+}
+
+void testTransitive(mlir::MLIRContext & context, llvm::StringRef source) {
+    const auto nested = nestedSource(source, 3, true);
+    auto module = import(context, nested);
+    if (!module) { return; }
+    auto function = guarded(*module);
+    const auto before = printed(*module);
+    const unsigned checks = countChecks(function);
+    auto result = recoverPrimitiveExceptionRegion(function, 100000,
+                                                  ExceptionRecoveryMode::EffectCheckedInvocations);
+    if (!check(result.recovered, "the complete transitive source family proves")) {
+        llvm::errs() << result.refusal << '\n';
+        return;
+    }
+    check(mlir::succeeded(mlir::verify(*module)), "transitive invocation recovery verifies");
+    const unsigned complete = result.steps;
+    restore(function, result);
+    check(printed(*module) == before, "transitive rollback preserves every family body");
+    for (unsigned budget = 0; budget < complete; ++budget) {
+        auto limited = recoverPrimitiveExceptionRegion(
+            function, budget, ExceptionRecoveryMode::EffectCheckedInvocations);
+        if (!check(!limited.recovered &&
+                       limited.refusal.find("budget exhausted") != std::string::npos &&
+                       printed(*module) == before && countChecks(function) == checks,
+                   "every transitive proof cutoff preserves the complete source graph")) {
+            llvm::errs() << "transitive budget " << budget << ": " << limited.refusal << '\n';
+            return;
+        }
+    }
+    auto exact = recoverPrimitiveExceptionRegion(function, complete,
+                                                 ExceptionRecoveryMode::EffectCheckedInvocations);
+    if (!check(exact.recovered && exact.steps == complete,
+               "the exact transitive budget completes")) {
+        return;
+    }
+    restore(function, exact);
+    check(printed(*module) == before, "exact transitive rollback retains all source operations");
+    llvm::outs() << "transitive recovery: " << complete
+                 << " steps, every incomplete budget preserves " << checks << " checks\n";
+
+    for (unsigned mutation = 0; mutation != 8; ++mutation) {
+        const auto suffix =
+            mutation == 2   ? "\nfunction unused(flag, payload) { return unused(flag, payload); }"
+            : mutation == 3 ? "\nleaf(false, this);"
+                            : "";
+        auto current = import(context, nested + suffix);
+        if (!current) { return; }
+        auto candidate = guarded(*current);
+        if (mutation != 2 && mutation != 3) {
+            auto prior = recoverPrimitiveExceptionRegion(
+                candidate, 100000, ExceptionRecoveryMode::EffectCheckedInvocations);
+            if (!check(prior.recovered, "transitive mutation first proves the live family")) {
+                return;
+            }
+            restore(candidate, prior);
+        }
+        auto forward = named(*current, "forward1");
+        auto leaf = named(*current, "leaf");
+        auto nestedCall = firstCall(forward);
+        ctjs::LoadGlobalOp load;
+        forward.walk([&](ctjs::LoadGlobalOp found) { load = found; });
+        if (!check(forward && leaf && nestedCall && load, "transitive controls find their edges")) {
+            return;
+        }
+        mlir::OpBuilder at(nestedCall);
+        if (mutation == 0 || mutation == 1) {
+            // Update both live identity operands. These are genuine recursive
+            // source families, rather than a stale named-target mismatch.
+            auto target = mutation == 0 ? forward : named(*current, "choose");
+            load.setNameAttr(at.getStringAttr(mutation == 0 ? "forward1" : "choose"));
+            nestedCall.setCalleeAttr(mlir::FlatSymbolRefAttr::get(&context, target.getSymName()));
+        } else if (mutation == 4) {
+            at.setInsertionPoint(leaf.getBody().front().getTerminator());
+            auto key = ctjs::ConstantOp::create(at, leaf.getLoc(), ctjs::ValueType::get(&context),
+                                                ctjs::StringAttr::get(&context, "getter"));
+            ctjs::GetPropertyOp::create(at, leaf.getLoc(), ctjs::ValueType::get(&context),
+                                        leaf.getBody().front().getArgument(0), key);
+        } else if (mutation == 5) {
+            ctjs::StoreGlobalOp declaration;
+            current->walk([&](ctjs::StoreGlobalOp store) {
+                if (store.getName() == "leaf") { declaration = store; }
+            });
+            at.setInsertionPointAfter(declaration);
+            at.clone(*declaration.getOperation());
+        } else if (mutation == 6) {
+            nestedCall->setOperand(2, forward.getBody().front().getArgument(0));
+        } else if (mutation == 7) {
+            (*current)->setAttr("ctjs.skipped", at.getArrayAttr({at.getDictionaryAttr({})}));
+        }
+        (*current)->setAttr("ctnative.global_bindings_complete", at.getUnitAttr());
+        leaf->setAttr("ctnative.nonthrowing", at.getUnitAttr());
+        nestedCall->setAttr("ctnative.completions_proved", at.getUnitAttr());
+        const auto changed = printed(*current);
+        auto refused = recoverPrimitiveExceptionRegion(
+            candidate, 100000, ExceptionRecoveryMode::EffectCheckedInvocations);
+        check(!refused.recovered && !refused.refusal.empty() && printed(*current) == changed &&
+                  countChecks(candidate) == checks,
+              "late transitive identity, effect, actual and recursive alternatives refuse");
+        if (mutation <= 2) {
+            check(refused.refusal.find("recursive") != std::string::npos,
+                  "recursive source components fail the complete live call census");
+        }
+    }
+    for (unsigned depth : {32u, 33u}) {
+        auto current = import(context, nestedSource(source, depth, true));
+        if (!current) { return; }
+        auto candidate = guarded(*current);
+        const auto unchanged = printed(*current);
+        auto checked = recoverPrimitiveExceptionRegion(
+            candidate, 1000000, ExceptionRecoveryMode::EffectCheckedInvocations);
+        check(checked.recovered == (depth == 32), "transitive completion depth is bounded at 32");
+        if (checked.recovered) {
+            check(mlir::succeeded(mlir::verify(*current)), "depth-boundary recovery verifies");
+            restore(candidate, checked);
+        } else {
+            check(checked.refusal.find("depth exceeds 32") != std::string::npos,
+                  "an excessive family reports the independent depth limit");
+        }
+        check(printed(*current) == unchanged, "depth-boundary proof retains exact rollback");
+    }
+}
+
+void testSelectedActuals(mlir::MLIRContext & context) {
+    constexpr llvm::StringLiteral source = R"js(
+function leaf(flag, payload) {
+    if (flag) { throw 32; }
+    return payload;
+}
+function forward(flag, payload) { return leaf(flag, payload); }
+function choose(flag, payload) { return forward(flag, payload); }
+function guarded(flag, payload) {
+    var mark = 0;
+    try {
+        mark = choose(false, payload);
+        mark = choose(flag, payload);
+    } catch (value) { return mark + value; }
+    return mark;
+}
+var caught52 = guarded(true, 20);
+var normal20 = guarded(false, 20);
+leaf(false, this);
+)js";
+    // The final leaf caller has an unknown normal return. Its effects and
+    // constant payload remain proved, but its result is not the first
+    // protected call's saved state. Only that call's own actual chain may
+    // establish the catch arithmetic's primitive operand.
+    testSource(context, "transitive selected actuals", source, 2, 20, 32,
+               ExceptionRecoveryMode::EffectCheckedInvocations);
+    auto module = import(context, source);
+    if (!module) { return; }
+    auto function = guarded(*module);
+    auto prior = recoverPrimitiveExceptionRegion(function, 100000,
+                                                 ExceptionRecoveryMode::EffectCheckedInvocations);
+    if (!check(prior.recovered, "selected actuals first prove independently of other returns")) {
+        return;
+    }
+    restore(function, prior);
+    auto entry = *module->getOps<ctjs::FuncOp>().begin();
+    bool changed = false;
+    entry.walk([&](ctjs::CallDirectOp call) {
+        if (!changed && call.getCallee() == function.getSymName()) {
+            call->setOperand(4, entry.getBody().front().getArgument(0));
+            changed = true;
+        }
+    });
+    check(changed, "selected-actual mutation finds a current root invocation");
+    function->setAttr("ctnative.completions_proved", mlir::UnitAttr::get(&context));
+    const auto before = printed(*module);
+    auto refused = recoverPrimitiveExceptionRegion(function, 100000,
+                                                   ExceptionRecoveryMode::EffectCheckedInvocations);
+    check(!refused.recovered && !refused.refusal.empty() && printed(*module) == before,
+          "one unknown selected actual cannot borrow a sibling caller's primitive result");
 }
 
 void testEffects(mlir::MLIRContext & context) {
@@ -673,6 +881,16 @@ int main(int argc, char ** argv) {
     }
     testMutations(context, source("assignment"));
     testBindings(context, source("assignment"));
+    for (auto [name, calls, saved, payload, parameters] :
+         {std::tuple{"assignment", 1u, 10.0, 32.0, false},
+          std::tuple{"sequential", 2u, 20.0, 32.0, false},
+          std::tuple{"argument", 1u, 14.0, 14.0, true}}) {
+        testSource(context, ("transitive " + std::string(name)),
+                   nestedSource(source(name), 3, parameters), calls, saved, payload,
+                   ExceptionRecoveryMode::EffectCheckedInvocations);
+    }
+    testTransitive(context, source("argument"));
+    testSelectedActuals(context);
     testEffects(context);
     return failures == 0 ? 0 : 1;
 }

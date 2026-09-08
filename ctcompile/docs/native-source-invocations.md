@@ -134,17 +134,19 @@ work consumed, sharing recovery's budget through the complete use/origin walks.
 The proof reads original module operations and their exact disposable clones;
 there is no persisted binding marker or symbol-only completion permission.
 Throw payloads must also be primitive, since observing a thrown object can
-reenter. A leaf's formal payload is checked against every current actual; an
-uncalled helper with an unknown payload refuses the whole binding proof.
+reenter. A formal payload is checked against every current actual through the
+closed call family; an uncalled helper with an unknown payload refuses the
+whole binding proof.
 
-The catch arithmetic also needs facts about the helper's completions. A narrow
-leaf query scans its current returns and explicit throws, rejecting unknown
-effects and nested calls/regions. Primitive operands follow all predecessor
-edges; helper formals map to the actual call operands. The normal return and
-thrown payload are separate facts, and both remain separate from proving the
-call nonthrowing. Other normal/catch effects still need the full effect scan.
-This admits structural recovery of the direct source fixtures without admitting
-the native call component or its payload/state carriers.
+The catch arithmetic also needs facts about the helper's completions. A bounded
+query scans current returns and explicit throws through the closed source call
+family, rejecting unknown effects and nested regions. Primitive operands follow
+all predecessor edges; helper formals map through the exact chain of actual
+call operands. The normal return and thrown payload are separate facts, and
+both remain separate from proving the call nonthrowing. Other normal/catch
+effects still need the full effect scan. This admits structural recovery of
+the direct source fixtures without admitting the native call component or its
+payload/state carriers.
 
 The `ctcompile_exception_recovery` additions cover a closed primitive CFG with
 two status edges, both edges of one conditional targeting the same block,
@@ -171,6 +173,53 @@ without changing the source; exact completion and rollback pass. All nineteen
 live binding mutations and both uncalled-throw variants pass. Log:
 `/tmp/ctcompile-map-presence-invocations.log`. No native program or new Bootstrap
 component is admitted by this increment.
+
+## Transitive source completion prerequisite
+
+`EffectCheckedInvocations` now follows `guarded -> choose -> forward -> leaf`
+without replacing any runtime call. Before using transitive completion facts,
+the existing declaration/use proof inventories the entire current source call
+graph and rejects recursive families. Its bounded topological walk includes
+every declared body, unused recursive helpers and repeated call edges. No
+optimistic primitive seed or persisted completion marker can authorize a cycle.
+
+The completion walk distinguishes returns from throws: only returns of the
+invoked body supply its normal result, while an uncaught throw in any descendant
+can supply its unwind payload. It scans all descendant bodies even when a
+descendant result is unused. A nested handler, missing body, changed callee,
+unknown effect or exhausted budget refuses before adopting the recovered clone.
+The existing primitive effect rules still apply; this is not a proof that the
+primitive alternatives share a supported native carrier.
+
+Each pending completion retains an interned chain of its exact direct calls.
+Mapping a formal to an actual pops exactly one call context. A body-wide effect
+check without a selected invocation instead inspects every current caller.
+This distinction lets an unrelated call return an unknown value while the
+protected call's own returned state is proved primitive; adding an unknown
+actual to the protected family removes that proof. Context depth has a separate
+limit of 32, in addition to the shared work budget. Neither limit invokes C++
+recursion or mutates the source on failure.
+
+The recovery unit adds transitive variants of assignment, sequential calls and
+argument mutation, checking the same one/two/one invokes and pre-call state.
+A fourth variant distinguishes selected actuals from an unrelated unknown
+normal return. Its controls cover fresh and mutual recursion, an unused
+recursive declaration, an unknown caller payload, descendant property effects,
+late declaration/callee/missing-body mutations, a late unknown selected actual,
+every incomplete transitive budget, exact completion and 32/33-deep call chains.
+All original bodies and status edges remain available for byte-identical
+rollback. The ordinary `ExplicitThrows` refusal, native census and emission
+path remain unchanged; complete source admission and owning payload/state
+lowering remain the next integration boundary.
+
+The devbox recovery CTest passes in **1.19 seconds**. Transitive assignment,
+sequential and argument-state proofs complete at **3737/6601/5106** steps with
+**1/2/1 invokes** and **7/10/9 original checks** available for rollback. The
+selected-actual variant completes at **9031** steps with two invokes and twelve
+original checks. All **5106** incomplete transitive budgets, the depth controls
+and nine new refusals pass, alongside all **3534** current source-binding and
+**937** effect-budget prefixes. Log: `/tmp/ctcompile-map-keyfacts-invocations.log`;
+the final compiler/full gate is recorded in [HANDOFF.md](HANDOFF.md).
 
 ## Remaining native recovery integration
 

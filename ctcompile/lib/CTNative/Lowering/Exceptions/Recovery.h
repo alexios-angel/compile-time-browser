@@ -24,6 +24,9 @@ enum class ExceptionRecoveryMode {
     // throwing call component or prove its payload/result/state carriers.
     // Source callee loads require a fresh bounded declaration/identity/use and
     // whole-module effect census; host reads and unknown alternatives refuse.
+    // Primitive completion operands may cross an acyclic closed call family,
+    // with exact actual/formal contexts and a maximum call depth of 32. This
+    // neither proves a single payload carrier nor changes ordinary admission.
     EffectCheckedInvocations,
 };
 
