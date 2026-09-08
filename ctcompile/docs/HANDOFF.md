@@ -6,6 +6,97 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Guarded Map reads and copied-object checkpoint, 2026-09-08
+
+Saved locally on `ctcompile-v1`: **`677714b`**, guarded saved scalar Map reads
+across conditional deletion, and **`72ca88e`**, fixed own-object copy contents
+and retention. This resumes `guarded_saved_read` from **`ca99089`** and the
+**09:08:55 synchronization journal**. The starting tree was clean. The old
+CallDirectOp recovery was already landed in `5307abf` and its branch is an
+ancestor; no history was rewritten. Separate agents supplied execution gates,
+host unit/audit controls, copy analysis and executed source witnesses. No browser
+source changed or push was performed.
+
+The exact guarded ternary advances **0/6 -> 6/6 native** in both optimization
+modes, preserving all **eighteen calls** and Node/interpreter **`trace=2`**.
+The deletion-free and straight-line fallback controls give **3** and **1** and
+remain admitted. Host/native proofs retain payload tags valid whenever present
+across deletion joins, independently of definite membership. Only a live `has`
+for the same Map/key restores membership. Joins intersect record keys and tags;
+unknown contents never become a proved absence. Possible-alias writes still
+join payload tags; exact writes replace them. Stale guards, unsupported effects
+and incomplete budgets withhold the complete proof. Deleted records do not
+inflate size bounds. Every structural branch and runtime call remains.
+
+The published gate passes **95 complete programs** and **eleven lifetime
+sanitizer variants**, with both modes, explicit/deduced GCC/Clang, forged/rerun
+controls and sixteen new discriminating mutations. Eight new refusal families
+cover missing tags, wrong Map/key guards, stale has values, mutation inside an
+arm, incompatible tags and literal predicates. The long String getter runs only
+false during startup; later saved C++ callables use both flags and own both
+selected strings through overwrite/delete, independent reentry and final Map
+release. Native budgets first complete at **18690/19232/19232/10792**, checking
+**29/31/31/29** cutoffs, with no natural speculative rollback interval.
+Log: `/tmp/ctcompile-guard-focused.log`.
+
+Host units pass **44 rows each in source/prepared form**, all **2866/3004**
+guarded and **2504/2629** conditional budget cutoffs, exact endpoints and live
+forged read/guard edits. Local mixed Maps pass **35 observations and seventeen
+refusals** across both storage layouts, Node/interpreter, GCC/Clang and
+ASan/UBSan. Seven targeted lit cases pass in **28.21 seconds**. Initial focused
+CTest passes **12/12 in 30.69 seconds**. Inspected
+`/tmp/ctcompile-guard-string.cpp`: real `map_has` and branch, owning String
+selection and saved copy through subsequent writes/deletes; no Script symbols
+or interpreter context.
+
+The parallel copy proof admits only exact fresh ordinary own-data source and
+target objects. It charges a source snapshot before writes, records copied
+edges separately from direct Stored witnesses and preserves every historical
+copy edge for cycle refusal. Runtime copy lookup can invoke getters in general;
+this proof excludes descriptors, accessors, prototypes and unknown effects.
+Arrays/external endpoints remain refused. No native ownership admission changes.
+
+Copy units pass **39 rows, eleven key controls, seventeen live states, one
+wide snapshot, one missing-lattice control and 2794 retention budget cutoffs**,
+plus five path-explosion cutoffs. Three executed functions add ten sites/instances
+with five retained. All previous source families retain their expectations.
+All four oracles report zero violations; expanded-fixture precision is **29/41**,
+while Bootstrap/p5/Phaser remain **0/64, 0/16, 0/20**. Combined focused CTest passes
+**12/12 in 30.19 seconds**. Log: `/tmp/ctcompile-guard-copy.log`.
+Homebrew clang-format **22.1.8** passes **743 files** and whitespace checks pass.
+
+The full generated devbox build succeeds and the **517-test CTest gate is
+running**, so there is no new completed full-suite total yet. Log:
+`/tmp/ctcompile-guard-full.log`. The prior completed baseline was **512/517**,
+with all **372 compiler tests** passing and only `selectors`, `frames`,
+`element_attrs`, `vm_async` and `early_errors` failing. Fresh complete corpus
+numbers await this gate; the preceding measured native components were
+Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725**, and exact Data remained
+**0/7 browser, 0/7 CommonJS, 0/8 AMD**. Complete native Bootstrap initialization
+is unfinished. The checkpoint does not claim the running full gate passed.
+
+**Exact next boundary:** replace the accepted guarded ternary with
+`(state.has('other') && state.get('other')) || state.get('')`. Keep the seed,
+conditional deletion, saved write/read/delete chain and two standalone
+`set(get(false))`, `set(get(true))` calls followed by `size()`. Node/interpreter
+still give **2**, but both native modes remain **0/6**, all **eighteen calls
+retained**, with no host owner proof. The ternary control is **6/6** with the same
+trace. The intermediate Boolean/String `&&` result needs proof that its truthy
+`||` arm retains a String; the host's single optional scalar tag currently loses
+that distinction. Prove live result alternatives and connect the native proof
+without selecting a startup value or using the storage schema as authority.
+
+Fresh guarded `result || null`, nullable ternary, normalized consumer-key and
+object-payload witnesses each remain **0/6**, eighteen calls, Node/interpreter
+**3**. A second guarded nullable return keeps nineteen calls with the same result
+and refusal. These witnesses differ from the preceding checkpoint's nullable
+ones. Full next source is committed in `native-owned-global-maps.md` under
+"Next boundary", and on the devbox at
+`/tmp/ctcompile-guard-next/shortcircuit_same_tag.js`; measured evidence:
+`/tmp/ctcompile-guard-boundary.json`. Keep observer calls as standalone statements.
+Nullable carriers, object identity, export ABI and native Bootstrap Data remain
+separate obligations.
+
 ## Conditional Map values and object-deletion checkpoint, 2026-09-08
 
 Saved locally on `ctcompile-v1`: **`53b44b9`**, saved scalar Map values across

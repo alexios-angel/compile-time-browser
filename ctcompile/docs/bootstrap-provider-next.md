@@ -240,28 +240,39 @@ each in source/prepared form and all 2501/2626 incomplete budgets. The local
 mixed gate passes 27 observations and twelve refusals. See
 [the Map checkpoint](native-owned-global-maps.md#saved-scalar-values-across-conditionals-2026-09-08).
 
-## Next: a guarded saved read after conditional deletion
+## Completed: a guarded saved read after conditional deletion
 
-Seed two String entries, conditionally delete `'other'`, then select
-`state.has('other') ? state.get('other') : state.get('')` before the saved
-write/read/delete chain. Node/interpreter give **`trace=2`** after the standalone
-`set(get(false))`, `set(get(true))` calls and `size()`. Both native modes remain
-**0/6**, with all **eighteen calls retained** and no host owner proof. Replacing
-the conditional deletion with `state.has('other')` gives **3** and admits **6/6**.
-Keeping the deletion but replacing the entire ternary with `state.get('')`
-gives **1** and admits **6/6**, with **sixteen calls retained**.
+Commit `677714b` admits **6/6 native** in both modes for the saved-value ternary
+`state.has('other') ? state.get('other') : state.get('')` after conditional
+deletion. All eighteen calls and Node/interpreter `trace=2` remain. Host/native
+proofs keep membership separate from the payload tag valid whenever present;
+joins intersect both independently. Live same-key guards can restore membership,
+while stale observations and unknown/conflicting payloads still refuse.
 
-Prove membership on the live `has` arm together with a payload tag valid whenever
-the key is present, including across the preceding deletion join. Membership
-alone cannot establish that tag. Preserve every arm, mutation, alias and budget
-rollback; startup observations cannot authorize later callers. Nullable saved
-results and object identity payloads are separate measured refusals.
-Evidence: `/tmp/ctcompile-conditional-boundary.json`; the complete source is in
-[the Map checkpoint](native-owned-global-maps.md#next-boundary).
+The gate passes 95 published programs, eleven lifetime sanitizer variants,
+35 local mixed observations, seventeen local refusals and 44 host rows each in
+source/prepared form. All guarded budgets, forged edits, both runtime flags and
+saved owning Strings after final Map release pass. See
+[the Map checkpoint](native-owned-global-maps.md#guarded-saved-reads-after-conditional-deletion-2026-09-08).
 
+## Next: short-circuit scalar result refinement
+
+Replace that ternary with `(state.has('other') && state.get('other')) ||
+state.get('')`, preserving the same saved write/read/delete chain and standalone
+calls. Node/interpreter still give **`trace=2`**, but native remains **0/6** in
+both modes with all **eighteen calls retained** and no host owner proof. The
+ternary control remains **6/6**. The intermediate `&&` has Boolean/String
+alternatives; the truthy `||` arm needs a live proof that its retained result is
+String. An observed startup value or storage schema cannot supply that proof.
+This matches the shape of Bootstrap's exact `get` at vendor line 17 before
+adding its nullable result and nested/object payload obligations.
+
+Fresh guarded nullable-result and object-payload specimens remain **0/6** with
+Node/interpreter `trace=3`; normalizing a nullable consumer key still lacks a
+host result proof. Evidence: `/tmp/ctcompile-guard-boundary.json`. Complete next
+source: [the Map boundary](native-owned-global-maps.md#next-boundary).
 Exact Bootstrap Data, general realm owners and future-call contracts remain
-unfinished; the latest measured boundaries, corpus counts and full gate are in
-[HANDOFF.md](HANDOFF.md). The 64-candidate size cap is deliberate.
+unfinished; the measured corpus counts and full gate are in [HANDOFF.md](HANDOFF.md).
 
 Exceptions do not make a callback or allocation inert. Native try/catch covers
 one acyclic handler with homogeneous number, boolean or owning string throws

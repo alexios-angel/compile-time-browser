@@ -59,8 +59,8 @@ preserve definite presence and an independently optional payload tag. A possibly
 aliasing `set` preserves presence and joins the old and new payload tags: equal
 proved tags survive, while differing or unproved tags become unknown. A later
 possible write cannot recover an unknown tag; an exact-key write replaces it.
-A possibly aliasing `delete` removes both presence and type facts. Independently
-disjoint keys preserve both. Different primitive tags are disjoint without
+A possibly aliasing `delete` removes definite membership while retaining the
+payload tag valid whenever present. Independently disjoint keys preserve both. Different primitive tags are disjoint without
 coercion; different SSA names of the same primitive type may alias. Both zero
 encodings and every NaN payload denote the same Map key. Each set also records
 its own key and payload independently of any earlier join. Every fact comparison
@@ -521,10 +521,49 @@ Host units cover **25 rows each in source and prepared forms**, all
 `/tmp/ctcompile-conditional-checkpoint3.log`. Full results are in
 [HANDOFF.md](HANDOFF.md).
 
+## Guarded saved reads after conditional deletion, 2026-09-08
+
+Commit `677714b` advances the preceding `guarded_saved_read` from **0/6 to 6/6
+native** in both optimization modes. Its conditional deletion followed by
+`state.has('other') ? state.get('other') : state.get('')` preserves all
+**eighteen calls** and Node/interpreter **`trace=2`**. The deletion-free and
+straight-line empty-key controls remain **6/6**, with traces **3** and **1**.
+
+Host and native analyses keep definite membership separate from a payload tag
+valid whenever the key is present. Deletion cannot change a surviving payload;
+a live `has` on the same Map/key can restore membership. Neither fact supplies
+the other. Joins intersect record keys and equal tags and require membership on
+both paths. An untracked key remains unknown prior contents, not an absent key.
+Possible-alias writes still join payload tags; exact writes replace them. Deleted
+records cannot inflate size bounds. Has observations are copied per arm and
+invalidated by possibly aliasing deletion. Every arm is checked and all host
+snapshot, join and guard work is budgeted. Native facts remain independent of
+the host result tag, storage schema and input annotations.
+
+The published gate passes **95 complete programs** and **eleven lifetime
+sanitizer variants**. Six new guarded programs cover String, Boolean and Number
+results and both flags; eight refusal families cover missing tags, wrong keys or
+Maps, stale observations, mutation within the guarded arm, disagreeing tags and
+literal predicates. Both optimization modes, GCC/Clang explicit/deduced C++,
+forged markers, reruns and sixteen discriminating source mutations pass. A long
+String getter sees only false at startup; saved native callables later use both
+flags and keep owning strings through overwrite/deletion and final Map release.
+The four new native budgets first complete at **18690/19232/19232/10792**, with
+**29/31/31/29** cutoffs and no natural speculative rollback interval.
+
+Host units pass **44 rows per source/prepared form**, every **2866/3004** guarded
+budget and **2504/2629** conditional budget, exact endpoints and live forged
+read/guard edits. Local mixed Maps pass **35 observations and seventeen
+refusals** across both storage layouts. Seven targeted lit cases pass in
+**28.21 seconds**; initial focused CTest passes **12/12 in 30.69 seconds**.
+Log: `/tmp/ctcompile-guard-focused.log`. The combined object-copy gate and full
+generated build are recorded in [HANDOFF.md](HANDOFF.md).
+
 ## Next boundary
 
-The next getter conditionally deletes one seeded entry, then guards its read
-with `has`. This complete source retains the accepted publication shape:
+Bootstrap's exact getter uses `(has && get) || null`. Replacing only the
+accepted saved-value ternary with `(has && get) || fallback` isolates its
+short-circuit shape while keeping String results and the same publication:
 
 ```js
 var host = {};
@@ -538,7 +577,7 @@ var host = {};
             state.set('', '');
             state.set('other', 'future');
             if (flag) { state.delete('other'); }
-            const saved = state.has('other') ? state.get('other') : state.get('');
+            const saved = (state.has('other') && state.get('other')) || state.get('');
             state.set(false, true);
             state.set(false, saved);
             const result = state.get(false);
@@ -553,25 +592,29 @@ host.slot.set(host.slot.get(true));
 var trace = host.slot.size();
 ```
 
-Node/interpreter agree on **`trace=2`**. Both native modes remain **0/6** with
-**eighteen calls retained** and no host owner proof. Replacing the conditional
-deletion with `state.has('other')` gives **3** and admits **6/6**. Keeping the
-deletion but replacing the entire ternary with `state.get('')` gives **1** and
-admits **6/6**, with **sixteen calls retained**. Replacing only the ternary
-predicate with `false` gives **1** and still refuses: both arms must
-be proved, and the unused arm reads an entry that may have been deleted.
-Evidence: `/tmp/ctcompile-conditional-boundary.json`; source on the devbox:
-`/tmp/ctcompile-conditional-next/guarded_saved_read.js`.
+Node/interpreter agree on **`trace=2`**, but both native modes remain **0/6**,
+with all **eighteen calls retained** and no host owner proof. Replacing the saved
+expression with `state.has('other') ? state.get('other') : state.get('')`
+restores **6/6** with the same trace and source call count. This is the next
+boundary from `ca99089` carried forward after its guarded ternary was completed.
 
-The next proof needs live `has`-guard membership and a payload tag valid whenever
-the key is present, preserved across the preceding deletion join. A membership
-fact alone cannot manufacture a payload type. Nullable saved results
-(`result || null`) and object identity payloads separately remain **0/6**, with
-Node/interpreter traces **4** and **6**. Keep observer calls as standalone
-statements; combining their results into arithmetic tests a separate boundary.
-The unseeded `get() { return state.get(0); }` also remains refused: neither an
-earlier observed invocation nor an incomplete family establishes its result.
-Raising the intentional size-witness cap does not address these barriers.
+The intermediate `&&` may carry false or String. The current host body proof
+records only one scalar tag and loses it at that join; the truthy `||` arm does
+not yet rederive that only String can reach it. Prove these live conditional
+result facts without selecting a startup value, trusting a schema, erasing
+calls or admitting arbitrary union results. Then connect the independent native
+result proof and preserve saved owning Strings. General nullable return and
+object identity payload contracts remain separate work.
+
+In the newly measured guarded specimens, `return result || null`, an explicit
+nullable ternary, normalized consumer keys and ordinary object payloads each
+remain **0/6** with **eighteen calls**, no host owner and Node/interpreter
+**`trace=3`**. A second guarded nullable return retains **nineteen calls** with
+the same trace and refusal. These are new specimens, distinct from the preceding
+checkpoint's nullable/object witnesses. Evidence:
+`/tmp/ctcompile-guard-boundary.json`; source on the devbox:
+`/tmp/ctcompile-guard-next/shortcircuit_same_tag.js`. Keep observer calls as
+standalone statements; arithmetic on their results tests a separate boundary.
 
 Current-call proofs cannot authorize arbitrary future external arguments or
 establish an export ABI. Future external callers, mutable publication slots,
