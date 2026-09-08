@@ -530,7 +530,7 @@ Three things the SDL layer was missing and now has:
   coordinates under letterboxed presentation. invaders is 320x240 in a 960x720
   window, so every pointer event arrived at three times its true position.
 
-`ctbrowser/unittests/unit/bindings_basics` drives all of it, and finishes by holding a key
+`ctbrowser/unittests/unit/page_input` drives all of it, and finishes by holding a key
 through MDN's breakout and asserting the frames differ — with a key the page
 ignores as the control, so "the frames differ" cannot pass by nondeterminism.
 

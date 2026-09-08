@@ -43,8 +43,8 @@ ctbrowser_test(stress/stress_slab)
 ctbrowser_test(stress/stress_dom)
 
 # THE CORPUS TESTS REACH THE DRIVER TOO, once ANGLE is on. gpu_basics and
-# bindings_basics got the suppression file because they were the only tests
-# that touched Vulkan; a WebGL 2 or Babylon ratchet built with
+# navigation (bindings_basics until 2026-09-07) got the suppression file
+# because they were the only tests that touched Vulkan; a WebGL 2 or Babylon ratchet built with
 # -DCTBROWSER_WITH_ANGLE=ON now does as well, and reported races inside
 # SwiftShader's command buffers with no ctbrowser frame on the stack.
 #

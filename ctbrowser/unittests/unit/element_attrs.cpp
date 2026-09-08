@@ -7,10 +7,10 @@
 // three it is. An element may hold `x` in no namespace and `x` in two others at
 // once, and every one of those lookups has a different right answer.
 //
-// WHAT MAKES THIS WORTH A FILE OF ITS OWN rather than more of bindings_basics:
+// WHAT MAKES THIS WORTH A FILE OF ITS OWN rather than more of node_methods:
 // every case below turns on a DISTINCTION - qualified against namespaced, HTML
 // against foreign, a name that serialises against a name that parses - and each
-// of them used to have one answer where two belong. `bindings_basics` asks
+// of them used to have one answer where two belong. `node_methods` asks
 // whether a binding works; these ask whether two bindings that look alike are
 // being kept apart.
 //

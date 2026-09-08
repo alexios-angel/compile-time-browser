@@ -6,7 +6,7 @@
 // a cluster of `dom/nodes` HARNESS_ERRORs stood behind them, because a harness
 // error means the test could not START and every subtest in it is lost.
 //
-// WHAT MAKES THIS WORTH A FILE OF ITS OWN rather than more of bindings_basics:
+// WHAT MAKES THIS WORTH A FILE OF ITS OWN rather than more of node_methods:
 // this tree builder has NO DOCUMENT NODE. `txn.root()` is the `<html>` element
 // and `document` is a plain script object with no handle at all, so every case
 // below is asking whether a Document that does not exist is being modelled

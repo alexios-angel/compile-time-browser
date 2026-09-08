@@ -106,7 +106,7 @@ one is what makes the second attributable:
 Making `getElementsByTagName` and `Element.children` live turned them into
 PROXIES, and `context::iterable_values` had no proxy case — so
 `for (const x of el.children)` and `[...collection]` silently read an **empty
-list**. Not an error: a wrong answer. `unittests/unit/bindings_basics` caught it
+list**. Not an error: a wrong answer. `unittests/unit/node_methods` caught it
 on the devbox before the measurement above was taken.
 
 `getElementsByClassName` and the eight document collections were already proxies
