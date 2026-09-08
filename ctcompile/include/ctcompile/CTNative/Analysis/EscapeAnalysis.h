@@ -365,6 +365,17 @@ struct ObjectPropertyDeletion {
     mlir::Value value;
 };
 
+/// An indirect own-data transfer: neither copy_props operand is the copied
+/// value. Keep this separate from direct Stored witnesses and preserve every
+/// copied edge in the historical cycle graph, even after overwrite/deletion.
+struct ObjectPropertyCopy {
+    mlir::Operation * by = nullptr;
+    mlir::Operation * source = nullptr;
+    mlir::Operation * target = nullptr;
+    mlir::StringAttr key;
+    mlir::Value value;
+};
+
 struct ArrayContentsExit {
     mlir::Operation * by = nullptr; // return
     mlir::Value value;
@@ -373,6 +384,7 @@ struct ArrayContentsExit {
     /// may therefore have several records with different contents and roots.
     llvm::MapVector<mlir::Operation *, llvm::SmallVector<mlir::Value, 4>> arrays;
     /// Exact own data properties of every fresh ordinary object on this path.
+    /// Entry order is diagnostic only, not an OwnPropertyKeys ordering proof.
     llvm::MapVector<mlir::Operation *, ObjectOwnProperties> objects;
     /// Every local object/array reachable from value at this exit, through
     /// current own elements/properties, once each. Includes a local root.
@@ -404,26 +416,31 @@ struct ArrayContentsEvidence {
     llvm::SmallVector<ObjectPropertyWrite, 0> propertyWrites;
     llvm::SmallVector<ObjectPropertyRead, 0> propertyReads;
     llvm::SmallVector<ObjectPropertyDeletion, 0> propertyDeletions;
+    llvm::SmallVector<ObjectPropertyCopy, 0> propertyCopies;
     llvm::SmallVector<ArrayContentsExit, 1> exits;
     /// Published only after the entire function and exit reachability pass.
-    /// Refusal/exhaustion returns NO container, write, read, deletion or exit records.
+    /// Refusal/exhaustion returns NO container, write, read, deletion, copy or exit records.
     bool complete = false;
     ArrayContentsFailure failure = ArrayContentsFailure::None;
     mlir::Operation * refusedBy = nullptr;
     /// Operation, forwarded-argument, initializer-element, branch-state-copy,
-    /// deletion-state-update and exit graph visits. Array key validation examines
-    /// one Number; object keys must be Strings of at most 256 bytes.
+    /// deletion-state-update, copy snapshot/field and exit graph visits. Array key validation
+    /// examines one Number; object keys must be Strings of at most 256 bytes.
     std::size_t work = 0;
 };
 
 /// Recompute from the CURRENT verified IR; needs neither trusted annotations
 /// nor alias lattices. An acyclic cf.br/cf.cond_br/cf.switch graph may contain
 /// constants, fresh objects/arrays, literal append, constant-Number-index array
-/// reads/overwrites, own String-property object writes/reads/deletes, truthy and return.
+/// reads/overwrites, own String-property object writes/reads/deletes/copies, truthy and return.
 /// Object reads require an earlier own write; keys longer than 256 bytes and
 /// __proto__ refuse. Named/computed object deletions erase only the current own
 /// property; absent deletion is a no-op, absent reads still refuse. All earlier
 /// writes remain in the cycle graph and saved reads retain their exact origins.
+/// copy_props requires known fresh own-data objects at both ends and snapshots
+/// every source field before writing, including self-copy. Copied fields retain
+/// their origins; source-container identity is not copied. Arrays and unknown
+/// sources/targets refuse. Enumeration order is outside this contents proof.
 /// Every array deletion refuses. String array indices refuse because the current
 /// VM's named property path does not access dense elements, unlike JavaScript's String
 /// index semantics. Loaded aliases share one contents state per path; cycles

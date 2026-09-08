@@ -110,6 +110,32 @@ function objectFrameDeletedTransientCycle() {
 }
 objectFrameDeletedTransientCycle();
 
+// --- OWN-DATA OBJECT COPIES THROUGH REAL IMPORTED FRAMES -----------------
+// Spread copies the child reference, so erasing the source field cannot
+// release a child still reachable through the returned target. Overwrite and
+// saved reads distinguish historical copy edges from final retained contents.
+function objectFrameCopiedChild() {
+    var child = {}, source = { held: child }, target = { ...source };
+    delete source.held;
+    return target;
+}
+H.push(objectFrameCopiedChild());
+function objectFrameCopiedOverwrite() {
+    var old = {}, replacement = {}, source = { held: old }, target = { ...source };
+    target.held = replacement;
+    delete source.held;
+    return target;
+}
+H.push(objectFrameCopiedOverwrite());
+function objectFrameCopiedSavedRead() {
+    var child = {}, source = { held: child }, target = { ...source };
+    var saved = target.held;
+    delete source.held;
+    delete target.held;
+    return saved;
+}
+H.push(objectFrameCopiedSavedRead());
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());

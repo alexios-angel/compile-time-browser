@@ -556,3 +556,64 @@ The combined focused devbox gate passes **12/12 CTests in 29.32 seconds**.
 Homebrew clang-format **22.1.8** passes all **743 files**, and whitespace checks
 pass. Log: `/tmp/ctcompile-conditional-checkpoint2.log`. The full generated
 gate is recorded separately in [HANDOFF.md](HANDOFF.md).
+
+## Fresh own-data object copies
+
+The complete contents query now accepts `ctjs.copy_props` only when both
+operands independently resolve to fresh ordinary objects in the current path.
+Every source property already has an exact bounded String key and a known
+primitive or allocation origin. Copying establishes or replaces those keys on
+the target, preserves unrelated keys and leaves the source unchanged. Deletion
+before copying removes a key from the copied mapping; deletion or replacement
+after copying does not alter the earlier copied value. Reads saved from either
+object retain their original identities and values.
+
+The runtime audit uses `ctbrowser/lib/Script/vm/objects/chain.cpp` and
+`ctbrowser/include/ctbrowser/script/value.hpp`. `copy_own_properties` snapshots
+enumerable own entries through `lookup_property`, so accessors can run in the
+general runtime operation despite the older no-accessor comments in its ODS
+and AOT bridge. This complete proof excludes descriptors, accessors, prototype
+changes, unknown effects and external values. Every admitted field therefore
+has ordinary enumerable, writable, configurable own-data semantics. Array and
+primitive sources/targets also remain outside this proof. No runtime or ODS
+contract is changed or used to infer an absent getter proof.
+
+Each copy charges a full source-property snapshot before allocating it, then
+charges every copied field. Snapshotting also handles equal source/target
+aliases. `ObjectPropertyCopy` records the source, target, key and exact copied
+value separately from direct `Stored` operand witnesses: neither operand of
+`copy_props` is the copied child. Return reachability follows current target
+fields, and the cycle check includes every historical copy edge along with
+all direct writes. A copied self-edge or mixed array/object cycle remains
+outside retention refinement after deletion. Copying fields does not itself
+retain the source object. Property mapping contents are exact; record order
+does not prove `OwnPropertyKeys` enumeration order, whose consumers remain
+unsupported.
+
+Conditional and switch paths retain independent source/target identities and
+snapshots. Every structural edge is checked, including literal-predicate arms.
+Any unsupported path or exhausted budget discards all copied records and every
+earlier contents record. The retention transaction still preserves all original
+verdicts until its final graph and verdict visits complete. Forged completion
+or confinement markers supply no evidence.
+
+The devbox unit fixture passes **39 copy rows, eleven key controls, seventeen live
+mutation states, one wide snapshot, one missing-lattice control and five
+path-explosion cutoffs**. Every row and live state checks every incomplete
+contents/retention budget and the exact completion/refusal endpoint. The wide
+case checks all 66 indirect edges through a 33-field copy followed by self-copy.
+Live controls replace source/target identities, create a copied self-cycle,
+insert deletion, accessors or publication, and mutate a later path while
+forged markers persist. All **2794 incomplete retention budgets** pass. Three
+executed source functions cover ten sites and ten instances: copied children
+retained by a returned target, overwritten copied children, and a saved child
+after deletion from both objects. The five retained instances keep their escape
+claims; the other five receive `Confined` claims. Earlier source families retain
+their exact expectations.
+
+The expanded source fixture measures **29/41** precision; Bootstrap/p5/Phaser
+remain **0/64, 0/16, 0/20**. All four execution oracles report zero violations.
+The combined focused CTest gate passes **12/12 in 30.19 seconds**, and Homebrew
+clang-format **22.1.8** passes all **743 files**. Whitespace checks pass. Log:
+`/tmp/ctcompile-guard-copy.log`. This adds no native ownership admission. The
+full generated gate is recorded separately in [HANDOFF.md](HANDOFF.md).

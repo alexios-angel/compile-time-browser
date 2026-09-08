@@ -350,6 +350,9 @@ void refineArrayRetention(EscapeVerdicts & verdicts, ctjs::FuncOp function, std:
     for (const ObjectPropertyWrite & write : contents.propertyWrites) {
         if (!addEdge(write.object, write.value)) { return; }
     }
+    for (const ObjectPropertyCopy & copy : contents.propertyCopies) {
+        if (!addEdge(copy.target, copy.value)) { return; }
+    }
     llvm::SmallVector<mlir::Operation *, 8> pending;
     for (const auto & [container, count] : incoming) {
         if (!spend()) { return; }
@@ -977,6 +980,33 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     out.writes.push_back({&op, position, &op, position, value});
                 }
                 state.origins[array.getResult()] = array.getResult();
+                continue;
+            }
+            if (auto copy = llvm::dyn_cast<ctjs::CopyPropsOp>(&op)) {
+                const mlir::Value source = origin(copy.getSource());
+                const mlir::Value target = origin(copy.getTarget());
+                mlir::Operation * from = source ? source.getDefiningOp() : nullptr;
+                mlir::Operation * into = target ? target.getDefiningOp() : nullptr;
+                auto sourceObject = state.objects.find(from);
+                auto targetObject = state.objects.find(into);
+                if (sourceObject == state.objects.end() || targetObject == state.objects.end()) {
+                    return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
+                }
+                // The live runtime copies enumerable own entries through property
+                // lookup, which can invoke getters in general (objects/chain.cpp).
+                // This complete query admits only fresh own data with attr_default:
+                // no accessors, prototypes, descriptors or unknown effects occur.
+                // Snapshot before writes, including when both exact aliases name
+                // one object. Charge the allocation and each subsequent copy edge.
+                if (!spend(sourceObject->second.size())) {
+                    return refuse(ArrayContentsFailure::WorkLimit, &op);
+                }
+                const ObjectOwnProperties snapshot = sourceObject->second;
+                for (const auto & [key, value] : snapshot) {
+                    if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                    targetObject->second[key] = value;
+                    out.propertyCopies.push_back({&op, from, into, key, value});
+                }
                 continue;
             }
             if (llvm::isa<ctjs::DeletePropertyOp, ctjs::DeleteNamedOp>(&op)) {
