@@ -4,9 +4,7 @@ The next source exception increment is a protected direct call whose return is
 assigned to a local. The existing `ctjs.invoke` representation and live type
 queries cover its two completions. An internal structural recovery mode now
 connects them to the enclosing try; native admission and emission do not consume
-that mode yet. Checked normal-return inference now follows imported frame/root
-bookkeeping, while unwind payloads retain the frame-entry failure alternative.
-An additional effect-checked mode validates the operations whose
+that mode yet. An additional effect-checked mode validates the operations whose
 status edges would disappear before adopting the recovered body. Ordinary
 lowering retains its throwing-call refusal. See
 [native exceptions](native-exceptions.md).
@@ -223,41 +221,6 @@ and nine new refusals pass, alongside all **3534** current source-binding and
 **937** effect-budget prefixes. Log: `/tmp/ctcompile-map-keyfacts-invocations.log`;
 the final frozen generated gate passes **475/475 CTests in 720.98 seconds**,
 including **163/163 lit cases**. See [HANDOFF.md](HANDOFF.md) for the exact baseline.
-
-## Imported normal-return types and frame failures
-
-The live invocation completion query now distinguishes normal-return collection
-from unwind-payload collection. Imported `frame_enter`, `frame_exit` and `root`
-operations do not change the SSA value supplied by a successful return. The
-normal query can cross them, under the existing 4096-operation and 32-helper
-bounds, and joins only the selected helper's return operands. A thrown payload
-does not become a return value, and an ordinary call does not gain the checked
-invocation's transfer. Unsupported operations and nested regions still refuse.
-
-Unwind inference deliberately remains `boxed` while a helper retains
-`frame_enter`. That operation has a depth guard and can fail without reaching
-any explicit source throw. Its ODS contract does not let a backend substitute
-an explicit numeric payload for that failure. The existing source effect and
-binding recovery prerequisite therefore cannot by itself authorize a homogeneous
-native exception carrier. A complete native component proof must resolve the
-frame-entry obligation before source payloads can be narrowed and emitted.
-
-The recovery unit solves the actual imported/recovered assignment, sequential
-call and argument-mutation specimens, plus string and boolean sources. It checks
-the normal call result, normal continuation and independent saved catch state,
-while retaining `boxed` on both the invocation unwind and enclosing catch.
-Fresh solves and rollback preserve the source graph. Ten live controls change
-returns to string, boolean and negative zero, change the explicit payload, add
-global/property effects, add recursion, expose a public target and test the
-exact 4096/4097-operation boundary. Forged type/effect markers cannot retain an
-old answer. A test-only counterpart without frame operations proves that the
-unwind refusal is attributable to the frame; it is not a source transform or
-native admission proof. A transitive source callee lookup remains a separate
-normal-result refusal pending its live binding consumer.
-
-No native function is newly admitted by this increment. The next native boundary
-is a complete frame-free call component, including standalone throwing bodies,
-homogeneous payload/state carriers and ordinary C++ invocation emission.
 
 ## Remaining native recovery integration
 
