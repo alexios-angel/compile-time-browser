@@ -196,6 +196,7 @@ if(STRICT)
   set(_array_frame_rows "")
   set(_object_deletion_rows "")
   set(_object_copy_rows "")
+  set(_object_copy_path_rows "")
   foreach(_line IN LISTS _recording_lines)
     if(_line MATCHES "^program ([0-9a-f]+) ")
       set(_program_hash "${CMAKE_MATCH_1}")
@@ -255,6 +256,16 @@ if(STRICT)
         message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
       endif()
       list(APPEND _object_copy_rows "${_row} ${CMAKE_MATCH_1}")
+    elseif(_function_name MATCHES "^objectFrameCopied(ConditionalAlias|ConditionalSource|SwitchSaved|LiteralOverwrite)$" AND _line MATCHES "^site ")
+      if(NOT _line MATCHES "^site ([0-9]+) kind obj made ([0-9]+) confined ([0-9]+) escaped ([0-9]+) unresolved ([0-9]+) unchecked ([0-9]+) routes ([^ ]+)$")
+        message(FATAL_ERROR "${_function_name}: unexpected object copy path observation: ${_line}")
+      endif()
+      set(_pc "${CMAKE_MATCH_1}")
+      set(_row "${_function_name} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3} ${CMAKE_MATCH_4} ${CMAKE_MATCH_5} ${CMAKE_MATCH_6} ${CMAKE_MATCH_7}")
+      if(NOT _claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_pc} obj ([^\n]+)")
+        message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
+      endif()
+      list(APPEND _object_copy_path_rows "${_row} ${CMAKE_MATCH_1}")
     endif()
   endforeach()
   set(_expected_publication_rows
@@ -360,6 +371,39 @@ if(STRICT)
     message(FATAL_ERROR "imported object copy evidence mismatch:\nexpected: ${_expected_object_copy_rows}\nobserved: ${_object_copy_rows}")
   endif()
   message(STATUS "imported object copy: ten sites, ten instances, five retained; live claims agree")
+
+  # Dynamic flags still carry unknown raw parameter registers and real source
+  # switches include unsupported comparisons. Preserve their conservative
+  # claims while checking every observed path and returned graph. The literal
+  # conditional is a complete-contents precision control: its old child dies.
+  set(_expected_object_copy_path_rows
+      "objectFrameCopiedConditionalAlias 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameCopiedConditionalAlias 2 2 0 0 0 - escapes:stored"
+      "objectFrameCopiedConditionalAlias 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameCopiedConditionalAlias 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameCopiedConditionalAlias 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameCopiedConditionalSource 2 1 1 0 0 temporaries:1 escapes:stored"
+      "objectFrameCopiedConditionalSource 2 1 1 0 0 temporaries:1 escapes:stored"
+      "objectFrameCopiedConditionalSource 2 2 0 0 0 - confined"
+      "objectFrameCopiedConditionalSource 2 2 0 0 0 - confined"
+      "objectFrameCopiedConditionalSource 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameCopiedSwitchSaved 3 0 3 0 0 temporaries:3 escapes:stored"
+      "objectFrameCopiedSwitchSaved 3 1 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameCopiedSwitchSaved 3 2 1 0 0 temporaries:1 escapes:stored"
+      "objectFrameCopiedSwitchSaved 3 2 1 0 0 temporaries:1 escapes:stored"
+      "objectFrameCopiedSwitchSaved 1 0 1 0 0 temporaries:1 escapes:returned"
+      "objectFrameCopiedSwitchSaved 1 0 1 0 0 temporaries:1 escapes:returned"
+      "objectFrameCopiedSwitchSaved 1 0 1 0 0 temporaries:1 escapes:returned"
+      "objectFrameCopiedLiteralOverwrite 1 1 0 0 0 - confined"
+      "objectFrameCopiedLiteralOverwrite 1 0 1 0 0 temporaries:1 escapes:stored"
+      "objectFrameCopiedLiteralOverwrite 1 1 0 0 0 - confined"
+      "objectFrameCopiedLiteralOverwrite 1 1 0 0 0 - confined")
+  list(SORT _object_copy_path_rows)
+  list(SORT _expected_object_copy_path_rows)
+  if(NOT _object_copy_path_rows STREQUAL _expected_object_copy_path_rows)
+    message(FATAL_ERROR "imported object copy path evidence mismatch:\nexpected: ${_expected_object_copy_path_rows}\nobserved: ${_object_copy_path_rows}")
+  endif()
+  message(STATUS "imported object copy paths: twenty-one sites, thirty-nine instances, twenty-three retained; live claims agree")
 endif()
 if(NOT _pyrc EQUAL 0)
   message(FATAL_ERROR "${NAME}: the checker exited ${_pyrc}")

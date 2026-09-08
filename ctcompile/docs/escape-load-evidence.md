@@ -617,3 +617,58 @@ The combined focused CTest gate passes **12/12 in 30.19 seconds**, and Homebrew
 clang-format **22.1.8** passes all **743 files**. Whitespace checks pass. Log:
 `/tmp/ctcompile-guard-copy.log`. This adds no native ownership admission. The
 full generated gate is recorded separately in [HANDOFF.md](HANDOFF.md).
+
+## Executed copy paths and the raw-import boundary
+
+Four additional source functions exercise copy behavior through real imported
+frames. Both flags of the conditional alias case execute: replacing and deleting
+the selected source or target leaves the old child reachable through the other
+object in the returned graph. A second conditional chooses the copy source,
+then deletes both original fields; each child is retained on exactly one call.
+The switch case executes `0`, `1` and default. Its saved copied child survives
+every arm, while the replacement and original containers are retained only by
+the graphs returned from the corresponding case.
+
+These are deliberately conservative source controls. The raw importer forwards
+the entire register vector to every successor. An external predicate parameter
+therefore remains an unknown forwarded value even though `ctjs.truthy` itself
+is allowed by the complete query. JavaScript `switch` also emits strict equality,
+Boolean conversion and conditional jumps; it does not import as `cf.switch`.
+Those comparison/conversion producers remain outside complete contents. The
+existing unit switch result does not establish source-switch precision.
+
+A fourth, parameter-free function supplies a literal conditional control for
+the existing complete path proof: after selected-alias replacement, both
+original and copied fields are deleted before the replacement is returned.
+The old child is absent on both structural arms, including the untaken one.
+The checker joins every new observation to its independent compiler claim by
+program hash, function index and bytecode PC, keeping every earlier family's
+exact expectations unchanged. The devbox source oracle passes **21 sites,
+39 instances and 23 retained instances**, including the conservative
+dynamic-path claims and the literal control's old-child confinement.
+
+Local Node syntax and execution checks pass for all **eight calls**, with four
+explicit identity assertions. Eight altered variants fail those observations:
+forced alias or source selection, deletion from both possible alias targets,
+copy/source aliasing, loss of the saved child, a saved read recomputed after
+overwrite, a changed default return and returning the replaced literal child.
+Node evidence: `/tmp/ctcompile-escape-copy-paths-node.js`.
+
+All four devbox execution oracles report zero soundness violations. The expanded
+fixture measures **34/47** precision, with zero partial or pending claims;
+Bootstrap/p5/Phaser remain **0/64, 0/16, 0/20**, including p5's existing single
+partial observation. The change from **29/41** adds five proved-confined sites
+and six observed-confined sites in the new fixture. It measures the existing
+analysis on additional source witnesses; no production analysis changed and
+none of the corpus precision counts improved. Homebrew clang-format **22.1.8**
+passes all **744 files** in the gate snapshot, and whitespace checks pass.
+Log: `/tmp/ctcompile-shortcircuit-focused.log`. The full generated gate remains
+pending and will be recorded separately in [HANDOFF.md](HANDOFF.md).
+
+The next small source-boundary proof is exact transport of an external
+predicate through unused raw register arguments without treating that value as
+known container contents, a retained root or an allowed unknown effect.
+Comparison/Boolean selector producers for source switches are a separate
+increment. Both need refusal and budget controls before dynamic source claims
+can improve. No runtime behavior, production analysis or native ownership
+admission changes in this source-only increment.

@@ -136,6 +136,77 @@ function objectFrameCopiedSavedRead() {
 }
 H.push(objectFrameCopiedSavedRead());
 
+// --- OWN-DATA COPIES ACROSS EXECUTED CONDITIONAL AND SWITCH PATHS ---------
+// Erasing the selected alias must leave the other object's copied child
+// reachable. Both flags execute, so updating both possible targets would
+// incorrectly release a child on a path the oracle actually observes.
+function objectFrameCopiedConditionalAlias(selectSource) {
+    var child = { id: 1 }, replacement = { id: 2 };
+    var source = { held: child }, target = { ...source };
+    var selected = selectSource ? source : target;
+    selected.held = replacement;
+    delete selected.held;
+    return { source: source, target: target };
+}
+H.push(objectFrameCopiedConditionalAlias(true));
+H.push(objectFrameCopiedConditionalAlias(false));
+
+// Each child is retained once and confined once. Copying the wrong source,
+// or sharing its later deletion with the target, loses a real returned child.
+function objectFrameCopiedConditionalSource(selectFirst) {
+    var left = { id: 1 }, right = { id: 2 };
+    var first = { held: left }, second = { held: right };
+    var source = selectFirst ? first : second;
+    var target = { ...source };
+    delete first.held;
+    delete second.held;
+    return target;
+}
+H.push(objectFrameCopiedConditionalSource(true));
+H.push(objectFrameCopiedConditionalSource(false));
+
+// All cases and default execute. The saved child survives overwrite and
+// deletion, while only the branch's returned source/target retains the new
+// child. A saved read recomputed from a later field would change this graph.
+function objectFrameCopiedSwitchSaved(choice) {
+    var child = { id: 1 }, replacement = { id: 2 };
+    var source = { held: child }, target = { ...source };
+    var saved = target.held;
+    switch (choice) {
+    case 0:
+        delete source.held;
+        target.held = replacement;
+        return { saved: saved, target: target };
+    case 1:
+        source.held = replacement;
+        delete target.held;
+        return { saved: saved, source: source };
+    default:
+        delete source.held;
+        delete target.held;
+        return { saved: saved };
+    }
+}
+H.push(objectFrameCopiedSwitchSaved(0));
+H.push(objectFrameCopiedSwitchSaved(1));
+H.push(objectFrameCopiedSwitchSaved(2));
+
+// Raw imported dynamic conditions still forward unknown parameter registers,
+// and source switches include comparison operations outside complete contents.
+// Their conservative Stored claims above are deliberate. This parameter-free
+// control reaches the existing conditional proof and releases the old child
+// on every structural arm, including the literal condition's untaken arm.
+function objectFrameCopiedLiteralOverwrite() {
+    var child = { id: 1 }, replacement = { id: 2 };
+    var source = { held: child }, target = { ...source };
+    var selected = true ? source : target;
+    selected.held = replacement;
+    delete source.held;
+    delete target.held;
+    return replacement;
+}
+H.push(objectFrameCopiedLiteralOverwrite());
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());
