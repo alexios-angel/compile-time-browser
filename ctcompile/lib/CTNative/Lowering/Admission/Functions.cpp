@@ -98,8 +98,8 @@ bool admission::function(ctjs::FuncOp fn) {
     if (fn->hasAttr(kNativeStoredCallable)) {
         const auto supported = [&](mlir::Value value) {
             const auto c = carrierOf(typeOf(value));
-            return isScalarCarrier(c) || c == carrier::string || c == carrier::map ||
-                   isObjectCarrier(c);
+            return isScalarCarrier(c) || c == carrier::string || c == carrier::nullableString ||
+                   c == carrier::map || isObjectCarrier(c);
         };
         for (unsigned i = 3; i < entry.getNumArguments(); ++i) {
             if (!supported(entry.getArgument(i))) {

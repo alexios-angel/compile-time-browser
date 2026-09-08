@@ -345,7 +345,25 @@ mlir::Type TypeInference::mapTypeOf(mlir::Operation * op, mlir::Value map) {
         }
         return type;
     };
-    return MapType::get(op->getContext(), joined(mapKeys_), joined(mapValues_));
+    mlir::Type key = BottomType::get(op->getContext());
+    if (auto found = mapKeys_.find(nativeMapGroup(map)); found != mapKeys_.end()) {
+        for (const auto & [value, exact] : found->second) {
+            if (exact && !llvm::isa<NumType>(exact)) {
+                key = meet(key, exact);
+                continue;
+            }
+            const auto * lattice = getLatticeElementFor(getProgramPointAfter(op), value);
+            if (!lattice->getValue().isUninitialized()) {
+                const auto inferred = lattice->getValue().getType();
+                // A semantic Number tag does not discard an independently
+                // inferred integer width. Wait for that lattice rather than
+                // prematurely widening a literal key to double.
+                key = meet(key,
+                           exact && !llvm::isa<NumType, BottomType>(inferred) ? exact : inferred);
+            }
+        }
+    }
+    return MapType::get(op->getContext(), key, joined(mapValues_));
 }
 
 mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
@@ -372,7 +390,15 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
         const int64_t group = nativeMapGroup(call.getReceiver());
         if (group < 0) { return; }
         if (action == "set" || action == "get" || action == "has" || action == "delete") {
-            mapKeys_[group].push_back(call.getArgs()[0]);
+            mlir::Type exact;
+            if (auto proof = call->getAttrOfType<mlir::StringAttr>(kNativeMapKeyType)) {
+                const auto tag = proof.getValue();
+                auto * context = call.getContext();
+                if (tag == "bool") { exact = BoolType::get(context); }
+                if (tag == "number") { exact = NumType::getDouble(context); }
+                if (tag == "string") { exact = StrType::get(context, StrEncoding::UTF8); }
+            }
+            mapKeys_[group].push_back({call.getArgs()[0], exact});
         }
         if (action == "set") { mapValues_[group].push_back(call.getArgs()[1]); }
     });

@@ -334,11 +334,28 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
     llvm::SmallVector<ctjs::CallOp> typedReads;
     llvm::SmallVector<ctjs::GetPropertyOp> sizes;
     llvm::DenseSet<mlir::Operation *> publishedCalls;
+    llvm::DenseMap<mlir::Value, PrimitiveAlternatives> parameters;
     if (globals && globals->proved()) {
         for (const auto & root : globals->roots()) {
             if (!root.methodTable || !root.methodTable->capturedMap) { continue; }
             for (ctjs::CallOp call : root.methodTable->capturedMap->calls) {
                 publishedCalls.insert(call);
+            }
+            // These are current semantic actual/formal facts from the complete
+            // host body worklist, not solver types or input annotations. They
+            // may seed primitive truthiness, never membership or payload tags.
+            for (const HostMethodParameters & method : root.methodTable->capturedMap->parameters) {
+                auto function = method.function;
+                auto & body = function.getBody().front();
+                const auto offset = body.getNumArguments() - method.alternatives.size();
+                for (unsigned index = 0; index < method.alternatives.size(); ++index) {
+                    const auto argument = body.getArgument(static_cast<unsigned>(offset) + index);
+                    auto [found, inserted] =
+                        parameters.try_emplace(argument, method.alternatives[index]);
+                    if (!inserted) {
+                        found->second = found->second.joined(method.alternatives[index]);
+                    }
+                }
             }
         }
     }
@@ -416,9 +433,9 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
             }
         }
     }
-    return map_detail::provePresence(module, calls, sizes, reads, optionalReads, typedReads,
-                                     snapshotCopies,
-                                     [&](mlir::Value value) { return graph.find(value); });
+    return map_detail::provePresence(
+        module, calls, sizes, reads, optionalReads, typedReads, snapshotCopies,
+        [&](mlir::Value value) { return graph.find(value); }, parameters);
 }
 
 } // namespace
@@ -429,7 +446,7 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
         for (llvm::StringRef name :
              {kNativeMapSite, kNativeMapAction, kNativeMapMethod, kNativeMapConstructor,
               kNativeMapReason, kNativeMapGroup, kNativeMapArgGroups, kNativeMapPresent,
-              kNativeMapReadType, kNativeMapWriteType, kNativeMapSnapshotCopy,
+              kNativeMapReadType, kNativeMapWriteType, kNativeMapKeyType, kNativeMapSnapshotCopy,
               kNativeMapSnapshotBuiltin}) {
             op->removeAttr(name);
         }

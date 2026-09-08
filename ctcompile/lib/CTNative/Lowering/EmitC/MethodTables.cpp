@@ -60,6 +60,7 @@ bool lowering::hasConcreteCallableSignature(ctjs::CreateClosureOp made) const {
         case carrier::number:
         case carrier::boolean:
         case carrier::string:
+        case carrier::nullableString:
         case carrier::objectValue:
         case carrier::objectIdentity:
         case carrier::map: return true;
@@ -84,6 +85,7 @@ std::string lowering::callableTypeSpelling(mlir::Type type) {
     case carrier::number: return "js_num";
     case carrier::boolean: return "bool";
     case carrier::string: needsString = true; return "std::string";
+    case carrier::nullableString: needsNullableString = true; return kNullableStringType.str();
     case carrier::objectValue: needsObjectValue = true; return kObjectValueType.str();
     case carrier::objectIdentity: needsObjectIdentity = true; return kObjectIdentityType.str();
     case carrier::map: {

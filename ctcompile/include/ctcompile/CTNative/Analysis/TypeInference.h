@@ -274,7 +274,9 @@ private:
 
     // Proved Map schema families: every queried/stored key and stored value,
     // including through set aliases and closed parameters, captures and returns.
-    llvm::DenseMap<int64_t, llvm::SmallVector<mlir::Value, 4>> mapKeys_;
+    // A live exact key proof applies only at its Map operation. Keep the
+    // original value's broader type everywhere else, including other calls.
+    llvm::DenseMap<int64_t, llvm::SmallVector<std::pair<mlir::Value, mlir::Type>, 4>> mapKeys_;
     llvm::DenseMap<int64_t, llvm::SmallVector<mlir::Value, 4>> mapValues_;
     mlir::Type mapTypeOf(mlir::Operation * op, mlir::Value map);
 

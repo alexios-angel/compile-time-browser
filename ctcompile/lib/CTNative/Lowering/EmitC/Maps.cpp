@@ -59,8 +59,30 @@ bool lowering::replaceMap(mlir::Operation * o) {
                        b.getStringAttr(spelling), mlir::ValueRange{value})
                 .getResult(0);
         };
-        if (map && !mixedMapSpelling(map.getKeyType()).empty() && args.size() >= 2) {
-            args[1] = convertAlternative(args[1], map.getKeyType());
+        if (map && args.size() >= 2) {
+            if (auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapKeyType)) {
+                const auto tag = proof.getValue();
+                const auto scalar = tag == "string" ? carrier::string
+                                    : tag == "bool" ? carrier::boolean
+                                                    : carrier::number;
+                const auto type = carrierType(context, scalar);
+                if (isBooleanStringCarrier(args[1].getType())) {
+                    const auto helper =
+                        tag == "string" ? "std::get<std::string>" : "std::get<bool>";
+                    args[1] = callWithConstValueOperands(b, where, mlir::TypeRange{type},
+                                                         b.getStringAttr(helper),
+                                                         mlir::ValueRange{args[1]})
+                                  .getResult(0);
+                } else if (isNullableCarrier(args[1].getType()) ||
+                           isNullableStringCarrier(args[1].getType())) {
+                    // This conversion copies the proved String, so normalized
+                    // keys do not borrow the nullable argument's storage.
+                    args[1] = convertScalar(b, where, args[1], type);
+                }
+            }
+            if (!mixedMapSpelling(map.getKeyType()).empty()) {
+                args[1] = convertAlternative(args[1], map.getKeyType());
+            }
         }
         if (action == "set") {
             auto call = llvm::cast<CallOp>(o);

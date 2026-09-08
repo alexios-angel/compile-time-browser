@@ -66,9 +66,27 @@
 # ternary changes all three observations. Distinct truthy/falsy results preserve
 # runtime reads, writes, deletions and producer/consumer order in both modes.
 # Missing/stale/wrong guards, mutation inside &&, missing/incompatible payloads,
-# nullable final results and an unexecuted future unknown effect remain refusals
+# nullable stored payloads and an unexecuted future unknown effect remain refusals
 # with source calls and branch operands intact through forgeries/reruns/budgets.
 # Forged read and write tags cannot justify extracting a short-circuit carrier
 # before a Map set; both tags require independent live reanalysis.
 # Saved owning String results again survive both future flags, mutation and
 # deletion of every source entry, independent reentry and final Map destruction.
+# Finite String/Null/Undefined method results use owning nullable_string callable
+# signatures. The normalized key || 'missing' consumer preserves the exact
+# eighteen-call nullable_or source without requiring real null Map keys. Separate
+# executed observations distinguish null, undefined, empty String and owning
+# String when Map size alone hides their difference. Both flags and three-way
+# String/Null/Undefined calls retain every runtime Map call and result operand.
+# Unknown results, unproved reads, Number/String mixtures, object results and
+# unexecuted future effects refuse fresh/stale forged read/write/key facts and
+# reruns in both modes. Real null Map keys keep independent owner proofs but
+# remain native refusals. A false-only startup's saved nullable getter later
+# returns null for true; its long String snapshots retain their bytes through
+# source overwrite/delete, caller-buffer mutation, independent reentry and final
+# release of both Maps under ASan/UBSan. Measured budget boundaries retain the
+# entire source component, signatures, branches and calls at every checked cutoff.
+# The same normalized consumer also works with exclusively String Map keys.
+# Normalizing one use never narrows the original nullable formal at a later
+# unnormalized Map write; that carrier refusal retains both writes and all
+# nineteen source calls under fresh/stale key forgeries and reruns in both modes.

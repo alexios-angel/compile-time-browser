@@ -23,6 +23,8 @@ inline constexpr llvm::StringLiteral kNativeMapPresent = "ctnative.map_present";
 inline constexpr llvm::StringLiteral kNativeMapReadType = "ctnative.map_read_type";
 // Exact primitive at the live write, independent of a broader SSA union.
 inline constexpr llvm::StringLiteral kNativeMapWriteType = "ctnative.map_write_type";
+// Exact key at this operation, rederived independently of the storage schema.
+inline constexpr llvm::StringLiteral kNativeMapKeyType = "ctnative.map_key_type";
 inline constexpr llvm::StringLiteral kNativeMapSnapshotCopy = "ctnative.map_snapshot_copy";
 inline constexpr llvm::StringLiteral kNativeMapSnapshotBuiltin = "ctnative.map_snapshot_builtin";
 

@@ -679,6 +679,100 @@ def shortcircuit_refusals():
     }
 
 
+def nullable_result_sources():
+    saved = shortcircuit_sources()["shortcircuit_same_tag"][0].replace(
+        "return result;", "return result || null;")
+    saved = saved.replace("state.set(key, true)", "state.set(key || 'missing', true)")
+    threeway = saved.replace("get(flag)", "get(flag, nullish)")
+    threeway = threeway.replace("return result || null;",
+        "return result || (nullish ? null : (void 0));")
+    threeway = threeway.replace("host.slot.get(false)", "host.slot.get(false, false)")
+    threeway = threeway.replace("host.slot.get(true)", "host.slot.get(true, true)")
+    threeway = threeway.replace("var trace =", "host.slot.set(host.slot.get(true, false)); var trace =")
+    owning = saved.replace("state.set('', ''); state.set('other', 'future');",
+        f"state.set('', ''); state.set('other', '{STRING_RESULT}'); "
+        f"state.set('{STRING_RESULT}', 'stored'); state.set('missing', 'stored');")
+    owning = owning.replace("state.set(false, true);",
+        "state.set('', false); state.delete(''); "
+        "state.set('other', false); state.delete('other'); state.set(false, true);")
+    owning = owning.replace("state.delete(false);", "state.set(false, false); state.delete(false);")
+    owning = owning.replace(" host.slot.set(host.slot.get(true));", "")
+    homogeneous = saved.replace(
+        "state.set('', ''); state.set('other', 'future'); "
+        "if (flag) { state.delete('other'); } "
+        "const saved = (state.has('other') && state.get('other')) || state.get(''); "
+        "state.set(false, true); state.set(false, saved); "
+        "const result = state.get(false); state.delete(false);",
+        "state.set('seed', 'future'); const result = flag ? '' : state.get('seed'); "
+        "state.delete('seed');")
+    return {
+        # Same eighteen calls as nullable_or: only the consuming key is
+        # normalized, separating the callable contract from real null Map keys.
+        "nullable_normalized": (saved, "host", 3),
+        "nullable_ternary": (saved.replace("return result || null;",
+            "return result ? result : null;"), "host", 3),
+        # void 0 imports as a literal; bare undefined is a separate host read.
+        "nullable_undefined": (saved.replace("return result || null;",
+            "return result || (void 0);"), "host", 3),
+        "nullable_empty": (saved.replace("state.set('other', 'future');",
+            "state.set('other', '');").replace(" host.slot.set(host.slot.get(true));", ""), "host", 3),
+        "nullable_threeway": (threeway, "host", 3),
+        # No Bool key can hide an incorrect nullable-to-String conversion
+        # behind the existing Bool/String variant wrapper.
+        "nullable_homogeneous_key": (homogeneous, "host", 2),
+        # Startup observes String only. A saved getter later returns null on
+        # true; both results survive deletion and destruction of their Map.
+        "nullable_string_saved": (owning, "host", 2),
+    }
+
+
+NULLABLE_OBSERVATIONS = {
+    "nullable_normalized": [("false", "string", "future"), ("true", "null_value", "")],
+    "nullable_ternary": [("false", "string", "future"), ("true", "null_value", "")],
+    "nullable_undefined": [("false", "string", "future"), ("true", "undefined", "")],
+    "nullable_empty": [("false", "null_value", ""), ("true", "null_value", "")],
+    "nullable_threeway": [("false, false", "string", "future"),
+                          ("true, true", "null_value", ""), ("true, false", "undefined", "")],
+    "nullable_homogeneous_key": [("false", "string", "future"), ("true", "null_value", "")],
+    "nullable_string_saved": [("false", "string", STRING_RESULT), ("true", "null_value", "")],
+}
+
+
+def nullable_result_refusals():
+    saved = nullable_result_sources()["nullable_normalized"][0]
+    effect = saved.replace("if (flag) { state.delete('other'); }", "if (flag) { inspect(state); }")
+    effect = effect.replace(" host.slot.set(host.slot.get(true));", "")
+    return {
+        "nullable_unknown_result": ("var unknownResult = null;\n" + saved.replace(
+            "return result || null;", "return result || unknownResult;"), 3,
+            "return result || unknownResult;", "return result || null;", 3),
+        "nullable_unproved_read": (saved.replace("return result || null;",
+            "return result || state.get('missing');"), 3,
+            "return result || state.get('missing');", "return result || null;", 3),
+        "nullable_object_result": (saved.replace("return result || null;",
+            "return result || {};"), 3,
+            "return result || {};", "return result || null;", 3),
+        "nullable_number_result": (saved.replace("return result || null;",
+            "return result || 7;"), 3,
+            "return result || 7;", "return result || null;", 3),
+        # A future true branch is checked even though startup only uses false.
+        "nullable_late_effect": (effect, 3,
+            "if (flag) { inspect(state); }", "if (flag) { state.delete('other'); }", 3),
+    }
+
+
+def nullable_carrier_refusals():
+    saved = nullable_result_sources()["nullable_normalized"][0]
+    return {
+        "nullable_original_key": (saved.replace("state.set(key || 'missing', true)",
+            "state.set(key, true)"), 3),
+        # The normalized first use proves its own String key. The original
+        # formal still includes null at the second use of that same SSA value.
+        "nullable_second_key_use": (saved.replace("state.set(key || 'missing', true)",
+            "state.set(key || 'missing', true); state.set(key, true)"), 4),
+    }
+
+
 def seeded_carrier_refusals():
     return {
         "result_seeded_number_string_contents": (mixed_result_sources()[
@@ -748,6 +842,8 @@ RESULT_SIGNATURES = {
               ("std::string" if "string" in name else "bool"), 6)
        for name in payload_result_sources()},
     **{name: (result, result, 6) for name, (result, _) in MIXED_RESULT_TYPES.items()},
+    **{name: ("ctnative::nullable_string", "ctnative::nullable_string", 6)
+       for name in nullable_result_sources()},
 }
 
 

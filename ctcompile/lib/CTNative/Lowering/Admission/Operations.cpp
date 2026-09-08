@@ -92,7 +92,23 @@ bool admission::op(mlir::Operation * o) {
         };
         if (!mixedMapSpelling(map.getKeyType()).empty() && !call.getArgs().empty() &&
             !scalarAlternative(map.getKeyType(), call.getArgs()[0])) {
-            return refuse("mixed native Map key needs one proved scalar alternative");
+            const auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapKeyType);
+            const auto tag = proof ? proof.getValue() : llvm::StringRef{};
+            const auto c = carrierOf(typeOf(call.getArgs()[0]));
+            const bool represented =
+                (tag == "string" &&
+                 (c == carrier::nullableString || c == carrier::booleanString)) ||
+                (tag == "bool" && (c == carrier::nullable || c == carrier::booleanString)) ||
+                (tag == "number" && c == carrier::nullable);
+            const bool inSchema = llvm::any_of(
+                llvm::cast<VariantType>(map.getKeyType()).getAlternatives(), [&](mlir::Type type) {
+                    return (tag == "bool" && llvm::isa<BoolType>(type)) ||
+                           (tag == "number" && llvm::isa<NumType>(type)) ||
+                           (tag == "string" && carrierOf(type) == carrier::string);
+                });
+            if (!represented || !inSchema) {
+                return refuse("mixed native Map key needs one proved scalar alternative");
+            }
         }
         if (!mixedMapSpelling(map.getValueType()).empty()) {
             if (action == "set" && !scalarAlternative(map.getValueType(), call.getArgs()[1])) {

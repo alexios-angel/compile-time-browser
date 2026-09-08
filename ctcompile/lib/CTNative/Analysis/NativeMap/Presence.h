@@ -2,7 +2,9 @@
 #pragma once
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTNative/Analysis/PrimitiveAlternatives.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 
@@ -21,6 +23,7 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
                           llvm::ArrayRef<ctjs::CallOp> optionalReads,
                           llvm::ArrayRef<ctjs::CallOp> typedReads,
                           const llvm::DenseSet<mlir::Operation *> & snapshotCopies,
-                          llvm::function_ref<mlir::Value(mlir::Value)> familyOf);
+                          llvm::function_ref<mlir::Value(mlir::Value)> familyOf,
+                          const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & parameters);
 
 } // namespace ctcompile::ctnative::map_detail

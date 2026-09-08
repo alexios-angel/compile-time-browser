@@ -16,10 +16,13 @@ from .sources import (
     payload_result_sources, payload_result_refusals, mixed_result_sources, mixed_result_refusals,
     saved_read_sources, saved_read_refusals, saved_join_sources, saved_join_refusals,
     guarded_saved_sources, guarded_saved_refusals, shortcircuit_sources, shortcircuit_refusals,
+    nullable_result_sources, nullable_result_refusals, nullable_carrier_refusals,
+    NULLABLE_OBSERVATIONS,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
     forge_map_presence, check_budgets, check_prepared_result_calls,
+    nullable_observer_source,
 )
 
 
@@ -88,6 +91,7 @@ def main():
         **saved_join_sources(),
         **guarded_saved_sources(),
         **shortcircuit_sources(),
+        **nullable_result_sources(),
     }
     saved = {}
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
@@ -207,6 +211,29 @@ def main():
             blind.write_text(live_source.replace(old, replacement))
             if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == f"trace={live_value}\n":
                 raise RuntimeError(f"{name}: payload witness cannot distinguish {replacement}")
+    for name, (source, _, _) in nullable_result_sources().items():
+        identity = args.work / f"{name}-identity.js"
+        identity.write_text(nullable_observer_source(source, name))
+        expected = f"trace={(1 << len(NULLABLE_OBSERVATIONS[name])) - 1}\n"
+        if (host.run([node, "-e", boundary.NODE, str(identity)]).stdout != expected
+                or host.run([str(reference), str(identity)]).stdout != expected):
+            raise RuntimeError(f"{name}: Node/interpreter String/null/undefined identity mismatch")
+        original_return = ("return result ? result : null;" if name == "nullable_ternary" else
+                           "return result || (void 0);" if name == "nullable_undefined" else
+                           "return result || (nullish ? null : (void 0));" if name == "nullable_threeway"
+                           else "return result || null;")
+        replacements = ("return result;", "return null;", "return undefined;")
+        if name == "nullable_empty":
+            replacements = ("return result;", "return undefined;")
+        if name == "nullable_string_saved":
+            replacements += ("return state.get(false) || null;",)
+        for index, replacement in enumerate(replacements):
+            if source.count(original_return) != 1:
+                raise RuntimeError(f"{name}: lost the nullable return observation")
+            blind = args.work / f"{name}-identity-blinded-{index}.js"
+            blind.write_text(nullable_observer_source(source.replace(original_return, replacement), name))
+            if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == expected:
+                raise RuntimeError(f"{name}: nullable identity cannot distinguish {replacement}")
     for name, (source, binding, value) in positives.items():
         js, ir, count = boundary.prepare(args, name, source)
         functions = (RESULT_SIGNATURES[name][2] if name in RESULT_SIGNATURES
@@ -217,9 +244,11 @@ def main():
             raise RuntimeError("saved_read_write: changed the exact 12-call boundary")
         if name == "saved_join" and len(source_calls(ir.read_text())) != 16:
             raise RuntimeError("saved_join: changed the exact 16-call boundary")
-        if name in {"guarded_saved_read", "shortcircuit_same_tag"} \
+        if name in {"guarded_saved_read", "shortcircuit_same_tag", "nullable_normalized"} \
                 and len(source_calls(ir.read_text())) != 18:
             raise RuntimeError(f"{name}: changed the exact 18-call boundary")
+        if name == "nullable_homogeneous_key" and len(source_calls(ir.read_text())) != 11:
+            raise RuntimeError("nullable_homogeneous_key: changed the exact 11-call control")
         if name == "already_resolved":
             ir = resolve_getter(args, ir)
         if name.startswith("legacy_"):
@@ -237,7 +266,7 @@ def main():
         if ir.read_text() != original or config.read_text() != manifest:
             raise RuntimeError(f"{name}: changed supplied source or manifest")
         if name in {**saved_read_sources(), **saved_join_sources(), **guarded_saved_sources(),
-                    **shortcircuit_sources()}:
+                    **shortcircuit_sources(), **nullable_result_sources()}:
             disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")
             if disabled.read_text() != output.read_text():
                 raise RuntimeError(f"{name}: saved scalar proof depends on optimization policy")
@@ -295,7 +324,8 @@ def main():
                  "saved_join_number", "saved_join_string_saved", "guarded_saved_read",
                  "guarded_saved_bool", "guarded_saved_number", "guarded_saved_string_saved",
                  "shortcircuit_same_tag", "shortcircuit_false", "shortcircuit_zero",
-                 "shortcircuit_string_saved"):
+                 "shortcircuit_string_saved", "nullable_normalized", "nullable_threeway",
+                 "nullable_string_saved"):
         key_ir, key_config, _ = saved[name]
         rollback += check_budgets(args, key_ir, key_config, name,
                                   functions=RESULT_SIGNATURES[name][2])
@@ -441,13 +471,18 @@ def main():
         **saved_join_refusals(),
         **guarded_saved_refusals(),
         **shortcircuit_refusals(),
+        **nullable_result_refusals(),
     }.items():
         js, rejected, count = boundary.prepare(args, name, source)
         if count != 6:
             raise RuntimeError(f"{name}: changed saved-read refusal source denominator")
         expected = f"trace={value}\n"
+        # This refusal deliberately reads an additional source global. The
+        # reference prints that unchanged null binding after the trace too.
+        reference_expected = expected + (
+            "unknownResult=null\n" if name == "nullable_unknown_result" else "")
         if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != expected
-                or host.run([str(reference), str(js)]).stdout != expected):
+                or host.run([str(reference), str(js)]).stdout != reference_expected):
             raise RuntimeError(f"{name}: Node/interpreter observation mismatch")
         if source.count(old) != 1:
             raise RuntimeError(f"{name}: lost the saved-read refusal observation")
@@ -461,8 +496,8 @@ def main():
             failed = methods.refused(args, rejected, mode_name, fresh, options=options, admitted=0)
             check_call_preservation(rejected.read_text(), failed.read_text(), mode_name)
             # Both are valid serialized tags. Neither a compatible String nor
-            # a wrong Boolean read/write marker may manufacture a missing get
-            # or justify extracting an unproved value before a later Map set.
+            # a wrong Boolean read/write/key marker may manufacture a missing
+            # get or justify extracting an unproved value before a Map set.
             for payload in ("bool", "string"):
                 forged_name = mode_name + "-forged-" + payload
                 forged = args.work / f"{forged_name}.mlir"
@@ -479,36 +514,46 @@ def main():
                 rerun = methods.refused(args, failed, forged_name + "-rerun", forged_config,
                                         options=options, admitted=0)
                 check_call_preservation(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
-    # A definite get tag does not narrow the whole Map's storage schema. The
-    # Number/String refusal keeps its complete owner proof and runtime edge.
-    for name, (source, value) in seeded_carrier_refusals().items():
+    # A result contract does not narrow Map storage or supply an implemented
+    # callable signature. Preserve the prepared producer/consumer operands.
+    for name, (source, value) in {**seeded_carrier_refusals(), **nullable_carrier_refusals()}.items():
         js, rejected, count = boundary.prepare(args, name, source)
         if count != 6:
             raise RuntimeError(f"{name}: changed seeded carrier source denominator")
+        if name == "nullable_original_key" and len(source_calls(rejected.read_text())) != 18:
+            raise RuntimeError("nullable_original_key: changed the exact 18-call boundary")
+        if name == "nullable_second_key_use" and len(source_calls(rejected.read_text())) != 19:
+            raise RuntimeError("nullable_second_key_use: changed the exact 19-call refusal")
         if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != f"trace={value}\n"
                 or host.run([str(reference), str(js)]).stdout != f"trace={value}\n"):
             raise RuntimeError(f"{name}: Node/interpreter observation mismatch")
         fresh = contract(args, rejected, name)
-        output = owned.lower(args, rejected, name, fresh, cleanup=False)
-        text = methods.census(output, count, name, admitted=0)
-        if "ctnative.host_owner_proved = true" not in text:
-            raise RuntimeError(f"{name}: did not independently prove the seeded result owner")
-        check_prepared_result_calls(text, rejected.read_text(), name)
-        forged_name = name + "-forged"
-        forged = args.work / f"{forged_name}.mlir"
-        forged.write_text(forge_map_presence(rejected.read_text()))
-        failed = methods.refused(args, forged, forged_name + "-stale", fresh,
-                                 reason="fingerprint mismatch", admitted=0)
-        check_call_preservation(forged.read_text(), failed.read_text(), forged_name + "-stale")
-        forged_config = contract(args, forged, forged_name)
-        failed = owned.lower(args, forged, forged_name, forged_config, cleanup=False)
-        forged_text = methods.census(failed, count, forged_name, admitted=0)
-        if "ctnative.host_owner_proved = true" not in forged_text:
-            raise RuntimeError(f"{forged_name}: forged presence changed the mixed carrier proof")
-        check_prepared_result_calls(forged_text, forged.read_text(), forged_name)
-        rerun = methods.refused(args, failed, forged_name + "-rerun", forged_config,
-                                reason="fingerprint mismatch", admitted=0)
-        check_call_preservation(forged_text, rerun.read_text(), forged_name + "-rerun")
+        modes = (("default", ""), ("disabled", "optimize=false")) if name.startswith("nullable") \
+            else (("default", ""),)
+        for mode, options in modes:
+            mode_name = name + "-" + mode
+            output = owned.lower(args, rejected, mode_name, fresh, options=options, cleanup=False)
+            text = methods.census(output, count, mode_name, admitted=0)
+            if "ctnative.host_owner_proved = true" not in text:
+                raise RuntimeError(f"{mode_name}: did not independently prove the result owner")
+            check_prepared_result_calls(text, rejected.read_text(), mode_name)
+            for payload in ("bool", "string"):
+                forged_name = mode_name + "-forged-" + payload
+                forged = args.work / f"{forged_name}.mlir"
+                forged.write_text(forge_map_presence(rejected.read_text(), payload))
+                failed = methods.refused(args, forged, forged_name + "-stale", fresh,
+                    options=options, reason="fingerprint mismatch", admitted=0)
+                check_call_preservation(forged.read_text(), failed.read_text(), forged_name + "-stale")
+                forged_config = contract(args, forged, forged_name)
+                failed = owned.lower(args, forged, forged_name, forged_config,
+                                     options=options, cleanup=False)
+                forged_text = methods.census(failed, count, forged_name, admitted=0)
+                if "ctnative.host_owner_proved = true" not in forged_text:
+                    raise RuntimeError(f"{forged_name}: forged tags changed the carrier proof")
+                check_prepared_result_calls(forged_text, forged.read_text(), forged_name)
+                rerun = methods.refused(args, failed, forged_name + "-rerun", forged_config,
+                    options=options, reason="fingerprint mismatch", admitted=0)
+                check_call_preservation(forged_text, rerun.read_text(), forged_name + "-rerun")
     # An implicit undefined return has an exact primitive tag, but that alone
     # does not supply an implemented native Map key. The separate size method
     # keeps the observation numeric so that it cannot cause this refusal.
@@ -596,7 +641,7 @@ def main():
                  "result_seeded_mixed_contents", "result_seeded_join_reseed",
                  "result_seeded_bool_string_contents", "result_seeded_mixed_string_saved",
                  *saved_read_sources(), *saved_join_sources(), *guarded_saved_sources(),
-                 *shortcircuit_sources()):
+                 *shortcircuit_sources(), *nullable_result_sources()):
         _, config, output = saved[name]
         functions = RESULT_SIGNATURES[name][2]
         rerun = owned.lower(args, output, name + "-rerun", config,
@@ -632,6 +677,10 @@ def main():
           f"{len(shortcircuit_sources())} short-circuit scalar programs in both modes; "
           f"{len(shortcircuit_refusals())} short-circuit guard/effect/tag refusals; "
           "present empty/false/zero select fallback, future Strings survive final Map release; "
+          f"{len(nullable_result_sources())} nullable result programs preserve String/null/undefined; "
+          "future nullable getter and owning strings survive reentry and final Map release; "
+          f"{len(nullable_result_refusals())} unknown/mixed/object/effect nullable refusals and "
+          f"{len(nullable_carrier_refusals())} unsupported nullable Map key carrier; "
           f"{len(seeded_result_refusals())} seeded proof and "
           f"{len(seeded_carrier_refusals())} seeded carrier refusals; "
           f"{len(rollback)} speculative rollback cutoffs")

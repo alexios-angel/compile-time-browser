@@ -128,7 +128,7 @@ struct presenceAnalysis {
     llvm::DenseMap<mlir::Operation *, llvm::StringRef> actions;
     llvm::DenseMap<mlir::Operation *, effects> summaries;
     llvm::DenseSet<mlir::Operation *> proved;
-    llvm::DenseMap<mlir::Operation *, payloadKind> payloads, writes;
+    llvm::DenseMap<mlir::Operation *, payloadKind> payloads, writes, keys;
     llvm::DenseSet<mlir::Operation *> sizes;
     llvm::function_ref<mlir::Value(mlir::Value)> familyOf;
     const llvm::DenseSet<mlir::Operation *> & snapshotCopies;
@@ -372,6 +372,11 @@ struct presenceAnalysis {
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
             if (snapshotCopies.contains(op)) { return; }
             const auto action = actions.lookup(op);
+            if ((action == "set" || action == "get" || action == "has" || action == "delete") &&
+                !call.getArgs().empty()) {
+                const auto kind = current.scalar(call.getArgs()[0]);
+                if (kind != payloadKind::Unknown) { keys[op] = kind; }
+            }
             if (action == "set") {
                 const auto kind = current.scalar(call.getArgs()[1]);
                 if (kind != payloadKind::Unknown) { writes[op] = kind; }
@@ -427,7 +432,8 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
                           llvm::ArrayRef<ctjs::CallOp> optionalReads,
                           llvm::ArrayRef<ctjs::CallOp> typedReads,
                           const llvm::DenseSet<mlir::Operation *> & snapshotCopies,
-                          llvm::function_ref<mlir::Value(mlir::Value)> familyOf) {
+                          llvm::function_ref<mlir::Value(mlir::Value)> familyOf,
+                          const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & parameters) {
     if (calls.empty()) { return {}; }
     presenceAnalysis analysis(familyOf, snapshotCopies);
     for (ctjs::GetPropertyOp size : sizes) { analysis.sizes.insert(size); }
@@ -435,6 +441,12 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
     analysis.buildSummaries(module);
     module.walk([&](ctjs::FuncOp fn) {
         state initial;
+        if (!fn.getBody().empty()) {
+            for (mlir::BlockArgument argument : fn.getBody().front().getArguments()) {
+                const auto found = parameters.find(argument);
+                if (found != parameters.end()) { initial.scalars[argument] = found->second; }
+            }
+        }
         analysis.region(fn.getBody(), initial);
     });
     for (ctjs::CallOp read : reads) {
@@ -456,6 +468,12 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
             // schema. Its homogeneous read still has definite membership.
             read->setAttr(kNativeMapPresent, mlir::UnitAttr::get(read.getContext()));
         }
+    }
+    for (const auto & [call, kind] : analysis.keys) {
+        const auto tag = kind == payloadKind::Boolean  ? "bool"
+                         : kind == payloadKind::Number ? "number"
+                                                       : "string";
+        call->setAttr(kNativeMapKeyType, mlir::StringAttr::get(call->getContext(), tag));
     }
     for (const auto & [write, kind] : analysis.writes) {
         const auto tag = kind == payloadKind::Boolean  ? "bool"
