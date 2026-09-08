@@ -173,7 +173,12 @@ void prepareNativeObjectIdentities(mlir::ModuleOp module, const OwnedGlobalRoots
     module.walk([](mlir::Operation * op) {
         op->removeAttr(kNativeObjectIdentity);
         op->removeAttr(kNativeObjectFieldGroup);
-        op->removeAttr("ctnative.object_reason");
+        // Other closure/object censuses also own diagnostics in this slot.
+        // Discard only this new census's stale reason on an ineligible rerun.
+        if (auto reason = op->getAttrOfType<mlir::StringAttr>("ctnative.object_reason");
+            reason && reason.getValue().starts_with("strict-comparison object ")) {
+            op->removeAttr("ctnative.object_reason");
+        }
     });
     const bool fieldsSafe = object_detail::scalarFieldEnvironment(module);
     int64_t nextFieldGroup = 0;
