@@ -121,6 +121,10 @@ its header, and the header did not change:
   in the order the surface was always installed. Three tiny helper lambdas are
   re-created verbatim in the halves that use them; the argument helpers are
   inline in `internal.hpp`.
+- `ctbrowser/lib/Shell/bindings/computed_style/` — three, from 1,326 (2026-09-08):
+  how a value is serialised, every property of one element, and the live
+  object. The serialisers are declared in `internal.hpp` in `shell::detail`,
+  which also carries the note on where a computed value comes from.
 
 ### What splitting the compiler cost, measured
 

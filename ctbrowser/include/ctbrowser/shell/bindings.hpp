@@ -138,7 +138,7 @@ public:
     // computed style: it holds only the declarations that MATCHED, as text, with
     // no inheritance and no initial values. So a keyword comes from the style
     // map, a resolved length from the box tree, and a used size from the
-    // fragment - see lib/Shell/bindings/computed_style.cpp.
+    // fragment - see lib/Shell/bindings/computed_style/.
     void observe_styles(const style::style_map * styles) { styles_ = styles; }
     void observe_boxes(const layout::box_node * boxes) { boxes_ = boxes; }
     void observe_viewport(int width, int height);

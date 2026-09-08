@@ -38,9 +38,12 @@ target_sources(ctbrowser-shell
     # the `CSS` namespace object: CSS.supports gates every computed-value test
     # in css/css-values, and it is a binding over style/css/properties.hpp
     bindings/css.cpp
-    # getComputedStyle: its own file because it is property dispatch over three
-    # sources, and element.cpp is already 1,100 lines.
-    bindings/computed_style.cpp
+    # getComputedStyle: its own directory because it is property dispatch over
+    # three sources - one 1,326-line file until 2026-09-08, three now: how a
+    # value is written down, every property of one element, and the live object.
+    bindings/computed_style/serialize.cpp
+    bindings/computed_style/entries.cpp
+    bindings/computed_style/object.cpp
     # the CSSOM object model: document.styleSheets and everything under it. Its
     # own file because it is a SECOND parse of the author's sheets - the cascade
     # keeps no stylesheet - and because CSSStyleSheet, CSSRuleList, CSSRule and
