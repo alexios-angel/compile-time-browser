@@ -7,6 +7,7 @@
 // OwnedGlobalMethodsFixtures.h beside this.
 
 #include "OwnedGlobalMethodsFixtures.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 
 using namespace ctcompile::test::owned_global_methods;
 
@@ -336,7 +337,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
                                "    %priorGetter = ctjs.get_property %owned[%key]\n"
                                "    %prior = ctjs.call %priorGetter(%owned)\n"
                                "    %putResult = ctjs.call %putter(%owned, %prior)");
-    for (const unsigned seeded : {0u, 1u, 2u, 3u, 4u, 5u}) {
+    for (const unsigned seeded : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}) {
         for (const bool lifted : {false, true}) {
             auto sourceResult = fromResult;
             if (seeded) {
@@ -352,7 +353,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
                              "    %loaded = ctjs.call %seedGet(%state, %seedKey)\n"
                              "    ctjs.return %loaded");
             }
-            if (seeded >= 2) {
+            if (seeded >= 2 && seeded < 6) {
                 std::string mutation =
                     seeded == 2
                         ? "    %other = ctjs.call %seedSet(%state, %seedValue, %seedValue)\n"
@@ -368,6 +369,38 @@ void checkSharedMap(mlir::MLIRContext & context) {
                 }
                 sourceResult = replaced(sourceResult, "    %seedGetKey = ctjs.constant",
                                         std::string(mutation) + "    %seedGetKey = ctjs.constant");
+            }
+            if (seeded >= 6) {
+                sourceResult =
+                    replaced(sourceResult,
+                             "    %seedValue = ctjs.constant #ctjs.number<4607182418800017408>",
+                             R"MLIR(
+    %nonempty = ctjs.truthy %size
+    %seedValue = scf.if %nonempty -> (!ctjs.value) {
+      %text = ctjs.constant #ctjs.string<"owned">
+      scf.yield %text : !ctjs.value
+    } else {
+      %null = ctjs.constant #ctjs.null
+      scf.yield %null : !ctjs.value
+    }
+)MLIR");
+                if (seeded == 7) {
+                    sourceResult = replaced(sourceResult, "    %seedGetKey = ctjs.constant",
+                                            "    %null = ctjs.constant #ctjs.null\n"
+                                            "    %aliased = ctjs.call %seedSet(%state, "
+                                            "%size, %null)\n"
+                                            "    %seedGetKey = ctjs.constant");
+                }
+                if (seeded == 8) {
+                    sourceResult = replaced(sourceResult, "    ctjs.return %loaded", R"MLIR(
+    %replacement = ctjs.constant #ctjs.boolean<false>
+    %overwritten = ctjs.call %seedSet(%state, %seedKey, %replacement)
+    %deleteKey = ctjs.constant #ctjs.string<"delete">
+    %deleter = ctjs.get_property %state[%deleteKey]
+    %deleted = ctjs.call %deleter(%state, %seedKey)
+    ctjs.return %loaded
+)MLIR");
+                }
             }
             auto program = lifted ? prepare(sourceResult) : sourceResult;
             if (lifted) {
@@ -385,13 +418,30 @@ void checkSharedMap(mlir::MLIRContext & context) {
                   "an independently proved result supplies the consuming formal tag");
             if (!query.proved()) { continue; }
             const auto & calls = query.roots().front().methodTable->calls;
+            using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
+            const auto expected =
+                seeded >= 6 ? Alternatives{Alternatives::String,
+                                           Alternatives::String | Alternatives::Null, true}
+                            : Alternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>());
             check(calls.size() == 3 && calls[1].arguments.size() == 1 &&
                       calls[1].arguments.front().actual == calls[0].call->getResult(0) &&
-                      calls[1].arguments.front().alternatives.tag() ==
-                          mlir::TypeID::get<ctjs::NumberAttr>() &&
+                      calls[1].arguments.front().alternatives == expected &&
                       calls[0].call->isBeforeInBlock(calls[1].call) &&
                       calls[1].call->isBeforeInBlock(calls[2].call),
                   "initial getter, setter and final getter retain their original SSA order");
+            if (seeded >= 6) {
+                const auto & table = *query.roots().front().methodTable;
+                auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
+                unsigned summaries = 0;
+                for (const auto & parameters : table.capturedMap->parameters) {
+                    if (parameters.function != setter) { continue; }
+                    ++summaries;
+                    check(parameters.alternatives == std::vector{expected},
+                          "the owner retains the complete nullable consumer parameter family");
+                }
+                check(summaries == 1,
+                      "the nullable consumer has exactly one independently proved family");
+            }
             const unsigned completion = query.steps();
             check(completion < 10000, "result dependency proof remains bounded");
             if (completion < 10000) {
@@ -433,7 +483,10 @@ void checkSharedMap(mlir::MLIRContext & context) {
             check(OwnedGlobalRoots(*module, contract).proved(),
                   "restoring the producing body restores its independent result proof");
             std::printf("%s Map %s proof and all %u incomplete budgets checked\n",
-                        seeded == 5   ? "repeated alias join"
+                        seeded == 8   ? "saved nullable result"
+                        : seeded == 7 ? "nullable alias join"
+                        : seeded == 6 ? "nullable result"
+                        : seeded == 5 ? "repeated alias join"
                         : seeded == 4 ? "possible alias join"
                         : seeded == 3 ? "disjoint delete"
                         : seeded == 2 ? "per-key result"
@@ -481,6 +534,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
 int main() {
     mlir::MLIRContext context;
     context.getOrLoadDialect<ctjs::CTJSDialect>();
+    context.getOrLoadDialect<mlir::scf::SCFDialect>();
     checkSharedMap(context);
     if (failures == 0) { std::puts("owned global shared Map proofs passed"); }
     return failures == 0 ? 0 : 1;

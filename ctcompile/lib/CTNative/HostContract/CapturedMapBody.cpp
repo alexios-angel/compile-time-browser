@@ -24,16 +24,16 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> alternatives;
     // All checked capture loads/fluent returns denote this one runtime Map.
     // Each invocation starts with unknown contents. A set preserves presence
-    // even when its key may alias an earlier entry. In that case both payloads
-    // must have the same independently proved tag to retain a definite type.
-    // Presence alone never supplies a payload tag. A possibly aliasing delete
+    // even when its key may alias an earlier entry. In that case the payload
+    // retains the union of both independently proved primitive alternatives.
+    // Presence alone never supplies payload evidence. A possibly aliasing delete
     // removes definite membership, but cannot change a surviving payload. Its
-    // tag stays valid whenever present; an exact set replaces it entirely.
+    // alternatives stay valid whenever present; an exact set replaces them.
     // This local contents fact is independent of the family's return worklist
-    // and publishes a tag only after the entire body/use proof completes.
+    // and publishes alternatives only after the entire body/use proof completes.
     struct entry_fact {
         mlir::Value key;
-        std::optional<mlir::TypeID> tag;
+        PrimitiveAlternatives payload;
         bool present = true;
     };
     llvm::SmallVector<entry_fact> entries;
@@ -45,7 +45,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
     const auto keyEvidence = [&](mlir::Value key) {
         return PrimitiveMapKeyEvidence{primitiveTag(key), sizeBounds.lookup(key)};
     };
-    const auto mutate = [&](mlir::Value key, bool erase, std::optional<mlir::TypeID> tag = {}) {
+    const auto mutate = [&](mlir::Value key, bool erase, PrimitiveAlternatives payload = {}) {
         for (auto it = entries.begin(); it != entries.end();) {
             if (!step()) { return false; }
             const auto relation =
@@ -60,8 +60,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
             } else {
                 // The old payload survives if these runtime keys differ; the
                 // new one wins if they compare equal. Unknown joined with any
-                // tag remains unknown, including after further possible writes.
-                if (it->tag != tag) { it->tag.reset(); }
+                // finite set remains unknown, including after further writes.
+                it->payload = it->payload.joined(payload);
                 ++it;
             }
         }
@@ -77,7 +77,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                 }
             }
         }
-        if (!erase) { entries.push_back({key, tag}); }
+        if (!erase) { entries.push_back({key, payload}); }
         return true;
     };
     const auto learn = [&](mlir::Value condition, bool branch) {
@@ -208,7 +208,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                             PrimitiveMapKeyRelation::Same) {
                             continue;
                         }
-                        if (left.tag != right.tag) { left.tag.reset(); }
+                        left.payload = left.payload.joined(right.payload);
                         left.present &= right.present;
                         joined.push_back(left);
                         break;
@@ -299,7 +299,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                 calls.insert(invoke);
                 if (key == "set") {
                     maps.insert(invoke.getResult());
-                    if (!mutate(invoke.getArgs()[0], false, primitiveTag(invoke.getArgs()[1]))) {
+                    if (!mutate(invoke.getArgs()[0], false,
+                                alternatives.lookup(invoke.getArgs()[1]))) {
                         return false;
                     }
                 } else {
@@ -315,10 +316,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                             if (!step()) { return false; }
                             if (comparePrimitiveMapKeys(entry.key, invoke.getArgs()[0]) ==
                                 PrimitiveMapKeyRelation::Same) {
-                                if (entry.present && entry.tag) {
-                                    alternatives.try_emplace(
-                                        invoke.getResult(),
-                                        PrimitiveAlternatives::forTag(*entry.tag));
+                                if (entry.present && entry.payload.known) {
+                                    alternatives.try_emplace(invoke.getResult(), entry.payload);
                                 }
                                 break;
                             }
