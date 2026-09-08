@@ -1502,3 +1502,93 @@ root's evidence parser and final devbox hash log. Evidence:
 Remaining producer boundaries include primitive conversions, dynamic
 Add/Concat and BigInt categories, followed by loops, callee summaries and native
 lifetime/effect consumers. Each retains its existing conservative behavior.
+
+## Primitive Add and Concat origins, 2026-09-08
+
+This continues the producer boundary in **`56569199`** and the **`bf2fd02e`**
+handoff. Dynamic Add and Concat now require **both original operand origins**
+to independently prove Undefined, Null, Boolean, Number or String. The existing
+bounded path state follows saved reads through later field overwrites/deletions
+and checks every structural arm. A primitive result has no object alias, but
+supplies no concrete Number/String tag, numeric value, literal property key or
+branch-liveness fact. BigInt, object/array and opaque operands still refuse;
+no annotation, host summary or observation supplies a missing origin proof.
+The operand-role table and native admission remain unchanged.
+
+The current VM's `Script/vm/coerce.cpp::binary_op` handles these two operations
+separately. Add first calls `to_primitive` in source order, then either combines
+primitive String bytes or performs static numeric addition. Concat applies
+`to_string` directly to each input. The five admitted primitive categories
+return before either String conversion can inspect an object or call user
+code. String results are VM allocations and conversions may allocate C++
+temporaries; this proof establishes neither absence nor success of allocation.
+Add's unconditional `to_primitive` depth guard may still throw an unrelated
+RangeError. The preceding Error/stack/unwind audit applies: this complete query
+rejects calls, handlers, closure capture and publication, so its fresh local
+identities cannot become retained through that guard. This remains **retention
+only**, with no normal-completion, no-throw or native effect guarantee. Concat's
+primitive path does not use that guard. No deep-stack execution is claimed.
+
+Before production changed, local Node and the parent's serialized current
+VM `ctcompile-test-native-reference` both measured **`trace=4095`** on twelve
+checks. These distinguish Number versus String addition, operand order, NaN,
+signed zero, Null/Undefined/Boolean formatting, Unicode bytes, infinity,
+object `valueOf` for Add versus `toString` for Concat, the two thrown conversion
+values, successful BigInt operations and a mixed BigInt TypeError. The object
+and BigInt observations explain the conservative cut; they do not prove future
+operands primitive. Source: `/tmp/ctcompile-escape-add-concat-semantics.js`.
+No browser or runtime source changed.
+
+The independent two-operand unit table preserves all historical rows and adds
+four cross-producer cases: numeric Add, Concat and each String-producing Add
+operand order. It passes **84 rows per kind**, including independent Add and Concat
+runs. Each of the seven dynamic binary kinds passes **49 live states and 4,127
+retention cutoffs**; each of Eq/Lt/Le/Gt/Ge passes **34 live states and 3,527
+retention cutoffs**. Tests retain separate live operand/kind/constant mutations
+under forged completion/confinement reports, every incomplete contents budget
+and the exact **64-work** wide snapshot check. Unknown inputs, saved
+BigInt/object origins, late publication/calls/throws/handlers and nonliteral
+result keys remain negative.
+
+Seven additive source functions measure **28 sites, 56 instances and 44
+retained**: saved String addition after BigInt replacement, numeric addition,
+saved Null/Undefined template inputs after object replacement, separate opaque
+Add-only and Concat-only refusals, successful BigInt controls, and an independently
+returned saved child. Every historical JavaScript byte and oracle-family
+expectation is preserved. The new checker joins recording and compiler claims
+by exact program/function/pc; only the three independently proved children gain
+confinement. All four escape oracles report **zero soundness violations**.
+Expanded-fixture precision is **52/78**, with zero partial/pending claims,
+versus the preceding **49/72**. This adds three proved-confined and six
+observed-confined sites; it is added source coverage, with no precision gain
+claimed on historical source. Bootstrap/p5/Phaser remain **0/64, 0/16, 0/20**,
+including p5's existing single partial observation. The historical arithmetic
+**20/40/32**, relational **20/40/32**, equality **24/44/33** and all older family
+expectations pass unchanged.
+
+Local Node executes **79 combined fixture calls**, and **72 new plus 267
+historical observation mutations** discriminate. Assertions check Number,
+String, BigInt and NaN results, operand order, saved primitive bytes, independent
+source/target identities, selected aliases and retained children. Separate
+opaque-object calls observe two `valueOf` and two `toString` calls; throwing
+versions stop after one conversion each. Evidence:
+`/tmp/ctcompile-escape-add-concat-node.{py,js,json}`. Homebrew clang-format
+**22.1.8** and changed-path whitespace checks pass; the complete formatter
+checks all **745 files**.
+
+The first 48-step devbox build compiles the new production and array tests,
+and both selected units pass, but its target list omits `escape-claims`.
+That older executable produces Stored claims for all three new children,
+while the recorder correctly observes their confinement: the initial focused
+result is **2/3 in 0.44 seconds**, with zero oracle violations but the expected
+precision assertion failing. Rebuilding all escape targets relinks the claims
+executable. No source, proof or expectation changes are needed. The corrected
+**15-step build has zero warnings**, and focused **15/15 CTests pass in 18.85
+seconds**, including **all eight escape CTests**. The source-family and unit
+measurements above are from this corrected gate. Evidence:
+`/tmp/ctcompile-comparison-identity-{build3.log,focused.log,build4.log,focused2.log}`
+and `-format22.log`. Full generated build/CTest results remain pending.
+
+Remaining producer boundaries include primitive conversions and BigInt
+categories; loops, callee summaries and native lifetime/effect consumers also
+retain their existing conservative behavior.

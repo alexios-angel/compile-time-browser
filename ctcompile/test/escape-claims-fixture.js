@@ -668,6 +668,114 @@ function objectFrameArithmeticBinaryRetained(choice) {
 H.push(objectFrameArithmeticBinaryRetained(false));
 H.push(objectFrameArithmeticBinaryRetained(true));
 
+// --- ORIGINAL PRIMITIVE ADDITION AND CONCATENATION ------------------------
+// Saved String operands retain their bytes after the field acquires a BigInt.
+// Generic addition must preserve operand order and its String result category.
+function objectFrameAddConcatSaved(choice) {
+    var child = { id: 1 };
+    var source = { held: child, input: choice ? "5." : "2" }, target = { ...source };
+    var saved = source.input;
+    source.input = 1n;
+    var sum = saved + 3, reverse = 3 + saved;
+    var selected = sum === "23" ? source : target;
+    delete source.held;
+    delete target.held;
+    delete source.input;
+    delete target.input;
+    return { selected: selected, source: source, target: target, sum: sum, reverse: reverse };
+}
+H.push(objectFrameAddConcatSaved(false));
+H.push(objectFrameAddConcatSaved(true));
+
+// No String input: generic addition yields Number, including an independent NaN.
+function objectFrameAddConcatNumbers(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var input = choice ? true : null;
+    var sum = input + 2, reverse = 2 + input, nan = (void 0) + input;
+    var selected = sum === 2 ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target,
+             sum: sum, reverse: reverse, nan: nan };
+}
+H.push(objectFrameAddConcatNumbers(false));
+H.push(objectFrameAddConcatNumbers(true));
+
+// Template concat uses ToString on each primitive, without preserving an object
+// alias. The saved Null/Undefined input survives a later own-object replacement.
+function objectFrameAddConcatTemplate(choice) {
+    var child = { id: 1 };
+    var source = { held: child, input: choice ? (void 0) : null }, target = { ...source };
+    var saved = source.input;
+    source.input = child;
+    var text = `a${saved}b`, reverse = `${saved}${true}`;
+    var selected = text === "anullb" ? source : target;
+    delete source.held;
+    delete target.held;
+    delete source.input;
+    delete target.input;
+    return { selected: selected, source: source, target: target, text: text, reverse: reverse };
+}
+H.push(objectFrameAddConcatTemplate(false));
+H.push(objectFrameAddConcatTemplate(true));
+
+// Successful Number observations do not prove an opaque future Add operand.
+function objectFrameAddConcatOpaqueAdd(input) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var sum = input + 3, reverse = 3 + input;
+    var selected = sum === 5 ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target, sum: sum, reverse: reverse };
+}
+H.push(objectFrameAddConcatOpaqueAdd(2));
+H.push(objectFrameAddConcatOpaqueAdd(5));
+
+// This separate refusal exercises Concat without a generic Add in its body.
+function objectFrameAddConcatOpaqueTemplate(input) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var text = `a${input}b`, reverse = `${input}${true}`;
+    var selected = text === "a2b" ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target, text: text, reverse: reverse };
+}
+H.push(objectFrameAddConcatOpaqueTemplate(2));
+H.push(objectFrameAddConcatOpaqueTemplate(5));
+
+// Successful BigInt addition and conversion remain outside the non-BigInt proof.
+function objectFrameAddConcatBigInt(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var input = choice ? 5n : 2n;
+    var sum = input + 3n, mixed = input + "!", text = `${input}:${sum}`;
+    var selected = sum === 5n ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target,
+             sum: sum, mixed: mixed, text: text };
+}
+H.push(objectFrameAddConcatBigInt(false));
+H.push(objectFrameAddConcatBigInt(true));
+
+// Scalar/string results never release a separately returned saved child.
+function objectFrameAddConcatRetained(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var saved = target.held, input = choice ? "5." : 2;
+    var sum = input + 3, text = `${sum}`;
+    var selected = text === "5" ? source : target;
+    delete source.held;
+    delete target.held;
+    return { selected: selected, source: source, target: target,
+             saved: saved, sum: sum, text: text };
+}
+H.push(objectFrameAddConcatRetained(false));
+H.push(objectFrameAddConcatRetained(true));
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());

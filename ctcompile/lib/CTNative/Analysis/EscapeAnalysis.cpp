@@ -1091,7 +1091,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 case ctjs::BinaryKind::Mul:
                 case ctjs::BinaryKind::Div:
                 case ctjs::BinaryKind::Mod:
-                case ctjs::BinaryKind::Pow: break;
+                case ctjs::BinaryKind::Pow:
+                case ctjs::BinaryKind::Add:
+                case ctjs::BinaryKind::Concat: break;
                 default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
                 const mlir::Value lhs = origin(binary.getLhs());
@@ -1100,17 +1102,19 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     !primitiveNonBigIntOrigin(rhs)) {
                     return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
-                // binary_op first excludes the BigInt arm, then these five
-                // kinds use to_number_value independently on both operands.
-                // Primitive non-BigInt origins cannot call object conversions;
-                // successful results are independent Numbers, including NaN,
-                // infinity and signed zero. No value/index/key is inferred.
-                // As with Neg/Plus, to_number_value's depth guard may throw an
-                // unrelated RangeError. This whole-frame query refuses calls,
-                // handlers and publication, so it cannot retain its fresh
+                // With primitive non-BigInt originals, binary_op cannot call
+                // object conversions or return an operand object. Sub/Mul/Div/
+                // Mod/Pow return Number via to_number_value. Add uses guarded
+                // to_primitive followed by static Number/String operations;
+                // Concat uses primitive to_string. Their result is independent,
+                // without a Number/String tag, value, index or key inference.
+                // Add and numeric conversions have a depth guard that may
+                // throw an unrelated RangeError. This whole-frame query refuses
+                // calls, handlers and publication, so it cannot retain fresh
                 // locals on that exit. This is retention-only evidence, never
                 // a normal-completion or no-throw/effect contract. String
-                // parsing may allocate C++ temporaries; success is unproved.
+                // results allocate in the VM and static conversions can allocate
+                // C++ temporaries; absence/success of allocation is unproved.
                 state.origins[binary.getResult()] = binary.getResult();
                 continue;
             }

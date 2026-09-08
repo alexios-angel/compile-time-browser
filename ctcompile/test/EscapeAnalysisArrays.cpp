@@ -3804,13 +3804,25 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
                  .arrays = "a:[x]",
                  .exit = "produced -> {}"}});
     }
-    for (const std::string kind : {"sub", "mul", "div", "mod", "pow"}) {
+    for (const std::string kind : {"sub", "mul", "div", "mod", "pow", "add", "concat"}) {
         run({.contents = {
                  .what = "arithmetic result origins feed independently checked binary producers",
                  .body = values + "  %operand = ctjs.binary " + kind + " %number, %zero\n" +
                          compare("%operand", "%zero") + "  ctjs.return %produced\n",
                  .arrays = "a:[x]",
                  .exit = "produced -> {}"}});
+    }
+    // Add can yield either Number or String; its result is primitive without
+    // a concrete tag fact. Every consumer must work with both original cases.
+    for (const bool stringLeft : {false, true}) {
+        const std::string operands = stringLeft ? "%text, %zero" : "%zero, %text";
+        run({.contents = {.what =
+                              "String-producing addition remains an independent primitive origin",
+                          .body = values + "  %text = ctjs.constant #ctjs.string<\"17.\">\n" +
+                                  "  %operand = ctjs.binary add " + operands + "\n" +
+                                  compare("%operand", "%zero") + "  ctjs.return %produced\n",
+                          .arrays = "a:[x]",
+                          .exit = "produced -> {}"}});
     }
     comparison_row wide = rows.front();
     std::string extras;
@@ -3906,7 +3918,8 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
                 const bool supported =
                     kind == ctjs::BinaryKind::Sub || kind == ctjs::BinaryKind::Mul ||
                     kind == ctjs::BinaryKind::Div || kind == ctjs::BinaryKind::Mod ||
-                    kind == ctjs::BinaryKind::Pow;
+                    kind == ctjs::BinaryKind::Pow || kind == ctjs::BinaryKind::Add ||
+                    kind == ctjs::BinaryKind::Concat;
                 inspect(supported ? ArrayContentsFailure::None
                                   : ArrayContentsFailure::UnsupportedOperation);
                 comparison.setKindAttr(KindAttr::get(&context, producerKind));
@@ -4867,7 +4880,8 @@ int main() {
         checkPrimitiveBinaryProducer<ctjs::CompareOp>(context, kind);
     }
     for (const auto kind : {ctjs::BinaryKind::Sub, ctjs::BinaryKind::Mul, ctjs::BinaryKind::Div,
-                            ctjs::BinaryKind::Mod, ctjs::BinaryKind::Pow}) {
+                            ctjs::BinaryKind::Mod, ctjs::BinaryKind::Pow, ctjs::BinaryKind::Add,
+                            ctjs::BinaryKind::Concat}) {
         checkPrimitiveBinaryProducer<ctjs::BinaryOp>(context, kind);
     }
     checkArrayFrames(context);
