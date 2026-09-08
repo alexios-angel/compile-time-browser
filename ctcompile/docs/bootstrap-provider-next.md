@@ -1,5 +1,29 @@
 # Next Bootstrap native boundary
 
+## Current continuation: native own-field presence, 2026-09-08
+
+`5599ae86` closes the historical eight-call saved local object identity case:
+**5/5 native** in both modes, trace=1, through overwrite/delete. Host proofs now
+also close local own-field reads and alias writes; the focused gate executes
+seventeen scalar-observation programs with standalone ownership/lifetime checks.
+
+The unchanged direct/get/guarded/saved field-return programs now have complete
+owners but remain **0/5 native**. The identity-field schema intentionally starts
+with Undefined (`TypeInference.cpp`, `nativeObjectFieldGroup` read rule).
+A new per-read initialization proof must keep saved allocation origins separate
+from current Map entries and other allocations before removing that seed.
+Do not transfer startup provider tokens or host result reports as authority.
+Keep exact raw sources; numeric-comparison variants already execute their field
+reads and writes and do not replace those controls.
+
+Comparison-only fresh allocation identity (historical eight-call distinct
+control), fresh post-delete values (nine-call control), String/object field
+carriers, full Bootstrap Data and native browser API integration remain open.
+The repeated-key trace=3 entry additionally needs numeric addition admission.
+See [HANDOFF.md](HANDOFF.md) for current measured gates; the full-suite run is
+pending at this checkpoint.
+
+
 The [diagnostic and callback increment](native-provider-diagnostics.md) and
 [ordinary object payloads](native-provider-objects.md) are implemented behind
 explicit host-prefix options. The object increment completes the exact Data

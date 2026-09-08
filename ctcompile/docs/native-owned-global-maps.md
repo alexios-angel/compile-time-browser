@@ -1,5 +1,28 @@
 # Native captured Maps across global publication
 
+## Saved local leaf reads, 2026-09-08
+
+Commit `5599ae86` preserves independently proved method-local object origins
+through same-key Map.get. Saved aliases survive replacement and deletion;
+definitely initialized fixed scalar fields can be read and updated through
+those aliases. The complete host/owner census records exact field reads and
+rejects cross-branch invalid SSA even under forged reports. Native present
+identity reads copy their shared owner from the existing finite Map payload.
+
+The exact eight-call saved-identity source now admits **5/5**, trace=1. The
+focused execution gate passes **17 programs** with both native modes,
+explicit/deduced GCC/Clang, no VM symbols and saved-callable lifetime sanitizers.
+Nine exact programs now have complete owners but retain native carrier/result
+refusals; eleven unsafe source families retain host refusals and exact repairs.
+All old source bytes remain. See [HANDOFF.md](HANDOFF.md) for measured budgets,
+full-gate status and the precise next boundary.
+
+Raw scalar field returns still include Undefined in native type inference.
+A separate live per-read initialization proof must narrow that possibility;
+another allocation's same-named field cannot supply it. Comparison-only fresh
+objects and fresh post-delete reads remain distinct proof boundaries.
+
+
 The [publication specimen](../test/CTNative/native-export-boundary.js)
 admits **4/4 native** with a fingerprinted `host-manifest` that selects
 `host.slot`, the numeric `trace` observation and `initial_intrinsics: ["Map"]`.

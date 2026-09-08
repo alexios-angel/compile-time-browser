@@ -6,6 +6,94 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved leaf readback and relational escape checkpoint, 2026-09-08
+
+Committed locally on `ctcompile-v1`: **`5599ae86`** proves method-local
+object readback and **`b98efac0`** proves primitive relational escape origins.
+**`4d616b79`** adds the seventeen-program execution and saved-lifetime gates.
+This resumes the exact next boundary in **`5d2d843a`** and the **20:26:24
+synchronization journal**. The initial tree/index was clean; interrupted
+`codex-wip-20260907` was already recovered, gated and merged. Three agents
+handled host tests, native execution/lifetimes and escape proofs. No browser
+or runtime source changed, history was rewritten or push performed.
+
+The historical **eight-call saved-identity source advances 0/5 -> 5/5 native**
+in both modes with Node/interpreter/native trace=1. A local Map.get now retains
+its independently proved allocation origin. Map overwrite/deletion changes
+membership but cannot retarget that saved alias. Fixed scalar own-field reads
+require definite local initialization; writes through either alias update the
+same allocation's field facts. Both branch arms must preserve those facts.
+Every object use must dominate its consumer, including live malformed-source
+queries. Exact field-read operations join the host/environment/owner census.
+Object-valued public arguments/results, unknown incoming object origins,
+accessors, dynamic fields, String fields and retaining object graphs still refuse.
+
+The standalone gate exposed a real emission defect: present object Map.get
+returned the finite payload wrapper into a shared object pointer. The new
+`map_get_present_identity` copies the owning pointer only when independently
+proved presence and ObjectIdentity result type authorize it. No implicit
+conversion, collector, VM context or value model was introduced.
+
+The corrected focused gate passes **12/12 CTests in 83.03 seconds**. Host tests
+add **26 rows per raw/prepared form**, with exhaustive budget cutoffs
+**3759/4368/3840/4468**; owner tests add **13 rows per form**, cutoffs
+**8276/9115/8062/8920**. Exact source operation vectors, stale/fresh forged
+facts, and two cross-branch invalid-SSA mutations per proof/form pass.
+
+The independent escape increment permits Lt/Le/Gt/Ge only from two separately
+proved primitive non-BigInt original origins. Eq and all four relational kinds
+each pass **75 rows, 34 live states, 3300 retention cutoffs** and the wide
+snapshot's exact **64 work units**. All eight escape CTests pass; all four
+oracles report zero violations. Fixture precision is **47/68**, versus 44/64:
+one historical child gains a proof and new coverage adds two proved/four
+observed. New sources measure **20 sites, 40 instances, 32 retained**; old
+loose-equality sources retain **24/44/33**. Corpus precision stays
+**0/64, 0/16, 0/20**, with p5 partial=1. The initial 11/12 run failed only
+five new handler rows expecting the wrong refusal category; the source was
+already safely refused. Relational coercion can hit a recursion guard; this
+whole-frame retention proof provides no normal-completion/no-throw contract.
+
+The complete new execution gate passes **17 native programs**, all **5/5** in
+both modes and explicit/deduced GCC/Clang, with no VM symbols. It checks live
+Map/field operations, **nine complete-owner native refusals**, **eleven host
+refusal/repair families**, fresh/stale markers and prepared reruns. Budget
+sweeps finish at **4439/4368/5045**, with **30/31/31 cutoffs** and no natural
+speculative rollback interval. All **257 historical helper source rows** and
+all sixteen previous boundary sources retain their bytes. The saved setter
+and size callables pass ASan/UBSan, stack lifetime and leak checks across 128
+future calls with varying numeric values, caller-key mutation, overwrite/delete,
+owner/table release, independent reentry and final Map release. Weak witnesses
+check both fresh leaves die at each call; an independently retained original
+leaf survives to its own last release and contains the later scalar write.
+
+The full generated build and CTest gate is running in
+`/tmp/ctcompile-leaf-readback-full.log`; final full-suite/lit/corpus counts are
+**pending**, not inferred from the focused run. Formatter **22.1.8** passes all
+**745 files**. The bundled 23-development formatter reports existing differences
+in nine unrelated files; no such file was edited. All seventeen code/test paths
+are frozen in `/tmp/ctcompile-leaf-readback-root-hashes.json`.
+
+**Exact next boundary: independently proved own-field presence in native type
+inference.** The unchanged direct/get/guarded/saved field-return sources now
+have complete ownership but remain **0/5 native**: the identity-field schema
+always starts with Undefined, so a Number field result is nullable and cannot
+be the numeric global `trace`. `TypeInference.cpp` deliberately seeds every
+`nativeObjectFieldGroup` read with `absentType`; a store on another allocation
+must never remove that seed. Introduce a separate live per-read origin and
+initialization proof before narrowing it. Explicit numeric field comparisons
+already execute natively; the exact raw field-return controls remain intact.
+Comparison-only fresh objects (including the historical eight-call distinct
+source) separately remain owner-complete **0/5**. A fresh post-delete read
+(the historical nine-call control) remains unowned **0/5**. The repeated-key
+trace=3 source also needs the entry's numeric addition proof. Exact Bootstrap
+Data, full-bundle native initialization and direct browser API integration are
+still unfinished; this slice makes no full-bundle coverage claim.
+
+Evidence: `/tmp/ctcompile-leaf-readback-{initial,build,build2,build3,focused,
+focused2,focused2-detail,probe,probe2,execution,full}.log`, the original sixteen
+sources in `/tmp/ctcompile-leaf-object-next.json`, and
+`/tmp/ctcompile-leaf-readback-{candidates,root-hashes}.json`.
+
 ## Method-local leaf object ownership and equality gates, 2026-09-08
 
 Saved locally on `ctcompile-v1`: **`e9f8e33c`**, method-local leaf object
