@@ -69,6 +69,23 @@ bool lowering::replaceMap(mlir::Operation * o) {
             // value, which deliberately has no entry in that analysis.
             const auto storedMap = llvm::cast<MapType>(typeOf(call.getResult()));
             if (!mixedMapSpelling(storedMap.getValueType()).empty()) {
+                if (auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapWriteType)) {
+                    const auto tag = proof.getValue();
+                    const auto scalar = tag == "string" ? carrier::string
+                                        : tag == "bool" ? carrier::boolean
+                                                        : carrier::number;
+                    const auto type = carrierType(context, scalar);
+                    if (isBooleanStringCarrier(args[2].getType())) {
+                        const auto helper =
+                            tag == "string" ? "std::get<std::string>" : "std::get<bool>";
+                        args[2] = callWithConstValueOperands(b, where, mlir::TypeRange{type},
+                                                             b.getStringAttr(helper),
+                                                             mlir::ValueRange{args[2]})
+                                      .getResult(0);
+                    } else if (isNullableCarrier(args[2].getType())) {
+                        args[2] = convertScalar(b, where, args[2], type);
+                    }
+                }
                 args[2] = convertAlternative(args[2], storedMap.getValueType());
             } else if (isObjectValueType(storedMap.getValueType())) {
                 args[2] =

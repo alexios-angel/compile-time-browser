@@ -174,6 +174,66 @@ function guardedDisjoint(flag) {
     map.delete(1);
     return seen ? map.get(0) : 7;
 }
+function shortString(flag, empty) {
+    const map = new Map();
+    map.set(false, true);
+    map.set(0, 'fallback');
+    map.set(1, empty ? '' : 'selected');
+    if (flag) { map.delete(1); }
+    const saved = (map.has(1) && map.get(1)) || map.get(0);
+    map.clear();
+    map.set(false, saved);
+    const result = map.get(false);
+    map.delete(false);
+    return result;
+}
+function shortNumber(flag, zero) {
+    const map = new Map();
+    map.set(false, false);
+    map.set(0, 3);
+    map.set(1, zero ? 0 : 11);
+    if (flag) { map.delete(1); }
+    const saved = (map.has(1) && map.get(1)) || map.get(0);
+    map.clear();
+    map.set(false, saved);
+    return map.get(false);
+}
+function shortBoolean(flag) {
+    const map = new Map();
+    map.set(0, 11);
+    map.set(false, true);
+    map.set(true, false);
+    if (flag) { map.delete(true); }
+    const saved = (map.has(true) && map.get(true)) || map.get(false);
+    map.clear();
+    map.set(0, saved);
+    return map.get(0) ? 1 : 2;
+}
+function shortSaved(flag) {
+    const map = new Map();
+    map.set(false, true);
+    map.set(0, 'fallback');
+    map.set(1, 'owning-short-\0-string');
+    if (flag) { map.delete(1); }
+    const intermediate = map.has(1) && map.get(1);
+    map.delete(1);
+    const saved = intermediate || map.get(0);
+    map.clear();
+    map.set(false, saved);
+    return map.get(false);
+}
+function shortFalsy(flag) {
+    const map = new Map();
+    map.set('tag', 'sentinel');
+    const intermediate = flag ? 'truthy' : false;
+    if (!intermediate) { map.set('result', intermediate); }
+    else { map.set('result', true); }
+    return map.get('result') ? 1 : 2;
+}
+function shortTemporary(flag) {
+    const intermediate = flag ? 'a-local-owning-string-without-any-map' : false;
+    return intermediate ? 1 : 2;
+}
 var traceNumbers = numberKeys();
 var traceSaved = savedString();
 var traceBranches = branch(true) * 10 + branch(false);
@@ -195,6 +255,17 @@ var traceGuardString = (guardedSavedString(false) === 'guarded-owning-\0-string'
 var traceGuardNumber = guardedSavedNumber(false) * 10 + guardedSavedNumber(true);
 var traceGuardBoolean = guardedSavedBoolean(false) * 10 + guardedSavedBoolean(true);
 var traceGuardDisjoint = guardedDisjoint(false) * 10 + guardedDisjoint(true);
+
+var traceShortString = (shortString(false, false) === 'selected' ? 100 : 0)
+    + (shortString(false, true) === 'fallback' ? 10 : 0)
+    + (shortString(true, false) === 'fallback' ? 1 : 0);
+var traceShortNumber = shortNumber(false, false) * 100 + shortNumber(false, true) * 10
+    + shortNumber(true, false);
+var traceShortBoolean = shortBoolean(false) * 10 + shortBoolean(true);
+var traceShortSaved = (shortSaved(false) === 'owning-short-\0-string' ? 10 : 0)
+    + (shortSaved(true) === 'fallback' ? 1 : 0);
+var traceShortFalsy = shortFalsy(true) * 10 + shortFalsy(false);
+var traceShortTemporary = shortTemporary(true) * 10 + shortTemporary(false);
 
 //--- snapshot.js
 function snapshot() {
@@ -379,5 +450,62 @@ function run(flag) {
     if (flag) { map.delete(0); }
     mutate(map);
     return map.has(0) ? (map.get(0) ? 1 : 2) : 3;
+}
+var trace = run(false) * 10 + run(true);
+
+//--- short-truthy-bool-refused.js
+function run(flag) {
+    const map = new Map();
+    map.set(false, true);
+    map.set(0, 'fallback');
+    map.set(1, 'selected');
+    if (flag) { map.delete(1); }
+    const intermediate = flag ? true : map.get(0);
+    const saved = intermediate || map.get(0);
+    map.set(false, saved);
+    return map.get(false) ? 1 : 2;
+}
+var trace = run(false) * 10 + run(true);
+
+//--- short-wrong-condition-refused.js
+function run(flag) {
+    const map = new Map();
+    map.set(false, true);
+    map.set(0, 'fallback');
+    map.set(1, 'selected');
+    if (flag) { map.delete(1); }
+    const intermediate = map.has(1) && map.get(1);
+    const saved = map.has(0) ? intermediate : map.get(0);
+    map.set(false, saved);
+    return map.get(false) ? 1 : 2;
+}
+var trace = run(false) * 10 + run(true);
+
+//--- short-stale-refused.js
+function run(flag) {
+    const map = new Map();
+    map.set(false, true);
+    map.set(0, 'fallback');
+    map.set(1, 'selected');
+    const seen = map.has(1);
+    if (flag) { map.delete(1); }
+    const intermediate = seen && map.get(1);
+    const saved = intermediate || map.get(0);
+    map.set(false, saved);
+    return map.get(false) ? 1 : 2;
+}
+var trace = run(false) * 10 + run(true);
+
+//--- short-unknown-refused.js
+function run(flag) {
+    const map = new Map();
+    map.set(false, true);
+    map.set(0, 'fallback');
+    map.set(1, 'selected');
+    if (flag) { map.delete(1); }
+    const intermediate = map.has(0) && map.get(2);
+    const saved = intermediate || map.get(0);
+    map.set(false, saved);
+    return map.get(false) ? 1 : 2;
 }
 var trace = run(false) * 10 + run(true);

@@ -596,6 +596,89 @@ def guarded_saved_refusals():
     }
 
 
+def shortcircuit_sources():
+    guarded = guarded_saved_sources()
+    guard = "state.has('other') ? state.get('other') : state.get('')"
+    short = "(state.has('other') && state.get('other')) || state.get('')"
+    saved = guarded["guarded_saved_read"][0].replace(guard, short)
+    distinct = saved.replace("state.set('', '');", "state.set('', 'first');")
+    boolean = guarded["guarded_saved_bool"][0].replace(guard, short)
+    false_value = boolean.replace("state.set('', false); state.set('other', true);",
+        "state.set('', true); state.set('other', false);")
+    false_value = false_value.replace("state.set(key, true)",
+        "state.set(true, true); state.set(key, true)")
+    number = guarded["guarded_saved_number"][0].replace(
+        "state.has(1) ? state.get(1) : state.get(0)",
+        "(state.has(1) && state.get(1)) || state.get(0)")
+    # Observe the present-but-falsy first call separately. A later call taking
+    # the fallback would insert its key and mask an incorrect ternary result.
+    empty = distinct.replace("state.set('other', 'future');", "state.set('other', '');")
+    empty = empty.replace(" host.slot.set(host.slot.get(true));", "")
+    zero = number.replace("state.set(1, 3);", "state.set(1, 0);")
+    zero = zero.replace(" host.slot.set(host.slot.get(true));", "")
+    owning = guarded["guarded_saved_string_saved"][0].replace(guard, short)
+    return {
+        # Exact eighteen-call source from the preceding handoff. The temporary
+        # && result includes false, but only String reaches the truthy || arm.
+        "shortcircuit_same_tag": (saved, "host", 2),
+        "shortcircuit_distinct": (distinct, "host", 3),
+        "shortcircuit_empty_string": (empty, "host", 3),
+        "shortcircuit_bool": (boolean, "host", 4),
+        "shortcircuit_false": (false_value, "host", 3),
+        "shortcircuit_number": (number, "host", 4),
+        "shortcircuit_zero": (zero, "host", 3),
+        # Only false runs at startup; the lifetime harness invokes both flags
+        # after owner release and retains both results past final Map release.
+        "shortcircuit_string_saved": (owning, "host", 2),
+    }
+
+
+def shortcircuit_refusals():
+    saved = shortcircuit_sources()["shortcircuit_same_tag"][0]
+    short = "(state.has('other') && state.get('other')) || state.get('')"
+    deletion = "if (flag) { state.delete('other'); }"
+    missing = saved.replace("state.set('other', 'future');", "state.has('other');")
+    other_map = saved.replace(deletion,
+        "const guardState = new Map(); guardState.set('different', true); " + deletion)
+    other_map = other_map.replace(short,
+        "(guardState.has('other') && state.get('other')) || state.get('')")
+    stale = saved.replace("state.set('other', 'future');",
+        "const present = state.has('other'); state.set('other', 'future');")
+    stale = stale.replace(short, "(present && state.get('other')) || state.get('')")
+    mutated = saved.replace(short,
+        "(state.has('other') && (state.delete('other'), state.get('other'))) || state.get('')")
+    # The unknown call is unexecuted during startup, but its future flag arm
+    # remains part of the published method and cannot receive a complete proof.
+    effect = saved.replace(deletion, "if (flag) { inspect(state); }")
+    effect = effect.replace(" host.slot.set(host.slot.get(true));", "")
+    return {
+        "shortcircuit_missing_tag": (missing, 1,
+            "state.has('other'); " + deletion,
+            "state.set('other', 'future'); " + deletion, 2),
+        "shortcircuit_wrong_key": (saved.replace(short,
+            "(state.has('missing') && state.get('other')) || state.get('')"), 1,
+            "state.has('missing')", "state.has('other')", 2),
+        "shortcircuit_wrong_map": (other_map, 1,
+            "guardState.has('other')", "state.has('other')", 2),
+        "shortcircuit_stale_has": (stale, 1,
+            "const present = state.has('other'); state.set('other', 'future'); " + deletion,
+            "state.set('other', 'future'); " + deletion + " const present = state.has('other');", 2),
+        "shortcircuit_mutated_arm": (mutated, 1,
+            "(state.delete('other'), state.get('other'))", "state.get('other')", 2),
+        "shortcircuit_disagreeing_tag": (saved.replace(deletion,
+            "if (flag) { state.set('other', true); }"), 4,
+            "if (flag) { state.set('other', true); }", deletion, 2),
+        "shortcircuit_missing_fallback": (saved.replace(short,
+            "(state.has('other') && state.get('other')) || state.get('missing')"), 3,
+            "state.get('missing')", "state.get('')", 2),
+        "shortcircuit_nullable": (saved.replace(short,
+            "(state.has('other') && state.get('other')) || null"), 3,
+            "|| null", "|| state.get('')", 2),
+        "shortcircuit_unknown_effect": (effect, 3,
+            "if (flag) { inspect(state); }", deletion, 3),
+    }
+
+
 def seeded_carrier_refusals():
     return {
         "result_seeded_number_string_contents": (mixed_result_sources()[
@@ -631,6 +714,14 @@ MIXED_RESULT_TYPES = {
     "guarded_saved_bool": ("bool", "std::string"),
     "guarded_saved_number": ("js_num", "double"),
     "guarded_saved_string_saved": ("std::string", "std::string"),
+    "shortcircuit_same_tag": ("std::string", "std::string"),
+    "shortcircuit_distinct": ("std::string", "std::string"),
+    "shortcircuit_empty_string": ("std::string", "std::string"),
+    "shortcircuit_bool": ("bool", "std::string"),
+    "shortcircuit_false": ("bool", "std::string"),
+    "shortcircuit_number": ("js_num", "double"),
+    "shortcircuit_zero": ("js_num", "double"),
+    "shortcircuit_string_saved": ("std::string", "std::string"),
 }
 
 

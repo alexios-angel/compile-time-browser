@@ -21,6 +21,8 @@ inline constexpr llvm::StringLiteral kNativeMapArgGroups = "ctnative.map_arg_gro
 inline constexpr llvm::StringLiteral kNativeMapPresent = "ctnative.map_present";
 // A live same-instance/key last-write proof, independent of the family schema.
 inline constexpr llvm::StringLiteral kNativeMapReadType = "ctnative.map_read_type";
+// Exact primitive at the live write, independent of a broader SSA union.
+inline constexpr llvm::StringLiteral kNativeMapWriteType = "ctnative.map_write_type";
 inline constexpr llvm::StringLiteral kNativeMapSnapshotCopy = "ctnative.map_snapshot_copy";
 inline constexpr llvm::StringLiteral kNativeMapSnapshotBuiltin = "ctnative.map_snapshot_builtin";
 

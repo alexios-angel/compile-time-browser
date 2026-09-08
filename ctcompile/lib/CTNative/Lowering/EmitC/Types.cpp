@@ -18,6 +18,7 @@ void lowering::retype(ctjs::FuncOp fn) {
         needsNullable |= carrierOf(typeOf(v)) == carrier::nullable;
         needsObjectValue |= carrierOf(typeOf(v)) == carrier::objectValue;
         needsNullableString |= carrierOf(typeOf(v)) == carrier::nullableString;
+        needsBooleanString |= carrierOf(typeOf(v)) == carrier::booleanString;
         if (!llvm::isa<ctjs::ValueType>(v.getType())) { return; }
         if (auto found = ownedObjectTypes.find(v); found != ownedObjectTypes.end()) {
             v.setType(found->second);

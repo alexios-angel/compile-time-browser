@@ -15,7 +15,7 @@ from .sources import (
     seeded_result_refusals, size_result_sources, size_result_refusals,
     payload_result_sources, payload_result_refusals, mixed_result_sources, mixed_result_refusals,
     saved_read_sources, saved_read_refusals, saved_join_sources, saved_join_refusals,
-    guarded_saved_sources, guarded_saved_refusals,
+    guarded_saved_sources, guarded_saved_refusals, shortcircuit_sources, shortcircuit_refusals,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
@@ -87,6 +87,7 @@ def main():
         **saved_read_sources(),
         **saved_join_sources(),
         **guarded_saved_sources(),
+        **shortcircuit_sources(),
     }
     saved = {}
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
@@ -170,6 +171,33 @@ def main():
         ("guarded_saved_string_saved", "state.delete('');", ("state.has('');",)),
         ("guarded_saved_string_saved", "state.set('other', false); state.delete('other');",
          ("state.set('other', false); state.has('other');",)),
+        ("shortcircuit_same_tag", "if (flag) { state.delete('other'); }",
+         ("state.has('other');",)),
+        ("shortcircuit_same_tag", "state.delete(false);", ("state.has(false);",)),
+        ("shortcircuit_distinct", "(state.has('other') && state.get('other')) || state.get('')",
+         ("state.get('')", "'future'")),
+        ("shortcircuit_distinct", "state.set(false, saved);", ("state.has(false);",)),
+        ("shortcircuit_empty_string", "(state.has('other') && state.get('other')) || state.get('')",
+         ("state.has('other') ? state.get('other') : state.get('')", "state.get('other')")),
+        ("shortcircuit_bool", "(state.has('other') && state.get('other')) || state.get('')",
+         ("state.get('')", "true")),
+        ("shortcircuit_bool", "state.set('temp', saved);",
+         ("state.has('temp');", "state.set('temp', state.get(''));")),
+        ("shortcircuit_false", "(state.has('other') && state.get('other')) || state.get('')",
+         ("state.has('other') ? state.get('other') : state.get('')",
+          "state.has('other') && state.get('other')")),
+        ("shortcircuit_number", "(state.has(1) && state.get(1)) || state.get(0)",
+         ("state.get(0)", "3")),
+        ("shortcircuit_number", "state.set(false, saved);",
+         ("state.has(false);", "state.set(false, state.get(0));")),
+        ("shortcircuit_zero", "(state.has(1) && state.get(1)) || state.get(0)",
+         ("state.has(1) ? state.get(1) : state.get(0)", "state.get(1)")),
+        ("shortcircuit_string_saved", "state.set(false, saved);", ("state.has(false);",)),
+        ("shortcircuit_string_saved", "return result;", ("return state.get(false);",)),
+        ("shortcircuit_string_saved", "state.delete(false);", ("state.has(false);",)),
+        ("shortcircuit_string_saved", "state.delete('');", ("state.has('');",)),
+        ("shortcircuit_string_saved", "state.set('other', false); state.delete('other');",
+         ("state.set('other', false); state.has('other');",)),
     ):
         live_source, _, live_value = positives[name]
         if live_source.count(old) != 1:
@@ -189,8 +217,9 @@ def main():
             raise RuntimeError("saved_read_write: changed the exact 12-call boundary")
         if name == "saved_join" and len(source_calls(ir.read_text())) != 16:
             raise RuntimeError("saved_join: changed the exact 16-call boundary")
-        if name == "guarded_saved_read" and len(source_calls(ir.read_text())) != 18:
-            raise RuntimeError("guarded_saved_read: changed the exact 18-call boundary")
+        if name in {"guarded_saved_read", "shortcircuit_same_tag"} \
+                and len(source_calls(ir.read_text())) != 18:
+            raise RuntimeError(f"{name}: changed the exact 18-call boundary")
         if name == "already_resolved":
             ir = resolve_getter(args, ir)
         if name.startswith("legacy_"):
@@ -207,7 +236,8 @@ def main():
             raise RuntimeError(f"{name}: lost live owning proof")
         if ir.read_text() != original or config.read_text() != manifest:
             raise RuntimeError(f"{name}: changed supplied source or manifest")
-        if name in {**saved_read_sources(), **saved_join_sources(), **guarded_saved_sources()}:
+        if name in {**saved_read_sources(), **saved_join_sources(), **guarded_saved_sources(),
+                    **shortcircuit_sources()}:
             disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")
             if disabled.read_text() != output.read_text():
                 raise RuntimeError(f"{name}: saved scalar proof depends on optimization policy")
@@ -263,7 +293,9 @@ def main():
                  "saved_read_write", "saved_read_write_false", "saved_read_write_number",
                  "saved_read_write_string_saved", "saved_join", "saved_join_bool",
                  "saved_join_number", "saved_join_string_saved", "guarded_saved_read",
-                 "guarded_saved_bool", "guarded_saved_number", "guarded_saved_string_saved"):
+                 "guarded_saved_bool", "guarded_saved_number", "guarded_saved_string_saved",
+                 "shortcircuit_same_tag", "shortcircuit_false", "shortcircuit_zero",
+                 "shortcircuit_string_saved"):
         key_ir, key_config, _ = saved[name]
         rollback += check_budgets(args, key_ir, key_config, name,
                                   functions=RESULT_SIGNATURES[name][2])
@@ -408,6 +440,7 @@ def main():
         **{name: (*row, 1) for name, row in saved_read_refusals().items()},
         **saved_join_refusals(),
         **guarded_saved_refusals(),
+        **shortcircuit_refusals(),
     }.items():
         js, rejected, count = boundary.prepare(args, name, source)
         if count != 6:
@@ -428,7 +461,8 @@ def main():
             failed = methods.refused(args, rejected, mode_name, fresh, options=options, admitted=0)
             check_call_preservation(rejected.read_text(), failed.read_text(), mode_name)
             # Both are valid serialized tags. Neither a compatible String nor
-            # a wrong Boolean marker may manufacture presence for a missing get.
+            # a wrong Boolean read/write marker may manufacture a missing get
+            # or justify extracting an unproved value before a later Map set.
             for payload in ("bool", "string"):
                 forged_name = mode_name + "-forged-" + payload
                 forged = args.work / f"{forged_name}.mlir"
@@ -561,7 +595,8 @@ def main():
                  "result_seeded_bool", "result_seeded_string", "result_seeded_string_saved",
                  "result_seeded_mixed_contents", "result_seeded_join_reseed",
                  "result_seeded_bool_string_contents", "result_seeded_mixed_string_saved",
-                 *saved_read_sources(), *saved_join_sources(), *guarded_saved_sources()):
+                 *saved_read_sources(), *saved_join_sources(), *guarded_saved_sources(),
+                 *shortcircuit_sources()):
         _, config, output = saved[name]
         functions = RESULT_SIGNATURES[name][2]
         rerun = owned.lower(args, output, name + "-rerun", config,
@@ -594,6 +629,9 @@ def main():
           f"{len(guarded_saved_sources())} live has-guarded scalar programs in both modes; "
           f"{len(guarded_saved_refusals())} absent/stale/wrong-guard/payload refusals; "
           "guarded future reads own both selected Strings after final Map release; "
+          f"{len(shortcircuit_sources())} short-circuit scalar programs in both modes; "
+          f"{len(shortcircuit_refusals())} short-circuit guard/effect/tag refusals; "
+          "present empty/false/zero select fallback, future Strings survive final Map release; "
           f"{len(seeded_result_refusals())} seeded proof and "
           f"{len(seeded_carrier_refusals())} seeded carrier refusals; "
           f"{len(rollback)} speculative rollback cutoffs")

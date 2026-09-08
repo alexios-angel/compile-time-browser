@@ -79,6 +79,10 @@ bool admission::function(ctjs::FuncOp fn) {
                                  : isCellArg(fn.getOperation(), i) ? "shared capture "
                                                                    : "capture ";
         const std::string which = kind + std::to_string(isCapture ? i - 3 : i - 3 - captures);
+        if (carrierOf(t) == carrier::booleanString) {
+            return refuse(which +
+                          " needs a supported concrete signature, not a Bool/String temporary");
+        }
         if (carrierOf(t) == carrier::none) {
             // Distinguish an unknown parameter from a proved type this
             // tier cannot represent, such as an optional string. The

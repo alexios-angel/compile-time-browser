@@ -40,7 +40,9 @@ def main():
                     "traceGuardNumber=133\ntraceGuardString=12\ntraceNumbers=1334\ntraceRewrite=1\n"
                     "traceSaved=1\ntraceSavedAlias=82\ntraceSavedBoolean=1\ntraceSavedBranch=11\n"
                     "traceSavedCall=1\ntraceSavedJoinBoolean=12\ntraceSavedJoinNumber=56\n"
-                    "traceSavedJoinString=12\ntraceSavedNumber=42\n")
+                    "traceSavedJoinString=12\ntraceSavedNumber=42\n"
+                    "traceShortBoolean=11\ntraceShortFalsy=12\ntraceShortNumber=1133\ntraceShortSaved=11\n"
+                    "traceShortString=111\ntraceShortTemporary=12\n")
         if ordered:
             expected += "traceSnapshot=1\n"
         assert run([node, "-e", representation.NODE_GLOBALS, str(js)]) == expected
@@ -80,7 +82,7 @@ def main():
         before = ir.read_text()
         forged = re.sub(r"(^\s*%[-\w.$]+ = ctjs\.call [^\n{]+)(\{)?",
             lambda m: m[1].rstrip() + " {ctnative.map_present = true, "
-                      "ctnative.map_read_type = \"bool\"" + (", " if m[2] else "}"),
+                      "ctnative.map_read_type = \"bool\", ctnative.map_write_type = \"string\"" + (", " if m[2] else "}"),
             before, flags=re.M)
         assert forged != before
         for label, contents in [("original", before), ("forged", forged)]:
@@ -91,16 +93,18 @@ def main():
                 run([args.opt, "--ctnative-lower-to-emitc=optimize=false", str(current), "-o", str(output)])
                 result = output.read_text()
                 assert not re.search(r"\bemitc.func @main\(", result), name
-                if name in {"saved-missing-refused", "saved-join-missing-refused"}:
+                if name in {"saved-missing-refused", "saved-join-missing-refused",
+                            "short-stale-refused", "short-unknown-refused"}:
                     assert "native Map needs supported keys" in result, name
                     assert "!ctnative.opt<!ctnative.variant<" in result, name
-                elif name == "saved-join-tags-refused":
+                elif name in {"saved-join-tags-refused", "short-truthy-bool-refused",
+                              "short-wrong-condition-refused"}:
                     assert "mixed native Map write needs one proved scalar alternative" in result, name
                 else:
                     assert "mixed native Map read needs independent present payload type evidence" in result, name
                 current = output
-    print("mixed Maps: 35 associative/ordered observations, Node/interpreter, GCC/Clang, "
-          "plain/deduced and ASan/UBSan; 17 live read-proof refusals with forged facts and reruns")
+    print("mixed Maps: 49 associative/ordered observations, Node/interpreter, GCC/Clang, "
+          "plain/deduced and ASan/UBSan; 21 live read/write-proof refusals with forged facts and reruns")
 
 
 if __name__ == "__main__":

@@ -98,6 +98,7 @@ void lowering::declareGlobals() {
     module->setAttr("ctnative.const_bindings", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.constexpr_bindings", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.numeric_alias", mlir::UnitAttr::get(context));
+    needsString |= needsBooleanString;
     needsNullableString |= needsStringVector;
     needsNullable |= needsNullableString;
     needsNullable |= needsObjectValue;
@@ -128,6 +129,22 @@ void lowering::declareGlobals() {
     if (needsNullable || needsMap || needsVector || !globals.empty()) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("exception"), b.getUnitAttr());
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNullableHelpers));
+    }
+    if (needsBooleanString) {
+        for (llvm::StringRef header : {"variant", "type_traits"}) {
+            ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), b.getUnitAttr());
+        }
+        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(R"cpp(
+namespace ctnative {
+inline bool boolean_string_truthy(const std::variant<bool, std::string> & value) {
+    return std::visit([](const auto & alternative) {
+        if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>, bool>) {
+            return alternative;
+        } else { return !alternative.empty(); }
+    }, value);
+}
+} // namespace ctnative
+)cpp"));
     }
     if (needsObjectIdentity) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("memory"), b.getUnitAttr());

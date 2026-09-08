@@ -355,8 +355,12 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
         llvm::DenseSet<mlir::Value> savedReads;
         for (ctjs::CallOp call : candidate.calls) {
             auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
-            if (keyOf(method.getKey()) == "get") { savedReads.insert(call.getResult()); }
+            const auto action = keyOf(method.getKey());
+            if (action == "get" || action == "has" || action == "delete") {
+                savedReads.insert(call.getResult());
+            }
         }
+        for (ctjs::GetPropertyOp size : candidate.sizes) { savedReads.insert(size.getResult()); }
         const auto scalarCandidate = [&](auto && self, mlir::Value value, unsigned depth) -> bool {
             if (depth > 32) { return false; }
             if (savedReads.contains(value)) { return true; }
@@ -425,7 +429,8 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
         for (llvm::StringRef name :
              {kNativeMapSite, kNativeMapAction, kNativeMapMethod, kNativeMapConstructor,
               kNativeMapReason, kNativeMapGroup, kNativeMapArgGroups, kNativeMapPresent,
-              kNativeMapReadType, kNativeMapSnapshotCopy, kNativeMapSnapshotBuiltin}) {
+              kNativeMapReadType, kNativeMapWriteType, kNativeMapSnapshotCopy,
+              kNativeMapSnapshotBuiltin}) {
             op->removeAttr(name);
         }
     });

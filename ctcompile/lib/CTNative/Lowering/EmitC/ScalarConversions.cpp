@@ -21,7 +21,10 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     }
     if (value.getType() == target) { return value; }
     llvm::StringRef helper;
-    if (isNullableStringCarrier(target)) {
+    if (isBooleanStringCarrier(target)) {
+        needsBooleanString = true;
+        helper = kBooleanStringType;
+    } else if (isNullableStringCarrier(target)) {
         needsNullableString = true;
         helper = "ctnative::to_nullable_string";
     } else if (isNullableStringCarrier(value.getType())) {

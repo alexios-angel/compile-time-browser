@@ -49,10 +49,20 @@ carrier carrierOf(mlir::Type type) {
             return carrier::nullable;
         }
     }
-    // A closed scalar union uses the same tags as an optional scalar. The
+    // Numeric/Boolean unions use the same tags as an optional scalar. The
     // lattice retains its exact alternatives: selecting this representation
-    // neither adds nullability nor admits strings, objects or unknown values.
+    // neither adds nullability nor admits objects or unknown values. A closed
+    // Boolean/String temporary has its own finite, owning variant carrier.
     if (auto variant = llvm::dyn_cast<VariantType>(type)) {
+        if (variant.getAlternatives().size() == 2 &&
+            llvm::any_of(variant.getAlternatives(),
+                         [](mlir::Type alternative) { return llvm::isa<BoolType>(alternative); }) &&
+            llvm::any_of(variant.getAlternatives(), [](mlir::Type alternative) {
+                auto string = llvm::dyn_cast<StrType>(alternative);
+                return string && string.getEncoding() == StrEncoding::UTF8;
+            })) {
+            return carrier::booleanString;
+        }
         if (llvm::all_of(variant.getAlternatives(), [](mlir::Type alternative) {
                 return llvm::isa<NumType, BoolType>(alternative);
             })) {
@@ -98,6 +108,14 @@ bool isNullableCarrier(mlir::Type type) {
     if (auto value = llvm::dyn_cast<ec::LValueType>(type)) { type = value.getValueType(); }
     auto opaque = llvm::dyn_cast<ec::OpaqueType>(type);
     return opaque && opaque.getValue() == kNullableType;
+}
+
+bool isBooleanStringCarrier(mlir::Type type) {
+    if (auto value = llvm::dyn_cast_if_present<ec::LValueType>(type)) {
+        type = value.getValueType();
+    }
+    auto opaque = llvm::dyn_cast_if_present<ec::OpaqueType>(type);
+    return opaque && opaque.getValue() == kBooleanStringType;
 }
 
 // The one C++ type a dense array lowers to. Spelled once: the emitted
@@ -185,6 +203,7 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     // that is worth far more than a double that happens to verify.
     switch (which) {
     case carrier::nullable: return ec::OpaqueType::get(c, kNullableType);
+    case carrier::booleanString: return ec::OpaqueType::get(c, kBooleanStringType);
     case carrier::nullableString: return ec::OpaqueType::get(c, kNullableStringType);
     case carrier::objectValue: return ec::OpaqueType::get(c, kObjectValueType);
     case carrier::objectIdentity: return ec::OpaqueType::get(c, kObjectIdentityType);

@@ -20,7 +20,7 @@
 
 // GLOBAL: ctjs.func @_script_$0
 // GLOBAL-SAME: ctnative.not_native = "store to global `result` is !ctnative.variant<!ctnative.bool, !ctnative.num<i32>>; native global observations require a definite number"
-// STRING: ctnative.not_native = "a value of type !ctnative.variant<!ctnative.bool, !ctnative.str<utf8>> from `scf.if`"
+// STRING: ctnative.not_native = "a Bool/String temporary needs a single proved return type"
 // MAP-KEY: ctnative.not_native = "mixed native Map key needs one proved scalar alternative"
 // MAP-VALUE: ctnative.not_native = "mixed native Map write needs one proved scalar alternative"
 // ARRAY: ctnative.not_native = "an array whose elements are !ctnative.opt<!ctnative.variant<!ctnative.bool, !ctnative.num<i32>>>, not numbers"

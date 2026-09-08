@@ -1,5 +1,6 @@
 #include "Analysis.h"
 
+#include "../Analysis/PrimitiveAlternatives.h"
 #include "../Analysis/PrimitiveMapKey.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -20,7 +21,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
     const auto firstRead = result.reads.size();
     const auto firstUpvalue = result.upvalues.size();
     llvm::DenseSet<mlir::Value> maps, primitives, flags;
-    llvm::DenseMap<mlir::Value, mlir::TypeID> tags;
+    llvm::DenseMap<mlir::Value, PrimitiveAlternatives> alternatives;
     // All checked capture loads/fluent returns denote this one runtime Map.
     // Each invocation starts with unknown contents. A set preserves presence
     // even when its key may alias an earlier entry. In that case both payloads
@@ -39,8 +40,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
     llvm::DenseSet<mlir::Operation *> observations;
     llvm::DenseMap<mlir::Value, unsigned> sizeBounds;
     const auto primitiveTag = [&](mlir::Value key) -> std::optional<mlir::TypeID> {
-        auto tag = tags.find(key);
-        return tag == tags.end() ? std::nullopt : std::optional<mlir::TypeID>(tag->second);
+        return alternatives.lookup(key).tag();
     };
     const auto keyEvidence = [&](mlir::Value key) {
         return PrimitiveMapKeyEvidence{primitiveTag(key), sizeBounds.lookup(key)};
@@ -80,13 +80,16 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
         if (!erase) { entries.push_back({key, tag}); }
         return true;
     };
-    const auto learn = [&](mlir::Value condition) {
+    const auto learn = [&](mlir::Value condition, bool branch) {
         while (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
             if (!step()) { return false; }
             condition = truthy.getValue();
         }
+        if (auto found = alternatives.find(condition); found != alternatives.end()) {
+            found->second = found->second.filtered(branch);
+        }
         auto call = condition.getDefiningOp<ctjs::CallOp>();
-        if (!call || !observations.contains(call)) { return true; }
+        if (!branch || !call || !observations.contains(call)) { return true; }
         // Only a live, checked has on this captured Map supplies membership.
         // It never creates a payload tag or selects away the other arm.
         auto key = call.getArgs()[0];
@@ -110,7 +113,9 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
     for (mlir::BlockArgument parameter : body.getArguments().drop_front(offset)) {
         if (!step()) { return false; }
         primitives.insert(parameter);
-        tags.try_emplace(parameter, parameters.primitiveTags[parameter.getArgNumber() - offset]);
+        alternatives.try_emplace(parameter,
+                                 PrimitiveAlternatives::forTag(
+                                     parameters.primitiveTags[parameter.getArgNumber() - offset]));
     }
     ctjs::ReturnOp returned;
     // SSA scalar facts and the complete use census are immutable across paths.
@@ -126,7 +131,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                     return false;
                 }
                 primitives.insert(constant.getResult());
-                tags.try_emplace(constant.getResult(), constant.getValue().getTypeID());
+                alternatives.try_emplace(constant.getResult(),
+                                         PrimitiveAlternatives::literal(constant.getValue()));
             } else if (auto constant = llvm::dyn_cast<mlir::arith::ConstantOp>(operation)) {
                 // CFG-to-SCF may leave an unused integer dispatch constant. Only
                 // exact i1 constants can serve as conditions in this body proof.
@@ -163,12 +169,18 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                     (void)observed;
                     if (!step()) { return false; }
                 }
+                for (const auto & value : alternatives) {
+                    (void)value;
+                    if (!step()) { return false; }
+                }
                 const auto incoming = entries;
                 const auto incomingObservations = observations;
-                if (!learn(branch.getCondition())) { return false; }
+                const auto incomingAlternatives = alternatives;
+                if (!learn(branch.getCondition(), true)) { return false; }
                 if (!self(self, branch.getThenRegion().front(), depth + 1)) { return false; }
                 auto thenEntries = std::move(entries);
                 auto thenObservations = std::move(observations);
+                auto thenAlternatives = std::move(alternatives);
                 for (const auto & entry : incoming) {
                     (void)entry;
                     if (!step()) { return false; }
@@ -177,8 +189,14 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                     (void)observed;
                     if (!step()) { return false; }
                 }
+                for (const auto & value : incomingAlternatives) {
+                    (void)value;
+                    if (!step()) { return false; }
+                }
                 entries = incoming;
                 observations = incomingObservations;
+                alternatives = incomingAlternatives;
+                if (!learn(branch.getCondition(), false)) { return false; }
                 if (hasElse && !self(self, branch.getElseRegion().front(), depth + 1)) {
                     return false;
                 }
@@ -209,13 +227,19 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                     if (!primitives.contains(left) || !primitives.contains(right)) { return false; }
                     auto value = branch.getResult(index);
                     primitives.insert(value);
-                    const auto leftTag = primitiveTag(left);
-                    if (leftTag && leftTag == primitiveTag(right)) {
-                        tags.try_emplace(value, *leftTag);
-                    }
+                    const auto joinedValue =
+                        thenAlternatives.lookup(left).joined(alternatives.lookup(right));
+                    thenAlternatives[value] = joinedValue;
+                    alternatives[value] = joinedValue;
                     const unsigned bound =
                         std::min(sizeBounds.lookup(left), sizeBounds.lookup(right));
                     if (bound) { sizeBounds[value] = bound; }
+                }
+                // Restore enclosing SSA facts after path-local refinements;
+                // selected results retain the union of their actual yields.
+                for (auto & value : llvm::make_early_inc_range(alternatives)) {
+                    if (!step()) { return false; }
+                    value.second = value.second.joined(thenAlternatives.lookup(value.first));
                 }
             } else if (auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(operation)) {
                 if (prepared || load.getIndex() != 0 || load.getClosure() != body.getArgument(2)) {
@@ -235,7 +259,9 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                 reads.insert(read);
                 if (key == "size") {
                     primitives.insert(read.getResult());
-                    tags.try_emplace(read.getResult(), mlir::TypeID::get<ctjs::NumberAttr>());
+                    alternatives.try_emplace(
+                        read.getResult(),
+                        PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>()));
                     // Count only a pairwise-distinct subset of definite entries.
                     // Different SSA keys may denote the same runtime key. Saved
                     // bounds belong to this read, surviving later Map mutations.
@@ -280,8 +306,9 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                 } else {
                     primitives.insert(invoke.getResult());
                     if (key == "has" || key == "delete") {
-                        tags.try_emplace(invoke.getResult(),
-                                         mlir::TypeID::get<ctjs::BooleanAttr>());
+                        alternatives.try_emplace(
+                            invoke.getResult(),
+                            PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::BooleanAttr>()));
                         if (key == "delete" && !mutate(invoke.getArgs()[0], true)) { return false; }
                         if (key == "has") { observations.insert(invoke); }
                     } else if (key == "get") {
@@ -290,7 +317,9 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                             if (comparePrimitiveMapKeys(entry.key, invoke.getArgs()[0]) ==
                                 PrimitiveMapKeyRelation::Same) {
                                 if (entry.present && entry.tag) {
-                                    tags.try_emplace(invoke.getResult(), *entry.tag);
+                                    alternatives.try_emplace(
+                                        invoke.getResult(),
+                                        PrimitiveAlternatives::forTag(*entry.tag));
                                 }
                                 break;
                             }
@@ -360,7 +389,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
     // Unproved Map.get results remain potentially nullable/mixed. Even a
     // local definite tag still needs the independent native Map schema and
     // presence analyses before a consuming formal can acquire a C++ carrier.
-    if (auto tag = tags.find(returned.getValue()); tag != tags.end()) { returnTag = tag->second; }
+    returnTag = primitiveTag(returned.getValue());
     return true;
 }
 

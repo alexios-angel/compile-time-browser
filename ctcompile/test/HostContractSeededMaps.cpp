@@ -292,6 +292,114 @@ void checkConditionalMapResults(mlir::MLIRContext & context, std::string source,
                 false, "a has guard cannot hide an unsupported effect on either structural arm");
     }
 
+    constexpr llvm::StringLiteral guardedSelection = R"MLIR(
+    %saved = scf.if %guard -> (!ctjs.value) {
+      %left = ctjs.call %mapGetter(%state, %probeKey)
+      scf.yield %left : !ctjs.value
+    } else {
+      %right = ctjs.call %mapGetter(%state, %seedKey)
+      scf.yield %right : !ctjs.value
+    }
+)MLIR";
+    constexpr llvm::StringLiteral shortSelection = R"MLIR(
+    %intermediate = scf.if %guard -> (!ctjs.value) {
+      %left = ctjs.call %mapGetter(%state, %probeKey)
+      scf.yield %left : !ctjs.value
+    } else {
+      scf.yield %observed : !ctjs.value
+    }
+    %selected = ctjs.truthy %intermediate
+    %saved = scf.if %selected -> (!ctjs.value) {
+      scf.yield %intermediate : !ctjs.value
+    } else {
+      %right = ctjs.call %mapGetter(%state, %seedKey)
+      scf.yield %right : !ctjs.value
+    }
+)MLIR";
+    const auto shortCircuit = replaced(guarded, guardedSelection, shortSelection);
+    const auto shortString =
+        replaced(shortCircuit, "#ctjs.number<4607182418800017408>", "#ctjs.string<\"owned\">");
+    constexpr llvm::StringLiteral falseYield = "      scf.yield %observed : !ctjs.value";
+    constexpr llvm::StringLiteral select = "    %selected = ctjs.truthy %intermediate";
+    variant(shortCircuit, true, "false or Number alternatives produce a same-tag Number result");
+    variant(shortString, true, "false or String alternatives produce a same-tag owning result",
+            mlir::TypeID::get<ctjs::StringAttr>());
+    variant(replaced(shortCircuit, "#ctjs.number<4607182418800017408>", "#ctjs.boolean<true>"),
+            true, "Boolean short-circuit results retain their independent scalar tag",
+            mlir::TypeID::get<ctjs::BooleanAttr>());
+    for (const auto & [program, tag] :
+         {std::pair{&shortCircuit, mlir::TypeID::get<ctjs::NumberAttr>()},
+          std::pair{&shortString, mlir::TypeID::get<ctjs::StringAttr>()}}) {
+        for (const char * literal :
+             {"#ctjs.boolean<false>", "#ctjs.number<0>", "#ctjs.number<9223372036854775808>",
+              "#ctjs.number<9221120237041090561>", "#ctjs.string<\"\">", "#ctjs.null",
+              "#ctjs.undefined"}) {
+            variant(replaced(*program, falseYield,
+                             "      %falsy = ctjs.constant " + std::string(literal) +
+                                 "\n      scf.yield %falsy : !ctjs.value"),
+                    true, "known falsy alternatives stay internal to a same-tag scalar result",
+                    tag);
+        }
+        variant(replaced(*program, falseYield,
+                         "      %other = ctjs.constant #ctjs.boolean<true>\n"
+                         "      scf.yield %other : !ctjs.value"),
+                false, "a genuinely truthy Boolean cannot disappear from a mixed scalar result");
+        variant(replaced(*program, falseYield, "      scf.yield %flag : !ctjs.value"), false,
+                "an unrelated Boolean retains its true alternative on the false has arm");
+    }
+    variant(replaced(shortCircuit, "      %left = ctjs.call %mapGetter(%state, %probeKey)",
+                     "      %left = ctjs.call %mapGetter(%state, %payload)"),
+            false, "truthiness cannot establish a scalar tag for a missing guarded read");
+    variant(replaced(shortCircuit, "      %right = ctjs.call %mapGetter(%state, %seedKey)",
+                     "      %right = ctjs.call %mapGetter(%state, %payload)"),
+            false, "the short-circuit fallback needs its own definite same-tag read");
+    variant(
+        replaced(shortCircuit, observed, "    %observed = ctjs.call %mapHas(%state, %seedKey)\n"),
+        false, "a different-key has cannot type the short-circuit's guarded read");
+    variant(replaced(shortCircuit,
+                     "    %otherSeed = ctjs.call %mapSetter(%state, %probeKey, "
+                     "%payload)\n",
+                     ""),
+            false, "a short-circuit cannot turn unknown prior Map contents into a scalar");
+    variant(replaced(shortCircuit, erase,
+                     "%different = ctjs.constant #ctjs.boolean<false>\n"
+                     "      %erased = ctjs.call %mapSetter(%state, %probeKey, %different)"),
+            false, "a surviving has result cannot refine incompatible Map payload tags");
+    variant(replaced(replaced(shortCircuit, observed, ""), "    scf.if %branch {",
+                     observed.str() + "    scf.if %branch {"),
+            false, "a short-circuit cannot reuse has membership from before conditional deletion");
+    variant(replaced(shortCircuit, guard,
+                     "    %later = ctjs.call %deleter(%state, %probeKey)\n" + guard.str()),
+            false, "deletion invalidates the guard before either short-circuit result exists");
+    for (const char * literal : {"true", "false"}) {
+        variant(replaced(shortCircuit, guard,
+                         "    %literal = ctjs.constant #ctjs.boolean<" + std::string(literal) +
+                             ">\n    %guard = ctjs.truthy %literal"),
+                false, "literal predicates cannot hide the short-circuit's missing read arm");
+    }
+    variant(replaced(shortCircuit, select, "    %selected = ctjs.truthy %flag"), false,
+            "truthiness of another SSA value cannot refine an intermediate union");
+    variant(replaced(shortCircuit, "%writeback = ctjs.call %mapSetter(%state, %seedKey, %saved)",
+                     "%writeback = ctjs.call %mapSetter(%state, %seedKey, %intermediate)"),
+            false, "the outer true arm cannot leak its refinement past the structural join");
+    for (const char * yielded : {"%left", "%observed", "%intermediate", "%right"}) {
+        const std::string terminator = std::string("scf.yield ") + yielded + " : !ctjs.value";
+        variant(replaced(shortCircuit, terminator,
+                         "ctjs.store_global \"trace\", " + std::string(yielded) + "\n      " +
+                             terminator),
+                false, "every short-circuit arm is checked through its last effect");
+    }
+    variant(replaced(shortString, select,
+                     "    %afterRead = ctjs.call %deleter(%state, %probeKey)\n" + select.str()),
+            true, "a saved false or String result survives deletion before truthy refinement",
+            mlir::TypeID::get<ctjs::StringAttr>());
+    variant(replaced(shortString, select,
+                     "    %replacement = ctjs.constant #ctjs.boolean<false>\n"
+                     "    %afterRead = ctjs.call %mapSetter(%state, %probeKey, %replacement)\n" +
+                         select.str()),
+            true, "a saved scalar alternative is independent of subsequent payload overwrites",
+            mlir::TypeID::get<ctjs::StringAttr>());
+
     const auto checkBudgets = [&](const std::string & program, const char * label) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
         if (!module) { return; }
@@ -311,12 +419,24 @@ void checkConditionalMapResults(mlir::MLIRContext & context, std::string source,
         check(exact.proved() && exact.steps() == completion && exact.callables().size() == 3,
               "the exact conditional budget reproduces the completed family");
         auto getter = module->lookupSymbol<ctjs::FuncOp>("get$2");
-        mlir::scf::IfOp branch;
-        ctjs::CallOp seed, right;
-        getter.walk([&](mlir::scf::IfOp conditional) { branch = conditional; });
+        mlir::scf::IfOp branch, guardedBranch;
+        ctjs::CallOp seed, left, right, observedCall;
+        getter.walk([&](mlir::scf::IfOp conditional) {
+            branch = conditional;
+            auto truthy = conditional.getCondition().getDefiningOp<ctjs::TruthyOp>();
+            if (truthy) {
+                if (auto call = truthy.getValue().getDefiningOp<ctjs::CallOp>()) {
+                    observedCall = call;
+                    guardedBranch = conditional;
+                }
+            }
+        });
         getter.walk([&](ctjs::CallOp call) {
             if (!seed) { seed = call; }
             if (branch && call->getParentRegion() == &branch.getElseRegion()) { right = call; }
+            if (guardedBranch && call->getParentRegion() == &guardedBranch.getThenRegion()) {
+                left = call;
+            }
         });
         check(branch && seed && right,
               "the live conditional fixture retains its seed and both arms");
@@ -339,28 +459,56 @@ void checkConditionalMapResults(mlir::MLIRContext & context, std::string source,
         right->setOperand(2, originalKey);
         check(HostContractAnalysis(*module, contract).proved(),
               "restoring the real arm restores its complete conditional result proof");
-        if (auto truthy = branch.getCondition().getDefiningOp<ctjs::TruthyOp>()) {
-            if (auto observedCall = truthy.getValue().getDefiningOp<ctjs::CallOp>()) {
-                const auto watchedKey = observedCall.getArgs()[0];
-                observedCall->setOperand(2, seed.getArgs()[0]);
-                HostContractAnalysis staleGuard(*module, contract);
-                check(!staleGuard.proved() && staleGuard.reason().contains("fingerprint") &&
-                          withheld(*module, staleGuard),
-                      "a live guard-key edit cannot reuse its earlier host fingerprint");
-                HostContractAnalysis freshGuard(*module, requested(*module));
-                check(!freshGuard.proved() && !freshGuard.exhausted() &&
-                          withheld(*module, freshGuard),
-                      "a fresh forged report cannot turn a different-key has into membership");
-                observedCall->setOperand(2, watchedKey);
+        if (observedCall) {
+            const auto watchedKey = observedCall.getArgs()[0];
+            observedCall->setOperand(2, seed.getArgs()[0]);
+            HostContractAnalysis staleGuard(*module, contract);
+            check(!staleGuard.proved() && staleGuard.reason().contains("fingerprint") &&
+                      withheld(*module, staleGuard),
+                  "a live guard-key edit cannot reuse its earlier host fingerprint");
+            HostContractAnalysis freshGuard(*module, requested(*module));
+            check(!freshGuard.proved() && !freshGuard.exhausted() && withheld(*module, freshGuard),
+                  "a fresh forged report cannot turn a different-key has into membership");
+            observedCall->setOperand(2, watchedKey);
+            check(HostContractAnalysis(*module, contract).proved(),
+                  "restoring the real guard restores its complete saved-value proof");
+        }
+        if (guardedBranch && guardedBranch != branch && left) {
+            left->setAttr("ctnative.map_present", builder.getBoolAttr(true));
+            left->setAttr("ctnative.map_read_type", builder.getStringAttr("string"));
+            guardedBranch->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+            contract = requested(*module);
+            check(HostContractAnalysis(*module, contract).proved(),
+                  "forged intermediate tags leave the complete short-circuit proof reproducible");
+            const auto mutation = [&](mlir::Operation * operation, unsigned operand,
+                                      mlir::Value replacement) {
+                const auto previous = operation->getOperand(operand);
+                operation->setOperand(operand, replacement);
+                HostContractAnalysis old(*module, contract);
+                check(!old.proved() && old.reason().contains("fingerprint") &&
+                          withheld(*module, old),
+                      "a changed short-circuit SSA edge invalidates its previous fingerprint");
+                HostContractAnalysis changed(*module, requested(*module));
+                check(!changed.proved() && !changed.exhausted() && withheld(*module, changed),
+                      "fresh forged tags cannot recover an invalid short-circuit scalar proof");
+                operation->setOperand(operand, previous);
                 check(HostContractAnalysis(*module, contract).proved(),
-                      "restoring the real guard restores its complete saved-value proof");
-            }
+                      "restoring a real short-circuit SSA edge restores the complete proof");
+            };
+            auto truthy = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+            auto falseArm = llvm::cast<mlir::scf::YieldOp>(
+                guardedBranch.getElseRegion().front().getTerminator());
+            const auto flag = getter.getBody().front().getArgument(prepared ? 4 : 3);
+            mutation(left, 2, seed.getArgs()[1]);
+            mutation(truthy, 0, flag);
+            mutation(falseArm, 0, flag);
         }
         std::printf("%s Map host %s: %u rows and all %u incomplete budgets checked\n", label,
                     prepared ? "prepared" : "source", rows, completion);
     };
     checkBudgets(source, "conditional");
     checkBudgets(guarded, "guarded");
+    checkBudgets(shortString, "short-circuit");
 }
 
 void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shared) {

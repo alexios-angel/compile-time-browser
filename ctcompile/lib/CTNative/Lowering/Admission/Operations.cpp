@@ -96,7 +96,22 @@ bool admission::op(mlir::Operation * o) {
         }
         if (!mixedMapSpelling(map.getValueType()).empty()) {
             if (action == "set" && !scalarAlternative(map.getValueType(), call.getArgs()[1])) {
-                return refuse("mixed native Map write needs one proved scalar alternative");
+                // A path-sensitive proof can establish one actual tag even
+                // when upstream SCF inference retains a wider scalar union.
+                const auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapWriteType);
+                const auto tag = proof ? proof.getValue() : llvm::StringRef{};
+                const auto c = carrierOf(typeOf(call.getArgs()[1]));
+                const bool represented = c == carrier::booleanString || c == carrier::nullable;
+                const bool inSchema =
+                    llvm::any_of(llvm::cast<VariantType>(map.getValueType()).getAlternatives(),
+                                 [&](mlir::Type type) {
+                                     return (tag == "bool" && llvm::isa<BoolType>(type)) ||
+                                            (tag == "number" && llvm::isa<NumType>(type)) ||
+                                            (tag == "string" && carrierOf(type) == carrier::string);
+                                 });
+                if (!represented || !inSchema) {
+                    return refuse("mixed native Map write needs one proved scalar alternative");
+                }
             }
             if (action == "get" && (!o->hasAttr(kNativeMapReadType) ||
                                     !scalarAlternative(map.getValueType(), call.getResult()))) {
@@ -496,6 +511,9 @@ bool admission::op(mlir::Operation * o) {
     if (llvm::isa<TryExitOp, TryYieldOp>(o)) { return true; }
     if (auto ret = llvm::dyn_cast<ReturnOp>(o)) {
         const carrier c = carrierOf(typeOf(ret.getValue()));
+        if (c == carrier::booleanString) {
+            return refuse("a Bool/String temporary needs a single proved return type");
+        }
         if (c == carrier::none) { return refuse("returns " + printed(typeOf(ret.getValue()))); }
         if (returns == carrier::none) { returns = c; }
         if (returns != c) {

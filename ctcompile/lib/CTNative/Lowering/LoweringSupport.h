@@ -55,6 +55,7 @@ enum class carrier {
     nullable,
     string,
     nullableString,
+    booleanString,
     map,
     closure,
     methodTable,
@@ -66,12 +67,14 @@ enum class carrier {
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
+inline constexpr llvm::StringLiteral kBooleanStringType = "std::variant<bool, std::string>";
 inline constexpr llvm::StringLiteral kNullableStringType = "ctnative::nullable_string";
 inline constexpr llvm::StringLiteral kNullableType = "ctnative::nullable_scalar";
 inline constexpr llvm::StringLiteral kObjectValueType = "ctnative::object_value";
 bool isScalarCarrier(carrier value);
 bool isNullableCarrier(mlir::Type type);
 bool isNullableStringCarrier(mlir::Type type);
+bool isBooleanStringCarrier(mlir::Type type);
 bool isStringCarrier(carrier value);
 bool isVectorCarrier(carrier value);
 bool stringConcatenation(mlir::Type left, mlir::Type right);

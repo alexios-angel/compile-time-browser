@@ -1,6 +1,7 @@
 //===- Presence.cpp - structured must-analysis for nested Map reads -------===//
 #include "Presence.h"
 
+#include "../PrimitiveAlternatives.h"
 #include "../PrimitiveMapKey.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -55,15 +56,21 @@ struct state {
     llvm::DenseMap<mlir::Value, unsigned> sizeBounds{};
     // A scalar get result owns its value. Unlike membership and entry tags,
     // its type remains true after the source entry is overwritten or erased.
-    llvm::DenseMap<mlir::Value, payloadKind> scalars{};
+    llvm::DenseMap<mlir::Value, PrimitiveAlternatives> scalars{};
 
-    payloadKind scalar(mlir::Value value) const {
+    PrimitiveAlternatives alternatives(mlir::Value value) const {
+        if (auto found = scalars.find(value); found != scalars.end()) { return found->second; }
         if (auto constant = value.getDefiningOp<ctjs::ConstantOp>()) {
-            if (llvm::isa<ctjs::BooleanAttr>(constant.getValue())) { return payloadKind::Boolean; }
-            if (llvm::isa<ctjs::NumberAttr>(constant.getValue())) { return payloadKind::Number; }
-            if (llvm::isa<ctjs::StringAttr>(constant.getValue())) { return payloadKind::String; }
+            return PrimitiveAlternatives::literal(constant.getValue());
         }
-        return scalars.lookup(value);
+        return {};
+    }
+    payloadKind scalar(mlir::Value value) const {
+        const auto tag = alternatives(value).tag();
+        if (tag == mlir::TypeID::get<ctjs::BooleanAttr>()) { return payloadKind::Boolean; }
+        if (tag == mlir::TypeID::get<ctjs::NumberAttr>()) { return payloadKind::Number; }
+        if (tag == mlir::TypeID::get<ctjs::StringAttr>()) { return payloadKind::String; }
+        return payloadKind::Unknown;
     }
 
     bool contains(fact value) const {
@@ -97,7 +104,8 @@ struct state {
             }
         }
         for (auto & [value, kind] : llvm::make_early_inc_range(scalars)) {
-            if (other.scalars.lookup(value) != kind) { scalars.erase(value); }
+            kind = kind.joined(other.alternatives(value));
+            if (!kind.known) { scalars.erase(value); }
         }
     }
 };
@@ -120,7 +128,7 @@ struct presenceAnalysis {
     llvm::DenseMap<mlir::Operation *, llvm::StringRef> actions;
     llvm::DenseMap<mlir::Operation *, effects> summaries;
     llvm::DenseSet<mlir::Operation *> proved;
-    llvm::DenseMap<mlir::Operation *, payloadKind> payloads;
+    llvm::DenseMap<mlir::Operation *, payloadKind> payloads, writes;
     llvm::DenseSet<mlir::Operation *> sizes;
     llvm::function_ref<mlir::Value(mlir::Value)> familyOf;
     const llvm::DenseSet<mlir::Operation *> & snapshotCopies;
@@ -213,6 +221,10 @@ struct presenceAnalysis {
                 break;
             }
         }
+        auto alternatives = current.alternatives(condition);
+        if (alternatives.known) {
+            current.scalars[condition] = alternatives.filtered(branch != inverted);
+        }
         auto call = condition.getDefiningOp<ctjs::CallOp>();
         if (call && actions.lookup(call) == "has" && branch != inverted &&
             current.observations.contains(call)) {
@@ -289,6 +301,8 @@ struct presenceAnalysis {
                 }
             }
             current.sizeBounds[read.getResult()] = static_cast<unsigned>(distinct.size());
+            current.scalars[read.getResult()] =
+                PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>());
             return;
         }
         if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
@@ -298,9 +312,9 @@ struct presenceAnalysis {
             learn(branch.getCondition(), false, elseState);
             region(branch.getThenRegion(), thenState);
             region(branch.getElseRegion(), elseState);
-            // A selected scalar owns its value just like either yielded read.
-            // Transfer only independently equal tags from both live arms;
-            // neither membership intersection nor the storage schema proves it.
+            // Retain independently proved truthy/falsy alternatives. A later
+            // test can refine the exact selected SSA value, while all effects
+            // in both structural arms are still visited.
             auto thenYield = branch.getThenRegion().hasOneBlock()
                                  ? llvm::dyn_cast<mlir::scf::YieldOp>(
                                        branch.getThenRegion().front().getTerminator())
@@ -312,11 +326,12 @@ struct presenceAnalysis {
             if (thenYield && elseYield && thenYield.getNumOperands() == branch.getNumResults() &&
                 elseYield.getNumOperands() == branch.getNumResults()) {
                 for (unsigned index = 0; index < branch.getNumResults(); ++index) {
-                    const auto left = thenState.scalar(thenYield.getOperand(index));
-                    if (left != payloadKind::Unknown &&
-                        left == elseState.scalar(elseYield.getOperand(index))) {
-                        thenState.scalars[branch.getResult(index)] = left;
-                        elseState.scalars[branch.getResult(index)] = left;
+                    const auto joined =
+                        thenState.alternatives(thenYield.getOperand(index))
+                            .joined(elseState.alternatives(elseYield.getOperand(index)));
+                    if (joined.known) {
+                        thenState.scalars[branch.getResult(index)] = joined;
+                        elseState.scalars[branch.getResult(index)] = joined;
                     }
                 }
             }
@@ -358,8 +373,12 @@ struct presenceAnalysis {
             if (snapshotCopies.contains(op)) { return; }
             const auto action = actions.lookup(op);
             if (action == "set") {
+                const auto kind = current.scalar(call.getArgs()[1]);
+                if (kind != payloadKind::Unknown) { writes[op] = kind; }
                 write(current, call);
             } else if (action == "has") {
+                current.scalars[call.getResult()] =
+                    PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::BooleanAttr>());
                 current.observations.insert(op);
             } else if (action == "get") {
                 const auto wanted = entry(call);
@@ -368,10 +387,17 @@ struct presenceAnalysis {
                     proved.insert(op);
                     if (value.payload != payloadKind::Unknown) {
                         payloads[op] = value.payload;
-                        current.scalars[call.getResult()] = value.payload;
+                        const auto tag = value.payload == payloadKind::Boolean
+                                             ? mlir::TypeID::get<ctjs::BooleanAttr>()
+                                         : value.payload == payloadKind::Number
+                                             ? mlir::TypeID::get<ctjs::NumberAttr>()
+                                             : mlir::TypeID::get<ctjs::StringAttr>();
+                        current.scalars[call.getResult()] = PrimitiveAlternatives::forTag(tag);
                     }
                 }
             } else if (action == "delete") {
+                current.scalars[call.getResult()] =
+                    PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::BooleanAttr>());
                 eraseKey(current, call);
             } else if (action == "clear") {
                 effects erase;
@@ -430,6 +456,12 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
             // schema. Its homogeneous read still has definite membership.
             read->setAttr(kNativeMapPresent, mlir::UnitAttr::get(read.getContext()));
         }
+    }
+    for (const auto & [write, kind] : analysis.writes) {
+        const auto tag = kind == payloadKind::Boolean  ? "bool"
+                         : kind == payloadKind::Number ? "number"
+                                                       : "string";
+        write->setAttr(kNativeMapWriteType, mlir::StringAttr::get(write->getContext(), tag));
     }
     for (ctjs::CallOp read : optionalReads) {
         if (analysis.proved.contains(read)) {

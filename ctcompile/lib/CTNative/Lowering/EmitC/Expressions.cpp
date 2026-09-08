@@ -51,6 +51,14 @@ mlir::Value lowering::truthyNumber(mlir::OpBuilder & b, mlir::Location where, ml
 }
 
 mlir::Value lowering::truthy(mlir::OpBuilder & builder, mlir::Location where, mlir::Value value) {
+    if (isBooleanStringCarrier(value.getType())) {
+        needsBooleanString = true;
+        return callWithConstValueOperands(builder, where,
+                                          mlir::TypeRange{mlir::IntegerType::get(context, 1)},
+                                          builder.getStringAttr("ctnative::boolean_string_truthy"),
+                                          mlir::ValueRange{value})
+            .getResult(0);
+    }
     if (isIdentityCarrier(value.getType())) {
         return ec::ConstantOp::create(builder, where, mlir::IntegerType::get(context, 1),
                                       builder.getBoolAttr(true));

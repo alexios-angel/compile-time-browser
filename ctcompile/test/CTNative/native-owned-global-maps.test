@@ -59,3 +59,16 @@
 # retain source IR. A guarded long String fixture runs only false at startup;
 # saved typed native callables later run both flags, own both selected strings
 # across entry overwrite/delete, owner release, reentry and final Map destruction.
+# Short-circuit (has && get) || fallback retains the exact eighteen-call source
+# and admits only a final independently proved scalar tag. The intermediate
+# false alternative cannot reach a truthy String/Number arm. Present empty
+# String, false and zero must select fallback; replacing || with a guarded
+# ternary changes all three observations. Distinct truthy/falsy results preserve
+# runtime reads, writes, deletions and producer/consumer order in both modes.
+# Missing/stale/wrong guards, mutation inside &&, missing/incompatible payloads,
+# nullable final results and an unexecuted future unknown effect remain refusals
+# with source calls and branch operands intact through forgeries/reruns/budgets.
+# Forged read and write tags cannot justify extracting a short-circuit carrier
+# before a Map set; both tags require independent live reanalysis.
+# Saved owning String results again survive both future flags, mutation and
+# deletion of every source entry, independent reentry and final Map destruction.
