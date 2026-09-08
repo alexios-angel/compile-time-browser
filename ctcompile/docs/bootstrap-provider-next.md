@@ -8,7 +8,11 @@ in both modes, with Node/interpreter and explicit/deduced GCC/Clang agreement,
 no VM symbols, and raw saved-callable ASan/UBSan/leak lifetime checks. The live
 per-read query retains exact saved object origins across Map overwrite/delete
 and later field writes. Only implicit absence disappears; every explicit schema
-value type remains. Fourteen focused CTests pass; the full gate is pending.
+value type remains. Fourteen focused CTests pass. The full warning-free 246-step
+build finishes at **512/517 CTests**, all **372 compiler tests** and **165 lit
+cases** passing, including **170 published programs/21 lifetime families**;
+only five established browser failures remain. Fresh native Bootstrap stays
+**19/574**, exact Data **0/7 browser/CommonJS and 0/8 AMD**.
 
 The next independently measured controls are comparison-only fresh objects:
 `local_identity_distinct_fresh` (**5 functions/6 calls/trace=0**) and

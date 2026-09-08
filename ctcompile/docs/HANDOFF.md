@@ -77,11 +77,24 @@ source programs and the unknown-effect refusal rule were preserved.
 
 Formatter **22.1.8 passes all 745 files**; `tools/format.sh --check` with the
 bundled development 23 still reports the same nine unrelated existing diffs.
-All **fourteen code/test paths** match committed HEAD, frozen gate input and
-the devbox. The full `tools/remote-build.sh` gate is running; its final CTest,
-lit, corpus and exact Bootstrap Data results are **pending**, not inferred
-from the focused gate. The integrated driver now contains 170 programs and
-21 lifetime families, awaiting that full execution.
+All **fourteen code/test paths** byte-match committed HEAD, frozen gate input
+and the final devbox sources. The full **246-step generated build passes with
+zero warnings**. CTest finishes **512/517 in 1267.11 seconds**: all **372 compiler
+tests** and **140/145 browser tests** pass. Only the five established browser
+failures remain: `selectors`, `frames`, `element_attrs`, `vm_async`, `early_errors`.
+All **165/165 lit cases pass in 619.29 seconds** (CTest **619.49 seconds**),
+including the integrated **170 published programs and 21 lifetime families**.
+ExceptionRecovery passes in **1.15 seconds**. All eight escape tests pass again;
+all four escape oracles retain zero violations and fixture **49/72**. The four
+type corpus oracles also report zero soundness violations.
+
+Fresh native corpus counts remain Bootstrap **19/574**, p5 **39/4754** and
+Phaser **45/7725** in both modes, with zero pruned. Exact Bootstrap Data remains
+**0/7 browser/CommonJS and 0/8 AMD**. Inspected emitted field/lifetime C++ keeps
+fresh object allocations, owning saved Map reads, runtime field/Map operations
+and scalar return conversion. It contains no Script/VM context or value symbols.
+The saved lifetime harness verifies independent retained leaves after the Map's
+final release; its weak observers are test instrumentation, not native storage.
 
 **Exact next boundary: comparison-only fresh object identity recognition.**
 Fresh six-case measurements preserve original source/calls and Node/interpreter
@@ -105,8 +118,10 @@ integration remain unfinished. No full-bundle coverage gain is claimed here.
 
 Evidence: `/tmp/ctcompile-field-presence-{initial,build,build2,build3,focused,
 focused-detail,execution,final-focused,final-focused2,final-focused3,next,full}.log`,
-`-root-hashes.json`, `-next.json` and `-format22-final.log`. The temporary
-`-next.py` probe names and preserves the six exact next-boundary sources.
+`-root-hashes.json`, `-next.json` and `-format22-final.log`. Final measurements
+are in `-full-detail.log`, `-postgate.log` and `-evidence.json`; inspected emitted
+files are `-final-field.cpp` and `-final-lifetime.cpp`. The temporary `-next.py`
+probe names and preserves the six exact next-boundary sources.
 
 ## Saved leaf readback and relational escape gates, 2026-09-08
 

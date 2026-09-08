@@ -20,8 +20,13 @@ complete-owner carrier refusals and their one-edit repairs gate that distinction
 The final focused gate passes **14/14 CTests in 17.08 seconds**, seven native
 programs and the raw lifetime family. Inference budgets are **89/89/30/112**;
 native budgets **3464/3957/4555**, with **31/33/29 cutoffs**. All 295 historical
-helper source rows and sixteen prior probes preserve bytes. The integrated
-170-program/21-lifetime full gate is pending. See [HANDOFF.md](HANDOFF.md).
+helper source rows and sixteen prior probes preserve bytes. The full 246-step
+build passes warning-free. CTest is **512/517 in 1267.11 seconds**, all **372
+compiler tests** and **165 lit cases** passing, including **170 programs and
+21 lifetime families**. Only the five existing browser failures remain.
+Fourteen code/test paths match HEAD/frozen/final devbox; inspected emitted C++
+retains runtime field operations, fresh leaves and saved owning reads without
+Script/VM symbols. See [HANDOFF.md](HANDOFF.md).
 
 The next measured gap is comparison-only fresh identity recognition: exact
 six/eight-call programs have complete owners but remain **0/5**. Their saved

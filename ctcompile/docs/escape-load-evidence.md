@@ -1446,12 +1446,13 @@ behavior and every JavaScript source byte are unchanged. The corrected
 eleven-step rebuild and focused **14/14 CTests pass in 18.28 seconds**, including
 **all eight escape CTests**. Historical array/object contents and retention
 families also pass. Evidence: `/tmp/ctcompile-field-presence-build3.log`,
-`-focused.log` and `-focused-detail.log`. The full generated gate is pending.
+`-focused.log` and `-focused-detail.log`. The completed full gate is recorded below.
 
 Five additive source functions measure **20 sites, 40 instances and 32
 retained**, with confinement only for the two independently proved arithmetic
-children. Opaque formal and successful BigInt controls retain Stored claims; an independently saved returned child remains retained after
-both container fields are deleted. Every historical source byte and historical
+children. Opaque formal and successful BigInt controls retain Stored claims; an
+independently saved returned child remains retained after both container fields
+are deleted. Every historical source byte and historical
 family expectation is preserved, including the historical relational
 **20/40/32** and equality **24/44/33** families. All four execution oracles report
 **zero soundness violations**. Expanded-fixture precision is **49/72**, with
@@ -1470,6 +1471,33 @@ conversion stops after one; five mixed/zero-divisor/negative-exponent BigInt
 probes throw. These observations justify conservative refusal without replacing
 current-IR proof. Evidence: `/tmp/ctcompile-escape-dynamic-node.{py,js,json}`.
 Homebrew clang-format **22.1.8** and changed-path whitespace checks pass.
+
+The arithmetic increment is saved in **`56569199`**. The final **246-step
+generated devbox build completes with zero warnings**. Full CTest finishes
+**512/517 in 1267.11 seconds**: all **372 compiler tests** and **140/145 browser
+tests** pass. The five established browser failures remain `selectors`,
+`frames`, `element_attrs`, `vm_async` and `early_errors`. All **165 lit cases
+pass in 619.29 seconds** (CTest **619.49 seconds**), including the integrated
+published Map driver. Exception recovery passes in **1.15 seconds**.
+
+All eight escape CTests repeat successfully. Each comparison kind repeats
+**80 rows, 34 live states and 3,425 retention cutoffs**; each arithmetic kind
+repeats **80 rows, 49 live states and 3,941 retention cutoffs**. All four execution
+oracles again report **zero soundness violations**. Fixture precision stays
+**49/72**, zero partial/pending, with the exact arithmetic **20/40/32**,
+relational **20/40/32** and equality **24/44/33** family observations.
+Bootstrap/p5/Phaser remain **0/64, 0/16, 0/20**, including p5's existing single
+partial observation. Native corpus counts remain Bootstrap **19/574**, p5
+**39/4754** and Phaser **45/7725** in both modes, zero pruned; exact Data stays
+**0/7 browser/CommonJS and 0/8 AMD**.
+
+All **fourteen code/test paths** match committed HEAD, frozen input and final
+devbox sources. Both actual emitted field/lifetime C++ artifacts use native
+object accessors and contain no Script/VM context/value symbols or AOT runtime
+calls. These hashes and output checks were independently rechecked against the
+root's evidence parser and final devbox hash log. Evidence:
+`/tmp/ctcompile-field-presence-{full.log,full-detail.log,evidence.json,postgate.log}`,
+`-root-hashes.json`, `-final-field.cpp` and `-final-lifetime.cpp`.
 
 Remaining producer boundaries include primitive conversions, dynamic
 Add/Concat and BigInt categories, followed by loops, callee summaries and native
