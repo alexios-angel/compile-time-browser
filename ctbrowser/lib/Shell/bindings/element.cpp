@@ -1388,7 +1388,7 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         (void)c;
         const auto txn = doc_->read();
         const node_id top = root_of_tree(txn, id, true);
-        return value::boolean(txn.kind(top).value_or(node_kind::element) == node_kind::document);
+        return value::boolean(is_document_root(txn, top));
     });
     // --- ParentNode and NonDocumentTypeChildNode -----------------------------
     //
@@ -2519,7 +2519,7 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         // install_document, and `node.getRootNode() === document` is the
         // assertion in four of `rootNode.html`'s five cases - so answering with
         // a wrapper for the document node would fail every one of them.
-        if (txn.kind(top).value_or(node_kind::element) == node_kind::document) { return document_; }
+        if (is_document_root(txn, top)) { return document_; }
         return wrap(c, top);
     });
     method("before", [this, parent_of](context & c, std::span<value> args) {
@@ -5262,6 +5262,26 @@ std::vector<node_id> dom_bindings::select_in_subtree(std::string_view selector, 
 // "SHADOW-INCLUDING ROOT", DOM 4.4. Up until there is no parent, and then -
 // with `composed` - across the one edge a parent pointer cannot express: from a
 // shadow root to its host, and on up the light tree that host sits in.
+// IS THE TOP OF A WALK THE DOCUMENT? Two answers, because this tree has two
+// shapes of document and only one of them keeps a Document node.
+//
+// `document::document` inserts one and `build().set_root()` REPLACES it, so a
+// PARSED document's root is the `<html>` element and the Document node above it
+// is gone - which CLAUDE.md states outright and `install_document_as_node`
+// already works around. A document from `createDocument(null, "")` never had
+// `set_root` called on it and still has its Document node.
+//
+// So "connected" is "the walk ended at the node the document calls its root",
+// and it has to be asked that way. Asking only `kind == document` made
+// `document.body.isConnected` FALSE and `document.body.getRootNode() ===
+// document` false on every parsed page there has ever been - eight assertions
+// in unit/shadow_dom and the whole of `dom/nodes/Node-isConnected.html`.
+[[nodiscard]] static bool is_document_root(const read_txn & txn, node_id top) {
+    if (!top) { return false; }
+    if (txn.kind(top).value_or(node_kind::element) == node_kind::document) { return true; }
+    return top == txn.root();
+}
+
 node_id dom_bindings::root_of_tree(const read_txn & txn, node_id from, bool composed) const {
     node_id at = from;
     // A DEPTH CAP, for the reason every other walk in this file has one: a cycle
