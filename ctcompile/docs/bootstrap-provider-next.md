@@ -192,28 +192,35 @@ sanitizer lifetime variants. Source/prepared host proof budgets are **2278/2372*
 the independent presence lit passes seven positives and fourteen refusals.
 See [the Map checkpoint](native-owned-global-maps.md#distinct-key-size-bounds-2026-09-08).
 
-## Next: homogeneous boolean and owning-string Map payloads
+## Completed: homogeneous boolean and owning-string Map payloads
 
-The existing `result_seeded_bool` and `result_seeded_string` specimens remain
-**0/6 native**, although their complete host owner/result proofs succeed and
-Node/interpreter agree on **`trace=2`**. They need payload carriers, not more
-cardinality evidence. `LoweringSupport.cpp` currently accepts Bottom/Number,
-object-value and nested Map payloads, excluding homogeneous Bool and UTF8 String.
+The existing `result_seeded_bool` and `result_seeded_string` specimens now
+admit **6/6 native**, preserving Node/interpreter **`trace=2`**. Their existing
+host proofs now feed supported native storage, construction and reads.
+The published gate passes **69 complete programs** with all seven lifetime
+variants, including saved strings after overwrite, deletion and Map destruction.
+Ordinary missing reads keep false/empty-string distinctions through existing
+nullable carriers; string value snapshots own their elements. Boolean snapshots
+and mixed stored payloads remain refused.
 
-Extend `carrierOf`, `mapValueSpelling`, `mapCarrierType`, `mapNeedsString` and
-`EmitC/Maps.cpp::replaceMap` together. Existing generic `make_map<K,V>`,
-`map_get_present`, setters and mutations already offer the ordinary owning C++
-implementation. Unproved-presence reads need the existing nullable scalar/string
-representations with false and empty strings distinct from missing. String
-value snapshots need owning copies or an explicit refusal; this does not
-admit `vector<bool>` or mixed stored payloads. Promote these two fixtures only
-with complete 6/6 admission, actual payload observations, retained calls, saved
-string lifetime/sanitizer coverage, live type/forgery/rerun controls and no VM
-symbols. The 64-candidate size cap is deliberate and is not this next boundary.
+## Next: closed mixed key/payload storage and exact read types
 
-Unseeded reads and mixed-payload carriers still refuse. Exact Bootstrap Data,
-general realm owners and future-call contracts remain unfinished; the latest
-completed corpus counts and full gate are in [HANDOFF.md](HANDOFF.md).
+The existing mixed-payload published programs still have complete host owner
+and result proofs, but their mixed native key and payload schemas have no carrier.
+The fresh `result_seeded_mixed_contents`, `result_seeded_join_reseed` and
+`result_seeded_bool_string_contents` probes remain **0/6**, with Node/interpreter
+traces **2/3/2** and all **9/10/9** source calls retained. Evidence:
+`/tmp/ctcompile-payloads-boundary.json`. Extend key comparison, storage, set
+conversion, reads and returned values together using proved finite unions;
+never let one exact final get tag erase another stored type. Preserve unknown
+or incomplete type refusals, SameValueZero keys, actual payload effects, saved
+owning strings and the independent missing/presence proof. Unseeded published
+reads still require result evidence across the complete call family; a recorded
+startup invocation cannot authorize later callers.
+
+Exact Bootstrap Data, general realm owners and future-call contracts remain
+unfinished; the latest measured boundaries, corpus counts and full gate are in
+[HANDOFF.md](HANDOFF.md). The 64-candidate size cap is deliberate.
 
 Exceptions do not make a callback or allocation inert. Native try/catch covers
 one acyclic handler with homogeneous number, boolean or owning string throws

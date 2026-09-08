@@ -6,7 +6,86 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Current distinct-key Map and array-chain checkpoint, 2026-09-08
+## Current Map payload and conditional-array checkpoint, 2026-09-08
+
+Saved locally on `ctcompile-v1`: **`d16f763`** (homogeneous boolean and owning
+string Map payloads) and **`ab10057`** (bounded conditional-array retention).
+The starting tree was clean at `7dde504`; this resumes the exact Bool/String
+boundary in that handoff and the **05:27:53 synchronization journal**. The
+interrupted CallDirectOp work was already recovered in `5307abf`, and
+`codex-wip-20260907` is an ancestor. The old unmerged closure-nesting fix is
+also already present in `ClosureLifting/Bindings.cpp`. No history was rewritten.
+Two disjoint implementation agents supplied the execution gate and array work;
+a third audited the lowering boundary. No browser source changed or push occurred.
+
+`result_seeded_bool` and `result_seeded_string` advance **0/6 -> 6/6 native**,
+with complete host owner/result proofs and Node/interpreter **`trace=2`**.
+The existing owning Map storage now accepts `bool` and `std::string` values.
+Ordinary reads preserve false/empty versus missing through existing nullable
+carriers; proved-present reads and string value snapshots return owning copies.
+Boolean value snapshots and mixed key/payload schemas remain refused. Every
+source call, runtime mutation, lookup and consuming argument remains executable.
+
+The published gate passes **69 complete native programs** with Node/interpreter
+and explicit/deduced GCC/Clang agreement, no Script symbols, and all **seven
+sanitizer lifetime variants**. Saved strings survive overwrite, deletion,
+Map destruction, caller-buffer mutation and independent reentry. False, empty,
+overwritten and saved-string witnesses return **1**; blinded controls return
+**2**. Two deleted-payload refusals preserve all calls under fresh/stale forged
+markers and reruns. Native admission first completes at **7474/7474/8008** steps
+for the original boolean/string and saved-string programs, checking **32/32/30**
+cutoffs. No natural speculative rollback interval was observed. Source/prepared
+cardinality proof budgets remain **2278/2372**.
+
+The local Map representation gate passes **13 observations**, including five
+new observations independently checked against Node/interpreter. GCC/Clang,
+explicit/deduced forms and ASan/UBSan cover missing reads, false/empty values,
+long embedded-NUL strings, returned nested Maps and copied value snapshots.
+All six targeted lowering lit tests pass after correcting new harness/FileCheck
+expectations; no production proof was weakened. Logs:
+`/tmp/ctcompile-payloads-native.log`, `/tmp/ctcompile-payloads-lit.log` and
+`/tmp/ctcompile-payloads-lit-final.log`.
+
+Array contents now enumerate bounded acyclic `cf.br`/`cf.cond_br` paths with
+independent exact origin, array-slot and frame state. Both edges are checked,
+and joins replay each predecessor so a strong overwrite cannot erase another
+path's aliases. Returned reachability and conservative all-write cycle checks
+cover every exit. Loops, unsupported effects and incomplete work still refuse;
+an external truthy predicate does not prove an external element or root safe.
+The combined focused gate passes **12/12 CTests in 29.38 seconds**: the new
+**17 conditional rows, five live states, 738 retention cutoffs and five bounded
+path-explosion controls**, plus the existing 35 contents/20 retention/26 frame
+rows. Four execution oracles report zero violations. Fixture precision remains
+**22/33**; Bootstrap/p5/Phaser remains **0/64, 0/16, 0/20**. Native ownership
+consumers remain separate. Log: `/tmp/ctcompile-payloads-focused.log`.
+
+The full generated devbox build succeeds (**243 build steps**). The **517-test
+combined CTest gate is running**, with the lit CTest already passing in
+**208.85 seconds**. Final totals and fresh corpus counts are pending at
+`/tmp/ctcompile-payloads-full.log`; extraction will write
+`/tmp/ctcompile-payloads-evidence.json`. Do not treat the prior checkpoint's
+512/517 result or corpus counts as a completed gate for this increment.
+The frozen source passes `tools/format.sh --check`: **742 files** using
+Homebrew clang-format **22.1.8**. All **19 changed code/test paths** byte-match
+the frozen devbox input and committed implementation.
+
+**Exact next native boundary:** `result_seeded_mixed_contents`,
+`result_seeded_join_reseed` and `result_seeded_bool_string_contents` remain
+**0/6 native** despite complete host owner/result proofs. Fresh Node/interpreter
+traces are **2/3/2**, with all **9/10/9 source calls** retained. Both keys and
+values have mixed schemas: Bool/Number or Bool/String. Extend closed finite key
+comparison, storage, set conversion and exact read/result facts together;
+one final get's tag cannot narrow the entire Map schema. Preserve SameValueZero,
+false versus numeric keys, owning strings and independent presence evidence.
+Evidence: `/tmp/ctcompile-payloads-boundary.json`.
+
+Unseeded published reads still need independent result evidence across the
+complete family. Current invocations do not authorize arbitrary future callers.
+Exact Bootstrap Data, realm owners, complete throwing-call components and live
+caller-depth/reentry proofs remain unfinished. Array loops, external stored
+values and other containers are still outside the complete contents query.
+
+## Preceding distinct-key Map and array-chain checkpoint, 2026-09-08
 
 Saved locally on `ctcompile-v1`: **`c900f84`** (distinct-key Map size bounds)
 and **`d863dc3`** (array retention through unconditional branch chains). The

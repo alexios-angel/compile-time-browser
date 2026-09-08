@@ -430,9 +430,14 @@ Map results are recorded in [HANDOFF.md](HANDOFF.md).
 
 ## Next boundary
 
-Mixed stored payloads remain separate **0/6** boundaries despite complete
-host ownership. Native storage and each read/result need closed finite type
-facts together; a proved final get tag cannot narrow the entire Map schema.
+Mixed keys and stored payloads remain separate **0/6** boundaries despite
+complete host ownership/result proofs. Fresh `result_seeded_mixed_contents`,
+`result_seeded_join_reseed` and `result_seeded_bool_string_contents` probes
+retain all **9/10/9 source calls**, with Node/interpreter traces **2/3/2**.
+Evidence: `/tmp/ctcompile-payloads-boundary.json`. Closed finite key comparison,
+storage, set conversion and each read/result need type facts together; a proved
+final get tag cannot narrow the entire Map schema. Preserve SameValueZero and
+the distinction between boolean and numeric keys.
 The unseeded `get() { return state.get(0); }` also remains refused: neither an
 earlier observed invocation nor an incomplete family establishes its result.
 Raising the intentional size-witness cap does not address these barriers.
