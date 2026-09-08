@@ -10,11 +10,7 @@
 
 #include "internal.hpp"
 
-namespace ctbrowser::script::builtins_detail {
-
-using detail::list_iterator;
-
-namespace detail {
+namespace ctbrowser::script::detail {
 
 // A REAL ITERATOR over a list that already exists.
 //
@@ -76,7 +72,11 @@ namespace detail {
     return value::object(it);
 }
 
-} // namespace detail
+} // namespace ctbrowser::script::detail
+
+namespace ctbrowser::script::builtins_detail {
+
+using detail::list_iterator;
 
 void install_array_iteration(context & cx, native_object * array_ctor,
                              object_object * array_proto) {

@@ -10,9 +10,7 @@
 
 #include "internal.hpp"
 
-namespace ctbrowser::script::builtins_detail {
-
-using detail::key_filter;
+namespace ctbrowser::script::detail {
 
 namespace {
 
@@ -22,8 +20,6 @@ namespace {
 }
 
 } // namespace
-
-namespace detail {
 
 // A context::property_descriptor AS JAVASCRIPT SEES IT (6.2.6.4,
 // FromPropertyDescriptor). Four callers needed the same object and each built
@@ -216,6 +212,4 @@ namespace detail {
     return true;
 }
 
-} // namespace detail
-
-} // namespace ctbrowser::script::builtins_detail
+} // namespace ctbrowser::script::detail
