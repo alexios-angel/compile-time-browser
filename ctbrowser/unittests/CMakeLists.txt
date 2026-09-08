@@ -48,10 +48,16 @@ ctbrowser_test(unit/style_basics)
 ctbrowser_test(unit/css_syntax)
 ctbrowser_test(unit/css_values)
 # The CSSOM object model - document.styleSheets and the objects under it. Its
-# own file rather than more of css_values: that one asks what a VALUE is worth,
-# this one asks what the object model SERIALISES to, and every case in it is a
-# string a `css/cssom` test compares byte for byte.
-ctbrowser_test(unit/cssom)
+# own files rather than more of css_values: that one asks what a VALUE is worth,
+# these ask what the object model SERIALISES to, and every case in them is a
+# string a `css/cssom` test compares byte for byte. Two files since 2026-09-07,
+# when the one (cssom.cpp) passed 1,000 lines, sharing unit/cssom_probe.hpp:
+# the RULES - CSSRuleList, CSSStyleRule, the grouping and media rules, every
+# rule type a sheet carries and where one may be inserted - and the SHEETS -
+# constructed, adopted, an element's, and the declaration blocks
+# getComputedStyle and el.style hand a script.
+ctbrowser_test(unit/cssom_rules)
+ctbrowser_test(unit/cssom_sheets)
 # `querySelector` and the Selectors engine behind it. Its own file rather than
 # more of css_syntax: that one asks what the parser BUILDS, and this asks what a
 # script gets back when it matches with it - which used to be a second, weaker
