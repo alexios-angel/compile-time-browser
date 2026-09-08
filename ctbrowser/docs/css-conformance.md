@@ -298,7 +298,7 @@ answer that the CSSOM layer then cannot be asked for.
 
 ## 5. What was fixed in the CSS engine, and what it was worth
 
-Two real defects in `lib/Style/css/calc.cpp`, both found by reading these
+Two real defects in `lib/Style/css/calc/` (one file, `calc.cpp`, at the time), both found by reading these
 failures rather than by guessing. Both are proved by
 `unittests/unit/style_basics.cpp`, and neither moved a render golden.
 

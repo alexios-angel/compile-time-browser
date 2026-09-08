@@ -26,7 +26,13 @@ target_sources(ctbrowser-style
     css/selector.cpp
     css/substitute.cpp
     css/media.cpp
-    css/calc.cpp
+    # calc/ - the math functions. One 1,810-line calc.cpp until 2026-09-08;
+    # the pieces share calc/internal.hpp and nothing about calc.hpp changed.
+    css/calc/evaluator.cpp
+    css/calc/units.cpp
+    css/calc/serialize.cpp
+    css/calc/fold.cpp
+    css/calc/simplify.cpp
     # the property table, the value grammar and the canonical serialisation -
     # what el.style, getComputedStyle and CSS.supports all three ask
     css/properties.cpp

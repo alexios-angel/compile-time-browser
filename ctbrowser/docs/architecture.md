@@ -110,6 +110,12 @@ its header, and the header did not change:
 - `ctbrowser/lib/Shell/bindings/` — seven, from 3,926 plus a stray 1,431 filed elsewhere.
 - `ctbrowser/lib/Script/compile/` — eleven, from 3,845, with the class declared in
   `compiler_impl.hpp` beside them. See below; it was the hardest of the four.
+- `ctbrowser/lib/Style/css/calc/` — five, from 1,810, on 2026-09-08. `calc.hpp`
+  did not change. The 628-line `evaluator` class stays whole in `evaluator.cpp`
+  for the reason the compiler's `at()` is inline: it is one recursive descent
+  and every member is defined in its body. The `term` it computes over and the
+  helpers more than one file needs are in `internal.hpp` beside them, in
+  `ctbrowser::style::css::detail`.
 
 ### What splitting the compiler cost, measured
 
