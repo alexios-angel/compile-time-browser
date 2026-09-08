@@ -199,7 +199,8 @@ interpreter runs both produce **`trace=2`**; evidence:
 case needs `size >= 2`. Derive a bounded lower bound from independently
 distinct definite keys in both analyses. Counting facts is unsound when
 different SSA keys can alias. Preserve SameValueZero, exact instance identity,
-saved-snapshot timing, invalidation and incomplete-budget controls.
+saved-snapshot timing, loop-carried replacements, invalidation and
+incomplete-budget controls.
 
 Unseeded gets remain refused. String/boolean/mixed Map payloads remain separate carrier
 boundaries at **0/6** despite completed host proofs. Exact Bootstrap Data stays

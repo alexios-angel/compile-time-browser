@@ -49,14 +49,26 @@ after supporting the dead fallback block. Bootstrap/p5/Phaser observed precision
 remains **0/64, 0/16, 0/20** in these script-mode probes. Log:
 `/tmp/ctcompile-size-escape2.log`. Native ownership consumers remain separate.
 
-The full generated devbox build and combined CTest gate are running against
-Claude's merged browser tree: `/tmp/ctcompile-size-full.log`. No current full
-pass is claimed yet. The prior recovered snapshot had five known browser
-failures (`selectors`, `frames`, `element_attrs`, `vm_async`, `early_errors`)
-and its local log ended at test 398. The frozen current source passes
-`tools/format.sh --check`: **742 C++ files**, Homebrew clang-format **22.1.8**,
-matching the preceding accepted checkpoint. The ignored local toolchain's
-clang-format 23 instead flags nine baseline files; those were left untouched.
+The full generated devbox build succeeds (**411 build steps**). The combined
+gate finishes **512/517 CTests in 770.50 seconds**: **372/372 compiler** and
+**140/145 browser**. Its five failures are the previously recorded browser
+`selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`; no browser
+source changed. All **164/164 lit cases** pass in **174.21 seconds**, and the
+restored source-exception recovery test passes in **1.15 seconds**. Log:
+`/tmp/ctcompile-size-full.log`; extracted evidence:
+`/tmp/ctcompile-size-evidence.json`. All **16 changed code/test paths** byte-match
+the frozen snapshot and committed implementation.
+
+Fresh native component coverage remains **19/574 Bootstrap**, **39/4754 p5**
+and **45/7725 Phaser**, in both optimization modes with zero pruned functions.
+Exact Data remains **0/7 browser**, **0/7 CommonJS** and **0/8 AMD**. Complete
+native Bootstrap initialization remains unfinished.
+
+The frozen current source passes `tools/format.sh --check`: **742 C++ files**,
+Homebrew clang-format **22.1.8**, matching the preceding accepted checkpoint.
+The ignored local toolchain's clang-format 23 instead flags nine baseline files;
+those were left untouched. Whitespace checks pass, and all session changes are
+committed locally without a push.
 
 **Exact next native boundary:** `seeded_size_two_entries` seeds keys 0 and 1,
 deletes `state.size`, then returns `state.get(1)`. It is freshly measured at
