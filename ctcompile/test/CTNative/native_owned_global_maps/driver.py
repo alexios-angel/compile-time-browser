@@ -14,7 +14,7 @@ from .sources import (
     RESULT_SIGNATURES, refusal_sources, parameter_refusals, result_refusals,
     seeded_result_refusals, size_result_sources, size_result_refusals,
     payload_result_sources, payload_result_refusals, mixed_result_sources, mixed_result_refusals,
-    saved_read_sources, saved_read_refusals,
+    saved_read_sources, saved_read_refusals, saved_join_sources, saved_join_refusals,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
@@ -84,6 +84,7 @@ def main():
         **payload_result_sources(),
         **mixed_result_sources(),
         **saved_read_sources(),
+        **saved_join_sources(),
     }
     saved = {}
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
@@ -130,6 +131,21 @@ def main():
          ("state.set(false, saved); const result",)),
         ("saved_read_write_overwritten", "state.set(false, true); const result",
          ("const result",)),
+        ("saved_join", "flag ? state.get('other') : state.get('')", ("state.get('')",)),
+        ("saved_join_distinct", "flag ? state.get('other') : state.get('')",
+         ("state.get('')", "state.get('other')")),
+        ("saved_join_bool", "flag ? state.get('other') : state.get('')",
+         ("state.get('')", "state.get('other')")),
+        ("saved_join_bool", "state.set('temp', saved);",
+         ("state.has('temp');", "state.set('temp', state.get(''));")),
+        ("saved_join_number", "flag ? state.get(1) : state.get(0)",
+         ("state.get(0)", "state.get(1)")),
+        ("saved_join_number", "state.set(false, saved);",
+         ("state.has(false);", "state.set(false, state.get(0));")),
+        ("saved_join_string_saved", "state.set(false, saved);", ("state.has(false);",)),
+        ("saved_join_string_saved", "return result;", ("return state.get(false);",)),
+        ("saved_join_string_saved", "state.delete(false);", ("state.has(false);",)),
+        ("saved_join_string_saved", "state.delete('');", ("state.has('');",)),
     ):
         live_source, _, live_value = positives[name]
         if live_source.count(old) != 1:
@@ -147,6 +163,8 @@ def main():
             raise RuntimeError(f"{name}: lost the {functions}-function source chain")
         if name == "saved_read_write" and len(source_calls(ir.read_text())) != 12:
             raise RuntimeError("saved_read_write: changed the exact 12-call boundary")
+        if name == "saved_join" and len(source_calls(ir.read_text())) != 16:
+            raise RuntimeError("saved_join: changed the exact 16-call boundary")
         if name == "already_resolved":
             ir = resolve_getter(args, ir)
         if name.startswith("legacy_"):
@@ -163,7 +181,7 @@ def main():
             raise RuntimeError(f"{name}: lost live owning proof")
         if ir.read_text() != original or config.read_text() != manifest:
             raise RuntimeError(f"{name}: changed supplied source or manifest")
-        if name in saved_read_sources():
+        if name in {**saved_read_sources(), **saved_join_sources()}:
             disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")
             if disabled.read_text() != output.read_text():
                 raise RuntimeError(f"{name}: saved scalar proof depends on optimization policy")
@@ -217,7 +235,8 @@ def main():
                  "result_seeded_mixed_contents", "result_seeded_join_reseed",
                  "result_seeded_bool_string_contents", "result_seeded_mixed_string_saved",
                  "saved_read_write", "saved_read_write_false", "saved_read_write_number",
-                 "saved_read_write_string_saved"):
+                 "saved_read_write_string_saved", "saved_join", "saved_join_bool",
+                 "saved_join_number", "saved_join_string_saved"):
         key_ir, key_config, _ = saved[name]
         rollback += check_budgets(args, key_ir, key_config, name,
                                   functions=RESULT_SIGNATURES[name][2])
@@ -358,7 +377,10 @@ def main():
         check_call_preservation(forged.read_text(), failed.read_text(), forged_name)
         rerun = methods.refused(args, failed, forged_name + "-rerun", forged_config, admitted=0)
         check_call_preservation(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
-    for name, (source, value, old, replacement) in saved_read_refusals().items():
+    for name, (source, value, old, replacement, restored_value) in {
+        **{name: (*row, 1) for name, row in saved_read_refusals().items()},
+        **saved_join_refusals(),
+    }.items():
         js, rejected, count = boundary.prepare(args, name, source)
         if count != 6:
             raise RuntimeError(f"{name}: changed saved-read refusal source denominator")
@@ -370,7 +392,7 @@ def main():
             raise RuntimeError(f"{name}: lost the saved-read refusal observation")
         blind = args.work / f"{name}-blinded.js"
         blind.write_text(source.replace(old, replacement))
-        if host.run([node, "-e", boundary.NODE, str(blind)]).stdout != "trace=1\n":
+        if host.run([node, "-e", boundary.NODE, str(blind)]).stdout != f"trace={restored_value}\n":
             raise RuntimeError(f"{name}: saved scalar cannot distinguish the missing read")
         fresh = contract(args, rejected, name)
         for mode, options in (("default", ""), ("disabled", "optimize=false")):
@@ -511,7 +533,7 @@ def main():
                  "result_seeded_bool", "result_seeded_string", "result_seeded_string_saved",
                  "result_seeded_mixed_contents", "result_seeded_join_reseed",
                  "result_seeded_bool_string_contents", "result_seeded_mixed_string_saved",
-                 *saved_read_sources()):
+                 *saved_read_sources(), *saved_join_sources()):
         _, config, output = saved[name]
         functions = RESULT_SIGNATURES[name][2]
         rerun = owned.lower(args, output, name + "-rerun", config,
@@ -538,6 +560,9 @@ def main():
           f"{len(mixed_result_refusals())} mixed deleted-result refusals preserve calls; "
           f"{len(saved_read_sources())} saved-read/write programs in both optimization modes; "
           f"{len(saved_read_refusals())} saved-read missing/deleted refusals and saved-string lifetime; "
+          f"{len(saved_join_sources())} conditional saved-value programs in both modes; "
+          f"{len(saved_join_refusals())} conditional missing/deleted/mixed-tag refusals; "
+          "both future getter flags and independent owning strings survive final Map release; "
           f"{len(seeded_result_refusals())} seeded proof and "
           f"{len(seeded_carrier_refusals())} seeded carrier refusals; "
           f"{len(rollback)} speculative rollback cutoffs")

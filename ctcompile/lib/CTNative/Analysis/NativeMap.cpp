@@ -5,6 +5,7 @@
 #include "NativeMap/Presence.h"
 #include "NativeMap/SnapshotCopies.h"
 #include "OwnedGlobalRoots.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -356,14 +357,38 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans, flo
             auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
             if (keyOf(method.getKey()) == "get") { savedReads.insert(call.getResult()); }
         }
+        const auto scalarCandidate = [&](auto && self, mlir::Value value, unsigned depth) -> bool {
+            if (depth > 32) { return false; }
+            if (savedReads.contains(value)) { return true; }
+            if (auto constant = value.getDefiningOp<ctjs::ConstantOp>()) {
+                return llvm::isa<ctjs::BooleanAttr, ctjs::NumberAttr, ctjs::StringAttr>(
+                    constant.getValue());
+            }
+            auto result = llvm::dyn_cast<mlir::OpResult>(value);
+            auto branch =
+                result ? llvm::dyn_cast<mlir::scf::IfOp>(result.getOwner()) : mlir::scf::IfOp{};
+            if (!branch) { return false; }
+            for (mlir::Region & region : branch->getRegions()) {
+                if (!region.hasOneBlock()) { return false; }
+                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(region.front().getTerminator());
+                if (!yield || result.getResultNumber() >= yield.getNumOperands() ||
+                    !self(self, yield.getOperand(result.getResultNumber()), depth + 1)) {
+                    return false;
+                }
+            }
+            // This is only a candidate census. Presence independently checks
+            // both reaching payload tags before a read can acquire a type.
+            savedReads.insert(value);
+            return true;
+        };
         bool primitive = true, boolean = false, number = false, string = false;
         for (ctjs::CallOp call : candidate.calls) {
             auto method = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
             if (keyOf(method.getKey()) != "set") { continue; }
             auto constant = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>();
             if (!constant) {
-                primitive &=
-                    publishedCalls.contains(call) || savedReads.contains(call.getArgs()[1]);
+                primitive &= publishedCalls.contains(call) ||
+                             scalarCandidate(scalarCandidate, call.getArgs()[1], 0);
                 continue;
             }
             auto value = constant.getValue();

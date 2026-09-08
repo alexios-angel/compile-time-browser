@@ -38,7 +38,8 @@ def main():
         js.write_text(text)
         expected = ("traceBranches=23\ntraceDead=2\ntraceNumbers=1334\ntraceRewrite=1\n"
                     "traceSaved=1\ntraceSavedAlias=82\ntraceSavedBoolean=1\ntraceSavedBranch=11\n"
-                    "traceSavedCall=1\ntraceSavedNumber=42\n")
+                    "traceSavedCall=1\ntraceSavedJoinBoolean=12\ntraceSavedJoinNumber=56\n"
+                    "traceSavedJoinString=12\ntraceSavedNumber=42\n")
         if ordered:
             expected += "traceSnapshot=1\n"
         assert run([node, "-e", representation.NODE_GLOBALS, str(js)]) == expected
@@ -89,14 +90,16 @@ def main():
                 run([args.opt, "--ctnative-lower-to-emitc=optimize=false", str(current), "-o", str(output)])
                 result = output.read_text()
                 assert not re.search(r"\bemitc.func @main\(", result), name
-                if name == "saved-missing-refused":
+                if name in {"saved-missing-refused", "saved-join-missing-refused"}:
                     assert "native Map needs supported keys" in result, name
                     assert "!ctnative.opt<!ctnative.variant<" in result, name
+                elif name == "saved-join-tags-refused":
+                    assert "mixed native Map write needs one proved scalar alternative" in result, name
                 else:
                     assert "mixed native Map read needs independent present payload type evidence" in result, name
                 current = output
-    print("mixed Maps: 21 associative/ordered observations, Node/interpreter, GCC/Clang, "
-          "plain/deduced and ASan/UBSan; 10 live read-proof refusals with forged facts and reruns")
+    print("mixed Maps: 27 associative/ordered observations, Node/interpreter, GCC/Clang, "
+          "plain/deduced and ASan/UBSan; 12 live read-proof refusals with forged facts and reruns")
 
 
 if __name__ == "__main__":

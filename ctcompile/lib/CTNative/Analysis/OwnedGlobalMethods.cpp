@@ -149,8 +149,13 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                        "functions");
             }
         } else {
-            if (!llvm::isa<ctjs::FuncOp>(operation->getParentOp()) ||
-                operation->getNumRegions() != 0) {
+            // Only the complete live captured-body proof authorizes control
+            // inside a method. Allocation, publication and entry calls retain
+            // their unconditional source-order requirements below.
+            const bool capturedBody =
+                capture && methodFunctions.contains(operation->getParentOfType<ctjs::FuncOp>());
+            if (!capturedBody && (!llvm::isa<ctjs::FuncOp>(operation->getParentOp()) ||
+                                  operation->getNumRegions() != 0)) {
                 reject("owned global method table requires unconditional straight-line operations");
             }
             operations.push_back(operation);

@@ -286,6 +286,28 @@ struct presenceAnalysis {
             learn(branch.getCondition(), false, elseState);
             region(branch.getThenRegion(), thenState);
             region(branch.getElseRegion(), elseState);
+            // A selected scalar owns its value just like either yielded read.
+            // Transfer only independently equal tags from both live arms;
+            // neither membership intersection nor the storage schema proves it.
+            auto thenYield = branch.getThenRegion().hasOneBlock()
+                                 ? llvm::dyn_cast<mlir::scf::YieldOp>(
+                                       branch.getThenRegion().front().getTerminator())
+                                 : mlir::scf::YieldOp{};
+            auto elseYield = branch.getElseRegion().hasOneBlock()
+                                 ? llvm::dyn_cast<mlir::scf::YieldOp>(
+                                       branch.getElseRegion().front().getTerminator())
+                                 : mlir::scf::YieldOp{};
+            if (thenYield && elseYield && thenYield.getNumOperands() == branch.getNumResults() &&
+                elseYield.getNumOperands() == branch.getNumResults()) {
+                for (unsigned index = 0; index < branch.getNumResults(); ++index) {
+                    const auto left = thenState.scalar(thenYield.getOperand(index));
+                    if (left != payloadKind::Unknown &&
+                        left == elseState.scalar(elseYield.getOperand(index))) {
+                        thenState.scalars[branch.getResult(index)] = left;
+                        elseState.scalars[branch.getResult(index)] = left;
+                    }
+                }
+            }
             thenState.intersect(elseState);
             current = std::move(thenState);
             return;

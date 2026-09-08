@@ -28,6 +28,7 @@ CALL_RESULT = PARAMETER.replace("host.slot.set('x');", "host.slot.set(host.slot.
 SEEDED_RESULT = CALL_RESULT.replace("get() { return state.size; }",
     "get() { state.set(0, 1); return state.get(0); }")
 STRING_RESULT = "result-key-" * 12
+OTHER_STRING_RESULT = "other-result-key-" * 12
 
 
 def parameter_sources():
@@ -436,6 +437,80 @@ def saved_read_refusals():
     }
 
 
+def saved_join_sources():
+    saved = saved_read_sources()["saved_read_write"][0].replace("get() {", "get(flag) {")
+    saved = saved.replace("state.set('', ''); const saved = state.get('');",
+        "state.set('', ''); state.set('other', 'future'); "
+        "const saved = flag ? state.get('other') : state.get('');")
+    saved = saved.replace("host.slot.set(host.slot.get());",
+        "host.slot.set(host.slot.get(false)); host.slot.set(host.slot.get(true));")
+    distinct = saved.replace("state.set('', '');", "state.set('', 'first');")
+    boolean = distinct.replace("state.set('', 'first'); state.set('other', 'future');",
+        "state.set('', false); state.set('other', true);")
+    boolean = boolean.replace("state.set(false, true); state.set(false, saved);",
+        "state.set('', 'changed'); state.set('other', 'changed'); "
+        "state.set('temp', 'old'); state.set('temp', saved);")
+    boolean = boolean.replace("const result = state.get(false); state.delete(false);",
+        "const result = state.get('temp'); state.delete('temp');")
+    number = distinct.replace("state.set('', 'first'); state.set('other', 'future');",
+        "state.set(0, 2); state.set(1, 3);")
+    number = number.replace("flag ? state.get('other') : state.get('')",
+        "flag ? state.get(1) : state.get(0)")
+    number = number.replace("state.set(false, true); state.set(false, saved);",
+        "state.set(0, true); state.set(1, true); "
+        "state.set(false, true); state.set(false, saved);")
+    owning = saved.replace("state.set('', ''); state.set('other', 'future');",
+        f"state.set('', '{STRING_RESULT}'); state.set('other', '{OTHER_STRING_RESULT}'); "
+        f"state.set('{STRING_RESULT}', 'stored'); state.set('{OTHER_STRING_RESULT}', 'stored');")
+    owning = owning.replace("state.set(false, true);",
+        "state.set('', false); state.delete(''); "
+        "state.set('other', false); state.delete('other'); state.set(false, true);")
+    owning = owning.replace("state.delete(false);", "state.set(false, false); state.delete(false);")
+    # Startup sees false only. The typed C++ lifetime caller later selects both
+    # branches, after the publishing owner and table have already been released.
+    owning = owning.replace(" host.slot.set(host.slot.get(true));", "")
+    return {
+        # Exact 16-call boundary from the preceding handoff. Both runtime calls
+        # must remain: choosing the empty arm unconditionally yields size 2.
+        "saved_join": (saved, "host", 3),
+        "saved_join_always_empty": (saved.replace(
+            "flag ? state.get('other') : state.get('')", "state.get('')"), "host", 2),
+        # Distinct result keys make either constant-arm substitution observable.
+        "saved_join_distinct": (distinct, "host", 4),
+        "saved_join_bool": (boolean, "host", 4),
+        "saved_join_number": (number, "host", 4),
+        "saved_join_string_saved": (owning, "host", 2),
+    }
+
+
+def saved_join_refusals():
+    saved = saved_join_sources()["saved_join_distinct"][0]
+    true_key = saved.replace("state.set(key, true)",
+        "state.set('future', true); state.set(key, true)")
+    false_key = saved.replace("state.set(key, true)",
+        "state.set('first', true); state.set(key, true)")
+    deleted = true_key.replace("const saved = flag ?",
+        "state.delete('other'); const saved = flag ?")
+    deleted = deleted.replace("state.set(false, true);",
+        "state.set('other', 'restored'); state.set(false, true);")
+    return {
+        # The untouched arm cannot supply the other arm's presence or scalar
+        # type. Preseed the expected result key so undefined stays observable.
+        "saved_join_missing_true": (true_key.replace(
+            "flag ? state.get('other')", "flag ? state.get('missing')"), 5,
+            "state.get('missing')", "state.get('other')", 4),
+        "saved_join_missing_false": (false_key.replace(
+            ": state.get('');", ": state.get('missing');"), 5,
+            "state.get('missing')", "state.get('')", 4),
+        # Restoring the source after the read must not restore its old value.
+        "saved_join_deleted_true": (deleted, 5,
+            "state.delete('other');", "state.has('other');", 4),
+        "saved_join_mixed_tags": (true_key.replace(
+            "state.set('other', 'future');", "state.set('other', true);"), 5,
+            "state.set('other', true);", "state.set('other', 'future');", 4),
+    }
+
+
 def seeded_carrier_refusals():
     return {
         "result_seeded_number_string_contents": (mixed_result_sources()[
@@ -459,6 +534,12 @@ MIXED_RESULT_TYPES = {
     "saved_read_write_string_saved": ("std::string", "std::string"),
     "saved_read_write_wrong_tag": ("bool", "std::string"),
     "saved_read_write_overwritten": ("bool", "std::string"),
+    "saved_join": ("std::string", "std::string"),
+    "saved_join_always_empty": ("std::string", "std::string"),
+    "saved_join_distinct": ("std::string", "std::string"),
+    "saved_join_bool": ("bool", "std::string"),
+    "saved_join_number": ("js_num", "double"),
+    "saved_join_string_saved": ("std::string", "std::string"),
 }
 
 

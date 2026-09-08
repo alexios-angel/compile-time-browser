@@ -7,11 +7,244 @@
 // checkCapturedCallables used to build inline, now from HostContractFixtures.h.
 
 #include "HostContractFixtures.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/APFloat.h"
 
 using namespace ctcompile::test::host_contract;
 
 namespace {
+
+void checkConditionalMapResults(mlir::MLIRContext & context, std::string source, bool prepared) {
+    const std::string header =
+        "@get$2(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value" +
+        std::string(prepared ? ", %state: !ctjs.value" : "");
+    source = replaced(source, header + ")", header + ", %flag: !ctjs.value)");
+    source = replaced(source, "    %priorGetter = ctjs.get_property",
+                      "    %trueFlag = ctjs.constant #ctjs.boolean<true>\n"
+                      "    %falseFlag = ctjs.constant #ctjs.boolean<false>\n"
+                      "    %priorGetter = ctjs.get_property");
+    if (prepared) {
+        source = replaced(source, "%priorEnvironment)", "%priorEnvironment, %trueFlag)");
+        source = replaced(source, "%getEnvironment)", "%getEnvironment, %falseFlag)");
+    } else {
+        source = replaced(source, "%produced = ctjs.call %priorGetter(%owned)",
+                          "%produced = ctjs.call %priorGetter(%owned, %trueFlag)");
+        source = replaced(source, "%answer = ctjs.call %getter(%owned)",
+                          "%answer = ctjs.call %getter(%owned, %falseFlag)");
+    }
+    constexpr llvm::StringLiteral continuation = R"MLIR(
+    %changedPayload = ctjs.constant #ctjs.boolean<false>
+    %overwritten = ctjs.call %mapSetter(%state, %seedKey, %changedPayload)
+    %writeback = ctjs.call %mapSetter(%state, %seedKey, %saved)
+    %answer = ctjs.call %mapGetter(%state, %seedKey)
+)MLIR";
+    source = replaced(source, "    %answer = ctjs.call %mapGetter(%state, %probeKey)",
+                      R"MLIR(
+    %unused = arith.constant 0 : i32
+    %branch = ctjs.truthy %flag
+    %saved = scf.if %branch -> (!ctjs.value) {
+      %left = ctjs.call %mapGetter(%state, %seedKey)
+      scf.yield %left : !ctjs.value
+    } else {
+      %right = ctjs.call %mapGetter(%state, %probeKey)
+      scf.yield %right : !ctjs.value
+    }
+)MLIR" + continuation.str());
+    const auto requested = [](mlir::ModuleOp module) {
+        auto contract = contractFor(module);
+        contract.initialIntrinsics = {"Map"};
+        return contract;
+    };
+    const auto withheld = [](mlir::ModuleOp module, const HostContractAnalysis & result) {
+        bool empty = result.callables().empty();
+        module.walk([&](mlir::Operation * operation) {
+            empty &= !result.callable(operation);
+            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(operation)) {
+                empty &= !result.property(read);
+            }
+        });
+        return empty;
+    };
+    unsigned rows = 0;
+    const auto variant = [&](const std::string & program, bool expected, const char * message,
+                             mlir::TypeID tag = mlir::TypeID::get<ctjs::NumberAttr>()) {
+        ++rows;
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "source/prepared conditional Map fixture parses");
+        if (!module) { return; }
+        const auto contract = requested(*module);
+        HostContractAnalysis result(*module, contract);
+        check(result.proved() == expected && !result.exhausted() &&
+                  (expected || withheld(*module, result)),
+              message);
+        if (result.proved() != expected || result.exhausted()) {
+            std::fprintf(stderr, "conditional Map host %s case %u: %s\n",
+                         prepared ? "prepared" : "source", rows, result.reason().str().c_str());
+        }
+        if (expected && result.proved()) {
+            auto getter = module->lookupSymbol<ctjs::FuncOp>("get$2");
+            auto setter = module->lookupSymbol<ctjs::FuncOp>("put$3");
+            const auto calls = result.callables();
+            check(calls.size() == 3 && calls[0].function == getter && calls[1].function == setter &&
+                      calls[2].function == getter && calls[0].arguments.size() == 1 &&
+                      calls[1].arguments.size() == 1 && calls[2].arguments.size() == 1 &&
+                      calls[0].arguments.front().primitiveTag ==
+                          mlir::TypeID::get<ctjs::BooleanAttr>() &&
+                      calls[1].arguments.front().primitiveTag == tag &&
+                      calls[1].arguments.front().actual == calls[0].call->getResult(0) &&
+                      calls[1].arguments.front().parameter ==
+                          setter.getBody().front().getArgument(prepared ? 4 : 3) &&
+                      calls[0].call->isBeforeInBlock(calls[1].call) &&
+                      calls[1].call->isBeforeInBlock(calls[2].call),
+                  "conditional producer results reach the consumer without selecting a call value");
+        }
+        check(hostContractFingerprint(*module) == contract.moduleSha256,
+              "conditional proofs retain every source operation and operand");
+    };
+    variant(source, true, "same-tag scalar yields survive overwrite and later writeback");
+    for (const auto & [payload, tag] :
+         {std::pair{"#ctjs.boolean<true>", mlir::TypeID::get<ctjs::BooleanAttr>()},
+          std::pair{"#ctjs.string<\"owned\">", mlir::TypeID::get<ctjs::StringAttr>()}}) {
+        variant(replaced(source, "#ctjs.number<4607182418800017408>", payload), true,
+                "Boolean and owning String joins retain independent scalar result tags", tag);
+    }
+    const auto missing =
+        replaced(source, "%mapGetter(%state, %probeKey)", "%mapGetter(%state, %payload)");
+    variant(missing, false, "one missing arm cannot supply a scalar tag to the consumer");
+    variant(replaced(missing, "%branch = ctjs.truthy %flag",
+                     "%always = ctjs.constant #ctjs.boolean<true>\n"
+                     "    %branch = ctjs.truthy %always"),
+            false, "a literal predicate cannot exempt the other arm from the complete body proof");
+    variant(replaced(source, "scf.yield %right : !ctjs.value",
+                     "%wrong = ctjs.constant #ctjs.boolean<false>\n"
+                     "      scf.yield %wrong : !ctjs.value"),
+            false, "different yielded tags cannot be joined into a definite consumer category");
+    for (const char * yielded : {"%left", "%right"}) {
+        const std::string terminator = std::string("scf.yield ") + yielded + " : !ctjs.value";
+        variant(replaced(source, terminator,
+                         "ctjs.store_global \"trace\", " + std::string(yielded) + "\n      " +
+                             terminator),
+                false, "a late unsupported effect in either arm rejects the entire family");
+        for (const char * escaped : {"%state", "%mapGetter"}) {
+            variant(replaced(source, terminator,
+                             std::string("scf.yield ") + escaped + " : !ctjs.value"),
+                    false, "Map and method values cannot escape through a scalar yield");
+        }
+    }
+    for (const char * object : {"%state", "%callee", "%this"}) {
+        variant(replaced(source, "%branch = ctjs.truthy %flag",
+                         std::string("%branch = ctjs.truthy ") + object),
+                false, "truthiness cannot authorize a nonprimitive or unproved input");
+    }
+    const auto deleted = replaced(source, "      scf.yield %left : !ctjs.value", R"MLIR(
+      %deleteKey = ctjs.constant #ctjs.string<"delete">
+      %deleter = ctjs.get_property %state[%deleteKey]
+      %erased = ctjs.call %deleter(%state, %seedKey)
+      scf.yield %left : !ctjs.value
+)MLIR");
+    variant(deleted, true, "a saved scalar survives a source deletion on just one arm");
+    variant(
+        replaced(deleted, continuation, "    %answer = ctjs.call %mapGetter(%state, %seedKey)\n"),
+        false, "contents intersection drops membership deleted on one reaching arm");
+    const auto changed = replaced(source, "      scf.yield %left : !ctjs.value", R"MLIR(
+      %boolean = ctjs.constant #ctjs.boolean<false>
+      %written = ctjs.call %mapSetter(%state, %seedKey, %boolean)
+      scf.yield %left : !ctjs.value
+)MLIR");
+    variant(
+        replaced(changed, continuation, "    %answer = ctjs.call %mapGetter(%state, %seedKey)\n"),
+        false, "contents intersection clears a payload changed on one reaching arm");
+    variant(changed, true, "a joined saved scalar can reseed after a one-arm payload overwrite");
+    for (const unsigned depth : {4u, 32u, 33u}) {
+        std::string nested = "      %left = ctjs.call %mapGetter(%state, %seedKey)\n";
+        for (unsigned index = 1; index < depth; ++index) {
+            const std::string prior = index == 1 ? "%left" : "%nested" + std::to_string(index - 1);
+            nested = "      %nested" + std::to_string(index) +
+                     " = scf.if %branch -> (!ctjs.value) {\n" + nested + "      scf.yield " +
+                     prior +
+                     " : !ctjs.value\n"
+                     "    } else {\n      scf.yield %payload : !ctjs.value\n    }\n";
+        }
+        nested += "      scf.yield %nested" + std::to_string(depth - 1) + " : !ctjs.value";
+        variant(replaced(source,
+                         "      %left = ctjs.call %mapGetter(%state, %seedKey)\n"
+                         "      scf.yield %left : !ctjs.value",
+                         nested),
+                depth <= 32, "nested conditionals respect the bounded complete-body depth");
+    }
+    const auto noElse = replaced(source, "    %saved = scf.if", R"MLIR(
+    scf.if %branch {
+      %effect = ctjs.call %mapSetter(%state, %seedKey, %payload)
+      scf.yield
+    }
+    %saved = scf.if)MLIR");
+    variant(noElse, true,
+            "an absent else preserves the incoming same-tag entry on its implicit path");
+    const auto literalNoElse = replaced(noElse, "%branch = ctjs.truthy %flag",
+                                        "%never = ctjs.constant #ctjs.boolean<false>\n"
+                                        "    %branch = ctjs.truthy %never");
+    constexpr llvm::StringLiteral effect =
+        "      %effect = ctjs.call %mapSetter(%state, %seedKey, %payload)";
+    variant(replaced(literalNoElse, effect, R"MLIR(
+      %deleteKey = ctjs.constant #ctjs.string<"delete">
+      %deleter = ctjs.get_property %state[%deleteKey]
+      %effect = ctjs.call %deleter(%state, %seedKey)
+)MLIR"),
+            false, "a no-else delete loses membership even behind a literal false predicate");
+    variant(replaced(literalNoElse, effect,
+                     "      %different = ctjs.constant #ctjs.boolean<false>\n"
+                     "      %effect = ctjs.call %mapSetter(%state, %seedKey, %different)"),
+            false, "a no-else incompatible write loses its tag even behind a literal predicate");
+
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
+    if (!module) { return; }
+    auto contract = requested(*module);
+    HostContractAnalysis complete(*module, contract);
+    const unsigned completion = complete.steps();
+    check(complete.proved() && completion < 15000,
+          "the complete conditional proof stays within its fixture work limit");
+    if (!complete.proved() || completion >= 15000) { return; }
+    for (unsigned budget = 0; budget < completion; ++budget) {
+        HostContractAnalysis limited(*module, contract, budget);
+        check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                  withheld(*module, limited),
+              "every incomplete conditional budget withholds all callable and argument edges");
+    }
+    HostContractAnalysis exact(*module, contract, completion);
+    check(exact.proved() && exact.steps() == completion && exact.callables().size() == 3,
+          "the exact conditional budget reproduces the completed family");
+    auto getter = module->lookupSymbol<ctjs::FuncOp>("get$2");
+    mlir::scf::IfOp branch;
+    ctjs::CallOp seed, right;
+    getter.walk([&](mlir::scf::IfOp conditional) { branch = conditional; });
+    getter.walk([&](ctjs::CallOp call) {
+        if (!seed) { seed = call; }
+        if (branch && call->getParentRegion() == &branch.getElseRegion()) { right = call; }
+    });
+    check(branch && seed && right, "the live conditional fixture retains its seed and both arms");
+    if (!branch || !seed || !right) { return; }
+    mlir::Builder builder(&context);
+    right->setAttr("ctnative.map_present", builder.getBoolAttr(true));
+    right->setAttr("ctnative.map_read_type", builder.getStringAttr("number"));
+    branch->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
+    contract = requested(*module);
+    check(HostContractAnalysis(*module, contract).proved(),
+          "forged reports leave an otherwise complete conditional proof reproducible");
+    const auto originalKey = right.getArgs()[0];
+    right->setOperand(2, seed.getArgs()[1]);
+    HostContractAnalysis stale(*module, contract);
+    check(!stale.proved() && stale.reason().contains("fingerprint") && withheld(*module, stale),
+          "a changed conditional arm cannot reuse the previous fingerprint");
+    HostContractAnalysis fresh(*module, requested(*module));
+    check(!fresh.proved() && !fresh.exhausted() && withheld(*module, fresh),
+          "fresh forged tags cannot recover the missing arm or its consumer argument");
+    right->setOperand(2, originalKey);
+    check(HostContractAnalysis(*module, contract).proved(),
+          "restoring the real arm restores its complete conditional result proof");
+    std::printf("conditional Map host %s: %u rows and all %u incomplete budgets checked\n",
+                prepared ? "prepared" : "source", rows, completion);
+}
 
 void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shared) {
     auto source =
@@ -80,6 +313,9 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
         return withheld;
     };
     const auto singleKeySource = source;
+    for (const bool prepared : {false, true}) {
+        checkConditionalMapResults(context, prepared ? prepare(source) : source, prepared);
+    }
     for (const bool multiple : {false, true}) {
         source = singleKeySource;
         if (multiple) {
@@ -589,6 +825,8 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
 int main() {
     mlir::MLIRContext context;
     context.getOrLoadDialect<ctjs::CTJSDialect>();
+    context.getOrLoadDialect<mlir::arith::ArithDialect>();
+    context.getOrLoadDialect<mlir::scf::SCFDialect>();
     checkSeededMapResults(context, sharedMapWithPutCall(sharedMapSource(capturedGetterSource())));
     if (failures == 0) { std::puts("host contract seeded Map result proofs passed"); }
     return failures == 0 ? 0 : 1;

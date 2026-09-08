@@ -94,6 +94,40 @@ function savedAlias(key) {
     map.set(0, saved);
     return map.get(0);
 }
+function savedJoinString(flag) {
+    const map = new Map();
+    map.set(false, false);
+    map.set('left', 'left-with-owned-\0-bytes');
+    map.set('right', 'right-with-owned-\0-bytes');
+    const saved = flag ? map.get('left') : map.get('right');
+    map.set('left', true);
+    map.delete('right');
+    map.set(false, saved);
+    const result = map.get(false);
+    map.clear();
+    return result;
+}
+function savedJoinNumber(flag, other) {
+    const map = new Map();
+    map.set(false, false);
+    map.set(0, 11);
+    map.set(1, 23);
+    const saved = flag ? (other ? map.get(0) : map.get(1)) : map.get(0);
+    map.delete(0);
+    map.delete(1);
+    map.set(false, saved);
+    return map.get(false);
+}
+function savedJoinBoolean(flag) {
+    const map = new Map();
+    map.set(false, false);
+    map.set(true, true);
+    map.set(0, 11);
+    const saved = flag ? map.get(true) : map.get(false);
+    map.clear();
+    map.set(0, saved);
+    return map.get(0) ? 1 : 2;
+}
 var traceNumbers = numberKeys();
 var traceSaved = savedString();
 var traceBranches = branch(true) * 10 + branch(false);
@@ -104,6 +138,11 @@ var traceSavedBoolean = savedBoolean();
 var traceSavedBranch = savedBranch(true) * 10 + savedBranch(false);
 var traceSavedCall = savedCall();
 var traceSavedAlias = savedAlias(0) + savedAlias(1);
+var traceSavedJoinString = (savedJoinString(true) === 'left-with-owned-\0-bytes' ? 10 : 0)
+    + (savedJoinString(false) === 'right-with-owned-\0-bytes' ? 2 : 0);
+var traceSavedJoinNumber = savedJoinNumber(true, true) + savedJoinNumber(true, false)
+    + savedJoinNumber(false, true) + savedJoinNumber(false, false);
+var traceSavedJoinBoolean = savedJoinBoolean(true) * 10 + savedJoinBoolean(false);
 
 //--- snapshot.js
 function snapshot() {
@@ -214,5 +253,27 @@ function run(flag) {
     const saved = map.get(0);
     if (flag) { map.set(false, saved); }
     return map.get(false) ? 1 : 0;
+}
+var trace = run(true) * 10 + run(false);
+
+//--- saved-join-missing-refused.js
+function run(flag) {
+    const map = new Map();
+    map.set(false, false);
+    map.set(0, 42);
+    const saved = flag ? map.get(0) : map.get(1);
+    map.set(false, saved);
+    return map.get(false) ? 1 : 2;
+}
+var trace = run(true) * 10 + run(false);
+
+//--- saved-join-tags-refused.js
+function run(flag) {
+    const map = new Map();
+    map.set(false, false);
+    map.set(0, 42);
+    const saved = flag ? map.get(0) : map.get(false);
+    map.set(false, saved);
+    return map.get(false) ? 1 : 2;
 }
 var trace = run(true) * 10 + run(false);

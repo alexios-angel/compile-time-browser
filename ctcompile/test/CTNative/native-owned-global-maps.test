@@ -36,3 +36,14 @@
 # and String forgeries, stale manifests, reruns and bounded proof cutoffs. The
 # long String chain survives mutation/deletion before each consuming write/return,
 # and then final Map destruction in both explicit/deduced sanitizer harnesses.
+# Live conditional saved reads merge only independent same-tag scalar evidence.
+# Both Boolean flag values retain producer/consumer order and every source Map
+# call, including the original 16-call boundary. Distinct result keys expose
+# either constant-arm substitution for String/Boolean/Number joins. Missing or
+# deleted reads in either arm and different arm tags remain refusals under valid
+# forged reports, stale/fresh manifests and reruns in both optimization modes.
+# Incomplete budgets retain branch/yield operands and all source calls. A long
+# String join sees only false at startup; saved native callables later select
+# both flags after publication owners are released. Both selected strings own
+# their bytes across source/writeback mutation and deletion, independent entry
+# execution, caller-buffer mutation and destruction of both Maps under sanitizers.

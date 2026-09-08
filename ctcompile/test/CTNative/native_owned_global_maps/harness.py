@@ -13,6 +13,7 @@ from .sources import (
     methods, owned, boundary, host, parameter_sources, seeded_result_sources, key_fact_sources,
     joined_result_sources, size_result_sources, payload_result_sources, STRING_RESULT,
     RESULT_SIGNATURES, mixed_result_sources, MIXED_RESULT_TYPES, saved_read_sources,
+    saved_join_sources, OTHER_STRING_RESULT,
 )
 
 
@@ -62,6 +63,8 @@ def check_result_calls(cpp, name, mode):
         **{name: ["get", "set", "size"] for name in payload_result_sources()},
         **{name: ["get", "set", "size"] for name in mixed_result_sources()},
         **{name: ["get", "set", "size"] for name in saved_read_sources()},
+        **{name: ["get", "set", "get", "set", "size"] for name in saved_join_sources()},
+        "saved_join_string_saved": ["get", "set", "size"],
         "saved_read_write_repeated": ["get", "set", "get", "set", "size"],
         "seeded_dynamic_overwrite": ["get", "set", "get", "set"],
         "seeded_dynamic_repeated": ["get", "set", "get", "set", "get"],
@@ -75,16 +78,16 @@ def check_result_calls(cpp, name, mode):
         raise RuntimeError(f"{name}/{mode}: lost runtime getter/mutation/final observation calls")
     seeded = {**seeded_result_sources(), **key_fact_sources(), **joined_result_sources(),
               **size_result_sources(), **payload_result_sources(), **mixed_result_sources(),
-              **saved_read_sources()}
+              **saved_read_sources(), **saved_join_sources()}
     if name in seeded and not re.search(r"ctnative::map_get(?:_\w+)?(?:<[^>]+>)?\(", cpp):
         raise RuntimeError(f"{name}/{mode}: replaced the live seeded Map lookup with a summary")
     if name in size_result_sources() and "ctnative::map_delete(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: dropped the live size-keyed deletion")
     if name in {"result_seeded_string_saved", "result_seeded_mixed_string_saved",
-                "saved_read_write_string_saved"} \
+                "saved_read_write_string_saved", "saved_join_string_saved"} \
             and "ctnative::map_delete(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: dropped the saved string's source deletion")
-    mixed = {**mixed_result_sources(), **saved_read_sources()}
+    mixed = {**mixed_result_sources(), **saved_read_sources(), **saved_join_sources()}
     if name in mixed:
         source = mixed[name][0]
         for method in ("set", "get", "has", "delete"):
@@ -301,6 +304,8 @@ int main() {
 
 
 def string_payload_lifetime(args, cpp, name, mode, compiler):
+    joined = name == "saved_join_string_saved"
+    initial_size = 2 if joined else 1
     changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
     if count != 1:
         raise RuntimeError("string lifetime harness needs exactly one entry")
@@ -314,18 +319,23 @@ def string_payload_lifetime(args, cpp, name, mode, compiler):
     changed += r'''
 int main() {
     const std::string expected = EXPECTED_STRING;
+    const std::string other_expected = OTHER_EXPECTED_STRING;
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1) { return 90; }
     auto owner = g_host;
     auto table = owner->slot;
     auto getter = table->m_get;
     auto setter = table->m_set;
     auto size = table->m_size;
-    static_assert(std::is_same_v<decltype(getter), std::function<std::string()>>);
+    static_assert(std::is_same_v<decltype(getter), std::function<std::string(GETTER_PARAMETERS)>>);
     static_assert(std::is_same_v<decltype(setter), std::function<js_num(std::string)>>);
-    auto saved = getter();
-    if (saved != expected || setter(saved) != 1) { return 91; }
+    auto read = [&]([[maybe_unused]] bool other) { return getter(GETTER_ARGUMENT); };
+    auto saved = read(false);
+    auto saved_other = read(true);
+    if (saved != expected || saved_other != other_expected || setter(saved) != INITIAL_SIZE ||
+        setter(saved_other) != INITIAL_SIZE) { return 91; }
     saved.assign(expected.size(), 'x');
-    if (setter(expected) != 1) { return 92; }
+    saved_other.assign(other_expected.size(), 'x');
+    if (setter(expected) != INITIAL_SIZE || setter(other_expected) != INITIAL_SIZE) { return 92; }
     std::weak_ptr owner_lifetime = owner;
     std::weak_ptr table_lifetime = table;
     g_host.reset();
@@ -336,10 +346,14 @@ int main() {
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
         ctn_test_maps[0].lock() == ctn_test_maps[1].lock()) { return 94; }
     for (int index = 0; index < 128; ++index) {
-        if (getter() != expected || setter("saved-" + std::to_string(index)) != index + 2 ||
-            size() != index + 2 || g_host->slot->m_size() != 1) { return 95; }
+        if (read(false) != expected || read(true) != other_expected ||
+            setter("saved-" + std::to_string(index)) != index + INITIAL_SIZE + 1 ||
+            size() != index + INITIAL_SIZE + 1 || g_host->slot->m_size() != INITIAL_SIZE) {
+            return 95;
+        }
     }
-    auto survivor = getter();
+    auto survivor = read(false);
+    auto other_survivor = read(true);
     getter = {};
     setter = {};
     if (ctn_test_maps[0].expired()) { return 96; }
@@ -349,13 +363,24 @@ int main() {
     for (int index = 0; index < 4096; ++index) {
         churn.emplace_back(expected.size(), 'q');
     }
-    if (survivor != expected || g_host->slot->m_get() != expected) { return 98; }
+    if (survivor != expected || other_survivor != other_expected ||
+        g_host->slot->m_get(FRESH_FIRST_ARGUMENT) != expected ||
+        g_host->slot->m_get(FRESH_OTHER_ARGUMENT) != other_expected) { return 98; }
     g_host.reset();
-    if (!ctn_test_maps[1].expired() || survivor != expected) { return 99; }
+    if (!ctn_test_maps[1].expired() || survivor != expected || other_survivor != other_expected) {
+        return 99;
+    }
     return 0;
 }
 '''
+    changed = changed.replace("OTHER_EXPECTED_STRING",
+        json.dumps(OTHER_STRING_RESULT if joined else STRING_RESULT))
     changed = changed.replace("EXPECTED_STRING", json.dumps(STRING_RESULT))
+    changed = changed.replace("GETTER_PARAMETERS", "bool" if joined else "")
+    changed = changed.replace("GETTER_ARGUMENT", "other" if joined else "")
+    changed = changed.replace("FRESH_FIRST_ARGUMENT", "false" if joined else "")
+    changed = changed.replace("FRESH_OTHER_ARGUMENT", "true" if joined else "")
+    changed = changed.replace("INITIAL_SIZE", str(initial_size))
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
@@ -365,7 +390,7 @@ int main() {
     result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
         env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
                  UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
-    if result.returncode or result.stdout != "trace=1\n" * 2:
+    if result.returncode or result.stdout != f"trace={initial_size}\n" * 2:
         raise RuntimeError(f"{name}/{mode}: saved string lifetime failure\n"
                            f"{result.stdout}{result.stderr}")
 
@@ -388,6 +413,8 @@ def standalone(args, output, name, value, compilers, nm):
             result, params, _ = RESULT_SIGNATURES[name]
             getter_params = "js_num" if name in {
                 "result_formal", "result_seeded_formal", "seeded_dynamic_formal"} else ""
+            if name in saved_join_sources():
+                getter_params = "bool"
             if (f"std::function<{result}({getter_params})>" not in cpp
                     or f"std::function<js_num({params})>" not in cpp):
                 raise RuntimeError(f"{name}/{mode}: missing typed producer/consumer signatures\n{cpp}")
@@ -419,13 +446,18 @@ def standalone(args, output, name, value, compilers, nm):
         if name in {"shared_growing", "shared_parameter"}:
             shared_lifetime(args, cpp, name, mode, compilers[1])
         if name in {"result_seeded_string_saved", "result_seeded_mixed_string_saved",
-                    "saved_read_write_string_saved"}:
+                    "saved_read_write_string_saved", "saved_join_string_saved"}:
             string_payload_lifetime(args, cpp, name, mode, compilers[1])
 
 
 def check_call_preservation(original, output, name):
     if source_calls(original) != source_calls(output):
         raise RuntimeError(f"{name}: failed ownership changed live source call operands")
+    if name.startswith("saved_join"):
+        pattern = (r"^\s*(?:%[-\w.$]+(?::\d+)? = )?((?:ctjs\.(?:truthy|cond_br|br)|"
+                   r"scf\.(?:if|yield))\b[^\n]*)")
+        if re.findall(pattern, original, re.M) != re.findall(pattern, output, re.M):
+            raise RuntimeError(f"{name}: failed ownership changed live branch/yield operands")
 
 
 def check_prepared_result_calls(text, original, name):
