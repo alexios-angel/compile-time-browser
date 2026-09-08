@@ -511,6 +511,91 @@ def saved_join_refusals():
     }
 
 
+def guarded_saved_sources():
+    conditional = saved_join_sources()
+    saved = conditional["saved_join"][0].replace(
+        "const saved = flag ? state.get('other') : state.get('');",
+        "if (flag) { state.delete('other'); } "
+        "const saved = state.has('other') ? state.get('other') : state.get('');")
+    boolean = conditional["saved_join_bool"][0].replace(
+        "const saved = flag ? state.get('other') : state.get('');",
+        "if (flag) { state.delete('other'); } "
+        "const saved = state.has('other') ? state.get('other') : state.get('');")
+    number = conditional["saved_join_number"][0].replace(
+        "const saved = flag ? state.get(1) : state.get(0);",
+        "if (flag) { state.delete(1); } "
+        "const saved = state.has(1) ? state.get(1) : state.get(0);")
+    owning = conditional["saved_join_string_saved"][0].replace(
+        f"state.set('', '{STRING_RESULT}'); state.set('other', '{OTHER_STRING_RESULT}');",
+        f"state.set('', '{OTHER_STRING_RESULT}'); state.set('other', '{STRING_RESULT}');")
+    owning = owning.replace("const saved = flag ? state.get('other') : state.get('');",
+        "if (flag) { state.delete('other'); } "
+        "const saved = state.has('other') ? state.get('other') : state.get('');")
+    return {
+        # Exact 18-call next boundary from HANDOFF. A deletion join loses
+        # unconditional membership, but preserves the tag whenever present.
+        "guarded_saved_read": (saved, "host", 2),
+        "guarded_saved_no_delete": (saved.replace(
+            "if (flag) { state.delete('other'); }", "state.has('other');"), "host", 3),
+        "guarded_saved_always_empty": (saved.replace(
+            "state.has('other') ? state.get('other') : state.get('')", "state.get('')"),
+            "host", 1),
+        "guarded_saved_bool": (boolean, "host", 4),
+        "guarded_saved_number": (number, "host", 4),
+        # The false-only startup returns STRING_RESULT. Future calls with true
+        # delete the guarded entry and return the other independently owned String.
+        "guarded_saved_string_saved": (owning, "host", 2),
+    }
+
+
+def guarded_saved_refusals():
+    saved = guarded_saved_sources()["guarded_saved_read"][0]
+    guard = "state.has('other') ? state.get('other') : state.get('')"
+    deletion = "if (flag) { state.delete('other'); }"
+    missing = saved.replace("state.set('other', 'future');", "state.has('other');")
+    stale = saved.replace(deletion,
+        "const present = state.has('other'); " + deletion)
+    stale = stale.replace(guard, "present ? state.get('other') : state.get('')")
+    other_map = saved.replace(deletion,
+        "const guardState = new Map(); guardState.set('other', true); " + deletion)
+    other_map = other_map.replace(guard,
+        "guardState.has('other') ? state.get('other') : state.get('')")
+    mutated = saved.replace(guard,
+        "state.has('other') ? (state.delete('other'), state.get('other')) : state.get('')")
+    mutated = mutated.replace("state.set(key, true)",
+        "state.set('future', true); state.set(key, true)")
+    return {
+        # Membership cannot supply a tag absent from the method's live local
+        # facts, even when startup always takes the independently typed fallback.
+        "guarded_saved_missing_tag": (missing, 1,
+            "state.has('other'); " + deletion,
+            "state.set('other', 'future'); " + deletion, 2),
+        "guarded_saved_wrong_key": (saved.replace(guard,
+            "state.has('') ? state.get('other') : state.get('')"), 3,
+            "state.has('') ?", "state.has('other') ?", 2),
+        "guarded_saved_wrong_map": (other_map, 3,
+            "guardState.has('other') ?", "state.has('other') ?", 2),
+        # A saved Boolean is not a membership proof after a same-key mutation.
+        "guarded_saved_stale_has": (stale, 3,
+            "const present = state.has('other'); " + deletion,
+            deletion + " const present = state.has('other');", 2),
+        "guarded_saved_mutated_arm": (mutated, 3,
+            "(state.delete('other'), state.get('other'))", "state.get('other')", 2),
+        # Both entries exist here, but the guarded key has different payload
+        # tags on the two paths. A has check must not erase that disagreement.
+        "guarded_saved_disagreeing_tag": (saved.replace(deletion,
+            "if (flag) { state.set('other', true); }"), 4,
+            "if (flag) { state.set('other', true); }", deletion, 2),
+        # Both syntactic arms still require proof for a literal predicate.
+        "guarded_saved_literal_false": (saved.replace(guard,
+            "false ? state.get('other') : state.get('')"), 1,
+            "false ?", "state.has('other') ?", 2),
+        "guarded_saved_literal_true": (saved.replace(guard,
+            "true ? state.get('other') : state.get('')"), 3,
+            "true ?", "state.has('other') ?", 2),
+    }
+
+
 def seeded_carrier_refusals():
     return {
         "result_seeded_number_string_contents": (mixed_result_sources()[
@@ -540,6 +625,12 @@ MIXED_RESULT_TYPES = {
     "saved_join_bool": ("bool", "std::string"),
     "saved_join_number": ("js_num", "double"),
     "saved_join_string_saved": ("std::string", "std::string"),
+    "guarded_saved_read": ("std::string", "std::string"),
+    "guarded_saved_no_delete": ("std::string", "std::string"),
+    "guarded_saved_always_empty": ("std::string", "std::string"),
+    "guarded_saved_bool": ("bool", "std::string"),
+    "guarded_saved_number": ("js_num", "double"),
+    "guarded_saved_string_saved": ("std::string", "std::string"),
 }
 
 

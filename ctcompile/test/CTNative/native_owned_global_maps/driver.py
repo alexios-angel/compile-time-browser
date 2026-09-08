@@ -15,6 +15,7 @@ from .sources import (
     seeded_result_refusals, size_result_sources, size_result_refusals,
     payload_result_sources, payload_result_refusals, mixed_result_sources, mixed_result_refusals,
     saved_read_sources, saved_read_refusals, saved_join_sources, saved_join_refusals,
+    guarded_saved_sources, guarded_saved_refusals,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
@@ -85,6 +86,7 @@ def main():
         **mixed_result_sources(),
         **saved_read_sources(),
         **saved_join_sources(),
+        **guarded_saved_sources(),
     }
     saved = {}
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
@@ -146,6 +148,28 @@ def main():
         ("saved_join_string_saved", "return result;", ("return state.get(false);",)),
         ("saved_join_string_saved", "state.delete(false);", ("state.has(false);",)),
         ("saved_join_string_saved", "state.delete('');", ("state.has('');",)),
+        ("guarded_saved_read", "if (flag) { state.delete('other'); }",
+         ("state.has('other');",)),
+        ("guarded_saved_read", "state.has('other') ? state.get('other') : state.get('')",
+         ("state.get('')",)),
+        ("guarded_saved_read", "state.delete(false);", ("state.has(false);",)),
+        ("guarded_saved_bool", "if (flag) { state.delete('other'); }",
+         ("state.has('other');",)),
+        ("guarded_saved_bool", "state.has('other') ? state.get('other') : state.get('')",
+         ("state.get('')",)),
+        ("guarded_saved_bool", "state.set('temp', saved);",
+         ("state.has('temp');", "state.set('temp', state.get(''));")),
+        ("guarded_saved_number", "if (flag) { state.delete(1); }", ("state.has(1);",)),
+        ("guarded_saved_number", "state.has(1) ? state.get(1) : state.get(0)",
+         ("state.get(0)",)),
+        ("guarded_saved_number", "state.set(false, saved);",
+         ("state.has(false);", "state.set(false, state.get(0));")),
+        ("guarded_saved_string_saved", "state.set(false, saved);", ("state.has(false);",)),
+        ("guarded_saved_string_saved", "return result;", ("return state.get(false);",)),
+        ("guarded_saved_string_saved", "state.delete(false);", ("state.has(false);",)),
+        ("guarded_saved_string_saved", "state.delete('');", ("state.has('');",)),
+        ("guarded_saved_string_saved", "state.set('other', false); state.delete('other');",
+         ("state.set('other', false); state.has('other');",)),
     ):
         live_source, _, live_value = positives[name]
         if live_source.count(old) != 1:
@@ -165,6 +189,8 @@ def main():
             raise RuntimeError("saved_read_write: changed the exact 12-call boundary")
         if name == "saved_join" and len(source_calls(ir.read_text())) != 16:
             raise RuntimeError("saved_join: changed the exact 16-call boundary")
+        if name == "guarded_saved_read" and len(source_calls(ir.read_text())) != 18:
+            raise RuntimeError("guarded_saved_read: changed the exact 18-call boundary")
         if name == "already_resolved":
             ir = resolve_getter(args, ir)
         if name.startswith("legacy_"):
@@ -181,7 +207,7 @@ def main():
             raise RuntimeError(f"{name}: lost live owning proof")
         if ir.read_text() != original or config.read_text() != manifest:
             raise RuntimeError(f"{name}: changed supplied source or manifest")
-        if name in {**saved_read_sources(), **saved_join_sources()}:
+        if name in {**saved_read_sources(), **saved_join_sources(), **guarded_saved_sources()}:
             disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")
             if disabled.read_text() != output.read_text():
                 raise RuntimeError(f"{name}: saved scalar proof depends on optimization policy")
@@ -236,7 +262,8 @@ def main():
                  "result_seeded_bool_string_contents", "result_seeded_mixed_string_saved",
                  "saved_read_write", "saved_read_write_false", "saved_read_write_number",
                  "saved_read_write_string_saved", "saved_join", "saved_join_bool",
-                 "saved_join_number", "saved_join_string_saved"):
+                 "saved_join_number", "saved_join_string_saved", "guarded_saved_read",
+                 "guarded_saved_bool", "guarded_saved_number", "guarded_saved_string_saved"):
         key_ir, key_config, _ = saved[name]
         rollback += check_budgets(args, key_ir, key_config, name,
                                   functions=RESULT_SIGNATURES[name][2])
@@ -380,6 +407,7 @@ def main():
     for name, (source, value, old, replacement, restored_value) in {
         **{name: (*row, 1) for name, row in saved_read_refusals().items()},
         **saved_join_refusals(),
+        **guarded_saved_refusals(),
     }.items():
         js, rejected, count = boundary.prepare(args, name, source)
         if count != 6:
@@ -533,7 +561,7 @@ def main():
                  "result_seeded_bool", "result_seeded_string", "result_seeded_string_saved",
                  "result_seeded_mixed_contents", "result_seeded_join_reseed",
                  "result_seeded_bool_string_contents", "result_seeded_mixed_string_saved",
-                 *saved_read_sources(), *saved_join_sources()):
+                 *saved_read_sources(), *saved_join_sources(), *guarded_saved_sources()):
         _, config, output = saved[name]
         functions = RESULT_SIGNATURES[name][2]
         rerun = owned.lower(args, output, name + "-rerun", config,
@@ -563,6 +591,9 @@ def main():
           f"{len(saved_join_sources())} conditional saved-value programs in both modes; "
           f"{len(saved_join_refusals())} conditional missing/deleted/mixed-tag refusals; "
           "both future getter flags and independent owning strings survive final Map release; "
+          f"{len(guarded_saved_sources())} live has-guarded scalar programs in both modes; "
+          f"{len(guarded_saved_refusals())} absent/stale/wrong-guard/payload refusals; "
+          "guarded future reads own both selected Strings after final Map release; "
           f"{len(seeded_result_refusals())} seeded proof and "
           f"{len(seeded_carrier_refusals())} seeded carrier refusals; "
           f"{len(rollback)} speculative rollback cutoffs")

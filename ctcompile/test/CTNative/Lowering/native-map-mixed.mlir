@@ -128,6 +128,52 @@ function savedJoinBoolean(flag) {
     map.set(0, saved);
     return map.get(0) ? 1 : 2;
 }
+function guardedSavedString(flag) {
+    const map = new Map();
+    map.set(false, false);
+    map.set('keep', 'guarded-owning-\0-string');
+    map.set('fallback', 'fallback');
+    if (flag) { map.delete('keep'); }
+    const saved = map.has('keep') ? map.get('keep') : map.get('fallback');
+    map.set('keep', false);
+    map.delete('fallback');
+    map.set(false, saved);
+    const result = map.get(false);
+    map.clear();
+    return result;
+}
+function guardedSavedNumber(flag) {
+    const map = new Map();
+    map.set(false, false);
+    map.set(0, 11);
+    map.set(1, 23);
+    if (flag) { map.delete(0); }
+    const saved = map.has(0) ? map.get(0) : map.get(1);
+    map.clear();
+    map.set(false, saved);
+    return map.get(false);
+}
+function guardedSavedBoolean(flag) {
+    const map = new Map();
+    map.set(false, false);
+    map.set(true, true);
+    map.set(0, 11);
+    if (flag) { map.delete(true); }
+    const saved = map.has(true) ? map.get(true) : map.get(false);
+    map.clear();
+    map.set(0, saved);
+    return map.get(0) ? 1 : 2;
+}
+function guardedDisjoint(flag) {
+    const map = new Map();
+    map.set(false, false);
+    map.set(0, 11);
+    map.set(1, 23);
+    if (flag) { map.delete(0); }
+    const seen = map.has(0);
+    map.delete(1);
+    return seen ? map.get(0) : 7;
+}
 var traceNumbers = numberKeys();
 var traceSaved = savedString();
 var traceBranches = branch(true) * 10 + branch(false);
@@ -143,6 +189,12 @@ var traceSavedJoinString = (savedJoinString(true) === 'left-with-owned-\0-bytes'
 var traceSavedJoinNumber = savedJoinNumber(true, true) + savedJoinNumber(true, false)
     + savedJoinNumber(false, true) + savedJoinNumber(false, false);
 var traceSavedJoinBoolean = savedJoinBoolean(true) * 10 + savedJoinBoolean(false);
+
+var traceGuardString = (guardedSavedString(false) === 'guarded-owning-\0-string' ? 10 : 0)
+    + (guardedSavedString(true) === 'fallback' ? 2 : 0);
+var traceGuardNumber = guardedSavedNumber(false) * 10 + guardedSavedNumber(true);
+var traceGuardBoolean = guardedSavedBoolean(false) * 10 + guardedSavedBoolean(true);
+var traceGuardDisjoint = guardedDisjoint(false) * 10 + guardedDisjoint(true);
 
 //--- snapshot.js
 function snapshot() {
@@ -277,3 +329,55 @@ function run(flag) {
     return map.get(false) ? 1 : 2;
 }
 var trace = run(true) * 10 + run(false);
+
+//--- guarded-stale-refused.js
+function run(flag) {
+    const map = new Map();
+    map.set(false, false);
+    map.set(0, 11);
+    const seen = map.has(0);
+    if (flag) { map.delete(0); }
+    return seen ? (map.get(0) ? 1 : 2) : 3;
+}
+var trace = run(false) * 10 + run(true);
+
+//--- guarded-wrong-key-refused.js
+function run(flag) {
+    const map = new Map();
+    map.set(false, false);
+    map.set(0, 11);
+    if (flag) { map.delete(0); }
+    return map.has(false) ? (map.get(0) ? 1 : 2) : 3;
+}
+var trace = run(false) * 10 + run(true);
+
+//--- guarded-unknown-arm-refused.js
+function run(flag) {
+    const map = new Map();
+    map.set(false, false);
+    if (flag) { map.set(0, 11); }
+    return map.has(0) ? (map.get(0) ? 1 : 2) : 3;
+}
+var trace = run(false) * 10 + run(true);
+
+//--- guarded-write-refused.js
+function run(flag) {
+    const map = new Map();
+    map.set(false, false);
+    map.set(0, 11);
+    if (flag) { map.delete(0); } else { map.set(0, false); }
+    return map.has(0) ? (map.get(0) ? 1 : 2) : 3;
+}
+var trace = run(false) * 10 + run(true);
+
+//--- guarded-call-refused.js
+function mutate(map) { map.set(0, false); }
+function run(flag) {
+    const map = new Map();
+    map.set(false, false);
+    map.set(0, 11);
+    if (flag) { map.delete(0); }
+    mutate(map);
+    return map.has(0) ? (map.get(0) ? 1 : 2) : 3;
+}
+var trace = run(false) * 10 + run(true);

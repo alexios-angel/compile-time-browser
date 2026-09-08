@@ -121,7 +121,11 @@ refused. A mixed `get` is admitted only when the live structured must-analysis
 independently proves both membership and the payload type from the last write
 on every reaching path. A write takes its tag from a literal or an independently
 proved saved scalar read. `has` adds no payload evidence. Possible aliasing
-writes, callee effects, deletion and loops invalidate contents conservatively.
+writes, callee effects and loops invalidate contents conservatively. Deletion
+clears definite membership while retaining the payload tag valid whenever
+present. A live same-instance/same-key `has` arm can restore membership, but
+never supplies a tag. Record keys and equal tags still intersect across arms;
+a missing record is unknown prior contents, not proof of absence.
 A saved read keeps its own scalar tag after known mutations; branches intersect
 these SSA facts separately from entry contents. Unknown values never gain a tag
 from the Map schema, another invocation or input annotations.
@@ -132,11 +136,11 @@ recognizes selected saved reads before monotone inference, but supplies no
 payload proof itself. Differing or missing arm results remain refused. Published
 captured Map methods now have a bounded structured body proof that checks every
 arm, including constant predicates and an implicit unchanged `else` path.
-The local mixed gate covers **27 observations and twelve refusals** across both
-storage implementations; the published gate covers **89 complete programs**
-and **ten lifetime sanitizer variants**. The next `has`-guarded read after
-conditional deletion needs separate membership and payload evidence; see
-[the current boundary](native-owned-global-maps.md#next-boundary).
+The local mixed gate covers **35 observations and seventeen refusals** across
+both storage implementations. Guarded saved String, Boolean and Number reads
+survive conditional deletion and subsequent writes. Stale observations,
+wrong-key guards, unknown join arms and intervening callee writes refuse.
+See [the published checkpoint](native-owned-global-maps.md).
 
 The read returns its exact scalar by value, preserving saved string ownership.
 Local read/write candidates must belong to the same proved Map family; arbitrary

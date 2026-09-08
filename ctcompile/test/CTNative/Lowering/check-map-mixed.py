@@ -36,7 +36,8 @@ def main():
         text = source + ((args.fixtures / "snapshot.js").read_text() if ordered else "")
         js = args.work / f"{name}.js"
         js.write_text(text)
-        expected = ("traceBranches=23\ntraceDead=2\ntraceNumbers=1334\ntraceRewrite=1\n"
+        expected = ("traceBranches=23\ntraceDead=2\ntraceGuardBoolean=12\ntraceGuardDisjoint=117\n"
+                    "traceGuardNumber=133\ntraceGuardString=12\ntraceNumbers=1334\ntraceRewrite=1\n"
                     "traceSaved=1\ntraceSavedAlias=82\ntraceSavedBoolean=1\ntraceSavedBranch=11\n"
                     "traceSavedCall=1\ntraceSavedJoinBoolean=12\ntraceSavedJoinNumber=56\n"
                     "traceSavedJoinString=12\ntraceSavedNumber=42\n")
@@ -98,8 +99,8 @@ def main():
                 else:
                     assert "mixed native Map read needs independent present payload type evidence" in result, name
                 current = output
-    print("mixed Maps: 27 associative/ordered observations, Node/interpreter, GCC/Clang, "
-          "plain/deduced and ASan/UBSan; 12 live read-proof refusals with forged facts and reruns")
+    print("mixed Maps: 35 associative/ordered observations, Node/interpreter, GCC/Clang, "
+          "plain/deduced and ASan/UBSan; 17 live read-proof refusals with forged facts and reruns")
 
 
 if __name__ == "__main__":

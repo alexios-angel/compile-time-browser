@@ -13,7 +13,7 @@ from .sources import (
     methods, owned, boundary, host, parameter_sources, seeded_result_sources, key_fact_sources,
     joined_result_sources, size_result_sources, payload_result_sources, STRING_RESULT,
     RESULT_SIGNATURES, mixed_result_sources, MIXED_RESULT_TYPES, saved_read_sources,
-    saved_join_sources, OTHER_STRING_RESULT,
+    saved_join_sources, OTHER_STRING_RESULT, guarded_saved_sources,
 )
 
 
@@ -64,7 +64,9 @@ def check_result_calls(cpp, name, mode):
         **{name: ["get", "set", "size"] for name in mixed_result_sources()},
         **{name: ["get", "set", "size"] for name in saved_read_sources()},
         **{name: ["get", "set", "get", "set", "size"] for name in saved_join_sources()},
+        **{name: ["get", "set", "get", "set", "size"] for name in guarded_saved_sources()},
         "saved_join_string_saved": ["get", "set", "size"],
+        "guarded_saved_string_saved": ["get", "set", "size"],
         "saved_read_write_repeated": ["get", "set", "get", "set", "size"],
         "seeded_dynamic_overwrite": ["get", "set", "get", "set"],
         "seeded_dynamic_repeated": ["get", "set", "get", "set", "get"],
@@ -78,16 +80,18 @@ def check_result_calls(cpp, name, mode):
         raise RuntimeError(f"{name}/{mode}: lost runtime getter/mutation/final observation calls")
     seeded = {**seeded_result_sources(), **key_fact_sources(), **joined_result_sources(),
               **size_result_sources(), **payload_result_sources(), **mixed_result_sources(),
-              **saved_read_sources(), **saved_join_sources()}
+              **saved_read_sources(), **saved_join_sources(), **guarded_saved_sources()}
     if name in seeded and not re.search(r"ctnative::map_get(?:_\w+)?(?:<[^>]+>)?\(", cpp):
         raise RuntimeError(f"{name}/{mode}: replaced the live seeded Map lookup with a summary")
     if name in size_result_sources() and "ctnative::map_delete(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: dropped the live size-keyed deletion")
     if name in {"result_seeded_string_saved", "result_seeded_mixed_string_saved",
-                "saved_read_write_string_saved", "saved_join_string_saved"} \
+                "saved_read_write_string_saved", "saved_join_string_saved",
+                "guarded_saved_string_saved"} \
             and "ctnative::map_delete(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: dropped the saved string's source deletion")
-    mixed = {**mixed_result_sources(), **saved_read_sources(), **saved_join_sources()}
+    mixed = {**mixed_result_sources(), **saved_read_sources(), **saved_join_sources(),
+             **guarded_saved_sources()}
     if name in mixed:
         source = mixed[name][0]
         for method in ("set", "get", "has", "delete"):
@@ -304,7 +308,7 @@ int main() {
 
 
 def string_payload_lifetime(args, cpp, name, mode, compiler):
-    joined = name == "saved_join_string_saved"
+    joined = name in {"saved_join_string_saved", "guarded_saved_string_saved"}
     initial_size = 2 if joined else 1
     changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
     if count != 1:
@@ -413,7 +417,7 @@ def standalone(args, output, name, value, compilers, nm):
             result, params, _ = RESULT_SIGNATURES[name]
             getter_params = "js_num" if name in {
                 "result_formal", "result_seeded_formal", "seeded_dynamic_formal"} else ""
-            if name in saved_join_sources():
+            if name in {**saved_join_sources(), **guarded_saved_sources()}:
                 getter_params = "bool"
             if (f"std::function<{result}({getter_params})>" not in cpp
                     or f"std::function<js_num({params})>" not in cpp):
@@ -446,14 +450,15 @@ def standalone(args, output, name, value, compilers, nm):
         if name in {"shared_growing", "shared_parameter"}:
             shared_lifetime(args, cpp, name, mode, compilers[1])
         if name in {"result_seeded_string_saved", "result_seeded_mixed_string_saved",
-                    "saved_read_write_string_saved", "saved_join_string_saved"}:
+                    "saved_read_write_string_saved", "saved_join_string_saved",
+                    "guarded_saved_string_saved"}:
             string_payload_lifetime(args, cpp, name, mode, compilers[1])
 
 
 def check_call_preservation(original, output, name):
     if source_calls(original) != source_calls(output):
         raise RuntimeError(f"{name}: failed ownership changed live source call operands")
-    if name.startswith("saved_join"):
+    if name.startswith(("saved_join", "guarded_saved")):
         pattern = (r"^\s*(?:%[-\w.$]+(?::\d+)? = )?((?:ctjs\.(?:truthy|cond_br|br)|"
                    r"scf\.(?:if|yield))\b[^\n]*)")
         if re.findall(pattern, original, re.M) != re.findall(pattern, output, re.M):

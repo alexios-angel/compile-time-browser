@@ -36,6 +36,9 @@ struct fact {
     mlir::Value instance;
     mlir::Value key;
     payloadKind payload = payloadKind::Unknown;
+    // Payload is valid whenever present, independently of definite membership.
+    // Deletion cannot change a surviving value, so it clears only this flag.
+    bool present = true;
     bool matches(const fact & other) const {
         return instance == other.instance &&
                comparePrimitiveMapKeys(key, other.key) == PrimitiveMapKeyRelation::Same;
@@ -43,7 +46,7 @@ struct fact {
 };
 
 struct state {
-    llvm::SmallVector<fact> present;
+    llvm::SmallVector<fact> entries;
     // A has result is a snapshot. Erasure invalidates its implication even
     // though its SSA boolean remains available to later conditions.
     llvm::DenseSet<mlir::Operation *> observations;
@@ -64,17 +67,23 @@ struct state {
     }
 
     bool contains(fact value) const {
-        return llvm::any_of(present, [&](const fact & old) { return old.matches(value); });
+        return llvm::any_of(entries, [&](const fact & old) { return old.matches(value); });
     }
     void add(fact value) {
-        if (!contains(value)) { present.push_back(value); }
+        for (fact & old : entries) {
+            if (!old.matches(value)) { continue; }
+            old.present |= value.present;
+            return;
+        }
+        entries.push_back(value);
     }
     void intersect(const state & other) {
-        llvm::erase_if(present, [&](const fact & value) { return !other.contains(value); });
-        for (fact & value : present) {
+        llvm::erase_if(entries, [&](const fact & value) { return !other.contains(value); });
+        for (fact & value : entries) {
             const auto found = llvm::find_if(
-                other.present, [&](const fact & candidate) { return value.matches(candidate); });
+                other.entries, [&](const fact & candidate) { return value.matches(candidate); });
             if (value.payload != found->payload) { value.payload = {}; }
+            value.present &= found->present;
         }
         for (mlir::Operation * op : llvm::make_early_inc_range(observations)) {
             if (!other.observations.contains(op)) { observations.erase(op); }
@@ -177,10 +186,10 @@ struct presenceAnalysis {
             current = {};
             return;
         }
-        llvm::erase_if(current.present, [&](const fact & value) {
+        llvm::erase_if(current.entries, [&](const fact & value) {
             return effect.erased.contains(familyOf(value.instance));
         });
-        for (fact & value : current.present) {
+        for (fact & value : current.entries) {
             if (effect.written.contains(familyOf(value.instance))) { value.payload = {}; }
         }
         for (mlir::Operation * op : llvm::make_early_inc_range(current.observations)) {
@@ -222,7 +231,9 @@ struct presenceAnalysis {
                                            {{}, current.sizeBounds.lookup(affected.key)}) !=
                        PrimitiveMapKeyRelation::Distinct;
         };
-        llvm::erase_if(current.present, mayErase);
+        for (fact & value : current.entries) {
+            if (mayErase(value)) { value.present = false; }
+        }
         for (mlir::Operation * op : llvm::make_early_inc_range(current.observations)) {
             if (mayErase(entry(llvm::cast<ctjs::CallOp>(op)))) { current.observations.erase(op); }
         }
@@ -234,7 +245,7 @@ struct presenceAnalysis {
     void write(state & current, ctjs::CallOp call) const {
         fact added = entry(call);
         added.payload = current.scalar(call.getArgs()[1]);
-        for (fact & previous : current.present) {
+        for (fact & previous : current.entries) {
             if (familyOf(previous.instance) != familyOf(added.instance)) { continue; }
             const auto relation = comparePrimitiveMapKeys(
                 previous.key, added.key, {{}, current.sizeBounds.lookup(previous.key)},
@@ -242,6 +253,7 @@ struct presenceAnalysis {
             if (relation == PrimitiveMapKeyRelation::Distinct) { continue; }
             if (previous.instance == added.instance && relation == PrimitiveMapKeyRelation::Same) {
                 previous.payload = added.payload;
+                previous.present = true;
             } else if (previous.payload != added.payload) {
                 previous.payload = {};
             }
@@ -264,8 +276,8 @@ struct presenceAnalysis {
             const auto instance = instanceOf(read.getObject());
             llvm::SmallVector<mlir::Value> distinct;
             unsigned candidates = 0;
-            for (const fact & value : current.present) {
-                if (value.instance != instance) { continue; }
+            for (const fact & value : current.entries) {
+                if (!value.present || value.instance != instance) { continue; }
                 if (candidates++ == kMaxPrimitiveMapSizeCandidates) { break; }
                 if (llvm::all_of(distinct, [&](mlir::Value previous) {
                         return comparePrimitiveMapKeys(
@@ -351,8 +363,8 @@ struct presenceAnalysis {
                 current.observations.insert(op);
             } else if (action == "get") {
                 const auto wanted = entry(call);
-                for (const fact & value : current.present) {
-                    if (!value.matches(wanted)) { continue; }
+                for (const fact & value : current.entries) {
+                    if (!value.present || !value.matches(wanted)) { continue; }
                     proved.insert(op);
                     if (value.payload != payloadKind::Unknown) {
                         payloads[op] = value.payload;

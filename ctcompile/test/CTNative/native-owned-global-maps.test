@@ -47,3 +47,15 @@
 # both flags after publication owners are released. Both selected strings own
 # their bytes across source/writeback mutation and deletion, independent entry
 # execution, caller-buffer mutation and destruction of both Maps under sanitizers.
+# A fresh has guard proves a conditional read only for its same live Map/key,
+# with an independently proved payload tag whenever present. Conditional delete
+# joins retain that tag without inventing unconditional membership; the original
+# 18-call boundary observes size 2 while its no-delete/fallback-only controls
+# observe 3/1. Both flags preserve Bool/Number/String results and every Map call.
+# Missing payload tags, wrong Map/key guards, stale has results, intervening
+# deletes, disagreeing payload paths and literal-only predicates remain refusals.
+# All retain calls and branch/yield operands under valid Bool/String forgeries,
+# stale/fresh manifests, reruns and both optimization policies. Incomplete budgets
+# retain source IR. A guarded long String fixture runs only false at startup;
+# saved typed native callables later run both flags, own both selected strings
+# across entry overwrite/delete, owner release, reentry and final Map destruction.

@@ -26,14 +26,17 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
     // even when its key may alias an earlier entry. In that case both payloads
     // must have the same independently proved tag to retain a definite type.
     // Presence alone never supplies a payload tag. A possibly aliasing delete
-    // removes both facts; an exact-key set replaces the old payload entirely.
+    // removes definite membership, but cannot change a surviving payload. Its
+    // tag stays valid whenever present; an exact set replaces it entirely.
     // This local contents fact is independent of the family's return worklist
     // and publishes a tag only after the entire body/use proof completes.
     struct entry_fact {
         mlir::Value key;
         std::optional<mlir::TypeID> tag;
+        bool present = true;
     };
     llvm::SmallVector<entry_fact> entries;
+    llvm::DenseSet<mlir::Operation *> observations;
     llvm::DenseMap<mlir::Value, unsigned> sizeBounds;
     const auto primitiveTag = [&](mlir::Value key) -> std::optional<mlir::TypeID> {
         auto tag = tags.find(key);
@@ -49,7 +52,10 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                 comparePrimitiveMapKeys(it->key, key, keyEvidence(it->key), keyEvidence(key));
             if (relation == PrimitiveMapKeyRelation::Distinct) {
                 ++it;
-            } else if (erase || relation == PrimitiveMapKeyRelation::Same) {
+            } else if (erase) {
+                it->present = false;
+                ++it;
+            } else if (relation == PrimitiveMapKeyRelation::Same) {
                 it = entries.erase(it);
             } else {
                 // The old payload survives if these runtime keys differ; the
@@ -59,7 +65,39 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                 ++it;
             }
         }
+        if (erase) {
+            for (auto * observed : llvm::make_early_inc_range(observations)) {
+                if (!step()) { return false; }
+                auto call = llvm::cast<ctjs::CallOp>(observed);
+                auto observedKey = call.getArgs()[0];
+                if (comparePrimitiveMapKeys(observedKey, key, keyEvidence(observedKey),
+                                            keyEvidence(key)) !=
+                    PrimitiveMapKeyRelation::Distinct) {
+                    observations.erase(observed);
+                }
+            }
+        }
         if (!erase) { entries.push_back({key, tag}); }
+        return true;
+    };
+    const auto learn = [&](mlir::Value condition) {
+        while (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
+            if (!step()) { return false; }
+            condition = truthy.getValue();
+        }
+        auto call = condition.getDefiningOp<ctjs::CallOp>();
+        if (!call || !observations.contains(call)) { return true; }
+        // Only a live, checked has on this captured Map supplies membership.
+        // It never creates a payload tag or selects away the other arm.
+        auto key = call.getArgs()[0];
+        for (auto & entry : entries) {
+            if (!step()) { return false; }
+            if (comparePrimitiveMapKeys(entry.key, key) == PrimitiveMapKeyRelation::Same) {
+                entry.present = true;
+                return true;
+            }
+        }
+        entries.push_back({key, {}});
         return true;
     };
     llvm::DenseSet<mlir::Operation *> reads, calls, upvalues;
@@ -121,14 +159,26 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                     (void)entry;
                     if (!step()) { return false; }
                 }
+                for (auto * observed : observations) {
+                    (void)observed;
+                    if (!step()) { return false; }
+                }
                 const auto incoming = entries;
+                const auto incomingObservations = observations;
+                if (!learn(branch.getCondition())) { return false; }
                 if (!self(self, branch.getThenRegion().front(), depth + 1)) { return false; }
                 auto thenEntries = std::move(entries);
+                auto thenObservations = std::move(observations);
                 for (const auto & entry : incoming) {
                     (void)entry;
                     if (!step()) { return false; }
                 }
+                for (auto * observed : incomingObservations) {
+                    (void)observed;
+                    if (!step()) { return false; }
+                }
                 entries = incoming;
+                observations = incomingObservations;
                 if (hasElse && !self(self, branch.getElseRegion().front(), depth + 1)) {
                     return false;
                 }
@@ -142,11 +192,16 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                             continue;
                         }
                         if (left.tag != right.tag) { left.tag.reset(); }
+                        left.present &= right.present;
                         joined.push_back(left);
                         break;
                     }
                 }
                 entries = std::move(joined);
+                for (auto * observed : llvm::make_early_inc_range(observations)) {
+                    if (!step()) { return false; }
+                    if (!thenObservations.contains(observed)) { observations.erase(observed); }
+                }
                 for (unsigned index = 0; index < branch.getNumResults(); ++index) {
                     if (!step()) { return false; }
                     const auto left = thenYield.getOperand(index),
@@ -188,6 +243,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                     for (const auto & entry : llvm::ArrayRef<entry_fact>(entries).take_front(
                              kMaxPrimitiveMapSizeCandidates)) {
                         if (!step()) { return false; }
+                        if (!entry.present) { continue; }
                         bool disjoint = true;
                         for (mlir::Value previous : distinct) {
                             if (!step()) { return false; }
@@ -227,12 +283,15 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                         tags.try_emplace(invoke.getResult(),
                                          mlir::TypeID::get<ctjs::BooleanAttr>());
                         if (key == "delete" && !mutate(invoke.getArgs()[0], true)) { return false; }
+                        if (key == "has") { observations.insert(invoke); }
                     } else if (key == "get") {
                         for (const auto & entry : entries) {
                             if (!step()) { return false; }
                             if (comparePrimitiveMapKeys(entry.key, invoke.getArgs()[0]) ==
                                 PrimitiveMapKeyRelation::Same) {
-                                if (entry.tag) { tags.try_emplace(invoke.getResult(), *entry.tag); }
+                                if (entry.present && entry.tag) {
+                                    tags.try_emplace(invoke.getResult(), *entry.tag);
+                                }
                                 break;
                             }
                         }
