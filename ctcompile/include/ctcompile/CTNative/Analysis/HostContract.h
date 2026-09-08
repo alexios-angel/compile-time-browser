@@ -69,9 +69,10 @@ struct HostPrimitiveArgument {
 
 // One immutable environment slot owns this exact standard Map, constructed
 // empty. The complete live census of every closure sharing that slot permits
-// only primitive contents and
-// standard size/set/get/has/delete effects. These effects remain runtime; no
-// startup value or result type is promised. Optional cell operations describe
+// primitive contents or fresh method-local leaf objects with fixed scalar
+// fields, and standard size/set/get/has/delete effects. Object payloads cannot
+// escape through a method result, field, key or unchecked use. Effects remain
+// runtime; no startup value or result type is promised. Optional cell operations describe
 // the original binding; after lifting, the call reads its environment value.
 // Every handle is rederived from the current module, never from native markers.
 struct HostCapturedMap {
@@ -85,6 +86,8 @@ struct HostCapturedMap {
     std::vector<ctjs::LoadUpvalueOp> upvalues;
     std::vector<ctjs::GetPropertyOp> reads;
     std::vector<ctjs::CallOp> calls;
+    std::vector<ctjs::CreateObjectOp> leafObjects;
+    std::vector<ctjs::SetPropertyOp> leafWrites;
     ctjs::LoadUpvalueOp argument;
 };
 

@@ -521,6 +521,19 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         }
         result.parameters.push_back({member, {}});
     }
+    // Once any sibling can allocate a leaf object, unknown Map reads cannot
+    // inherit the primitive-only contents guarantee. Inspect the complete
+    // current family before proving even one invocation result. The body
+    // proof below still independently checks every allocation and its uses.
+    bool primitiveContents = true;
+    for (auto & parameters : result.parameters) {
+        const auto census = parameters.function.getBody().walk([&](mlir::Operation * operation) {
+            if (!step()) { return mlir::WalkResult::interrupt(); }
+            if (llvm::isa<ctjs::CreateObjectOp>(operation)) { primitiveContents = false; }
+            return mlir::WalkResult::advance();
+        });
+        if (census.wasInterrupted()) { return {}; }
+    }
     // Establish invocation results before joining the complete method census.
     // Two calls to one method may have an acyclic result dependency even when
     // a method-level worklist would wait for its own unpublished result. Each
@@ -550,7 +563,8 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                 // Provisional reads/calls never escape into the family plan.
                 HostCapturedMap scratch;
                 PrimitiveAlternatives alternatives;
-                if (!capturedMapBody(member, prepared, parameters, scratch, alternatives)) {
+                if (!capturedMapBody(member, prepared, primitiveContents, parameters, scratch,
+                                     alternatives)) {
                     return {};
                 }
                 if (alternatives.known && (alternatives.truthy | alternatives.falsy)) {
@@ -573,7 +587,8 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         PrimitiveAlternatives alternatives;
         if (!capturedMapParameters(parameters.function, prepared, familyCalls[index],
                                    completedResults, parameters) ||
-            !capturedMapBody(parameters.function, prepared, parameters, result, alternatives)) {
+            !capturedMapBody(parameters.function, prepared, primitiveContents, parameters, result,
+                             alternatives)) {
             return {};
         }
     }

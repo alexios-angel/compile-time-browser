@@ -42,7 +42,7 @@ struct analyzer {
                                llvm::ArrayRef<mlir::Operation *> calls,
                                const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
                                HostMethodParameters & result);
-    bool capturedMapBody(ctjs::FuncOp function, bool prepared,
+    bool capturedMapBody(ctjs::FuncOp function, bool prepared, bool primitiveContents,
                          const HostMethodParameters & parameters, HostCapturedMap & result,
                          PrimitiveAlternatives & returnAlternatives);
     ctjs::CreateObjectOp object(mlir::Value value, unsigned depth = 0);

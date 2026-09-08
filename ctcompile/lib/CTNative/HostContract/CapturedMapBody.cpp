@@ -9,18 +9,20 @@
 
 namespace ctcompile::ctnative::host_detail {
 
-bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
+bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primitiveContents,
                                const HostMethodParameters & parameters, HostCapturedMap & result,
                                PrimitiveAlternatives & returnAlternatives) {
     // This is an effects and ownership proof, not an evaluation of the first
     // invocation. The immutable slot always denotes this Map; its contents
     // may change at every call. A complete body census closes all writes over
-    // primitives, making get results primitive without promising a value or
-    // native carrier. Type inference must still prove the latter separately.
+    // primitives and fresh leaf objects. No object can own another object or
+    // the Map, escape to a caller, or execute an accessor. The native identity,
+    // field and Map analyses must still independently prove their carriers.
     auto & body = function.getBody().front();
     const auto firstRead = result.reads.size();
     const auto firstUpvalue = result.upvalues.size();
-    llvm::DenseSet<mlir::Value> maps, primitives, flags;
+    llvm::DenseSet<mlir::Value> maps, primitives, flags, objects;
+    llvm::DenseSet<mlir::Operation *> objectWrites, objectStores;
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> alternatives;
     // All checked capture loads/fluent returns denote this one runtime Map.
     // Each invocation starts with unknown contents. A set preserves presence
@@ -137,6 +139,22 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                 // exact i1 constants can serve as conditions in this body proof.
                 if (!llvm::isa<mlir::IntegerAttr>(constant.getValue())) { return false; }
                 if (constant.getType().isInteger(1)) { flags.insert(constant.getResult()); }
+            } else if (auto made = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
+                objects.insert(made.getResult());
+                result.leafObjects.push_back(made);
+            } else if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
+                const auto payload = alternatives.lookup(write.getValue());
+                constexpr unsigned scalar =
+                    PrimitiveAlternatives::Number | PrimitiveAlternatives::Boolean |
+                    PrimitiveAlternatives::Null | PrimitiveAlternatives::Undefined;
+                const unsigned mask = payload.truthy | payload.falsy;
+                if (!objects.contains(write.getObject()) || !ordinaryKey(keyOf(write.getKey())) ||
+                    !primitives.contains(write.getValue()) || !payload.known || !mask ||
+                    (mask & ~scalar)) {
+                    return false;
+                }
+                objectWrites.insert(write);
+                result.leafWrites.push_back(write);
             } else if (auto truthy = llvm::dyn_cast<ctjs::TruthyOp>(operation)) {
                 if (!primitives.contains(truthy.getValue())) { return false; }
                 flags.insert(truthy.getResult());
@@ -292,8 +310,11 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                 if (key == "size" || invoke.getArgs().size() != (key == "set" ? 2u : 1u)) {
                     return false;
                 }
-                for (mlir::Value argument : invoke.getArgs()) {
-                    if (!step() || !primitives.contains(argument)) { return false; }
+                for (auto [index, argument] : llvm::enumerate(invoke.getArgs())) {
+                    if (!step()) { return false; }
+                    if (primitives.contains(argument)) { continue; }
+                    if (key != "set" || index != 1 || !objects.contains(argument)) { return false; }
+                    objectStores.insert(invoke);
                 }
                 result.calls.push_back(invoke);
                 calls.insert(invoke);
@@ -304,19 +325,21 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
                         return false;
                     }
                 } else {
-                    primitives.insert(invoke.getResult());
                     if (key == "has" || key == "delete") {
+                        primitives.insert(invoke.getResult());
                         alternatives.try_emplace(
                             invoke.getResult(),
                             PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::BooleanAttr>()));
                         if (key == "delete" && !mutate(invoke.getArgs()[0], true)) { return false; }
                         if (key == "has") { observations.insert(invoke); }
                     } else if (key == "get") {
+                        if (primitiveContents) { primitives.insert(invoke.getResult()); }
                         for (const auto & entry : entries) {
                             if (!step()) { return false; }
                             if (comparePrimitiveMapKeys(entry.key, invoke.getArgs()[0]) ==
                                 PrimitiveMapKeyRelation::Same) {
                                 if (entry.present && entry.payload.known) {
+                                    primitives.insert(invoke.getResult());
                                     alternatives.try_emplace(invoke.getResult(), entry.payload);
                                 }
                                 break;
@@ -366,6 +389,21 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
             if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
                 (reads.contains(use.getOwner()) && use.getOperandNumber() == 0) ||
                 (calls.contains(use.getOwner()) && use.getOperandNumber() == 1)) {
+                continue;
+            }
+            return false;
+        }
+    }
+    // A method-local object is a leaf owner, with the captured Map as its only
+    // possible longer-lived owner. Check every use, including uses outside the
+    // walked body. Neither native markers nor provider allocation tokens can
+    // authorize a field, alias, escape or future invocation here.
+    for (mlir::Value object : objects) {
+        for (mlir::OpOperand & use : object.getUses()) {
+            if (!step()) { return false; }
+            if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+                (objectWrites.contains(use.getOwner()) && use.getOperandNumber() == 0) ||
+                (objectStores.contains(use.getOwner()) && use.getOperandNumber() == 3)) {
                 continue;
             }
             return false;

@@ -21,7 +21,7 @@ struct OwnedGlobalMethodTable {
     ctjs::FuncOp factory;
     ctjs::CreateObjectOp table;
     llvm::SmallVector<OwnedGlobalMethod> methods;
-    llvm::SmallVector<HostCallableEdge> calls;
+    llvm::SmallVector<HostCallableEdge, 0> calls;
     ctjs::FuncOp wrapper;
     ctjs::CallDirectOp wrapperCall;
     std::optional<HostCapturedMap> capturedMap;

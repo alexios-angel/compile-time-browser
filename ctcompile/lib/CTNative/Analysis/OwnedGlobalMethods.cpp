@@ -95,7 +95,9 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
                          edge.capturedMap->parameters != capture->parameters ||
                          edge.capturedMap->upvalues != capture->upvalues ||
                          edge.capturedMap->reads != capture->reads ||
-                         edge.capturedMap->calls != capture->calls)) ||
+                         edge.capturedMap->calls != capture->calls ||
+                         edge.capturedMap->leafObjects != capture->leafObjects ||
+                         edge.capturedMap->leafWrites != capture->leafWrites)) ||
             edge.call->getParentOfType<ctjs::FuncOp>() != entry) {
             reject("owned global method table has another environment or invocation context");
             return;
@@ -176,7 +178,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     for (mlir::Operation * operation : operations) {
         if (!spend()) { return; }
         if (auto made = llvm::dyn_cast<ctjs::CreateObjectOp>(operation)) {
-            if (made != owner && made != table) {
+            if (made != owner && made != table &&
+                (!capture || !llvm::is_contained(capture->leafObjects, made))) {
                 reject("owned global method table has another allocation");
             }
         }
@@ -196,7 +199,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
             loads.push_back(load);
         }
         if (auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(operation)) {
-            if (write != field && !methodInitializations.contains(write)) {
+            if (write != field && !methodInitializations.contains(write) &&
+                (!capture || !llvm::is_contained(capture->leafWrites, write))) {
                 reject("owned global method fields cannot be replaced or extended");
             }
         }

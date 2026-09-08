@@ -140,6 +140,11 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                         if (checked.roots().front().methodTable &&
                             checked.roots().front().methodTable->capturedMap) {
                             prepareNativeMaps(*prepared, &checked);
+                            // The host body proves confinement of future local
+                            // leaves, not their C++ representation. Rebuild the
+                            // existing object/field use proof after Map actions
+                            // are known, just as for an ordinary native source.
+                            prepareNativeObjectIdentities(*prepared);
                             transformed.moduleSha256 = hostContractFingerprint(*prepared);
                         }
                         const OwnedGlobalRoots final(*prepared, transformed, hostMaxSteps);
