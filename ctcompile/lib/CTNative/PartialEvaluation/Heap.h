@@ -23,12 +23,8 @@ struct value {
     mlir::Attribute constant;
     unsigned node = 0;
     std::string method;
-    static value primitive(mlir::Attribute attr) {
-        return {kind::constant, attr, 0, {}};
-    }
-    static value reference(unsigned id) {
-        return {kind::reference, {}, id, {}};
-    }
+    static value primitive(mlir::Attribute attr) { return {kind::constant, attr, 0, {}}; }
+    static value reference(unsigned id) { return {kind::reference, {}, id, {}}; }
 };
 
 struct node {

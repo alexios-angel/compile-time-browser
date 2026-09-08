@@ -10,17 +10,29 @@ namespace ctcompile::ctnative {
 namespace {
 
 // A completion query, not an effect summary for native admission. Apart from
-// explicit calls/throws/returns, only declaratively pure operations qualify.
+// explicit calls/throws/returns, only declaratively pure operations qualify
+// for unwind payloads. Normal returns can also cross imported frame/root
+// bookkeeping: its failure cannot supply a successful return's value. In
+// particular frame_enter's depth failure is NOT an explicit thrown operand,
+// so it still prevents inferring an explicit-only unwind payload.
 // Unknown effects and nested handlers require a richer proof and stay boxed.
 // Rebuild this query for each visit: neither markers nor earlier IR can supply
 // an escaping payload or a normal return. Limits bound both work and the C++
 // recursion stack.
 struct invokeCompletions {
+    enum class Kind {
+        NormalReturn,
+        Unwind
+    };
+
+    Kind kind;
     unsigned remaining = 4096;
     llvm::DenseSet<mlir::Operation *> active;
     llvm::DenseSet<mlir::Operation *> complete;
     llvm::SmallVector<mlir::Value> thrown;
     llvm::SmallVector<mlir::Value> returned;
+
+    explicit invokeCompletions(Kind kind) : kind(kind) {}
 
     bool collect(ctjs::CallDirectOp call) {
         auto target =
@@ -45,6 +57,13 @@ struct invokeCompletions {
                     if (active.size() == 1) { returned.push_back(completion.getValue()); }
                 } else if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) {
                     if (!collect(direct)) { return false; }
+                } else if (kind == Kind::NormalReturn &&
+                           llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(
+                               operation)) {
+                    // This is not permission to remove the frame or any
+                    // exceptional edge. Native admission must independently
+                    // prove the complete component before dropping either.
+                    continue;
                 } else if (operation.getNumRegions() != 0 || !mlir::isPure(&operation)) {
                     return false;
                 }
@@ -73,7 +92,7 @@ mlir::LogicalResult TypeInference::visitCallOperation(
     // verifier prevents that value from reaching the unwind continuation.
     // Join the actual helper's returns only after rebuilding the bounded
     // completion proof. No return is synthesized for a throw-only body.
-    invokeCompletions completions;
+    invokeCompletions completions{invokeCompletions::Kind::NormalReturn};
     if (!getSolverConfig().isInterprocedural() || results.size() != 1 ||
         !completions.collect(direct) || completions.returned.empty()) {
         for (auto * result : results) { setToEntryState(static_cast<TypeLattice *>(result)); }
@@ -101,7 +120,7 @@ void TypeInference::visitNonControlFlowArguments(
         return;
     }
     auto call = llvm::dyn_cast<ctjs::CallDirectOp>(invocation.getBody().front().front());
-    invokeCompletions completions;
+    invokeCompletions completions{invokeCompletions::Kind::Unwind};
     if (!call || !completions.collect(call) || completions.thrown.empty()) {
         setAllToEntryStates(nonSuccessorInputLattices);
         return;
