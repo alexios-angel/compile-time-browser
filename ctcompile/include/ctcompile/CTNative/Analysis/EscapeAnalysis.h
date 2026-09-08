@@ -436,7 +436,8 @@ struct ArrayContentsEvidence {
 /// reads/overwrites, own String-property object writes/reads/deletes/copies,
 /// strict equality, ToBoolean, logical negation, typeof, void, supported static
 /// binary operations on independently non-BigInt origins, arithmetic unary
-/// operations and loose equality on independently primitive non-BigInt origins,
+/// operations, loose equality and relational comparisons on independently
+/// primitive non-BigInt origins,
 /// truthy and return.
 /// Object reads require an earlier own write; keys longer than 256 bytes and
 /// __proto__ refuse. Named/computed object deletions erase only the current own
@@ -478,8 +479,13 @@ struct ArrayContentsEvidence {
 /// origins prove primitive non-BigInt inputs. Its VM primitive paths never
 /// invoke user conversion or the reentry-depth guard. Saved reads retain their
 /// original identity across overwrites; no operand value, key or branch choice
-/// is inferred. Relational kinds still refuse: even a primitive operand reaches
-/// to_primitive's catchable reentry-depth guard. Other conversion kinds refuse.
+/// is inferred. Relational kinds require the same independent original operands;
+/// their normal String/static-number paths yield only an independent Boolean.
+/// Their to_primitive depth guard can throw an unrelated RangeError even for
+/// primitives. As with Neg/Plus, the whole-frame query's exclusion of calls,
+/// handlers and publication prevents retention of its unpublished fresh locals;
+/// this is not normal-completion or no-throw/effect evidence. Opaque/object and
+/// BigInt inputs remain refused. Other conversion kinds refuse.
 /// Joins keep exact separate states rather than unioning overwrite targets. Truthy
 /// accepts an external value only as a noncapturing predicate, never an element.
 /// Exact entry !ctjs.value identities may travel through unused register arguments

@@ -1274,3 +1274,92 @@ The completed postgate checks confirm that all **nineteen code/test paths**
 match committed HEAD, frozen input and final devbox sources. Both actual emitted
 leaf programs contain no Script/VM symbols. Evidence:
 `/tmp/ctcompile-leaf-object-postgate.log` and `-final-hashes.json`.
+
+## Primitive relational origins, 2026-09-08 (focused gate passed)
+
+This continues the exact relational boundary left by **`5e2cb6b2`** and the
+**`5d2d843a`** handoff. `computeArrayContents` now accepts Lt, Le, Gt and Ge
+only when **both original operand origins** independently prove Undefined,
+Null, Boolean, Number or String. The proof follows saved reads and every
+structural incoming arm; a later primitive overwrite cannot repair an older
+object/BigInt origin. Existing Eq and StrictEq behavior is preserved. No type,
+completion or confinement report supplies authority, and `operandRole` remains
+unchanged. Results are independent Booleans with no inferred truth, key,
+index, alias or branch-liveness fact.
+
+The runtime argument is deliberately narrower than no-throw. Current
+`Script/vm/coerce.cpp::compare_relational` passes both operands, in source order,
+through `to_primitive`. On these independently proved primitive categories,
+normal execution then uses String/String byte comparison or static numeric
+conversion; neither invokes a user conversion or returns an input object.
+The unconditional `to_primitive` depth guard can still throw an unrelated
+RangeError above depth 512. `script/vm.hpp::make_error` attaches only primitive
+message/stack data and a pre-existing error prototype. The entire contents
+query refuses calls, publication, closure creation and handlers, so none of
+its fresh local identities is available to an outer catch or an Error prototype
+accessor reached by uncaught-error description. The unwind oracle excludes the
+ending frame's register window (`unwind_to_handler`/`each_root`). This justifies
+retention on an early exit, **not normal completion or an effect/no-throw
+contract**. C++ String parsing may allocate; allocation success is unproved.
+No dynamic deep-stack measurement is claimed. Native lifetime/effect consumers
+still require their own proof. No runtime/browser source changed.
+
+The independent unit table now runs for Eq and each of the four relational
+kinds. Each passes **75 rows**, **34 live mutation states**, an exact
+**64-work-unit** wide snapshot increment, and **3,300 incomplete retention
+budget cutoffs**, alongside the exhaustive incomplete contents budgets. Controls cover both operands, original array/field
+reads across replacement/deletion, every structural arm, retained aliases,
+opaque/BigInt/object exclusions, invalid result keys, fresh/stale completion
+markers, and actual publication before/after the comparison, retaining calls,
+explicit throws and local exception handlers. The latter keep the exceptional
+retention argument bounded to the function subset it audited.
+
+The initial focused devbox run passes **11/12 CTests in 87.98 seconds**.
+The only failure is five repetitions of the new handler row, one per comparison
+kind: it expects `UnsupportedOperation` (2), while the existing non-cf successor
+guard returns `UnsupportedControlFlow` (1) at `ctjs.push_handler`.
+The query already refuses with empty evidence, and the retention refusal and
+budget checks pass. Correcting only that expected enum fixes the test; a
+nearby comment now explicitly limits the guard-free/catchable-throw statement
+to Eq. No production behavior or JavaScript source changes in the correction.
+The subsequent nineteen-step focused rebuild passes, followed by **12/12
+CTests in 83.03 seconds**, including **all eight escape CTests**. All five
+comparison kinds repeat the exact unit counts above, and historical array
+contents/retention families pass. Evidence:
+`/tmp/ctcompile-leaf-readback-focused.log`, `-focused2.log` and
+`-focused2-detail.log`. The generated full-build/CTest gate remains pending.
+
+The historical `objectFrameLooseEqualityRelational` function and both calls
+retain their exact source bytes. Its numeric/String results already ran in
+the preceding oracle; only its child's claim changes from Stored to confined,
+now independently checked against both observed instances. This is a precision
+improvement on existing input, not new source coverage. The historical
+loose-equality family keeps its **24 sites, 44 instances and 33 retained**;
+all other historical family expectations pass unchanged. Five separate new
+functions measure **20 sites, 40 instances, 32 retained**: saved String origins after a BigInt field overwrite
+and deletion; unordered Undefined/invalid numeric String results; opaque
+formal and literal BigInt refusal controls; and an independently saved child
+still returned after both container fields are deleted. Four execution oracles
+report **zero soundness violations**. Expanded-fixture precision is **47/68**,
+with zero partial/pending claims. Relative to **44/64**, one already observed
+child gains confinement; the new family contributes two proved-confined and
+four observed-confined sites. Bootstrap/p5/Phaser remain **0/64, 0/16, 0/20**,
+including p5's existing single partial observation. These are focused escape
+measurements, not a native corpus or full-suite gain.
+
+Local Node execution passes **55 combined fixture calls**, preserving every
+historical function and call. Independent assertions check lexical versus
+numeric order, all four false outcomes for unordered values, reverse operand
+results, exact source/target identities and selected aliases, and the returned
+saved child. All **51 new observation mutations** and **156 historical
+mutations** discriminate. Additional opaque-object probes observe four
+`valueOf` calls and a thrown conversion value after one call; these justify
+retaining the object/opaque refusal and do not replace the current-IR proof.
+Evidence: `/tmp/ctcompile-escape-relational-node.{py,js,json}`. Homebrew
+clang-format **22.1.8** and changed-path whitespace checks pass. The focused
+devbox compiler and execution-oracle gates pass as recorded above; the full
+suite remains parent-owned and pending.
+
+Remaining boundaries include independently proved primitive conversions and
+dynamic arithmetic, BigInt comparison categories, loops, callee summaries and
+native lifetime consumers. These retain their existing conservative behavior.

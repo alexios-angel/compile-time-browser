@@ -1003,23 +1003,36 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // it cannot coerce, call, throw or retain either operand
                 // (Operators.td, value::strict_equals). The independent Boolean
                 // result is known even when an operand is an opaque entry.
-                // Loose equality needs a separate proof for BOTH original
-                // origins. Its five primitive non-BigInt categories stay in
-                // loose_equals' guard-free tag/string/static-number paths,
-                // without user conversion, a catchable JS throw or an input
-                // alias. String parsing may allocate C++ temporaries; success
-                // of allocation is not proved. No value/key/liveness is inferred.
-                if (compare.getKind() == ctjs::CompareKind::Eq) {
+                // Eq needs a separate proof for BOTH original origins. Only
+                // Eq's five primitive non-BigInt categories stay in guard-free
+                // loose_equals tag/string/static-number paths, without user
+                // conversion, a catchable JS throw or an input alias. Relational
+                // kinds instead need the guarded retention argument below.
+                // String parsing may allocate C++ temporaries; allocation
+                // success is not proved. No value/key/liveness is inferred.
+                switch (compare.getKind()) {
+                case ctjs::CompareKind::StrictEq: break;
+                case ctjs::CompareKind::Eq:
+                case ctjs::CompareKind::Lt:
+                case ctjs::CompareKind::Le:
+                case ctjs::CompareKind::Gt:
+                case ctjs::CompareKind::Ge: {
                     const mlir::Value lhs = origin(compare.getLhs());
                     const mlir::Value rhs = origin(compare.getRhs());
                     if (!lhs || !rhs || !primitiveNonBigIntOrigin(lhs) ||
                         !primitiveNonBigIntOrigin(rhs)) {
                         return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                     }
-                } else if (compare.getKind() != ctjs::CompareKind::StrictEq) {
-                    // Relational comparison calls to_primitive even for a
-                    // primitive; its reentry-depth guard can throw RangeError.
-                    return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
+                    // Relational kinds enter to_primitive's depth guard even
+                    // for primitives. Their normal String/static-number paths
+                    // retain no input identity; the guard's unrelated Error
+                    // cannot expose this whole-frame query's unpublished fresh
+                    // locals. Calls, handlers and publication still refuse.
+                    // This proves retention, not normal completion or no-throw
+                    // effects. BigInt and object conversion remain outside it.
+                    break;
+                }
+                default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
                 state.origins[compare.getResult()] = compare.getResult();
                 continue;
