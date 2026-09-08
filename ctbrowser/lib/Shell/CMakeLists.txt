@@ -64,7 +64,14 @@ target_sources(ctbrowser-shell
     # own file because it is a SECOND parse of the author's sheets - the cascade
     # keeps no stylesheet - and because CSSStyleSheet, CSSRuleList, CSSRule and
     # CSSStyleDeclaration are four interfaces nothing else in bindings/ owns.
-    bindings/stylesheets.cpp
+    # stylesheets.cpp reached 2,814 lines and was split on 2026-09-08 into a
+    # directory of six, one concern each, sharing bindings/stylesheets/internal.hpp.
+    bindings/stylesheets/serialize.cpp
+    bindings/stylesheets/source.cpp
+    bindings/stylesheets/rules.cpp
+    bindings/stylesheets/sheets.cpp
+    bindings/stylesheets/objects.cpp
+    bindings/stylesheets/prototypes.cpp
     bindings/window.cpp
     bindings/canvas.cpp
     bindings/resources.cpp

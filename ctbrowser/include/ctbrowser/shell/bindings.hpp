@@ -673,7 +673,7 @@ private:
     bool mutation_delivery_queued_ = false;
     // END mutation observers
 
-    // BEGIN style sheets (bindings/stylesheets.cpp)
+    // BEGIN style sheets (bindings/stylesheets/)
 public:
     // THE CSSOM'S OWN COPY OF THE AUTHOR'S SHEETS, and why it is a copy.
     //
@@ -749,7 +749,7 @@ public:
     // (`author_sheet_loaded_`) and re-running the cascade is its business, not
     // the bindings'. So the bindings publish the new text and the browser
     // decides: with no hook installed the object model is still correct and the
-    // RENDER simply does not move. See bindings/stylesheets.cpp.
+    // RENDER simply does not move. See bindings/stylesheets/internal.hpp.
     void set_author_styles_hook(std::function<void(std::string)> hook) {
         on_author_styles_ = std::move(hook);
     }

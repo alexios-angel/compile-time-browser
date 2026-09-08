@@ -118,6 +118,13 @@ its header, and the header did not change:
   (namespace URIs, qualified names, the element/doctype/attribute/XML Name
   rules) every file needs, inline. No function was split and the public header
   did not change.
+- `ctbrowser/lib/Shell/bindings/stylesheets/` — six, from a 2,814-line
+  `stylesheets.cpp` (2026-09-08). Its 890-line anonymous namespace was the hard
+  part: the helpers more than one file needs have external linkage in
+  `ctbrowser::shell::detail`, declared in `internal.hpp` and defined verbatim in
+  `serialize.cpp` and `source.cpp`; a helper only one file needs stays in that
+  file's anonymous namespace. The 963-line `install_stylesheet_prototypes` was
+  left whole; the public header did not change.
 - `ctbrowser/lib/Script/compile/` — eleven, from 3,845, with the class declared in
   `compiler_impl.hpp` beside them. See below; it was the hardest of the four.
 
