@@ -24,7 +24,7 @@ from .sources import (
     nullable_nested_result_sources, nullable_nested_result_refusals, NULLABLE_NESTED_RESULT_CALLS,
     leaf_object_sources, leaf_object_refusals, LEAF_OBJECT_CALLS, LEAF_OBJECT_FUNCTIONS,
     leaf_readback_sources, leaf_readback_refusals, LEAF_READBACK_CALLS, LEAF_READBACK_CARRIERS,
-    LEAF_READBACK_UNOWNED, LEAF_READBACK_CHECKED_RETURNS,
+    LEAF_READBACK_UNOWNED, LEAF_FIELD_RESULTS, leaf_field_result_refusals,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
@@ -136,27 +136,23 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
                 check_call_preservation(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
 
 
-def check_leaf_readback_carriers(args, positives, node, reference):
-    for name in sorted(LEAF_READBACK_CARRIERS):
-        source, _, value = leaf_readback_sources()[name]
-        js, ir, count = boundary.prepare(args, name, source)
-        if count != 5 or len(source_calls(ir.read_text())) != LEAF_READBACK_CALLS[name]:
-            raise RuntimeError(f"{name}: changed exact comparison-only allocation source")
-        expected = f"trace={value}\n"
-        if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != expected
-                or host.run([str(reference), str(js)]).stdout != expected):
-            raise RuntimeError(f"{name}: comparison-only source observation mismatch")
-        if name in LEAF_READBACK_CHECKED_RETURNS:
-            old, replacement = LEAF_READBACK_CHECKED_RETURNS[name]
-            repair = name + "_checked"
-        elif name == "local_field_get":
-            old, replacement = "return saved.value;", "return saved.value === 1 ? 1 : 0;"
-            repair = "local_field_readback_test"
-        else:
+def check_leaf_readback_carriers(args, positives, node, reference, controls=None):
+    if controls is None:
+        controls = {}
+        for name in sorted(LEAF_READBACK_CARRIERS):
+            source, _, value = leaf_readback_sources()[name]
             historical = name.startswith("historical_")
             repair = "historical_object_saved_identity" if historical else "local_identity_saved"
             old = "saved === {value: 1}" if historical else "saved === {}"
-            replacement = "saved === item"
+            controls[name] = source, value, old, "saved === item", repair, LEAF_READBACK_CALLS[name]
+    for name, (source, value, old, replacement, repair, source_call_count) in controls.items():
+        js, ir, count = boundary.prepare(args, name, source)
+        if count != 5 or len(source_calls(ir.read_text())) != source_call_count:
+            raise RuntimeError(f"{name}: changed exact complete-owner carrier source")
+        expected = f"trace={value}\n"
+        if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != expected
+                or host.run([str(reference), str(js)]).stdout != expected):
+            raise RuntimeError(f"{name}: complete-owner carrier observation mismatch")
         if source.count(old) != 1 or source.replace(old, replacement) != positives[repair][0]:
             raise RuntimeError(f"{name}: carrier repair changed its exact source")
         config = contract(args, ir, name)
@@ -166,10 +162,10 @@ def check_leaf_readback_carriers(args, positives, node, reference):
             calls = re.findall(r"^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) "
                                r"\{ctnative\.stored_call = 1 : i32\}", text, re.M)
             if ("ctnative.host_owner_proved = true" not in text
-                    or len(source_calls(text)) != LEAF_READBACK_CALLS[name]
+                    or len(source_calls(text)) != source_call_count
                     or [callee for _, callee, _ in calls] != ["fn$3", "fn$4"]
                     or [len(actuals.split(", ")) for _, _, actuals in calls]
-                    != [4, 6 if name == "local_field_readback_lifetime" else 5]
+                    != [4, 5]
                     or f'ctjs.store_global "trace", {calls[-1][0]}' not in text):
                 raise RuntimeError(f"{label}: lost complete local origins or prepared published calls")
 
@@ -216,8 +212,7 @@ def check_leaf_readback_observations(args, node, reference):
             raise RuntimeError(f"{name}: readback observation cannot distinguish {replacement}")
     # The future caller supplies values absent from the startup script and
     # retains the callable independently of the published owner.
-    source = positives["local_field_readback_lifetime_checked"][0]
-    source += """
+    future = """
 (function() {
     const setter = host.slot.set, size = host.slot.size;
     host = {};
@@ -229,12 +224,27 @@ def check_leaf_readback_observations(args, node, reference):
     if (size() === 0) { trace += 16; }
 })();
 """
-    observed = args.work / "leaf-readback-future.js"
-    observed.write_text(source)
-    expected = "trace=31\n"
-    if (host.run([node, "-e", boundary.NODE, str(observed)]).stdout != expected
-            or host.run([str(reference), str(observed)]).stdout != expected):
-        raise RuntimeError("leaf readback: future callable field/identity observation mismatch")
+    for name in ("local_field_readback_lifetime_checked", "local_field_readback_lifetime"):
+        source = positives[name][0] + future
+        observed = args.work / f"{name}-future.js"
+        observed.write_text(source)
+        expected = "trace=31\n"
+        if (host.run([node, "-e", boundary.NODE, str(observed)]).stdout != expected
+                or host.run([str(reference), str(observed)]).stdout != expected):
+            raise RuntimeError(f"{name}: future callable field/identity observation mismatch")
+        if name.endswith("_checked"):
+            continue
+        for index, (old, replacement) in enumerate((
+            ("item.value = value;", "item.value = 3;"),
+            ("state.delete(key);", "state.has(key);"),
+            ("return saved === item ? saved.value : 0;", "return saved === item ? 1 : 0;"),
+        )):
+            if source.count(old) != 1:
+                raise RuntimeError(f"{name}: lost a unique future field observation")
+            blind = args.work / f"{name}-future-blinded-{index}.js"
+            blind.write_text(source.replace(old, replacement))
+            if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == expected:
+                raise RuntimeError(f"{name}: future field observation cannot distinguish {replacement}")
 
 
 def check_nullable_host_result_refusals(args, positives, node, reference, *, names=None):
@@ -741,6 +751,8 @@ def main():
     check_leaf_object_forgeries(args, saved)
     check_leaf_object_forgeries(args, saved,
         ("local_field_get_guarded_checked", "historical_object_saved_identity", "local_field_readback_lifetime_checked"))
+    check_leaf_object_forgeries(args, saved,
+        ("local_field_direct", "local_field_saved_overwrite", "local_field_readback_lifetime"))
 
     # Valid-looking scalar markers cannot normalize real null keys or narrow
     # the second use of a nullable formal. Fresh proof must emit the same C++.
@@ -1024,6 +1036,7 @@ def main():
     check_leaf_object_refusals(args, positives, node, reference)
     check_leaf_object_refusals(args, positives, node, reference, leaf_readback_refusals())
     check_leaf_readback_carriers(args, positives, node, reference)
+    check_leaf_readback_carriers(args, positives, node, reference, leaf_field_result_refusals())
     # A result contract does not narrow Map storage or supply an implemented
     # callable signature. Preserve the prepared producer/consumer operands.
     mixed_read_refusals = mixed_nullable_payload_refusals()
@@ -1205,6 +1218,9 @@ def main():
     for name in ("local_field_get_guarded_checked", "historical_object_saved_identity", "local_field_readback_lifetime_checked"):
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
+    for name in ("local_field_direct", "local_field_get_guarded", "local_field_readback_lifetime"):
+        ir, config, _ = saved[name]
+        rollback += check_budgets(args, ir, config, name, functions=5)
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
           "Node/interpreter/GCC/Clang explicit+deduced and Map/table/callable lifetime pass; "
           f"{len(refusal_sources()) - 1} source refusals and contract/rerun/budget controls pass; "
@@ -1271,7 +1287,10 @@ def main():
           "saved aliases observe later field writes across replacement/deletion and saved numeric "
           "callables pass future-argument, reentry and final-owner sanitizer lifetime checks; "
           f"{len(leaf_readback_refusals())} unknown/missing/export/field refusals restore exact sources; "
-          f"{len(LEAF_READBACK_CARRIERS)} raw nullable field results and comparison-only allocations "
+          f"{len(LEAF_FIELD_RESULTS)} exact raw field results remove only independently proved absence; "
+          "saved raw numeric results and callable lifetimes pass future-argument and field mutations; "
+          f"{len(LEAF_READBACK_CARRIERS)} comparison-only allocations and "
+          f"{len(leaf_field_result_refusals())} complete-schema field results "
           "retain complete host ownership and separate native carrier refusals; "
           f"{len(seeded_result_refusals())} seeded proof and "
           f"{len(seeded_carrier_refusals())} seeded carrier refusals; "

@@ -1470,11 +1470,27 @@ LEAF_READBACK_CALLS = {
 LEAF_READBACK_CALLS.update({name + "_checked": LEAF_READBACK_CALLS[name]
                            for name in LEAF_READBACK_CHECKED_RETURNS})
 
-# These preserve both remaining native carrier boundaries: comparison-only
-# fresh allocations and nullable numeric field results at numeric exports.
-LEAF_READBACK_CARRIERS = {"local_identity_distinct_fresh", "historical_object_distinct_identity",
-    "local_field_get", *LEAF_READBACK_CHECKED_RETURNS}
+# Keep the exact formerly nullable own-field sources; their initialized reads
+# now have an independent per-read presence proof. The schema still joins all
+# stored value types, including explicitly written Undefined.
+LEAF_FIELD_RESULTS = {"local_field_get", *LEAF_READBACK_CHECKED_RETURNS}
+LEAF_READBACK_CARRIERS = {"local_identity_distinct_fresh", "historical_object_distinct_identity"}
 LEAF_READBACK_UNOWNED = {"local_identity_repeated_keys"}
+
+
+def leaf_field_result_refusals():
+    positive = leaf_readback_sources()
+    rows = {}
+    for name, repaired, old, replacement in (
+        ("schema_bool", "local_field_saved_overwrite", "{value: 2}", "{value: false}"),
+        ("explicit_undefined", "local_field_get", "const item = {value: 1};",
+         "const item = {value: void 0}; item.value = 1;"),
+    ):
+        source, _, value = positive[repaired]
+        assert source.count(old) == 1
+        rows["local_field_" + name] = (source.replace(old, replacement), value,
+            replacement, old, repaired, LEAF_READBACK_CALLS[repaired])
+    return rows
 
 
 def leaf_readback_refusals():

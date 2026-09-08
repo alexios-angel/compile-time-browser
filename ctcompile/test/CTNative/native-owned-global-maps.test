@@ -175,3 +175,12 @@
 # fields and public object results refuse with exact separately gated repairs.
 # Live calls, field accesses, comparisons and allocations survive every refusal;
 # valid fresh/stale forged reports and work-budget cutoffs grant no authority.
+# The exact raw direct/get/guarded/saved field-return sources remove implicit
+# absence only after an independent live per-read initialization proof. Their
+# numeric callable ABI preserves every field operation; saved aliases still
+# observe writes after Map overwrite/deletion. The raw saved setter repeats
+# future Number arguments and final-owner lifetime checks under sanitizers.
+# Presence never narrows the full schema's stored value-type join: a Boolean
+# on another Map-stored allocation and an explicit Undefined overwritten by
+# Number keep complete host ownership but refuse native numeric exports.
+# Exact one-edit repairs restore independently gated historical source bytes.

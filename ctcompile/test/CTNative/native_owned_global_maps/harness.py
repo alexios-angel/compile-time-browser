@@ -1243,7 +1243,7 @@ def standalone(args, output, name, value, compilers, nm):
             nullable_stored_payload_lifetime(args, cpp, name, mode, compilers[1])
         if name == "leaf_object_lifetime":
             leaf_object_lifetime(args, cpp, name, mode, compilers[1])
-        if name == "local_field_readback_lifetime_checked":
+        if name in {"local_field_readback_lifetime_checked", "local_field_readback_lifetime"}:
             leaf_readback_lifetime(args, cpp, name, mode, compilers[1])
 
 
