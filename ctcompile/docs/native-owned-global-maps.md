@@ -731,8 +731,8 @@ GCC/Clang, exact Node/interpreter/native identity observations and saved-payload
 sanitizers. The saved setter sees only false at startup; future calls use both
 flags, caller-buffer mutation, overwrite/deletion, independent reentry and
 final Map destruction. Input tags and expected return tags are checked
-independently. The complete driver now contains **124 programs**; its final
-full-suite result is pending rather than inferred from the focused checks.
+independently. All **124 programs** and **fifteen lifetime families** pass in
+the final complete driver, including the new deleted-read forged-fact controls.
 
 The three missing-result/object/snapshot host refusals and mixed full-schema
 read refusal pass both modes and fresh forged facts. New budgets
@@ -744,8 +744,13 @@ cases pass in **37.98 seconds**. The first local rerun found a removed split
 fixture left on disk; the test now clears its own output before extraction.
 Construction diagnostic wording remains compatible with existing checks.
 Formatter **22.1.8** passes all **745 files**. All thirteen native code/test
-paths match the frozen gate. The full 247-step generated build succeeds without warnings. CTest is running
-in `/tmp/ctcompile-nullable-payloads-full.log`.
+paths match committed HEAD, frozen gate input and final devbox source.
+The full **247-step generated build succeeds without warnings**. CTest passes
+**512/517 in 1045.44 seconds**, all **372 compiler tests**, with only the five
+recorded browser failures. All **165 lit cases pass in 440.08 seconds**, including
+the complete corrected published driver. Corpus and exact Data native counts
+remain unchanged. Final evidence: `/tmp/ctcompile-nullable-payloads-full.log`,
+`-evidence.json` and `-postgate.log`; see [HANDOFF.md](HANDOFF.md).
 
 ## Next boundary
 

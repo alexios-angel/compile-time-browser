@@ -318,8 +318,9 @@ The first driver passed all 123 positives and fifteen lifetime families.
 After promoting the deleted-read case, all six new payload programs and the
 remaining refusal controls pass focused checks. Seven targeted lit cases,
 four host/owner CTests and the 63-observation/34-refusal local gate pass.
-The full 124-program driver and repository gate are pending; see
-[the payload checkpoint](native-owned-global-maps.md#owning-nullable-payloads-2026-09-08).
+The full 124-program driver and all 165 lit cases pass. Final CTest is
+512/517, all 372 compiler tests, with only the five recorded browser failures;
+see [the payload checkpoint](native-owned-global-maps.md#owning-nullable-payloads-2026-09-08).
 
 ## Next: independent nullable payload facts in mixed storage
 

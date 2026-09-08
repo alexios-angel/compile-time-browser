@@ -852,9 +852,14 @@ The separate negation witness contributes one additional proved-confined site
 and one observed-confined site. This is additional coverage, not a precision
 gain on the historical fixture. Bootstrap/p5/Phaser precision remains
 **0/64, 0/16, 0/20**, including p5's existing single partial observation.
-Focused log: `/tmp/ctcompile-nullable-payloads-focused.log`. These measurements
-cover the escape CTests; the full generated build and combined suite gate
-remain pending.
+Focused log: `/tmp/ctcompile-nullable-payloads-focused.log`. The final 247-step
+generated build succeeds without warnings. Full CTest passes **512/517 in
+1045.44 seconds**, all **372 compiler tests**, with only the five recorded
+browser failures. All **165 lit cases** pass in **440.08 seconds**. The four
+oracles repeat the same precision and zero-violation results in that gate.
+All eighteen session code/test paths match committed HEAD, frozen input and
+final devbox source. Evidence: `/tmp/ctcompile-nullable-payloads-full.log`,
+`-evidence.json` and `-postgate.log`.
 
 Local Node syntax and execution pass **fifteen fixture calls**, sixteen explicit
 identity assertions and two extra object-selector probes whose coercion

@@ -14,7 +14,8 @@ the exact payload boundary in **`1c7985a5`** and the **14:07:41 synchronization
 journal**. The starting tree was clean; `codex-wip-20260907` is an ancestor and
 its interrupted recovery was already gated in `5307abf`. Three agents handled
 published execution/lifetime tests, independent local tests and escape analysis.
-No browser source, runtime semantics or branch history changed; no push occurred.
+No browser source or runtime semantics changed. No history was rewritten or
+push performed.
 
 The eleven-call `state.set(key, key)` and twelve-call readback witnesses
 advance **0/6 -> 6/6 native** in both modes, retaining Node/interpreter trace=2.
@@ -37,8 +38,9 @@ explicit/deduced GCC/Clang, Node/interpreter/native identity checks and the
 saved-payload sanitizer harness. It keeps Strings alive through caller-buffer
 mutation, overwrite/deletion, both future flags, independent reentry and final
 Map destruction. Three host refusals and the mixed full-schema read refusal
-pass both modes and fresh forged facts. The final complete driver now has
-**124 programs**; its full-suite result remains pending.
+pass both modes and fresh forged facts. All **124 programs** and **fifteen
+lifetime families** pass in the final complete driver, including the
+deleted-read fresh/stale forgery controls.
 
 Fresh/stale payload forgeries and budgets **17270/20256/13049** pass
 **31/30/31 cutoffs**, with no natural speculative rollback interval. The local
@@ -47,10 +49,13 @@ isolated payload helpers and ASan/UBSan. Four host/owner CTests pass in
 **26.44 seconds**; seven targeted lit cases pass in **37.98 seconds**. The
 local test now clears its own split output so a removed refusal cannot persist.
 Formatter **22.1.8** passes all **745 files**. All **eighteen session code/test
-paths** match frozen gate input. The full **247-step generated build succeeds
-without warnings**. CTest is running in `/tmp/ctcompile-nullable-payloads-full.log`;
-only the five recorded browser failures have appeared so far. This checkpoint
-does not claim a completed full gate or fresh corpus counts.
+paths** match committed HEAD, frozen gate input and final devbox source.
+The full **247-step generated build succeeds without warnings**. Final CTest
+passes **512/517 in 1045.44 seconds**: **372/372 compiler** and **140/145 browser**
+tests. Only the recorded `selectors`, `frames`, `element_attrs`, `vm_async` and
+`early_errors` failures remain. All **165/165 lit cases pass in 440.08 seconds**;
+exception recovery passes in **1.17 seconds**. Log:
+`/tmp/ctcompile-nullable-payloads-full.log`.
 
 The independent escape proof adds only total `LogicalNot` as a noncapturing
 Boolean origin. It proves no input value or branch liveness. Eight escape
@@ -62,6 +67,11 @@ measures **four sites, sixteen instances, twelve retained**; earlier copy
 precision **37/49** adds coverage relative to **36/48**, with no corpus gain:
 Bootstrap/p5/Phaser remain **0/64, 0/16, 0/20**. Other total unary producers,
 loops and native lifetime consumers remain separate work.
+
+Fresh native components remain **Bootstrap 19/574, p5 39/4754, Phaser 45/7725**
+in both modes, zero pruned. Exact Data remains **0/7 browser, 0/7 CommonJS,
+0/8 AMD**, zero pruned. The payload increment advances the focused published
+programs; whole-Bootstrap native coverage is unchanged.
 
 **Exact next boundary: finite nullable payload facts in mixed storage.** Add
 one temporary Boolean write/delete to the accepted readback. The resulting
@@ -79,9 +89,11 @@ general exports and native throwing-call admission remain unfinished.
 Evidence: `/tmp/ctcompile-nullable-payloads-compile.log`, `-focused.log`,
 `-native.log`, `-controls.log`, `-boundary.json` and `-full.log`. The first
 published-driver failure is retained in `-native.log`; the corrected focused
-gate passes in `-controls.log`. Snapshot input and hashes are recorded in
-`-snapshot.txt` and `-input-hashes.json`. Inspected `-saved.cpp` owns its Strings
-and emits no Script symbol or VM context. Complete next sources are in
+gate passes in `-controls.log`, and the complete driver passes in the final full
+gate. Final counts and source hashes are in `-evidence.json`, `-final-hashes.json`
+and `-postgate.log`; frozen input is recorded in `-snapshot.txt` and
+`-input-hashes.json`. Inspected `-string.cpp` and `-mixed.cpp` own their payloads
+and emit no Script symbol or VM context. Complete next sources are in
 `native-owned-global-maps.md` and devbox `/tmp/ctcompile-nullable-payloads-next/`.
 
 ## Nullable Map-key and switch-selector checkpoint, 2026-09-08
