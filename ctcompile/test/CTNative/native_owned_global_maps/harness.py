@@ -436,7 +436,7 @@ def check_prepared_result_calls(text, original, name):
 
 def forge_map_presence(text):
     marked, count = re.subn(r"(^\s*%[-\w.$]+ = ctjs\.call [^\n{]+)(\{)?",
-        lambda match: match[1].rstrip() + " {ctnative.map_present = true, ctnative.map_read_type = !ctnative.bool"
+        lambda match: match[1].rstrip() + " {ctnative.map_present = true, ctnative.map_read_type = \"bool\""
                       + (", " if match[2] else "}"), methods.forge_reports(text), flags=re.M)
     if count == 0:
         raise RuntimeError("forged-presence control lost every live Map call")

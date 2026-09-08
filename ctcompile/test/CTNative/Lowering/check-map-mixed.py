@@ -76,7 +76,7 @@ def main():
         before = ir.read_text()
         forged = re.sub(r"(^\s*%[-\w.$]+ = ctjs\.call [^\n{]+)(\{)?",
             lambda m: m[1].rstrip() + " {ctnative.map_present = true, "
-                      "ctnative.map_read_type = !ctnative.bool" + (", " if m[2] else "}"),
+                      "ctnative.map_read_type = \"bool\"" + (", " if m[2] else "}"),
             before, flags=re.M)
         assert forged != before
         for label, contents in [("original", before), ("forged", forged)]:

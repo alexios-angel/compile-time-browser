@@ -3,7 +3,6 @@
 
 #include "../PrimitiveMapKey.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
-#include "ctcompile/CTNative/IR/CTNativeTypes.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
@@ -24,10 +23,19 @@ llvm::StringRef actionOf(ctjs::CallOp call) {
     return text ? text.getValue() : llvm::StringRef{};
 }
 
+// This analysis also runs from CTJS-only binding-time and partial-evaluation
+// callers. Keep semantic tags independent of native dialect type storage.
+enum class payloadKind {
+    Unknown,
+    Boolean,
+    Number,
+    String
+};
+
 struct fact {
     mlir::Value instance;
     mlir::Value key;
-    mlir::Type payload;
+    payloadKind payload = payloadKind::Unknown;
     bool matches(const fact & other) const {
         return instance == other.instance &&
                comparePrimitiveMapKeys(key, other.key) == PrimitiveMapKeyRelation::Same;
@@ -88,7 +96,7 @@ struct presenceAnalysis {
     llvm::DenseMap<mlir::Operation *, llvm::StringRef> actions;
     llvm::DenseMap<mlir::Operation *, effects> summaries;
     llvm::DenseSet<mlir::Operation *> proved;
-    llvm::DenseMap<mlir::Operation *, mlir::Type> payloads;
+    llvm::DenseMap<mlir::Operation *, payloadKind> payloads;
     llvm::DenseSet<mlir::Operation *> sizes;
     llvm::function_ref<mlir::Value(mlir::Value)> familyOf;
     const llvm::DenseSet<mlir::Operation *> & snapshotCopies;
@@ -211,13 +219,12 @@ struct presenceAnalysis {
     void write(state & current, ctjs::CallOp call) const {
         fact added = entry(call);
         if (auto constant = call.getArgs()[1].getDefiningOp<ctjs::ConstantOp>()) {
-            auto * context = call.getContext();
             if (llvm::isa<ctjs::BooleanAttr>(constant.getValue())) {
-                added.payload = BoolType::get(context);
+                added.payload = payloadKind::Boolean;
             } else if (llvm::isa<ctjs::NumberAttr>(constant.getValue())) {
-                added.payload = NumType::getDouble(context);
+                added.payload = payloadKind::Number;
             } else if (llvm::isa<ctjs::StringAttr>(constant.getValue())) {
-                added.payload = StrType::get(context, StrEncoding::UTF8);
+                added.payload = payloadKind::String;
             }
         }
         for (fact & previous : current.present) {
@@ -318,7 +325,7 @@ struct presenceAnalysis {
                 for (const fact & value : current.present) {
                     if (!value.matches(wanted)) { continue; }
                     proved.insert(op);
-                    if (value.payload) { payloads[op] = value.payload; }
+                    if (value.payload != payloadKind::Unknown) { payloads[op] = value.payload; }
                 }
             } else if (action == "delete") {
                 eraseKey(current, call);
@@ -370,8 +377,11 @@ std::string provePresence(mlir::ModuleOp module, llvm::ArrayRef<ctjs::CallOp> ca
         read->setAttr(kNativeMapPresent, mlir::UnitAttr::get(read.getContext()));
     }
     for (ctjs::CallOp read : typedReads) {
-        if (auto type = analysis.payloads.lookup(read)) {
-            read->setAttr(kNativeMapReadType, mlir::TypeAttr::get(type));
+        if (auto kind = analysis.payloads.lookup(read); kind != payloadKind::Unknown) {
+            const auto tag = kind == payloadKind::Boolean  ? "bool"
+                             : kind == payloadKind::Number ? "number"
+                                                           : "string";
+            read->setAttr(kNativeMapReadType, mlir::StringAttr::get(read.getContext(), tag));
             // Dead-code inference may remove an alternative from the final
             // schema. Its homogeneous read still has definite membership.
             read->setAttr(kNativeMapPresent, mlir::UnitAttr::get(read.getContext()));
