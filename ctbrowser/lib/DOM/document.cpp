@@ -5,6 +5,26 @@
 
 namespace ctbrowser {
 
+namespace {
+
+// The three namespaces "adjust foreign attributes" can put an attribute in.
+// Spelled out rather than derived, for the reason bindings/document.cpp spells
+// its four out: one wrong character makes the lookup miss on the valid case and
+// nothing about the failure says so.
+constexpr std::string_view xlink_namespace = "http://www.w3.org/1999/xlink";
+constexpr std::string_view xml_namespace = "http://www.w3.org/XML/1998/namespace";
+constexpr std::string_view xmlns_namespace = "http://www.w3.org/2000/xmlns/";
+
+// Does this attribute answer to (namespace, local name)? THAT PAIR IS AN
+// ATTRIBUTE'S IDENTITY in the DOM, and the prefix is deliberately no part of
+// it: `foo:bar` and `quux:bar` in the same namespace are ONE attribute.
+[[nodiscard]] bool attribute_is(const atom_table & atoms, const attribute & a, std::string_view ns,
+                                std::string_view local) {
+    return atoms.text(a.ns) == ns && attribute_local_name(atoms, a) == local;
+}
+
+} // namespace
+
 read_txn::read_txn(const document & doc) noexcept : doc_(&doc), guard_(doc.domain_) {}
 
 bool read_txn::contains(node_id id) const noexcept {
@@ -56,16 +76,37 @@ std::string_view read_txn::text(node_id id) const noexcept {
     return n->text.load(std::memory_order_acquire)->value;
 }
 
-std::string_view read_txn::attribute_value(node_id id, atom name) const noexcept {
+const attribute * read_txn::find_attribute(node_id id, atom name) const noexcept {
+    // THE FIRST, not any: an element may hold two attributes with this
+    // qualified name in different namespaces, and every one of getAttribute,
+    // setAttribute and removeAttribute is defined on the first of them.
     for (const attribute & a : attributes(id)) {
-        if (a.name == name) { return a.value; }
+        if (a.name == name) { return &a; }
     }
-    return {};
+    return nullptr;
+}
+
+const attribute * read_txn::find_attribute_ns(node_id id, std::string_view ns,
+                                              std::string_view local) const noexcept {
+    const atom_table & atoms = doc_->atoms();
+    for (const attribute & a : attributes(id)) {
+        if (attribute_is(atoms, a, ns, local)) { return &a; }
+    }
+    return nullptr;
+}
+
+std::string_view read_txn::attribute_value(node_id id, atom name) const noexcept {
+    const attribute * found = find_attribute(id, name);
+    return found == nullptr ? std::string_view{} : std::string_view{found->value};
 }
 
 bool read_txn::has_attribute(node_id id, atom name) const noexcept {
-    const auto attrs = attributes(id);
-    return std::ranges::any_of(attrs, [name](const attribute & a) { return a.name == name; });
+    return find_attribute(id, name) != nullptr;
+}
+
+bool read_txn::has_attribute_ns(node_id id, std::string_view ns,
+                                std::string_view local) const noexcept {
+    return find_attribute_ns(id, ns, local) != nullptr;
 }
 
 node_id read_txn::root() const noexcept {
@@ -193,6 +234,8 @@ std::expected<void, dom_error> document::set_attribute(node_id id, atom name,
     const auto at =
         std::ranges::find_if(fresh->items, [name](const attribute & a) { return a.name == name; });
     if (at != fresh->items.end()) {
+        // ONLY THE VALUE. The attribute found may be in a namespace and may
+        // carry a prefix; neither is what a `setAttribute` was asked to change.
         at->value = std::string{value};
     } else {
         fresh->items.push_back(attribute{name, std::string{value}});
@@ -202,15 +245,70 @@ std::expected<void, dom_error> document::set_attribute(node_id id, atom name,
     return {};
 }
 
+std::expected<void, dom_error> document::set_attribute_ns(node_id id, atom ns, atom name,
+                                                          std::string_view value) {
+    const std::lock_guard lock{stripe_of(id)};
+    node * n = find(id);
+    if (n == nullptr) { return std::unexpected{dom_error::no_such_node}; }
+    if (n->kind != node_kind::element) { return std::unexpected{dom_error::not_an_element}; }
+
+    const attribute wanted{name, ns, std::string{}};
+    const std::string_view local = attribute_local_name(*atoms_, wanted);
+    const std::string_view uri = atoms_->text(ns);
+
+    const attr_list * stale = n->attributes.load(std::memory_order_acquire);
+    auto * fresh = new attr_list{stale->items};
+    const auto at = std::ranges::find_if(fresh->items, [&](const attribute & a) {
+        return attribute_is(*atoms_, a, uri, local);
+    });
+    if (at != fresh->items.end()) {
+        at->value = std::string{value};
+    } else {
+        fresh->items.push_back(attribute{name, ns, std::string{value}});
+    }
+    publish(n->attributes, static_cast<const attr_list *>(fresh));
+    bump_version();
+    return {};
+}
+
+std::expected<void, dom_error> document::set_attribute(node_id id, const attribute & held) {
+    return set_attribute_ns(id, held.ns, held.name, held.value);
+}
+
 std::expected<void, dom_error> document::remove_attribute(node_id id, atom name) {
     const std::lock_guard lock{stripe_of(id)};
     node * n = find(id);
     if (n == nullptr) { return std::unexpected{dom_error::no_such_node}; }
     const attr_list * stale = n->attributes.load(std::memory_order_acquire);
+    const auto gone =
+        std::ranges::find_if(stale->items, [name](const attribute & a) { return a.name == name; });
+    // NOTHING TO DO, and saying so rather than republishing an identical block:
+    // a `removeAttribute` for an attribute that is not there must not dirty the
+    // document, or every one of them costs a restyle.
+    if (gone == stale->items.end()) { return {}; }
     auto * fresh = new attr_list{stale->items};
-    const auto gone = std::ranges::remove_if(
-        fresh->items, [name](const attribute & a) { return a.name == name; });
-    fresh->items.erase(gone.begin(), gone.end());
+    // THE FIRST ONE ONLY. `removeAttribute("x")` on an element holding `x` in
+    // two namespaces removes one of them and the OTHER becomes the answer to
+    // `getAttribute("x")` - which is what Element-removeAttribute.html's two
+    // subtests check, in both orders.
+    fresh->items.erase(fresh->items.begin() +
+                       std::distance(stale->items.begin(), gone));
+    publish(n->attributes, static_cast<const attr_list *>(fresh));
+    bump_version();
+    return {};
+}
+
+std::expected<void, dom_error> document::remove_attribute_ns(node_id id, std::string_view ns,
+                                                             std::string_view local) {
+    const std::lock_guard lock{stripe_of(id)};
+    node * n = find(id);
+    if (n == nullptr) { return std::unexpected{dom_error::no_such_node}; }
+    const attr_list * stale = n->attributes.load(std::memory_order_acquire);
+    const auto gone = std::ranges::find_if(
+        stale->items, [&](const attribute & a) { return attribute_is(*atoms_, a, ns, local); });
+    if (gone == stale->items.end()) { return {}; }
+    auto * fresh = new attr_list{stale->items};
+    fresh->items.erase(fresh->items.begin() + std::distance(stale->items.begin(), gone));
     publish(n->attributes, static_cast<const attr_list *>(fresh));
     bump_version();
     return {};
@@ -281,16 +379,34 @@ void document::builder::insert_before(node_id parent, node_id child, node_id bef
     child_node->parent.store(parent, std::memory_order_relaxed);
 }
 
+atom document::foreign_namespace_of(node_ns element_ns, atom name) const {
+    if (element_ns != node_ns::svg) { return atom{}; }
+    const std::string_view text = atoms_->text(name);
+    // `xmlns` ALONE is the one unprefixed name in the table, and the colon test
+    // is what keeps every ordinary SVG attribute - `d`, `viewBox`, `fill` - to
+    // a single find() before it returns.
+    const std::size_t colon = text.find(':');
+    if (colon == std::string_view::npos) {
+        return text == "xmlns" ? atoms_->intern(xmlns_namespace) : atom{};
+    }
+    const std::string_view prefix = text.substr(0, colon);
+    if (prefix == "xlink") { return atoms_->intern(xlink_namespace); }
+    if (prefix == "xml") { return atoms_->intern(xml_namespace); }
+    if (prefix == "xmlns") { return atoms_->intern(xmlns_namespace); }
+    return atom{};
+}
+
 void document::builder::set_attribute(node_id id, atom name, std::string_view value) {
     node * n = doc_->find(id);
     if (n == nullptr) { return; }
+    attribute made{name, doc_->foreign_namespace_of(n->ns, name), std::string{value}};
     const attr_list * current = n->attributes.load(std::memory_order_relaxed);
     if (current == &empty_attributes) {
         auto * fresh = new attr_list{};
-        fresh->items.push_back(attribute{name, std::string{value}});
+        fresh->items.push_back(std::move(made));
         n->attributes.store(fresh, std::memory_order_relaxed);
     } else {
-        const_cast<attr_list *>(current)->items.push_back(attribute{name, std::string{value}});
+        const_cast<attr_list *>(current)->items.push_back(std::move(made));
     }
 }
 

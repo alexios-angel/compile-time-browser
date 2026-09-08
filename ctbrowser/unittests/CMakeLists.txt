@@ -57,6 +57,12 @@ ctbrowser_test(unit/cssom)
 # script gets back when it matches with it - which used to be a second, weaker
 # matcher entirely.
 ctbrowser_test(unit/selectors)
+# The document as a Node. Its own file rather than more of bindings_basics
+# because every case in it turns on ONE structural fact - this tree builder has
+# no Document node above `<html>` - so what the cases pin down is a MODEL being
+# consistent with itself, including where it honestly refuses. See the block
+# above install_document_as_node in lib/Shell/bindings/document.cpp.
+ctbrowser_test(unit/document_node)
 ctbrowser_test(unit/layout_basics)
 # The flex formatting context. Its own file rather than more of layout_basics:
 # S9.7's freeze loop has more cases than the other three contexts together.

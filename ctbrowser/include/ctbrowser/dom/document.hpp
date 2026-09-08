@@ -90,8 +90,28 @@ public:
     [[nodiscard]] std::span<const attribute> attributes(node_id) const noexcept;
     [[nodiscard]] std::string_view text(node_id) const noexcept;
 
+    // THE TWO LOOKUPS ARE NOT THE SAME QUESTION, and DOM §4.9 means them not to
+    // be. `getAttribute(qualifiedName)` matches on the QUALIFIED name
+    // irrespective of namespace and answers the FIRST such attribute in order;
+    // `getAttributeNS(ns, localName)` matches on the PAIR, in which the prefix
+    // takes no part. An element may hold `x` in no namespace and `x` in two
+    // others at once, and each of the three lookups has a different right
+    // answer - which is what `dom/nodes/Element-removeAttribute.html`'s two
+    // subtests are about.
     [[nodiscard]] std::string_view attribute_value(node_id, atom name) const noexcept;
     [[nodiscard]] bool has_attribute(node_id, atom name) const noexcept;
+    // The attribute itself, so a caller that wants its namespace or its value
+    // AND its presence does not pay for the walk twice. The pointer is into the
+    // same immutable block `attributes` returns a span over, and is valid for
+    // exactly as long.
+    [[nodiscard]] const attribute * find_attribute(node_id, atom name) const noexcept;
+    // `ns` and `local` are TEXT rather than atoms on purpose: a read must not be
+    // able to grow the atom table, and `getAttributeNS` is handed whatever URI a
+    // page can spell. The empty string is the null namespace.
+    [[nodiscard]] const attribute * find_attribute_ns(node_id, std::string_view ns,
+                                                      std::string_view local) const noexcept;
+    [[nodiscard]] bool has_attribute_ns(node_id, std::string_view ns,
+                                        std::string_view local) const noexcept;
 
     [[nodiscard]] node_id root() const noexcept;
     [[nodiscard]] std::uint64_t version() const noexcept;
@@ -134,8 +154,28 @@ public:
     std::expected<void, dom_error> remove_child(node_id child);
 
     // --- per-node writes (striped) -----------------------------------------
+    //
+    // "SET AN ATTRIBUTE VALUE", DOM §4.9.1, in its two spellings. Both CHANGE
+    // an existing attribute rather than adding a second one, and which existing
+    // attribute they find is the whole difference between them: the qualified
+    // form takes the first attribute with that name whatever its namespace, the
+    // namespaced form takes the one with that (namespace, local name) whatever
+    // its prefix. Neither ever rewrites a prefix - "Setting the same attribute
+    // with another prefix should not change the prefix" is a subtest by name.
     std::expected<void, dom_error> set_attribute(node_id, atom name, std::string_view value);
+    // `name` is the QUALIFIED name and `ns` the interned namespace URI; the
+    // local name is derived from the pair - see attribute_local_name.
+    std::expected<void, dom_error> set_attribute_ns(node_id, atom ns, atom name,
+                                                    std::string_view value);
+    // One WHOLE attribute, namespace and all, which is what copying an element
+    // needs: a clone whose `xlink:href` came back in no namespace is a different
+    // attribute from the one it was cloned from.
+    std::expected<void, dom_error> set_attribute(node_id, const attribute & held);
+    // The FIRST attribute with this qualified name, irrespective of namespace -
+    // and only the first, which is what `removeAttribute` means.
     std::expected<void, dom_error> remove_attribute(node_id, atom name);
+    std::expected<void, dom_error> remove_attribute_ns(node_id, std::string_view ns,
+                                                       std::string_view local);
     std::expected<void, dom_error> set_text(node_id, std::string_view value);
 
     // Destroy the storage of nodes removed and no longer observable. Callers
@@ -158,6 +198,14 @@ public:
         [[nodiscard]] node_id create_text(std::string_view v) { return doc_->create_text(v); }
         [[nodiscard]] node_id create_comment(std::string_view v) { return doc_->create_comment(v); }
         void append(node_id parent, node_id child);
+        // Appends, without looking for a duplicate: a start tag's attribute list
+        // has already been deduplicated by the tokenizer and this runs once per
+        // attribute of every element in the document.
+        //
+        // IT IS ALSO WHERE "ADJUST FOREIGN ATTRIBUTES" HAPPENS - see
+        // foreign_namespace_of. The tree builder hands over a qualified name and
+        // the element it belongs to, which is exactly what that step needs, and
+        // this is the one place every parsed attribute passes through.
         void set_attribute(node_id, atom name, std::string_view value);
         // Move a node to a new parent, keeping its own subtree. The HTML tree
         // builder needs it for the adoption agency algorithm - the one that
@@ -217,6 +265,20 @@ private:
 
     // detach `child` from whatever parent it has; caller holds structure_
     void detach_locked(node * child_node, node_id child);
+
+    // "ADJUST FOREIGN ATTRIBUTES", the HTML parser's own step, and the reason
+    // an SVG `xlink:href` is in the XLink namespace while an HTML `xml:lang` is
+    // in none. It applies to FOREIGN CONTENT ONLY, which is why it takes the
+    // element's namespace: the same qualified name written on a `<div>` stays
+    // unprefixed and unnamespaced, and `dom/nodes/Attr-prefix.html` asserts
+    // both halves against each other.
+    //
+    // The specification lists ten names; this matches the three PREFIXES those
+    // ten use, which differs only for something like `xlink:actuate`'s
+    // unlisted neighbours - and putting `xlink:anything` in the XLink namespace
+    // is what an author writing it means. Costs one enum compare on every
+    // attribute of an HTML document, which is where it returns.
+    [[nodiscard]] atom foreign_namespace_of(node_ns element_ns, atom name) const;
 
     atom_table * atoms_;
     mutable epoch_domain domain_;

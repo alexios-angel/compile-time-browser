@@ -6,11 +6,14 @@
 
 #include "ctbrowser/script/compile.hpp"
 
+#include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
+#include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Pass/PassManager.h"
@@ -18,6 +21,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <bit>
+#include <cstdint>
 #include <cstdio>
 #include <optional>
 #include <string>
@@ -252,6 +256,174 @@ void testSource(mlir::MLIRContext & context, llvm::StringRef name, llvm::StringR
                  << " original checks retained for admission rollback, " << recovered.steps
                  << " steps, effects=" << (mode == ExceptionRecoveryMode::EffectCheckedInvocations)
                  << '\n';
+}
+
+void checkCompletionTypes(mlir::ModuleOp module, ctjs::FuncOp function, llvm::StringRef normalType,
+                          llvm::StringRef stateType,
+                          llvm::StringRef payloadType = "!ctnative.boxed") {
+    mlir::DataFlowSolver solver;
+    solver.load<mlir::dataflow::DeadCodeAnalysis>();
+    solver.load<mlir::dataflow::SparseConstantPropagation>();
+    solver.load<ctcompile::ctnative::TypeInference>();
+    const auto before = printed(module);
+    if (!check(mlir::succeeded(solver.initializeAndRun(module)),
+               "recovered source completion inference converges")) {
+        return;
+    }
+    const auto expect = [&](mlir::Value value, llvm::StringRef wanted, llvm::StringRef label) {
+        const auto * lattice = solver.lookupState<ctcompile::ctnative::TypeLattice>(value);
+        std::string type;
+        if (lattice) {
+            llvm::raw_string_ostream into(type);
+            lattice->getValue().print(into);
+        }
+        if (!check(type == wanted, label)) {
+            llvm::errs() << "  wanted " << wanted << ", found " << type << '\n';
+        }
+    };
+    unsigned invokes = 0, states = 0;
+    function.walk([&](ctjs::InvokeOp invocation) {
+        ++invokes;
+        auto call = llvm::cast<ctjs::CallDirectOp>(invocation.getBody().front().front());
+        expect(call.getResult(), normalType, "successful source call has its own normal type");
+        expect(invocation.getNormalBody().front().getArgument(0), normalType,
+               "normal continuation receives only the successful returned value");
+        expect(invocation.getUnwindBody().front().getArgument(0), payloadType,
+               "unwind inference preserves the imported frame's failure alternative");
+    });
+    function.walk([&](ctjs::TryOp attempt) {
+        auto & caught = attempt.getCatchBody().front();
+        expect(caught.getArgument(0), payloadType,
+               "enclosing catch cannot narrow an unproved frame failure");
+        for (auto saved : caught.getArguments().drop_front()) {
+            ++states;
+            expect(saved, stateType, "pre-call catch state is independent of the payload type");
+        }
+    });
+    check(invokes != 0 && states != 0, "source type witness includes invocation and saved state");
+    check(printed(module) == before, "completion inference does not change source operations");
+}
+
+void testSourceCompletionTypes(mlir::MLIRContext & context, llvm::StringRef name,
+                               llvm::StringRef source, llvm::StringRef normalType,
+                               llvm::StringRef stateType) {
+    auto module = import(context, source);
+    if (!module) { return; }
+    auto function = guarded(*module);
+    const auto original = printed(*module);
+    auto recovered = recoverPrimitiveExceptionRegion(
+        function, 100000, ExceptionRecoveryMode::EffectCheckedInvocations);
+    if (!check(recovered.recovered, "source type witness passes independent effect recovery")) {
+        llvm::errs() << recovered.refusal << '\n';
+        return;
+    }
+    checkCompletionTypes(*module, function, normalType, stateType);
+    checkCompletionTypes(*module, function, normalType, stateType);
+    function.getBody().takeBody(recovered.original->getBody());
+    function->setAttrs((*recovered.original)->getAttrs());
+    check(printed(*module) == original, "type inference retains exact source rollback");
+    auto ordinary = recoverPrimitiveExceptionRegion(function);
+    check(!ordinary.recovered && printed(*module) == original,
+          "normal type precision does not admit a native throwing source call");
+    llvm::outs() << name << ": source normal/state types " << normalType << "/" << stateType
+                 << ", unwind remains boxed across frame_enter\n";
+}
+
+void testSourceCompletionMutations(mlir::MLIRContext & context, llvm::StringRef source) {
+    for (unsigned mutation = 0; mutation != 10; ++mutation) {
+        auto module = import(context, source);
+        if (!module) { return; }
+        auto function = guarded(*module);
+        auto recovered = recoverPrimitiveExceptionRegion(
+            function, 100000, ExceptionRecoveryMode::EffectCheckedInvocations);
+        if (!check(recovered.recovered, "live type control starts with checked source recovery")) {
+            return;
+        }
+        checkCompletionTypes(*module, function, "!ctnative.num<i32>", "!ctnative.num<i32>");
+        auto call = firstCall(function);
+        auto helper =
+            mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, call.getCalleeAttr());
+        ctjs::ReturnOp returned;
+        ctjs::ThrowOp thrown;
+        helper.walk([&](ctjs::ReturnOp operation) { returned = operation; });
+        helper.walk([&](ctjs::ThrowOp operation) { thrown = operation; });
+        if (!check(returned && thrown, "source type control retains both helper completions")) {
+            return;
+        }
+        mlir::OpBuilder at(returned);
+        const auto where = returned.getLoc();
+        const auto type = ctjs::ValueType::get(&context);
+        helper->setAttr("ctnative.nothrow", at.getUnitAttr());
+        helper->setAttr("ctnative.exception_effects", at.getUnitAttr());
+        call->setAttr("ctnative.type", at.getStringAttr("num<i32>"));
+        llvm::StringRef expected = "!ctnative.boxed";
+        llvm::StringRef payload = "!ctnative.boxed";
+        llvm::SmallVector<mlir::Operation *> added;
+        if (mutation < 3) {
+            mlir::Attribute literal =
+                mutation == 0   ? mlir::Attribute(ctjs::StringAttr::get(&context, "live"))
+                : mutation == 1 ? mlir::Attribute(ctjs::BooleanAttr::get(&context, true))
+                                : mlir::Attribute(ctjs::NumberAttr::get(
+                                      &context, std::bit_cast<uint64_t>(-0.0)));
+            auto replacement = ctjs::ConstantOp::create(at, where, type, literal);
+            returned->setOperand(0, replacement);
+            expected = mutation == 0   ? "!ctnative.str<utf8>"
+                       : mutation == 1 ? "!ctnative.bool"
+                                       : "!ctnative.num<f64>";
+        } else if (mutation == 3) {
+            at.setInsertionPoint(thrown);
+            auto replacement = ctjs::ConstantOp::create(at, where, type,
+                                                        ctjs::StringAttr::get(&context, "failure"));
+            thrown->setOperand(0, replacement);
+            expected = "!ctnative.num<i32>";
+        } else if (mutation == 4) {
+            added.push_back(ctjs::StoreGlobalOp::create(at, where, "late", returned.getValue()));
+        } else if (mutation == 5) {
+            auto key = ctjs::ConstantOp::create(at, where, type,
+                                                ctjs::StringAttr::get(&context, "property"));
+            ctjs::GetPropertyOp::create(at, where, type, helper.getBody().front().getArgument(0),
+                                        key);
+        } else if (mutation == 6) {
+            auto arguments = helper.getBody().front().getArguments();
+            ctjs::CallDirectOp::create(at, where, type, call.getCalleeAttr(), arguments[0],
+                                       arguments[1], arguments[2], arguments.drop_front(3));
+        } else if (mutation == 7) {
+            mlir::SymbolTable::setSymbolVisibility(helper, mlir::SymbolTable::Visibility::Public);
+        } else if (mutation == 8) {
+            unsigned operations = 0;
+            helper.getBody().walk([&](mlir::Operation *) { ++operations; });
+            if (!check(operations < 4096, "source completion leaves room for exact work limit")) {
+                return;
+            }
+            for (unsigned index = operations; index != 4096; ++index) {
+                added.push_back(ctjs::ConstantOp::create(at, where, type,
+                                                         ctjs::BooleanAttr::get(&context, true)));
+            }
+            checkCompletionTypes(*module, function, "!ctnative.num<i32>", "!ctnative.num<i32>");
+            added.push_back(
+                ctjs::ConstantOp::create(at, where, type, ctjs::BooleanAttr::get(&context, true)));
+        } else {
+            // A test-only frame-free counterpart establishes that the boxed
+            // payload above is a real frame-failure obligation. This erasure
+            // is not a source transform or evidence that native may do it.
+            llvm::SmallVector<mlir::Operation *> bookkeeping;
+            helper.walk([&](mlir::Operation * operation) {
+                if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(operation)) {
+                    bookkeeping.push_back(operation);
+                }
+            });
+            for (auto * operation : llvm::reverse(bookkeeping)) { operation->erase(); }
+            expected = "!ctnative.num<i32>";
+            payload = "!ctnative.num<i32>";
+        }
+        checkCompletionTypes(*module, function, expected, "!ctnative.num<i32>", payload);
+        checkCompletionTypes(*module, function, expected, "!ctnative.num<i32>", payload);
+        if (!added.empty()) {
+            for (auto * operation : llvm::reverse(added)) { operation->erase(); }
+            checkCompletionTypes(*module, function, "!ctnative.num<i32>", "!ctnative.num<i32>");
+        }
+    }
+    llvm::outs() << "source completion types: ten live mutations, fresh solves and reruns\n";
 }
 
 void testMutations(mlir::MLIRContext & context, llvm::StringRef source) {
@@ -881,6 +1053,41 @@ int main(int argc, char ** argv) {
     }
     testMutations(context, source("assignment"));
     testBindings(context, source("assignment"));
+    for (auto name : {"assignment", "sequential", "argument"}) {
+        testSourceCompletionTypes(context, name, source(name), "!ctnative.num<i32>",
+                                  "!ctnative.num<i32>");
+    }
+    testSourceCompletionTypes(context, "string", R"js(
+function choose(flag) {
+    if (flag) { throw "payload"; }
+    return "normal";
+}
+function guarded(flag) {
+    var mark = "entry";
+    try { mark = "saved"; mark = choose(flag); }
+    catch (value) { return mark + value; }
+    return mark;
+}
+var caught = guarded(true);
+var normal = guarded(false);
+)js",
+                              "!ctnative.str<utf8>", "!ctnative.str<utf8>");
+    testSourceCompletionTypes(context, "boolean", R"js(
+function choose(flag) {
+    if (flag) { throw true; }
+    return false;
+}
+function guarded(flag) {
+    var mark = false;
+    try { mark = true; mark = choose(flag); }
+    catch (value) { return mark === value; }
+    return mark;
+}
+var caught = guarded(true);
+var normal = guarded(false);
+)js",
+                              "!ctnative.bool", "!ctnative.bool");
+    testSourceCompletionMutations(context, source("assignment"));
     for (auto [name, calls, saved, payload, parameters] :
          {std::tuple{"assignment", 1u, 10.0, 32.0, false},
           std::tuple{"sequential", 2u, 20.0, 32.0, false},
@@ -890,6 +1097,9 @@ int main(int argc, char ** argv) {
                    ExceptionRecoveryMode::EffectCheckedInvocations);
     }
     testTransitive(context, source("argument"));
+    testSourceCompletionTypes(context, "transitive callee lookup",
+                              nestedSource(source("assignment"), 3, false), "!ctnative.boxed",
+                              "!ctnative.num<i32>");
     testSelectedActuals(context);
     testEffects(context);
     return failures == 0 ? 0 : 1;

@@ -745,6 +745,37 @@ private:
     [[nodiscard]] style::engine & selector_engine();
     style::engine * selector_engine_ = nullptr;
     std::unique_ptr<style::engine> own_selector_engine_;
+
+    // --- THE DOCUMENT AS A NODE (bindings/document.cpp) -------------------
+    //
+    // There is NO Document node in this tree: `txn.root()` is the `<html>`
+    // element and `document` is a plain script object carrying no handle at
+    // all. Every Node and ParentNode member below therefore answers as if
+    // there were a Document whose one child is `documentElement`. The whole of
+    // that decision, and what it makes impossible, is written down above
+    // `install_document_as_node` in bindings/document.cpp - read it before
+    // adding to any of these.
+    void install_document_as_node(context & cx, script::object_object & doc);
+
+    // Is this value the `document` object itself? By IDENTITY, because shape
+    // cannot tell: the Document is the one node-like object with no handle
+    // property, so `handle_of` reports the same empty handle for it as for a
+    // number or a plain object.
+    [[nodiscard]] bool is_the_document(value v) const;
+
+    // DOM 4.4, "locate a namespace", run at an ELEMENT. `prefix` is the null
+    // prefix when the pointer is null, which is what `lookupNamespaceURI(null)`
+    // and `isDefaultNamespace` both ask for. An empty answer IS the null
+    // namespace and reports as `null`.
+    [[nodiscard]] std::string locate_namespace(node_id element, const std::string * prefix);
+    // DOM 4.4, "locate a namespace prefix". Empty means no prefix was found.
+    [[nodiscard]] std::string locate_namespace_prefix(node_id element, const std::string & ns);
+
+    // `normalize()`: merge adjacent Text children and drop empty ones, over a
+    // whole subtree. Reads the shape out first and mutates afterwards - a
+    // structural write inside a live read_txn is a shape nothing else in these
+    // bindings has.
+    void normalize_subtree(node_id root);
     // END selectors
 
     [[nodiscard]] node_id id_or_nothing(context & c) { return receiver(c); }
@@ -1033,6 +1064,19 @@ private:
     // `cancelable` are the two flags that change what dispatch does.
     [[nodiscard]] value make_event_object(context & cx, std::string_view type, bool bubbles,
                                           bool cancelable);
+    // WHAT `passive` MEANS WHEN THE PAGE DID NOT SAY -
+    // https://dom.spec.whatwg.org/#default-passive-value. The member has no
+    // default in the IDL: a listener for one of the four SCROLL-BLOCKING types
+    // registered on the window, the document, the document element or the body
+    // is passive unless the page asked for otherwise, and passive everywhere
+    // else means only what was asked for. It is not a hint - the canceled flag
+    // is not set while such a listener runs - so getting it wrong makes
+    // `preventDefault` work where it must not.
+    [[nodiscard]] bool default_passive_value(std::string_view type, const path_step & target);
+    // The `error` event a faulting callback produces, carrying the VALUE the
+    // throw left behind beside its text. `dispatch_error` is this with no value,
+    // which is what a fault that was never an exception has to hand a page.
+    bool dispatch_error_value(std::string_view message, value error);
     // `Event`, `CustomEvent` and `EventTarget` as globals, and the prototype an
     // event object is linked to so `instanceof` and the phase constants work.
     void install_event_interfaces(context & cx);

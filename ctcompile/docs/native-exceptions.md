@@ -14,7 +14,10 @@ the active handler. This target prerequisite grants no source effect proof.
 Explicit CTJS invocation regions now separate normal results from pre-call
 unwind state and infer both normal returns and a payload from live direct
 callees. This is an IR and analysis prerequisite; source recovery and native
-lowering do not emit it yet.
+lowering do not emit it yet. The recovered source invocation's normal-return
+type can now cross imported frame/root bookkeeping, but its unwind stays boxed
+while `frame_enter` can fail independently of explicit throws. See
+[source invocation integration](native-source-invocations.md#imported-normal-return-types-and-frame-failures).
 This is separate from
 [private provider mutation summaries](native-provider-mutations.md).
 

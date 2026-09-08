@@ -160,6 +160,149 @@ void test_attributes_and_text() {
     CHECK_EQ(doc.read().text(t), std::string_view{"goodbye"});
 }
 
+// AN ATTRIBUTE HAS A NAMESPACE, and the two lookups over it are different
+// questions: `getAttribute` matches the QUALIFIED name irrespective of
+// namespace and answers the first such attribute, `getAttributeNS` matches
+// (namespace, local name) and the prefix takes no part in it. Everything below
+// is DOM 4.9 without a browser anywhere near it.
+void test_attribute_namespaces() {
+    atom_table atoms;
+    document doc{atoms};
+    const node_id n = doc.create_element(atoms.intern("div"));
+    const atom x = atoms.intern("x");
+    const atom foo = atoms.intern("foo");
+    const atom bar = atoms.intern("bar");
+
+    // The same local name in three namespaces is THREE attributes.
+    CHECK(doc.set_attribute(n, x, "none").has_value());
+    CHECK(doc.set_attribute_ns(n, foo, x, "first").has_value());
+    CHECK(doc.set_attribute_ns(n, bar, x, "second").has_value());
+    {
+        const auto r = doc.read();
+        CHECK_EQ(r.attributes(n).size(), 3u);
+        // ...and the qualified lookup answers the FIRST of them.
+        CHECK_EQ(r.attribute_value(n, x), std::string_view{"none"});
+        CHECK(r.find_attribute_ns(n, "", "x") != nullptr);
+        CHECK_EQ(r.find_attribute_ns(n, "foo", "x")->value, std::string{"first"});
+        CHECK_EQ(r.find_attribute_ns(n, "bar", "x")->value, std::string{"second"});
+        CHECK(r.find_attribute_ns(n, "nope", "x") == nullptr);
+        CHECK(r.has_attribute_ns(n, "", "x"));
+        CHECK(!r.has_attribute_ns(n, "", "y"));
+    }
+    // A namespaced write finds the one it already has rather than adding a
+    // fourth, and the qualified write changes the FIRST, whatever namespace
+    // that one is in.
+    CHECK(doc.set_attribute_ns(n, foo, x, "changed").has_value());
+    CHECK(doc.set_attribute(n, x, "also changed").has_value());
+    {
+        const auto r = doc.read();
+        CHECK_EQ(r.attributes(n).size(), 3u);
+        CHECK_EQ(r.find_attribute_ns(n, "foo", "x")->value, std::string{"changed"});
+        CHECK_EQ(r.find_attribute_ns(n, "", "x")->value, std::string{"also changed"});
+    }
+    // Removal, in both spellings. The qualified one takes the first and leaves
+    // the rest, so the answer to the same question changes.
+    CHECK(doc.remove_attribute(n, x).has_value());
+    {
+        const auto r = doc.read();
+        CHECK_EQ(r.attributes(n).size(), 2u);
+        CHECK_EQ(r.attribute_value(n, x), std::string_view{"changed"});
+        CHECK(r.find_attribute_ns(n, "", "x") == nullptr);
+    }
+    CHECK(doc.remove_attribute_ns(n, "bar", "x").has_value());
+    {
+        const auto r = doc.read();
+        CHECK_EQ(r.attributes(n).size(), 1u);
+        CHECK(r.find_attribute_ns(n, "bar", "x") == nullptr);
+    }
+    // Removing something absent is a no-op rather than a write: nothing to
+    // republish and nothing to make the document look dirty.
+    const std::uint64_t settled = doc.version();
+    CHECK(doc.remove_attribute(n, atoms.intern("absent")).has_value());
+    CHECK(doc.remove_attribute_ns(n, "bar", "x").has_value());
+    CHECK_EQ(doc.version(), settled);
+}
+
+// The prefix is NOT part of an attribute's identity, and it is not stored
+// either - see attribute_local_name. These are the four cases that derivation
+// has to get right.
+void test_attribute_prefixes() {
+    atom_table atoms;
+    document doc{atoms};
+    const node_id n = doc.create_element(atoms.intern("div"));
+    const atom ns = atoms.intern("http://example.com/");
+
+    // A prefixed name in a namespace splits at the first colon...
+    CHECK(doc.set_attribute_ns(n, ns, atoms.intern("foo:bar"), "1").has_value());
+    // ...and setting the SAME (namespace, local name) through another prefix
+    // changes the value and keeps the qualified name it already had.
+    CHECK(doc.set_attribute_ns(n, ns, atoms.intern("quux:bar"), "2").has_value());
+    {
+        const auto r = doc.read();
+        CHECK_EQ(r.attributes(n).size(), 1u);
+        const attribute & held = r.attributes(n)[0];
+        CHECK_EQ(atoms.text(held.name), std::string_view{"foo:bar"});
+        CHECK_EQ(held.value, std::string{"2"});
+        CHECK_EQ(attribute_prefix(atoms, held), std::string_view{"foo"});
+        CHECK_EQ(attribute_local_name(atoms, held), std::string_view{"bar"});
+        // The qualified lookup wants the WHOLE name; the local one alone finds
+        // nothing.
+        CHECK(r.has_attribute(n, atoms.intern("foo:bar")));
+        CHECK(!r.has_attribute(n, atoms.intern("bar")));
+    }
+    // removeAttributeNS TAKES A LOCAL NAME - handing it the qualified one
+    // matches nothing, which is the whole of Element-removeAttributeNS.html.
+    CHECK(doc.remove_attribute_ns(n, "http://example.com/", "foo:bar").has_value());
+    CHECK_EQ(doc.read().attributes(n).size(), 1u);
+    CHECK(doc.remove_attribute_ns(n, "http://example.com/", "bar").has_value());
+    CHECK(doc.read().attributes(n).empty());
+    // A COLON WITH NO NAMESPACE IS NOT A PREFIX. `setAttribute("pre:fix", …)`
+    // has local name "pre:fix" and no prefix at all, because a prefix without a
+    // namespace is a NamespaceError and can never have been stored.
+    const node_id other = doc.create_element(atoms.intern("div"));
+    CHECK(doc.set_attribute(other, atoms.intern("pre:fix"), "v").has_value());
+    {
+        const auto r = doc.read();
+        const attribute & held = r.attributes(other)[0];
+        CHECK(attribute_prefix(atoms, held).empty());
+        CHECK_EQ(attribute_local_name(atoms, held), std::string_view{"pre:fix"});
+        CHECK(r.has_attribute_ns(other, "", "pre:fix"));
+        CHECK(!r.has_attribute_ns(other, "", "fix"));
+    }
+}
+
+// "Adjust foreign attributes": the parse path, where an SVG `xlink:href` gets a
+// namespace and the same spelling on an HTML element does not.
+void test_parsed_foreign_attributes() {
+    atom_table atoms;
+    document doc{atoms};
+    (void)parse_html(doc, R"(<div xml:lang="en"><svg xmlns:xlink="urn:x"><use xlink:href="#a"
+        fill="red"/></svg></div>)");
+
+    const auto r = doc.read();
+    node_id div{};
+    node_id use{};
+    const auto walk = [&](auto && self, node_id at) -> void {
+        if (r.tag(at) == atoms.intern("div")) { div = at; }
+        if (r.tag(at) == atoms.intern("use")) { use = at; }
+        for (const node_id c : r.children(at)) { self(self, c); }
+    };
+    walk(walk, r.root());
+    CHECK(static_cast<bool>(div));
+    CHECK(static_cast<bool>(use));
+    if (div) {
+        // HTML content: one unprefixed attribute whose whole name is "xml:lang".
+        const attribute & held = r.attributes(div)[0];
+        CHECK(!held.ns);
+        CHECK_EQ(attribute_local_name(atoms, held), std::string_view{"xml:lang"});
+    }
+    if (use) {
+        CHECK(r.has_attribute_ns(use, "http://www.w3.org/1999/xlink", "href"));
+        // ...and an ordinary SVG attribute is still in no namespace.
+        CHECK(r.has_attribute_ns(use, "", "fill"));
+    }
+}
+
 // A read_txn keeps what it can reach alive. This is the guarantee the whole
 // lock-free design rests on, so it gets a test of its own.
 void test_read_txn_pins_storage() {
@@ -244,6 +387,9 @@ int main() {
     test_append_moves();
     test_insert_before();
     test_attributes_and_text();
+    test_attribute_namespaces();
+    test_attribute_prefixes();
+    test_parsed_foreign_attributes();
     test_read_txn_pins_storage();
     test_version_advances_on_writes();
     test_parse_html();
