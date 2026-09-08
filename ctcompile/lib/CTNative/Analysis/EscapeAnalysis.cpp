@@ -331,32 +331,43 @@ void refineArrayRetention(EscapeVerdicts & verdicts, ctjs::FuncOp function, std:
         if (!spend()) { return; }
         incoming.try_emplace(array, 0);
     }
-    for (const ArrayElementWrite & write : contents.writes) {
+    for (mlir::Operation * object : contents.objects) {
         if (!spend()) { return; }
-        mlir::Operation * child = write.value.getDefiningOp();
+        incoming.try_emplace(object, 0);
+    }
+    const auto addEdge = [&](mlir::Operation * container, mlir::Value value) {
+        if (!spend()) { return false; }
+        mlir::Operation * child = value.getDefiningOp();
         auto found = incoming.find(child);
-        if (found == incoming.end()) { continue; } // constant or property-free object
-        successors[write.array].push_back(child);
+        if (found == incoming.end()) { return true; } // a primitive constant
+        successors[container].push_back(child);
         ++found->second;
+        return true;
+    };
+    for (const ArrayElementWrite & write : contents.writes) {
+        if (!addEdge(write.array, write.value)) { return; }
+    }
+    for (const ObjectPropertyWrite & write : contents.propertyWrites) {
+        if (!addEdge(write.object, write.value)) { return; }
     }
     llvm::SmallVector<mlir::Operation *, 8> pending;
-    for (mlir::Operation * array : contents.arrays) {
+    for (const auto & [container, count] : incoming) {
         if (!spend()) { return; }
-        if (incoming.lookup(array) == 0) { pending.push_back(array); }
+        if (count == 0) { pending.push_back(container); }
     }
     std::size_t visited = 0;
     while (!pending.empty()) {
         if (!spend()) { return; }
-        mlir::Operation * array = pending.pop_back_val();
+        mlir::Operation * container = pending.pop_back_val();
         ++visited;
-        auto found = successors.find(array);
+        auto found = successors.find(container);
         if (found == successors.end()) { continue; }
         for (mlir::Operation * child : found->second) {
             if (!spend()) { return; }
             if (--incoming[child] == 0) { pending.push_back(child); }
         }
     }
-    if (visited != contents.arrays.size()) { return; }
+    if (visited != incoming.size()) { return; }
 
     llvm::SmallPtrSet<mlir::Operation *, 8> retained;
     for (const ArrayContentsExit & exit : contents.exits) {
@@ -751,9 +762,10 @@ LoadProvenanceEvidence computeLoadProvenance(mlir::DataFlowSolver & solver, ctjs
 namespace {
 
 // An own array element, not a property requiring conversion/prototype lookup.
-// -0 Number is index zero; the String "-0" is a different named property.
-// 2^32-1 is an ordinary property key, not an array element. Limiting strings
-// before parsing also bounds proof work independently of source key length.
+// Number -0 is index zero; 2^32-1 is not an array element. String indices
+// remain refused: current VM lookup_index/store_index use dense array slots
+// only for Number keys, so even String "0" disagrees with JavaScript here.
+// Refusal preserves sound retention claims against both execution behaviors.
 std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
     auto constant = value.getDefiningOp<ctjs::ConstantOp>();
     if (!constant) { return std::nullopt; }
@@ -763,18 +775,18 @@ std::optional<std::size_t> ownArrayIndex(mlir::Value value) {
             std::floor(index) == index) {
             return static_cast<std::size_t>(index);
         }
-    } else if (auto string = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())) {
-        const llvm::StringRef text = string.getValue();
-        if (text.empty() || text.size() > 10 || (text.size() > 1 && text.front() == '0') ||
-            !llvm::all_of(text, [](char c) { return c >= '0' && c <= '9'; })) {
-            return std::nullopt;
-        }
-        std::uint64_t index = 0;
-        if (!text.getAsInteger(10, index) && index < 4294967295ULL) {
-            return static_cast<std::size_t>(index);
-        }
     }
     return std::nullopt;
+}
+
+mlir::StringAttr ownObjectKey(mlir::Value value) {
+    auto constant = value.getDefiningOp<ctjs::ConstantOp>();
+    if (!constant) { return {}; }
+    auto string = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue());
+    if (!string || string.getValue().size() > 256 || string.getValue() == "__proto__") {
+        return {};
+    }
+    return mlir::StringAttr::get(constant.getContext(), string.getValue());
 }
 
 } // namespace
@@ -808,6 +820,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
     struct State {
         llvm::DenseMap<mlir::Value, mlir::Value> origins;
         llvm::MapVector<mlir::Operation *, llvm::SmallVector<mlir::Value, 4>> arrays;
+        llvm::MapVector<mlir::Operation *, ObjectOwnProperties> objects;
         llvm::SmallPtrSet<mlir::Block *, 8> visited;
         ctjs::FrameEnterOp frame;
         bool frameExited = false;
@@ -818,6 +831,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
     state.current = &function.getBody().front().front();
     llvm::SmallVector<State, 2> alternatives;
     llvm::SmallPtrSet<mlir::Operation *, 8> arraySites;
+    llvm::SmallPtrSet<mlir::Operation *, 8> objectSites;
     const auto origin = [&](mlir::Value value) { return state.origins.lookup(value); };
     const auto forward = [&](State & path, mlir::Block * next, mlir::ValueRange operands) {
         if (next->getParent() != &function.getBody() || next->empty() ||
@@ -902,6 +916,12 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                         return refuse(ArrayContentsFailure::WorkLimit, &op);
                     }
                 }
+                for (const auto & [object, properties] : state.objects) {
+                    (void)object;
+                    if (!spend() || !spend(properties.size())) {
+                        return refuse(ArrayContentsFailure::WorkLimit, &op);
+                    }
+                }
                 State alternative = state;
                 auto failure =
                     forward(alternative, branch.getFalseDest(), branch.getFalseDestOperands());
@@ -914,8 +934,14 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             // Truthy is total, noncapturing and nonthrowing (Operators.td). An
             // external input remains unknown for every other use; only its i1
             // result can be carried as a predicate. Neither branch is pruned.
-            if (llvm::isa<ctjs::ConstantOp, ctjs::CreateObjectOp, ctjs::TruthyOp>(&op)) {
+            if (llvm::isa<ctjs::ConstantOp, ctjs::TruthyOp>(&op)) {
                 state.origins[op.getResult(0)] = op.getResult(0);
+                continue;
+            }
+            if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(&op)) {
+                if (objectSites.insert(&op).second) { out.objects.push_back(&op); }
+                state.objects.try_emplace(&op);
+                state.origins[object.getResult()] = object.getResult();
                 continue;
             }
             if (auto array = llvm::dyn_cast<ctjs::CreateArrayOp>(&op)) {
@@ -933,8 +959,33 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
             }
             if (llvm::isa<ctjs::AppendOp, ctjs::SetPropertyOp, ctjs::GetPropertyOp>(&op)) {
                 const mlir::Value base = origin(op.getOperand(0));
-                mlir::Operation * array = base ? base.getDefiningOp() : nullptr;
-                auto found = state.arrays.find(array);
+                mlir::Operation * container = base ? base.getDefiningOp() : nullptr;
+                auto object = state.objects.find(container);
+                if (object != state.objects.end() && !llvm::isa<ctjs::AppendOp>(&op)) {
+                    // CreateObject has a null explicit prototype and no accessors
+                    // (Containers/Properties.td). Only known own writes/reads are
+                    // modeled; no call, descriptor or prototype mutation is allowed.
+                    // Refuse __proto__ even though the current VM stores it as data.
+                    const mlir::Value keyValue = origin(op.getOperand(1));
+                    const auto key = keyValue ? ownObjectKey(keyValue) : mlir::StringAttr{};
+                    if (!key) { return refuse(ArrayContentsFailure::UnknownPropertyKey, &op); }
+                    auto & properties = object->second;
+                    if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(&op)) {
+                        const mlir::Value value = origin(store.getValue());
+                        if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
+                        properties[key] = value;
+                        out.propertyWrites.push_back({&op, 2, container, key, value});
+                    } else {
+                        auto found = properties.find(key);
+                        if (found == properties.end()) {
+                            return refuse(ArrayContentsFailure::MissingProperty, &op);
+                        }
+                        state.origins[op.getResult(0)] = found->second;
+                        out.propertyReads.push_back({&op, container, key, found->second});
+                    }
+                    continue;
+                }
+                auto found = state.arrays.find(container);
                 if (found == state.arrays.end()) {
                     return refuse(ArrayContentsFailure::UnknownArray, &op);
                 }
@@ -945,7 +996,7 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     if (elements.size() >= 4294967295ULL) {
                         return refuse(ArrayContentsFailure::MissingElement, &op);
                     }
-                    out.writes.push_back({&op, 1, array, elements.size(), value});
+                    out.writes.push_back({&op, 1, container, elements.size(), value});
                     elements.push_back(value);
                     continue;
                 }
@@ -961,10 +1012,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     const mlir::Value value = origin(store.getValue());
                     if (!value) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
                     elements[*index] = value;
-                    out.writes.push_back({&op, 2, array, *index, value});
+                    out.writes.push_back({&op, 2, container, *index, value});
                 } else {
                     state.origins[op.getResult(0)] = elements[*index];
-                    out.reads.push_back({&op, array, *index, elements[*index]});
+                    out.reads.push_back({&op, container, *index, elements[*index]});
                 }
                 continue;
             }
@@ -985,13 +1036,23 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     if (!isTrackedSite(site) || !visited.insert(site).second) { continue; }
                     exit.reachableSites.push_back(site);
                     auto array = state.arrays.find(site);
-                    if (array == state.arrays.end()) { continue; }
-                    for (mlir::Value element : array->second) {
-                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
-                        pending.push_back(element);
+                    if (array != state.arrays.end()) {
+                        for (mlir::Value element : array->second) {
+                            if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                            pending.push_back(element);
+                        }
+                    }
+                    auto object = state.objects.find(site);
+                    if (object != state.objects.end()) {
+                        for (const auto & [key, element] : object->second) {
+                            (void)key;
+                            if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                            pending.push_back(element);
+                        }
                     }
                 }
                 exit.arrays = std::move(state.arrays);
+                exit.objects = std::move(state.objects);
                 out.exits.push_back(std::move(exit));
                 returned = true;
                 continue;

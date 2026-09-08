@@ -162,9 +162,11 @@ allocation once, and handles self and mutual cycles. This identifies identities
 and edges; it does not select an owner, make a cycle collectable, or change the
 legacy `Stored` verdict.
 
-The proof requires a known initialized own index. Number `-0` and canonical
-decimal String `"0"` refer to index zero; String `"-0"`, noncanonical spellings,
-fractions, NaN, infinity, negative numbers and `2^32-1` do not. Generic writes
+The proof requires a known initialized own Number index. Number `-0` refers
+to index zero; fractions, NaN, infinity, negative numbers and `2^32-1` do not.
+String indices, including canonical `"0"`, are now refused because the current
+VM's named-property path does not access dense elements; see the measured
+boundary below. Generic writes
 may overwrite existing elements only. Extending a generic property write, reading
 an absent slot, deleting elements, accessing named properties, changing prototypes
 or defining accessors refuses the entire result. Literal append uses the existing
@@ -179,8 +181,8 @@ proof. `ctjs.throw` is excluded because uncaught diagnostic formatting may call
 `toString` and reenter JavaScript. Return is the only supported exit.
 
 The default budget is 100,000 operation, forwarded-argument, initializer-element,
-branch-state-copy and exit graph visits. Key parsing examines one Number or at most ten String
-digits. Only a completed function scan and return graph publish `complete=true`. Unsupported
+branch-state-copy and exit graph visits. Array key validation examines one Number.
+Only a completed function scan and return graph publish `complete=true`. Unsupported
 operations or exhausted work return a named failure and witness operation with
 **no proof records**, including when all reads were already checked. Every IR
 mutation invalidates previous records; callers must recompute.
@@ -389,3 +391,67 @@ precision increment does not establish a corpus gain. Homebrew clang-format
 **164/164 lit cases**. Only the five recorded browser failures remain; no browser
 source changed. Log: `/tmp/ctcompile-payloads-full.log`; fresh oracle evidence:
 `/tmp/ctcompile-payloads-evidence.json`. Native ownership consumers remain separate.
+
+## Fixed own properties on fresh objects
+
+The complete query now includes ordinary `ctjs.create_object` containers with
+bounded constant String keys. A write establishes or replaces an own data
+property; a read requires an earlier write to that exact key on the current
+path. Missing own properties remain refused, including names supplied by a
+builtin or prototype. Numeric, Boolean, external and otherwise coercing keys
+are not accepted. Strings may be empty, contain NUL or look like indices;
+their byte length is limited to 256. `__proto__` is explicitly refused.
+
+This follows the existing `Containers.td`/`Properties.td` fresh-object contract:
+the object has a null explicit prototype, no accessors and writable/extensible
+own data. The proof still refuses every prototype/descriptor operation, call,
+global access, publication and unsupported effect. It does not infer an
+unchanged prototype from a marker or use a missing-field VM result as evidence.
+No runtime or native-admission behavior changed.
+
+Each path records its exact object fields alongside its arrays. Reads retain
+their original values after replacement, and object aliases loaded through
+arrays or other objects update the same current instance. Return reachability
+crosses both field and element edges. The retention consumer checks the union
+of all writes across both container kinds, including overwritten edges and
+mutually exclusive paths, before discharging a single `Stored` verdict.
+Self, mixed and transient cycles therefore keep every original verdict.
+
+Branch snapshots charge each object and own property before copying it. Every
+incomplete budget or unsupported operation discards all object, array, read,
+write and exit records; the retention transaction also preserves all original
+verdicts. Keys are interned exact String attributes, so equal bytes in separate
+constants cannot create distinct fields. Current IR is rechecked on every query.
+
+The focused gate passes **31 object rows, eleven key controls and twelve live mutation
+states**, with every incomplete contents/retention budget and exact endpoint.
+They cover field replacement, saved reads, mixed-container aliases and returns,
+conditional target identity, absent properties, late effects, frame bookkeeping,
+cycle refusal and live changes under forged completion/confinement markers.
+Existing source fixtures and precision expectations are unchanged. Homebrew
+clang-format 22.1.8 and whitespace checks pass. These controls are not a measured
+corpus precision increase. Loops, external stored values, coercing keys, absent own
+reads and other container kinds remain outside the proof; native type,
+identity, cycle ownership and frame-lifetime consumers remain separate.
+
+The initial object gate passed, but a subsequent source audit exposed an older
+array-index assumption that this extension made easier to reach. In
+`/tmp/ctcompile-object-key-oracle.json`, both a direct `a['0'] = next` and an
+object-loaded String key produce **Node `trace=2`, interpreter `trace=1`**;
+the interpreter leaves the old dense element unchanged. Reading through an
+object-loaded String key produces **Node `trace=1`, interpreter
+`trace=undefined`**. Current VM `lookup_index`/`store_index` use dense array
+slots only for Number keys, and the named-property paths do not access them.
+The compiler now refuses String array reads and writes rather than claiming
+which child was read or replaced. The VM and source oracle expectations are
+unchanged. Direct and object/array-loaded String key refusals, plus live
+Number-to-String-to-Number changes under forged markers, guard this boundary.
+The revised array contents suite passes **38 rows**; all incomplete work
+budgets continue to publish no proof and preserve the original escape verdicts.
+The final focused devbox gate passes **12/12 CTests in 28.30 seconds**, including
+**1269 object-retention cutoffs**, 14 array keys, 20 retention rows/661 cutoffs,
+26 frame rows/444 cutoffs and 17 conditional rows/877 cutoffs with five
+path-explosion controls. All four execution oracles report zero violations.
+Fixture precision remains **22/33**; Bootstrap/p5/Phaser remains **0/64, 0/16,
+0/20**. Log: `/tmp/ctcompile-object-focused2.log`. The full generated gate is
+pending; its final result belongs in [HANDOFF.md](HANDOFF.md).

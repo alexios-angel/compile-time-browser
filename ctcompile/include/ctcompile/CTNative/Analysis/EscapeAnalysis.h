@@ -12,7 +12,7 @@
 // `arguments`, `suspended`, `unknown_op` and the `unvisited*` gaps are outside
 // the native subset and become a compile-time diagnostic naming the site and
 // the reason. So the reason is load-bearing, not a roadmap, and the analysis
-// keeps the FIRST one it finds. A separate, complete local-array proof may
+// keeps the FIRST one it finds. A separate, complete local-container proof may
 // discharge a Stored verdict when no return path can retain the site. It
 // never relabels a stored child as uniquely returned or chooses a graph owner.
 //
@@ -56,6 +56,7 @@
 
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/Analysis/DataFlowFramework.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -263,7 +264,7 @@ struct EscapeVerdicts {
     /// R4 `suspended` or R1's guard `arguments_late`: every site escapes with
     /// this reason.
     std::optional<EscapeReason> wholeFunction;
-    /// A separate complete local-array proof discharged these Stored sites.
+    /// A separate complete local-container proof discharged these Stored sites.
     /// Its all-write graph must be acyclic, every operation must be supported,
     /// and none of these sites may be reachable through the returned value.
     /// This does not discharge native type, identity or lifetime obligations.
@@ -271,7 +272,7 @@ struct EscapeVerdicts {
     /// Complete contents, acyclicity, return reachability and the full verdict
     /// refinement finished. False leaves every original verdict untouched.
     bool arrayRetentionComplete = false;
-    /// Contents-query work plus array/write graph and verdict visits. A zero
+    /// Contents-query work plus container/write graph and verdict visits. A zero
     /// limit disables the refinement and preserves the original sink verdicts.
     std::size_t arrayRetentionWork = 0;
 };
@@ -320,7 +321,7 @@ struct LoadProvenanceEvidence {
                                                            const EscapeVerdicts & verdicts,
                                                            std::size_t workLimit = 100000);
 
-/// Independent complete own-element evidence, not the candidate graph above.
+/// Independent complete own-element/field evidence, not the candidate graph above.
 /// Values name their original constant or fresh allocation, following exact
 /// earlier reads. Each write keeps its actual operand position as a witness.
 struct ArrayElementWrite {
@@ -338,6 +339,23 @@ struct ArrayElementRead {
     mlir::Value value;
 };
 
+using ObjectOwnProperties = llvm::MapVector<mlir::StringAttr, mlir::Value>;
+
+struct ObjectPropertyWrite {
+    mlir::Operation * by = nullptr;
+    unsigned position = 0;
+    mlir::Operation * object = nullptr;
+    mlir::StringAttr key;
+    mlir::Value value;
+};
+
+struct ObjectPropertyRead {
+    mlir::Operation * by = nullptr;
+    mlir::Operation * object = nullptr;
+    mlir::StringAttr key;
+    mlir::Value value;
+};
+
 struct ArrayContentsExit {
     mlir::Operation * by = nullptr; // return
     mlir::Value value;
@@ -345,8 +363,10 @@ struct ArrayContentsExit {
     /// A join is explored separately for each incoming path; the same return
     /// may therefore have several records with different contents and roots.
     llvm::MapVector<mlir::Operation *, llvm::SmallVector<mlir::Value, 4>> arrays;
+    /// Exact own data properties of every fresh ordinary object on this path.
+    llvm::MapVector<mlir::Operation *, ObjectOwnProperties> objects;
     /// Every local object/array reachable from value at this exit, through
-    /// current own elements, once each. Includes the root when it is local.
+    /// current own elements/properties, once each. Includes a local root.
     /// Overwritten elements are absent unless another live path retains them.
     llvm::SmallVector<mlir::Operation *, 4> reachableSites;
 };
@@ -360,7 +380,9 @@ enum class ArrayContentsFailure {
     UnknownIndex,
     MissingElement,
     WorkLimit,
-    InvalidFrame
+    InvalidFrame,
+    UnknownPropertyKey,
+    MissingProperty
 };
 
 struct ArrayContentsEvidence {
@@ -369,22 +391,30 @@ struct ArrayContentsEvidence {
     llvm::SmallVector<mlir::Operation *, 4> arrays;
     llvm::SmallVector<ArrayElementWrite, 0> writes;
     llvm::SmallVector<ArrayElementRead, 0> reads;
+    llvm::SmallVector<mlir::Operation *, 4> objects;
+    llvm::SmallVector<ObjectPropertyWrite, 0> propertyWrites;
+    llvm::SmallVector<ObjectPropertyRead, 0> propertyReads;
     llvm::SmallVector<ArrayContentsExit, 1> exits;
     /// Published only after the entire function and exit reachability pass.
-    /// Refusal/exhaustion returns NO arrays, writes, reads or exits.
+    /// Refusal/exhaustion returns NO container, write, read or exit records.
     bool complete = false;
     ArrayContentsFailure failure = ArrayContentsFailure::None;
     mlir::Operation * refusedBy = nullptr;
     /// Operation, forwarded-argument, initializer-element, branch-state-copy
-    /// and exit graph visits. Key parsing examines one number or ten digits.
+    /// and exit graph visits. Array key validation examines one Number;
+    /// object keys must be Strings of at most 256 bytes.
     std::size_t work = 0;
 };
 
 /// Recompute from the CURRENT verified IR; needs neither trusted annotations
 /// nor alias lattices. An acyclic cf.br/cf.cond_br graph may contain
-/// constants, fresh property-free objects/arrays, literal append, constant-index
-/// array reads/overwrites, truthy and return. Loaded array aliases share one
-/// contents state per path; cycles are visited once at exits. Unknown values/indices,
+/// constants, fresh objects/arrays, literal append, constant-Number-index array
+/// reads/overwrites, own String-property object writes/reads, truthy and return.
+/// Object reads require an earlier own write; keys longer than 256 bytes and
+/// __proto__ refuse. String array indices refuse because the current VM's named
+/// property path does not access dense elements, unlike JavaScript's String
+/// index semantics. Loaded aliases share one contents state per path; cycles
+/// are visited once at exits. Unknown values/keys,
 /// holes, calls, throws, publication, regions, prototypes and accessors refuse.
 /// Both conditional edges are explored, even with a constant predicate. Joins
 /// keep exact separate states rather than unioning overwrite targets. Truthy
@@ -414,7 +444,7 @@ struct ArrayContentsEvidence {
 ///
 /// With initialized solver evidence, a complete current computeArrayContents
 /// proof may discharge Stored sites absent from every return path. A bounded
-/// acyclicity check over ALL writes excludes even transient cycles. Retained
+/// acyclicity check over ALL array/object writes excludes transient cycles. Retained
 /// children keep their original Stored witness; no unique owner is inferred.
 /// Unsupported operations, cycles, missing lattices or budget exhaustion leave
 /// every original verdict intact. No native admission consumes this refinement.
