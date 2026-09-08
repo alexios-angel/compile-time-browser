@@ -153,9 +153,10 @@
 # Graphs, dynamic/prototype fields, String fields, external object arguments,
 # object keys/returns and unproved sibling reads remain independent refusals.
 # The exact historical eight-call saved identity source reads its actual leaf
-# after replacement/deletion. The eight-call distinct source keeps complete
-# host ownership and a separate comparison-only allocation carrier refusal;
-# the nine-call fresh deleted read remains unproved. Source bytes are preserved.
+# after replacement/deletion. The eight-call distinct source and the local
+# six-call fresh comparison retain actual separate allocations through a complete
+# strict-comparison use census. The nine-call fresh deleted read remains
+# unproved. Source bytes are preserved.
 # Fresh/stale
 # forged object identity/field/presence annotations and transactional budget
 # cutoffs cannot manufacture ownership or erase source allocation/field uses.
@@ -184,3 +185,13 @@
 # on another Map-stored allocation and an explicit Undefined overwritten by
 # Number keep complete host ownership but refuse native numeric exports.
 # Exact one-edit repairs restore independently gated historical source bytes.
+# Comparison-only fresh RHS allocations and the exact saved-object repairs
+# retain all four source programs, numeric fields and Map operations. Standalone
+# explicit/deduced GCC/Clang execution and sanitizer observers exercise 128
+# future calls, owner/table release, repeated keys, independent entry reexecution
+# and final Map destruction. Separately retained comparison operands stay
+# distinct within and across calls and preserve their fields until release.
+# Fresh/stale forged identity, field, payload and host reports, prepared reruns
+# and measured budget cutoffs cannot manufacture source authority. Both exact
+# post-delete sources remain unowned with all seven/nine original calls intact;
+# possible absence is not a definite Undefined result.

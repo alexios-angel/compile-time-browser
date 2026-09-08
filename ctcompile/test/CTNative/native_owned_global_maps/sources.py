@@ -1387,8 +1387,8 @@ def leaf_object_refusals():
 
 def leaf_readback_sources():
     # These preserve the sixteen measured next.json sources from 5d2d843a.
-    # Keep the two post-delete reads as refusals and the comparison-only
-    # fresh allocations as separate native carrier controls below.
+    # Keep the two post-delete reads as refusals. The comparison-only fresh
+    # allocations now use an independent strict-comparison identity census.
     base = leaf_object_sources()["leaf_object_identity_repair"][0]
     old = "const item = {value: 1}; state.set(key, item); return state.size;"
     empty = "const item = {}; state.set(key, item); const saved = state.get(key); "
@@ -1474,7 +1474,11 @@ LEAF_READBACK_CALLS.update({name + "_checked": LEAF_READBACK_CALLS[name]
 # now have an independent per-read presence proof. The schema still joins all
 # stored value types, including explicitly written Undefined.
 LEAF_FIELD_RESULTS = {"local_field_get", *LEAF_READBACK_CHECKED_RETURNS}
-LEAF_READBACK_CARRIERS = {"local_identity_distinct_fresh", "historical_object_distinct_identity"}
+LEAF_COMPARISON_REPAIRS = {
+    "local_identity_distinct_fresh": "local_identity_saved",
+    "historical_object_distinct_identity": "historical_object_saved_identity",
+}
+LEAF_COMPARISON_CASES = (*LEAF_COMPARISON_REPAIRS, *LEAF_COMPARISON_REPAIRS.values())
 LEAF_READBACK_UNOWNED = {"local_identity_repeated_keys"}
 
 

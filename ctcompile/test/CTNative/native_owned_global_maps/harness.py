@@ -17,7 +17,7 @@ from .sources import (
     nullable_result_sources, nullable_key_sources, NULLABLE_OBSERVATIONS,
     nullable_payload_sources, NULLABLE_PAYLOAD_READBACKS, nullable_host_result_sources,
     nullable_nested_result_sources,
-    leaf_object_sources, LEAF_OBJECT_FIELDS, leaf_readback_sources,
+    leaf_object_sources, LEAF_OBJECT_FIELDS, leaf_readback_sources, LEAF_COMPARISON_CASES,
 )
 
 
@@ -975,6 +975,156 @@ def check_leaf_readback_calls(cpp, name, mode):
         expected += ["size"]
     if [methods_by_value.get(callee) for callee, _ in calls] != expected:
         raise RuntimeError(f"{name}/{mode}: changed the live readback method order")
+    if name in LEAF_COMPARISON_CASES:
+        comparisons = re.findall(r"ctnative::object_strict_equal\((\w+), (\w+)\)", cpp)
+        reads = re.findall(r"\b(\w+)\s*=\s*ctnative::map_get_present_identity\(", cpp)
+        created = re.findall(r"\b(\w+)\s*=\s*std::make_shared<ctnative::identity_object>\(\)", cpp)
+        if (len(comparisons) != 1 or len(reads) != 1
+                or comparisons[0][0] != reads[0] or comparisons[0][1] not in created
+                or ("distinct" in name and comparisons[0][1] != created[-1])):
+            raise RuntimeError(f"{name}/{mode}: strict comparison lost its live saved/fresh operands")
+
+
+def comparison_identity_observer_source(source, name):
+    # These future calls remain separate from the byte-preserved compiled
+    # source. Retaining Map payloads is observation, never production storage.
+    historical = name.startswith("historical_")
+    writes = 2 if historical else 1
+    result = leaf_readback_sources()[name][2]
+    observed = source + """
+(function() {
+    const seen = [], results = [];
+    const original = Map.prototype.set;
+    Map.prototype.set = function(key, value) {
+        seen.push(value); return original.call(this, key, value);
+    };
+    const setter = host.slot.set, size = host.slot.size;
+    host = {};
+    results.push(setter('future-key'));
+    results.push(setter('future-key'));
+    results.push(setter('other-key'));
+    results.push(setter('other-key'));
+    Map.prototype.set = original;
+    trace = 0;
+"""
+    checks = [f"seen.length === {4 * writes}",
+              f"results.length === 4 && results.every(value => value === {result})",
+              f"size() === {0 if historical else 3}"]
+    for left in range(4 * writes):
+        for right in range(left + 1, 4 * writes):
+            checks.append(f"seen[{left}] !== seen[{right}]")
+    if historical:
+        checks.append("seen.every(value => value.value === 1)")
+    # Avoid bitwise accumulation: the full pairwise historical census has
+    # more than 31 independent checks, and JavaScript bitwise values are Int32.
+    for check in checks:
+        observed += f"    if ({check}) {{ trace += 1; }}\n"
+    return observed + "})();\n", len(checks)
+
+
+def comparison_identity_cpp(cpp, name):
+    historical = name.startswith("historical_")
+    distinct = "distinct" in name
+    allocations = 1 + historical + distinct
+    result = leaf_readback_sources()[name][2]
+    changed = instrument_leaf_objects(cpp, allocations=allocations)
+    changed = changed.replace("template <class T> std::shared_ptr<T> ctn_test_make_leaf() {",
+        "static bool ctn_test_capture = false;\n"
+        "static std::vector<std::shared_ptr<const void>> ctn_test_retained;\n"
+        "template <class T> std::shared_ptr<T> ctn_test_make_leaf() {")
+    changed = changed.replace("ctn_test_objects.emplace_back(made); return made;",
+        "ctn_test_objects.emplace_back(made); "
+        "if (ctn_test_capture) { ctn_test_retained.emplace_back(made); } return made;")
+    changed += r'''
+int main() {
+    constexpr std::size_t allocations = CTN_ALLOCATIONS;
+    constexpr bool deleted = CTN_DELETED;
+    constexpr js_num result = CTN_RESULT;
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
+        ctn_test_objects.size() != allocations) { return 120; }
+    for (std::size_t index = 0; index < allocations; ++index) {
+        if (ctn_test_objects[index].expired() != (deleted || index != 0)) { return 121; }
+    }
+    auto owner = g_host;
+    auto table = owner->slot;
+    auto size = table->m_size;
+    auto setter = table->m_set;
+    static_assert(std::is_same_v<decltype(size), std::function<js_num()>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<js_num(std::string)>>);
+    std::weak_ptr owner_lifetime = owner;
+    std::weak_ptr table_lifetime = table;
+    g_host.reset(); owner.reset(); table.reset();
+    if (!owner_lifetime.expired() || !table_lifetime.expired() || ctn_test_maps[0].expired()) {
+        return 122;
+    }
+    const std::string original(160, 'k');
+    for (int call = 0; call < 128; ++call) {
+        const auto count = ctn_test_objects.size();
+        auto caller = original;
+        if (setter(caller) != result || size() != (deleted ? 0 : 2) ||
+            ctn_test_objects.size() != count + allocations) { return 123; }
+        caller.assign(original.size(), 'q');
+        for (std::size_t index = allocations; index < count; ++index) {
+            if (!ctn_test_objects[index].expired()) { return 124; }
+        }
+        for (std::size_t index = 0; index < allocations; ++index) {
+            if (ctn_test_objects[count + index].expired() != (deleted || index != 0)) { return 125; }
+        }
+    }
+    ctn_test_capture = true;
+    if (setter(original) != result || setter(original) != result ||
+        ctn_test_retained.size() != allocations * 2) { return 126; }
+    ctn_test_capture = false;
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
+        ctn_test_maps[0].lock() == ctn_test_maps[1].lock() ||
+        size() != (deleted ? 0 : 2) || g_host->slot->m_size() != (deleted ? 0 : 1)) { return 127; }
+    setter = {};
+    if (ctn_test_maps[0].expired()) { return 128; }
+    size = {};
+    if (!ctn_test_maps[0].expired() || ctn_test_maps[1].expired()) { return 129; }
+    g_host.reset();
+    std::vector<std::string> churn;
+    for (int index = 0; index < 4096; ++index) { churn.emplace_back(original.size(), 'w'); }
+    if (!ctn_test_maps[1].expired()) { return 130; }
+    for (std::size_t left = 0; left < ctn_test_retained.size(); ++left) {
+        if (!ctn_test_retained[left]) { return 131; }
+        for (std::size_t right = left + 1; right < ctn_test_retained.size(); ++right) {
+            if (ctn_test_retained[left] == ctn_test_retained[right]) { return 132; }
+        }
+        CTN_FIELD_CHECK
+    }
+    ctn_test_retained.clear();
+    for (const auto & object : ctn_test_objects) {
+        if (!object.expired()) { return 134; }
+    }
+    return 0;
+}
+'''
+    fields = ""
+    if historical:
+        fields = ("const auto leaf = std::static_pointer_cast<const ctnative::identity_object>"
+                  "(ctn_test_retained[left]);\n"
+                  "        if (leaf->field_76616c7565.tag != ctnative::nullable_scalar::kind::number ||\n"
+                  "            leaf->field_76616c7565.value != 1) { return 133; }")
+    return changed.replace("CTN_ALLOCATIONS", str(allocations)).replace(
+        "CTN_DELETED", "true" if historical else "false").replace(
+        "CTN_RESULT", str(result)).replace("CTN_FIELD_CHECK", fields)
+
+
+def comparison_identity_lifetime(args, cpp, name, mode, compiler):
+    source = args.work / f"{name}.{mode}.lifetime.cpp"
+    source.write_text(comparison_identity_cpp(cpp, name))
+    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
+    host.run([compiler, *owned.FLAGS, "-O1", "-g", "-fno-omit-frame-pointer",
+              "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
+              str(source), "-o", str(binary)])
+    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
+        env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+                 UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+    expected = f"trace={leaf_readback_sources()[name][2]}\n" * 2
+    if result.returncode or result.stdout != expected:
+        raise RuntimeError(f"{name}/{mode}: comparison identity lifetime failure (exit {result.returncode})\n"
+                           f"{result.stdout}{result.stderr}")
 
 
 def leaf_readback_lifetime(args, cpp, name, mode, compiler):
@@ -1195,6 +1345,9 @@ def standalone(args, output, name, value, compilers, nm):
                                                or name == "leaf_object_identity_repair"):
             source = args.work / f"{name}.{mode}.identity.cpp"
             source.write_text(leaf_object_identity_cpp(cpp, name))
+        if name in LEAF_COMPARISON_CASES:
+            source = args.work / f"{name}.{mode}.identity.cpp"
+            source.write_text(comparison_identity_cpp(cpp, name))
         if name in {**nullable_result_sources(), **nullable_key_sources(), **nullable_payload_sources(),
                     **nullable_host_result_sources(), **nullable_nested_result_sources()}:
             key = "std::string" if name == "nullable_homogeneous_key" else "std::variant<bool, std::string>"
@@ -1224,7 +1377,8 @@ def standalone(args, output, name, value, compilers, nm):
             host.run([compiler, *owned.FLAGS, str(source), "-o", str(binary)])
             if owned.VM.search(host.run([nm, "-C", str(binary)]).stdout):
                 raise RuntimeError(f"{name}/{mode}: linked a VM symbol")
-            if host.run([str(binary)]).stdout != f"trace={value}\n":
+            traces = 2 if name in LEAF_COMPARISON_CASES else 1
+            if host.run([str(binary)]).stdout != f"trace={value}\n" * traces:
                 raise RuntimeError(f"{name}/{mode}: standalone result mismatch")
         if name in {"ordinary", "mutate_map", "growing", "result_seeded_growing"}:
             lifetime(args, cpp, name, mode, value, compilers[1])
@@ -1245,6 +1399,8 @@ def standalone(args, output, name, value, compilers, nm):
             leaf_object_lifetime(args, cpp, name, mode, compilers[1])
         if name in {"local_field_readback_lifetime_checked", "local_field_readback_lifetime"}:
             leaf_readback_lifetime(args, cpp, name, mode, compilers[1])
+        if name in LEAF_COMPARISON_CASES:
+            comparison_identity_lifetime(args, cpp, name, mode, compilers[1])
 
 
 def check_call_preservation(original, output, name):

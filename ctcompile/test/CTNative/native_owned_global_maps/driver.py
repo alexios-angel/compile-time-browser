@@ -23,14 +23,15 @@ from .sources import (
     NULLABLE_HOST_RESULT_CALLS,
     nullable_nested_result_sources, nullable_nested_result_refusals, NULLABLE_NESTED_RESULT_CALLS,
     leaf_object_sources, leaf_object_refusals, LEAF_OBJECT_CALLS, LEAF_OBJECT_FUNCTIONS,
-    leaf_readback_sources, leaf_readback_refusals, LEAF_READBACK_CALLS, LEAF_READBACK_CARRIERS,
+    leaf_readback_sources, leaf_readback_refusals, LEAF_READBACK_CALLS,
+    LEAF_COMPARISON_REPAIRS, LEAF_COMPARISON_CASES,
     LEAF_READBACK_UNOWNED, LEAF_FIELD_RESULTS, leaf_field_result_refusals,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
     forge_map_presence, check_budgets, check_prepared_result_calls,
     nullable_observer_source,
-    leaf_object_observer_source, forge_leaf_evidence,
+    leaf_object_observer_source, forge_leaf_evidence, comparison_identity_observer_source,
 )
 
 
@@ -115,6 +116,9 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
             mode_name = name + "-" + mode
             failed = methods.refused(args, rejected, mode_name, config, options=options, admitted=0)
             check_call_preservation(rejected.read_text(), failed.read_text(), mode_name)
+            postdelete = name in {"local_identity_after_delete", "historical_object_deleted_identity"}
+            if postdelete and "ctnative.host_owner_proved = false" not in failed.read_text():
+                raise RuntimeError(f"{name}: possible absence manufactured a complete host owner")
             repaired = owned.lower(args, restored, mode_name + "-restored", restored_config, options=options)
             text = methods.census(repaired, restored_count, mode_name + "-restored", admitted=restored_count)
             if "ctnative.host_owner_proved = true" not in text:
@@ -131,20 +135,14 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
                 if "fingerprint mismatch" in failed.read_text():
                     raise RuntimeError(f"{forged_name}: skipped independent leaf/use reanalysis")
                 check_call_preservation(forged.read_text(), failed.read_text(), forged_name)
+                if postdelete and "ctnative.host_owner_proved = false" not in failed.read_text():
+                    raise RuntimeError(f"{forged_name}: forged absence manufactured a host owner")
                 rerun = methods.refused(args, failed, forged_name + "-rerun", fresh,
                                         options=options, admitted=0)
                 check_call_preservation(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
 
 
-def check_leaf_readback_carriers(args, positives, node, reference, controls=None):
-    if controls is None:
-        controls = {}
-        for name in sorted(LEAF_READBACK_CARRIERS):
-            source, _, value = leaf_readback_sources()[name]
-            historical = name.startswith("historical_")
-            repair = "historical_object_saved_identity" if historical else "local_identity_saved"
-            old = "saved === {value: 1}" if historical else "saved === {}"
-            controls[name] = source, value, old, "saved === item", repair, LEAF_READBACK_CALLS[name]
+def check_leaf_readback_carriers(args, positives, node, reference, controls):
     for name, (source, value, old, replacement, repair, source_call_count) in controls.items():
         js, ir, count = boundary.prepare(args, name, source)
         if count != 5 or len(source_calls(ir.read_text())) != source_call_count:
@@ -245,6 +243,36 @@ def check_leaf_readback_observations(args, node, reference):
             blind.write_text(source.replace(old, replacement))
             if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == expected:
                 raise RuntimeError(f"{name}: future field observation cannot distinguish {replacement}")
+
+
+def check_comparison_identity_observations(args, node, reference):
+    positives = leaf_readback_sources()
+    for name, repair in LEAF_COMPARISON_REPAIRS.items():
+        source, _, value = positives[name]
+        expression = "saved === {value: 1}" if name.startswith("historical_") else "saved === {}"
+        if (source.count(expression) != 1
+                or source.replace(expression, "saved === item") != positives[repair][0]
+                or value == positives[repair][2]):
+            raise RuntimeError(f"{name}: distinct identity lost its exact saved-object repair")
+    for name in LEAF_COMPARISON_CASES:
+        source = positives[name][0]
+        observed, expected = comparison_identity_observer_source(source, name)
+        js = args.work / f"{name}-comparison-future.js"
+        js.write_text(observed)
+        if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != f"trace={expected}\n"
+                or host.run([str(reference), str(js)]).stdout != f"trace={expected}\n"):
+            raise RuntimeError(f"{name}: future strict identity or saved object observation mismatch")
+        mutations = [("saved ===", "saved !=="), ("const item =", "const item = host; const unused =")]
+        if name.startswith("historical_"):
+            mutations.extend([("value: 1", "value: 2"), ("state.delete(key);", "state.has(key);")])
+        for index, (old, replacement) in enumerate(mutations):
+            if old not in source:
+                raise RuntimeError(f"{name}: lost independent identity mutation {old}")
+            blind, _ = comparison_identity_observer_source(source.replace(old, replacement), name)
+            js = args.work / f"{name}-comparison-blind-{index}.js"
+            js.write_text(blind)
+            if host.run([node, "-e", boundary.NODE, str(js)]).stdout == f"trace={expected}\n":
+                raise RuntimeError(f"{name}: identity observer cannot distinguish {replacement}")
 
 
 def check_nullable_host_result_refusals(args, positives, node, reference, *, names=None):
@@ -455,7 +483,7 @@ def main():
         **nullable_host_result_sources(), **nullable_nested_result_sources(),
         **leaf_object_sources(),
         **{name: row for name, row in leaf_readback_sources().items()
-           if name not in LEAF_READBACK_CARRIERS | LEAF_READBACK_UNOWNED},
+           if name not in LEAF_READBACK_UNOWNED},
         # Keep the original refusal source byte-for-byte. Its method-local
         # empty payload now has the same independently proved leaf owner.
         "object_payload": (refusal_sources()["object_payload"], "host", 1),
@@ -463,6 +491,7 @@ def main():
     saved = {}
     check_leaf_object_observations(args, node, reference)
     check_leaf_readback_observations(args, node, reference)
+    check_comparison_identity_observations(args, node, reference)
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
     blind = args.work / "seeded-dynamic-overwrite-blinded.js"
     blind.write_text(overwrite_source.replace("return state.get(1);", "return 1;"))
@@ -753,6 +782,7 @@ def main():
         ("local_field_get_guarded_checked", "historical_object_saved_identity", "local_field_readback_lifetime_checked"))
     check_leaf_object_forgeries(args, saved,
         ("local_field_direct", "local_field_saved_overwrite", "local_field_readback_lifetime"))
+    check_leaf_object_forgeries(args, saved, LEAF_COMPARISON_REPAIRS)
 
     # Valid-looking scalar markers cannot normalize real null keys or narrow
     # the second use of a nullable formal. Fresh proof must emit the same C++.
@@ -1035,7 +1065,6 @@ def main():
     check_nullable_host_result_refusals(args, positives, node, reference)
     check_leaf_object_refusals(args, positives, node, reference)
     check_leaf_object_refusals(args, positives, node, reference, leaf_readback_refusals())
-    check_leaf_readback_carriers(args, positives, node, reference)
     check_leaf_readback_carriers(args, positives, node, reference, leaf_field_result_refusals())
     # A result contract does not narrow Map storage or supply an implemented
     # callable signature. Preserve the prepared producer/consumer operands.
@@ -1206,7 +1235,7 @@ def main():
         text = methods.census(rerun, functions, name + "-rerun", admitted=functions)
         if "ctnative.host_owner_proved = false" not in text or "fingerprint mismatch" not in text:
             raise RuntimeError(f"{name}: prepared leaf owner reused the original source authority")
-    for name in leaf_readback_sources().keys() - LEAF_READBACK_CARRIERS - LEAF_READBACK_UNOWNED:
+    for name in leaf_readback_sources().keys() - LEAF_READBACK_UNOWNED:
         _, config, output = saved[name]
         rerun = owned.lower(args, output, name + "-rerun", config, cleanup=False)
         text = methods.census(rerun, 5, name + "-rerun", admitted=5)
@@ -1219,6 +1248,9 @@ def main():
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
     for name in ("local_field_direct", "local_field_get_guarded", "local_field_readback_lifetime"):
+        ir, config, _ = saved[name]
+        rollback += check_budgets(args, ir, config, name, functions=5)
+    for name in LEAF_COMPARISON_REPAIRS:
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
@@ -1282,14 +1314,15 @@ def main():
           "and final Map/object lifetime checks; "
           f"{len(leaf_object_refusals()) - 2} object graph/field/argument/result/read refusals "
           "restore exact gated sources and reject fresh/stale forged leaf reports; "
-          f"{len(leaf_readback_sources()) - len(LEAF_READBACK_CARRIERS) - len(LEAF_READBACK_UNOWNED)} local leaf readback programs "
+          f"{len(leaf_readback_sources()) - len(LEAF_READBACK_UNOWNED)} local leaf readback programs "
           "preserve definite object origins, strict identities and fixed scalar field reads; "
           "saved aliases observe later field writes across replacement/deletion and saved numeric "
           "callables pass future-argument, reentry and final-owner sanitizer lifetime checks; "
           f"{len(leaf_readback_refusals())} unknown/missing/export/field refusals restore exact sources; "
           f"{len(LEAF_FIELD_RESULTS)} exact raw field results remove only independently proved absence; "
           "saved raw numeric results and callable lifetimes pass future-argument and field mutations; "
-          f"{len(LEAF_READBACK_CARRIERS)} comparison-only allocations and "
+          f"{len(LEAF_COMPARISON_REPAIRS)} exact comparison-only fresh allocations retain distinct "
+          "identities, field writes and saved-callable lifetimes with their exact saved-object repairs; "
           f"{len(leaf_field_result_refusals())} complete-schema field results "
           "retain complete host ownership and separate native carrier refusals; "
           f"{len(seeded_result_refusals())} seeded proof and "
