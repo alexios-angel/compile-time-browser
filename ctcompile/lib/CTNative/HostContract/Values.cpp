@@ -521,36 +521,61 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         }
         result.parameters.push_back({member, {}});
     }
-    // Only a completed body/effect proof may publish finite result alternatives.
-    // This is a dependency worklist, not an optimistic recursive type join:
-    // an unseeded cycle cannot authorize itself. No result value is evaluated
-    // or substituted, and every getter and mutation remains in runtime order.
+    // Establish invocation results before joining the complete method census.
+    // Two calls to one method may have an acyclic result dependency even when
+    // a method-level worklist would wait for its own unpublished result. Each
+    // edge must independently pass the entire body/effect proof, starting with
+    // unknown Map contents and generalized input categories. Only a completed
+    // invocation supplies result evidence; cycles cannot authorize themselves.
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> completedResults;
     llvm::DenseSet<mlir::Operation *> completed;
-    while (completed.size() != result.parameters.size()) {
+    std::size_t invocationCount = 0;
+    for (const auto & invocations : familyCalls) {
+        if (!step()) { return {}; }
+        invocationCount += invocations.size();
+    }
+    while (completed.size() != invocationCount) {
         bool progress = false;
         for (unsigned index = 0; index < result.parameters.size(); ++index) {
             if (!step()) { return {}; }
-            auto & parameters = result.parameters[index];
-            if (completed.contains(parameters.function)) { continue; }
-            if (!capturedMapParameters(parameters.function, prepared, familyCalls[index],
-                                       completedResults, parameters)) {
-                continue;
-            }
-            PrimitiveAlternatives alternatives;
-            if (!capturedMapBody(parameters.function, prepared, parameters, result, alternatives)) {
-                return {};
-            }
-            if (alternatives.known && (alternatives.truthy | alternatives.falsy)) {
-                for (mlir::Operation * invocation : familyCalls[index]) {
-                    if (!step()) { return {}; }
+            auto member = result.parameters[index].function;
+            for (mlir::Operation * invocation : familyCalls[index]) {
+                if (!step()) { return {}; }
+                if (completed.contains(invocation)) { continue; }
+                HostMethodParameters parameters{member, {}};
+                if (!capturedMapParameters(member, prepared, {invocation}, completedResults,
+                                           parameters)) {
+                    continue;
+                }
+                // Provisional reads/calls never escape into the family plan.
+                HostCapturedMap scratch;
+                PrimitiveAlternatives alternatives;
+                if (!capturedMapBody(member, prepared, parameters, scratch, alternatives)) {
+                    return {};
+                }
+                if (alternatives.known && (alternatives.truthy | alternatives.falsy)) {
                     completedResults.try_emplace(invocation->getResult(0), alternatives);
                 }
+                completed.insert(invocation);
+                progress = true;
             }
-            completed.insert(parameters.function);
-            progress = true;
         }
         if (!progress || exhausted) { return {}; }
+    }
+    // Invocation evidence does not authorize a published method or its sibling
+    // family. Recheck every body with ALL actual categories, including later
+    // calls and uncalled zero-argument siblings. Only this final census records
+    // the owning plan. No result is evaluated or substituted, and every getter
+    // and mutation remains in runtime order.
+    for (unsigned index = 0; index < result.parameters.size(); ++index) {
+        if (!step()) { return {}; }
+        auto & parameters = result.parameters[index];
+        PrimitiveAlternatives alternatives;
+        if (!capturedMapParameters(parameters.function, prepared, familyCalls[index],
+                                   completedResults, parameters) ||
+            !capturedMapBody(parameters.function, prepared, parameters, result, alternatives)) {
+            return {};
+        }
     }
     if (exhausted) { return {}; }
     return result;
@@ -619,6 +644,7 @@ bool analyzer::capturedMapParameters(
                                       ctjs::NullAttr, ctjs::UndefinedAttr>(value)) {
                 tags.push_back(PrimitiveAlternatives::forTag(value.getTypeID()));
             } else if (auto known = results.find(actual); known != results.end()) {
+                if (!before(actual.getDefiningOp(), operation)) { return false; }
                 tags.push_back(known->second.categories());
             } else {
                 return false;
