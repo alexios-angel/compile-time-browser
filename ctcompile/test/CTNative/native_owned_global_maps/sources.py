@@ -905,6 +905,84 @@ NULLABLE_OBSERVATIONS.update({
 })
 
 
+def nullable_host_result_sources():
+    source = nullable_payload_sources()["nullable_payload_mixed_readback"][0].replace(
+        "size() { return state.size; }", "size(key) { state.set(key, key); return state.size; }")
+    source = source.replace(
+        "host.slot.set(host.slot.get(true)); var trace = host.slot.size();",
+        "var trace = host.slot.size(host.slot.set(host.slot.get(false)));")
+    both = source.replace("host.slot.set(host.slot.get(false)); var trace =",
+        "host.slot.set(host.slot.get(true)); var trace =")
+    conditional = source.replace("state.set(key, key); return state.get(key);",
+        "state.set(key, key); if (key) { state.set(key, 'selected'); } return state.get(key);")
+    saved = source.replace("state.set('seed', 'future');",
+        f"state.set('seed', '{STRING_RESULT}');").replace("state.delete('seed');",
+        "state.set('seed', 'overwritten'); state.delete('seed');")
+    saved = saved.replace("state.set(key, key); return state.get(key);",
+        "state.set(key, key); const saved = state.get(key); "
+        "state.set(key, true); state.delete(key); return saved;")
+    return {
+        # Preserve the exact acyclic fifteen-call, trace=1 source from ae8e021a.
+        # The final size argument needs the setter's independent result proof.
+        "nullable_host_result": (source, "host", 1),
+        "nullable_host_result_both": (both, "host", 2),
+        "nullable_host_result_identity": (source.replace("var trace =",
+            "host.slot.set(host.slot.get(true)); host.slot.set(void 0); host.slot.set(''); "
+            "var trace ="), "host", 4),
+        # A live conditional write joins the stored payload alternatives before
+        # the host result proof; it cannot reuse the native Presence analysis.
+        "nullable_host_result_conditional": (conditional, "host", 2),
+        # The copied result reaches size after its Map entry was overwritten
+        # with Boolean and deleted. Startup uses false; saved calls use both.
+        "nullable_host_result_saved": (saved, "host", 1),
+    }
+
+
+NULLABLE_HOST_RESULT_CALLS = {
+    "nullable_host_result": 15,
+    "nullable_host_result_both": 15,
+    "nullable_host_result_identity": 19,
+    "nullable_host_result_conditional": 16,
+    "nullable_host_result_saved": 18,
+}
+
+NULLABLE_OBSERVATIONS.update({
+    name: [("false", "string", STRING_RESULT if name == "nullable_host_result_saved" else "future"),
+           ("true", "null_value", "")]
+    for name in nullable_host_result_sources()
+})
+NULLABLE_PAYLOAD_READBACKS.update({
+    name: [(argument, tag, value, tag,
+            "selected" if name == "nullable_host_result_conditional" and value else value)
+           for argument, tag, value in ((repr(STRING_RESULT), "string", STRING_RESULT),
+                                       ("null", "null_value", ""), ("void 0", "undefined", ""),
+                                       ("''", "string", ""))]
+    for name in nullable_host_result_sources()
+})
+
+
+def nullable_host_result_refusals():
+    source = nullable_host_result_sources()["nullable_host_result"][0]
+    both = nullable_host_result_sources()["nullable_host_result_both"][0]
+    return {
+        # These call graphs are acyclic; only the live host result fact is
+        # missing. Each exact repair is a separately admitted positive source.
+        "nullable_host_result_unknown": ("var unknownResult = null;\n" + source.replace(
+            "state.set(key, key); return state.get(key);",
+            "state.set(key, unknownResult); return state.get(key);"), 2,
+            "state.set(key, unknownResult);", "state.set(key, key);", 1),
+        "nullable_host_result_missing": (source.replace("return state.get(key);",
+            "return state.get('missing');"), 2,
+            "return state.get('missing');", "return state.get(key);", 1),
+        "nullable_host_result_deleted": (both.replace("return state.get(key);",
+            "state.delete(key); return state.get(key);"), 1,
+            "state.delete(key); ", "", 2),
+        "nullable_host_result_aliasing": (source.replace("return state.get(key);",
+            "state.set(key || 'fallback', true); return state.get(key);"), 2,
+            "state.set(key || 'fallback', true); ", "", 1),
+    }
+
+
 def nullable_payload_refusals():
     source = nullable_payload_sources()["nullable_payload_readback"][0]
     mixed = nullable_payload_sources()["nullable_payload_mixed"][0]
@@ -1024,7 +1102,8 @@ RESULT_SIGNATURES = {
        for name in payload_result_sources()},
     **{name: (result, result, 6) for name, (result, _) in MIXED_RESULT_TYPES.items()},
     **{name: ("ctnative::nullable_string", "ctnative::nullable_string", 6)
-       for name in {**nullable_result_sources(), **nullable_key_sources(), **nullable_payload_sources()}},
+       for name in {**nullable_result_sources(), **nullable_key_sources(), **nullable_payload_sources(),
+                    **nullable_host_result_sources()}},
 }
 
 

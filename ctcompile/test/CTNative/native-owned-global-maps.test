@@ -124,3 +124,15 @@
 # fourteen-call source in both modes. Fresh/stale nullable read
 # markers are rederived independently from scalar write/key markers; reruns and
 # measured budget cutoffs cannot manufacture presence or narrow a live union.
+# The exact acyclic fifteen-call get -> set -> size(key) chain retains nullable
+# payload alternatives in the independent host result proof. A substituted
+# Null/Undefined/empty String/Boolean return changes its trace from 1 to 2.
+# Conditional writes and saved reads before Boolean overwrite/deletion preserve
+# every producer/consumer operand, all four tags, and owning String bytes.
+# Saved native getter/setter/size callables survive owner release and reentry;
+# returned payloads survive caller/result mutation and final Map destruction.
+# Unknown/missing/deleted/aliasing host-result facts independently refuse in
+# both modes; exact admitted repairs have different observations. Fresh/stale
+# scalar/nullable forgeries, reruns and transactional budgets cannot supply the
+# missing host evidence. Same-method nested setter census remains a separate
+# fifteen-call refusal with its original trace and source operands preserved.

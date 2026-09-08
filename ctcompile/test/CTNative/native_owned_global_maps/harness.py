@@ -15,7 +15,7 @@ from .sources import (
     RESULT_SIGNATURES, mixed_result_sources, MIXED_RESULT_TYPES, saved_read_sources,
     saved_join_sources, OTHER_STRING_RESULT, guarded_saved_sources, shortcircuit_sources,
     nullable_result_sources, nullable_key_sources, NULLABLE_OBSERVATIONS,
-    nullable_payload_sources, NULLABLE_PAYLOAD_READBACKS,
+    nullable_payload_sources, NULLABLE_PAYLOAD_READBACKS, nullable_host_result_sources,
 )
 
 
@@ -28,6 +28,7 @@ def check_result_calls(cpp, name, mode):
     calls = re.findall(
         r"(?:\b(\w+)\s*=\s*)?ctnative::invoke_callable\((\w+)([^;\n]*)\);", entry[1])
     sequence, pending = [], []
+    setter_result = None
     for result, callee, arguments in calls:
         method = methods_by_value.get(callee)
         if not method:
@@ -44,11 +45,17 @@ def check_result_calls(cpp, name, mode):
             literal_key = name in {"nullable_key_identity", "nullable_key_identity_normalized",
                                    "nullable_key_string_saved", "nullable_payload_identity",
                                    "nullable_payload_saved", "nullable_payload_mixed_identity",
-                                   "nullable_payload_mixed_saved"} \
+                                   "nullable_payload_mixed_saved", "nullable_host_result_identity"} \
                 and not pending and len(actuals) == 1
             if not literal_key and (not pending or actuals != pending):
                 raise RuntimeError(f"{name}/{mode}: setter lost live producing-call operands/order")
             pending.clear()
+            setter_result = result
+        elif method == "size" and name in nullable_host_result_sources():
+            actuals = [re.sub(r"^std::move\((\w+)\)$", r"\1", argument.strip())
+                       for argument in arguments.split(",")[1:]]
+            if not setter_result or actuals != [setter_result]:
+                raise RuntimeError(f"{name}/{mode}: size lost the live nullable setter result")
     expected = {
         "parameter_call_result": ["get", "set", "get"],
         "result_reverse_members": ["get", "set", "get"],
@@ -76,6 +83,9 @@ def check_result_calls(cpp, name, mode):
         **{name: ["get", "set", "get", "set", "size"] for name in nullable_result_sources()},
         **{name: ["get", "set", "get", "set", "size"] for name in nullable_key_sources()},
         **{name: ["get", "set", "get", "set", "size"] for name in nullable_payload_sources()},
+        **{name: ["get", "set", "get", "set", "size"] for name in nullable_host_result_sources()},
+        "nullable_host_result_identity": ["get", "set", "get", "set", "set", "set",
+                                          "get", "set", "size"],
         "saved_join_string_saved": ["get", "set", "size"],
         "guarded_saved_string_saved": ["get", "set", "size"],
         "shortcircuit_empty_string": ["get", "set", "size"],
@@ -106,7 +116,7 @@ def check_result_calls(cpp, name, mode):
               **size_result_sources(), **payload_result_sources(), **mixed_result_sources(),
               **saved_read_sources(), **saved_join_sources(), **guarded_saved_sources(),
               **shortcircuit_sources(), **nullable_result_sources(), **nullable_key_sources(),
-              **nullable_payload_sources()}
+              **nullable_payload_sources(), **nullable_host_result_sources()}
     if name in seeded and not re.search(r"ctnative::map_get(?:_\w+)?(?:<[^>]+>)?\(", cpp):
         raise RuntimeError(f"{name}/{mode}: replaced the live seeded Map lookup with a summary")
     if name in size_result_sources() and "ctnative::map_delete(" not in cpp:
@@ -114,12 +124,13 @@ def check_result_calls(cpp, name, mode):
     if name in {"result_seeded_string_saved", "result_seeded_mixed_string_saved",
                 "saved_read_write_string_saved", "saved_join_string_saved",
                 "guarded_saved_string_saved", "shortcircuit_string_saved", "nullable_string_saved",
-                "nullable_key_string_saved", "nullable_payload_saved", "nullable_payload_mixed_saved"} \
+                "nullable_key_string_saved", "nullable_payload_saved", "nullable_payload_mixed_saved",
+                "nullable_host_result_saved"} \
             and "ctnative::map_delete(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: dropped the saved string's source deletion")
     mixed = {**mixed_result_sources(), **saved_read_sources(), **saved_join_sources(),
              **guarded_saved_sources(), **shortcircuit_sources(), **nullable_result_sources(),
-             **nullable_key_sources(), **nullable_payload_sources()}
+             **nullable_key_sources(), **nullable_payload_sources(), **nullable_host_result_sources()}
     if name in mixed:
         source = mixed[name][0]
         for method in ("set", "get", "has", "delete"):
@@ -128,7 +139,7 @@ def check_result_calls(cpp, name, mode):
             if native_count != source_count:
                 raise RuntimeError(f"{name}/{mode}: changed the {source_count} live Map.{method} calls")
     if name in {**shortcircuit_sources(), **nullable_result_sources(), **nullable_key_sources(),
-                **nullable_payload_sources()}:
+                **nullable_payload_sources(), **nullable_host_result_sources()}:
         getter = re.search(r"^[^\n;]+\bfn_4\([^\n]*\) \{(.*?)^\}", cpp, re.M | re.S)
         branches = 5 if name == "nullable_threeway" else 4 if name in nullable_result_sources() else 3
         if name == "nullable_homogeneous_key":
@@ -137,6 +148,8 @@ def check_result_calls(cpp, name, mode):
             branches = 4 if name in {"nullable_original_key", "nullable_second_key_use"} else 2
         if name in nullable_payload_sources():
             branches = 4 if name in {"nullable_payload_mixed", "nullable_mixed_payload_readback"} else 2
+        if name in nullable_host_result_sources():
+            branches = 2
         # Canonicalization can use ?: for the pure Null/Undefined selection.
         # The executed identity observer also checks both results separately.
         if not getter or len(re.findall(r"\bif\s*\(|\?", getter[1])) != branches:
@@ -723,6 +736,28 @@ int main() {
 }
 '''
     changed = changed.replace("EXPECTED_STRING", json.dumps(STRING_RESULT))
+    if name == "nullable_host_result_saved":
+        # This saved size callable itself consumes a nullable result. A fixed
+        # distinct String entry observes both independent Maps without keeping
+        # the overwritten payload alive or changing the setter's result.
+        # Rewrite only the appended observer; generated helpers may contain
+        # their own member size() calls and must remain byte-identical.
+        generated, separator, observer = changed.rpartition("\nint main() {\n")
+        if not separator:
+            raise RuntimeError("nullable host-result observer lost its main function")
+        size_call = 'size(result_type{std::string{"anchor"}})'
+        observer, count = re.subn(r"(?<![.>\w])size\(\)", size_call, observer)
+        if count != 2 or observer.count("g_host->slot->m_size()") != 1:
+            raise RuntimeError("nullable host-result observer lost its three size calls")
+        observer = observer.replace("g_host->slot->m_size()", "g_host->slot->m_" + size_call)
+        observer = observer.replace(size_call + " != 0", size_call + " != 1")
+        observer = observer.replace("    auto caller = getter(false);",
+            "    static_assert(std::is_same_v<decltype(size), std::function<js_num(result_type)>>);\n"
+            "    auto caller = getter(false);")
+        observer = observer.replace("    for (int index = 0; index < 128; ++index) {",
+            "    g_host->slot->m_set(g_host->slot->m_get(false));\n"
+            "    for (int index = 0; index < 128; ++index) {")
+        changed = generated + separator + observer
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(changed)
     binary = (args.work / f"{name}.{mode}.sanitized").resolve()
@@ -732,7 +767,8 @@ int main() {
     result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
         env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
                  UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
-    if result.returncode or result.stdout != "trace=0\n" * 2:
+    expected_trace = 1 if name == "nullable_host_result_saved" else 0
+    if result.returncode or result.stdout != f"trace={expected_trace}\n" * 2:
         raise RuntimeError(f"{name}/{mode}: nullable stored-payload lifetime failure\n"
                            f"{result.stdout}{result.stderr}")
 
@@ -742,8 +778,10 @@ def standalone(args, output, name, value, compilers, nm):
     host.run([args.opt, str(output), "--ctnative-print-deduced", "-o", str(deduced)])
     for mode, ir in (("explicit", output), ("deduced", deduced)):
         cpp = host.run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
+        size_signature = ("std::function<js_num(ctnative::nullable_string)>"
+                          if name in nullable_host_result_sources() else "std::function<js_num()>")
         if (owned.VM.search(cpp) or "std::shared_ptr<ctn_slot>" not in cpp
-                or "std::function<js_num()>" not in cpp or "ctnative::map_size(" not in cpp
+                or size_signature not in cpp or "ctnative::map_size(" not in cpp
                 or not re.search(r"std::shared_ptr<ctnative::method_\w+>\s+slot\s*;", cpp)):
             raise RuntimeError(f"{name}/{mode}: missing standalone Map/table/callable owners\n{cpp}")
         if name in parameter_sources():
@@ -757,7 +795,7 @@ def standalone(args, output, name, value, compilers, nm):
                 "result_formal", "result_seeded_formal", "seeded_dynamic_formal"} else ""
             if name in {**saved_join_sources(), **guarded_saved_sources(), **shortcircuit_sources(),
                         **nullable_result_sources(), **nullable_key_sources(),
-                        **nullable_payload_sources()}:
+                        **nullable_payload_sources(), **nullable_host_result_sources()}:
                 getter_params = "bool"
             if name == "nullable_threeway":
                 getter_params = "bool, bool"
@@ -781,7 +819,8 @@ def standalone(args, output, name, value, compilers, nm):
                 raise RuntimeError(f"{name}/{mode}: missing exact finite key/payload carrier\n{cpp}")
         source = args.work / f"{name}.{mode}.cpp"
         source.write_text(cpp)
-        if name in {**nullable_result_sources(), **nullable_key_sources(), **nullable_payload_sources()}:
+        if name in {**nullable_result_sources(), **nullable_key_sources(), **nullable_payload_sources(),
+                    **nullable_host_result_sources()}:
             key = "std::string" if name == "nullable_homogeneous_key" else "std::variant<bool, std::string>"
             if name in nullable_key_sources():
                 key = "ctnative::nullable_string"
@@ -797,6 +836,9 @@ def standalone(args, output, name, value, compilers, nm):
                 elif name in {"nullable_payload_mixed_readback", "nullable_payload_mixed_identity",
                               "nullable_payload_mixed_saved"}:
                     payload = "std::variant<bool, ctnative::nullable_string>"
+            if name in nullable_host_result_sources():
+                key = "ctnative::nullable_string"
+                payload = "std::variant<bool, ctnative::nullable_string>"
             if f"std::shared_ptr<ctnative::map_storage<{key}, {payload}>>" not in cpp:
                 raise RuntimeError(f"{name}/{mode}: nullable signature changed the exact Map schema")
             source = args.work / f"{name}.{mode}.identity.cpp"
@@ -820,7 +862,7 @@ def standalone(args, output, name, value, compilers, nm):
             nullable_payload_lifetime(args, cpp, name, mode, compilers[1])
         if name == "nullable_key_string_saved":
             nullable_key_lifetime(args, cpp, name, mode, compilers[1])
-        if name in {"nullable_payload_saved", "nullable_payload_mixed_saved"}:
+        if name in {"nullable_payload_saved", "nullable_payload_mixed_saved", "nullable_host_result_saved"}:
             nullable_stored_payload_lifetime(args, cpp, name, mode, compilers[1])
 
 
