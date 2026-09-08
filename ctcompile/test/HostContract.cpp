@@ -521,7 +521,8 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
             const auto variant = [&](const std::string & program, bool expected,
                                      const char * message,
                                      mlir::TypeID expectedTag =
-                                         mlir::TypeID::get<ctjs::NumberAttr>()) {
+                                         mlir::TypeID::get<ctjs::NumberAttr>(),
+                                     bool checkJoins = false) {
                 auto changed = mlir::parseSourceString<mlir::ModuleOp>(
                     prepared ? prepare(program) : program, &context);
                 check(static_cast<bool>(changed), "seeded Map presence variant parses");
@@ -537,6 +538,76 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                             result.callables()[1].arguments.front().primitiveTag == expectedTag,
                         "the retained entry supplies its current payload tag, not an older write");
                 }
+                if (!checkJoins || !result.proved()) { return; }
+                const auto joinedContract = requested(*changed);
+                const unsigned joinedCompletion = result.steps();
+                check(joinedCompletion < 15000,
+                      "joined payload proof stays within its fixture work limit");
+                if (joinedCompletion < 15000) {
+                    for (unsigned budget = 0; budget < joinedCompletion; ++budget) {
+                        HostContractAnalysis limited(*changed, joinedContract, budget);
+                        check(!limited.proved() && limited.exhausted() &&
+                                  limited.steps() <= budget && empty(*changed, limited),
+                              "every incomplete join budget withholds the entire callable family");
+                    }
+                    HostContractAnalysis exact(*changed, joinedContract, joinedCompletion);
+                    check(exact.proved() && exact.steps() == joinedCompletion &&
+                              exact.callables().size() == 3,
+                          "the exact join completion budget reproduces every live result edge");
+                }
+                auto joinedGetter = changed->lookupSymbol<ctjs::FuncOp>("get$2");
+                llvm::SmallVector<ctjs::CallOp> operations;
+                joinedGetter.walk([&](ctjs::CallOp call) { operations.push_back(call); });
+                check(operations.size() == 3, "live join fixture retains both sets and its get");
+                if (operations.size() != 3) { return; }
+                auto first = operations[0], possible = operations[1], get = operations[2];
+                const auto writtenKey = possible.getArgs()[0];
+                const auto writtenPayload = possible.getArgs()[1];
+                const auto queriedKey = get.getArgs()[0];
+                const auto assertTag = [&](mlir::TypeID tag, const char * reason) {
+                    HostContractAnalysis fresh(*changed, requested(*changed));
+                    check(fresh.proved() && fresh.callables().size() == 3 &&
+                              fresh.callables()[1].arguments.size() == 1 &&
+                              fresh.callables()[1].arguments.front().primitiveTag == tag,
+                          reason);
+                };
+                for (mlir::Attribute payload :
+                     {mlir::Attribute(ctjs::BooleanAttr::get(&context, true)),
+                      mlir::Attribute(ctjs::StringAttr::get(&context, "joined"))}) {
+                    mlir::OpBuilder at(possible);
+                    auto replacement = ctjs::ConstantOp::create(at, possible.getLoc(), payload);
+                    possible->setOperand(3, replacement.getResult());
+                    HostContractAnalysis staleJoin(*changed, joinedContract);
+                    check(!staleJoin.proved() && staleJoin.reason().contains("fingerprint") &&
+                              empty(*changed, staleJoin),
+                          "a changed possible payload invalidates the original join fingerprint");
+                    get->setAttr("ctnative.map_present", at.getBoolAttr(true));
+                    get->setAttr("ctnative.host_proved", at.getBoolAttr(true));
+                    HostContractAnalysis mixed(*changed, requested(*changed));
+                    check(!mixed.proved() && !mixed.exhausted() && empty(*changed, mixed),
+                          "fresh forged presence cannot retain a tag across incompatible payloads");
+                    possible->setOperand(2, first.getArgs()[0]);
+                    assertTag(payload.getTypeID(),
+                              "an exact same-key overwrite replaces rather than joins its tag");
+                    possible->setOperand(2, writtenKey);
+                    get->setOperand(2, writtenKey);
+                    assertTag(payload.getTypeID(),
+                              "the new write has its own definite payload despite an unknown join");
+                    get->setOperand(2, queriedKey);
+                    possible->setOperand(3, writtenPayload);
+                    replacement.erase();
+                    assertTag(mlir::TypeID::get<ctjs::NumberAttr>(),
+                              "restoring the live payload restores the independent joined tag");
+                }
+                get->setOperand(2, writtenPayload);
+                HostContractAnalysis absent(*changed, requested(*changed));
+                check(!absent.proved() && empty(*changed, absent),
+                      "a numeric dynamic write cannot prove a different literal is present");
+                get->setOperand(2, queriedKey);
+                assertTag(mlir::TypeID::get<ctjs::NumberAttr>(),
+                          "restoring the queried key restores the joined result proof");
+                std::printf("joined Map host %s proof and all %u incomplete budgets checked\n",
+                            prepared ? "prepared" : "source", joinedCompletion);
             };
             constexpr llvm::StringLiteral seedLine =
                 "    %seeded = ctjs.call %mapSetter(%state, %seedKey, %payload)";
@@ -578,8 +649,41 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
     %dynamicKey = ctjs.get_property %state[%sizeKey]
     %maybeAlias = ctjs.call %mapSetter(%state, %dynamicKey, %payload)
 )MLIR";
-            variant(replaced(source, seedLine, dynamicMutation), false,
-                    "a numeric runtime key may alias the seeded literal despite another SSA name");
+            variant(replaced(source, seedLine, dynamicMutation), true,
+                    "same-tag possible writes preserve presence and join their numeric payloads",
+                    mlir::TypeID::get<ctjs::NumberAttr>(), !multiple);
+            const auto incompatibleMutation = replaced(
+                dynamicMutation,
+                "    %maybeAlias = ctjs.call %mapSetter(%state, %dynamicKey, %payload)",
+                "    %incompatible = ctjs.constant #ctjs.boolean<true>\n"
+                "    %maybeAlias = ctjs.call %mapSetter(%state, %dynamicKey, %incompatible)");
+            variant(replaced(source, seedLine, incompatibleMutation), false,
+                    "possible bool/number overwrites lose the tag without losing presence");
+            variant(
+                replaced(source, seedLine,
+                         incompatibleMutation +
+                             "    %later = ctjs.call %mapSetter(%state, %dynamicKey, %payload)\n"),
+                false, "a later possible numeric write cannot restore an unknown earlier tag");
+            const std::string reseed =
+                "    %reseed = ctjs.call %mapSetter(%state, %seedKey, %payload)\n";
+            variant(replaced(source, seedLine, incompatibleMutation + reseed), true,
+                    "an exact-key reseed restores its tag after an incompatible possible write");
+            const auto unknownMutation = replaced(
+                dynamicMutation,
+                "    %maybeAlias = ctjs.call %mapSetter(%state, %dynamicKey, %payload)",
+                "    %unknownGetKey = ctjs.constant #ctjs.string<\"get\">\n"
+                "    %unknownGetter = ctjs.get_property %state[%unknownGetKey]\n"
+                "    %unknownPayload = ctjs.call %unknownGetter(%state, %payload)\n"
+                "    %maybeAlias = ctjs.call %mapSetter(%state, %dynamicKey, %unknownPayload)");
+            variant(replaced(source, seedLine, unknownMutation), false,
+                    "an unproved primitive payload loses a possibly overwritten entry's tag");
+            variant(replaced(source, seedLine, unknownMutation + reseed), true,
+                    "an exact-key reseed replaces an earlier unknown payload tag");
+            variant(
+                replaced(source, seedLine,
+                         unknownMutation +
+                             "    %later = ctjs.call %mapSetter(%state, %dynamicKey, %payload)\n"),
+                false, "unknown payloads remain unknown across later possible numeric writes");
             variant(replaced(source, seedLine,
                              replaced(dynamicMutation,
                                       "%maybeAlias = ctjs.call %mapSetter(%state, "

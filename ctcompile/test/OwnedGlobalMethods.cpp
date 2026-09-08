@@ -530,7 +530,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
                                "    %priorGetter = ctjs.get_property %owned[%key]\n"
                                "    %prior = ctjs.call %priorGetter(%owned)\n"
                                "    %putResult = ctjs.call %putter(%owned, %prior)");
-    for (const unsigned seeded : {0u, 1u, 2u, 3u}) {
+    for (const unsigned seeded : {0u, 1u, 2u, 3u, 4u, 5u}) {
         for (const bool lifted : {false, true}) {
             auto sourceResult = fromResult;
             if (seeded) {
@@ -547,12 +547,19 @@ void checkSharedMap(mlir::MLIRContext & context) {
                              "    ctjs.return %loaded");
             }
             if (seeded >= 2) {
-                const auto mutation =
+                std::string mutation =
                     seeded == 2
                         ? "    %other = ctjs.call %seedSet(%state, %seedValue, %seedValue)\n"
-                        : "    %deleteKey = ctjs.constant #ctjs.string<\"delete\">\n"
+                    : seeded == 3
+                        ? "    %deleteKey = ctjs.constant #ctjs.string<\"delete\">\n"
                           "    %deleter = ctjs.get_property %state[%deleteKey]\n"
-                          "    %deleted = ctjs.call %deleter(%state, %seedValue)\n";
+                          "    %deleted = ctjs.call %deleter(%state, %seedValue)\n"
+                        : "    %otherKey = ctjs.get_property %state[%key]\n"
+                          "    %other = ctjs.call %seedSet(%state, %otherKey, %seedValue)\n";
+                if (seeded == 5) {
+                    mutation += "    %thirdKey = ctjs.get_property %state[%key]\n"
+                                "    %third = ctjs.call %seedSet(%state, %thirdKey, %seedKey)\n";
+                }
                 sourceResult = replaced(sourceResult, "    %seedGetKey = ctjs.constant",
                                         std::string(mutation) + "    %seedGetKey = ctjs.constant");
             }
@@ -618,7 +625,9 @@ void checkSharedMap(mlir::MLIRContext & context) {
             check(OwnedGlobalRoots(*module, contract).proved(),
                   "restoring the producing body restores its independent result proof");
             std::printf("%s Map %s proof and all %u incomplete budgets checked\n",
-                        seeded == 3   ? "disjoint delete"
+                        seeded == 5   ? "repeated alias join"
+                        : seeded == 4 ? "possible alias join"
+                        : seeded == 3 ? "disjoint delete"
                         : seeded == 2 ? "per-key result"
                         : seeded      ? "seeded result"
                                       : "result",

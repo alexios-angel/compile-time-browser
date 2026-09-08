@@ -8,7 +8,8 @@
 # order, including two mutating actuals, repeated calls and local aliases.
 # Missing/unknown/mixed results and circular evidence remain refusals.
 # Method-local per-key set facts prove a later get only for its same live key and
-# independently typed payload. Repeated calls, overwrites and runtime formal
-# keys preserve the lookup, result operand and shared Map lifetime. Missing,
-# deleted, cleared and possibly aliased facts refuse; disjoint literals survive. String/bool result tags do not
-# authorize unsupported native Map payload carriers.
+# independently typed payload. Possible same-key writes join payload tags while
+# preserving definite presence; repeated writes, saved keys and distinct formal
+# actuals retain runtime lookups, result operands and the shared Map lifetime.
+# Missing, deleted, cleared and incompatibly joined facts refuse. An exact-key
+# reseed restores its own tag without authorizing unsupported payload carriers.

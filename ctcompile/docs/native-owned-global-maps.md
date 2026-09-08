@@ -55,11 +55,16 @@ optimistic tag seeds a circular dependency, and no recursive `propertyCall`
 query supplies authority. A `Map.get` can retain a local `set`'s independent
 payload tag when its key is the same SSA value or a SameValueZero-equal primitive
 constant. Each invocation starts with unknown contents. Bounded per-key facts
-survive writes and deletes only when the mutation key is independently distinct.
-Different primitive tags are disjoint without coercion; different SSA names of
-the same primitive type may alias. Both zero encodings and every NaN payload
-denote the same Map key. A possibly aliasing mutation removes the old fact before
-a set installs its new payload tag. Every fact comparison spends work budget.
+preserve definite presence and an independently optional payload tag. A possibly
+aliasing `set` preserves presence and joins the old and new payload tags: equal
+proved tags survive, while differing or unproved tags become unknown. A later
+possible write cannot recover an unknown tag; an exact-key write replaces it.
+A possibly aliasing `delete` removes both presence and type facts. Independently
+disjoint keys preserve both. Different primitive tags are disjoint without
+coercion; different SSA names of the same primitive type may alias. Both zero
+encodings and every NaN payload denote the same Map key. Each set also records
+its own key and payload independently of any earlier join. Every fact comparison
+spends work budget.
 Only the complete method body and use census publishes its result tag.
 Unique initialized global actuals are checked against the full initialization proof.
 
@@ -105,7 +110,39 @@ by value. Native output links neither the interpreter nor the collector. Escape
 analysis still reports global publication as `StoredGlobal`; general global
 loads remain external. The new owner does not require a weaker escape verdict.
 
-## Measured per-key gate, 2026-09-07
+## Measured possible-alias join gate, 2026-09-07
+
+The retained producer below advances **0/5 -> 5/5 native**, preserving
+Node/interpreter `trace=1` through the same published `set(get())` entry:
+
+```js
+get() { state.set(0, 1); state.set(state.size, 2); return state.get(0); }
+```
+
+The gate passes **55 complete programs**: fifteen **4/4**, thirty-three **5/5**
+and seven **6/6**, with matching Node, interpreter and standalone explicit/deduced
+GCC/Clang execution. Eight new cases cover possible and actual overwrites,
+saved runtime keys, repeated writes, reseeding, runtime payloads and distinct
+formal arguments. The actual-overwrite witness produces **2**; replacing the
+getter with its old payload produces **1**. The generated calls and Map lookups
+remain runtime operations. All six existing ownership/lifetime variants pass
+ASan/UBSan, use-after-scope/return and leak checks; linked-symbol gates pass.
+Thirteen seeded proof refusals retain every call. Four separate carrier
+refusals include exact-key reseeding after an incompatible possible write: its
+host result tag recovers, while the mixed Map schema still refuses native code.
+
+Source/prepared host join proofs complete at **2172/2258** steps; owner proofs
+at **5101/4992**. Repeated owner joins complete at **5186/5085**. Every smaller
+budget withholds the entire proof. First source native completion is **5774**
+for the dynamic write and **16339** for the parameterized variant, with **31/32**
+checked cutoffs and no natural speculative rollback interval. These are work
+limits, not speedups. Ownership CTest passes in **18.21 seconds**; host CTest
+passes in **1.64 seconds**, followed by the complete native program gate.
+Logs: `/tmp/ctcompile-map-joins-proof.log` and
+`/tmp/ctcompile-map-joins-focused.log`. The full generated gate is recorded in
+[HANDOFF.md](HANDOFF.md) when complete.
+
+## Preceding per-key gate, 2026-09-07
 
 The producer below advances **0/5 -> 5/5 native**, preserving Node/interpreter
 `trace=1` through `host.slot.set(host.slot.get())` and the final getter:
@@ -293,14 +330,10 @@ devbox build passes **475/475 CTests** in **652.00 seconds**, including
 
 ## Next boundary
 
-The retained `seeded_dynamic_write` instead uses `state.set(state.size, 2)`
-before the producer's `return state.get(0)`. It remains **0/5 native** with every
-source call intact and no owner proof. Fresh Node/interpreter runs both produce
-`trace=1`. The runtime key may alias key 0, so the
-current proof discards that entry's payload fact even though both payloads are
-numeric. The next increment needs a complete result-type join across possibly
-aliasing writes, independently of key presence. A possibly aliasing delete still
-requires absence/presence evidence and cannot inherit a set's rule. The unseeded
+The retained `seeded_dynamic_delete` uses `state.delete(state.size)` before
+the producer's `return state.get(0)`. It remains **0/5 native**, with every
+source call intact and no owner proof. A possibly aliasing delete requires
+independent presence evidence and cannot inherit a set's type-join rule. The unseeded
 `get() { return state.get(0); }` remains refused. Neither an earlier observed
 invocation nor an incomplete family establishes the result.
 

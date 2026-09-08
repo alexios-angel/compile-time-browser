@@ -135,6 +135,48 @@ def key_fact_sources():
     }
 
 
+def joined_result_sources():
+    dynamic = SEEDED_RESULT.replace("return state.get(0);",
+        "state.set(state.size, 2); return state.get(0);")
+    observed_size = dynamic.replace("get() {",
+        "size() { return state.size; }, get() {").replace("var trace = host.slot.get();",
+                                                         "var trace = host.slot.size();")
+    return {
+        "seeded_dynamic_write": (dynamic, "host", 1),
+        # The first getter's size key really overwrites key 1, producing 2.
+        # Reusing the old payload 1 changes the setter's key and leaves one
+        # entry rather than two. Observe the final setter's returned size.
+        "seeded_dynamic_overwrite": (dynamic.replace("state.set(0, 1)", "state.set(1, 1)")
+            .replace("state.get(0)", "state.get(1)")
+            .replace("var trace = host.slot.get();",
+                     "var trace = host.slot.set(host.slot.get());"), "host", 2),
+        "seeded_dynamic_saved_key": (SEEDED_RESULT.replace(
+            "state.set(0, 1); return state.get(0);",
+            "const key = state.size; state.set(key, 1); "
+            "state.set(state.size, 2); return state.get(key);"), "host", 1),
+        "seeded_dynamic_repeated": (dynamic.replace("return state.get(0);",
+            "state.set(state.size, 3); return state.get(0);")
+            .replace("host.slot.set(host.slot.get());",
+                     "host.slot.set(host.slot.get()); host.slot.set(host.slot.get());"), "host", 1),
+        "seeded_dynamic_reseed": (dynamic.replace("return state.get(0);",
+            "state.set(0, 3); state.set(state.size, 4); return state.get(0);"), "host", 3),
+        "seeded_dynamic_runtime_payload": (dynamic.replace("state.set(state.size, 2)",
+            "state.set(state.size, state.size)"), "host", 1),
+        # Distinct calls make this a numeric formal, never a guessed constant.
+        # The first getter's write aliases key 1; the second keeps key 7.
+        "seeded_dynamic_formal": (observed_size.replace(
+            "get() { state.set(0, 1); state.set(state.size, 2); return state.get(0); }",
+            "get(key) { state.set(key, 1); state.set(state.size, 2); return state.get(key); }")
+            .replace("host.slot.set(host.slot.get());",
+                     "host.slot.set(host.slot.get(1)); host.slot.set(host.slot.get(7));"),
+            "host", 4),
+        "seeded_dynamic_saved_overwrite": (SEEDED_RESULT.replace(
+            "state.set(0, 1); return state.get(0);",
+            "const key = state.size; state.set(key, 1); state.set(state.size, 2); "
+            "state.set(key, 3); state.set(state.size, 4); return state.get(key);"), "host", 3),
+    }
+
+
 def seeded_carrier_refusals():
     observed_size = SEEDED_RESULT.replace("get() {",
         "size() { return state.size; }, get() {").replace("var trace = host.slot.get();",
@@ -148,6 +190,8 @@ def seeded_carrier_refusals():
             .replace("state.set(key, 1)", "state.set(key, true)"), 2),
         "result_seeded_mixed_contents": (observed_size.replace("state.set(0, 1);",
             "state.set(0, true); state.set(0, 1);"), 2),
+        "result_seeded_join_reseed": (observed_size.replace("return state.get(0);",
+            "state.set(state.size, true); state.set(0, 3); return state.get(0);"), 3),
     }
 
 
@@ -167,6 +211,8 @@ RESULT_SIGNATURES = {
     "result_seeded_growing": ("js_num", "js_num", 5),
     "result_seeded_formal": ("js_num", "js_num", 6),
     **{name: ("js_num", "js_num", 5) for name in key_fact_sources()},
+    **{name: ("js_num", "js_num", 6 if name == "seeded_dynamic_formal" else 5)
+       for name in joined_result_sources()},
 }
 
 
@@ -211,10 +257,14 @@ def check_result_calls(cpp, name, mode):
         "result_seeded_growing": ["get", "set", "get"],
         "result_seeded_formal": ["get", "set", "get", "set", "size"],
         **{name: ["get", "set", "get"] for name in key_fact_sources()},
+        **{name: ["get", "set", "get"] for name in joined_result_sources()},
+        "seeded_dynamic_overwrite": ["get", "set", "get", "set"],
+        "seeded_dynamic_repeated": ["get", "set", "get", "set", "get"],
+        "seeded_dynamic_formal": ["get", "set", "get", "set", "size"],
     }[name]
     if sequence != expected or "ctnative::map_set(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: lost runtime getter/mutation/final observation calls")
-    if name in {**seeded_result_sources(), **key_fact_sources()} and not re.search(r"ctnative::map_get(?:_\w+)?\(", cpp):
+    if name in {**seeded_result_sources(), **key_fact_sources(), **joined_result_sources()} and not re.search(r"ctnative::map_get(?:_\w+)?\(", cpp):
         raise RuntimeError(f"{name}/{mode}: replaced the live seeded Map lookup with a summary")
 
 
@@ -440,7 +490,8 @@ def standalone(args, output, name, value, compilers, nm):
                 raise RuntimeError(f"{name}/{mode}: missing typed setter arguments\n{cpp}")
         if name in RESULT_SIGNATURES:
             result, params, _ = RESULT_SIGNATURES[name]
-            getter_params = "js_num" if name in {"result_formal", "result_seeded_formal"} else ""
+            getter_params = "js_num" if name in {
+                "result_formal", "result_seeded_formal", "seeded_dynamic_formal"} else ""
             if (f"std::function<{result}({getter_params})>" not in cpp
                     or f"std::function<js_num({params})>" not in cpp):
                 raise RuntimeError(f"{name}/{mode}: missing typed producer/consumer signatures\n{cpp}")
@@ -539,10 +590,18 @@ def seeded_result_refusals():
             "state.clear(); return state.get(0);"),
         "seeded_deleted": SEEDED_RESULT.replace("return state.get(0);",
             "state.delete(0); return state.get(0);"),
-        "seeded_dynamic_write": SEEDED_RESULT.replace("return state.get(0);",
-            "state.set(state.size, 2); return state.get(0);"),
         "seeded_dynamic_delete": SEEDED_RESULT.replace("return state.get(0);",
             "state.delete(state.size); return state.get(0);"),
+        "seeded_dynamic_bool_join": SEEDED_RESULT.replace("return state.get(0);",
+            "state.set(state.size, true); return state.get(0);"),
+        "seeded_dynamic_string_join": SEEDED_RESULT.replace("return state.get(0);",
+            "state.set(state.size, 'other'); return state.get(0);"),
+        "seeded_dynamic_unknown_join": SEEDED_RESULT.replace("return state.get(0);",
+            "state.set(state.size, state.get(9)); return state.get(0);"),
+        "seeded_dynamic_later_join": SEEDED_RESULT.replace("return state.get(0);",
+            "state.set(state.size, true); state.set(state.size, 2); return state.get(0);"),
+        "seeded_dynamic_unseeded": SEEDED_RESULT.replace("state.set(0, 1);",
+            "state.set(state.size, 2);"),
         "seeded_overwritten_unknown": SEEDED_RESULT.replace("return state.get(0);",
             "state.set(0, state.get(9)); return state.get(0);"),
         "seeded_deleted_earlier": SEEDED_RESULT.replace("return state.get(0);",
@@ -676,8 +735,14 @@ def main():
         **result_sources(),
         **seeded_result_sources(),
         **key_fact_sources(),
+        **joined_result_sources(),
     }
     saved = {}
+    overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
+    blind = args.work / "seeded-dynamic-overwrite-blinded.js"
+    blind.write_text(overwrite_source.replace("return state.get(1);", "return 1;"))
+    if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == f"trace={overwrite_value}\n":
+        raise RuntimeError("dynamic overwrite witness cannot distinguish retaining the old payload")
     for name, (source, binding, value) in positives.items():
         js, ir, count = boundary.prepare(args, name, source)
         functions = (RESULT_SIGNATURES[name][2] if name in RESULT_SIGNATURES
@@ -743,9 +808,11 @@ def main():
     rollback += check_budgets(args, parameter_ir, parameter_config, "shared_parameter", functions=5)
     result_ir, result_config, result_output = saved["parameter_call_result"]
     rollback += check_budgets(args, result_ir, result_config, "parameter_call_result", functions=5)
-    for name in ("seeded_earlier_key", "seeded_other_delete"):
+    for name in ("seeded_earlier_key", "seeded_other_delete", "seeded_dynamic_write",
+                 "seeded_dynamic_formal"):
         key_ir, key_config, _ = saved[name]
-        rollback += check_budgets(args, key_ir, key_config, name, functions=5)
+        rollback += check_budgets(args, key_ir, key_config, name,
+                                  functions=RESULT_SIGNATURES[name][2])
     seeded_ir, seeded_config, seeded_output = saved["result_seeded_map_get"]
     rollback += check_budgets(args, seeded_ir, seeded_config, "result_seeded_map_get", functions=5)
 
@@ -813,12 +880,13 @@ def main():
         fresh = contract(args, rejected, name)
         failed = methods.refused(args, rejected, name, fresh, admitted=0)
         check_call_preservation(rejected.read_text(), failed.read_text(), name)
-        if name == "seeded_deleted":
-            forged = args.work / "seeded-forged.mlir"
-            forged.write_text(methods.forge_reports(rejected.read_text()))
-            forged_config = contract(args, forged, "seeded-forged")
-            failed = methods.refused(args, forged, "seeded-forged", forged_config, admitted=0)
-            check_call_preservation(forged.read_text(), failed.read_text(), "seeded-forged")
+        if name in {"seeded_deleted", "seeded_dynamic_bool_join", "seeded_dynamic_delete"}:
+            forged_name = name + "-forged"
+            forged = args.work / f"{forged_name}.mlir"
+            forged.write_text(forge_map_presence(rejected.read_text()))
+            forged_config = contract(args, forged, forged_name)
+            failed = methods.refused(args, forged, forged_name, forged_config, admitted=0)
+            check_call_preservation(forged.read_text(), failed.read_text(), forged_name)
     # A definite local get tag is separate from an implemented native Map
     # payload carrier. Keep the observation numeric and retain every prepared
     # call so bool/string/mixed contents cannot acquire numeric authority.
@@ -935,6 +1003,7 @@ def main():
           f"{len(result_refusals())} result-proof refusals and missing-return carrier refusal; "
           f"{len(seeded_result_sources())} seeded result programs and growing lifetime pass; "
           f"{len(key_fact_sources())} per-key result programs; "
+          f"{len(joined_result_sources())} type-joined result programs; "
           f"{len(seeded_result_refusals())} seeded proof and "
           f"{len(seeded_carrier_refusals())} seeded carrier refusals; "
           f"{len(rollback)} speculative rollback cutoffs")
