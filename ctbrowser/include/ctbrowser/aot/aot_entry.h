@@ -28,7 +28,7 @@
 // handler base - which is 32 bytes on this target, and the row's whole reason
 // for making the storage CALLER-allocated is that the layout stays Phase 4's to
 // change. 64 is that with room to double, and it is asserted against the real
-// type in lib/Script/aot_bridge.cpp rather than trusted.
+// type in lib/Script/aot_bridge/internal.hpp rather than trusted.
 //
 // It is a macro rather than a constant because generated C must size an array
 // with it before it has seen a single C++ declaration.

@@ -1681,7 +1681,7 @@ private:
     // ct_aot_enter pushes a real call_frame, ct_aot_leave truncates handlers_
     // exactly as op::ret does, and ct_aot_check classifies against frames_ and
     // failed_ - all of which are this class's private state and none of which
-    // should become public API for a rung. See lib/Script/aot_bridge.cpp.
+    // should become public API for a rung. See lib/Script/aot_bridge/.
     // The one implementation of "enter this callable", which `call` and
     // `construct` are the two public spellings of. Private because
     // `constructing` is not a thing an embedder should be choosing.

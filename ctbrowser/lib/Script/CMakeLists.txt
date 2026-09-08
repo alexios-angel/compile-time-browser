@@ -13,7 +13,13 @@
 add_library(ctbrowser-script)
 target_sources(ctbrowser-script
   PRIVATE
-    aot_bridge.cpp
+    # The AOT ABI's bodies. struct aot_bridge is declared in aot_bridge/internal.hpp
+    # and each member is defined beside the extern "C" row that calls it - four
+    # files, from one of 1,586 lines (2026-09-08).
+    aot_bridge/frames.cpp
+    aot_bridge/operators.cpp
+    aot_bridge/properties.cpp
+    aot_bridge/calls.cpp
     dispatch.cpp
     aot_contract.cpp
     # The program image: the writer and the reader, from one file of 1,156 lines
@@ -45,7 +51,8 @@ target_sources(ctbrowser-script
     # loop is one null test; everything it does lives here.
     type_record.cpp
     # The standard library. builtins.cpp is now just install_builtins() calling
-    # the five files beside it; builtins/internal.hpp is private to them and is
+    # the files beside it - two of them, and three directories where a file
+    # outgrew 1,000 lines; builtins/internal.hpp is private to all of them and is
     # deliberately in NO file set - builtins.hpp still declares one function.
     builtins.cpp
     builtins/values.cpp
