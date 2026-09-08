@@ -379,9 +379,12 @@ The existing native object identity pass now runs in host Map preparation too,
 followed by the final live owner proof. No carrier or emitter code changed.
 The old four-function empty-object refusal advances to 4/4, trace=1.
 
-All four host/owner CTests and both-mode GCC/Clang execution pass. Full execution,
-saved-callable lifetime and generated CTest gates are pending at this checkpoint;
-see [HANDOFF.md](HANDOFF.md) for measured results and preserved failures.
+All four host/owner CTests pass. Commit **`2efcbbe2`** passes eight new and one
+historical program in both modes, explicit/deduced GCC/Clang, independent
+identity/field observers, saved-callable sanitizer lifetime, thirteen
+refusal/repair families and three budget sweeps. The full generated CTest gate
+is running with 146 programs and nineteen lifetime families; see
+[HANDOFF.md](HANDOFF.md) for measured results and preserved test failures.
 
 ## Next: method-local object readback and identity
 

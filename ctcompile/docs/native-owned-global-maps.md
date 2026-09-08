@@ -920,9 +920,16 @@ storage, with no Script/VM context or value symbols.
 All four host/owner CTests and both-mode GCC/Clang execution pass. The new host
 family has 25 rows per form and exhaustive cutoffs 3227/3460/3298/3531; owner
 cutoffs are 7730/7969/7506/7745. Exact source vectors, sibling reads, unsafe
-fields/uses and forged reports are independently checked. Complete source
-lifetime/refusal/budget and full generated gates are pending; current evidence
-is in [HANDOFF.md](HANDOFF.md).
+fields/uses and forged reports are independently checked. Commit **`2efcbbe2`** passes all eight new programs plus the historical object
+source in both modes, explicit/deduced GCC/Clang, six independent identity/field
+observers and the saved-callable sanitizer lifetime. Thirteen refusal/repair
+families and positive fresh/stale proofs pass. Three budget sweeps finish at
+8550/10134/19225 with 32/33/31 cutoffs. The historical mixed Object/String
+sibling retains its complete owner, native refusal and prepared result edges.
+The corrected lifetime observer ends temporary strong references before testing
+expiry; source and compiler behavior remain unchanged. The full generated gate
+is running with 146 programs and nineteen lifetime families; final measurements
+will be recorded in [HANDOFF.md](HANDOFF.md).
 
 ## Next boundary
 

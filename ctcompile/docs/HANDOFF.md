@@ -10,7 +10,7 @@ committing. There is no CI. Do not build on the small local machine.
 
 Saved locally on `ctcompile-v1`: **`e9f8e33c`**, method-local leaf object
 ownership in published Maps, and **`5e2cb6b2`**, primitive loose-equality escape
-origins. This resumes the exact seven-call object boundary in **`e533a865`**
+origins; **`2efcbbe2`** adds published leaf execution and lifetime gates. This resumes the exact seven-call object boundary in **`e533a865`**
 and the **18:56:37 synchronization journal**. The initial tree/index was clean;
 `codex-wip-20260907` was already recovered, gated and merged. Three agents
 handled independent host tests, execution/lifetimes and escape proofs. No
@@ -55,12 +55,35 @@ A source audit qualifies prior Neg/Plus evidence: the recursion guard can
 throw an unrelated RangeError. This whole-frame retention proof supplies no
 normal-completion or no-throw/effect contract to future native consumers.
 
-Formatter **22.1.8** passes all **745 files**. The new complete execution,
-identity/refusal/budget and saved-callable lifetime gate is in progress; its
-first four object programs already pass both modes and explicit/deduced
-GCC/Clang. A test-only temporary strong reference caused lifetime exit 93;
-field reads now end before overwrite/deletion expiry checks. The corrected
-execution gate and full generated CTest gate remain pending at this checkpoint.
+Commit **`2efcbbe2`** gates **eight new source programs** with
+**7/7/7/7/9/7/7/5 calls** and **2/2/2/2/1/2/2/1 traces**, plus the unchanged
+four-call/four-function historical object payload. All nine pass both modes,
+explicit/deduced GCC/Clang and the no-VM-symbol gate. Six independent future
+object observers check exact identities and scalar fields. Saved numeric
+size/set/erase callables survive owner/table release, caller-key mutation,
+independent reentry and 128 overwrite/delete cycles. Weak witnesses prove
+reclamation after overwrite, deletion and final Map/callable release; an
+independently retained leaf survives until its own last owner releases it.
+The saved family passes ASan/UBSan and leak checks.
+
+All **thirteen new refusal/repair families**, positive fresh/stale forgeries,
+prepared reruns and the historical mixed Object/String carrier control pass.
+Three budget sweeps finish at **8550/10134/19225**, checking **32/33/31 cutoffs**
+with no natural speculative rollback interval. All 236 historical helper
+source rows preserve their bytes. The original saved/distinct/deleted identity
+refusals preserve their exact sources, observations and 8/8/9 calls.
+
+The first lifetime harness exited 93 because an observer `weak.lock()`
+temporary remained alive through a later deletion/expiry check in the same
+full expression. The corrected harness ends each read first, retaining every
+assertion. No compiler or source fix was needed. The corrected sync then lost
+SSH; `server.sh start` and `allow-ip` restored access before the complete focused
+execution gate passed. The initial failure and interrupted sync logs remain.
+
+Formatter **22.1.8** passes all **745 files**. All nineteen code/test paths
+match committed HEAD and the frozen gate input. The full generated devbox gate
+is running with **146 published programs and nineteen lifetime families**;
+its final results are pending at this checkpoint.
 
 **Exact next boundary: method-local object readback and identity.** The
 unchanged eight-call saved-read source stores `{value: 1}`, reads it back,
@@ -76,7 +99,7 @@ original eleven-call object/String witness, exact Bootstrap Data, browser API
 integration, general exports and native throwing-call admission remain unfinished.
 
 Evidence: `/tmp/ctcompile-leaf-object-{compile,host,host2,native-prep,focused,
-escape-rerun,smoke,execution,execution2}.log`, `-boundary.json`, `-saved.cpp`,
+escape-rerun,smoke,execution,execution2,execution3,full}.log`, `-boundary.json`, `-saved.cpp`,
 `-root-hashes.json`, `-snapshot.txt` and `-format.log`.
 
 ## Nested published Map results and arithmetic unary checkpoint, 2026-09-08
