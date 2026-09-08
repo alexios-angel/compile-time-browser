@@ -6,6 +6,85 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Nested published Map results and arithmetic unary checkpoint, 2026-09-08
+
+Saved locally on `ctcompile-v1`: **`d7148fcf`**, per-invocation results before
+the complete method census; **`1392478f`**, arithmetic unary escape origins;
+and **`a1b11e80`**, nested-result execution and saved lifetimes. This resumes
+the exact same-setter dependency in **`a8da7c27`** and the **17:53:27
+synchronization journal**. The initial tree/index was clean. The interrupted
+`codex-wip-20260907` is already an ancestor, recovered and gated in `5307abf`.
+Three agents handled independent host tests, published execution controls and
+escape proofs. No browser/runtime source changed, history rewrite or push.
+
+The exact **fifteen-call**, trace=2 `set(set(get(false)))` source advances
+**0/6 -> 6/6 native** in both modes. Every invocation first proves its own
+arguments and complete body from independent primitive categories, starting
+with unknown Map contents. Only completed, source-ordered result edges can
+supply another invocation. A second mandatory proof joins **all** actuals and
+checks every sibling body before publishing the owning family. Scratch body
+facts never leak into the final plan. Cycles, forward references, foreign or
+unknown results, bad later actuals and unsafe siblings remain refusals.
+This never substitutes startup observations for future input categories.
+Emission code and owning nullable String carriers are unchanged.
+
+The focused gate passes **12/12 CTests in 61.47 seconds**. Host tests add
+**21 rows per raw/prepared form**, four exhaustive budget families
+**2211/3274/2264/3362**, and eight live refused states per budget fixture.
+Four owner families per form cover all actual orderings; four exhaustive
+cutoffs are **5100/7779/4957/7572**, with seven live refused states per family.
+The fresh/stale same-tag forward-edge control separates source ordering from
+cycles and type mismatches. Two formerly refused but acyclic old unit sources
+now complete their generalized family proofs.
+
+All **four new source programs** pass both modes, explicit/deduced GCC/Clang,
+Node/interpreter/native identity and the saved-result sanitizer harness. Their
+call counts are **15/15/18/15**, traces **2/1/5/0**. The saved nested result owns
+its bytes through same-key Boolean overwrite/deletion, caller/result mutation,
+owner release, independent reentry and final Map release. All **nine old/new
+host-result refusal/repair families** pass fresh/stale annotations and reruns;
+five are new. Three budget sweeps complete at **26292/51642/19726**, each with
+**31 cutoffs**, and no natural speculative rollback interval. All historical
+source programs retain their bytes. The full driver now configures **137
+programs and eighteen lifetime families**; its complete run is pending below.
+
+Each arithmetic Neg/Plus/BitNot escape family passes **34 rows, nineteen live
+states and 1779 retention cutoffs**, plus a wide snapshot's exact **64 work
+units**. Current original origins must independently prove primitive non-BigInt
+inputs; opaque/object/array/BigInt inputs still refuse. The result supplies a
+Number origin, never a value, index or branch choice. String conversion may
+allocate ordinary C++ temporaries; allocation success is not proved. The new
+source family measures **sixteen sites, 28 instances and 21 retained**. Four
+escape oracles report zero violations. Expanded-fixture precision **42/58**
+adds coverage relative to **40/54**; Bootstrap/p5/Phaser remain **0/64, 0/16,
+0/20**. Catchable BigInt outcomes still require completion-path evidence.
+
+Formatter **22.1.8** passes all **745 files**. All twelve code/test paths match
+the frozen gated input and committed HEAD. The devbox briefly lost SSH access;
+`server.sh start` and `allow-ip` restored it before the combined gate. No
+local C++ build ran. The full serialized `tools/remote-build.sh` gate is now
+running at `/tmp/ctcompile-nested-method-full.log`; final CTest, complete driver,
+corpus and exact Data counts remain pending. Prior full baseline was all
+372 compiler tests plus 140/145 browser tests, with `selectors`, `frames`,
+`element_attrs`, `vm_async` and `early_errors` failing.
+
+**Exact next boundary: ordinary object payloads in a published Map method.**
+The **eleven-call**, trace=2 source changing the setter to
+`state.set(key, {value: 'instance'}); return state.size;` remains unowned and
+**0/6 native** in both modes. The independent host body accepts primitive
+contents only; existing provider execution facts cannot authorize future
+method-local object identities. Ownership, fields/aliases, native Map schema
+and owning extraction need their own live proofs. The dual-nested local
+conditional also retains its separate callee-identity refusal. Full Bootstrap
+Data, browser API integration, general exports and native throwing-call
+admission remain unfinished. Full accepted/next sources are in
+`native-owned-global-maps.md` and the published source driver.
+
+Evidence: `/tmp/ctcompile-nested-method-compile.log`, `-boundary.json`,
+`-baseline.log`, `-focused.log`, `-native.log`, `-format.log`,
+`-input-hashes.json`, `-snapshot.txt` and `-full.log`. The first `-host.log`
+records the SSH failure before its build; the corrected combined gate passes.
+
 ## Finite host Map results and static-binary checkpoint, 2026-09-08
 
 Saved locally on `ctcompile-v1`: **`ed1a833c`**, finite nullable host Map

@@ -790,6 +790,17 @@ Commit **`ed1a833c`** closes the exact acyclic host-result boundary recorded in
 **`ae8e021a`**. This program retains all fifteen calls and advances **0/6 -> 6/6
 native** in both modes, preserving Node/interpreter/native **trace=1**:
 
+```js
+var host = {};
+(function(factory) {
+    host.slot = factory();
+})(function() {
+    const state = new Map();
+    return {
+        size(key) { state.set(key, key); return state.size; }, get(flag) { state.set('seed', 'future'); const result = flag ? '' : state.get('seed'); state.delete('seed'); return result || null; }, set(key) { state.set('extra', true); state.delete('extra'); state.set(key, key); return state.get(key); }
+    };
+});
+host.slot.set(host.slot.get(false)); var trace = host.slot.size(host.slot.set(host.slot.get(false)));
 ```
 
 `CapturedMapBody.cpp` now keeps finite primitive alternatives per live key.
@@ -824,10 +835,11 @@ across the full run and corrected rerun; only five browser failures remain.
 Corpus counts are unchanged. All twelve code/test paths match committed HEAD,
 frozen input and final devbox sources; details are in [HANDOFF.md](HANDOFF.md).
 
-## Next boundary
+## Per-invocation results before the complete census, 2026-09-08
 
-This same-method result dependency still has **fifteen calls**, trace=2,
-no host owner proof and **0/6 native** in both modes:
+Commit **`d7148fcf`** closes the same-method dependency left by `a8da7c27`.
+The original **fifteen-call**, trace=2 source now has complete host ownership
+and **6/6 native** in both optimization modes:
 
 ```js
 var host = {};
@@ -836,63 +848,62 @@ var host = {};
 })(function() {
     const state = new Map();
     return {
-        size() { return state.size; },
-        get(flag) {
-            state.set('seed', 'future');
-            const result = flag ? '' : state.get('seed');
-            state.delete('seed');
-            return result || null;
-        },
-        set(key) {
-            state.set('extra', true);
-            state.delete('extra');
-            state.set(key, key);
-            return state.get(key);
-        }
+        size() { return state.size; }, get(flag) { state.set('seed', 'future'); const result = flag ? '' : state.get('seed'); state.delete('seed'); return result || null; }, set(key) { state.set('extra', true); state.delete('extra'); state.set(key, key); return state.get(key); }
     };
 });
-host.slot.set(host.slot.set(host.slot.get(false)));
-host.slot.set(host.slot.get(true));
-var trace = host.slot.size();
+host.slot.set(host.slot.set(host.slot.get(false))); host.slot.set(host.slot.get(true)); var trace = host.slot.size();
 ```
 
-`Values.cpp` requires the entire setter argument census before checking its
-body. One actual is that same setter's unpublished result, so the complete
-method dependency worklist cannot progress. A next proof must resolve that
-dependency independently, retaining the final complete census and future input
-categories. The first startup call cannot authorize every later call.
-The distinct-method control above proves nullable storage/results themselves.
+`Values.cpp` first checks each source invocation's argument categories and
+entire body, with unknown initial Map contents. Only a completed result can
+seed a source-ordered consumer. Then a separate complete census joins every
+actual and checks every sibling body before publishing the owning plan.
+Per-invocation scratch reads/calls are discarded. Future input categories
+remain generalized; the first call never authorizes a whole method. Unknown,
+foreign, circular or forward result evidence and unsafe later calls refuse.
 
-The original dual-nested local conditional has a separate merged-callee identity
-boundary, preserved in `native-map-mixed.mlir`. An object payload
-`{value: 'instance'}` still has eleven calls, trace=2, no host owner and **0/6**.
-Full Bootstrap Data, object identity/fields, browser API integration, general
-exports and future-call contracts remain unfinished. Complete both-mode
-measurements are in `/tmp/ctcompile-nullable-host-results-boundary.json` and
-devbox `/tmp/ctcompile-nullable-host-results-boundary/`; the exact nested source
-is a permanent refusal beside the acyclic positives in the published driver.
+Commit **`a1b11e80`** gates four programs with **15/15/18/15 calls** and
+**2/1/5/0 traces** in both modes, explicit/deduced GCC/Clang, exact identities
+and the saved nested-result sanitizer harness. Four nullable identities keep
+owning bytes through overwrite/deletion, caller/result mutation, owner release,
+independent reentry and final Map destruction. Five new refusal/repair pairs
+and four prior pairs pass fresh/stale annotations and reruns. Three budget
+families complete at **26292/51642/19726**, each checking **31 cutoffs**.
+All twelve focused CTests pass in **61.47 seconds**; the host and owner gates
+include final-family cardinality checks and independent same-tag forward-edge
+mutations. The full **137-program/eighteen-lifetime** driver is pending the
+full gate; current evidence is in [HANDOFF.md](HANDOFF.md).
 
-A smaller host-proof control has four functions and one published setter:
+## Next boundary
+
+An ordinary object payload remains outside the published Map ownership proof.
+This exact source has **eleven calls**, Node/interpreter **trace=2**, no host
+owner and **0/6 native** in both modes:
 
 ```js
 var host = {};
-(function(factory) { host.slot = factory(); })(function() {
+(function(factory) {
+    host.slot = factory();
+})(function() {
     const state = new Map();
-    return { set(key) { state.set(key, key); return state.get(key); } };
+    return {
+        size() { return state.size; }, get(flag) { state.set('seed', 'future'); const result = flag ? '' : state.get('seed'); state.delete('seed'); return result || null; }, set(key) { state.set(key, {value: 'instance'}); return state.size; }
+    };
 });
-host.slot.set(null);
-var trace = host.slot.set(host.slot.set('future'));
+host.slot.set(host.slot.get(false)); host.slot.set(host.slot.get(true)); var trace = host.slot.size();
 ```
 
-Its seven calls return String `"future"` in Node and the interpreter, but have
-no host owner and **0/4 native** in both modes. Removing the outer setter call
-reduces it to six calls and restores ownership. Removing the direct Null call
-instead gives a six-call all-String refusal; its five-call direct repair also
-restores ownership. The direct repairs still refuse native emission because
-String `trace` hits the separate numeric-global export restriction. Moving
-Null after the nested call retains the same census refusal. These are host-proof
-controls; the fifteen-call acyclic source above remains the admitted native
-control. Adding a numeric comparison observer to these smaller sources introduces
-another host-prefix obligation, so those probes do not replace the clean controls.
-Complete measured sources and diagnostics:
-`/tmp/ctcompile-nullable-host-results-next.json` and `-next.log`.
+The captured-body proof currently closes writes over primitive values. The
+provider's executed startup object facts do not prove future method-local
+allocation identity or ownership. Extend the live object/body and Map schema
+proofs while preserving ordinary owning C++ storage; a provider report or a
+boxed fallback cannot supply authority. Object field mutation, saved aliases
+and extraction lifetime need independent evidence. The smaller source above
+measures object storage before returned-object fields introduce another limit.
+
+The dual-nested local conditional retains a separate merged-callee identity
+refusal in `native-map-mixed.mlir`. Full Bootstrap Data, browser API integration,
+general exports, future-call contracts and native throwing calls remain open.
+Complete measurements: `/tmp/ctcompile-nested-method-boundary.json`. The prior
+smaller String-trace probes in `/tmp/ctcompile-nullable-host-results-next.json`
+are historical census controls, not current native-admission measurements.

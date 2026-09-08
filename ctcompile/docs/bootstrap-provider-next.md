@@ -353,14 +353,27 @@ test-only `077328ae` ownership/carrier correction, the complete lit rerun passes
 compiler tests pass across both runs; five established browser failures remain.
 [HANDOFF.md](HANDOFF.md) records the separate measurements and logs.
 
-## Next: same-method result dependencies
+## Completed: same-method invocation result dependencies
 
-The fifteen-call `set(set(get(false)))` source remains unowned and **0/6** in
-both modes, trace=2. Its setter argument census waits for that same setter's
-result before its body may be checked. Resolve this dependency with independent
-evidence and a final complete census, without substituting the first startup
-call's observations for future calls. Object payloads remain a separate owner
-boundary. Exact sources are in [the Map boundary](native-owned-global-maps.md#next-boundary).
+Commit **`d7148fcf`** advances the exact fifteen-call `set(set(get(false)))`
+source to complete ownership and **6/6 native** in both modes, trace=2.
+Independent invocation body proofs supply only source-ordered result facts;
+a second mandatory all-call/all-sibling census authorizes the published family.
+Unknown results, forward edges, cycles and unsafe later actuals still refuse.
+Four source programs, nested saved-result lifetime, five new refusal/repair
+families and three budget sweeps pass in **`a1b11e80`**. The combined focused
+gate is **12/12 CTests in 61.47 seconds**. The full 137-program/eighteen-lifetime
+driver and full CTest are running; [HANDOFF.md](HANDOFF.md) records the status.
+
+## Next: ordinary object payload ownership
+
+The eleven-call setter with `state.set(key, {value: 'instance'})` remains
+unowned and **0/6 native** in both modes, trace=2. Its host proof still permits
+primitive contents only. Method-local object identity, field/alias facts and
+owning native Map storage/extraction require independent live proofs; executed
+provider facts cannot characterize future calls. The source isolates storage
+before a returned-object field read adds another boundary. Exact sources are
+in [the Map boundary](native-owned-global-maps.md#next-boundary).
 
 The exact Bootstrap getter at vendor line 17 also needs nested/object payloads.
 Exact Bootstrap Data, general realm owners and future-call contracts remain
