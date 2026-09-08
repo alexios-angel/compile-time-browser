@@ -162,7 +162,8 @@ and the existing six lifetime variants. No lookup or call is evaluated away.
 ## Next: payload types across possibly aliasing writes
 
 `seeded_dynamic_write` uses `state.set(state.size, 2)` instead. It stays
-**0/5 native** with no owner proof and every source call intact. Its runtime key
+**0/5 native** with no owner proof and every source call intact; fresh Node and
+interpreter runs both produce `trace=1`. Its runtime key
 may alias the seed, so the current proof discards the old payload tag. A complete
 type join across possible overwrites could retain an independently proved
 numeric payload; key presence and possibly aliasing deletes remain separate

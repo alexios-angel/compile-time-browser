@@ -239,10 +239,19 @@ cutoffs**, alongside the 31 contents rows and 209 sink-table rows. All four
 existing execution oracles report zero violations. The combined Map/escape
 gate passes **7/7 CTests in 22.54 seconds**; log:
 `/tmp/ctcompile-map-keyfacts-units.log`. Corpus precision is unchanged in this
-gate; preceding measurements above describe the prerequisite only.
+gate. The full frozen generated build passes **475/475 CTests in 720.98 seconds**,
+including all four oracles; log: `/tmp/ctcompile-map-keyfacts-full.log`.
+Preceding measurements above describe the prerequisite only.
 
 No native admission consumes these verdicts. Complete contents for control flow,
 external values and other containers remain unfinished. Native automatic storage
 still requires the plan's separate type, identity, cycle ownership and
 frame-lifetime obligations. Corpus precision improvements require measurement;
 these unit cases do not establish a Bootstrap gain.
+
+The next source-facing prerequisite is imported frame/root bookkeeping:
+`EscapeClaims` analyzes raw imported functions, whose entry includes
+`ctjs.frame_enter`, while the complete contents query currently refuses that
+operation. Supporting this boundary needs an explicit balanced-frame proof and
+an executed source/oracle witness; the hand-written local-array cases alone do
+not establish a precision gain on imported JavaScript.

@@ -64,26 +64,39 @@ CTest in **159.07 seconds**; log: `/tmp/ctcompile-map-keyfacts-invocations.log`.
 Ordinary native throwing-call admission and payload/state emission remain
 unfinished.
 
-The full frozen generated devbox gate is running at
-`/tmp/ctcompile-map-keyfacts-full.log`. Its compiler bytes match the three
-committed implementations. Browser bytes are the committed `3494d44` baseline
-(unchanged since `7a755dd`), excluding Claude's unmerged WPT branch and ten browser
-carryover paths. Compiler formatting and whitespace checks pass; the whole-tree
-formatter flags only untouched browser `style/selector.hpp`, `DOM/document.cpp`
-and `Style/css/selector.cpp`. Fresh full-corpus/native counts remain pending;
-the preceding checkpoint below records the last completed full gate.
+The full frozen generated devbox gate passes **475/475 CTests in 720.98
+seconds**: **367 compiler / 108 browser**, including **163/163 lit cases in
+149.67 seconds**. Log: `/tmp/ctcompile-map-keyfacts-full.log`. All thirteen
+changed compiler code/test paths byte-match the three committed implementations.
+Browser bytes are the committed `3494d44` baseline (unchanged since `7a755dd`),
+excluding Claude's unmerged WPT branch and ten browser carryover paths. Compiler
+formatting and whitespace checks pass; the whole-tree formatter flags only
+untouched browser `style/selector.hpp`, `DOM/document.cpp` and
+`Style/css/selector.cpp`.
+
+Fresh native component counts remain **19/574 Bootstrap**, **39/4754 p5** and
+**45/7725 Phaser**, in both optimization modes with zero pruned functions.
+Exact Data remains **0/7 CommonJS**, **0/7 browser** and **0/8 AMD**. These are
+component counts, not complete applications. Evidence:
+`/tmp/ctcompile-map-keyfacts-evidence.json`. The emitted
+`/tmp/ctcompile-map-keyfacts-parameter.cpp` was reviewed: both seed writes and
+the typed `map_get_present` remain, and the result flows into the runtime setter.
+There are no interpreter symbols, VM contexts or collector dependencies.
 
 **Exact next native boundary:** `seeded_dynamic_write` replaces the disjoint
 write with `state.set(state.size, 2)` before `return state.get(0)`. It remains
-**0/5 native** with no owner proof and every source call intact. Its runtime
-key may alias key 0, so the proof discards the earlier payload fact despite both
+**0/5 native** with no owner proof and every source call intact; fresh Node and
+interpreter runs both produce `trace=1`. Its runtime key may alias key 0, so the
+proof discards the earlier payload fact despite both
 payloads being numeric. Next prove a complete type join across possible
 same-key overwrites independently of presence; a possibly aliasing delete
 still needs its own presence proof. Unseeded gets, unsupported payload carriers,
 full Bootstrap Data, realm ownership and future external callers remain open.
 Source invocation integration still needs complete native component admission
-and owning payload/state emission. Broader array contents and native ownership
-consumers remain unfinished.
+and owning payload/state emission. The array consumer next needs checked
+imported frame/root bookkeeping and an executed source/oracle witness; raw
+imports contain `ctjs.frame_enter`, which the complete query still refuses.
+Broader contents and native ownership consumers remain unfinished.
 
 ## Preceding seeded-Map, contents and source-binding checkpoint, 2026-09-07
 

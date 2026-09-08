@@ -219,7 +219,8 @@ selected-actual variant completes at **9031** steps with two invokes and twelve
 original checks. All **5106** incomplete transitive budgets, the depth controls
 and nine new refusals pass, alongside all **3534** current source-binding and
 **937** effect-budget prefixes. Log: `/tmp/ctcompile-map-keyfacts-invocations.log`;
-the final compiler/full gate is recorded in [HANDOFF.md](HANDOFF.md).
+the final frozen generated gate passes **475/475 CTests in 720.98 seconds**,
+including **163/163 lit cases**. See [HANDOFF.md](HANDOFF.md) for the exact baseline.
 
 ## Remaining native recovery integration
 

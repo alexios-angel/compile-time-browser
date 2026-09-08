@@ -130,7 +130,9 @@ disjoint delete, with **30/31** checked cutoffs and no natural speculative
 rollback interval. These are work-limit measurements, not performance claims.
 The initial focused CTest gate passes **2/2 in 14.16 seconds**, followed by all
 47 native programs; log: `/tmp/ctcompile-map-keyfacts-focused2.log`.
-The combined and full gates are recorded in [HANDOFF.md](HANDOFF.md).
+The final frozen generated gate passes **475/475 CTests in 720.98 seconds**,
+including **163/163 lit cases**; log: `/tmp/ctcompile-map-keyfacts-full.log`.
+Fresh component counts and the browser baseline are in [HANDOFF.md](HANDOFF.md).
 
 ## Preceding seeded-result gate, 2026-09-07
 
@@ -293,7 +295,8 @@ devbox build passes **475/475 CTests** in **652.00 seconds**, including
 
 The retained `seeded_dynamic_write` instead uses `state.set(state.size, 2)`
 before the producer's `return state.get(0)`. It remains **0/5 native** with every
-source call intact and no owner proof. The runtime key may alias key 0, so the
+source call intact and no owner proof. Fresh Node/interpreter runs both produce
+`trace=1`. The runtime key may alias key 0, so the
 current proof discards that entry's payload fact even though both payloads are
 numeric. The next increment needs a complete result-type join across possibly
 aliasing writes, independently of key presence. A possibly aliasing delete still
