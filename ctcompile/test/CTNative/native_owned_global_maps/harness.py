@@ -17,6 +17,7 @@ from .sources import (
     nullable_result_sources, nullable_key_sources, NULLABLE_OBSERVATIONS,
     nullable_payload_sources, NULLABLE_PAYLOAD_READBACKS, nullable_host_result_sources,
     nullable_nested_result_sources,
+    leaf_object_sources, LEAF_OBJECT_FIELDS,
 )
 
 
@@ -814,6 +815,223 @@ int main() {
                            f"{result.stdout}{result.stderr}")
 
 
+def leaf_object_observer_source(source, name):
+    # Only this independent reference observer replaces Map.set. The compiled
+    # source and its standard intrinsic contract retain their original bytes.
+    observed = source + """
+(function() {
+    const seen = [];
+    const original = Map.prototype.set;
+    Map.prototype.set = function(key, value) {
+        seen.push(value); return original.call(this, key, value);
+    };
+    const before = host.slot.size();
+    host.slot.set('leaf-observer-future-key');
+    host.slot.set('leaf-observer-future-key');
+    Map.prototype.set = original;
+    const first = seen[0], second = seen[1];
+    trace = 0;
+"""
+    checks = ["seen.length === 2", "first !== second", "host.slot.size() === before + 1"]
+    style = LEAF_OBJECT_FIELDS.get(name)
+    if style:
+        checks.extend(["first.value === " + ("before" if style == "scalar" else "1"),
+                       "second.value === " + ("before + 1" if style == "scalar" else "1")])
+    if style == "scalar":
+        checks.extend(["first.flag === false && second.flag === false",
+                       "first.empty === null && second.empty === null",
+                       "first.absent === undefined && second.absent === undefined"])
+    for index, check in enumerate(checks):
+        observed += f"    if ({check}) {{ trace = trace + {1 << index}; }}\n"
+    return observed + "})();\n", (1 << len(checks)) - 1
+
+
+def instrument_leaf_objects(cpp):
+    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
+    if count != 1:
+        raise RuntimeError("leaf object observer needs exactly one entry")
+    changed = ("#include <memory>\n#include <type_traits>\n#include <vector>\n"
+               "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n"
+               "static std::vector<std::weak_ptr<const void>> ctn_test_objects;\n"
+               "template <class T> std::shared_ptr<T> ctn_test_make_leaf() {\n"
+               "    auto made = std::make_shared<T>();\n"
+               "    ctn_test_objects.emplace_back(made); return made;\n}\n" + changed)
+    changed, count = re.subn(r"return std::make_shared<(map_storage<K, V>|number_map<K>)>\(\);",
+        lambda match: "auto made = std::make_shared<" + match[1] + ">(); "
+                      "ctn_test_maps.emplace_back(made); return made;", changed)
+    if count != 2 or changed.count("std::make_shared<ctnative::identity_object>()") != 1:
+        raise RuntimeError("leaf object observer lost its Map and setter-local allocation sites")
+    return changed.replace("std::make_shared<ctnative::identity_object>()",
+                           "ctn_test_make_leaf<ctnative::identity_object>()")
+
+
+def leaf_field_failures(variable, style, expected):
+    if not style:
+        return []
+    scalar = "ctnative::nullable_scalar::kind::"
+    checks = [f"{variable}->field_76616c7565.tag != {scalar}number",
+              f"{variable}->field_76616c7565.value != {expected}"]
+    if style == "scalar":
+        checks.extend([f"{variable}->field_666c6167.tag != {scalar}boolean",
+                       f"{variable}->field_666c6167.value != 0",
+                       f"{variable}->field_656d707479.tag != {scalar}null",
+                       f"{variable}->field_616273656e74.tag != {scalar}undefined"])
+    return checks
+
+
+def leaf_object_identity_cpp(cpp, name):
+    changed = instrument_leaf_objects(cpp)
+    changed += r'''
+int main() {
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1) { return 90; }
+    const auto before = g_host->slot->m_size();
+    const auto count = ctn_test_objects.size();
+    g_host->slot->m_set(std::string{"leaf-observer-future-key"});
+    auto first = std::static_pointer_cast<const ctnative::identity_object>(ctn_test_objects.back().lock());
+    g_host->slot->m_set(std::string{"leaf-observer-future-key"});
+    auto second = std::static_pointer_cast<const ctnative::identity_object>(ctn_test_objects.back().lock());
+    if (ctn_test_objects.size() != count + 2 || !first || !second || first == second ||
+        g_host->slot->m_size() != before + 1) { return 91; }
+    g_host.reset();
+    if (!ctn_test_maps[0].expired() || ctn_test_objects[count].expired() ||
+        ctn_test_objects[count + 1].expired()) { return 92; }
+'''
+    style = LEAF_OBJECT_FIELDS.get(name)
+    checks = leaf_field_failures("first", style, "before" if style == "scalar" else "1")
+    checks += leaf_field_failures("second", style, "before + 1" if style == "scalar" else "1")
+    if checks:
+        changed += "    if (" + " ||\n        ".join(checks) + ") { return 93; }\n"
+    return changed + r'''
+    first.reset();
+    second.reset();
+    for (const auto & object : ctn_test_objects) {
+        if (!object.expired()) { return 94; }
+    }
+    return 0;
+}
+'''
+
+
+def check_leaf_object_calls(cpp, name, mode):
+    source = leaf_object_sources()[name][0]
+    entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
+    if not entry or "std::function<js_num(std::string)>" not in cpp:
+        raise RuntimeError(f"{name}/{mode}: missing numeric leaf setter ABI")
+    methods_by_value = dict(re.findall(
+        r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1]))
+    calls = re.findall(r"ctnative::invoke_callable\((\w+)([^;\n]*)\);", entry[1])
+    sequence = [methods_by_value.get(callee) for callee, _ in calls]
+    expected = ["set", "set", "set", "size"]
+    if name == "leaf_object_lifetime":
+        expected = ["set", "set", "set", "erase", "size"]
+    elif name == "leaf_object_identity_repair":
+        expected = ["size", "set"]
+    if sequence != expected:
+        raise RuntimeError(f"{name}/{mode}: changed live leaf-method order")
+    for method in ("set", "get", "has", "delete"):
+        original = len(re.findall(rf"\bstate\.{method}\(", source))
+        lowered = len(re.findall(rf"\bctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(", cpp))
+        if lowered != original:
+            raise RuntimeError(f"{name}/{mode}: changed the {original} live Map.{method} calls")
+    if name.endswith("_repair") and name != "leaf_object_identity_repair":
+        return
+    style = LEAF_OBJECT_FIELDS.get(name)
+    writes = 6 if style == "scalar" else 1 if style else 0
+    if ("std::shared_ptr<ctnative::map_storage<std::string, ctnative::object_value>>" not in cpp
+            or cpp.count("std::make_shared<ctnative::identity_object>()") != 1
+            or len(re.findall(r"ctnative::object_set_field_[0-9a-f]+\(", cpp)) != writes):
+        raise RuntimeError(f"{name}/{mode}: lost the leaf owner, exact payload schema or field writes")
+
+
+def leaf_object_lifetime(args, cpp, name, mode, compiler):
+    changed = instrument_leaf_objects(cpp)
+    changed += r'''
+int main() {
+    const auto fields_match = [](const std::shared_ptr<const void> & value, double expected) {
+        const auto object = std::static_pointer_cast<const ctnative::identity_object>(value);
+        using kind = ctnative::nullable_scalar::kind;
+        return object && object->field_76616c7565.tag == kind::number &&
+            object->field_76616c7565.value == expected &&
+            object->field_666c6167.tag == kind::boolean && object->field_666c6167.value == 0 &&
+            object->field_656d707479.tag == kind::null && object->field_616273656e74.tag == kind::undefined;
+    };
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 || ctn_test_objects.size() != 3 ||
+        !ctn_test_objects[0].expired() || !fields_match(ctn_test_objects[1].lock(), 1) ||
+        !ctn_test_objects[2].expired()) { return 90; }
+    auto owner = g_host;
+    auto table = owner->slot;
+    auto size = table->m_size;
+    auto setter = table->m_set;
+    auto erase = table->m_erase;
+    static_assert(std::is_same_v<decltype(size), std::function<js_num()>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<js_num(std::string)>>);
+    static_assert(std::is_same_v<decltype(erase), std::function<js_num(std::string)>>);
+    std::weak_ptr owner_lifetime = owner;
+    std::weak_ptr table_lifetime = table;
+    g_host.reset();
+    owner.reset();
+    table.reset();
+    if (!owner_lifetime.expired() || !table_lifetime.expired() || ctn_test_maps[0].expired()) {
+        return 91;
+    }
+    const std::string expected(160, 'k');
+    auto caller = expected;
+    if (setter(caller) != 2 || !fields_match(ctn_test_objects.back().lock(), 1)) { return 92; }
+    caller.assign(expected.size(), 'q');
+    if (setter(expected) != 2 || ctn_test_objects.size() != 5 || !ctn_test_objects[3].expired() ||
+        !fields_match(ctn_test_objects[4].lock(), 2)) { return 93; }
+    // The temporary strong lock used to inspect fields must die before erase.
+    if (erase(expected) != 1 ||
+        !ctn_test_objects[4].expired()) { return 93; }
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 || ctn_test_objects.size() != 8 ||
+        ctn_test_maps[0].lock() == ctn_test_maps[1].lock()) { return 94; }
+    for (int index = 0; index < 128; ++index) {
+        const std::string key = expected + std::to_string(index);
+        const auto count = ctn_test_objects.size();
+        if (setter(key) != 2 || !fields_match(ctn_test_objects[count].lock(), 1)) { return 95; }
+        if (setter(key) != 2 || !ctn_test_objects[count].expired() ||
+            !fields_match(ctn_test_objects[count + 1].lock(), 2)) { return 95; }
+        if (erase(key) != 1 ||
+            !ctn_test_objects[count + 1].expired() || size() != 1 || g_host->slot->m_size() != 1) {
+            return 95;
+        }
+    }
+    if (setter(std::string{"kept"}) != 2) { return 96; }
+    const auto kept = ctn_test_objects.size() - 1;
+    auto saved = ctn_test_objects[kept].lock();
+    setter = {};
+    if (erase(std::string{"x"}) != 1 || !ctn_test_objects[1].expired()) { return 97; }
+    erase = {};
+    if (ctn_test_maps[0].expired() || size() != 1) { return 98; }
+    size = {};
+    if (!ctn_test_maps[0].expired() || ctn_test_maps[1].expired() ||
+        ctn_test_objects[kept].expired()) { return 99; }
+    g_host.reset();
+    std::vector<std::string> churn;
+    for (int index = 0; index < 4096; ++index) { churn.emplace_back(expected.size(), 'w'); }
+    if (!ctn_test_maps[1].expired() || !fields_match(saved, 1)) { return 100; }
+    saved.reset();
+    for (const auto & object : ctn_test_objects) {
+        if (!object.expired()) { return 101; }
+    }
+    return 0;
+}
+'''
+    source = args.work / f"{name}.{mode}.lifetime.cpp"
+    source.write_text(changed)
+    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
+    host.run([compiler, *owned.FLAGS, "-O1", "-g", "-fno-omit-frame-pointer",
+              "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
+              str(source), "-o", str(binary)])
+    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
+        env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+                 UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+    if result.returncode or result.stdout != "trace=1\n" * 2:
+        raise RuntimeError(f"{name}/{mode}: leaf Map/callable/object lifetime failure "
+                           f"(exit {result.returncode})\n"
+                           f"{result.stdout}{result.stderr}")
+
+
 def standalone(args, output, name, value, compilers, nm):
     deduced = args.work / f"{name}.deduced.mlir"
     host.run([args.opt, str(output), "--ctnative-print-deduced", "-o", str(deduced)])
@@ -830,6 +1048,8 @@ def standalone(args, output, name, value, compilers, nm):
                       "shared_two_parameters": "std::string, js_num"}.get(name, "std::string")
             if f"std::function<js_num({params})>" not in cpp:
                 raise RuntimeError(f"{name}/{mode}: missing typed setter arguments\n{cpp}")
+        if name in leaf_object_sources():
+            check_leaf_object_calls(cpp, name, mode)
         if name in RESULT_SIGNATURES:
             result, params, _ = RESULT_SIGNATURES[name]
             getter_params = "js_num" if name in {
@@ -860,6 +1080,10 @@ def standalone(args, output, name, value, compilers, nm):
                 raise RuntimeError(f"{name}/{mode}: missing exact finite key/payload carrier\n{cpp}")
         source = args.work / f"{name}.{mode}.cpp"
         source.write_text(cpp)
+        if name in leaf_object_sources() and (not name.endswith("_repair")
+                                               or name == "leaf_object_identity_repair"):
+            source = args.work / f"{name}.{mode}.identity.cpp"
+            source.write_text(leaf_object_identity_cpp(cpp, name))
         if name in {**nullable_result_sources(), **nullable_key_sources(), **nullable_payload_sources(),
                     **nullable_host_result_sources(), **nullable_nested_result_sources()}:
             key = "std::string" if name == "nullable_homogeneous_key" else "std::variant<bool, std::string>"
@@ -906,22 +1130,38 @@ def standalone(args, output, name, value, compilers, nm):
         if name in {"nullable_payload_saved", "nullable_payload_mixed_saved", "nullable_host_result_saved",
                     "nullable_nested_result_saved"}:
             nullable_stored_payload_lifetime(args, cpp, name, mode, compilers[1])
+        if name == "leaf_object_lifetime":
+            leaf_object_lifetime(args, cpp, name, mode, compilers[1])
 
 
 def check_call_preservation(original, output, name):
     if source_calls(original) != source_calls(output):
         raise RuntimeError(f"{name}: failed ownership changed live source call operands")
-    if name.startswith(("saved_join", "guarded_saved", "shortcircuit", "nullable")):
+    if name.startswith(("saved_join", "guarded_saved", "shortcircuit", "nullable", "leaf_object")):
         pattern = (r"^\s*(?:%[-\w.$]+(?::\d+)? = )?((?:ctjs\.(?:truthy|cond_br|br)|"
                    r"scf\.(?:if|yield))\b[^\n]*)")
         if re.findall(pattern, original, re.M) != re.findall(pattern, output, re.M):
             raise RuntimeError(f"{name}: failed ownership changed live branch/yield operands")
+    if name.startswith("leaf_object"):
+        pattern = r"^\s*((?:%[-\w.$]+ = )?ctjs\.(?:create_object|set_property|get_property)\b[^\n{]*)"
+        if ([match.strip() for match in re.findall(pattern, original, re.M)]
+                != [match.strip() for match in re.findall(pattern, output, re.M)]):
+            raise RuntimeError(f"{name}: failed ownership changed leaf allocations or field operands")
 
 
 def check_prepared_result_calls(text, original, name):
     calls = re.findall(
         r"^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) "
         r"\{ctnative\.stored_call = 1 : i32\}", text, re.M)
+    if name == "nullable_nested_sibling":
+        actuals = [arguments.split(", ") for _, _, arguments in calls]
+        if (len(source_calls(text)) != len(source_calls(original))
+                or [target for _, target, _ in calls] != ["fn$4", "fn$5", "fn$5", "fn$4", "fn$5", "fn$3"]
+                or [len(arguments) for arguments in actuals] != [5, 5, 5, 5, 5, 4]
+                or any(actuals[consumer][-1] != calls[producer][0] for producer, consumer in ((0, 1), (1, 2), (3, 4)))
+                or f'ctjs.store_global "trace", {calls[-1][0]}' not in text):
+            raise RuntimeError(f"{name}: Object/String carrier refusal lost prepared nested result operands")
+        return
     pairs = 2 if name.startswith("nullable") else 1
     getter_arguments = 5 if name.startswith("nullable") else 4
     if (len(source_calls(text)) != len(source_calls(original))
@@ -948,6 +1188,21 @@ def forge_map_presence(text, payload="bool"):
                       + (", " if match[2] else "}"), methods.forge_reports(text), flags=re.M)
     if count == 0:
         raise RuntimeError("forged-presence control lost every live Map call")
+    return marked
+
+
+def forge_leaf_evidence(text, payload="bool"):
+    marked = forge_map_presence(text, payload)
+    marked, count = re.subn(r"(\bctjs\.create_object)(\s*\{)?",
+        lambda match: match[1] + " {ctnative.object_identity"
+                      + (", " if match[2] else "}"), marked)
+    if count == 0:
+        raise RuntimeError("forged leaf evidence lost every allocation")
+    marked, count = re.subn(r"(^\s*(?:%[-\w.$]+ = )?ctjs\.(?:get|set)_property [^\n{]+)(\{)?",
+        lambda match: match[1].rstrip() + " {ctnative.object_field_group = 99 : i64"
+                      + (", " if match[2] else "}"), marked, flags=re.M)
+    if count == 0:
+        raise RuntimeError("forged leaf evidence lost every field/publication access")
     return marked
 
 

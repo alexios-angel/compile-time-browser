@@ -140,3 +140,23 @@
 # exact nested result tags and saved owning bytes remain independently checked.
 # Unknown/foreign/unseeded results, a later bad actual and a bad sibling refuse
 # fresh/stale forged evidence; exact repaired sources admit in both modes.
+# Method-local leaf objects use the existing owning object/Map carrier with
+# numeric public results and primitive arguments. The exact seven-call empty
+# and Number-field sources retain repeated live String keys. Fixed Number,
+# Boolean, Null and Undefined fields, scalar rewrites and local aliases remain
+# runtime operations. Independent future-call observers distinguish fresh
+# identities and field values, including after the Map's final owner dies.
+# A saved numeric size/set/erase family survives publication-owner release,
+# caller-key mutation and independent reentry. Weak witnesses require objects
+# to die on same-key overwrite/deletion and the Map to die at its final saved
+# callable release; one observer-retained leaf survives until its own release.
+# Graphs, dynamic/prototype fields, String fields, external object arguments,
+# object keys/returns and unproved sibling reads remain independent refusals.
+# The exact saved/distinct/deleted object identity controls remain a following
+# boundary; repairs restore a separately gated numeric source. Fresh/stale
+# forged object identity/field/presence annotations and transactional budget
+# cutoffs cannot manufacture ownership or erase source allocation/field uses.
+# The historical empty-object payload now admits without changing its source.
+# The historical nested leaf-writing sibling has complete ownership, while its
+# mixed Object/String Map still refuses native output and preserves prepared
+# nested result operands under fresh/stale facts and reruns.

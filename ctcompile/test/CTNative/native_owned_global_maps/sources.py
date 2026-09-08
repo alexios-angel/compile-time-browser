@@ -1279,3 +1279,107 @@ def seeded_result_refusals():
             "get(key, other) { state.set(key, 1); return state.get(other); }")
             .replace("host.slot.get()", "host.slot.get(7, 8)"),
     }
+
+
+LEAF_OBJECT_SOURCE = """var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        set(key) { const item = {}; state.set(key, item); return state.size; }
+    };
+});
+host.slot.set('x'); host.slot.set('x'); host.slot.set('y');
+var trace = host.slot.size();
+"""
+
+
+def leaf_object_sources():
+    number = LEAF_OBJECT_SOURCE.replace("const item = {};", "const item = {value: 1};")
+    fields = LEAF_OBJECT_SOURCE.replace("const item = {};",
+        "const item = {value: 1, flag: true, empty: null, absent: void 0}; "
+        "item.value = state.size; item.flag = false;")
+    lifetime = fields.replace("size() { return state.size; },",
+        "size() { return state.size; }, "
+        "erase(key) { state.delete(key); return state.size; },")
+    lifetime = lifetime.replace("var trace =", "host.slot.erase('y'); var trace =")
+    return {
+        # These first two programs preserve the exact seven-call/five-function
+        # continuation measured in e533a865, including repeated live keys.
+        "leaf_object_plain": (LEAF_OBJECT_SOURCE, "host", 2),
+        "leaf_object_number_field": (number, "host", 2),
+        "leaf_object_scalar_writes": (fields, "host", 2),
+        "leaf_object_alias": (fields.replace("state.set(key, item);",
+            "const alias = item; state.set(key, alias);"), "host", 2),
+        # An independently called deleting sibling provides a numeric ABI for
+        # the saved-callable observer. No object crosses a published boundary.
+        "leaf_object_lifetime": (lifetime, "host", 1),
+        "leaf_object_number_repair": (LEAF_OBJECT_SOURCE.replace("const item = {};",
+            "const item = 1;"), "host", 2),
+        "leaf_object_string_repair": (LEAF_OBJECT_SOURCE.replace("const item = {};",
+            "const item = 'instance';"), "host", 2),
+        "leaf_object_identity_repair": (number.replace(
+            "host.slot.set('x'); host.slot.set('x'); host.slot.set('y');\nvar trace = host.slot.size();",
+            "host.slot.size(); var trace = host.slot.set('x');"), "host", 1),
+    }
+
+
+LEAF_OBJECT_CALLS = {name: 9 if name == "leaf_object_lifetime"
+                     else 5 if name == "leaf_object_identity_repair" else 7
+                     for name in leaf_object_sources()}
+LEAF_OBJECT_FUNCTIONS = {name: 6 if name == "leaf_object_lifetime" else 5
+                         for name in leaf_object_sources()}
+LEAF_OBJECT_FIELDS = {
+    "leaf_object_number_field": "number",
+    "leaf_object_identity_repair": "number",
+    "leaf_object_scalar_writes": "scalar",
+    "leaf_object_alias": "scalar",
+    "leaf_object_lifetime": "scalar",
+}
+
+
+def leaf_object_refusals():
+    number = leaf_object_sources()["leaf_object_number_field"][0]
+    repaired = leaf_object_sources()["leaf_object_identity_repair"][0]
+    body = "const item = {value: 1}; state.set(key, item); return state.size;"
+    saved = ("const item = {value: 1}; state.set(key, item); const saved = state.get(key); "
+             "state.set(key, {value: 1}); state.delete(key); return saved === item ? 1 : 0;")
+    rows = {}
+    for name, old, replacement, repair, value, calls in (
+        ("string_field", "const item = {value: 1};", "const item = {value: 'instance'};",
+         "leaf_object_number_field", 2, 7),
+        ("nested_field", "const item = {value: 1};", "const item = {value: {}};",
+         "leaf_object_number_field", 2, 7),
+        ("cycle", "const item = {value: 1};", "const item = {value: 1}; item.value = item;",
+         "leaf_object_number_field", 2, 7),
+        ("dynamic_field", "const item = {value: 1};", "const item = {value: 1}; item[key] = 1;",
+         "leaf_object_number_field", 2, 7),
+        ("prototype", "const item = {value: 1};", "const item = {value: 1}; item.__proto__ = {};",
+         "leaf_object_number_field", 2, 7),
+        ("object_key", "state.set(key, item);", "state.set(item, item);",
+         "leaf_object_number_field", 3, 7),
+        ("object_return", "state.set(key, item); return state.size;",
+         "state.set(key, item); return item;", "leaf_object_number_field", 2, 7),
+        ("later_actual", "var trace =", "host.slot.set({}); var trace =",
+         "leaf_object_number_field", 3, 8),
+        ("unknown_read", "size() { return state.size; }",
+         "size() { const item = state.get('x'); return item ? 1 : 0; }",
+         "leaf_object_number_field", 1, 8),
+        ("unsafe_sibling", "size() { return state.size; }",
+         "size() { const item = {}; item.self = item; state.set('cycle', item); return state.size; }",
+         "leaf_object_number_field", 3, 8),
+    ):
+        rows["leaf_object_" + name] = (number.replace(old, replacement), value,
+            replacement, old, repair, calls)
+    # The exact saved/distinct/deleted identity continuation remains separate
+    # from write-only leaf ownership. Each repair restores the same complete
+    # numeric-returning source, rather than erasing or trusting forged reads.
+    for name, expression, value, calls in (
+        ("saved_identity", "saved === item", 1, 8),
+        ("distinct_identity", "saved === {value: 1}", 0, 8),
+        ("deleted_identity", "state.get(key) === item", 0, 9),
+    ):
+        changed = saved.replace("saved === item", expression)
+        rows["leaf_object_" + name] = (repaired.replace(body, changed), value,
+            changed, body, "leaf_object_identity_repair", calls)
+    return rows

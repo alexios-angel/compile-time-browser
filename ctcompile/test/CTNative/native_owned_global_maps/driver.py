@@ -22,11 +22,13 @@ from .sources import (
     NULLABLE_PAYLOAD_READBACKS, nullable_host_result_sources, nullable_host_result_refusals,
     NULLABLE_HOST_RESULT_CALLS,
     nullable_nested_result_sources, nullable_nested_result_refusals, NULLABLE_NESTED_RESULT_CALLS,
+    leaf_object_sources, leaf_object_refusals, LEAF_OBJECT_CALLS, LEAF_OBJECT_FUNCTIONS,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
     forge_map_presence, check_budgets, check_prepared_result_calls,
     nullable_observer_source,
+    leaf_object_observer_source, forge_leaf_evidence,
 )
 
 
@@ -38,11 +40,104 @@ def comparable_provenance(cpp, input_ir):
                    for line in cpp.splitlines(keepends=True))
 
 
-def check_nullable_host_result_refusals(args, positives, node, reference):
+def check_leaf_object_observations(args, node, reference):
+    for name, (source, _, _) in leaf_object_sources().items():
+        if name in {"leaf_object_number_repair", "leaf_object_string_repair"}:
+            continue
+        observed, value = leaf_object_observer_source(source, name)
+        observed_js = args.work / f"{name}-object-observer.js"
+        observed_js.write_text(observed)
+        if (host.run([node, "-e", boundary.NODE, str(observed_js)]).stdout != f"trace={value}\n"
+                or host.run([str(reference), str(observed_js)]).stdout != f"trace={value}\n"):
+            raise RuntimeError(f"{name}: independent future object identity/field mismatch")
+        mutations = [("const item = {};", "const item = host;")] if name == "leaf_object_plain" else []
+        if name in {"leaf_object_number_field", "leaf_object_identity_repair"}:
+            mutations = [("const item = {value: 1};", "const item = host;"), ("{value: 1}", "{value: 0}")]
+        if name in {"leaf_object_scalar_writes", "leaf_object_alias", "leaf_object_lifetime"}:
+            mutations = [("item.value = state.size;", "item.value = 1;"),
+                         ("item.flag = false;", "item.flag = true;"),
+                         ("empty: null", "empty: 0"), ("absent: void 0", "absent: null")]
+        for index, (old, replacement) in enumerate(mutations):
+            if source.count(old) != 1:
+                raise RuntimeError(f"{name}: leaf observer mutation lost its unique source origin")
+            mutated, _ = leaf_object_observer_source(source.replace(old, replacement), name)
+            blind = args.work / f"{name}-object-observer-blind-{index}.js"
+            blind.write_text(mutated)
+            if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == f"trace={value}\n":
+                raise RuntimeError(f"{name}: object identity/field observer cannot distinguish {replacement}")
+
+
+def check_leaf_object_forgeries(args, saved):
+    for name in ("leaf_object_plain", "leaf_object_scalar_writes", "leaf_object_lifetime"):
+        ir, config, output = saved[name]
+        functions = LEAF_OBJECT_FUNCTIONS[name]
+        expected_cpp = comparable_provenance(
+            host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout, ir)
+        for mode, options in (("default", ""), ("disabled", "optimize=false")):
+            for payload in ("bool", "string", "nullable_string"):
+                forged_name = name + "-" + mode + "-forged-" + payload
+                forged = args.work / f"{forged_name}.mlir"
+                forged.write_text(forge_leaf_evidence(ir.read_text(), payload))
+                failed = methods.refused(args, forged, forged_name + "-stale", config,
+                    options=options, reason="fingerprint mismatch", admitted=0)
+                check_call_preservation(forged.read_text(), failed.read_text(), forged_name + "-stale")
+                fresh = contract(args, forged, forged_name)
+                checked = owned.lower(args, forged, forged_name, fresh, options=options)
+                text = methods.census(checked, functions, forged_name, admitted=functions)
+                if ("ctnative.host_owner_proved = true" not in text
+                        or comparable_provenance(
+                            host.run([args.translate, "--mlir-to-cpp", str(checked)]).stdout,
+                            forged) != expected_cpp):
+                    raise RuntimeError(f"{forged_name}: forged leaf facts changed native owners or fields")
+
+
+def check_leaf_object_refusals(args, positives, node, reference):
+    for name, (source, value, old, replacement, repaired_name, calls) in leaf_object_refusals().items():
+        js, rejected, count = boundary.prepare(args, name, source)
+        if count != 5 or len(source_calls(rejected.read_text())) != calls:
+            raise RuntimeError(f"{name}: changed the exact leaf-object source census")
+        if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != f"trace={value}\n"
+                or host.run([str(reference), str(js)]).stdout != f"trace={value}\n"):
+            raise RuntimeError(f"{name}: Node/interpreter leaf-object refusal mismatch")
+        if source.count(old) != 1 or source.replace(old, replacement) != positives[repaired_name][0]:
+            raise RuntimeError(f"{name}: repair no longer restores its independently gated source")
+        _, restored, restored_count = boundary.prepare(args, name + "-restored", source.replace(old, replacement))
+        if restored_count != LEAF_OBJECT_FUNCTIONS[repaired_name]:
+            raise RuntimeError(f"{name}: changed repaired source function census")
+        config = contract(args, rejected, name)
+        restored_config = contract(args, restored, name + "-restored")
+        for mode, options in (("default", ""), ("disabled", "optimize=false")):
+            mode_name = name + "-" + mode
+            failed = methods.refused(args, rejected, mode_name, config, options=options, admitted=0)
+            check_call_preservation(rejected.read_text(), failed.read_text(), mode_name)
+            repaired = owned.lower(args, restored, mode_name + "-restored", restored_config, options=options)
+            text = methods.census(repaired, restored_count, mode_name + "-restored", admitted=restored_count)
+            if "ctnative.host_owner_proved = true" not in text:
+                raise RuntimeError(f"{name}: exact leaf-object repair did not restore ownership")
+            for payload in ("bool", "string", "nullable_string"):
+                forged_name = mode_name + "-forged-" + payload
+                forged = args.work / f"{forged_name}.mlir"
+                forged.write_text(forge_leaf_evidence(rejected.read_text(), payload))
+                stale = methods.refused(args, forged, forged_name + "-stale", config,
+                    options=options, reason="fingerprint mismatch", admitted=0)
+                check_call_preservation(forged.read_text(), stale.read_text(), forged_name + "-stale")
+                fresh = contract(args, forged, forged_name)
+                failed = methods.refused(args, forged, forged_name, fresh, options=options, admitted=0)
+                if "fingerprint mismatch" in failed.read_text():
+                    raise RuntimeError(f"{forged_name}: skipped independent leaf/use reanalysis")
+                check_call_preservation(forged.read_text(), failed.read_text(), forged_name)
+                rerun = methods.refused(args, failed, forged_name + "-rerun", fresh,
+                                        options=options, admitted=0)
+                check_call_preservation(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
+
+
+def check_nullable_host_result_refusals(args, positives, node, reference, *, names=None):
     controls = {name: (*row[:4], "nullable_host_result_both" if name.endswith("deleted")
                       else "nullable_host_result", 16 if name.endswith(("deleted", "aliasing")) else 15)
                 for name, row in nullable_host_result_refusals().items()}
     controls.update(nullable_nested_result_refusals())
+    if names is not None:
+        controls = {name: row for name, row in controls.items() if name in names}
     for name, (source, value, old, replacement, repaired_name, expected_calls) in controls.items():
         js, rejected, count = boundary.prepare(args, name, source)
         if count != 6 or len(source_calls(rejected.read_text())) != expected_calls:
@@ -66,8 +161,25 @@ def check_nullable_host_result_refusals(args, positives, node, reference):
         restored_config = contract(args, restored_ir, name + "-restored")
         for mode, options in (("default", ""), ("disabled", "optimize=false")):
             mode_name = name + "-" + mode
-            failed = methods.refused(args, rejected, mode_name, fresh, options=options, admitted=0)
-            check_call_preservation(rejected.read_text(), failed.read_text(), mode_name)
+
+            def reject_live(input_ir, label, current_config):
+                if name != "nullable_nested_sibling":
+                    failed = methods.refused(args, input_ir, label, current_config,
+                                             options=options, admitted=0)
+                    check_call_preservation(input_ir.read_text(), failed.read_text(), label)
+                    return failed
+                # The historical leaf-writing sibling now has a complete
+                # owner. Its Object/String Map still has no native carrier.
+                failed = owned.lower(args, input_ir, label, current_config, options=options, cleanup=False)
+                text = methods.census(failed, 6, label, admitted=0)
+                if ("ctnative.host_owner_proved = true" not in text
+                        or "!ctnative.map<!ctnative.opt<!ctnative.str<utf8>>, !ctnative.boxed>" not in text
+                        or re.search(r"\bemitc\.func @main\(", text)):
+                    raise RuntimeError(f"{label}: lost the complete owner or Object/String carrier refusal")
+                check_prepared_result_calls(text, input_ir.read_text(), name)
+                return failed
+
+            failed = reject_live(rejected, mode_name, fresh)
             repaired = owned.lower(args, restored_ir, mode_name + "-restored", restored_config,
                                    options=options)
             repaired_text = methods.census(repaired, 6, mode_name + "-restored", admitted=6)
@@ -81,13 +193,12 @@ def check_nullable_host_result_refusals(args, positives, node, reference):
                     options=options, reason="fingerprint mismatch", admitted=0)
                 check_call_preservation(forged.read_text(), stale.read_text(), forged_name + "-stale")
                 forged_config = contract(args, forged, forged_name)
-                failed = methods.refused(args, forged, forged_name, forged_config, options=options, admitted=0)
+                failed = reject_live(forged, forged_name, forged_config)
                 if "fingerprint mismatch" in failed.read_text():
                     raise RuntimeError(f"{forged_name}: skipped independent host payload reanalysis")
-                check_call_preservation(forged.read_text(), failed.read_text(), forged_name)
                 rerun = methods.refused(args, failed, forged_name + "-rerun", forged_config,
                                         options=options, admitted=0)
-                check_call_preservation(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
+                check_call_preservation(failed.read_text(), rerun.read_text(), forged_name + "-rerun")
 
 
 def check_shortcircuit_nullable_refusal(args, node, reference):
@@ -226,8 +337,13 @@ def main():
         **nullable_key_sources(),
         **nullable_payload_sources(),
         **nullable_host_result_sources(), **nullable_nested_result_sources(),
+        **leaf_object_sources(),
+        # Keep the original refusal source byte-for-byte. Its method-local
+        # empty payload now has the same independently proved leaf owner.
+        "object_payload": (refusal_sources()["object_payload"], "host", 1),
     }
     saved = {}
+    check_leaf_object_observations(args, node, reference)
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
     blind = args.work / "seeded-dynamic-overwrite-blinded.js"
     blind.write_text(overwrite_source.replace("return state.get(1);", "return 1;"))
@@ -457,7 +573,8 @@ def main():
         raise RuntimeError("nullable host result: saved payload lifetime cannot distinguish deletion")
     for name, (source, binding, value) in positives.items():
         js, ir, count = boundary.prepare(args, name, source)
-        functions = (RESULT_SIGNATURES[name][2] if name in RESULT_SIGNATURES
+        functions = (LEAF_OBJECT_FUNCTIONS[name] if name in LEAF_OBJECT_FUNCTIONS
+                     else RESULT_SIGNATURES[name][2] if name in RESULT_SIGNATURES
                      else 6 if name == "shared_three" else 5 if name.startswith("shared") else 4)
         if count != functions:
             raise RuntimeError(f"{name}: lost the {functions}-function source chain")
@@ -481,6 +598,8 @@ def main():
         if name in NULLABLE_NESTED_RESULT_CALLS \
                 and len(source_calls(ir.read_text())) != NULLABLE_NESTED_RESULT_CALLS[name]:
             raise RuntimeError(f"{name}: changed the exact {NULLABLE_NESTED_RESULT_CALLS[name]}-call boundary")
+        if name in LEAF_OBJECT_CALLS and len(source_calls(ir.read_text())) != LEAF_OBJECT_CALLS[name]:
+            raise RuntimeError(f"{name}: changed the exact {LEAF_OBJECT_CALLS[name]}-call leaf boundary")
         if name == "already_resolved":
             ir = resolve_getter(args, ir)
         if name.startswith("legacy_"):
@@ -499,12 +618,15 @@ def main():
             raise RuntimeError(f"{name}: changed supplied source or manifest")
         if name in {**saved_read_sources(), **saved_join_sources(), **guarded_saved_sources(),
                     **shortcircuit_sources(), **nullable_result_sources(), **nullable_key_sources(),
-                    **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources()}:
+                    **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources(),
+                    **leaf_object_sources()}:
             disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")
             if disabled.read_text() != output.read_text():
                 raise RuntimeError(f"{name}: saved scalar proof depends on optimization policy")
         standalone(args, output, name, value, compilers, nm)
         saved[name] = ir, config, output
+
+    check_leaf_object_forgeries(args, saved)
 
     # Valid-looking scalar markers cannot normalize real null keys or narrow
     # the second use of a nullable formal. Fresh proof must emit the same C++.
@@ -599,6 +721,8 @@ def main():
     rollback += check_budgets(args, seeded_ir, seeded_config, "result_seeded_map_get", functions=5)
 
     for name, source in refusal_sources().items():
+        if name == "object_payload":
+            continue
         _, rejected, _ = boundary.prepare(args, name, source)
         fresh = contract(args, rejected, name)
         methods.refused(args, rejected, name, fresh)
@@ -783,6 +907,7 @@ def main():
                 check_call_preservation(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
     check_shortcircuit_nullable_refusal(args, node, reference)
     check_nullable_host_result_refusals(args, positives, node, reference)
+    check_leaf_object_refusals(args, positives, node, reference)
     # A result contract does not narrow Map storage or supply an implemented
     # callable signature. Preserve the prepared producer/consumer operands.
     mixed_read_refusals = mixed_nullable_payload_refusals()
@@ -945,9 +1070,19 @@ def main():
         text = methods.census(rerun, functions, name + "-rerun", admitted=functions)
         if "ctnative.host_owner_proved = false" not in text or "fingerprint mismatch" not in text:
             raise RuntimeError(f"{name}: prepared Map reused the original source authority")
+    for name in leaf_object_sources():
+        _, config, output = saved[name]
+        functions = LEAF_OBJECT_FUNCTIONS[name]
+        rerun = owned.lower(args, output, name + "-rerun", config, cleanup=False)
+        text = methods.census(rerun, functions, name + "-rerun", admitted=functions)
+        if "ctnative.host_owner_proved = false" not in text or "fingerprint mismatch" not in text:
+            raise RuntimeError(f"{name}: prepared leaf owner reused the original source authority")
+    for name in ("leaf_object_plain", "leaf_object_scalar_writes", "leaf_object_lifetime"):
+        ir, config, _ = saved[name]
+        rollback += check_budgets(args, ir, config, name, functions=LEAF_OBJECT_FUNCTIONS[name])
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
           "Node/interpreter/GCC/Clang explicit+deduced and Map/table/callable lifetime pass; "
-          f"{len(refusal_sources())} source refusals and contract/rerun/budget controls pass; "
+          f"{len(refusal_sources()) - 1} source refusals and contract/rerun/budget controls pass; "
           f"two carrier refusals and {len(shared_refusals)} shared-method refusals; "
           f"{len(parameter_refusals())} argument refusals preserve current call operands; "
           "typed parameterized setters 5/5 with changing source and saved-callable keys; "
@@ -996,8 +1131,16 @@ def main():
           "host-result refusals and exact repairs pass both modes and fresh/stale proof controls; "
           f"{len(nullable_nested_result_sources())} same-method result programs retain the exact "
           "15-call nested chain, later nullable/String actuals and saved owning nested results; "
-          f"{len(nullable_nested_result_refusals())} unknown/foreign/unseeded/later-actual/sibling "
-          "refusals and exact repairs pass both modes and fresh/stale proof controls; "
+          f"{len(nullable_nested_result_refusals()) - 1} unknown/foreign/unseeded/later-actual "
+          "host refusals and exact repairs pass both modes and fresh/stale proof controls; "
+          "the historical leaf-writing sibling retains complete ownership and a separate "
+          "Object/String carrier refusal with nested prepared operands intact; "
+          f"{len(leaf_object_sources())} method-local leaf programs and the historical object payload "
+          "preserve runtime allocation, Map writes, fixed scalar fields and numeric public signatures; "
+          "future distinct objects and saved size/set/erase callables pass overwrite/deletion, reentry "
+          "and final Map/object lifetime checks; "
+          f"{len(leaf_object_refusals())} object graph/field/argument/result/read/identity refusals "
+          "restore exact gated sources and reject fresh/stale forged leaf reports; "
           f"{len(seeded_result_refusals())} seeded proof and "
           f"{len(seeded_carrier_refusals())} seeded carrier refusals; "
           f"{len(rollback)} speculative rollback cutoffs")
