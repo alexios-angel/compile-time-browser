@@ -86,11 +86,18 @@ def main():
     blind.write_text(overwrite_source.replace("return state.get(1);", "return 1;"))
     if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == f"trace={overwrite_value}\n":
         raise RuntimeError("dynamic overwrite witness cannot distinguish retaining the old payload")
-    saved_source, _, saved_value = positives["seeded_size_saved"]
-    blind = args.work / "seeded-size-saved-blinded.js"
-    blind.write_text(saved_source.replace("state.delete(saved)", "state.delete(state.size)"))
-    if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == f"trace={saved_value}\n":
-        raise RuntimeError("saved size witness cannot distinguish a later current-size read")
+    for name in ("seeded_size_saved", "seeded_size_two_saved", "seeded_size_two_saved_empty"):
+        saved_source, _, saved_value = positives[name]
+        blind = args.work / f"{name}-snapshot-blinded.js"
+        blind.write_text(saved_source.replace("state.delete(saved)", "state.delete(state.size)"))
+        if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == f"trace={saved_value}\n":
+            raise RuntimeError(f"{name}: saved size witness cannot distinguish a current-size read")
+    for name in ("seeded_size_two_saved", "seeded_size_after_delete"):
+        live_source, _, live_value = positives[name]
+        blind = args.work / f"{name}-delete-blinded.js"
+        blind.write_text(live_source.replace("state.delete(", "state.has("))
+        if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == f"trace={live_value}\n":
+            raise RuntimeError(f"{name}: size witness cannot distinguish a real deletion")
     for name, (source, binding, value) in positives.items():
         js, ir, count = boundary.prepare(args, name, source)
         functions = (RESULT_SIGNATURES[name][2] if name in RESULT_SIGNATURES
@@ -157,7 +164,8 @@ def main():
     result_ir, result_config, result_output = saved["parameter_call_result"]
     rollback += check_budgets(args, result_ir, result_config, "parameter_call_result", functions=5)
     for name in ("seeded_earlier_key", "seeded_other_delete", "seeded_dynamic_write",
-                 "seeded_dynamic_formal", "seeded_dynamic_delete", "seeded_size_saved"):
+                 "seeded_dynamic_formal", "seeded_dynamic_delete", "seeded_size_saved",
+                 "seeded_size_two_entries", "seeded_size_two_saved_empty"):
         key_ir, key_config, _ = saved[name]
         rollback += check_budgets(args, key_ir, key_config, name,
                                   functions=RESULT_SIGNATURES[name][2])
@@ -244,7 +252,12 @@ def main():
                 or host.run([str(reference), str(js)]).stdout != expected):
             raise RuntimeError(f"{name}: Node/interpreter observation mismatch")
         blind = args.work / f"{name}-blinded.js"
-        blind.write_text(source.replace("state.delete(", "state.has("))
+        # Earlier removals may establish the current cardinality. Suppress
+        # only the final, result-determining deletion in this control.
+        parts = source.rsplit("state.delete(", 1)
+        if len(parts) != 2:
+            raise RuntimeError(f"{name}: size-key refusal lost its deleting operation")
+        blind.write_text("state.has(".join(parts))
         if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == expected:
             raise RuntimeError(f"{name}: size-key refusal cannot distinguish a real deletion")
         fresh = contract(args, rejected, name)
@@ -369,6 +382,13 @@ def main():
     text = methods.census(rerun, 5, "seeded-rerun", admitted=5)
     if "ctnative.host_owner_proved = false" not in text or "fingerprint mismatch" not in text:
         raise RuntimeError("seeded-rerun: prepared presence reused the original source authority")
+    for name in ("seeded_size_two_entries", "seeded_size_two_saved_empty"):
+        _, cardinality_config, cardinality_output = saved[name]
+        rerun = owned.lower(args, cardinality_output, name + "-rerun", cardinality_config,
+                            cleanup=False)
+        text = methods.census(rerun, 5, name + "-rerun", admitted=5)
+        if "ctnative.host_owner_proved = false" not in text or "fingerprint mismatch" not in text:
+            raise RuntimeError(f"{name}: prepared cardinality reused the original source authority")
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
           "Node/interpreter/GCC/Clang explicit+deduced and Map/table/callable lifetime pass; "
           f"{len(refusal_sources())} source refusals and contract/rerun/budget controls pass; "
@@ -380,7 +400,7 @@ def main():
           f"{len(seeded_result_sources())} seeded result programs and growing lifetime pass; "
           f"{len(key_fact_sources())} per-key result programs; "
           f"{len(joined_result_sources())} type-joined result programs; "
-          f"{len(size_result_sources())} nonempty-size programs and "
+          f"{len(size_result_sources())} bounded-size programs and "
           f"{len(size_result_refusals())} size-key refusals with discriminating observations; "
           f"{len(seeded_result_refusals())} seeded proof and "
           f"{len(seeded_carrier_refusals())} seeded carrier refusals; "

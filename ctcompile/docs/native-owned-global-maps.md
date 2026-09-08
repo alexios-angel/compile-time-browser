@@ -358,20 +358,50 @@ CTests pass. Logs: `/tmp/ctcompile-size-focused.log`,
 `/tmp/ctcompile-size-native.log`, `/tmp/ctcompile-size-lit.log`.
 The full combined gate is recorded in [HANDOFF.md](HANDOFF.md).
 
+## Distinct-key size bounds, 2026-09-08
+
+The `seeded_size_two_entries` producer seeds keys 0 and 1, deletes
+`state.size`, then returns `state.get(1)`. It now advances **0/5 -> 5/5
+native**, preserving Node/interpreter **`trace=2`**. Both analyses independently
+construct a pairwise-distinct subset of definite entries in the exact runtime
+Map. A size snapshot is at least the subset's cardinality; subsequent mutations
+do not change that saved number. Distinct SSA names alone never count twice.
+SameValueZero still equates signed zeros and all NaN payloads.
+
+Each read examines at most **64 candidates**. This deliberately yields a lower
+bound, not an exact size; keys outside the examined subset cannot increase it.
+Host analysis charges every examined candidate and comparison to its existing
+shared work budget. Native presence filters by exact runtime instance, preserves
+known immutable snapshots across mutation, meets branch facts conservatively
+and discards loop-carried assumptions. Neither analysis consumes a forged size
+annotation. Source/prepared host proofs complete at **2278/2372 steps**, with
+no callable/property proof at any smaller budget. The 64/65-candidate controls,
+late seed/read/delete mutations and signed-zero/NaN duplicate controls pass.
+
+The gate passes **63 complete native programs**, including eight size programs
+and ten size-key refusals, with Node/interpreter and explicit/deduced GCC/Clang
+agreement and no interpreter symbols. All six existing sanitizer lifetime
+variants pass. New saved-bound observations distinguish rereading size after
+growth and after deleting all seeded keys; deletion controls distinguish real
+mutations from no-ops. Runtime calls, lookups and result operands remain intact.
+First complete native admission is **5931** for two entries and **9391** for the
+saved/emptied Map, each with **30** checked cutoffs and no natural speculative
+rollback interval. The combined focused CTest gate passes **12/12 in 28.45
+seconds**. The independent presence lit gate passes **seven positives and
+fourteen refusals**, including `has` branches, different instances and loop
+invalidation. Logs: `/tmp/ctcompile-cardinality-focused2.log` and
+`/tmp/ctcompile-cardinality-lit2.log`.
+
 ## Next boundary
 
-After `state.set(0, 1); state.set(1, 2)`, deleting `state.size` should preserve
-`state.get(1)`. The current nonempty bound cannot establish that size is at
-least two. This needs a bounded cardinality lower bound from independently
-distinct definite keys; the number of facts is not a cardinality proof because
-different SSA keys can alias. The unseeded `get() { return state.get(0); }`
-remains refused. Neither an earlier observed invocation nor an incomplete
-family establishes the result.
+The existing `result_seeded_string` and `result_seeded_bool` specimens need
+native homogeneous payload carriers despite complete host ownership/result
+proofs. String, boolean and mixed Map payload carriers remain separate **0/6**
+boundaries. The unseeded `get() { return state.get(0); }` remains refused;
+neither an earlier observed invocation nor an incomplete family establishes its
+result. Raising the intentional size-witness cap does not address these barriers.
 
-String, boolean and mixed Map payload carriers remain separate **0/6**
-boundaries even after complete host proofs. Current-call proofs cannot authorize
-arbitrary future external arguments or establish an export ABI.
-
-Future external callers, a typed export ABI, mutable publication slots,
+Current-call proofs cannot authorize arbitrary future external arguments or
+establish an export ABI. Future external callers, mutable publication slots,
 general realm owners, reentry and throwing provider effects remain separate
 obligations. See [the next Bootstrap work](bootstrap-provider-next.md).

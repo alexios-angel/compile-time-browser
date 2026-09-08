@@ -184,6 +184,11 @@ def size_result_sources():
         "alias.set(saved, 2); state.delete(saved); return state.get(0);")
     saved = saved.replace("var trace = host.slot.get();",
                           "var trace = host.slot.set(host.slot.get());")
+    two_saved = SEEDED_RESULT.replace("state.set(0, 1); return state.get(0);",
+        "const alias = state; alias.set(0, 1); alias.set(1, 2); const saved = alias.size; "
+        "alias.set(saved, 3); state.delete(saved); return state.get(1);")
+    observed_size = SEEDED_RESULT.replace("var trace = host.slot.get();",
+        "var trace = host.slot.set(host.slot.get());")
     return {
         "seeded_dynamic_delete": (SEEDED_RESULT.replace("return state.get(0);",
             "state.delete(state.size); return state.get(0);"), "host", 1),
@@ -194,6 +199,30 @@ def size_result_sources():
         "seeded_size_saved_empty": (SEEDED_RESULT.replace("return state.get(0);",
             "const saved = state.size; state.delete(0); state.set(0, 3); "
             "state.delete(saved); return state.get(0);"), "host", 3),
+        "seeded_size_two_entries": (SEEDED_RESULT.replace("state.set(0, 1); return state.get(0);",
+            "state.set(0, 1); state.set(1, 2); state.delete(state.size); "
+            "return state.get(1);"), "host", 2),
+        "seeded_size_three_entries": (SEEDED_RESULT.replace("state.set(0, 1); return state.get(0);",
+            "state.set(0, 1); state.set(1, 2); state.set(2, 3); "
+            "state.delete(state.size); return state.get(2);"), "host", 3),
+        # The alias reads size >= 2 before growing the Map. Both later calls
+        # must delete that saved key; rereading current size leaves trace=4.
+        "seeded_size_two_saved": (two_saved.replace("var trace = host.slot.get();",
+            "var trace = host.slot.set(host.slot.get());"), "host", 3),
+        # Remove both seeds and the prior setter's key before reseeding. The
+        # saved bound still excludes key 1 after every definite entry is gone.
+        "seeded_size_two_saved_empty": (observed_size.replace(
+            "state.set(0, 1); return state.get(0);",
+            "state.set(0, 1); state.set(1, 2); const saved = state.size; "
+            "state.delete(0); state.delete(1); state.delete(3); "
+            "state.set(1, 3); state.delete(saved); return state.get(1);"),
+            "host", 2),
+        # Deleting one known key leaves two distinct definite entries. The
+        # numeric payload 7 makes suppressing that real delete observable.
+        "seeded_size_after_delete": (observed_size.replace(
+            "state.set(0, 1); return state.get(0);",
+            "state.set(0, 1); state.set(1, 7); state.set(2, 3); state.delete(2); "
+            "state.delete(state.size); return state.get(1);"), "host", 3),
     }
 
 
@@ -214,6 +243,38 @@ def size_result_refusals():
             "state.set(0, 1); return state.get(0);",
             "state.set(0, 1); const first = state.size; const second = state.size; "
             "state.set(first, 2); state.delete(second); return state.get(first);"), 2),
+        # Three tracked SSA keys may name only two actual entries. In the
+        # first call both size snapshots equal 1 and deletion removes key 2.
+        "seeded_size_aliasing_facts": (observed_size.replace(
+            "state.set(0, 1); return state.get(0);",
+            "state.set(2, 1); const first = state.size; const second = state.size; "
+            "state.set(first, 2); state.set(second, 3); state.delete(state.size); "
+            "return state.get(2);"), 4),
+        "seeded_size_duplicate_zero": (observed_size.replace(
+            "state.set(0, 1); return state.get(0);",
+            "state.set(0, 1); state.set(0, 2); state.set(2, 3); "
+            "state.delete(state.size); return state.get(2);"), 4),
+        "seeded_size_removed_entry": (observed_size.replace(
+            "state.set(0, 1); return state.get(0);",
+            "state.set(0, 1); state.set(1, 2); state.delete(0); "
+            "state.delete(state.size); return state.get(1);"), 3),
+        "seeded_size_before_second_entry": (observed_size.replace(
+            "state.set(0, 1); return state.get(0);",
+            "state.set(1, 1); const saved = state.size; state.set(0, 2); "
+            "state.delete(saved); return state.get(1);"), 3),
+        "seeded_size_equal_bound": (observed_size.replace(
+            "state.set(0, 1); return state.get(0);",
+            "state.set(0, 1); state.set(2, 2); state.delete(state.size); "
+            "return state.get(2);"), 3),
+        "seeded_size_equal_two_snapshots": (observed_size.replace(
+            "state.set(0, 1); return state.get(0);",
+            "state.set(0, 1); state.set(1, 2); const first = state.size; "
+            "const second = state.size; state.set(first, 3); state.delete(second); "
+            "return state.get(first);"), 3),
+        "seeded_size_removed_seeds": (observed_size.replace(
+            "state.set(0, 1); return state.get(0);",
+            "state.set(0, 1); state.set(1, 2); state.delete(0); state.delete(1); "
+            "state.set(1, 3); state.delete(state.size); return state.get(1);"), 3),
     }
 
 

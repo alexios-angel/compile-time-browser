@@ -7,6 +7,7 @@
 // checkCapturedCallables used to build inline, now from HostContractFixtures.h.
 
 #include "HostContractFixtures.h"
+#include "llvm/ADT/APFloat.h"
 
 using namespace ctcompile::test::host_contract;
 
@@ -377,6 +378,32 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
 )MLIR";
             const auto nonempty =
                 replaced(source, seedLine, seedLine.str() + sizeRead + sizeDelete);
+            auto twoEntries =
+                replaced(nonempty, seedLine,
+                         seedLine.str() + "\n    %secondSeed = ctjs.call %mapSetter(%state, "
+                                          "%payload, %payload)");
+            twoEntries = replaced(twoEntries, "%probeKey = ctjs.constant #ctjs.number<0>",
+                                  "%probeKey = ctjs.constant #ctjs.number<4607182418800017408>");
+            variant(twoEntries, true,
+                    "two independently distinct keys prove a size lower bound of two");
+            variant(replaced(twoEntries,
+                             "%secondSeed = ctjs.call %mapSetter(%state, %payload, %payload)",
+                             "%secondSeed = ctjs.call %mapSetter(%state, %seedKey, %payload)"),
+                    false, "a repeated runtime key cannot inflate the cardinality lower bound");
+            auto savedTwo = replaced(twoEntries, sizeDelete, R"MLIR(
+    %deleteKey = ctjs.constant #ctjs.string<"delete">
+    %deleter = ctjs.get_property %state[%deleteKey]
+    %removeZero = ctjs.call %deleter(%state, %seedKey)
+    %deleted = ctjs.call %deleter(%state, %dynamicKey)
+)MLIR");
+            variant(savedTwo, true, "saved size bounds survive a later cardinality decrease");
+            constexpr llvm::StringLiteral sizeLine =
+                "    %dynamicKey = ctjs.get_property %state[%sizeKey]\n";
+            auto decreased = replaced(savedTwo, sizeLine, "");
+            decreased = replaced(decreased, "    %deleted = ctjs.call",
+                                 sizeLine.str() + "    %deleted = ctjs.call");
+            variant(decreased, false,
+                    "a size read after deletion cannot inherit the earlier cardinality");
             variant(nonempty, true, "a nonempty size snapshot cannot delete the definite zero key");
             variant(replaced(source, seedLine, seedLine.str() + sizeRead + R"MLIR(
     %deleteKey = ctjs.constant #ctjs.string<"delete">
@@ -393,6 +420,18 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                                    "%probeKey = ctjs.constant #ctjs.number<4607182418800017408>");
             variant(positiveKey, false,
                     "nonempty alone cannot distinguish a positive key from the size");
+            const auto aliasingFacts = replaced(positiveKey, sizeDelete, R"MLIR(
+    %possibleAlias = ctjs.call %mapSetter(%state, %dynamicKey, %payload)
+    %currentSize = ctjs.get_property %state[%sizeKey]
+    %deleteKey = ctjs.constant #ctjs.string<"delete">
+    %deleter = ctjs.get_property %state[%deleteKey]
+    %deleted = ctjs.call %deleter(%state, %currentSize)
+)MLIR");
+            variant(aliasingFacts, false,
+                    "different definite SSA keys may alias and cannot count as two entries");
+            variant(replaced(twoEntries, "%seedKey = ctjs.constant #ctjs.number<0>",
+                             "%seedKey = ctjs.constant #ctjs.boolean<false>"),
+                    true, "independent primitive tags also prove pairwise key disjointness");
             for (const char * bits : {"9223372036854775808", "13830554455654793216",
                                       "4602678819172646912", "9221120237041090561"}) {
                 auto outside =
@@ -405,62 +444,105 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                         "negative zero, negative, subunit and NaN keys cannot equal nonempty size");
             }
             if (!multiple) {
-                auto checked = mlir::parseSourceString<mlir::ModuleOp>(
-                    prepared ? prepare(nonempty) : nonempty, &context);
-                check(static_cast<bool>(checked), "nonempty size budget fixture parses");
-                if (!checked) { continue; }
-                const auto sizeContract = requested(*checked);
-                HostContractAnalysis complete(*checked, sizeContract);
-                const unsigned sizeCompletion = complete.steps();
-                check(complete.proved() && sizeCompletion < 15000,
-                      "complete size proof stays within the fixture work limit");
-                if (!complete.proved() || sizeCompletion >= 15000) { continue; }
-                for (unsigned budget = 0; budget < sizeCompletion; ++budget) {
-                    HostContractAnalysis limited(*checked, sizeContract, budget);
-                    check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                              empty(*checked, limited),
-                          "every incomplete size budget withholds the entire callable family");
+                const auto cardinalityFixture = [&](unsigned count, unsigned probe) {
+                    std::string seeds;
+                    for (unsigned i = 1; i < count; ++i) {
+                        seeds += "\n    %key" + std::to_string(i) +
+                                 " = ctjs.constant #ctjs.number<" +
+                                 std::to_string(llvm::APFloat(static_cast<double>(i))
+                                                    .bitcastToAPInt()
+                                                    .getZExtValue()) +
+                                 ">\n    %seed" + std::to_string(i) +
+                                 " = ctjs.call %mapSetter(%state, %key" + std::to_string(i) +
+                                 ", %payload)\n";
+                    }
+                    return replaced(replaced(nonempty, seedLine, seedLine.str() + seeds),
+                                    "%probeKey = ctjs.constant #ctjs.number<0>",
+                                    "%probeKey = ctjs.constant #ctjs.number<" +
+                                        std::to_string(llvm::APFloat(static_cast<double>(probe))
+                                                           .bitcastToAPInt()
+                                                           .getZExtValue()) +
+                                        ">");
+                };
+                variant(cardinalityFixture(3, 2), true,
+                        "three definite keys establish a stronger bound than nonempty");
+                variant(cardinalityFixture(64, 63), true,
+                        "the candidate cap includes all 64 independently distinct witnesses");
+                variant(cardinalityFixture(65, 64), false,
+                        "a capped subset never supplies the unexamined sixty-fifth witness");
+                for (const auto & bits :
+                     {std::pair{"0", "9223372036854775808"},
+                      std::pair{"9221120237041090561", "9221120237041090562"}}) {
+                    auto aliases = cardinalityFixture(3, 2);
+                    aliases = replaced(aliases, "%seedKey = ctjs.constant #ctjs.number<0>",
+                                       std::string("%seedKey = ctjs.constant #ctjs.number<") +
+                                           bits.first + ">");
+                    aliases = replaced(
+                        aliases, "%key1 = ctjs.constant #ctjs.number<4607182418800017408>",
+                        std::string("%key1 = ctjs.constant #ctjs.number<") + bits.second + ">");
+                    variant(aliases, false,
+                            "SameValueZero duplicates never inflate a size bound past two");
                 }
-                HostContractAnalysis exact(*checked, sizeContract, sizeCompletion);
-                check(exact.proved() && exact.steps() == sizeCompletion &&
-                          exact.callables().size() == 3,
-                      "the exact size completion budget reproduces every live result edge");
-                auto sizeGetter = checked->lookupSymbol<ctjs::FuncOp>("get$2");
-                llvm::SmallVector<ctjs::CallOp> operations;
-                ctjs::GetPropertyOp size;
-                sizeGetter.walk([&](ctjs::CallOp call) { operations.push_back(call); });
-                sizeGetter.walk([&](ctjs::GetPropertyOp read) {
-                    auto key = read.getKey().getDefiningOp<ctjs::ConstantOp>();
-                    auto name =
-                        key ? llvm::dyn_cast<ctjs::StringAttr>(key.getValue()) : ctjs::StringAttr{};
-                    if (name && name.getValue() == "size") { size = read; }
-                });
-                check(size && operations.size() == 3,
-                      "the nonempty proof keeps seed, size, delete and get operations");
-                if (!size || operations.size() != 3) { continue; }
-                auto sizeSeed = operations[0], erased = operations[1];
-                auto * seedNext = sizeSeed->getNextNode();
-                sizeSeed->moveAfter(size);
-                HostContractAnalysis staleSize(*checked, sizeContract);
-                check(!staleSize.proved() && staleSize.reason().contains("fingerprint") &&
-                          empty(*checked, staleSize),
-                      "moving size before seed invalidates the original fingerprint");
-                size->setAttr("ctnative.nonempty_size", builder.getBoolAttr(true));
-                HostContractAnalysis beforeSeed(*checked, requested(*checked));
-                check(!beforeSeed.proved() && empty(*checked, beforeSeed),
-                      "a fresh fingerprint and forged size marker cannot prove initial contents");
-                sizeSeed->moveBefore(seedNext);
-                erased->setOperand(2, sizeSeed.getArgs()[0]);
-                HostContractAnalysis equalDelete(*checked, requested(*checked));
-                check(!equalDelete.proved() && empty(*checked, equalDelete),
-                      "an equal-key delete cannot inherit disjointness from the previous operand");
-                erased->setOperand(2, size.getResult());
-                check(
-                    HostContractAnalysis(*checked, requested(*checked)).proved(),
-                    "restoring the live size order and delete key restores its independent proof");
-                std::printf(
-                    "nonempty Map size host %s proof and all %u incomplete budgets checked\n",
-                    prepared ? "prepared" : "source", sizeCompletion);
+                for (const auto & specimen : {nonempty, twoEntries}) {
+                    auto checked = mlir::parseSourceString<mlir::ModuleOp>(
+                        prepared ? prepare(specimen) : specimen, &context);
+                    check(static_cast<bool>(checked), "nonempty size budget fixture parses");
+                    if (!checked) { continue; }
+                    const auto sizeContract = requested(*checked);
+                    HostContractAnalysis complete(*checked, sizeContract);
+                    const unsigned sizeCompletion = complete.steps();
+                    check(complete.proved() && sizeCompletion < 15000,
+                          "complete size proof stays within the fixture work limit");
+                    if (!complete.proved() || sizeCompletion >= 15000) { continue; }
+                    for (unsigned budget = 0; budget < sizeCompletion; ++budget) {
+                        HostContractAnalysis limited(*checked, sizeContract, budget);
+                        check(!limited.proved() && limited.exhausted() &&
+                                  limited.steps() <= budget && empty(*checked, limited),
+                              "every incomplete size budget withholds the entire callable family");
+                    }
+                    HostContractAnalysis exact(*checked, sizeContract, sizeCompletion);
+                    check(exact.proved() && exact.steps() == sizeCompletion &&
+                              exact.callables().size() == 3,
+                          "the exact size completion budget reproduces every live result edge");
+                    auto sizeGetter = checked->lookupSymbol<ctjs::FuncOp>("get$2");
+                    llvm::SmallVector<ctjs::CallOp> operations;
+                    ctjs::GetPropertyOp size;
+                    sizeGetter.walk([&](ctjs::CallOp call) { operations.push_back(call); });
+                    sizeGetter.walk([&](ctjs::GetPropertyOp read) {
+                        auto key = read.getKey().getDefiningOp<ctjs::ConstantOp>();
+                        auto name = key ? llvm::dyn_cast<ctjs::StringAttr>(key.getValue())
+                                        : ctjs::StringAttr{};
+                        if (name && name.getValue() == "size") { size = read; }
+                    });
+                    check(size && (operations.size() == 3 || operations.size() == 4),
+                          "the nonempty proof keeps seed, size, delete and get operations");
+                    if (!size || (operations.size() != 3 && operations.size() != 4)) { continue; }
+                    auto sizeSeed = operations[0], erased = operations[operations.size() - 2];
+                    auto * seedNext = sizeSeed->getNextNode();
+                    sizeSeed->moveAfter(size);
+                    HostContractAnalysis staleSize(*checked, sizeContract);
+                    check(!staleSize.proved() && staleSize.reason().contains("fingerprint") &&
+                              empty(*checked, staleSize),
+                          "moving size before seed invalidates the original fingerprint");
+                    size->setAttr("ctnative.nonempty_size", builder.getBoolAttr(true));
+                    HostContractAnalysis beforeSeed(*checked, requested(*checked));
+                    check(
+                        !beforeSeed.proved() && empty(*checked, beforeSeed),
+                        "a fresh fingerprint and forged size marker cannot prove initial contents");
+                    sizeSeed->moveBefore(seedNext);
+                    erased->setOperand(2, operations.back().getArgs()[0]);
+                    HostContractAnalysis equalDelete(*checked, requested(*checked));
+                    check(!equalDelete.proved() && empty(*checked, equalDelete),
+                          "an equal-key delete cannot inherit disjointness from the previous "
+                          "operand");
+                    erased->setOperand(2, size.getResult());
+                    check(HostContractAnalysis(*checked, requested(*checked)).proved(),
+                          "restoring the live size order and delete key restores its independent "
+                          "proof");
+                    std::printf(
+                        "%zu-key Map size host %s proof and all %u incomplete budgets checked\n",
+                        operations.size() - 2, prepared ? "prepared" : "source", sizeCompletion);
+                }
             }
             auto stringSeed = replaced(source, "%seedKey = ctjs.constant #ctjs.number<0>",
                                        "%seedKey = ctjs.constant #ctjs.string<\"seed\">");

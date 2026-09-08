@@ -62,6 +62,9 @@ def check_result_calls(cpp, name, mode):
         "seeded_dynamic_repeated": ["get", "set", "get", "set", "get"],
         "seeded_dynamic_formal": ["get", "set", "get", "set", "size"],
         "seeded_size_saved": ["get", "set", "get", "set"],
+        "seeded_size_two_saved": ["get", "set", "get", "set"],
+        "seeded_size_two_saved_empty": ["get", "set", "get", "set"],
+        "seeded_size_after_delete": ["get", "set", "get", "set"],
     }[name]
     if sequence != expected or "ctnative::map_set(" not in cpp:
         raise RuntimeError(f"{name}/{mode}: lost runtime getter/mutation/final observation calls")

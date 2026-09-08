@@ -661,13 +661,13 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
         std::optional<mlir::TypeID> tag;
     };
     llvm::SmallVector<entry_fact> entries;
-    llvm::DenseSet<mlir::Value> nonemptySizes;
+    llvm::DenseMap<mlir::Value, unsigned> sizeBounds;
     const auto primitiveTag = [&](mlir::Value key) -> std::optional<mlir::TypeID> {
         auto tag = tags.find(key);
         return tag == tags.end() ? std::nullopt : std::optional<mlir::TypeID>(tag->second);
     };
     const auto keyEvidence = [&](mlir::Value key) {
-        return PrimitiveMapKeyEvidence{primitiveTag(key), nonemptySizes.contains(key)};
+        return PrimitiveMapKeyEvidence{primitiveTag(key), sizeBounds.lookup(key)};
     };
     const auto mutate = [&](mlir::Value key, bool erase, std::optional<mlir::TypeID> tag = {}) {
         for (auto it = entries.begin(); it != entries.end();) {
@@ -730,10 +730,26 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared,
             if (key == "size") {
                 primitives.insert(read.getResult());
                 tags.try_emplace(read.getResult(), mlir::TypeID::get<ctjs::NumberAttr>());
-                // One definite entry proves size >= 1. The entry keys may
-                // alias, so their count is not a cardinality lower bound.
-                // Later mutation cannot change this already-read SSA number.
-                if (!entries.empty()) { nonemptySizes.insert(read.getResult()); }
+                // Count only a pairwise-distinct subset of definite entries.
+                // Different SSA keys may denote the same runtime key. Saved
+                // bounds belong to this read, surviving later Map mutations.
+                llvm::SmallVector<mlir::Value> distinct;
+                for (const auto & entry : llvm::ArrayRef<entry_fact>(entries).take_front(
+                         kMaxPrimitiveMapSizeCandidates)) {
+                    if (!step()) { return false; }
+                    bool disjoint = true;
+                    for (mlir::Value previous : distinct) {
+                        if (!step()) { return false; }
+                        if (comparePrimitiveMapKeys(previous, entry.key, keyEvidence(previous),
+                                                    keyEvidence(entry.key)) !=
+                            PrimitiveMapKeyRelation::Distinct) {
+                            disjoint = false;
+                            break;
+                        }
+                    }
+                    if (disjoint) { distinct.push_back(entry.key); }
+                }
+                sizeBounds[read.getResult()] = static_cast<unsigned>(distinct.size());
             }
         } else if (auto invoke = llvm::dyn_cast<ctjs::CallOp>(operation)) {
             auto read = invoke.getCallee().getDefiningOp<ctjs::GetPropertyOp>();

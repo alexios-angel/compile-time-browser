@@ -9,6 +9,8 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <algorithm>
+
 namespace ctcompile::ctnative::map_detail {
 namespace {
 
@@ -37,7 +39,7 @@ struct state {
     llvm::DenseSet<mlir::Operation *> observations;
     // Bounds on already-read SSA numbers survive known mutations. They are
     // acquired only from a checked size read with exact-instance presence.
-    llvm::DenseSet<mlir::Value> nonemptySizes;
+    llvm::DenseMap<mlir::Value, unsigned> sizeBounds{};
 
     bool contains(fact value) const {
         return llvm::any_of(present, [&](const fact & old) { return old.matches(value); });
@@ -50,8 +52,13 @@ struct state {
         for (mlir::Operation * op : llvm::make_early_inc_range(observations)) {
             if (!other.observations.contains(op)) { observations.erase(op); }
         }
-        for (mlir::Value value : llvm::make_early_inc_range(nonemptySizes)) {
-            if (!other.nonemptySizes.contains(value)) { nonemptySizes.erase(value); }
+        for (auto & bound : llvm::make_early_inc_range(sizeBounds)) {
+            const unsigned otherBound = other.sizeBounds.lookup(bound.first);
+            if (otherBound == 0) {
+                sizeBounds.erase(bound.first);
+            } else {
+                bound.second = std::min(bound.second, otherBound);
+            }
         }
     }
 };
@@ -173,8 +180,8 @@ struct presenceAnalysis {
             // an independent disjointness proof, any of them may be this Map.
             return familyOf(value.instance) == familyOf(affected.instance) &&
                    comparePrimitiveMapKeys(value.key, affected.key,
-                                           {{}, current.nonemptySizes.contains(value.key)},
-                                           {{}, current.nonemptySizes.contains(affected.key)}) !=
+                                           {{}, current.sizeBounds.lookup(value.key)},
+                                           {{}, current.sizeBounds.lookup(affected.key)}) !=
                        PrimitiveMapKeyRelation::Distinct;
         };
         llvm::erase_if(current.present, mayErase);
@@ -196,10 +203,21 @@ struct presenceAnalysis {
         if (sizes.contains(op)) {
             auto read = llvm::cast<ctjs::GetPropertyOp>(op);
             const auto instance = instanceOf(read.getObject());
-            if (llvm::any_of(current.present,
-                             [&](const fact & value) { return value.instance == instance; })) {
-                current.nonemptySizes.insert(read.getResult());
+            llvm::SmallVector<mlir::Value> distinct;
+            unsigned candidates = 0;
+            for (const fact & value : current.present) {
+                if (value.instance != instance) { continue; }
+                if (candidates++ == kMaxPrimitiveMapSizeCandidates) { break; }
+                if (llvm::all_of(distinct, [&](mlir::Value previous) {
+                        return comparePrimitiveMapKeys(
+                                   previous, value.key, {{}, current.sizeBounds.lookup(previous)},
+                                   {{}, current.sizeBounds.lookup(value.key)}) ==
+                               PrimitiveMapKeyRelation::Distinct;
+                    })) {
+                    distinct.push_back(value.key);
+                }
             }
+            current.sizeBounds[read.getResult()] = static_cast<unsigned>(distinct.size());
             return;
         }
         if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
