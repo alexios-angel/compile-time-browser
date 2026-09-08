@@ -1383,3 +1383,137 @@ def leaf_object_refusals():
         rows["leaf_object_" + name] = (repaired.replace(body, changed), value,
             changed, body, "leaf_object_identity_repair", calls)
     return rows
+
+
+def leaf_readback_sources():
+    # These preserve the sixteen measured next.json sources from 5d2d843a.
+    # Keep the two post-delete reads as refusals and the comparison-only
+    # fresh allocations as separate native carrier controls below.
+    base = leaf_object_sources()["leaf_object_identity_repair"][0]
+    old = "const item = {value: 1}; state.set(key, item); return state.size;"
+    empty = "const item = {}; state.set(key, item); const saved = state.get(key); "
+    field = "const item = {value: 1}; state.set(key, item); const saved = state.get(key); "
+    rows = {
+        "local_identity_saved": (empty + "return saved === item ? 1 : 0;", 1),
+        "local_identity_distinct_fresh": (empty + "return saved === {} ? 1 : 0;", 0),
+        "local_field_direct": ("const item = {value: 1}; state.set(key, item); return item.value;", 1),
+        "local_field_get": (field + "return saved.value;", 1),
+        "local_field_get_guarded": (field + "return saved === item ? saved.value : 0;", 1),
+        "local_identity_distinct_stored": (empty + "const replacement = {}; "
+            "state.set(key, replacement); return saved === replacement ? 1 : 0;", 0),
+        "local_identity_saved_overwrite": (field + "state.set(key, {value: 1}); "
+            "return saved === item ? 1 : 0;", 1),
+        "local_identity_saved_delete": (field + "state.delete(key); return saved === item ? 1 : 0;", 1),
+        "local_field_saved_overwrite": (field + "state.set(key, {value: 2}); "
+            "return saved === item ? saved.value : 0;", 1),
+        "local_field_saved_delete": (field + "state.delete(key); "
+            "return saved === item ? saved.value : 0;", 1),
+        "local_field_saved_alias_write": (field + "item.value = 2; "
+            "return saved === item ? saved.value : 0;", 2),
+    }
+    result = {name: (base.replace(old, body), "host", value)
+              for name, (body, value) in rows.items()}
+    same = result["local_identity_saved"][0]
+    result["local_identity_repeated_keys"] = (same.replace("host.slot.set('x');",
+        "host.slot.set('x') + host.slot.set('x') + host.slot.set('y');"), "host", 3)
+    for name in ("saved_identity", "distinct_identity"):
+        source, value, *_ = leaf_object_refusals()["leaf_object_" + name]
+        result["historical_object_" + name] = source, "host", value
+    result["local_identity_not_equal"] = (same.replace("saved === item", "saved !== item"), "host", 0)
+    result["local_field_readback_test"] = (base.replace(old,
+        field + "return saved.value === 1 ? 1 : 0;"), "host", 1)
+    result["local_field_export_repair"] = (result["local_field_get_guarded"][0].replace(
+        "return saved === item ? saved.value : 0;", "return saved === item && saved.value === 1 ? 1 : 0;")
+        .replace("var trace = host.slot.set('x');", "host.slot.set('x'); var trace = host.slot.size();"), "host", 1)
+    for name, literal in (("boolean", "false"), ("null", "null"), ("undefined", "void 0")):
+        result["local_field_" + name] = (base.replace(old,
+            "const item = {value: " + literal + "}; state.set(key, item); "
+            "const saved = state.get(key); return saved.value === (" + literal + ") ? 1 : 0;"), "host", 1)
+    lifetime = base.replace("set(key)", "set(key, value)").replace(old,
+        field + "state.set(key, {value: 3}); state.delete(key); item.value = value; "
+        "return saved === item ? saved.value : 0;")
+    result["local_field_readback_lifetime"] = (lifetime.replace("host.slot.set('x')",
+        "host.slot.set('x', 2)"), "host", 2)
+    for name, (old_return, checked_return) in LEAF_READBACK_CHECKED_RETURNS.items():
+        source, binding, value = result[name]
+        result[name + "_checked"] = source.replace(old_return, checked_return), binding, value
+    return result
+
+
+LEAF_READBACK_CHECKED_RETURNS = {
+    "local_field_direct": ("return item.value;", "return item.value === 1 ? 1 : 0;"),
+    "local_field_get_guarded": ("return saved === item ? saved.value : 0;",
+        "return saved === item && saved.value === 1 ? 1 : 0;"),
+    "local_field_saved_overwrite": ("return saved === item ? saved.value : 0;",
+        "return saved === item && saved.value === 1 ? 1 : 0;"),
+    "local_field_saved_delete": ("return saved === item ? saved.value : 0;",
+        "return saved === item && saved.value === 1 ? 1 : 0;"),
+    "local_field_saved_alias_write": ("return saved === item ? saved.value : 0;",
+        "return saved === item && saved.value === 2 ? 2 : 0;"),
+    "local_field_readback_lifetime": ("return saved === item ? saved.value : 0;",
+        "return saved === item && saved.value === value ? value : 0;"),
+}
+
+
+LEAF_READBACK_CALLS = {
+    "local_identity_saved": 6, "local_identity_distinct_fresh": 6,
+    "local_field_direct": 5, "local_field_get": 6, "local_field_get_guarded": 6,
+    "local_identity_distinct_stored": 7, "local_identity_saved_overwrite": 7,
+    "local_identity_saved_delete": 7, "local_field_saved_overwrite": 7,
+    "local_field_saved_delete": 7, "local_field_saved_alias_write": 6,
+    "local_identity_repeated_keys": 8, "historical_object_saved_identity": 8,
+    "historical_object_distinct_identity": 8, "local_identity_not_equal": 6,
+    "local_field_boolean": 6, "local_field_null": 6, "local_field_undefined": 6,
+    "local_field_readback_lifetime": 8,
+    "local_field_readback_test": 6, "local_field_export_repair": 7,
+}
+LEAF_READBACK_CALLS.update({name + "_checked": LEAF_READBACK_CALLS[name]
+                           for name in LEAF_READBACK_CHECKED_RETURNS})
+
+# These preserve both remaining native carrier boundaries: comparison-only
+# fresh allocations and nullable numeric field results at numeric exports.
+LEAF_READBACK_CARRIERS = {"local_identity_distinct_fresh", "historical_object_distinct_identity",
+    "local_field_get", *LEAF_READBACK_CHECKED_RETURNS}
+LEAF_READBACK_UNOWNED = {"local_identity_repeated_keys"}
+
+
+def leaf_readback_refusals():
+    positive = leaf_readback_sources()
+    field = positive["local_field_get_guarded"][0]
+    tested = positive["local_field_readback_test"][0]
+    same = positive["local_identity_saved"][0]
+    rows = {}
+    for name, source, old, replacement, repair, value, calls in (
+        ("unknown_incoming", same, "state.set(key, item);", "state.has(key);",
+         "local_identity_saved", 0, 6),
+        ("other_key", same, "state.get(key)", "state.get('other')",
+         "local_identity_saved", 0, 6),
+        ("object_export", positive["local_field_export_repair"][0],
+         "return saved === item && saved.value === 1 ? 1 : 0;", "return saved;", "local_field_export_repair", 1, 7),
+        ("uninitialized_field", tested, "value: 1", "other: 1", "local_field_readback_test", 0, 6),
+        ("dynamic_field_read", tested, "saved.value", "saved[key]", "local_field_readback_test", 0, 6),
+        ("prototype_field_read", tested, "saved.value", "saved.__proto__",
+         "local_field_readback_test", 0, 6),
+        ("unknown_alias_field", tested, "value: 1", "value: key", "local_field_readback_test", 0, 6),
+        ("deleted_before_read", same, "const saved = state.get(key);",
+         "state.delete(key); const saved = state.get(key);", "local_identity_saved", 0, 7),
+    ):
+        rows["leaf_readback_" + name] = (source.replace(old, replacement), value,
+            replacement, old, repair, calls)
+    deleted, value, old, replacement, _, calls = leaf_object_refusals()["leaf_object_deleted_identity"]
+    rows["historical_object_deleted_identity"] = (deleted, value, old, replacement,
+        "leaf_object_identity_repair", calls)
+    direct = field.replace("const saved = state.get(key); ", "")
+    direct = direct.replace("return saved === item ? saved.value : 0;",
+        "state.delete(key); return state.get(key) === item ? 1 : 0;")
+    repaired = positive["local_identity_saved_delete"][0]
+    rows["local_identity_after_delete"] = (direct, 0,
+        "state.delete(key); return state.get(key) === item ? 1 : 0;",
+        "const saved = state.get(key); state.delete(key); return saved === item ? 1 : 0;",
+        "local_identity_saved_delete", 7)
+    assert direct.replace(rows["local_identity_after_delete"][2],
+                          rows["local_identity_after_delete"][3]) == repaired
+    rows["local_identity_repeated_keys"] = (positive["local_identity_repeated_keys"][0], 3,
+        "host.slot.set('x') + host.slot.set('x') + host.slot.set('y')", "host.slot.set('x')",
+        "local_identity_saved", 8)
+    return rows

@@ -152,11 +152,26 @@
 # callable release; one observer-retained leaf survives until its own release.
 # Graphs, dynamic/prototype fields, String fields, external object arguments,
 # object keys/returns and unproved sibling reads remain independent refusals.
-# The exact saved/distinct/deleted object identity controls remain a following
-# boundary; repairs restore a separately gated numeric source. Fresh/stale
+# The exact historical eight-call saved identity source reads its actual leaf
+# after replacement/deletion. The eight-call distinct source keeps complete
+# host ownership and a separate comparison-only allocation carrier refusal;
+# the nine-call fresh deleted read remains unproved. Source bytes are preserved.
+# Fresh/stale
 # forged object identity/field/presence annotations and transactional budget
 # cutoffs cannot manufacture ownership or erase source allocation/field uses.
 # The historical empty-object payload now admits without changing its source.
 # The historical nested leaf-writing sibling has complete ownership, while its
 # mixed Object/String Map still refuses native output and preserves prepared
 # nested result operands under fresh/stale facts and reruns.
+# Definite same-key leaf readback and initialized fixed scalar fields retain
+# exact object origins independently of the Map's current entry. Both strict
+# equality and inequality distinguish aliases from separately stored leaves.
+# A saved alias sees later original-alias field writes after replacement and
+# deletion. Saved numeric set(key, value)/size callables exercise 128 future
+# values, owner/table release and independent reentry under ASan/UBSan/leak
+# checks; weak witnesses prove Map and ephemeral leaf reclamation, while an
+# observer-retained leaf survives final Map release until its own owner dies.
+# Unknown incoming origins, wrong/missing keys, absent fields, dynamic/prototype
+# fields and public object results refuse with exact separately gated repairs.
+# Live calls, field accesses, comparisons and allocations survive every refusal;
+# valid fresh/stale forged reports and work-budget cutoffs grant no authority.
