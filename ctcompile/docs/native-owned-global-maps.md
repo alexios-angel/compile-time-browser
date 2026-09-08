@@ -871,14 +871,60 @@ and four prior pairs pass fresh/stale annotations and reruns. Three budget
 families complete at **26292/51642/19726**, each checking **31 cutoffs**.
 All twelve focused CTests pass in **61.47 seconds**; the host and owner gates
 include final-family cardinality checks and independent same-tag forward-edge
-mutations. The full **137-program/eighteen-lifetime** driver is pending the
-full gate; current evidence is in [HANDOFF.md](HANDOFF.md).
+mutations. The full **137-program/eighteen-lifetime** driver passes with all **165 lit
+cases in 529.85 seconds** (CTest 530.05 seconds). The 243-step build is warning-free;
+CTest is **512/517 in 1170.30 seconds**, all **372 compiler tests** and
+140/145 browser tests. Only the five established browser failures remain.
+All twelve code/test paths match HEAD, frozen input and final devbox sources;
+see [HANDOFF.md](HANDOFF.md).
 
 ## Next boundary
 
-An ordinary object payload remains outside the published Map ownership proof.
-This exact source has **eleven calls**, Node/interpreter **trace=2**, no host
-owner and **0/6 native** in both modes:
+The smallest measured continuation isolates **published method-local leaf
+object ownership**. This source has **seven calls and five functions**;
+Node/interpreter give **trace=2**, while both modes remain unowned and
+**0/5 native**:
+
+```js
+var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        set(key) { const item = {}; state.set(key, item); return state.size; }
+    };
+});
+host.slot.set('x'); host.slot.set('x'); host.slot.set('y');
+var trace = host.slot.size();
+```
+
+Changing only `const item = {};` to `const item = {value: 1};` preserves that
+refusal and observation. The exact repairs `const item = 1;` and
+`const item = 'instance';` each admit **5/5** in both modes, with the same seven
+calls and trace=2. No object crosses a published formal or return; all keys
+are String and method results are numeric.
+
+The host captured-body proof currently rejects `ctjs.create_object` and object
+Map payloads. Start with bounded ordinary leaf-owner eligibility for the
+setter-local allocation, retaining the complete call/sibling census and
+primitive key/formal/result boundary. Reuse existing `NativeObjectIdentity`,
+closed value flow, native Map storage and fixed scalar field checks. No new
+heap/value model is needed. Provider object tokens prove only entry allocations
+in one executed startup trace; they cannot authorize this future local owner.
+
+A separate identity continuation stores `{value: 1}`, saves `state.get(key)`,
+overwrites with a distinct `{value: 1}`, deletes the key and returns
+`saved === item ? 1 : 0`. Its eight calls produce Node/interpreter trace=1.
+Comparing against a distinct equal-field object produces trace=0 with eight
+calls; replacing the saved operand with a fresh read after deletion gives
+trace=0 with nine calls. All three remain **0/5** in both modes. These are later
+object-result/identity/retention proofs, separate from admitting write-only
+ownership. Complete sources and diagnostics:
+`/tmp/ctcompile-nested-method-object-next.json`.
+
+The earlier object witness combines additional schema and field boundaries.
+It still has **eleven calls**, Node/interpreter **trace=2**, no host owner and
+**0/6 native** in both modes:
 
 ```js
 var host = {};
@@ -893,17 +939,18 @@ var host = {};
 host.slot.set(host.slot.get(false)); host.slot.set(host.slot.get(true)); var trace = host.slot.size();
 ```
 
-The captured-body proof currently closes writes over primitive values. The
-provider's executed startup object facts do not prove future method-local
-allocation identity or ownership. Extend the live object/body and Map schema
-proofs while preserving ordinary owning C++ storage; a provider report or a
-boxed fallback cannot supply authority. Object field mutation, saved aliases
-and extraction lifetime need independent evidence. The smaller source above
-measures object storage before returned-object fields introduce another limit.
+Besides local object ownership, this Map mixes object and String payloads,
+while the existing `object_value` union excludes String. Its owning `value`
+field is also String; existing owning identity fields accept nullable scalar
+leaves. Those extensions require independent proofs after the isolated
+property-free/Number-field step. Preserve ordinary owning C++ storage and
+exact identities, with no provider report or boxed fallback as authority.
 
-The dual-nested local conditional retains a separate merged-callee identity
-refusal in `native-map-mixed.mlir`. Full Bootstrap Data, browser API integration,
-general exports, future-call contracts and native throwing calls remain open.
-Complete measurements: `/tmp/ctcompile-nested-method-boundary.json`. The prior
-smaller String-trace probes in `/tmp/ctcompile-nullable-host-results-next.json`
-are historical census controls, not current native-admission measurements.
+The earlier four-function nested String-trace controls now all prove host
+ownership (seven nullable or six all-String calls), as do the direct repairs
+(six/five calls). All still refuse native emission at **0/4** because the global
+trace is String. Numeric comparison observers retain their separate host-prefix
+refusal. Their current measurements are in `/tmp/ctcompile-nested-method-next.json`.
+The dual-nested local conditional retains its merged-callee identity refusal in
+`native-map-mixed.mlir`. Full Bootstrap Data, browser API integration, general
+exports, future-call contracts and native throwing calls remain unfinished.

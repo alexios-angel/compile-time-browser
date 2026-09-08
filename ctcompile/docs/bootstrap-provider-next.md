@@ -363,17 +363,29 @@ Unknown results, forward edges, cycles and unsafe later actuals still refuse.
 Four source programs, nested saved-result lifetime, five new refusal/repair
 families and three budget sweeps pass in **`a1b11e80`**. The combined focused
 gate is **12/12 CTests in 61.47 seconds**. The full 137-program/eighteen-lifetime
-driver and full CTest are running; [HANDOFF.md](HANDOFF.md) records the status.
+driver and all 165 lit cases pass. The warning-free 243-step build completes
+with CTest **512/517**, all 372 compiler tests and 140/145 browser tests, leaving
+only the five established browser failures; [HANDOFF.md](HANDOFF.md) records
+the measurements.
 
-## Next: ordinary object payload ownership
+## Next: published method-local leaf object ownership
 
-The eleven-call setter with `state.set(key, {value: 'instance'})` remains
-unowned and **0/6 native** in both modes, trace=2. Its host proof still permits
-primitive contents only. Method-local object identity, field/alias facts and
-owning native Map storage/extraction require independent live proofs; executed
-provider facts cannot characterize future calls. The source isolates storage
-before a returned-object field read adds another boundary. Exact sources are
-in [the Map boundary](native-owned-global-maps.md#next-boundary).
+The isolated **seven-call/five-function** source uses String keys, creates `{}`
+inside `set(key)`, stores it to the captured Map and returns numeric size.
+Node/interpreter give trace=2 but both modes remain unowned **0/5 native**.
+A `{value: 1}` payload gives the same refusal. Exact Number and String primitive
+repairs admit **5/5**, retaining the seven calls and trace. Start with bounded
+ordinary local owner eligibility in the host body, reusing existing native
+object identity, value flow and Map/field machinery. Published object arguments
+and returns are separate; provider entry tokens cannot authorize future local
+allocations.
+
+The original eleven-call `{value: 'instance'}` source remains unowned **0/6**,
+trace=2, and additionally needs mixed object/String Map values and owning String
+fields. Saved-object identity has a separate measured eight-call trace=1 case
+and distinct/re-read trace=0 controls, all **0/5**. Full sources, exact primitive
+repairs and proof boundaries are in [the Map boundary](native-owned-global-maps.md#next-boundary)
+and `/tmp/ctcompile-nested-method-object-next.json`.
 
 The exact Bootstrap getter at vendor line 17 also needs nested/object payloads.
 Exact Bootstrap Data, general realm owners and future-call contracts remain

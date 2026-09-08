@@ -45,8 +45,8 @@ owner release, independent reentry and final Map release. All **nine old/new
 host-result refusal/repair families** pass fresh/stale annotations and reruns;
 five are new. Three budget sweeps complete at **26292/51642/19726**, each with
 **31 cutoffs**, and no natural speculative rollback interval. All historical
-source programs retain their bytes. The full driver now configures **137
-programs and eighteen lifetime families**; its complete run is pending below.
+source programs retain their bytes. The complete **137-program/eighteen-lifetime** driver also passes in the
+full lit gate below.
 
 Each arithmetic Neg/Plus/BitNot escape family passes **34 rows, nineteen live
 states and 1779 retention cutoffs**, plus a wide snapshot's exact **64 work
@@ -59,30 +59,59 @@ escape oracles report zero violations. Expanded-fixture precision **42/58**
 adds coverage relative to **40/54**; Bootstrap/p5/Phaser remain **0/64, 0/16,
 0/20**. Catchable BigInt outcomes still require completion-path evidence.
 
-Formatter **22.1.8** passes all **745 files**. All twelve code/test paths match
-the frozen gated input and committed HEAD. The devbox briefly lost SSH access;
-`server.sh start` and `allow-ip` restored it before the combined gate. No
-local C++ build ran. The full serialized `tools/remote-build.sh` gate is now
-running at `/tmp/ctcompile-nested-method-full.log`; final CTest, complete driver,
-corpus and exact Data counts remain pending. Prior full baseline was all
-372 compiler tests plus 140/145 browser tests, with `selectors`, `frames`,
-`element_attrs`, `vm_async` and `early_errors` failing.
+The full **243-step generated build passes warning-free**. CTest finishes
+**512/517 in 1170.30 seconds**: all **372 compiler tests** and **140/145 browser
+tests** pass. Only the established `selectors`, `frames`, `element_attrs`,
+`vm_async` and `early_errors` failures remain. All **165 lit cases pass in
+529.85 seconds**, CTest **530.05 seconds**, including the complete
+137-program/eighteen-lifetime driver. Exception recovery passes in **1.19
+seconds**. No corrected rerun was needed for this full gate.
 
-**Exact next boundary: ordinary object payloads in a published Map method.**
-The **eleven-call**, trace=2 source changing the setter to
-`state.set(key, {value: 'instance'}); return state.size;` remains unowned and
-**0/6 native** in both modes. The independent host body accepts primitive
-contents only; existing provider execution facts cannot authorize future
-method-local object identities. Ownership, fields/aliases, native Map schema
-and owning extraction need their own live proofs. The dual-nested local
-conditional also retains its separate callee-identity refusal. Full Bootstrap
-Data, browser API integration, general exports and native throwing-call
-admission remain unfinished. Full accepted/next sources are in
-`native-owned-global-maps.md` and the published source driver.
+Formatter **22.1.8** passes all **745 files**. All twelve code/test paths match
+committed HEAD, frozen input and final devbox sources. The inspected saved C++
+keeps the getter -> inner setter -> outer setter result operands; each setter
+copies its nullable result before Boolean overwrite/deletion. Both inspected
+files contain no Script/VM context/value symbols. Native corpus counts remain
+Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725** in both modes, zero
+pruned. Exact Data remains **0/7 browser/CommonJS, 0/8 AMD**. The devbox briefly
+lost SSH access; `server.sh start` and `allow-ip` restored it before the combined
+gate. No local C++ build ran and no browser/runtime source changed.
+
+**Exact next boundary: published method-local leaf object ownership.**
+A smaller **seven-call/five-function** source now isolates the first gap:
+`set(key) { const item = {}; state.set(key, item); return state.size; }`,
+a sibling `size()`, and calls with `'x', 'x', 'y'`. Node/interpreter give
+**trace=2**, but both modes remain unowned and **0/5 native**. A Number-valued
+field `{value: 1}` gives the same result. Exact primitive repairs `item = 1`
+and `item = 'instance'` retain seven calls and trace=2 and admit **5/5** in both
+modes. Keys remain String, all published returns remain numeric; object-valued
+host arguments/results are not prerequisites for this first step.
+
+Reuse existing native object identity, closed value flow, Map storage and
+fixed scalar fields. The independent host body still rejects object creation
+and permits primitive Map values only; provider object tokens cover entry
+allocations and cannot authorize future setter-local objects. The original
+**eleven-call**, trace=2 `{value: 'instance'}` witness remains unowned **0/6**
+and additionally mixes object/String Map payloads and needs owning String
+fields. Those are separate from the isolated leaf-owner step.
+
+A following **eight-call** saved-object identity source reports trace=1 in
+Node/interpreter, while a distinct equal-field object gives trace=0 (eight
+calls) and a fresh read after deletion gives trace=0 (nine calls); all three
+remain **0/5** in both modes. These isolate later exact identity and retention.
+The earlier small nested String-trace controls now all prove ownership, but
+remain **0/4 native** at the separate numeric-global export restriction; adding
+a numeric comparison retains its separate host-prefix refusal. The original
+dual-nested local conditional retains its callee-identity refusal. Full Bootstrap
+Data, browser API integration, general exports and native throwing-call admission
+remain unfinished. Full accepted/next sources are in `native-owned-global-maps.md`
+and `/tmp/ctcompile-nested-method-object-next.json`.
 
 Evidence: `/tmp/ctcompile-nested-method-compile.log`, `-boundary.json`,
 `-baseline.log`, `-focused.log`, `-native.log`, `-format.log`,
-`-input-hashes.json`, `-snapshot.txt` and `-full.log`. The first `-host.log`
+`-input-hashes.json`, `-snapshot.txt`, `-full.log`, `-full-detail.log`,
+`-evidence.json`, `-postgate.log`, `-final-hashes.json`, `-saved.cpp`,
+`-mixed.cpp`, `-object-next.json` and `-next.json`. The first `-host.log`
 records the SSH failure before its build; the corrected combined gate passes.
 
 ## Finite host Map results and static-binary checkpoint, 2026-09-08

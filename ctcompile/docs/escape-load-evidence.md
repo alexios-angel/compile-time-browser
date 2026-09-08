@@ -1109,8 +1109,8 @@ sites; this adds coverage rather than measuring a precision improvement on
 the historical fixture. Bootstrap/p5/Phaser precision remains **0/64, 0/16,
 0/20**, including p5's existing single partial observation. The complete
 focused gate passes **12/12 CTests in 61.47 seconds**. Evidence:
-`/tmp/ctcompile-nested-method-focused.log`. These measurements do not claim a
-completed full-suite gate or a native corpus gain.
+`/tmp/ctcompile-nested-method-focused.log`. No native corpus gain is claimed
+for this escape increment.
 
 Local Node syntax and execution pass **34 combined fixture calls** and their
 numeric, tag, field and identity assertions. All **31 new observation
@@ -1126,4 +1126,18 @@ pass the changed C++ files. No runtime behavior or native admission changed.
 
 The next BigInt boundary still requires completion-path evidence, rather than
 successful literal observations. Loops and native lifetime consumers remain
-separate work. The full generated build/CTest gate remains pending.
+separate work.
+
+The final **243-step generated devbox build passes warning-free**. CTest
+finishes **512/517 in 1170.30 seconds**: all **372 compiler tests** and
+**140/145 browser tests** pass. Only the five established browser failures
+remain: `selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`.
+All **165/165 lit cases pass in 529.85 seconds** (CTest **530.05 seconds**),
+including the complete **137-program/eighteen-lifetime** published Map gate.
+The four escape oracles again report zero violations, fixture **42/58** and
+corpora **0/64, 0/16, 0/20**. Native coverage remains Bootstrap **19/574**, p5
+**39/4754** and Phaser **45/7725** in both modes, with zero pruned; exact Data
+remains **0/7 browser/CommonJS and 0/8 AMD**. All twelve session code/test
+paths match committed HEAD, frozen gate input and final devbox sources.
+Evidence: `/tmp/ctcompile-nested-method-full.log`, `-full-detail.log`,
+`-evidence.json` and `-postgate.log`.
