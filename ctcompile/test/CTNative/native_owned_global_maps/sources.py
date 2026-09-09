@@ -2174,12 +2174,14 @@ def numeric_entry_cases():
 
 NUMERIC_ENTRY_UNOWNED = {
     'local_add_string_control', 'local_add_object_control', 'local_clear_zero_size_key',
-    'leaf_object_string_field', 'local_numeric_future_bool', 'local_numeric_later_bool',
+    'local_numeric_future_bool', 'local_numeric_later_bool',
     'local_numeric_bool', 'local_numeric_null', 'local_numeric_undefined',
 }
 NUMERIC_ENTRY_SAVED_GLOBALS = {'local_add_saved_results', 'local_numeric_saved_snapshot'}
 NUMERIC_ENTRY_CARRIERS = set()
-NUMERIC_ENTRY_EXISTING_POSITIVES = {'local_identity_saved', 'leaf_object_number_field'}
+NUMERIC_ENTRY_EXISTING_POSITIVES = {
+    'local_identity_saved', 'leaf_object_number_field', 'leaf_object_string_field',
+}
 NUMERIC_ENTRY_PROMOTED = {'local_identity_repeated_keys'}
 
 
@@ -2598,3 +2600,99 @@ def normalized_scalar_output(output):
     # Both reference and native printf may spell Number NaN as -nan. Do not
     # normalize any other value or turn a string, Undefined or infinity into NaN.
     return re.sub(r"(?m)^(\w+)=\-nan$", r"\1=nan", output)
+
+
+# The original String-field source and its Number repair keep their exact
+# bytes, function count and seven calls. Other names beginning field_string
+# preserve the post-417cd0ac continuation probe, including its long saved read.
+STRING_FIELD_BYTES = StringValue('quoted "field"\n\t%\\=;雪\x00tail')
+STRING_FIELD_LONG = StringValue('saved field contents-' * 64)
+STRING_FIELD_PROMOTED = {'leaf_object_string_field'}
+
+
+def string_field_cases():
+    base = leaf_object_sources()['leaf_object_identity_repair'][0]
+    old = 'const item = {value: 1}; state.set(key, item); return state.size;'
+    assert base.count(old) == 1
+    rows = {}
+
+    def add(name, source, value, calls, *, repair=None, owner=True, admitted=True):
+        rows[name] = dict(source=source, expected_trace=value, raw_calls=calls,
+            prepared_calls=calls, sha256=hashlib.sha256(source.encode()).hexdigest(),
+            owner=owner, admitted=admitted)
+        if repair:
+            removed, replacement, target = repair
+            assert source.count(removed) == 1, name
+            assert source.replace(removed, replacement) == rows[target]['source'], name
+            rows[name].update(removed_text=removed, replacement_text=replacement, repair=target)
+
+    historical = numeric_entry_cases()['leaf_object_string_field']
+    add('leaf_object_string_field', historical['source'], 2, 7)
+    assert rows['leaf_object_string_field']['sha256'] == NUMERIC_ENTRY_HISTORY['leaf_object_string_field'][2]
+    number = leaf_object_sources()['leaf_object_number_field'][0]
+    assert hashlib.sha256(number.encode()).hexdigest() == NUMERIC_ENTRY_HISTORY['leaf_object_number_field'][2]
+
+    def body(name, replacement, value, calls=5):
+        add(name, base.replace(old, replacement), value, calls)
+
+    body('field_string_read',
+        "const item = {value: 'instance'}; state.set(key, item); return item.value;",
+        StringValue('instance'))
+    body('field_string_empty',
+        "const item = {value: ''}; state.set(key, item); return item.value;", StringValue(''))
+    body('field_string_bytes',
+        'const item = {value: ' + json.dumps(STRING_FIELD_BYTES) +
+        '}; state.set(key, item); return item.value;', STRING_FIELD_BYTES)
+    body('field_string_saved',
+        'const item = {value: ' + json.dumps(STRING_FIELD_LONG) + '}; '
+        'state.set(key, item); const alias = state.get(key); const saved = alias.value; '
+        "alias.value = 'changed'; state.delete(key); return saved;", STRING_FIELD_LONG, 7)
+    body('field_string_alias_write',
+        "const item = {value: 'first'}; state.set(key, item); const alias = item; "
+        "alias.value = 'changed'; return item.value;", StringValue('changed'))
+    body('field_string_get',
+        "const item = {value: 'instance'}; state.set(key, item); "
+        'const alias = state.get(key); return alias.value;', StringValue('instance'), 6)
+    body('field_string_separate_members',
+        'const item = {value: ' + json.dumps(STRING_FIELD_BYTES) + ', count: 7, flag: false}; '
+        'state.set(key, item); item.count = 9; item.flag = true; return item.value;',
+        STRING_FIELD_BYTES)
+    for tag, literal in (('null', 'null'), ('undefined', 'void 0')):
+        body('field_string_' + tag + '_store',
+            'const item = {value: ' + literal + "}; item.value = 'instance'; "
+            "state.set(key, item); return item.value === 'instance' ? 1 : 0;", 1)
+    body('field_string_saved_overwrite',
+        'const item = {value: ' + json.dumps(STRING_FIELD_LONG) + '}; '
+        'state.set(key, item); const alias = state.get(key); const saved = alias.value; '
+        "state.set(key, {value: 'replacement'}); item.value = 'changed'; "
+        'state.delete(key); return saved;', STRING_FIELD_LONG, 8)
+    lifetime = base.replace('set(key)', 'set(key, value, flag)').replace(old,
+        'const item = {value: value}; state.set(key, item); const alias = state.get(key); '
+        "const saved = alias.value; if (flag) { alias.value = 'left'; } "
+        "else { item.value = 'right'; } state.delete(key); return saved;")
+    lifetime = lifetime.replace("host.slot.set('x')",
+        "host.slot.set('x', " + json.dumps(STRING_FIELD_LONG) + ', false)')
+    add('field_string_lifetime', lifetime, STRING_FIELD_LONG, 7)
+
+    read = rows['field_string_read']['source']
+    for name, removed, replacement, value, owner in (
+        ('field_mixed_write_control', 'return item.value;', 'item.value = 1; return item.value;', 1, True),
+        ('field_dynamic_write_control', 'return item.value;',
+         "item[key] = 'changed'; return item.value;", StringValue('instance'), False),
+        ('field_prototype_control', 'return item.value;',
+         'item.__proto__ = {}; return item.value;', StringValue('instance'), False),
+        ('field_string_missing', "value: 'instance'", "other: 'instance'", 'undefined', False),
+        ('field_string_dynamic_read', 'item.value', 'item[key]', 'undefined', False),
+    ):
+        add(name, read.replace(removed, replacement), value, 5,
+            repair=(replacement, removed, 'field_string_read'), owner=owner, admitted=False)
+    saved = rows['field_string_saved_overwrite']['source']
+    add('field_string_other_allocation_number', saved.replace("{value: 'replacement'}", '{value: 7}'),
+        STRING_FIELD_LONG, 8, repair=('{value: 7}', "{value: 'replacement'}", 'field_string_saved_overwrite'),
+        admitted=False)
+    return rows
+
+
+def string_field_sources():
+    return {name: (row['source'], 'host', row['expected_trace'])
+            for name, row in string_field_cases().items() if row['admitted']}

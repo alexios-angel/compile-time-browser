@@ -150,7 +150,7 @@
 # caller-key mutation and independent reentry. Weak witnesses require objects
 # to die on same-key overwrite/deletion and the Map to die at its final saved
 # callable release; one observer-retained leaf survives until its own release.
-# Graphs, dynamic/prototype fields, String fields, external object arguments,
+# Graphs, dynamic/prototype fields, mixed field carriers, external object arguments,
 # object keys/returns and unproved sibling reads remain independent refusals.
 # The exact historical eight-call saved identity source reads its actual leaf
 # after replacement/deletion. The eight-call distinct source and the local
@@ -303,3 +303,16 @@
 # refusals and exact repairs. A long String snapshot family survives 128 future
 # Map calls, owner/table release, mutation of original globals, independent
 # reentry and final Map/leaf destruction under both compilers and sanitizers.
+# Owning String fields preserve the original 88d51f7d seven-call/five-function
+# source and Number repair. Direct, empty, escaped UTF-8/NUL, Map-read and saved
+# field results keep every live field access and call in both optimization modes.
+# String/Null/Undefined storage uses owning nullable_string; independent scalar
+# members retain scalar storage, while the complete String/Number store census
+# refuses even when the last read is narrow. Dynamic/prototype/absent reads keep
+# independent owner refusals and exact admitted repairs under forgeries/reruns.
+# Typed Node/interpreter observations distinguish empty String from absence and
+# all bytes after NUL. Wrong-tag emitted fields terminate at the exact String
+# read check. Saved String callables exercise 128 future values and both flags,
+# caller mutation, owner/table release and independent reentry. Weak witnesses
+# require Map/leaf destruction, while saved owning strings survive field mutation,
+# deletion, final Map release and the last separately retained leaf under sanitizers.

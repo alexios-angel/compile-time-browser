@@ -40,7 +40,7 @@ from .sources import (
     SCALAR_GLOBAL_CARRIERS, SCALAR_GLOBAL_INITIALIZED,
     constant_global_cases, constant_global_sources, normalized_scalar_output,
     CONSTANT_GLOBAL_UNOWNED, CONSTANT_GLOBAL_CARRIERS, CONSTANT_GLOBAL_EXISTING,
-    StringValue,
+    StringValue, string_field_cases, string_field_sources, STRING_FIELD_PROMOTED,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
@@ -50,7 +50,7 @@ from .harness import (
     LEAF_ABSENCE_LIFETIMES, leaf_absence_observer_source,
     primitive_absence_observer_source,
     LEAF_CLEAR_LIFETIMES, leaf_clear_observer_source,
-    NUMERIC_ENTRY_LIFETIMES, numeric_entry_observer_source,
+    NUMERIC_ENTRY_LIFETIMES, numeric_entry_observer_source, string_field_observer_source,
 )
 
 
@@ -344,7 +344,7 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
     if controls is None:
         controls = {name: row for name, row in leaf_object_refusals().items()
                     if name not in {"leaf_object_saved_identity", "leaf_object_distinct_identity",
-                                    *LEAF_ABSENCE_PROMOTED_REFUSALS}}
+                                    *LEAF_ABSENCE_PROMOTED_REFUSALS, *STRING_FIELD_PROMOTED}}
     for name, (source, value, old, replacement, repaired_name, calls) in controls.items():
         def preserved(before, after, label):
             check_call_preservation(before, after, label)
@@ -548,6 +548,8 @@ def numeric_reference_output(name, value):
 
 
 def numeric_node_observer(value):
+    if isinstance(value, StringValue):
+        return CONSTANT_GLOBAL_NODE.replace('JSON.parse(process.argv[2])', '["trace"]')
     if not isinstance(value, bool) and value not in {"NaN", "-Infinity"}:
         return boundary.NODE
     predicate = "typeof trace !== 'number' || !Number.isFinite(trace)"
@@ -1430,6 +1432,7 @@ def main():
         **numeric_entry_sources(),
         **scalar_global_sources(),
         **constant_global_sources(),
+        **string_field_sources(),
         # Keep the original refusal source byte-for-byte. Its method-local
         # empty payload now has the same independently proved leaf owner.
         "object_payload": (refusal_sources()["object_payload"], "host", 1),
@@ -1442,6 +1445,7 @@ def main():
     check_primitive_absence_observations(args, node, reference)
     check_leaf_clear_observations(args, node, reference)
     check_numeric_entry_observations(args, node, reference)
+    check_string_field_observations(args, node, reference)
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
     blind = args.work / "seeded-dynamic-overwrite-blinded.js"
     blind.write_text(overwrite_source.replace("return state.get(1);", "return 1;"))
@@ -1675,6 +1679,7 @@ def main():
                      else 5 if name in LEAF_READBACK_CALLS or name in leaf_absence_sources()
                      or name in leaf_clear_sources() or name in numeric_entry_sources() or name in scalar_global_sources()
                      or name in constant_global_sources()
+                     or name in string_field_sources()
                      else RESULT_SIGNATURES[name][2] if name in RESULT_SIGNATURES
                      else 6 if name == "shared_three" else 5 if name.startswith("shared") else 4)
         if count != functions:
@@ -1708,6 +1713,7 @@ def main():
         if name in LEAF_READBACK_CALLS and len(source_calls(ir.read_text())) != LEAF_READBACK_CALLS[name]:
             raise RuntimeError(f"{name}: changed the exact {LEAF_READBACK_CALLS[name]}-call readback boundary")
         check_leaf_absence_census(args, ir, name)
+        check_string_field_census(args, ir, name)
         if name in primitive_absence_sources() and (
                 len(source_calls((args.work / f"{name}.raw.mlir").read_text())) != 10
                 or len(source_calls(ir.read_text())) != 10):
@@ -1717,6 +1723,8 @@ def main():
         if name.startswith("legacy_"):
             ir = methods.legacy_marker(args, ir, name)
         expected = f"trace={str(value).lower() if isinstance(value, bool) else value}\n"
+        if isinstance(value, StringValue):
+            expected = scalar_global_output(name, value)
         node_command = [node, "-e", numeric_node_observer(value), str(js)]
         if name in constant_global_cases():
             names = json.dumps(sorted(["trace", *constant_global_cases()[name]["saved"]]))
@@ -1743,7 +1751,7 @@ def main():
                     **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources(),
                     **leaf_object_sources(), **leaf_readback_sources(), **leaf_absence_sources(),
                     **primitive_absence_sources(), **leaf_clear_sources(), **numeric_entry_sources(),
-                    **scalar_global_sources(), **constant_global_sources()}:
+                    **scalar_global_sources(), **constant_global_sources(), **string_field_sources()}:
             disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")
             if disabled.read_text() != output.read_text():
                 raise RuntimeError(f"{name}: saved scalar proof depends on optimization policy")
@@ -1780,6 +1788,9 @@ def main():
         ("constant_string", "constant_string_bytes", "constant_string_alias_chain",
          "constant_string_trace_empty", "constant_string_branch_lifetime"))
     check_string_observation_mutations(args, compilers, nm)
+    check_leaf_object_forgeries(args, saved,
+        ("leaf_object_string_field", "field_string_bytes", "field_string_saved", "field_string_lifetime"))
+    check_string_field_tag_mutations(args, compilers, nm)
 
     # Valid-looking scalar markers cannot normalize real null keys or narrow
     # the second use of a nullable formal. Fresh proof must emit the same C++.
@@ -2078,6 +2089,7 @@ def main():
     check_constant_global_observations(args, node, reference)
     check_constant_global_refusals(args, positives, node, reference)
     check_leaf_readback_carriers(args, positives, node, reference, leaf_field_result_refusals())
+    check_string_field_refusals(args, positives)
     # A result contract does not narrow Map storage or supply an implemented
     # callable signature. Preserve the prepared producer/consumer operands.
     mixed_read_refusals = mixed_nullable_payload_refusals()
@@ -2250,7 +2262,7 @@ def main():
     for name in ((leaf_readback_sources().keys() - LEAF_READBACK_UNOWNED)
                  | leaf_absence_sources().keys() | leaf_clear_sources().keys()
                  | numeric_entry_sources().keys() | scalar_global_sources().keys()
-                 | constant_global_sources().keys()):
+                 | constant_global_sources().keys() | string_field_sources().keys()):
         _, config, output = saved[name]
         rerun = owned.lower(args, output, name + "-rerun", config, cleanup=False)
         text = methods.census(rerun, 5, name + "-rerun", admitted=5)
@@ -2278,7 +2290,8 @@ def main():
                  "local_add_saved_results", "scalar_result_key", "scalar_alias",
                  "scalar_alias_chain", "scalar_constant_only", "constant_alias_arithmetic",
                  "constant_boolean", "constant_boolean_alias_chain",
-                 "constant_string", "constant_string_alias_chain"):
+                 "constant_string", "constant_string_alias_chain",
+                 "field_string_read", "field_string_lifetime"):
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
@@ -2341,7 +2354,7 @@ def main():
           "preserve runtime allocation, Map writes, fixed scalar fields and numeric public signatures; "
           "future distinct objects and saved size/set/erase callables pass overwrite/deletion, reentry "
           "and final Map/object lifetime checks; "
-          f"{len(leaf_object_refusals()) - 3} object graph/field/argument/result/read refusals "
+          f"{len(leaf_object_refusals()) - 3 - len(STRING_FIELD_PROMOTED)} object graph/field/argument/result/read refusals "
           "restore exact gated sources and reject fresh/stale forged leaf reports; "
           f"{len(leaf_readback_sources()) - len(LEAF_READBACK_UNOWNED)} local leaf readback programs "
           "preserve definite object origins, strict identities and fixed scalar field reads; "
@@ -2377,6 +2390,9 @@ def main():
           "constant-only alias/arithmetic edges and mixed saved-Map lifetimes pass; "
           "Boolean aliases/results retain true/false output with independent Number/Boolean tags; "
           "14 wrong-tag/null/missing-store observation mutations reach the exact termination check; "
+          f"{len(string_field_sources())} owning String-field programs preserve exact tags, bytes and live accesses; "
+          "six field refusal/repair families and six emitted field-tag controls remain independent; "
+          "saved String callables and snapshots survive 128 future calls, both flags and final Map/leaf release; "
           f"{len(NUMERIC_ENTRY_LIFETIMES)} numeric lifetime families retain 128 future results across both branches, reentry, "
           "final Map release and independent leaf release; "
           f"{len(leaf_field_result_refusals())} complete-schema field results "
@@ -2388,3 +2404,164 @@ def main():
           f"{len(seeded_result_refusals().keys() - PRIMITIVE_ABSENCE_CARRIERS)} seeded proof and "
           f"{len(seeded_carrier_refusals())} seeded carrier refusals; "
           f"{len(rollback)} speculative rollback cutoffs")
+
+
+STRING_FIELD_OBSERVERS = ('leaf_object_string_field', 'field_string_alias_write',
+    'field_string_saved', 'field_string_saved_overwrite', 'field_string_lifetime')
+
+
+def check_string_field_census(args, ir, name):
+    if name not in string_field_cases():
+        return
+    row = string_field_cases()[name]
+    raw = (args.work / f'{name}.raw.mlir').read_text()
+    if (len(boundary.FUNCTION.findall(raw)) != 5
+            or len(source_calls(raw)) != row['raw_calls']
+            or len(source_calls(ir.read_text())) != row['prepared_calls']):
+        raise RuntimeError(f'{name}: changed the exact five-function field source/call census')
+
+
+def check_string_field_observations(args, node, reference):
+    cases = string_field_cases()
+    for name, row in cases.items():
+        js = args.work / f'{name}-field-observed.js'
+        js.write_text(row['source'])
+        value = row['expected_trace']
+        expected = scalar_global_output(name, value)
+        node_result = host.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]'])
+        if node_result.stdout != expected:
+            raise RuntimeError(f'{name}: Node typed field bytes changed\n{node_result.stdout}\n{expected}')
+        if reference:
+            result = host.run([str(reference), str(js)])
+            counts = ('0 number, 0 boolean, 1 string, 0 null, 0 undefined' if isinstance(value, StringValue)
+                      else '0 number, 0 boolean, 0 string, 0 null, 1 undefined' if value == 'undefined'
+                      else '1 number, 0 boolean, 0 string, 0 null, 0 undefined')
+            if result.stdout != expected or '(' + counts + ')' not in result.stderr:
+                raise RuntimeError(f'{name}: interpreter lost independently observed field tags/bytes')
+    mutations = (
+        ('field_string_read', "value: 'instance'", "value: ''"),
+        ('field_string_empty', 'return item.value;', 'return void 0;'),
+        ('field_string_empty', 'return item.value;', 'return null;'),
+        ('field_string_bytes', 'return item.value;', "return 'tail';"),
+        ('field_string_saved', 'return saved;', 'return alias.value;'),
+        ('field_string_alias_write', "alias.value = 'changed';", "alias.value = 'first';"),
+        ('field_string_saved_overwrite', 'return saved;', 'return item.value;'),
+        ('field_string_lifetime', 'return saved;', 'return alias.value;'),
+    )
+    for index, (name, old, replacement) in enumerate(mutations):
+        row = cases[name]
+        assert row['source'].count(old) == 1, name
+        js = args.work / f'{name}-field-blind-{index}.js'
+        js.write_text(row['source'].replace(old, replacement))
+        result = host.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]'])
+        if result.stdout == scalar_global_output(name, row['expected_trace']):
+            raise RuntimeError(f'{name}: typed field observer cannot distinguish {replacement}')
+    for name in STRING_FIELD_OBSERVERS:
+        source = cases[name]['source']
+        observed, value = string_field_observer_source(source, name)
+        js = args.work / f'{name}-field-future.js'
+        js.write_text(observed)
+        expected = f'trace={value}\n'
+        if (host.run([node, '-e', boundary.NODE, str(js)]).stdout != expected
+                or reference and host.run([str(reference), str(js)]).stdout != expected):
+            raise RuntimeError(f'{name}: future String field identity or saved-read observation changed')
+        mutations = []
+        if 'state.delete(key);' in source:
+            mutations += [('state.delete(key);', 'state.has(key);'), ('return saved;', 'return alias.value;')]
+        if name == 'field_string_lifetime':
+            mutations += [("alias.value = 'left';", "alias.value = 'right';"),
+                          ("item.value = 'right';", "item.value = 'left';")]
+        elif name == 'field_string_alias_write':
+            mutations += [("alias.value = 'changed';", "alias.value = 'first';")]
+        elif name == 'leaf_object_string_field':
+            mutations += [("value: 'instance'", "value: ''")]
+        for index, (old, replacement) in enumerate(mutations):
+            assert source.count(old) == 1, name
+            blind, _ = string_field_observer_source(source.replace(old, replacement), name)
+            js = args.work / f'{name}-field-future-blind-{index}.js'
+            js.write_text(blind)
+            if host.run([node, '-e', boundary.NODE, str(js)]).stdout == expected:
+                raise RuntimeError(f'{name}: future field observer cannot distinguish {replacement}')
+
+
+def check_string_field_refusals(args, positives):
+    for name, row in string_field_cases().items():
+        if row['admitted']:
+            continue
+        _, ir, count = boundary.prepare(args, name, row['source'])
+        check_string_field_census(args, ir, name)
+        repair = row['repair']
+        if row['source'].replace(row['removed_text'], row['replacement_text']) != positives[repair][0]:
+            raise RuntimeError(f'{name}: field repair no longer restores its independently executed source')
+        _, restored, repaired_count = boundary.prepare(args, name + '-restored', positives[repair][0])
+        if count != 5 or repaired_count != 5:
+            raise RuntimeError(f'{name}: exact field repair changed function count')
+        config = contract(args, ir, name)
+        repaired_config = contract(args, restored, name + '-restored')
+        for mode, options in (('default', ''), ('disabled', 'optimize=false')):
+            label = name + '-' + mode
+
+            def reject(input_ir, current, current_config):
+                failed = owned.lower(args, input_ir, current, current_config, options=options, cleanup=False)
+                text = methods.census(failed, 5, current, admitted=0)
+                if f'ctnative.host_owner_proved = {str(row["owner"]).lower()}' not in text:
+                    raise RuntimeError(f'{current}: field refusal lost its independent ownership boundary')
+                if not row['owner']:
+                    check_call_preservation(input_ir.read_text(), text, current)
+                else:
+                    calls = re.findall(r'^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) '
+                                       r'\{ctnative\.stored_call = 1 : i32\}', text, re.M)
+                    if (len(source_calls(text)) != row['prepared_calls']
+                            or [callee for _, callee, _ in calls] != ['fn$3', 'fn$4']
+                            or [len(actuals.split(', ')) for _, _, actuals in calls] != [4, 5]
+                            or f'ctjs.store_global "trace", {calls[-1][0]}' not in text):
+                        raise RuntimeError(f'{current}: mixed field storage erased current result/capture operands')
+                return failed
+
+            reject(ir, label, config)
+            repaired = owned.lower(args, restored, label + '-restored', repaired_config, options=options)
+            if 'ctnative.host_owner_proved = true' not in methods.census(repaired, 5, label, admitted=5):
+                raise RuntimeError(f'{label}: exact field repair lost native ownership')
+            for payload in ('bool', 'string', 'nullable_string'):
+                current = label + '-forged-' + payload
+                forged = args.work / f'{current}.mlir'
+                forged.write_text(forge_leaf_evidence(ir.read_text(), payload))
+                stale = methods.refused(args, forged, current + '-stale', config, options=options,
+                                        reason='fingerprint mismatch', admitted=0)
+                check_call_preservation(forged.read_text(), stale.read_text(), current + '-stale')
+                fresh = contract(args, forged, current)
+                failed = reject(forged, current + '-fresh', fresh)
+                rerun = methods.refused(args, failed, current + '-rerun', fresh, options=options, admitted=0)
+                check_call_preservation(failed.read_text(), rerun.read_text(), current + '-rerun')
+
+
+def check_string_field_tag_mutations(args, compilers, nm):
+    for name, replacement in (
+        ('field_string_read', 'ctnative::nullable_string{}'),
+        ('field_string_empty', 'ctnative::nullable_string{}'),
+        ('field_string_read', 'ctnative::to_nullable_string(ctnative::nullable_scalar::null())'),
+    ):
+        for mode in ('explicit', 'deduced'):
+            original = (args.work / f'{name}.{mode}.cpp').read_text()
+            pattern = r'ctnative::object_set_field_76616c7565\((\w+), (\w+)\);'
+            matches = list(re.finditer(pattern, original))
+            if len(matches) != 1:
+                raise RuntimeError(f'{name}/{mode}: lost exact field-store mutation site')
+            match = matches[0]
+            changed = (original[:match.start()] + 'ctnative::object_set_field_76616c7565(' +
+                       match[1] + ', ' + replacement + '); (void)' + match[2] + ';' + original[match.end():])
+            changed, count = re.subn(r'(\bmain\(\)\s*\{)',
+                r'\1\n    std::set_terminate([] { std::fflush(stdout); std::_Exit(211); });', changed)
+            if count != 1:
+                raise RuntimeError(f'{name}/{mode}: lost exact field-read termination observer')
+            tag = 'null' if '::null' in replacement else 'undefined'
+            source = args.work / f'{name}.{mode}.{tag}-field.cpp'
+            source.write_text('#include <cstdio>\n#include <cstdlib>\n#include <exception>\n' + changed)
+            binary = source.with_suffix('.mutated').resolve()
+            host.run([compilers[1], *owned.FLAGS, str(source), '-o', str(binary)])
+            if owned.VM.search(host.run([nm, '-C', str(binary)]).stdout):
+                raise RuntimeError(f'{name}/{mode}: field tag mutation linked a VM symbol')
+            result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=30)
+            if result.returncode != 211 or result.stdout or result.stderr:
+                raise RuntimeError(f'{name}/{mode}: {tag} field bypassed exact String read tag check\n'
+                                   f'{result.returncode}: {result.stdout}{result.stderr}')
