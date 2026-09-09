@@ -2503,3 +2503,21 @@ Evidence: `/tmp/ctcompile-string-complete-full{,-detail}.log`,
 `/tmp/ctcompile-string-nextpow-results.json`. The probe is
 `/tmp/ctcompile-string-audit-nextpow-semantics.js`, SHA256
 `b6f5dbfe7d30e34c37efaab48183f033fa049b40eb639a9a27fe6115858b4c76`.
+
+
+**Corrected lit gate, 2026-09-09.** The pending rerun above is complete:
+**165/165 lit cases pass in 1096.14 seconds** (CTest **1096.20**, total
+**1096.21**), with exit status zero. Independent review verifies all 165 unique
+PASS rows and the integrated **302 native Map programs/37 lifetime families**.
+All **24** final hashes agree across frozen inputs, sources before and after the
+devbox run, local files and HEAD. The initial 23 inputs and all five escape
+files remain unchanged; the latter still match **1138dbfd**. Combining the
+initial full run with this lit-only rerun gives **372/372 compiler checks** and
+**512/517 CTests** with passing results, leaving the five browser failures above.
+These are two separate runs; no second full 517-test run is claimed. The escape
+results and measured Pow cap divergence above remain unchanged, and Pow
+retention/native admission remains future work. Evidence:
+`/tmp/ctcompile-string-corrected-lit{,-detail}.log`,
+`/tmp/ctcompile-string-corrected-final-hashes.json` and
+`/tmp/ctcompile-string-audit-full-escape.json`; its separate `-initial.json`
+snapshot preserves the initial full-gate audit.
