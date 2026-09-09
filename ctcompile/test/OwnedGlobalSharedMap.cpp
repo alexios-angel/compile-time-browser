@@ -385,10 +385,41 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
                       "restoring the original yield repairs the host proof and restores the exact "
                       "owner boundary");
                 ++scopeMutations;
+                // Clone the valid i1 producer into the then arm. It cannot
+                // become the enclosing conditional's own condition, even when
+                // its operand still denotes the same constant Boolean.
+                const auto originalCondition = branch.getCondition();
+                mlir::OpBuilder builder(branch.getThenRegion().front().getTerminator());
+                auto * localCondition = builder.clone(*originalCondition.getDefiningOp());
+                const auto conditionContract = requested(*module);
+                check(validScope(*module, conditionContract),
+                      "an unused then-local predicate preserves the original source proof");
+                branch->setOperand(0, localCondition->getResult(0));
+                OwnedGlobalRoots staleCondition(*module, conditionContract);
+                check(!staleCondition.proved() && staleCondition.reason().contains("fingerprint") &&
+                          withheld(*module, staleCondition),
+                      "a then-only conditional predicate invalidates its prior fingerprint");
+                OwnedGlobalRoots freshCondition(*module, requested(*module));
+                HostContractAnalysis freshConditionHost(*module, requested(*module));
+                check(!freshConditionHost.proved() && !freshConditionHost.exhausted() &&
+                          freshConditionHost.callables().empty() && !freshCondition.proved() &&
+                          !freshCondition.exhausted() && withheld(*module, freshCondition) &&
+                          freshCondition.reason() != "owned global method table requires "
+                                                     "unconditional straight-line operations",
+                      "a fresh Number report cannot authorize a conditional's then-only predicate");
+                branch->setOperand(0, originalCondition);
+                check(
+                    validScope(*module, conditionContract),
+                    "restoring the exact original predicate restores the independent source proof");
+                localCondition->erase();
+                check(
+                    validScope(*module, contract),
+                    "removing the temporary predicate restores the original complete fingerprint");
+                ++scopeMutations;
             }
         }
-        check(scopeMutations == 16,
-              "all known/unknown numeric scopes and both yield directions ran");
+        check(scopeMutations == 20,
+              "all known/unknown numeric scopes, yield directions and predicate scopes ran");
         for (const auto & [text, label] : {std::pair{program, "direct"}, {saved, "saved"}}) {
             auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
             check(static_cast<bool>(module), "numeric budget fixture parses");

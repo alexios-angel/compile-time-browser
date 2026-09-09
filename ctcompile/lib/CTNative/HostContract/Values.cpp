@@ -693,6 +693,7 @@ PrimitiveAlternatives analyzer::entryCategories(
         return PrimitiveAlternatives::forTag(number);
     }
     if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(definition)) {
+        if (!step() || !dominance.dominates(branch.getCondition(), branch)) { return {}; }
         auto result = llvm::cast<mlir::OpResult>(value);
         std::optional<PrimitiveAlternatives> joined;
         // A category is not a branch predicate. Both live yield operands must
