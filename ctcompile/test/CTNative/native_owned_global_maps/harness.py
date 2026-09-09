@@ -1312,11 +1312,23 @@ def standalone(args, output, name, value, compilers, nm):
     for mode, ir in (("explicit", output), ("deduced", deduced)):
         cpp = host.run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
         size_signature = ("std::function<js_num(ctnative::nullable_string)>"
-                          if name in nullable_host_result_sources() else "std::function<js_num()>")
+                          if name in nullable_host_result_sources()
+                          else "std::function<bool()>" if name == "boolean_result"
+                          else "std::function<js_num()>")
+        map_action = "ctnative::map_has(" if name == "boolean_result" else "ctnative::map_size("
         if (owned.VM.search(cpp) or "std::shared_ptr<ctn_slot>" not in cpp
-                or size_signature not in cpp or "ctnative::map_size(" not in cpp
+                or size_signature not in cpp or map_action not in cpp
                 or not re.search(r"std::shared_ptr<ctnative::method_\w+>\s+slot\s*;", cpp)):
             raise RuntimeError(f"{name}/{mode}: missing standalone Map/table/callable owners\n{cpp}")
+        if name == "boolean_result":
+            entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
+            getter = re.search(r"\bfn_3\([^\n]*\)\s*\{(.*?)^\}", cpp, re.M | re.S)
+            if (not entry or not getter or entry[1].count("ctnative::invoke_callable(") != 1
+                    or entry[1].count("ctnative::global_boolean(") != 1
+                    or "ctnative::global_number(" in entry[1]
+                    or getter[1].count("ctnative::map_set(") != 1
+                    or getter[1].count("ctnative::map_has(") != 1):
+                raise RuntimeError(f"{name}/{mode}: lost the live Boolean result or its exact observation tag")
         if name in parameter_sources():
             params = {"shared_parameter_number": "js_num", "shared_parameter_bool": "bool",
                       "shared_two_parameters": "std::string, js_num"}.get(name, "std::string")

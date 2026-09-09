@@ -547,12 +547,13 @@ def numeric_reference_output(name, value):
 
 
 def numeric_node_observer(value):
-    if value not in {"NaN", "-Infinity"}:
+    if not isinstance(value, bool) and value not in {"NaN", "-Infinity"}:
         return boundary.NODE
     predicate = "typeof trace !== 'number' || !Number.isFinite(trace)"
     if boundary.NODE.count(predicate) != 1:
         raise RuntimeError("exact NaN observer lost the shared finite-number control")
-    condition = ("typeof trace !== 'number' || !Number.isNaN(trace)" if value == "NaN"
+    condition = ("typeof trace !== 'boolean'" if isinstance(value, bool)
+                 else "typeof trace !== 'number' || !Number.isNaN(trace)" if value == "NaN"
                  else "typeof trace !== 'number' || trace !== -Infinity")
     return boundary.NODE.replace(predicate, condition)
 
@@ -1319,6 +1320,8 @@ def main():
         "repeated": (SOURCE + "\ntrace = host.slot.get();", "host", 0),
         "ordinary_window": (SOURCE.replace("host", "window"), "window", 0),
         "mutate_map": (mutated, "host", 1),
+        "boolean_result": (SOURCE.replace("return state.size;",
+            "state.set('x', 1); return state.has('x');"), "host", True),
         "growing": (growing, "host", 1),
         "growing_repeated": (growing + "\ntrace = host.slot.get();" * 2, "host", 3),
         "primitive_actions": (SOURCE.replace("return state.size;",
@@ -1618,6 +1621,10 @@ def main():
                      else 6 if name == "shared_three" else 5 if name.startswith("shared") else 4)
         if count != functions:
             raise RuntimeError(f"{name}: lost the {functions}-function source chain")
+        if name == "boolean_result" and (
+                len(source_calls((args.work / f"{name}.raw.mlir").read_text())) != 5
+                or len(source_calls(ir.read_text())) != 5):
+            raise RuntimeError("boolean_result: changed the historical five-call source")
         if name == "saved_read_write" and len(source_calls(ir.read_text())) != 12:
             raise RuntimeError("saved_read_write: changed the exact 12-call boundary")
         if name == "saved_join" and len(source_calls(ir.read_text())) != 16:
@@ -1651,16 +1658,20 @@ def main():
             ir = resolve_getter(args, ir)
         if name.startswith("legacy_"):
             ir = methods.legacy_marker(args, ir, name)
-        expected = f"trace={value}\n"
+        expected = f"trace={str(value).lower() if isinstance(value, bool) else value}\n"
         node_command = [node, "-e", numeric_node_observer(value), str(js)]
         if name in constant_global_cases():
             names = json.dumps(sorted(["trace", *constant_global_cases()[name]["saved"]]))
             node_command = [node, "-e", CONSTANT_GLOBAL_NODE, str(js), names]
             expected = numeric_reference_output(name, value)
+        reference_result = host.run([str(reference), str(js)])
         if (host.run(node_command).stdout != expected
-                or normalized_scalar_output(host.run([str(reference), str(js)]).stdout)
+                or normalized_scalar_output(reference_result.stdout)
                 != numeric_reference_output(name, value)):
             raise RuntimeError(f"{name}: Node/interpreter source observation mismatch")
+        if name == "boolean_result" and (
+                "(0 number, 1 boolean, 0 string, 0 null, 0 undefined)" not in reference_result.stderr):
+            raise RuntimeError("boolean_result: reference lost its independently observed Boolean tag")
         config = contract(args, ir, name, binding)
         original, manifest = ir.read_text(), config.read_text()
         output = owned.lower(args, ir, name, config)
@@ -1669,7 +1680,7 @@ def main():
             raise RuntimeError(f"{name}: lost live owning proof")
         if ir.read_text() != original or config.read_text() != manifest:
             raise RuntimeError(f"{name}: changed supplied source or manifest")
-        if name in {**saved_read_sources(), **saved_join_sources(), **guarded_saved_sources(),
+        if name == "boolean_result" or name in {**saved_read_sources(), **saved_join_sources(), **guarded_saved_sources(),
                     **shortcircuit_sources(), **nullable_result_sources(), **nullable_key_sources(),
                     **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources(),
                     **leaf_object_sources(), **leaf_readback_sources(), **leaf_absence_sources(),
@@ -1806,12 +1817,10 @@ def main():
         _, rejected, _ = boundary.prepare(args, name, source)
         fresh = contract(args, rejected, name)
         methods.refused(args, rejected, name, fresh)
-    # Primitive ownership does not promise an implemented Map carrier or make
-    # a nullable/boolean result a numeric export. These bodies have complete
-    # live ownership but still need independent type and carrier proofs.
+    # Primitive ownership does not make a nullable result a definite observation.
+    # The historical Boolean result is executed above with its actual Bool type.
     for name, body in {
         "nullable_result": "state.set('x', 1); return state.get('missing');",
-        "boolean_result": "state.set('x', 1); return state.has('x');",
     }.items():
         js, rejected, _ = boundary.prepare(args, name, SOURCE.replace("return state.size;", body))
         fresh = contract(args, rejected, name)
@@ -2212,7 +2221,8 @@ def main():
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
           "Node/interpreter/GCC/Clang explicit+deduced and Map/table/callable lifetime pass; "
           f"{len(refusal_sources()) - 1} source refusals and contract/rerun/budget controls pass; "
-          f"two carrier refusals and {len(shared_refusals)} shared-method refusals; "
+          f"one nullable carrier refusal and {len(shared_refusals)} shared-method refusals; "
+          "the historical five-call Boolean result retains its bool() callable and exact Boolean output; "
           f"{len(parameter_refusals())} argument refusals preserve current call operands; "
           "typed parameterized setters 5/5 with changing source and saved-callable keys; "
           f"{len(result_sources())} live result programs preserve call order and operands; "

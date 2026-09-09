@@ -288,3 +288,8 @@
 # A mixed Number/Boolean snapshot lifetime runs 128 future saved Map calls with
 # both flags after owner/table release, checks globals before independent reentry,
 # and preserves Boolean tags and values after final Map/leaf destruction.
+# The historical Boolean Map.has result retains its exact four-function,
+# five-call source and now executes in both optimization modes with a bool()
+# callable and true output. Node and the interpreter check its Boolean tag;
+# explicit/deduced GCC/Clang output retains the live set/has and observation check.
+# Its adjacent missing-key result keeps its independent nullable refusal.
