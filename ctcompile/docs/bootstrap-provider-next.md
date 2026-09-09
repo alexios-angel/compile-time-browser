@@ -1,6 +1,31 @@
 # Next Bootstrap native boundary
 
-## Current continuation: object-valued Map absence, 2026-09-08
+## Current continuation: captured Map.clear, 2026-09-08
+
+`f05c3e0b` closes exact-key object-valued Map absence; `3825f3cf` gates
+21 programs, ten exact refusal/repair controls and two sanitizer lifetime
+families. The original seven-call fresh Undefined source reaches **5/5 native**,
+trace=1; historical seven/nine-call post-delete identity sources reach **5/5**,
+trace=0. The source hashes below are unchanged. Both affected CTests pass after
+preserving when-present payloads through deletion. Full repository results and
+the integrated 193-program/27-lifetime run are pending.
+
+The next isolated boundary is **captured `Map.clear()`**. A saved-object identity
+read across clear separates method admission from result typing; a fresh read
+also needs whole-Map absence. `HostContract/CapturedMapBody.cpp` currently only
+admits size/set/get/has/delete and fixed one/two-argument calls. NativeMap,
+NativeObject field analysis and EmitC Maps already understand the standard
+zero-argument clear method. Reuse those implementations; do not duplicate Map
+behavior. Validate every future invocation, live spelling/receiver/arity and
+source effects before admitting clear. Whole-Map absence must account for later
+writes, possible key aliases, saved values and surviving branch joins.
+
+A source-preserving 29-case runner is queued for current Node/VM/native
+measurement: `/tmp/ctcompile-map-absence-next.py`. Entry numeric addition,
+String/object carriers, exact Data/full Bootstrap and direct browser APIs remain
+separate boundaries. No full-bundle coverage gain is claimed.
+
+## Previous continuation: object-valued Map absence, 2026-09-08
 
 `2593acd7` and `316818b2` close the comparison-only fresh identity boundary from
 `bf2fd02e`. The exact local six-call and historical eight-call sources advance

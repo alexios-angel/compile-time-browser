@@ -1,5 +1,30 @@
 # Native captured Maps across global publication
 
+## Definite absence after exact deletion, 2026-09-08
+
+`f05c3e0b` and `3825f3cf` recover the interrupted object-valued Map absence
+slice. Exact seven-call Undefined and seven/nine-call post-delete identity
+sources now reach **5/5 native** in both modes. The **21-program** focused gate
+passes explicit/deduced GCC/Clang and Node/interpreter, ten exact refusal/repair
+controls and two ASan/UBSan/leak lifetime families. Saved callables survive
+128 future calls, owner/table release and reentry before final Map/leaf release.
+
+The source proof keeps definite absence independent of possible absence and
+preserves when-present payload facts through deletion. Aliasing writes clear
+absence; surviving nonidentical branches intersect it; saved read values never
+retarget. Complete scope checks cover scalar/flag, Map, method and object uses.
+Thirty rows per source/prepared host/owner form and exhaustive budgets pass.
+Historical fixtures remain intact; exact-delete expectations now assert precise
+Undefined/Number results. Both affected CTests pass in **91.56 seconds** after
+repairing the initial guarded-payload regression. Native budget completions are
+**4160/4866**, with **32/30 cutoffs**. All twelve final code/test hashes match HEAD
+and the frozen input; full repository results remain pending.
+
+The integrated driver contains **193 programs and 27 lifetime families**;
+its complete run is pending. Next is captured `Map.clear()` admission, followed
+by arbitrary-key absence after clear. Exact Data/full Bootstrap and direct
+browser API integration remain unfinished. See [HANDOFF.md](HANDOFF.md).
+
 ## Strict fresh object comparisons, 2026-09-08
 
 `2593acd7` admits comparison-only fresh allocations after a complete independent

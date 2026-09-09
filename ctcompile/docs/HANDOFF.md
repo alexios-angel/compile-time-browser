@@ -6,6 +6,85 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Definite captured Map absence recovery and BigInt equality, 2026-09-08
+
+Recovered the twelve uncommitted compiler files left by the interrupted
+**00:35:04 UTC iteration 19**. The continuation came from **`60b744e1`** and
+its 00:21/00:33 synchronization journal entries. The older
+`codex-wip-20260907` recovery was already merged; no other branch was changed.
+Three agents recovered query tests, execution/lifetimes and escape analysis.
+
+Committed locally: **`f05c3e0b`** proves definite captured Map absence,
+**`3825f3cf`** gates its execution and lifetimes, and **`ca219c28`** proves
+exact BigInt-pair equality escape origins. No browser/runtime source changed
+and nothing was pushed.
+
+The exact seven-call `local_absence_delete_undefined` source advances
+**0/5 -> 5/5 native**, trace=1, in both optimization modes. The original local
+seven-call and historical nine-call post-delete comparisons now also reach
+**5/5**, trace=0. Repeated deletion, saved Undefined across reseeding, disjoint
+writes and two nonidentical deleting branches work. Every source allocation,
+field write, Map operation and published call remains. All **297 historical
+helper rows** and **31 previous continuation sources** preserve bytes.
+
+Absence is separate from uncertain membership. Exact deletion establishes it;
+possibly aliasing writes invalidate it; branch joins require it on both arms.
+Saved reads keep their read-time values. Deletion also preserves prior payload
+facts conditional on presence, needed by the nondeleting arm of a later join.
+Scalar/flag, Map receiver, method callee and object uses independently check
+source dominance. Reports cannot authorize a proof. No new runtime carrier or
+Script dependency was added.
+
+Initial devbox access required `start`/`allow-ip`. The first build caught a
+const op-wrapper in the new tests. The corrected warning-free **13-step**
+build produced **19/20 CTests in 96.87 seconds**: only seeded Map tests failed.
+Erasing the old when-present payload caused historical guarded/nullable
+regressions; restoring that payload fixes them. Five historical assertion
+sites now check exact Undefined or a Number fallback, preserving all **777
+fixture/source literal tokens**. The warning-free **six-step** rebuild passes
+both affected CTests in **91.56 seconds**. All twenty focused tests have passing
+results across these runs; this is not a second full twenty-test run.
+
+Each source/prepared host/owner form passes **30 absence rows**, live/fresh
+forgeries, eight scope controls and exhaustive budgets. The **21-program**
+execution gate passes Node/interpreter and explicit/deduced GCC/Clang, no-VM
+symbol checks, **ten refusal/repair controls**, reruns and **two sanitizer
+lifetime families**. Saved callables survive owner/table release, exercise
+128 future calls and both branch flags, and release every Map/leaf after
+reentry and final release. Native budgets finish at **4160/4866**, testing
+**32/30 cutoffs**, with no speculative rollback interval.
+
+BigInt Eq requires two independently proved original BigInt constants; mixed,
+opaque, computed and relational BigInt operands remain refused. All eight
+escape tests pass: **52 rows, 30 live states, 2280 retention cutoffs**, and a
+64-work snapshot. Four new sources measure **16 sites, 32 instances and 26
+retained**; fixture precision is **53/81**, all four oracles have zero violations,
+and corpus precision remains **0/64, 0/16, 0/20**. This supplies retention evidence,
+not a native BigInt carrier or effect proof. The premeasurement's refused
+object-to-BigInt cases still differ: Node 4095 versus VM 1023; its first ten
+checks agree at 1023. The discrepancy is journaled for the runtime owner.
+
+Stable formatter **22.1.8 passes all 745 files**; changed C++ files also pass
+bundled 23, whose complete check retains the same nine unrelated differences.
+All **twelve code/test hashes** match committed HEAD and the frozen gate input.
+The full repository build/CTest gate is running; its final results and the
+integrated **193-program/27-lifetime** gate are not yet measured here.
+
+**Next boundary: captured `Map.clear()` admission, then whole-Map absence.**
+The existing host method whitelist/arity rejects even a saved-object identity
+read across clear, while NativeMap and EmitC already have standard clear
+support. Fresh get-after-clear additionally needs proof for arbitrary keys,
+subsequent possibly aliasing writes and branch joins. A source-preserving
+29-case continuation is queued for devbox measurement. Entry numeric addition,
+String/object carriers, exact Bootstrap Data, full native Bootstrap and direct
+browser API integration remain unfinished. The last full corpus measurements
+remain Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725**; exact Data
+**0/7 browser/CommonJS, 0/8 AMD**. No new full-bundle coverage is claimed.
+
+Evidence: `/tmp/ctcompile-absence-recovery-{build,build2,build3,focused,focused3,execution,full}.log`,
+`-frozen.json`, `-final-format22.log`, `-final-format23.log`, and
+`/tmp/ctcompile-map-absence-recovery-audit/`.
+
 ## Strict fresh object comparisons and primitive Add/Concat, 2026-09-08
 
 Committed locally on `ctcompile-v1`: **`2593acd7`** recognizes comparison-only
