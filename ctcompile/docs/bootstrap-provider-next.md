@@ -1,6 +1,61 @@
 # Next Bootstrap native boundary
 
-## Current continuation: captured Map.clear, 2026-09-08
+## Current continuation: entry numeric results, 2026-09-08
+
+`1c352a82` and `c2b49f99` complete captured standard clear and arbitrary-key
+absence, with both original seven-call sources now **5/5 native**, trace=1.
+The 21-program focused execution gate passes Node/interpreter, explicit/deduced
+GCC/Clang, five refusal/repair controls and three sanitizer lifetime families.
+All twenty focused CTests pass across the initial 19/20 run and a corrected
+escape expectation rerun. The full repository gate is pending.
+
+The next exact boundary is **entry arithmetic over published method results**:
+
+```js
+var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        set(key) { const item = {}; state.set(key, item); const saved = state.get(key); return saved === item ? 1 : 0; }
+    };
+});
+host.slot.size(); var trace = host.slot.set('x') + host.slot.set('x') + host.slot.set('y');
+```
+
+Logical source SHA-256 (including its final newline):
+`379ccc667b2d463c5fbdc531c53a90ec01c7ba7d8ab578ef1493c3e62f4e281e`.
+This unchanged source has **five functions, eight raw/prepared calls, two binary
+operations and trace=3**, but stays unowned **0/5** in both modes, diagnosed as
+`unsupported provider behavior through ctjs.binary`. The actual diagnostic
+backticks the operation name. Replacing only its final declaration with
+`host.slot.set('x'); host.slot.set('x'); var trace = host.slot.set('y');`
+retains **all eight calls**, reaches **5/5** and returns trace=1. The older
+one-call repair also stays admitted, with six total calls.
+
+`HostContract/Analysis.cpp` rejects binary operations in the live environment.
+`HostContract/Values.cpp` already proves invocation-result dependencies before
+the complete method census. Extend those live proofs only with independently
+proved operand/result categories; source order, complete future-call argument
+joins and effect checks remain mandatory. Reports or observed startup numbers
+cannot supply type authority. Keep the evaluated operands and every call.
+A later method key computed from earlier results needs the same bounded
+result-dependency proof, without allowing a circular method summary.
+
+All **twelve probes** agree across Node/interpreter and both modes: four admitted
+5/5 and eight unowned 0/5. Saved results, Number-plus-literal and result-fed keys
+remain refused, with original binary and call edges intact. Number/String
+concatenation and object coercion controls also refuse. The zero-size witness
+after clear is separate: existing lower bounds do not prove that snapshot is
+exactly zero. Its eight-call literal-zero repair retains the actual size read
+and reaches 5/5. The original seven-call String leaf-field source remains 0/5;
+its numeric repair is 5/5. Full Bootstrap and browser API integration are open.
+
+Evidence: `/tmp/ctcompile-map-clear-next.{py,json,log}` and
+[HANDOFF.md](HANDOFF.md). Additional numeric globals in the saved-result probe
+are included in the interpreter comparison; all original JavaScript is intact.
+
+## Previous continuation: captured Map.clear, 2026-09-08
 
 `f05c3e0b` closes exact-key object-valued Map absence; `3825f3cf` gates
 21 programs, ten exact refusal/repair controls and two sanitizer lifetime

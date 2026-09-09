@@ -6,6 +6,86 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Captured Map.clear and exact BigInt relations, 2026-09-08
+
+Resumed the precise `Map.clear()` continuation in **`b1e8ba6b`**, the previous
+HANDOFF and the **02:13:49 UTC synchronization journal**. The tree/index began
+clean; the older `codex-wip-20260907` recovery was already merged. Three agents
+worked on query controls, native execution/lifetimes and escape proofs. Root
+finished the query agent's final audit after it hit a rate limit.
+
+Committed locally: **`1c352a82`** proves captured clear and arbitrary-key absence,
+**`c2b49f99`** gates native execution/lifetimes, and **`9f969651`** proves exact
+BigInt relational escape origins. No browser/runtime source changed; no push.
+
+Both original seven-call clear sources advance **0/5 -> 5/5 native**, trace=1,
+in both optimization modes. Standard zero-argument clear returns Undefined and
+reuses existing native Map lowering. Every invocation starts with unknown Map
+contents. Clear establishes a complete possible-key census; subsequent sets
+record every possibly present key, and branches union those possibilities.
+Exact absence intersects across both arms, including clear versus exact delete.
+Cross-arm comparisons cannot borrow the other arm's narrowed types. Saved
+object, field and Undefined reads retain their read-time values. Live receiver,
+callee, arity, source scope, effects and the entire published family still prove
+independently; annotations supply no authority. All historical source bytes and
+22 previously measured clear programs remain intact.
+
+The warning-free **22-step** focused build passes **19/20 CTests in 125.60
+seconds**. Its sole failure is an older escape expectation: the exact original
+BigInt relational child is now confined. Updating only that verdict preserves
+all historical JavaScript and allocation/retention counts. The corrected fixture
+passes **1/1 in 0.21 seconds** after a no-work rebuild. All twenty focused tests
+therefore pass across these runs; this is not a second twenty-test run.
+
+Each source/prepared host/owner query passes **29 clear rows**, eight scope
+mutations, stale/fresh live edits and exhaustive work budgets. Host completions
+are **4324/5441 source, 4419/5574 prepared**; owner completions are
+**8853/9982 source, 8653/9820 prepared**. The **21-program** execution gate passes
+Node/interpreter and explicit/deduced GCC/Clang, no-VM symbols, **five refusal
+and exact-repair controls**, reruns and **three sanitizer lifetime families**.
+Saved callables survive owner/table release and 128 future calls, reentry and
+final Map/leaf release. A separately retained leaf remains readable after the
+Map dies, then expires when its final owner releases it. Native budgets complete
+at **4121/4866**, checking **31/30 cutoffs**, with no speculative rollback interval.
+
+Each BigInt Lt/Le/Gt/Ge query passes **60 rows, 32 live states and 2684 retention
+cutoffs**, plus the 64-work snapshot; Eq repeats **52/30/2448**. The new source
+family measures **20 sites, 40 instances and 32 retained**. Fixture precision is
+**55/85**, including one historical confinement improvement and added coverage;
+all four escape oracles report zero violations, with corpus precision unchanged
+at **0/64, 0/16, 0/20**. This is retention evidence, never a native BigInt carrier
+or a no-throw/effect proof. Supported premeasurement agrees at **trace=65535**;
+separate refused mixed String/object conversions differ, **Node 15 versus VM 8**,
+and are journaled for the runtime owner.
+
+Stable formatter **22.1.8 passes all 745 files**; changed C++ also passes bundled
+23, whose complete check retains the same nine unrelated differences. Twelve
+code/test hashes are frozen and match committed HEAD. The full generated build
+and complete CTest gate are running; no full-gate result is claimed yet.
+
+**Next boundary: entry arithmetic over independently proved published results.**
+All **twelve continuation sources** agree on Node/interpreter observations and
+both admission modes: **four reach 5/5, eight remain unowned 0/5**. The exact
+original eight-call expression adds three Number-returning method calls and
+returns trace=3, but fails at `unsupported provider behavior through ctjs.binary`.
+The eight-call repair retains all three calls and removes only their addition;
+it reaches 5/5, trace=1. Saved-result addition, Number-plus-literal and an added
+result used as the next method's key also refuse. Preserve actual operands,
+source order and all future method input categories when proving arithmetic;
+String concatenation and object coercion need their own evidence.
+
+The exact zero-size read after clear is a separate boundary: an eight-call
+Number-key witness remains 0/5, while its literal-zero repair preserves the
+actual size read and reaches 5/5. Existing size facts are lower bounds. The
+seven-call String leaf-field source also remains 0/5; its numeric repair is 5/5.
+Full native Bootstrap and direct browser API integration remain unfinished.
+
+Evidence: `/tmp/ctcompile-map-clear-{build,focused,fixture2,execution,full}.log`,
+`/tmp/ctcompile-map-clear-{frozen,next,first}.json`, and
+`/tmp/ctcompile-map-clear-next.py`. The temporary continuation runner was corrected
+to account for the saved-result source's three additional numeric globals; no
+source or observation was changed.
+
 ## Definite captured Map absence recovery and BigInt equality, 2026-09-08
 
 Recovered the twelve uncommitted compiler files left by the interrupted

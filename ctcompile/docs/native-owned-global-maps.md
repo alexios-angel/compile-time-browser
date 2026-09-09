@@ -1,5 +1,32 @@
 # Native captured Maps across global publication
 
+## Standard clear and arbitrary-key absence, 2026-09-08
+
+`1c352a82` proves zero-argument captured clear and its Undefined result;
+`c2b49f99` gates 21 native programs and three saved-callable lifetime families.
+Both original seven-call clear sources now reach **5/5 native**, trace=1, in
+both modes. All original 22 clear source hashes are preserved. Each invocation
+starts with unknown contents; clear closes the set of possibly present keys,
+sets add possibilities, and joins union them. Per-key absence intersects,
+including implicit clear absence on the other arm, without borrowing path-local
+type refinements. Saved values and when-present payload facts stay independent.
+
+Each source/prepared host/owner query passes 29 rows, eight scope controls,
+three live spelling/receiver/arity mutations per budget fixture and exhaustive
+work limits. Node/interpreter, explicit/deduced GCC/Clang, no-VM checks, five
+refusal/repair families and three ASan/UBSan/leak lifetime families pass. Future
+128-call loops retain callables across owner/table release and reentry, free
+every Map, and keep one observed leaf only until its final independent release.
+Native budgets complete at 4121/4866 with 31/30 cutoffs. Twenty focused CTests
+pass across the first 19/20 run and corrected escape-fixture rerun; the full gate
+is pending. See [HANDOFF.md](HANDOFF.md) for measurements and source evidence.
+
+Next is entry numeric addition over proved method results. The exact eight-call
+three-result expression remains unowned 0/5; an eight-call repair keeps all
+calls and removes only their addition, reaching 5/5. Exact zero Map size and
+String leaf fields remain separate boundaries. Full native Bootstrap and direct
+browser API integration remain unfinished.
+
 ## Definite absence after exact deletion, 2026-09-08
 
 `f05c3e0b` and `3825f3cf` recover the interrupted object-valued Map absence
