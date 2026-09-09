@@ -6,8 +6,9 @@
 **49663558** admits **5/5** in both modes with all eight calls preserved.
 Fourteen focused programs, twenty-three typed references, nine refusal/repair
 families and a 128-call saved-object lifetime pass. `HANDOFF.md` records gates;
-the complete repository run is pending. Exact-zero proof does not erase the
-actual Map operations or substitute a literal in emitted code.
+the full run passes all **372 compiler CTests** and **166/166 lit cases**
+(**512/517** total, five established browser failures). Exact-zero proof keeps
+the actual Map operations and evaluated size reads in emitted code.
 
 The next unchanged source is:
 

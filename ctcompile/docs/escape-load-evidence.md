@@ -2720,3 +2720,37 @@ validation is still pending. Evidence:
 `/tmp/ctcompile-map-zero-corrected.log`,
 `/tmp/ctcompile-string-bigint-arrays-corrected.log` and
 `/tmp/ctcompile-string-bigint-vm-corrected.log`.
+
+
+**Completed full gate, 2026-09-09.** The pending full suite above is complete:
+a warning-free **241-step** build passes **512/517 CTests in 1926.71 seconds**.
+The five failures remain the established browser tests `selectors`, `frames`,
+`element_attrs`, `vm_async` and `early_errors`. The nonzero CTest status is **8**;
+no compiler failure or corrective rerun occurred in this complete run.
+
+All **eight escape CTests pass**, including arrays in **0.56 seconds** and the
+strengthened fixture in **0.41**. The independently audited detailed output
+preserves String/BigInt Add's **97 rows/37 live states/3850 budget cutoffs** and
+Concat's **97/37/4104**, with both wide snapshots. Pow retains **139/51/5377**;
+Div and Mod each retain **132/47/5043**. The source checker again confirms
+**32 literal sites, 64 instances and 50 retained**, alongside the separate
+historical Pow, Div/Mod and signed-shift Error witnesses.
+
+All four actual escape corpus oracles report **zero violations**. The fixture
+retains **617 claims, 625 observed sites, nine unclaimed sites and 81/122
+precision**, with zero partial or pending claims. Bootstrap, p5 and Phaser
+remain **0/64, 0/16 and 0/20**; p5's established single partial claim remains
+separate. The deliberately wrong oracle self-tests are separate checks and
+retain their expected violations.
+
+All **15** final source/test hashes agree across frozen inputs, recorded devbox
+sources, local files and HEAD. All **five escape code/test inputs** also match
+**e42f2d24**. The historical fixture bytes, source-coordinate assertions and
+**96-corruption checker audit** remain unchanged. This is one completed full
+suite; the initial focused expectation failures remain preserved above. Mixed
+primitive BigInt comparison retention is still the next separate escape
+boundary; native BigInt, effect/completion contracts and known broader source
+semantics differences remain open. Evidence:
+`/tmp/ctcompile-map-zero-full{,-detail}.log`,
+`/tmp/ctcompile-map-zero-full-hashes.json` and
+`/tmp/ctcompile-string-bigint-full-audit.json`.

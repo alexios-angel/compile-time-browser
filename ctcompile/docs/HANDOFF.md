@@ -36,8 +36,8 @@ modes pass the no-Script-symbol gate. The saved-zero/object lifetime passes
 **128 future calls**, both flags, owner/table release, independent entry
 reexecution and final Map/leaf release under ASan/UBSan/leak checks. Budgets
 **4523/6224** each check **31 cutoffs**. All **665 historical helper rows across
-57 helpers** preserve their source bytes. Integrated inventory is **327
-programs/39 lifetime families**, pending the full gate.
+57 helpers** preserve their source bytes. The full integration passes **327
+programs/39 lifetime families**.
 
 The warning-free focused build passes **five of six proof CTests in 180.99
 seconds**; only new type expectations failed. Homogeneous local Number Map
@@ -66,9 +66,23 @@ Node/VM checks agree. The first escape run passed **7/8 in 9.09 seconds**; its
 an array index. Only those expectations changed; production/source bytes stayed
 fixed. The corrected full escape subset passes within the 9/9 gate above.
 
-The full repository gate is pending on **15 frozen, committed code/test
-inputs**. Its first attempt stopped at SSH before syncing or building; devbox
-access is being restored. No new full-suite or vendor coverage result is claimed.
+The warning-free **241-step** full build passes **512/517 CTests in 1926.71
+seconds**, including **all 372 compiler checks**. All **166/166 lit cases**
+pass in **1178.31 seconds** (CTest **1178.50**), including the integrated
+**327 programs/39 lifetime families**. Only the five established browser tests
+fail: `selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`.
+All **15** frozen code/test hashes match local files, committed code and devbox
+sources. This is one complete full-suite run after an SSH preflight failure;
+no compiler correction or rerun was needed.
+
+All five type and all four escape corpus checks report zero violations.
+Fixture precision is **81/122**; the existing p5 partial result is unchanged.
+Fresh coverage remains **19/574 Bootstrap, 39/4754 p5 and 45/7725 Phaser**,
+both optimization modes, with zero pruned. Exact Bootstrap Data remains
+**0/7, 0/7 and 0/8**. Independent source/gate audits preserve all historical
+sources and reconcile every CTest/detail result. Final emitted C++ retains real
+size reads, Map mutations, ordinary owners and saved callables without Script
+symbols; lifetime observers belong only to test instrumentation.
 
 **Next: exact one from a saved size after clear/set.** Eight fresh typed
 Node/interpreter probes agree. Historical **544f425b** remains **0/5** in both
@@ -87,6 +101,9 @@ Evidence: `/tmp/ctcompile-map-zero-{probe-results,execution-probe,source-hashes}
 `/tmp/ctcompile-after-zero-size-boundary-{results,sources}.json`,
 `/tmp/ctcompile-string-bigint-frozen.json` and
 `/tmp/ctcompile-string-bigint-checker-audit/audit.json`.
+Full evidence: `/tmp/ctcompile-map-zero-full{,-detail}.log`,
+`/tmp/ctcompile-map-zero-final-audit.json` and
+`/tmp/ctcompile-map-zero-full-hashes.json`.
 
 ## Owning String object fields and BigInt Pow, 2026-09-09
 
