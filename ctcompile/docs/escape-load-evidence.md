@@ -2059,3 +2059,92 @@ Full evidence: `/tmp/ctcompile-scalars-final-evidence.json`,
 
 Remaining boundaries include static and exceptional BigInt arithmetic, mixed
 conversions, loops, callee summaries and native lifetime/effect consumers.
+
+## Computed static BigInt categories, 2026-09-09
+
+Continues the static category boundary recorded after **`b953ab00`**. Static
+`Add`, `BitAnd`, `BitOr` and `BitXor` now require two independently proved
+original BigInt operands before recording an independent BigInt result in the
+existing charged per-path category set. Saved reads keep that category after
+an array or own field changes value; each structural path can give the same
+SSA result its own Number or BigInt category. Every existing non-BigInt
+consumer still excludes the BigInt set. No value, branch choice, literal key
+or native carrier follows from this retention evidence.
+
+The audited `binary_op_static` path reaches `bigint_binary` before its static
+Number conversions. These four exact-pair arms allocate independent digits
+without calling user conversion or retaining operand object identities. The
+existing non-BigInt static path is unchanged, including its separate known
+fresh-object behavior. Static signed shifts can fail, unsigned shifts throw,
+and mixed/opaque operands remain refused. Dynamic bitwise opcodes are not
+borrowed from the static form. Dynamic Div/Mod/Pow/Concat and unknown operations
+remain separate boundaries. Allocation success, normal completion, native
+BigInt admission and no-throw/effect contracts are not established.
+
+Before production changed, the sixteen-check source
+`/tmp/ctcompile-alias-bigint-semantics.js` returned **trace=65535** in both Node
+and the unchanged devbox interpreter; root recorded the latter in
+`/tmp/ctcompile-alias-bigint-semantics.log`. Checks distinguish wide and signed
+bit operations, chained results, saved field/array origins, Number/BigInt path
+categories, mixed-input TypeErrors and unsigned-shift refusal. Source `&`, `|`
+and `^` reach static VM operations. Static Add is covered by the raw IR matrix
+and the shared exact-digit implementation audit; the source addition check
+uses dynamic Add, so it is not presented as a source static-Add measurement.
+
+The existing BigInt binary test matrix now exercises all three dynamic and
+four static admitted operation forms. It retains two-sided provenance checks,
+saved field/array reads, complete structural arms, stale versus fresh solver
+queries under forged markers, every incomplete contents/retention budget and
+exact endpoints. A wide snapshot requires **128 additional work units** for
+32 separately categorized results. Cross-operation controls reject mixed
+Number/BigInt consumers and distinguish unsupported dynamic bitwise forms from
+static bitwise forms. The earlier static Number matrix preserves its object
+and Number controls while giving exact BigInt pairs their separate category.
+
+Six additive JavaScript functions exercise saved operands, separate Number and
+BigInt paths, opaque inputs, mixed comparisons, a successful but still refused
+shift, and an independently retained child. Local Node checks all **twelve
+calls and nineteen discriminating mutations**. The first devbox oracle
+measures **24 sites, 48 instances and 38 retained** for this new family. The
+original `objectFrameStaticBinaryBigInt` child now proves confined with its
+source and allocation/retention counts unchanged. All historical JavaScript
+bytes are preserved. Fixture precision is **64/98**, versus **61/93**: one
+historical improvement plus two proved and five observed new confined sites.
+The fixture has **64 sound claims, zero partial and zero pending**. All four
+oracles report **zero violations**; corpus precision stays **0/64, 0/16,
+0/20**, with p5's existing one partial.
+
+The first **twelve-step** build has zero warnings. The focused gate passes
+**8/9 CTests in 9.80 seconds**, including type inference and seven escape
+CTests. The array unit crashes while its new shared test matrix mutates an
+invalid enum through generic `Operation::setAttr`; gdb stops in
+`BinaryKindAttr::getValue` during the first dynamic binary mutation. The test
+now uses each operation's generated `setKindAttr` accessor, preserving the
+intended malformed enum rather than an invalid null inherent property. The
+invalid-kind and all other controls remain; production and JavaScript source
+are unchanged by this correction. This first focused run is not a complete
+escape-test pass.
+
+The corrected **two-step** rebuild has zero warnings. The array CTest passes
+in **0.36 seconds** (CTest total **0.37 seconds**), so all **eight escape CTests
+pass across the two runs**. Each static BigInt operator passes **105 rows,
+39 stale/fresh live states and 3706 retention budget cutoffs**, plus the
+**128-work** snapshot. The three dynamic BigInt operators each pass
+**105/41/3774** with the expanded cross-form controls; both unary families
+pass **83/15/2348**. BigInt Eq remains **52/30/2448**, and each relational
+family remains **60/32/2740**. The seven static Number forms retain all
+**31 rows and 18 live states**, with **1316** cutoffs for Add/And/Or/Xor and
+**1283** for shifts. All original non-BigInt primitive operator rows pass.
+The full CTest gate remains pending.
+
+Stable clang-format **22.1.8** passes all **745 C++ files**; the three changed
+C++ files also pass bundled **23**. JavaScript syntax and whitespace checks
+pass. All five code/test hashes remain unchanged after the corrected test
+freeze; the doc-only measurement update refreshes its sixth hash. No
+browser/runtime source changed and the child ran no build. Evidence:
+`/tmp/ctcompile-alias-focused-build.log`, `/tmp/ctcompile-alias-focused.log`,
+`/tmp/ctcompile-alias-escape-crash.log`,
+`/tmp/ctcompile-alias-corrected-build.log`,
+`/tmp/ctcompile-alias-corrected-arrays.log`,
+`/tmp/ctcompile-alias-escape-static-node.js` and
+`/tmp/ctcompile-alias-escape-static-frozen.json`.

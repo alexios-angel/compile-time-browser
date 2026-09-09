@@ -1060,6 +1060,87 @@ function objectFrameBigIntBinaryRetained(choice) {
 H.push(objectFrameBigIntBinaryRetained(false));
 H.push(objectFrameBigIntBinaryRetained(true));
 
+// --- INDEPENDENT STATIC BIGINT RESULT CATEGORIES ----------------------------
+// The earlier objectFrameStaticBinaryBigInt source now has its own BigInt
+// category proof. Its historical source stays unchanged; only the claim moves.
+function objectFrameBigIntStaticSaved(choice) {
+    var child = { id: 1 };
+    var source = { held: child, left: choice ? 9007199254740993n : 9007199254740992n,
+                   right: 3n };
+    var target = { ...source }, left = target.left, right = source.right;
+    target.left = 1; source.right = 0;
+    delete source.left; delete target.left;
+    delete source.right; delete target.right;
+    var masked = left & right, unioned = left | right, toggled = left ^ right;
+    var recovered = toggled ^ right, inverse = ~unioned, sum = masked + 2n;
+    var equal = recovered == left, smaller = masked < unioned;
+    delete source.held; delete target.held;
+    return { source: source, target: target, masked: masked, unioned: unioned,
+             toggled: toggled, recovered: recovered, inverse: inverse, sum: sum,
+             equal: equal, smaller: smaller };
+}
+H.push(objectFrameBigIntStaticSaved(false));
+H.push(objectFrameBigIntStaticSaved(true));
+
+// One static SSA producer keeps separate Number and BigInt path categories.
+function objectFrameBigIntStaticPaths(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var operand = choice ? 1n : 2;
+    var masked = operand & operand, unioned = operand | operand, toggled = operand ^ operand;
+    delete source.held; delete target.held;
+    return { source: source, target: target, masked: masked, unioned: unioned, toggled: toggled };
+}
+H.push(objectFrameBigIntStaticPaths(false));
+H.push(objectFrameBigIntStaticPaths(true));
+
+// Runtime BigInt actuals cannot establish an opaque future operand's category.
+function objectFrameBigIntStaticOpaque(operand) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var masked = operand & 3n, unioned = operand | 3n, toggled = operand ^ 3n;
+    delete source.held; delete target.held;
+    return { source: source, target: target, masked: masked, unioned: unioned, toggled: toggled };
+}
+H.push(objectFrameBigIntStaticOpaque(1n));
+H.push(objectFrameBigIntStaticOpaque(2n));
+
+// A static BigInt result cannot authorize a mixed-category comparison.
+function objectFrameBigIntStaticMixed(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var operand = choice ? 1n : 2n, masked = operand & 3n;
+    var equal = masked == 2, smaller = masked < 3;
+    delete source.held; delete target.held;
+    return { source: source, target: target, masked: masked, equal: equal, smaller: smaller };
+}
+H.push(objectFrameBigIntStaticMixed(false));
+H.push(objectFrameBigIntStaticMixed(true));
+
+// Successful observed shifts do not prove their exceptional future cases.
+function objectFrameBigIntStaticShift(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var operand = choice ? 1n : 2n, masked = operand & 3n, shifted = masked << 1n;
+    delete source.held; delete target.held;
+    return { source: source, target: target, masked: masked, shifted: shifted };
+}
+H.push(objectFrameBigIntStaticShift(false));
+H.push(objectFrameBigIntStaticShift(true));
+
+// Independent static results leave a separately retained object edge intact.
+function objectFrameBigIntStaticRetained(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source }, saved = target.held;
+    var operand = choice ? 1n : 2n;
+    var masked = operand & 3n, unioned = operand | 3n, toggled = operand ^ 3n;
+    delete source.held; delete target.held;
+    return { source: source, target: target, saved: saved,
+             masked: masked, unioned: unioned, toggled: toggled };
+}
+H.push(objectFrameBigIntStaticRetained(false));
+H.push(objectFrameBigIntStaticRetained(true));
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());

@@ -1185,6 +1185,23 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 const mlir::Value lhs = origin(binary.getLhs());
                 const mlir::Value rhs = origin(binary.getRhs());
                 if (!lhs || !rhs) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
+                if (bigIntOrigin(lhs, state.bigIntOrigins) &&
+                    bigIntOrigin(rhs, state.bigIntOrigins) &&
+                    (binary.getKind() == ctjs::BinaryKind::Add ||
+                     binary.getKind() == ctjs::BinaryKind::BitAnd ||
+                     binary.getKind() == ctjs::BinaryKind::BitOr ||
+                     binary.getKind() == ctjs::BinaryKind::BitXor)) {
+                    // These exact bigint_binary arms allocate independent digits
+                    // before static Number conversion, with no input alias or
+                    // user conversion. Keep a separate per-path category so a
+                    // later Number-only consumer cannot inherit this opcode's
+                    // usual Number result. Allocation success remains unproved;
+                    // signed/unsigned shifts and mixed operands stay refused.
+                    if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                    state.bigIntOrigins.insert(binary.getResult());
+                    state.origins[binary.getResult()] = binary.getResult();
+                    continue;
+                }
                 if (!nonBigIntOrigin(lhs, state.bigIntOrigins) ||
                     !nonBigIntOrigin(rhs, state.bigIntOrigins)) {
                     return refuse(ArrayContentsFailure::UnsupportedOperation, &op);

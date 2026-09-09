@@ -460,8 +460,11 @@ struct ArrayContentsEvidence {
 /// with no key/value inference. TypeOf's VM String allocation carries no input
 /// object; this query proves neither absence of allocation nor its success.
 /// The seven static binary kinds yield Number only after both exact origins
-/// exclude BigInt. Opaque inputs and BigInt constants refuse because their
-/// catchable failure paths are unproved. Non-BigInt static conversion never
+/// exclude BigInt. Static Add/BitAnd/BitOr/BitXor separately accept two independently
+/// proved BigInt origins and record an independent BigInt result in the charged
+/// per-path category set. Their exact digit operations invoke no user conversion;
+/// allocation success is unproved. Mixed/opaque inputs and all BigInt shifts
+/// still refuse. Non-BigInt static conversion never
 /// invokes user code, including on a fresh object (a documented VM deviation
 /// from source JS). Results infer no Number value, index or branch liveness.
 /// String conversion can allocate C++ temporaries; absence of allocation and
@@ -485,7 +488,7 @@ struct ArrayContentsEvidence {
 /// invoke user conversion or the reentry-depth guard. Saved reads retain their
 /// original identity across overwrites; no operand value, key or branch choice
 /// is inferred. An independent alternative admits two exact original
-/// BigInt constants or proved Neg/BitNot and dynamic Add/Sub/Mul results: the VM compares their
+/// BigInt constants or independently categorized unary/binary results: the VM compares their
 /// digits without conversions or input aliases. Both operand origins must qualify;
 /// mixed/opaque/unproved computed BigInt inputs still refuse. This adds only an independent Boolean
 /// origin, never equality, key, liveness, allocation-success or native effect evidence. Relational
@@ -511,7 +514,7 @@ struct ArrayContentsEvidence {
 /// preserving their independent result category in the same charged per-path
 /// set as Neg/BitNot. Saved reads and chained results retain that category;
 /// neither operand supplies authority for the other. Add's depth guard has the
-/// same retention-only early-exit argument. Static BigInt operations, dynamic
+/// same retention-only early-exit argument. Static BigInt shifts, dynamic
 /// Div/Mod/Pow/Concat, mixed and object/opaque inputs remain outside this bounded
 /// BigInt proof. No allocation-success, normal-completion or native effect
 /// guarantee follows.

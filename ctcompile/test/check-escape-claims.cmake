@@ -210,6 +210,7 @@ if(STRICT)
   set(_object_bigint_relational_rows "")
   set(_object_bigint_unary_rows "")
   set(_object_bigint_binary_rows "")
+  set(_object_bigint_static_rows "")
   foreach(_line IN LISTS _recording_lines)
     if(_line MATCHES "^program ([0-9a-f]+) ")
       set(_program_hash "${CMAKE_MATCH_1}")
@@ -409,6 +410,16 @@ if(STRICT)
         message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
       endif()
       list(APPEND _object_bigint_binary_rows "${_row} ${CMAKE_MATCH_1}")
+    elseif(_function_name MATCHES "^objectFrameBigIntStatic(Saved|Paths|Opaque|Mixed|Shift|Retained)$" AND _line MATCHES "^site ")
+      if(NOT _line MATCHES "^site ([0-9]+) kind obj made ([0-9]+) confined ([0-9]+) escaped ([0-9]+) unresolved ([0-9]+) unchecked ([0-9]+) routes ([^ ]+)$")
+        message(FATAL_ERROR "${_function_name}: unexpected static BigInt observation: ${_line}")
+      endif()
+      set(_pc "${CMAKE_MATCH_1}")
+      set(_row "${_function_name} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3} ${CMAKE_MATCH_4} ${CMAKE_MATCH_5} ${CMAKE_MATCH_6} ${CMAKE_MATCH_7}")
+      if(NOT _claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_pc} obj ([^\n]+)")
+        message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
+      endif()
+      list(APPEND _object_bigint_static_rows "${_row} ${CMAKE_MATCH_1}")
     endif()
   endforeach()
   set(_expected_publication_rows
@@ -598,9 +609,9 @@ if(STRICT)
   endif()
   message(STATUS "imported typeof/void: eight sites, twenty-eight instances, twenty-one retained; live claims agree")
 
-  # Only the positive excludes BigInt independently on every structural path.
-  # Runtime-only Number observations and a successful literal BigInt operation
-  # cannot authorize the complete contents proof's Number result refinement.
+  # Number and BigInt results each require their independent original category.
+  # The historical literal BigInt pair now has its own category proof; opaque
+  # runtime Number observations still cannot authorize retention refinement.
   set(_expected_object_static_binary_rows
       "objectFrameStaticBinaryReleased 2 2 0 0 0 - confined"
       "objectFrameStaticBinaryReleased 2 0 2 0 0 temporaries:2 escapes:stored"
@@ -610,7 +621,7 @@ if(STRICT)
       "objectFrameStaticBinaryOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameStaticBinaryOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameStaticBinaryOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
-      "objectFrameStaticBinaryBigInt 1 1 0 0 0 - escapes:stored"
+      "objectFrameStaticBinaryBigInt 1 1 0 0 0 - confined"
       "objectFrameStaticBinaryBigInt 1 0 1 0 0 temporaries:1 escapes:stored"
       "objectFrameStaticBinaryBigInt 1 0 1 0 0 temporaries:1 escapes:stored"
       "objectFrameStaticBinaryBigInt 1 0 1 0 0 temporaries:1 escapes:returned")
@@ -904,6 +915,38 @@ if(STRICT)
     message(FATAL_ERROR "imported BigInt binary evidence mismatch:\nexpected: ${_expected_object_bigint_binary_rows}\nobserved: ${_object_bigint_binary_rows}")
   endif()
   message(STATUS "imported BigInt binary: twenty sites, forty instances, thirty-two retained; live claims agree")
+
+  set(_expected_object_bigint_static_rows
+      "objectFrameBigIntStaticSaved 2 2 0 0 0 - confined"
+      "objectFrameBigIntStaticSaved 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntStaticSaved 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntStaticSaved 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntStaticPaths 2 2 0 0 0 - confined"
+      "objectFrameBigIntStaticPaths 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntStaticPaths 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntStaticPaths 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntStaticOpaque 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntStaticOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntStaticOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntStaticOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntStaticMixed 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntStaticMixed 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntStaticMixed 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntStaticMixed 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntStaticShift 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntStaticShift 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntStaticShift 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntStaticShift 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntStaticRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntStaticRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntStaticRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntStaticRetained 2 0 2 0 0 temporaries:2 escapes:returned")
+  list(SORT _object_bigint_static_rows)
+  list(SORT _expected_object_bigint_static_rows)
+  if(NOT _object_bigint_static_rows STREQUAL _expected_object_bigint_static_rows)
+    message(FATAL_ERROR "imported static BigInt evidence mismatch:\nexpected: ${_expected_object_bigint_static_rows}\nobserved: ${_object_bigint_static_rows}")
+  endif()
+  message(STATUS "imported static BigInt: twenty-four sites, forty-eight instances, thirty-eight retained; live claims agree")
 endif()
 if(NOT _pyrc EQUAL 0)
   message(FATAL_ERROR "${NAME}: the checker exited ${_pyrc}")
