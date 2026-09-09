@@ -1190,13 +1190,20 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     (binary.getKind() == ctjs::BinaryKind::Add ||
                      binary.getKind() == ctjs::BinaryKind::BitAnd ||
                      binary.getKind() == ctjs::BinaryKind::BitOr ||
-                     binary.getKind() == ctjs::BinaryKind::BitXor)) {
+                     binary.getKind() == ctjs::BinaryKind::BitXor ||
+                     binary.getKind() == ctjs::BinaryKind::Shl ||
+                     binary.getKind() == ctjs::BinaryKind::Shr)) {
                     // These exact bigint_binary arms allocate independent digits
                     // before static Number conversion, with no input alias or
-                    // user conversion. Keep a separate per-path category so a
-                    // later Number-only consumer cannot inherit this opcode's
-                    // usual Number result. Allocation success remains unproved;
-                    // signed/unsigned shifts and mixed operands stay refused.
+                    // user conversion. Signed shifts may instead raise an
+                    // independent RangeError for an oversized left shift,
+                    // including a negative right-shift count. The whole-frame
+                    // exclusion of calls, handlers and publication prevents
+                    // that early exit from retaining unpublished local objects.
+                    // Keep the normal result's separate per-path category; this
+                    // proves neither allocation success nor normal completion
+                    // or no-throw/native effects. Unsigned shifts and mixed
+                    // operands remain refused, even on an observed success.
                     if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                     state.bigIntOrigins.insert(binary.getResult());
                     state.origins[binary.getResult()] = binary.getResult();

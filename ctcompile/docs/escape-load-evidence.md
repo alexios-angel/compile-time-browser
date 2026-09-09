@@ -2157,3 +2157,114 @@ browser/runtime source changed and the child ran no build. Evidence:
 `/tmp/ctcompile-alias-corrected-arrays.log`,
 `/tmp/ctcompile-alias-escape-static-node.js` and
 `/tmp/ctcompile-alias-escape-static-frozen.json`.
+
+## Computed signed BigInt shifts, 2026-09-09
+
+Continues the source-backed signed-shift boundary after **74db2857** and the
+latest **68bcc183** handoff. Static `Shl` and `Shr` now accept two independently
+proved original BigInt operands. Their normal result uses the same separately
+charged per-path BigInt category as other computed origins. Saved own-field
+and array reads preserve that category across overwrite/deletion; each
+structural path keeps its own Number or BigInt category. No exact value,
+constant key, chosen branch or native carrier follows.
+
+The current `binary_op_static` calls `bigint_binary` first. Its signed-shift
+arms produce independent digits without user conversion. Negative counts
+reverse direction; very large right shifts produce `0n` or `-1n` according to
+the input sign. An oversized left shift, including a negative right-shift
+count, instead throws an independent RangeError. The existing whole-frame
+proof rejects calls, handlers and publication: its unpublished fresh locals
+cannot become reachable through that Error. This is retention evidence only,
+not allocation success, normal completion or a no-throw/effect guarantee.
+`make_error` sets primitive message/stack strings and an existing prototype;
+`current_stack` formats source names and offsets. No Error constructor, cause,
+frame value or user conversion is involved, so this path adds no local object
+edge to the Error. Unsigned BigInt shifts, dynamic bitwise/shifts, mixed/opaque operands, static
+Sub/Mul and dynamic Div/Mod/Pow/Concat retain their separate refusals. Existing
+non-BigInt static conversion behavior is unchanged.
+
+Before production changed, all **sixteen** checks in
+`/tmp/ctcompile-escape-bigint-shift-semantics.js` agreed at **trace=65535** in
+Node and the unchanged devbox interpreter. Root's live measurement is
+`/tmp/ctcompile-constant-shift-preprobe.log`. The checks distinguish wide and
+signed results, zero/reversed counts, enormous right shifts, the two oversized
+left-shift forms, mixed and unsigned TypeErrors, saved field/array operands,
+path categories and chained unary/bitwise results. The enormous count is
+9007199254740993n; the VM refuses a left allocation before attempting it.
+This probes actual source static shifts, not an unexecuted raw dynamic form.
+
+The shared raw IR matrix now includes both signed static shift producers.
+Every old row remains, with only independently newly proved shift cases
+changing expectation. Both operands, saved origins, Number-only consumers,
+structural arms, forged markers and stale versus fresh solvers stay separately
+checked. New zero/negative/enormous count rows preserve retention evidence but
+still reject later effects, even when a concrete runtime shift would throw
+first. Count mutations keep categories independently from values. Each wide
+snapshot still requires **128 additional work units** for 32 operations,
+category entries and both snapshot entries. The first devbox arrays test passes
+in **0.41 seconds**. Both shift forms check **119 rows, 47 stale/fresh live
+states and 4592 retention budget cutoffs**, including every incomplete budget
+and exact completion endpoint. The older static BigInt forms now each check
+**109/39/3928**; dynamic Add/Sub/Mul each check **109/41/3908**, and both unary
+forms check **83/15/2374**. The static Number forms retain **31 rows and
+18 states**, with **1316** cutoffs for Add/And/Or/Xor/Shl/Shr and **1283** for
+UShr. BigInt Eq remains **52/30/2448**, each relational kind **60/32/2740**,
+and every original non-BigInt primitive operator row passes.
+
+Six additive source functions exercise saved results, Number/BigInt paths,
+opaque and mixed refusals, an early RangeError and a separately retained child.
+The caller keeps that Error after the callee's unpublished locals die, so the
+recording measures **24 source sites, 47 instances and 35 retained**, plus a
+separate implicit Error object. Its successful and throwing calls are both
+present. The unchanged `objectFrameBigIntStaticShift` child now proves confined. Removing the additive block reproduces every
+historical fixture byte exactly. Local Node verifies all **twelve observations
+and 23 discriminating mutations**, including signed arithmetic, category
+distinctions, overwritten contents and the retained Error's independent
+identity. Stable clang-format **22.1.8** and bundled **23** pass the changed
+C++; JavaScript syntax and whitespace pass.
+
+The first warning-free **ten-step** build passes **7/8 escape CTests in
+8.97 seconds**. The only failure is the new source-row checker demanding a
+compiler literal-allocation claim for that implicit Error. The recording has
+four source allocations at bytecode PCs **5/9/13/33** and one additional
+object at **pc25**, made once and retained through the `thrown` root. The
+location-bearing import independently identifies pc25 as the source static
+`shl`, not a source object allocation. Production and all JavaScript remain
+unchanged by the test correction.
+
+The corrected checker pins the exact Early function body
+(`2a35f86f51344a271fec92b345a6b0b5e748f2295cb454d501cf26e2b79df51c`),
+all four literal PCs and their mandatory claims. Only the separately asserted
+pc25 Error must have no source allocation claim; every other missing claim
+still fails. Missing/duplicate/moved Error records, changed retention/root,
+a forged claim, extra literal/unknown coordinates, removed literal claims or
+coordinates, and a changed source shift each fail. The local CMake check
+against the actual recording passes all historical and new families and
+rejects all **eleven** mutations. It does not replace the complete devbox rerun.
+
+The first run already reports **68 sound claims, zero partial/pending and
+precision 68/103**, compared with the preceding **64/98**. That combines one
+historical improvement and three new proved confined sites; the two Early
+containers each escape in the normal call, so their partly confined instances
+are not new wholly confined sites. The implicit Error remains unclaimed and
+adds no confinement credit. All four execution oracles report **zero
+violations**; corpus precision remains **0/64, 0/16, 0/20**, including p5's
+existing one partial observation.
+
+The corrected no-work rebuild has zero warnings. All **eight escape CTests
+pass in 8.81 seconds**, including arrays in **0.42** and the source fixture in
+**0.28**. The run repeats both shift **119/47/4592** checks, the exact source
+**24/47/35** family and the separately retained pc25 Error. Fixture precision
+remains **68/103**, all four oracles have zero violations, and all historical
+family counts and corpus precision remain unchanged. The full compiler/lit
+gate remains pending; this is a focused escape pass.
+
+The five code/test hashes and evidence document are frozen in
+`/tmp/ctcompile-escape-bigint-shift-frozen.json`; only the source-row checker
+hash changes after the first gate. No browser/runtime source changed, no
+native BigInt admission was added, and the child ran no build. Evidence:
+`/tmp/ctcompile-constant-{focused-build,escape,escape-corrected}.log`,
+`/tmp/ctcompile-constant-escape-fixture.{rec,claims,mlir}`,
+`/tmp/ctcompile-constant-escape-fixture-debug.mlir`,
+`/tmp/ctcompile-escape-bigint-shift-node.js` and
+`/tmp/ctcompile-escape-shift-checker-audit/audit.json`.

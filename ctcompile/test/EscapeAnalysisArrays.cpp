@@ -3107,12 +3107,13 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
                           .failure = ArrayContentsFailure::UnsupportedOperation}},
             {.contents = {.what = "two BigInts need their independent static result category",
                           .body = values + operation + " %big, %big\n" + done,
-                          .failure = kind == ctjs::BinaryKind::Add ||
-                                             kind == ctjs::BinaryKind::BitAnd ||
-                                             kind == ctjs::BinaryKind::BitOr ||
-                                             kind == ctjs::BinaryKind::BitXor
-                                         ? ArrayContentsFailure::None
-                                         : ArrayContentsFailure::UnsupportedOperation,
+                          .failure =
+                              kind == ctjs::BinaryKind::Add || kind == ctjs::BinaryKind::BitAnd ||
+                                      kind == ctjs::BinaryKind::BitOr ||
+                                      kind == ctjs::BinaryKind::BitXor ||
+                                      kind == ctjs::BinaryKind::Shl || kind == ctjs::BinaryKind::Shr
+                                  ? ArrayContentsFailure::None
+                                  : ArrayContentsFailure::UnsupportedOperation,
                           .arrays = "a:[x]",
                           .exit = "zero -> {}"}},
             {.contents = {.what = "a forwarded BigInt arm refuses the complete transaction",
@@ -3295,7 +3296,8 @@ void checkStaticBinaryProducers(mlir::MLIRContext & context) {
             // This shared constant is also the later array index. Exact BigInt
             // arithmetic succeeds independently; it never authorizes that key.
             inspect(kind == ctjs::BinaryKind::Add || kind == ctjs::BinaryKind::BitAnd ||
-                            kind == ctjs::BinaryKind::BitOr || kind == ctjs::BinaryKind::BitXor
+                            kind == ctjs::BinaryKind::BitOr || kind == ctjs::BinaryKind::BitXor ||
+                            kind == ctjs::BinaryKind::Shl || kind == ctjs::BinaryKind::Shr
                         ? ArrayContentsFailure::UnknownIndex
                         : ArrayContentsFailure::UnsupportedOperation);
             constant.setValueAttr(oldValue);
@@ -4100,7 +4102,8 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
                         (form == "binary"
                              ? operation == "add" || operation == "sub" || operation == "mul"
                              : operation == "add" || operation == "bitand" ||
-                                   operation == "bitor" || operation == "bitxor");
+                                   operation == "bitor" || operation == "bitxor" ||
+                                   operation == "shl" || operation == "shr");
                     run({.contents = {
                              .what =
                                  "computed BigInt requires an independent binary category proof",
@@ -4280,7 +4283,8 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
          {binary_kind{ctjs::BinaryKind::Add, false}, binary_kind{ctjs::BinaryKind::Sub, false},
           binary_kind{ctjs::BinaryKind::Mul, false}, binary_kind{ctjs::BinaryKind::Add, true},
           binary_kind{ctjs::BinaryKind::BitAnd, true}, binary_kind{ctjs::BinaryKind::BitOr, true},
-          binary_kind{ctjs::BinaryKind::BitXor, true}}) {
+          binary_kind{ctjs::BinaryKind::BitXor, true}, binary_kind{ctjs::BinaryKind::Shl, true},
+          binary_kind{ctjs::BinaryKind::Shr, true}}) {
         const std::string form = isStatic ? "binary_static" : "binary";
         const std::string spelling = ctjs::stringifyBinaryKind(kind).str();
         const auto binary = [&](const std::string & lhs, const std::string & rhs) {
@@ -4385,7 +4389,7 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                          .arrays = "a:[x]",
                          .exit = "produced -> {}"}});
             }
-            for (const std::string operation : {"add", "bitand", "bitor", "bitxor"}) {
+            for (const std::string operation : {"add", "bitand", "bitor", "bitxor", "shl", "shr"}) {
                 run({.contents = {
                          .what =
                              "static BigInt operands retain their independent original category",
@@ -4435,7 +4439,7 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                     consumerForm == "binary"
                         ? operation == "add" || operation == "sub" || operation == "mul"
                         : operation == "add" || operation == "bitand" || operation == "bitor" ||
-                              operation == "bitxor";
+                              operation == "bitxor" || operation == "shl" || operation == "shr";
                 for (const std::string operands :
                      {"%produced, %zero", "%zero, %produced", "%produced, %rhs"}) {
                     run({.contents = {
@@ -4471,6 +4475,29 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                              operand + "\">\n  %next = ctjs.binary " + operation +
                              " %produced, %exceptional\n" + done,
                      .failure = ArrayContentsFailure::UnsupportedOperation}});
+        }
+        if (isStatic && (kind == ctjs::BinaryKind::Shl || kind == ctjs::BinaryKind::Shr)) {
+            for (const std::string count : {"0", "-2", "9007199254740993", "-9007199254740993"}) {
+                const std::string shifted = values + "  %count = ctjs.constant #ctjs.bigint<\"" +
+                                            count + "\">\n" + binary("%lhs", "%count");
+                run({.contents = {
+                         .what = "signed shift counts supply only normal-result category evidence",
+                         .body = shifted + done,
+                         .arrays = "a:[x]",
+                         .exit = "produced -> {}"}});
+                run({.contents = {
+                         .what = "even throwing shift counts cannot hide later unsupported effects",
+                         .body = shifted + "  ctjs.store_global \"held\", %a\n" + done,
+                         .failure = ArrayContentsFailure::UnsupportedOperation}});
+            }
+            for (const std::string digits : {"-9", "0"}) {
+                run({.contents = {.what =
+                                      "negative and zero shift inputs retain their BigInt category",
+                                  .body = values + "  %input = ctjs.constant #ctjs.bigint<\"" +
+                                          digits + "\">\n" + binary("%input", "%rhs") + done,
+                                  .arrays = "a:[x]",
+                                  .exit = "produced -> {}"}});
+            }
         }
         for (const bool reversed : {false, true}) {
             const std::string big = "%lhs, %rhs : !ctjs.value, !ctjs.value";
@@ -4596,7 +4623,7 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                 constant.setValueAttr(oldValue);
                 inspect(ArrayContentsFailure::None);
             }
-            const std::vector<ctjs::BinaryKind> invalidKinds =
+            const std::vector<ctjs::BinaryKind> otherKinds =
                 isStatic ? std::vector<ctjs::BinaryKind>{ctjs::BinaryKind::Sub,
                                                          ctjs::BinaryKind::Mul,
                                                          ctjs::BinaryKind::Div,
@@ -4629,11 +4656,25 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                     llvm::cast<ctjs::BinaryOp>(producer).setKindAttr(attribute);
                 }
             };
-            for (const auto other : invalidKinds) {
+            for (const auto other : otherKinds) {
                 setKind(other);
-                inspect(ArrayContentsFailure::UnsupportedOperation);
+                inspect(isStatic &&
+                                (other == ctjs::BinaryKind::Shl || other == ctjs::BinaryKind::Shr)
+                            ? ArrayContentsFailure::None
+                            : ArrayContentsFailure::UnsupportedOperation);
                 setKind(kind);
                 inspect(ArrayContentsFailure::None);
+            }
+            if (isStatic && (kind == ctjs::BinaryKind::Shl || kind == ctjs::BinaryKind::Shr)) {
+                auto count = producer->getOperand(1).getDefiningOp<ctjs::ConstantOp>();
+                const auto original = count.getValue();
+                for (const std::string digits :
+                     {"0", "-2", "9007199254740993", "-9007199254740993"}) {
+                    count.setValueAttr(ctjs::BigIntAttr::get(&context, digits));
+                    inspect(ArrayContentsFailure::None);
+                    count.setValueAttr(original);
+                    inspect(ArrayContentsFailure::None);
+                }
             }
             auto store = llvm::cast<ctjs::SetPropertyOp>(&function.getBody().back().front());
             const mlir::Value replacement = store.getValue();

@@ -460,11 +460,15 @@ struct ArrayContentsEvidence {
 /// with no key/value inference. TypeOf's VM String allocation carries no input
 /// object; this query proves neither absence of allocation nor its success.
 /// The seven static binary kinds yield Number only after both exact origins
-/// exclude BigInt. Static Add/BitAnd/BitOr/BitXor separately accept two independently
-/// proved BigInt origins and record an independent BigInt result in the charged
-/// per-path category set. Their exact digit operations invoke no user conversion;
-/// allocation success is unproved. Mixed/opaque inputs and all BigInt shifts
-/// still refuse. Non-BigInt static conversion never
+/// exclude BigInt. Static Add/BitAnd/BitOr/BitXor/Shl/Shr separately accept two
+/// independently proved BigInt origins and record the normal independent BigInt
+/// result in the charged per-path category set. Exact digit operations invoke no
+/// user conversion. Signed shifts can throw an independent RangeError for an
+/// oversized left shift, including a negative right-shift count. The whole-frame
+/// exclusion of calls, handlers and publication prevents that exit from retaining
+/// unpublished local objects; normal completion, no-throw/effects and allocation
+/// success remain unproved. Mixed/opaque inputs and unsigned BigInt shifts still
+/// refuse. Non-BigInt static conversion never
 /// invokes user code, including on a fresh object (a documented VM deviation
 /// from source JS). Results infer no Number value, index or branch liveness.
 /// String conversion can allocate C++ temporaries; absence of allocation and
@@ -514,8 +518,8 @@ struct ArrayContentsEvidence {
 /// preserving their independent result category in the same charged per-path
 /// set as Neg/BitNot. Saved reads and chained results retain that category;
 /// neither operand supplies authority for the other. Add's depth guard has the
-/// same retention-only early-exit argument. Static BigInt shifts, dynamic
-/// Div/Mod/Pow/Concat, mixed and object/opaque inputs remain outside this bounded
+/// same retention-only early-exit argument. Static unsigned shifts, dynamic
+/// Div/Mod/Pow/Concat/bitwise/shifts, mixed and object/opaque inputs remain outside this bounded
 /// BigInt proof. No allocation-success, normal-completion or native effect
 /// guarantee follows.
 /// Joins keep exact separate states rather than unioning overwrite targets. Truthy

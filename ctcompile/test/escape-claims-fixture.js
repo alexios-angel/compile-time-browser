@@ -1141,6 +1141,92 @@ function objectFrameBigIntStaticRetained(choice) {
 H.push(objectFrameBigIntStaticRetained(false));
 H.push(objectFrameBigIntStaticRetained(true));
 
+// --- INDEPENDENT SIGNED BIGINT SHIFT CATEGORIES -----------------------------
+// Saved operands keep their original category after own fields are overwritten.
+function objectFrameBigIntShiftSaved(choice) {
+    var child = { id: 1 };
+    var source = { held: child, left: choice ? -9n : 9007199254740993n, count: 2n };
+    var target = { ...source }, left = target.left, count = source.count;
+    target.left = 1; source.count = 0;
+    delete source.left; delete target.left;
+    delete source.count; delete target.count;
+    var expanded = left << count, reduced = left >> count;
+    var reverseLeft = left << -count, reverseRight = left >> -count;
+    var recovered = expanded >> count, far = left >> 9007199254740993n;
+    var equal = recovered == left;
+    delete source.held; delete target.held;
+    return { source: source, target: target, expanded: expanded, reduced: reduced,
+             reverseLeft: reverseLeft, reverseRight: reverseRight, recovered: recovered,
+             far: far, equal: equal };
+}
+H.push(objectFrameBigIntShiftSaved(false));
+H.push(objectFrameBigIntShiftSaved(true));
+
+// A shared shift producer separately records its Number and BigInt paths.
+function objectFrameBigIntShiftPaths(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var operand = choice ? 1n : 2;
+    var expanded = operand << operand, reduced = operand >> operand;
+    delete source.held; delete target.held;
+    return { source: source, target: target, expanded: expanded, reduced: reduced };
+}
+H.push(objectFrameBigIntShiftPaths(false));
+H.push(objectFrameBigIntShiftPaths(true));
+
+// Observed BigInt actuals cannot prove an opaque future operand's category.
+function objectFrameBigIntShiftOpaque(operand) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var expanded = operand << 1n, reduced = operand >> 1n;
+    delete source.held; delete target.held;
+    return { source: source, target: target, expanded: expanded, reduced: reduced };
+}
+H.push(objectFrameBigIntShiftOpaque(1n));
+H.push(objectFrameBigIntShiftOpaque(2n));
+
+// The BigInt result still cannot authorize a mixed-category comparison.
+function objectFrameBigIntShiftMixed(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var operand = choice ? 1n : 2n, expanded = operand << 1n, reduced = operand >> 1n;
+    var equal = expanded == 2, smaller = reduced < 2;
+    delete source.held; delete target.held;
+    return { source: source, target: target, expanded: expanded, reduced: reduced,
+             equal: equal, smaller: smaller };
+}
+H.push(objectFrameBigIntShiftMixed(false));
+H.push(objectFrameBigIntShiftMixed(true));
+
+// An oversized left shift throws an independent Error before this return.
+// The caller keeps that Error, while this frame's unpublished locals die.
+function objectFrameBigIntShiftEarly(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var count = choice ? 9007199254740993n : 1n, expanded = 1n << count;
+    delete source.held; delete target.held;
+    return { source: source, target: target, expanded: expanded };
+}
+H.push(objectFrameBigIntShiftEarly(false));
+function objectFrameBigIntShiftCatch() {
+    try { H.push(objectFrameBigIntShiftEarly(true)); }
+    catch (error) { H.push(error); }
+}
+objectFrameBigIntShiftCatch();
+
+// A separately retained object edge remains live across both shift results.
+function objectFrameBigIntShiftRetained(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source }, saved = target.held;
+    var operand = choice ? 1n : 2n;
+    var expanded = operand << 1n, reduced = operand >> 1n;
+    delete source.held; delete target.held;
+    return { source: source, target: target, saved: saved,
+             expanded: expanded, reduced: reduced };
+}
+H.push(objectFrameBigIntShiftRetained(false));
+H.push(objectFrameBigIntShiftRetained(true));
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());

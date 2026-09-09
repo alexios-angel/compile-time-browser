@@ -211,6 +211,18 @@ if(STRICT)
   set(_object_bigint_unary_rows "")
   set(_object_bigint_binary_rows "")
   set(_object_bigint_static_rows "")
+  set(_object_bigint_shift_rows "")
+  set(_object_bigint_shift_error_rows "")
+  set(_object_bigint_shift_literal_pcs "")
+  # This source-backed RangeError is allocated by the VM at the signed shift,
+  # not by a source object literal. Pin the exact body and measured bytecode pc
+  # independently from every literal site's mandatory compiler claim below.
+  file(READ "${_corpus}" _fixture_source)
+  string(REGEX MATCH "function objectFrameBigIntShiftEarly\\(choice\\) \\{[^\n]*\n(    [^\n]*\n)*\\}" _shift_error_source "${_fixture_source}")
+  string(SHA256 _shift_error_hash "${_shift_error_source}")
+  if(NOT _shift_error_hash STREQUAL "2a35f86f51344a271fec92b345a6b0b5e748f2295cb454d501cf26e2b79df51c")
+    message(FATAL_ERROR "the signed-shift exception source changed; remeasure its bytecode coordinate before updating this case")
+  endif()
   foreach(_line IN LISTS _recording_lines)
     if(_line MATCHES "^program ([0-9a-f]+) ")
       set(_program_hash "${CMAKE_MATCH_1}")
@@ -420,6 +432,31 @@ if(STRICT)
         message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
       endif()
       list(APPEND _object_bigint_static_rows "${_row} ${CMAKE_MATCH_1}")
+    elseif(_function_name STREQUAL "objectFrameBigIntShiftEarly" AND _line MATCHES "^alloc ")
+      if(NOT _line MATCHES "^alloc ([0-9]+) kind obj$")
+        message(FATAL_ERROR "unexpected signed-shift literal allocation: ${_line}")
+      endif()
+      list(APPEND _object_bigint_shift_literal_pcs "${CMAKE_MATCH_1}")
+    elseif(_function_name MATCHES "^objectFrameBigIntShift(Saved|Paths|Opaque|Mixed|Early|Retained)$" AND _line MATCHES "^site ")
+      if(NOT _line MATCHES "^site ([0-9]+) kind obj made ([0-9]+) confined ([0-9]+) escaped ([0-9]+) unresolved ([0-9]+) unchecked ([0-9]+) routes ([^ ]+)$")
+        message(FATAL_ERROR "${_function_name}: unexpected signed BigInt shift observation: ${_line}")
+      endif()
+      set(_pc "${CMAKE_MATCH_1}")
+      set(_row "${_function_name} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3} ${CMAKE_MATCH_4} ${CMAKE_MATCH_5} ${CMAKE_MATCH_6} ${CMAKE_MATCH_7}")
+      if(_function_name STREQUAL "objectFrameBigIntShiftEarly" AND _pc STREQUAL "25")
+        if(NOT _line STREQUAL "site 25 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes thrown:1")
+          message(FATAL_ERROR "the signed shift's independent Error was not retained through unwinding: ${_line}")
+        endif()
+        if(_claim_text MATCHES "escape ${_program_hash} ${_function_index} 25 [^\n]+")
+          message(FATAL_ERROR "the implicit signed-shift Error acquired a source allocation claim")
+        endif()
+        list(APPEND _object_bigint_shift_error_rows "${_row} pc25 unclaimed")
+      else()
+        if(NOT _claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_pc} obj ([^\n]+)")
+          message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
+        endif()
+        list(APPEND _object_bigint_shift_rows "${_row} ${CMAKE_MATCH_1}")
+      endif()
     endif()
   endforeach()
   set(_expected_publication_rows
@@ -933,7 +970,7 @@ if(STRICT)
       "objectFrameBigIntStaticMixed 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntStaticMixed 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntStaticMixed 2 0 2 0 0 temporaries:2 escapes:returned"
-      "objectFrameBigIntStaticShift 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntStaticShift 2 2 0 0 0 - confined"
       "objectFrameBigIntStaticShift 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntStaticShift 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntStaticShift 2 0 2 0 0 temporaries:2 escapes:returned"
@@ -947,6 +984,46 @@ if(STRICT)
     message(FATAL_ERROR "imported static BigInt evidence mismatch:\nexpected: ${_expected_object_bigint_static_rows}\nobserved: ${_object_bigint_static_rows}")
   endif()
   message(STATUS "imported static BigInt: twenty-four sites, forty-eight instances, thirty-eight retained; live claims agree")
+
+  if(NOT _object_bigint_shift_literal_pcs STREQUAL "5;9;13;33")
+    message(FATAL_ERROR "the signed-shift literal coordinates changed or included its implicit Error: ${_object_bigint_shift_literal_pcs}")
+  endif()
+  if(NOT _object_bigint_shift_error_rows STREQUAL "objectFrameBigIntShiftEarly 1 0 1 0 0 thrown:1 pc25 unclaimed")
+    message(FATAL_ERROR "missing or duplicate independent signed-shift exception evidence: ${_object_bigint_shift_error_rows}")
+  endif()
+  message(STATUS "imported signed-shift Error: exact source pc25, one implicit object retained through unwinding, no source allocation claim")
+
+  set(_expected_object_bigint_shift_rows
+      "objectFrameBigIntShiftSaved 2 2 0 0 0 - confined"
+      "objectFrameBigIntShiftSaved 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntShiftSaved 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntShiftSaved 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntShiftPaths 2 2 0 0 0 - confined"
+      "objectFrameBigIntShiftPaths 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntShiftPaths 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntShiftPaths 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntShiftOpaque 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntShiftOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntShiftOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntShiftOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntShiftMixed 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntShiftMixed 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntShiftMixed 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntShiftMixed 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntShiftEarly 2 2 0 0 0 - confined"
+      "objectFrameBigIntShiftEarly 2 1 1 0 0 temporaries:1 escapes:stored"
+      "objectFrameBigIntShiftEarly 2 1 1 0 0 temporaries:1 escapes:stored"
+      "objectFrameBigIntShiftEarly 1 0 1 0 0 temporaries:1 escapes:returned"
+      "objectFrameBigIntShiftRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntShiftRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntShiftRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntShiftRetained 2 0 2 0 0 temporaries:2 escapes:returned")
+  list(SORT _object_bigint_shift_rows)
+  list(SORT _expected_object_bigint_shift_rows)
+  if(NOT _object_bigint_shift_rows STREQUAL _expected_object_bigint_shift_rows)
+    message(FATAL_ERROR "imported signed BigInt shift evidence mismatch:\nexpected: ${_expected_object_bigint_shift_rows}\nobserved: ${_object_bigint_shift_rows}")
+  endif()
+  message(STATUS "imported signed BigInt shifts: twenty-four sites, forty-seven instances, thirty-five retained; live claims agree")
 endif()
 if(NOT _pyrc EQUAL 0)
   message(FATAL_ERROR "${NAME}: the checker exited ${_pyrc}")
