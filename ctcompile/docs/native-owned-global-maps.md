@@ -27,9 +27,15 @@ were stale; **7dc796b7/48885ae1** preserve their exact sources and gate native
 method/Map results at **3/3 and 4/4** with Boolean output. Focused executions
 and all **197** refusal-census cases pass, preserving the **173** historical
 classifications. The initial Map test executed **283 programs/36 lifetimes**
-before the stale guard. The corrected **284-program/36-lifetime** full lit rerun
-is pending. Corpus coverage remains **19/574, 39/4754, 45/7725** in both modes,
-zero pruned; exact Bootstrap Data stays **0/7, 0/7, 0/8**.
+before the stale guard. The corrected full lit rerun passes **165/165 in
+1040.72 seconds** (CTest **1040.78**), including all **284 programs/36 lifetimes**.
+All **28** final code/test hashes match local files, committed HEAD, the frozen
+inputs and devbox sources. Across the initial full run and corrected rerun,
+all **372 compiler CTests** and **512/517 total** have passing results; this is
+not a second full 517-test run. Only the five established browser failures
+remain. Corpus coverage stays **19/574, 39/4754, 45/7725** in both modes, zero
+pruned; exact Bootstrap Data stays **0/7, 0/7, 0/8**. Final evidence is
+`/tmp/ctcompile-boolean-gate-final-evidence.json`.
 
 Next are owning String globals: unchanged **3a99e34c/f0a03c19** copy/literal
 sources remain **0/5**, respectively at live scalar-read/Map identity and

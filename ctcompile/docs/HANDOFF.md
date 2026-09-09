@@ -60,10 +60,15 @@ GCC/Clang executions pass. The method test passes in **20.95 seconds**; a
 **197-case** census preserves all **173** historical refusal classifications.
 The initial Map run completed all **283 programs/36 lifetime families** before
 its stale refusal check. The corrected inventory is **284 programs/36 families**.
-No production code changed during these test repairs. A complete **165-case lit
-rerun is pending**, with **28** final code/test inputs frozen and committed.
+No production code changed during these test repairs. The complete corrected
+lit rerun passes **165/165 in 1040.72 seconds** (CTest **1040.78**), including
+all **284 programs/36 lifetime families** and the ten method-table programs.
+All **28** final code/test hashes match local files, committed HEAD, frozen
+inputs and devbox sources.
 
-All other **371 compiler CTests** pass. The five established browser failures
+Across the initial full run and corrected lit rerun, **all 372 compiler CTests**
+and **512/517 total CTests** have passing results. This is not a second full
+517-test run. The five established browser failures
 are `selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`.
 Fresh native coverage remains Bootstrap **19/574**, p5 **39/4754**, Phaser
 **45/7725** in both modes, with zero pruned. Exact Bootstrap Data remains
@@ -79,10 +84,14 @@ must remain distinct; actual optional/mixed/boxed lattices remain authoritative.
 String leaf fields, exact zero after clear, full Bootstrap initialization and
 direct browser API integration remain open. See `bootstrap-provider-next.md`.
 
-Evidence: `/tmp/ctcompile-boolean-gate-{focused,execution}.log`,
+Evidence: `/tmp/ctcompile-boolean-gate-{focused,execution,full,full-detail}.log`,
+`/tmp/ctcompile-boolean-corrected-lit.log`,
+`/tmp/ctcompile-boolean-gate-{initial,final}-evidence.json`,
+`/tmp/ctcompile-boolean-gate-final-inventory.json`,
 `/tmp/ctcompile-boolean-completion-census.json`,
 `/tmp/ctcompile-boolean-execution-completed-frozen.json` and
-`/tmp/ctcompile-boolean-gate-source-hashes.json`.
+`/tmp/ctcompile-boolean-corrected-source-hashes.json`. The initial 27-input
+manifest and failed full-run evidence remain separate from the corrected gate.
 
 ## Constant-only Number globals and signed BigInt shifts, 2026-09-09
 
