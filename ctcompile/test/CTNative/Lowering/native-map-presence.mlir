@@ -41,6 +41,27 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_same_schema_distinct_instance.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_selected_nonzero_arm.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
 
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_exact_snapshot.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EXACT --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_duplicate_literal_key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EXACT --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_saved_before_growth.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EXACT --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_both_same_key_arms.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EXACT --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_selected_snapshot.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EXACT --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_fluent_alias.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EXACT --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_two_exact_keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EXACT --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_two_selected_snapshot.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EXACT --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_before_insertion.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_after_second_insertion.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_startup_lower_bound.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_conditional_second_key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_different_singleton_arms.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_selected_two_arm.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_fluent_clear_invalidates.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_same_schema_distinct_instance.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/one_unknown_key_equality.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+
+// EXACT: emitc.func
+// EXACT: call_opaque "ctnative::map_get_present"
+
 // ZERO: emitc.func
 // ZERO: call_opaque "ctnative::map_get_present"
 
@@ -606,3 +627,254 @@ function probe(flag) {
     return outer.get(0).size;
 }
 var result = probe(true);
+
+//--- one_exact_snapshot.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- one_duplicate_literal_key.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(1, inner);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- one_saved_before_growth.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    const saved = outer.size;
+    outer.set(2, inner);
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- one_both_same_key_arms.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    if (flag) { outer.set(1, inner); }
+    else { outer.set(1, inner); outer.set(1, inner); }
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- one_selected_snapshot.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    const saved = flag ? outer.size : 1;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- one_fluent_alias.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    const alias = outer.set(1, inner);
+    const saved = alias.size;
+    alias.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- one_two_exact_keys.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(2).size;
+}
+var result = probe(true);
+
+//--- one_two_selected_snapshot.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    const saved = flag ? outer.size : 2;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(2).size;
+}
+var result = probe(true);
+
+//--- one_before_insertion.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    const saved = outer.size;
+    outer.set(1, inner);
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- one_after_second_insertion.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    outer.set(2, inner);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- one_startup_lower_bound.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.set(1, inner);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- one_conditional_second_key.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    if (flag) { outer.set(2, inner); }
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- one_different_singleton_arms.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    if (flag) { outer.set(1, inner); } else { outer.set(3, inner); }
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- one_selected_two_arm.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    const saved = flag ? outer.size : 2;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- one_fluent_clear_invalidates.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    const saved = outer.size;
+    outer.clear();
+    const alias = outer.set(saved, inner);
+    alias.clear();
+    return outer.get(1).size;
+}
+var result = probe(true);
+
+//--- one_same_schema_distinct_instance.js
+function identity(map) { return map; }
+function probe(flag) {
+    const first = new Map();
+    const second = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    identity(first);
+    identity(second);
+    first.clear();
+    first.set(1, inner);
+    second.set(2, inner);
+    const saved = second.size;
+    second.clear();
+    second.set(saved, inner);
+    return second.get(1).size;
+}
+var result = probe(true);
+
+//--- one_unknown_key_equality.js
+function probe(left, right) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(left, inner);
+    outer.set(right, inner);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(2).size;
+}
+var result = probe("x", "y");

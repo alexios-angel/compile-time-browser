@@ -1,8 +1,10 @@
 #pragma once
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "llvm/ADT/bit.h"
 
 #include <cmath>
+#include <cstdint>
 #include <optional>
 
 namespace ctcompile::ctnative {
@@ -18,22 +20,28 @@ struct PrimitiveMapKeyEvidence {
     // Derived at the actual size read from definite presence in that runtime
     // instance. It describes the immutable numeric snapshot, not later contents.
     unsigned sizeLowerBound = 0;
-    // An independent exact-empty proof at this size read. A zero lower bound
-    // alone means unknown and must never manufacture this fact.
-    bool sizeIsZero = false;
+    // The complete possible-key upper bound also agrees at this read. A
+    // positive lower bound alone never establishes an exact cardinality.
+    std::optional<unsigned> exactSize;
 };
-
-inline bool isPrimitiveMapZero(mlir::Value value, PrimitiveMapKeyEvidence evidence = {}) {
-    if (auto constant = value.getDefiningOp<ctjs::ConstantOp>()) {
-        auto number = llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue());
-        return number && number.getDouble() == 0;
-    }
-    return evidence.sizeIsZero;
-}
 
 // A deterministic subset is sufficient for a lower bound. Limit candidates,
 // not just accepted witnesses, so possibly aliasing keys also bound the work.
 inline constexpr unsigned kMaxPrimitiveMapSizeCandidates = 64;
+
+inline std::optional<unsigned> primitiveMapSize(mlir::Value value,
+                                                PrimitiveMapKeyEvidence evidence = {}) {
+    if (auto constant = value.getDefiningOp<ctjs::ConstantOp>()) {
+        auto number = llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue());
+        if (!number) { return std::nullopt; }
+        const double size = number.getDouble();
+        if (size >= 0 && size <= kMaxPrimitiveMapSizeCandidates && std::trunc(size) == size) {
+            return static_cast<unsigned>(size);
+        }
+        return std::nullopt;
+    }
+    return evidence.exactSize;
+}
 
 // Only live literal/SSA identity and independently proved facts are evidence.
 // Different SSA names alone never prove different runtime keys.
@@ -52,8 +60,15 @@ inline PrimitiveMapKeyRelation comparePrimitiveMapKeys(mlir::Value left, mlir::V
         return constant.getValue();
     };
     auto lhs = literal(left), rhs = literal(right);
-    if (!lhs && leftEvidence.sizeIsZero) { lhs = ctjs::NumberAttr::get(left.getContext(), 0.0); }
-    if (!rhs && rightEvidence.sizeIsZero) { rhs = ctjs::NumberAttr::get(right.getContext(), 0.0); }
+    if (!lhs && leftEvidence.exactSize) {
+        lhs = ctjs::NumberAttr::get(left.getContext(), llvm::bit_cast<uint64_t>(static_cast<double>(
+                                                           *leftEvidence.exactSize)));
+    }
+    if (!rhs && rightEvidence.exactSize) {
+        rhs = ctjs::NumberAttr::get(
+            right.getContext(),
+            llvm::bit_cast<uint64_t>(static_cast<double>(*rightEvidence.exactSize)));
+    }
     auto leftTag = leftEvidence.tag, rightTag = rightEvidence.tag;
     if (lhs) { leftTag = lhs.getTypeID(); }
     if (rhs) { rightTag = rhs.getTypeID(); }

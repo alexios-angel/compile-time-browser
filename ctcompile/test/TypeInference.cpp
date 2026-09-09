@@ -1014,6 +1014,251 @@ void checkMapZeroSizePresence(mlir::MLIRContext & context) {
                 rows.size() * 2);
 }
 
+void checkMapExactSizePresence(mlir::MLIRContext & context) {
+    using namespace ctcompile;
+    const std::string prelude = R"mlir(
+  %one = ctjs.constant #ctjs.number<4607182418800017408>
+  %anotherOne = ctjs.constant #ctjs.number<4607182418800017408>
+  %two = ctjs.constant #ctjs.number<4611686018427387904>
+  %three = ctjs.constant #ctjs.number<4613937818241073152>
+  %zero = ctjs.constant #ctjs.number<0>
+  %negativeZero = ctjs.constant #ctjs.number<9223372036854775808>
+  %nan = ctjs.constant #ctjs.number<9221120237041090560>
+  %anotherNan = ctjs.constant #ctjs.number<9221120237041090561>
+  %false = ctjs.constant #ctjs.boolean<false>
+  %stringOne = ctjs.constant #ctjs.string<"1">
+  %setName = ctjs.constant #ctjs.string<"set">
+  %getName = ctjs.constant #ctjs.string<"get">
+  %clearName = ctjs.constant #ctjs.string<"clear">
+  %sizeName = ctjs.constant #ctjs.string<"size">
+  %constructor = ctjs.load_global "Map"
+  %map = ctjs.construct %constructor(%constructor)
+  %setter = ctjs.get_property %map[%setName]
+  %getter = ctjs.get_property %map[%getName]
+  %clearer = ctjs.get_property %map[%clearName]
+)mlir";
+    const std::string clear = "  %cleared = ctjs.call %clearer(%map) {mutate_clear}\n";
+    const std::string seed = "  %seeded = ctjs.call %setter(%map, %one, %one) {seed}\n";
+    const std::string extra = "  %extra = ctjs.call %setter(%map, %two, %one) {extra}\n";
+    const std::string size = "  %saved = ctjs.get_property %map[%sizeName] {snapshot}\n";
+    const std::string reset = "  %reset = ctjs.call %clearer(%map) {reset}\n";
+    const std::string store = "  %stored = ctjs.call %setter(%map, %saved, %one) {mutate_store}\n";
+    const std::string read = "  %observed = ctjs.call %getter(%map, %one) {check}\n";
+    const auto replace = [](std::string text, llvm::StringRef from, llvm::StringRef to) {
+        const auto position = text.find(from.str());
+        if (position == std::string::npos) {
+            std::printf("FAIL exact-size fixture replacement did not match\n");
+            ++failures;
+            return text;
+        }
+        text.replace(position, from.size(), to.str());
+        return text;
+    };
+    const std::string both = "  %bit = ctjs.truthy %p\n  scf.if %bit {\n" + seed +
+                             "  } else {\n    %right = ctjs.call %setter(%map, %anotherOne, %one)\n"
+                             "    %again = ctjs.call %setter(%map, %one, %one)\n  }\n";
+    const std::string selected = "  %bit = ctjs.truthy %p\n"
+                                 "  %saved = scf.if %bit -> (!ctjs.value) {\n"
+                                 "    %left = ctjs.get_property %map[%sizeName]\n"
+                                 "    scf.yield %left : !ctjs.value\n"
+                                 "  } else {\n    scf.yield %anotherOne : !ctjs.value\n  }\n";
+    const auto suffix = reset + store + read;
+    struct presenceRow {
+        const char * what;
+        std::string body;
+        bool present;
+    };
+    const std::vector<presenceRow> rows = {
+        {"a size saved after clear and one insertion is exactly one", clear + seed + size + suffix,
+         true},
+        {"a literal repair keeps the evaluated size read",
+         clear + seed + replace(size, "%saved", "%evaluated") +
+             "  %saved = ctjs.constant #ctjs.number<4607182418800017408>\n" + suffix,
+         true},
+        {"different SSA literals for one equal key count once",
+         clear + seed + replace(extra, "%two", "%anotherOne") + size + suffix, true},
+        {"a saved one survives later growth and clearing", clear + seed + size + extra + suffix,
+         true},
+        {"two distinct complete keys give exactly two",
+         clear + seed + extra + size + reset + store + replace(read, "%one", "%two"), true},
+        {"two entries do not retain the earlier exact one", clear + seed + extra + size + suffix,
+         false},
+        {"an earlier size read cannot learn from a later insertion", clear + size + seed + suffix,
+         false},
+        {"a later clear cannot establish the earlier exact size", size + clear + seed + suffix,
+         false},
+        {"uncleared initial contents do not follow from a positive lower bound",
+         seed + size + suffix, false},
+        {"positive and negative zero count as one SameValueZero key",
+         clear + replace(seed, "%one, %one", "%zero, %one") +
+             replace(extra, "%two", "%negativeZero") + size + suffix,
+         true},
+        {"different NaN bit patterns count as one SameValueZero key",
+         clear + replace(seed, "%one, %one", "%nan, %one") + replace(extra, "%two", "%anotherNan") +
+             size + suffix,
+         true},
+        {"Boolean false and numeric zero remain distinct keys",
+         clear + replace(seed, "%one, %one", "%zero, %one") + replace(extra, "%two", "%false") +
+             size + reset + store + replace(read, "%one", "%two"),
+         true},
+        {"String one and Number one remain distinct keys",
+         clear + seed + replace(extra, "%two", "%stringOne") + size + reset + store +
+             replace(read, "%one", "%two"),
+         true},
+        {"every structural arm leaves the same exact one key", clear + both + size + suffix, true},
+        {"one empty structural arm prevents exact one",
+         clear + "  %bit = ctjs.truthy %p\n  scf.if %bit {\n" + seed + "  }\n" + size + suffix,
+         false},
+        {"a conditional second key invalidates the complete cardinality join",
+         clear + seed + "  %bit = ctjs.truthy %p\n  scf.if %bit {\n" + extra + "  }\n" + size +
+             suffix,
+         false},
+        {"different singleton keys do not borrow an intersected exact-one proof",
+         clear +
+             replace(replace(both, "%anotherOne", "%three"),
+                     "    %again = ctjs.call %setter(%map, %one, %one)\n", "") +
+             size + suffix,
+         false},
+        {"selected size and literal arms independently establish one",
+         clear + seed + selected + suffix, true},
+        {"one selected two arm cannot inherit the other arm's exact one",
+         clear + seed + replace(selected, "scf.yield %anotherOne", "scf.yield %two") + suffix,
+         false},
+        {"a fluent set alias denotes the exact Map whose size is read",
+         clear + seed + replace(size, "%map", "%seeded") + suffix, true},
+        {"a live clear through a fluent alias removes later membership",
+         clear + seed + size + reset + store +
+             "  %aliasClearer = ctjs.get_property %stored[%clearName]\n"
+             "  %aliasClear = ctjs.call %aliasClearer(%stored)\n" +
+             read,
+         false},
+        {"a known saved two used as a key joins its literal counterpart",
+         clear + seed + extra + size + reset + store +
+             "  %later = ctjs.get_property %map[%sizeName]\n" + replace(read, "%one", "%two"),
+         true},
+    };
+    const auto marked = [](mlir::ModuleOp module, llvm::StringRef name) {
+        mlir::Operation * result = nullptr;
+        module.walk([&](mlir::Operation * op) {
+            if (op->hasAttr(name)) { result = op; }
+        });
+        return result;
+    };
+    const auto verify = [&](mlir::ModuleOp module, const char * what, bool expected,
+                            bool mixed = true) {
+        for (bool clone : {false, true}) {
+            mlir::OwningOpRef<mlir::ModuleOp> fresh;
+            auto current = module;
+            if (clone) {
+                fresh = mlir::OwningOpRef<mlir::ModuleOp>{module.clone()};
+                current = *fresh;
+            }
+            mlir::Builder attrs(&context);
+            current.walk([&](mlir::Operation * op) {
+                op->setAttr("ctnative.map_exact_size", attrs.getI32IntegerAttr(1));
+                if (op->hasAttr("check")) {
+                    op->setAttr(ctnative::kNativeMapPresent, attrs.getUnitAttr());
+                    op->setAttr(ctnative::kNativeMapReadType, attrs.getStringAttr("number"));
+                }
+            });
+            std::vector<mlir::Operation *> before;
+            std::vector<std::vector<mlir::Value>> operands;
+            current.walk([&](mlir::Operation * op) {
+                before.push_back(op);
+                operands.emplace_back(op->operand_begin(), op->operand_end());
+            });
+            ctnative::prepareNativeMaps(current);
+            auto * observed = marked(current, "check");
+            if (!observed || ctnative::nativeMapAction(observed) != "get" ||
+                observed->hasAttr(ctnative::kNativeMapPresent) != expected) {
+                std::printf("FAIL %s: %s exact-size membership differs from %d\n", what,
+                            clone ? "fresh" : "reused", static_cast<int>(expected));
+                ++failures;
+            }
+            std::vector<mlir::Operation *> after;
+            current.walk([&](mlir::Operation * op) { after.push_back(op); });
+            bool intact = before == after;
+            for (size_t index = 0; intact && index < before.size(); ++index) {
+                intact &= llvm::equal(before[index]->getOperands(), operands[index]);
+            }
+            if (!intact) {
+                std::printf("FAIL %s: exact-size preparation changed executable source\n", what);
+                ++failures;
+            }
+            check(current, what,
+                  !mixed ? "!ctnative.opt<!ctnative.num<i32>>"
+                  : expected
+                      ? "!ctnative.num<f64>"
+                      : "!ctnative.opt<!ctnative.variant<!ctnative.bool, !ctnative.num<i32>>>");
+        }
+    };
+    const std::string mixedSuffix = "  %booleanWrite = ctjs.call %setter(%map, %three, %false)\n";
+    for (const presenceRow & r : rows) {
+        for (bool mixed : {false, true}) {
+            auto module = mlir::parseSourceString<mlir::ModuleOp>(
+                prologue() + prelude + r.body + (mixed ? mixedSuffix : "") +
+                    "  ctjs.return %observed\n}\n",
+                &context);
+            if (!module) {
+                std::printf("FAIL %s: exact-size presence fixture did not parse\n", r.what);
+                ++failures;
+                continue;
+            }
+            // A homogeneous local Number read retains its optional public
+            // type; the later mixed store independently requests presence.
+            verify(*module, r.what, mixed && r.present, mixed);
+        }
+    }
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(prologue() + prelude + clear + seed +
+                                                              size + extra + suffix + mixedSuffix +
+                                                              "  ctjs.return %observed\n}\n",
+                                                          &context);
+    if (!module) {
+        std::printf("FAIL live exact-size presence fixture did not parse\n");
+        ++failures;
+        return;
+    }
+    auto * snapshot = marked(*module, "snapshot");
+    auto * seeded = marked(*module, "seed");
+    auto * growth = marked(*module, "extra");
+    auto * resetting = marked(*module, "reset");
+    auto * storing = marked(*module, "mutate_store");
+    auto * observed = marked(*module, "check");
+    if (!snapshot || !seeded || !growth || !resetting || !storing || !observed) {
+        std::printf("FAIL live exact-size presence fixture lost its marked operations\n");
+        ++failures;
+        return;
+    }
+    verify(*module, "current saved one before growth", true);
+    snapshot->moveAfter(growth);
+    verify(*module, "moving the read after growth yields two rather than one", false);
+    snapshot->moveBefore(growth);
+    verify(*module, "restoring the read before growth recovers exact one", true);
+    snapshot->moveBefore(seeded);
+    verify(*module, "moving the read before the first insertion yields zero", false);
+    snapshot->moveAfter(seeded);
+    verify(*module, "restoring the first insertion before size recovers one", true);
+    resetting->moveAfter(storing);
+    verify(*module, "a live later clear removes the saved-key membership", false);
+    resetting->moveBefore(storing);
+    verify(*module, "restoring clear before the store recovers membership", true);
+    const auto saved = storing->getOperand(2);
+    const auto two = growth->getOperand(2);
+    storing->setOperand(2, two);
+    verify(*module, "a changed live store key cannot inherit snapshot equality", false);
+    storing->setOperand(2, saved);
+    verify(*module, "restoring the saved store key recovers its independently proved equality",
+           true);
+    const auto one = observed->getOperand(2);
+    observed->setOperand(2, two);
+    verify(*module, "a changed live read key cannot borrow saved-one membership", false);
+    observed->setOperand(2, one);
+    verify(*module, "restoring the read key recovers exact-one membership", true);
+    std::printf("exact-size Map presence: %zu source/mixed rows and ten live edits, reused/fresh "
+                "modules\n",
+                rows.size() * 2);
+}
+
 void checkStaleFieldEffects(mlir::MLIRContext & context) {
     const auto checkBoth = [&](mlir::ModuleOp module, const char * what, bool assigned) {
         const char * expected =
@@ -2586,6 +2831,7 @@ int main() {
     checkIdentityFieldRows(context);
     checkIdentityMapFieldRows(context);
     checkMapZeroSizePresence(context);
+    checkMapExactSizePresence(context);
     checkComparisonIdentityRows(context);
     checkComparisonIdentityMutations(context);
     checkStaleFieldEffects(context);

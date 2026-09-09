@@ -54,15 +54,20 @@ struct state {
     // Bounds on already-read SSA numbers survive known mutations. They are
     // acquired only from a checked size read with exact-instance presence.
     llvm::DenseMap<mlir::Value, unsigned> sizeBounds{};
-    // Emptiness belongs to one runtime instance, never its schema family or
-    // an empty intersected entry list. Saved zero reads belong to immutable SSA.
-    llvm::DenseSet<mlir::Value> emptyInstances, zeroSizes;
+    // A complete possible-key census belongs to one runtime instance, never
+    // its schema family or an intersected entry list. Absence from this map
+    // means unknown contents; an empty vector independently proves emptiness.
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> possibleKeys{};
+    llvm::DenseMap<mlir::Value, unsigned> exactSizes{};
     // A scalar get result owns its value. Unlike membership and entry tags,
     // its type remains true after the source entry is overwritten or erased.
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> scalars{};
 
     PrimitiveMapKeyEvidence keyEvidence(mlir::Value value) const {
-        return {{}, sizeBounds.lookup(value), zeroSizes.contains(value)};
+        const auto found = exactSizes.find(value);
+        return {{},
+                sizeBounds.lookup(value),
+                found == exactSizes.end() ? std::nullopt : std::optional(found->second)};
     }
 
     PrimitiveAlternatives alternatives(mlir::Value value) const {
@@ -92,11 +97,20 @@ struct state {
         entries.push_back(value);
     }
     void intersect(const state & other) {
-        for (mlir::Value instance : llvm::make_early_inc_range(emptyInstances)) {
-            if (!other.emptyInstances.contains(instance)) { emptyInstances.erase(instance); }
+        for (auto & [instance, possible] : llvm::make_early_inc_range(possibleKeys)) {
+            const auto found = other.possibleKeys.find(instance);
+            if (found == other.possibleKeys.end() ||
+                possible.size() + found->second.size() > kMaxPrimitiveMapSizeCandidates) {
+                possibleKeys.erase(instance);
+            } else {
+                possible.append(found->second);
+            }
         }
-        for (mlir::Value value : llvm::make_early_inc_range(zeroSizes)) {
-            if (!other.zeroSizes.contains(value)) { zeroSizes.erase(value); }
+        for (const auto & [value, exact] : llvm::make_early_inc_range(exactSizes)) {
+            const auto found = other.exactSizes.find(value);
+            if (found == other.exactSizes.end() || exact != found->second) {
+                exactSizes.erase(value);
+            }
         }
         llvm::erase_if(entries, [&](const fact & value) { return !other.contains(value); });
         for (fact & value : entries) {
@@ -208,9 +222,10 @@ struct presenceAnalysis {
             current = {};
             return;
         }
-        for (mlir::Value instance : llvm::make_early_inc_range(current.emptyInstances)) {
-            if (effect.written.contains(familyOf(instance))) {
-                current.emptyInstances.erase(instance);
+        for (const auto & [instance, possible] : llvm::make_early_inc_range(current.possibleKeys)) {
+            if (effect.written.contains(familyOf(instance)) ||
+                (!possible.empty() && effect.erased.contains(familyOf(instance)))) {
+                current.possibleKeys.erase(instance);
             }
         }
         llvm::erase_if(current.entries, [&](const fact & value) {
@@ -253,6 +268,11 @@ struct presenceAnalysis {
 
     void eraseKey(state & current, ctjs::CallOp call) const {
         const auto affected = entry(call);
+        for (const auto & [instance, possible] : llvm::make_early_inc_range(current.possibleKeys)) {
+            if (!possible.empty() && familyOf(instance) == familyOf(affected.instance)) {
+                current.possibleKeys.erase(instance);
+            }
+        }
         const auto mayErase = [&](fact value) {
             // A schema family may contain several runtime instances. Without
             // an independent disjointness proof, any of them may be this Map.
@@ -275,9 +295,12 @@ struct presenceAnalysis {
     // its alternatives; an unproved write clears them. has supplies no tag.
     void write(state & current, ctjs::CallOp call) const {
         fact added = entry(call);
-        for (mlir::Value instance : llvm::make_early_inc_range(current.emptyInstances)) {
-            if (familyOf(instance) == familyOf(added.instance)) {
-                current.emptyInstances.erase(instance);
+        for (auto & [instance, possible] : llvm::make_early_inc_range(current.possibleKeys)) {
+            if (familyOf(instance) != familyOf(added.instance)) { continue; }
+            if (instance == added.instance && possible.size() < kMaxPrimitiveMapSizeCandidates) {
+                possible.push_back(added.key);
+            } else {
+                current.possibleKeys.erase(instance);
             }
         }
         added.payload = current.alternatives(call.getArgs()[1]).categories();
@@ -310,9 +333,6 @@ struct presenceAnalysis {
         if (sizes.contains(op)) {
             auto read = llvm::cast<ctjs::GetPropertyOp>(op);
             const auto instance = instanceOf(read.getObject());
-            if (current.emptyInstances.contains(instance)) {
-                current.zeroSizes.insert(read.getResult());
-            }
             llvm::SmallVector<mlir::Value> distinct;
             unsigned candidates = 0;
             for (const fact & value : current.entries) {
@@ -328,6 +348,22 @@ struct presenceAnalysis {
                 }
             }
             current.sizeBounds[read.getResult()] = static_cast<unsigned>(distinct.size());
+            if (const auto found = current.possibleKeys.find(instance);
+                found != current.possibleKeys.end()) {
+                llvm::SmallVector<mlir::Value> possible;
+                for (mlir::Value key : found->second) {
+                    if (llvm::none_of(possible, [&](mlir::Value previous) {
+                            return comparePrimitiveMapKeys(
+                                       previous, key, current.keyEvidence(previous),
+                                       current.keyEvidence(key)) == PrimitiveMapKeyRelation::Same;
+                        })) {
+                        possible.push_back(key);
+                    }
+                }
+                if (possible.size() == distinct.size()) {
+                    current.exactSizes[read.getResult()] = static_cast<unsigned>(distinct.size());
+                }
+            }
             current.scalars[read.getResult()] =
                 PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>());
             return;
@@ -355,10 +391,10 @@ struct presenceAnalysis {
                 for (unsigned index = 0; index < branch.getNumResults(); ++index) {
                     const auto left = thenYield.getOperand(index),
                                right = elseYield.getOperand(index);
-                    if (isPrimitiveMapZero(left, thenState.keyEvidence(left)) &&
-                        isPrimitiveMapZero(right, elseState.keyEvidence(right))) {
-                        thenState.zeroSizes.insert(branch.getResult(index));
-                        elseState.zeroSizes.insert(branch.getResult(index));
+                    const auto exact = primitiveMapSize(left, thenState.keyEvidence(left));
+                    if (exact && exact == primitiveMapSize(right, elseState.keyEvidence(right))) {
+                        thenState.exactSizes[branch.getResult(index)] = *exact;
+                        elseState.exactSizes[branch.getResult(index)] = *exact;
                     }
                     const auto joined =
                         thenState.alternatives(thenYield.getOperand(index))
@@ -442,7 +478,7 @@ struct presenceAnalysis {
                 effects erase;
                 erase.erased.insert(familyOf(call.getReceiver()));
                 invalidate(current, erase);
-                current.emptyInstances.insert(instanceOf(call.getReceiver()));
+                current.possibleKeys[instanceOf(call.getReceiver())] = {};
             } else if (action.empty()) {
                 current = {};
             }
