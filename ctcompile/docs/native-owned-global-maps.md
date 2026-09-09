@@ -28,10 +28,12 @@ Map programs/37 lifetime families**. The only compiler failure is lit **164/165
 in 1096.42 seconds** (CTest **1096.48**): an obsolete String-load diagnostic.
 **9582188d** preserves its source and pins the remaining unproved call-result
 store; the focused rerun passes **1/1 in 0.08 seconds**. The complete corrected
-lit rerun is pending in `/tmp/ctcompile-string-corrected-lit.log`. All other
-**371 compiler checks** pass; the five established browser failures remain.
-Initial **23** inputs match committed/frozen/devbox sources; the corrected
-manifest has **24**. Fresh corpus coverage stays **19/574, 39/4754, 45/7725**,
+lit rerun passes **165/165 in 1096.14 seconds** (CTest **1096.20**), including
+all **302 Map programs/37 lifetime families**. The initial full run plus this
+lit-only rerun provides passing results for all **372 compiler checks** and
+**512/517 total**; only the five established browser failures remain. All **24**
+final code/test hashes match local files, committed HEAD, frozen inputs and
+devbox sources. Fresh corpus coverage stays **19/574, 39/4754, 45/7725**,
 both modes, zero pruned; exact Bootstrap Data remains **0/7, 0/7, 0/8**.
 
 Next is the measured **88d51f7d** String-field source, still **0/5** against its

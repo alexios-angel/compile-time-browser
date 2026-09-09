@@ -67,16 +67,22 @@ lit **164/165 in 1096.42 seconds** (CTest **1096.48**). Its integrated Map test
 passes all **302 native programs/37 lifetime families**. **9582188d** preserves
 every historical divergence source and updates the obsolete String-global load
 refusal to the still-unproved call-result store. A no-work rebuild and focused
-lit rerun pass **1/1 in 0.08 seconds**. The **complete corrected lit rerun is
-pending** in `/tmp/ctcompile-string-corrected-lit.log`.
+lit rerun pass **1/1 in 0.08 seconds**. The complete corrected lit rerun passes
+**165/165 in 1096.14 seconds** (CTest **1096.20**, total **1096.21**),
+including all **302 Map programs/37 lifetime families**. All **24** final code/test
+hashes match local files, committed HEAD, frozen inputs and devbox sources.
+Across the initial full run plus corrected lit rerun, all **372 compiler CTests**
+and **512/517 total** have passing results; only the five established browser
+failures remain. These are one full run and one lit-only rerun.
 
-All other **371 compiler CTests** pass. Fresh coverage remains **19/574,
-39/4754 and 45/7725**, both modes, zero pruned; exact Bootstrap Data remains
+Fresh coverage remains **19/574, 39/4754 and 45/7725**, both modes, zero
+pruned; exact Bootstrap Data remains
 **0/7, 0/7 and 0/8**. The four escape corpus oracles have zero violations;
 fixture precision remains **72/109**. The independent BigInt Pow probe agrees
 on all **16 common checks** and measures the existing oversized-exponent gap:
-Node's four small-base cases succeed, while the VM raises four RangeErrors. Pow retention-origin analysis remains the next separate escape
-increment; no native BigInt or normal-completion guarantee was added.
+Node's four small-base cases succeed, while the VM raises four RangeErrors.
+Pow retention-origin analysis remains the next separate escape increment; no
+native BigInt or normal-completion guarantee was added.
 
 **Next: owning String fields on proved ordinary objects.** A fresh **13-source**
 probe agrees on typed Node/interpreter observations in every case. The exact
