@@ -2208,9 +2208,9 @@ SCALAR_GLOBAL_UNOWNED = {
     "scalar_read_before_write", "scalar_later_bool", "scalar_future_bool", "scalar_duplicate_number",
 }
 SCALAR_GLOBAL_CARRIERS = {
-    "scalar_alias", "scalar_single_write_repair", "scalar_duplicate_write",
-    "scalar_constant_only",
+    "scalar_duplicate_write", "scalar_constant_only",
 }
+SCALAR_GLOBAL_INITIALIZED = {"scalar_alias", "scalar_single_write_repair"}
 
 
 def scalar_global_cases():
@@ -2289,8 +2289,9 @@ def scalar_global_cases():
         {"first": 1, "second": 2, "fixed": 7, "copy": 7},
         "a constant-only Number global has no completed published-result dependency", repair=(
         "const copy = fixed;", "const copy = 7;", "scalar_constant_literal_repair"))
-    # Keep the measured alias-only sources unchanged: their live Map proof
-    # succeeds, while ordinary Number-global observation still joins Undefined.
+    # Keep the measured alias-only sources and their arithmetic repairs intact.
+    # Exact initialization evidence now removes only the implicit Undefined seed;
+    # the actual stored SSA value still supplies the independently inferred type.
     alias = rows["scalar_alias"]["source"]
     add("scalar_alias_number_repair", alias.replace("const alias = first;", "const alias = first + 0;"),
         12, rows["scalar_alias"]["saved"],
@@ -2309,6 +2310,28 @@ def scalar_global_cases():
     add("scalar_duplicate_number", duplicate, 2, {"first": 2},
         "definite Number output isolates the global all-writes census from the alias observation carrier",
         repair=("first = host.slot.set('y');", "host.slot.set('y');", "scalar_single_number_repair"))
+    add("scalar_alias_chain", alias.replace("const alias = first;",
+        "const saved = first; const alias = saved;"), 12,
+        {**rows["scalar_alias"]["saved"], "saved": 1},
+        "each alias edge subscribes to its own stored value after independent initialization proof")
+    arithmetic = rows["scalar_arithmetic_result"]["source"]
+    add("scalar_alias_arithmetic", arithmetic.replace("var trace = total + 1;",
+        "const alias = total; var trace = alias + 1;"), 13,
+        {**rows["scalar_arithmetic_result"]["saved"], "alias": 12},
+        "an alias of a stored arithmetic result preserves both actual Number dependencies")
+    branch = rows["scalar_saved_branch_lifetime"]["source"]
+    add("scalar_alias_branch_lifetime", branch.replace("var trace = first + second * third;",
+        "const left = first; const middle = second; const right = third; "
+        "var trace = left + middle * right;"), 14,
+        {**rows["scalar_saved_branch_lifetime"]["saved"], "left": 2, "middle": 3, "right": 4},
+        "saved aliases survive future branch effects, owner release and independent reentry")
+    for name, calls, digest in (
+        ("scalar_alias", 8, "8003b4bc3a35bc936752067dc66c97ab02b36294db685d776d10a53f1a42b388"),
+        ("scalar_single_write_repair", 7,
+         "06efa534b2cbb1c79ce8c714677e6b2e99b43b553da63d025bcb86f0beb59f3f"),
+    ):
+        assert rows[name]["raw_calls"] == calls, name
+        assert hashlib.sha256(rows[name]["source"].encode()).hexdigest() == digest, name
     for name, row in rows.items():
         if "repair" in row:
             assert row["source"].count(row["removed_text"]) == 1, name

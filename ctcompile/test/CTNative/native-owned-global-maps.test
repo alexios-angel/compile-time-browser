@@ -240,8 +240,9 @@
 # StoreGlobal/LoadGlobal order and each actual arithmetic operand. Additional
 # Number observation requests print all saved globals without supplying proof.
 # Duplicate writes, read-before-write and later mixed actuals/results refuse;
-# constant-only globals lack published-result evidence, and alias-only global
-# observations retain their separate nullable inference refusal. Every control
+# constant-only globals lack published-result evidence. Exact earlier scalar
+# stores remove implicit absence for aliases using their actual stored types.
+# Alias chains and direct observations retain all loads and stores. Every control
 # preserves its exact measured source and has an independently admitted repair.
 # String/object/Boolean/nullish operands and future mixed results remain refused
 # under fresh/stale forged facts and reruns. Both explicit/deduced forms retain
@@ -251,3 +252,6 @@
 # A new saved-global branch family also keeps first/second/third snapshots across
 # future mutation, owner destruction and independent reentry; all saved globals
 # match the interpreter, in both C++ forms and under GCC, Clang and sanitizers.
+# The original eight-call alias and seven-call direct observation preserve their
+# source hashes and arithmetic repairs. Saved aliases of all three branch results
+# survive 128 future calls, owner/table release, reentry and final leaf mutation.

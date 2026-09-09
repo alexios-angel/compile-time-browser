@@ -35,7 +35,7 @@ from .sources import (
     numeric_entry_cases, numeric_entry_sources, numeric_entry_refusals, NUMERIC_ENTRY_PROMOTED,
     NUMERIC_ENTRY_CARRIERS, NUMERIC_ENTRY_SAVED_GLOBALS,
     scalar_global_cases, scalar_global_sources, scalar_global_refusals, scalar_global_output,
-    SCALAR_GLOBAL_CARRIERS,
+    SCALAR_GLOBAL_CARRIERS, SCALAR_GLOBAL_INITIALIZED,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
@@ -323,6 +323,8 @@ def check_leaf_object_forgeries(args, saved, names=None):
                 failed = methods.refused(args, forged, forged_name + "-stale", config,
                     options=options, reason="fingerprint mismatch", admitted=0)
                 check_call_preservation(forged.read_text(), failed.read_text(), forged_name + "-stale")
+                if name in scalar_global_cases():
+                    check_scalar_global_preparation(failed.read_text(), forged.read_text(), name)
                 fresh = contract(args, forged, forged_name)
                 checked = owned.lower(args, forged, forged_name, fresh, options=options)
                 text = methods.census(checked, functions, forged_name, admitted=functions)
@@ -339,6 +341,11 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
                     if name not in {"leaf_object_saved_identity", "leaf_object_distinct_identity",
                                     *LEAF_ABSENCE_PROMOTED_REFUSALS}}
     for name, (source, value, old, replacement, repaired_name, calls) in controls.items():
+        def preserved(before, after, label):
+            check_call_preservation(before, after, label)
+            if name in scalar_global_cases():
+                check_scalar_global_preparation(after, before, name)
+
         js, rejected, count = boundary.prepare(args, name, source)
         check_leaf_absence_census(args, rejected, name)
         if count != 5 or len(source_calls(rejected.read_text())) != calls:
@@ -356,7 +363,7 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
         for mode, options in (("default", ""), ("disabled", "optimize=false")):
             mode_name = name + "-" + mode
             failed = methods.refused(args, rejected, mode_name, config, options=options, admitted=0)
-            check_call_preservation(rejected.read_text(), failed.read_text(), mode_name)
+            preserved(rejected.read_text(), failed.read_text(), mode_name)
             postdelete = (name in LEAF_ABSENCE_UNOWNED or name in LEAF_CLEAR_UNOWNED
                           or name in numeric_entry_refusals() or name in scalar_global_refusals())
             if postdelete and "ctnative.host_owner_proved = false" not in failed.read_text():
@@ -371,17 +378,17 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
                 forged.write_text(forge_leaf_evidence(rejected.read_text(), payload))
                 stale = methods.refused(args, forged, forged_name + "-stale", config,
                     options=options, reason="fingerprint mismatch", admitted=0)
-                check_call_preservation(forged.read_text(), stale.read_text(), forged_name + "-stale")
+                preserved(forged.read_text(), stale.read_text(), forged_name + "-stale")
                 fresh = contract(args, forged, forged_name)
                 failed = methods.refused(args, forged, forged_name, fresh, options=options, admitted=0)
                 if "fingerprint mismatch" in failed.read_text():
                     raise RuntimeError(f"{forged_name}: skipped independent leaf/use reanalysis")
-                check_call_preservation(forged.read_text(), failed.read_text(), forged_name)
+                preserved(forged.read_text(), failed.read_text(), forged_name)
                 if postdelete and "ctnative.host_owner_proved = false" not in failed.read_text():
                     raise RuntimeError(f"{forged_name}: forged absence manufactured a host owner")
                 rerun = methods.refused(args, failed, forged_name + "-rerun", fresh,
                                         options=options, admitted=0)
-                check_call_preservation(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
+                preserved(forged.read_text(), rerun.read_text(), forged_name + "-rerun")
 
 
 def check_leaf_readback_carriers(args, positives, node, reference, controls):
@@ -651,8 +658,6 @@ def check_scalar_global_preparation(text, original, name):
     for operation in ("scf.if", "scf.yield", "ctjs.create_object", "ctjs.construct"):
         if text.count(operation) != original.count(operation):
             raise RuntimeError(f"{name}: preparation changed live {operation}")
-    if name == "scalar_constant_only":
-        check_numeric_global_preparation(text, original, "local_numeric_saved_snapshot")
 
 
 def check_scalar_global_source(ir, name):
@@ -694,6 +699,19 @@ def check_scalar_global_source(ir, name):
     first_writes = sum(event[:2] == ("store", "first") for event in stores)
     if name.startswith("scalar_duplicate_") and first_writes != 2:
         raise RuntimeError(f"{name}: erased a second live scalar write")
+    aliases = {
+        "scalar_alias": [("alias", "first")],
+        "scalar_single_write_repair": [("trace", "first")],
+        "scalar_alias_chain": [("saved", "first"), ("alias", "saved")],
+        "scalar_alias_arithmetic": [("alias", "total")],
+        "scalar_alias_branch_lifetime": [("left", "first"), ("middle", "second"),
+                                          ("right", "third")],
+    }.get(name, [])
+    for destination, origin in aliases:
+        expected = ("store", destination, "global:" + origin)
+        writes = [event for event in stores if event[1] == destination]
+        if writes != [expected] or ("load", origin) not in loads:
+            raise RuntimeError(f"{name}: lost the exact {origin} to {destination} alias edge")
 
 
 def check_scalar_global_emission(args, ir, name):
@@ -750,8 +768,6 @@ def check_scalar_global_emission(args, ir, name):
 
 def check_scalar_global_carriers(args, positives, node, reference):
     cases = scalar_global_cases()
-    reasons = {"scalar_alias": "store to global `alias` may be null or undefined",
-               "scalar_single_write_repair": "store to global `trace` may be null or undefined"}
     for name in sorted(SCALAR_GLOBAL_CARRIERS):
         case = cases[name]
         source, value = case["source"], case["expected_trace"]
@@ -772,10 +788,12 @@ def check_scalar_global_carriers(args, positives, node, reference):
             def reject(input_ir, label, current_config):
                 failed = owned.lower(args, input_ir, label, current_config, options=options, cleanup=False)
                 text = methods.census(failed, count, label, admitted=0)
-                reason = reasons.get(name, "standard Map identity is unproved with other host/global value reads")
+                reason = "standard Map identity is unproved with other host/global value reads"
                 if "ctnative.host_owner_proved = true" not in text or reason not in text:
                     raise RuntimeError(f"{label}: lost independent scalar ownership/carrier boundary")
                 check_scalar_global_preparation(text, input_ir.read_text(), name)
+                if name == "scalar_constant_only":
+                    check_numeric_global_preparation(text, input_ir.read_text(), "local_numeric_saved_snapshot")
                 return failed
 
             label = name + "-" + mode
@@ -791,11 +809,13 @@ def check_scalar_global_carriers(args, positives, node, reference):
                 stale = methods.refused(args, forged, forged_name + "-stale", config,
                     options=options, reason="fingerprint mismatch", admitted=0)
                 check_call_preservation(forged.read_text(), stale.read_text(), forged_name + "-stale")
+                check_scalar_global_preparation(stale.read_text(), forged.read_text(), name)
                 fresh = contract(args, forged, forged_name)
                 failed = reject(forged, forged_name, fresh)
                 rerun = methods.refused(args, failed, forged_name + "-rerun", fresh,
                     options=options, reason="fingerprint mismatch", admitted=0)
                 check_call_preservation(failed.read_text(), rerun.read_text(), forged_name + "-rerun")
+                check_scalar_global_preparation(rerun.read_text(), failed.read_text(), name)
 
 
 def check_numeric_entry_observations(args, node, reference):
@@ -812,7 +832,8 @@ def check_numeric_entry_observations(args, node, reference):
         mutations = [("return saved.value;", "return 1;"),
                      ("value: value", "value: 1"),
                      ("state.clear();", "state.has(key);")]
-        if name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime"}:
+        if name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime",
+                    "scalar_alias_branch_lifetime"}:
             mutations.append(("state.delete(key);", "state.has(key);"))
         for index, (old, replacement) in enumerate(mutations):
             if old not in source:
@@ -826,6 +847,11 @@ def check_numeric_entry_observations(args, node, reference):
         ("local_numeric_sub", "host.slot.set('x') - host.slot.set('y')",
          "host.slot.set('y') - host.slot.set('x')"),
         ("local_numeric_saved_snapshot", "first * 10 + second", "host.slot.size() * 10 + second"),
+        ("scalar_alias", "const alias = first;", "const alias = second;"),
+        ("scalar_single_write_repair", "var trace = first;", "var trace = host.slot.size();"),
+        ("scalar_alias_chain", "const saved = first;", "const saved = second;"),
+        ("scalar_alias_arithmetic", "const alias = total;", "const alias = first;"),
+        ("scalar_alias_branch_lifetime", "const left = first;", "const left = third;"),
     ):
         source, value = cases[name]["source"], cases[name]["expected_trace"]
         if name == "local_numeric_sub":
@@ -1433,6 +1459,8 @@ def main():
     check_leaf_object_forgeries(args, saved,
         ("local_add_saved_results", "local_numeric_saved_snapshot", "scalar_result_key",
          "scalar_saved_branch_lifetime"))
+    check_leaf_object_forgeries(args, saved,
+        (*sorted(SCALAR_GLOBAL_INITIALIZED), "scalar_alias_chain", "scalar_alias_branch_lifetime"))
 
     # Valid-looking scalar markers cannot normalize real null keys or narrow
     # the second use of a nullable formal. Fresh proof must emit the same C++.
@@ -1927,7 +1955,8 @@ def main():
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
     for name in ("local_identity_repeated_keys", "local_numeric_nested_key",
-                 "local_add_saved_results", "scalar_result_key"):
+                 "local_add_saved_results", "scalar_result_key", "scalar_alias",
+                 "scalar_alias_chain"):
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
@@ -2018,7 +2047,8 @@ def main():
           f"{len(NUMERIC_ENTRY_SAVED_GLOBALS)} historical saved-global sources and "
           f"{len(scalar_global_sources())} new scalar programs retain live global stores, loads and arithmetic; "
           f"{len(scalar_global_refusals())} source-order/write/future-family refusals and "
-          f"{len(SCALAR_GLOBAL_CARRIERS)} scalar Map/observation carrier refusals retain exact repairs; "
+          f"{len(SCALAR_GLOBAL_CARRIERS)} scalar Map identity refusals retain exact repairs; "
+          f"{len(SCALAR_GLOBAL_INITIALIZED)} original alias/direct observations retain definite stored-value types; "
           f"{len(NUMERIC_ENTRY_LIFETIMES)} numeric lifetime families retain 128 future results across both branches, reentry, "
           "final Map release and independent leaf release; "
           f"{len(leaf_field_result_refusals())} complete-schema field results "

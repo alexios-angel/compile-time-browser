@@ -1871,7 +1871,7 @@ int main() {
 
 
 NUMERIC_ENTRY_LIFETIMES = ("local_numeric_saved_lifetime", "local_numeric_branch_lifetime",
-                           "scalar_saved_branch_lifetime")
+                           "scalar_saved_branch_lifetime", "scalar_alias_branch_lifetime")
 
 
 def check_numeric_entry_calls(cpp, name, mode):
@@ -1879,8 +1879,7 @@ def check_numeric_entry_calls(cpp, name, mode):
     entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
     if not entry:
         raise RuntimeError(f"{name}/{mode}: missing numeric entry")
-    params = ("ctnative::nullable_scalar" if name == "scalar_result_key" else
-              "std::string, js_num, bool" if "set(key, value, flag)" in source else
+    params = ("std::string, js_num, bool" if "set(key, value, flag)" in source else
               "std::string, js_num" if "set(key, value)" in source else
               "js_num" if name in {"local_add_result_key", "local_numeric_nested_key",
                                     "local_numeric_nan_key", "local_clear_zero_literal_repair", "scalar_result_key"}
@@ -1920,7 +1919,8 @@ def check_numeric_entry_calls(cpp, name, mode):
 
 
 def numeric_entry_observer_source(source, name):
-    branch = name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime"}
+    branch = name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime",
+                      "scalar_alias_branch_lifetime"}
     observed = source + """
 (function() {
     const seen = [], results = [], sizes = [];
@@ -1950,7 +1950,8 @@ def numeric_entry_observer_source(source, name):
 
 
 def numeric_entry_lifetime_cpp(cpp, name):
-    branch = name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime"}
+    branch = name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime",
+                      "scalar_alias_branch_lifetime"}
     changed = instrument_leaf_objects(cpp)
     changed = changed.replace(
         "static std::vector<std::weak_ptr<const void>> ctn_test_objects;",
@@ -2030,7 +2031,7 @@ int main() {
     return 0;
 }
 '''
-    if name == "scalar_saved_branch_lifetime":
+    if name in {"scalar_saved_branch_lifetime", "scalar_alias_branch_lifetime"}:
         changed = changed.replace("    auto owner = g_host;", """
     const auto first_snapshot = ctnative::global_number(g_first);
     const auto second_snapshot = ctnative::global_number(g_second);
@@ -2055,6 +2056,32 @@ int main() {
         leaf->field_76616c7565.value = 99;
         if (saved.back() != 15.75 || first_snapshot != 2 || second_snapshot != 3 ||
             third_snapshot != 4 || ctnative::global_number(g_first) != 2) { return 196; }
+    }
+    ctn_test_retained.reset();""")
+    if name == "scalar_alias_branch_lifetime":
+        changed = changed.replace("    auto owner = g_host;", """
+    const auto left_snapshot = ctnative::global_number(g_left);
+    const auto middle_snapshot = ctnative::global_number(g_middle);
+    const auto right_snapshot = ctnative::global_number(g_right);
+    static_assert(std::is_same_v<decltype(left_snapshot), const js_num>);
+    if (left_snapshot != first_snapshot || middle_snapshot != second_snapshot ||
+        right_snapshot != third_snapshot) { return 197; }
+    auto owner = g_host;""")
+        changed = changed.replace("    ctn_test_keep_leaf = false;", """
+    if (ctnative::global_number(g_left) != left_snapshot ||
+        ctnative::global_number(g_middle) != middle_snapshot ||
+        ctnative::global_number(g_right) != right_snapshot ||
+        ctnative::global_number(g_trace) != left_snapshot + middle_snapshot * right_snapshot) {
+        return 199;
+    }
+    ctn_test_keep_leaf = false;""")
+        changed = changed.replace("    ctn_test_retained.reset();", """
+    if (left_snapshot != 2 || middle_snapshot != 3 || right_snapshot != 4 ||
+        ctnative::global_number(g_left) != left_snapshot ||
+        ctnative::global_number(g_middle) != middle_snapshot ||
+        ctnative::global_number(g_right) != right_snapshot ||
+        ctnative::global_number(g_trace) != left_snapshot + middle_snapshot * right_snapshot) {
+        return 198;
     }
     ctn_test_retained.reset();""")
     return changed.replace("CTN_PARAMS", "std::string, js_num, bool" if branch else "std::string, js_num").replace(
