@@ -6,6 +6,75 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Owning String object fields and BigInt Pow, 2026-09-09
+
+Continued the explicit **88d51f7d** String-field boundary in the previous
+handoff and `bootstrap-provider-next.md`, starting clean at **164fe8c2**.
+The interrupted String-global work was already gated and committed; the old
+codex-wip recovery is an ancestor. The two unmerged compiler lens branches are
+superseded by the nesting-depth fix **6520fcf2**. Three agents independently
+handled execution tests, proof controls and Pow retention. No browser/runtime
+source changed.
+
+**d83f6b83** proves owning String leaf fields in captured Map methods using
+current allocation/alias identity, definite own-field initialization and
+read-time primitive facts. Actual stored SSA lattices independently determine
+types. **c4fa24e3** admits String/nullable String fields and checks the complete
+store census across candidate functions before call-component admission.
+Equal emitted member names must have compatible carriers. Final emission uses
+owning `nullable_string` members, getters and setters, initial Undefined, and
+exact tag checks for narrower String or absent reads. A later overwrite cannot
+change an earlier String copy. Mixed storage remains a diagnostic.
+
+The unchanged **88d51f7d** source advances **0/5 -> 5/5 native** in both modes,
+retaining all seven calls and Number `trace=2`; its Number repair still admits.
+**a680b093** passes **12 focused native programs**, **18 typed Node/interpreter
+comparisons**, six refusal/repair families, six emitted-tag controls and five
+future-call observers. GCC/Clang explicit/deduced binaries link no Script/VM
+symbols. The saved long String lifetime spans **128 future calls**, both flags,
+field mutation, Map deletion, owner/table release, reentry and final Map/leaf
+release under ASan/UBSan/leak checks. Budgets **3512/4408** check **31/30 cutoffs**.
+All **636 historical helper rows across 55 helpers** preserve their source bytes.
+The integrated inventory is **314 programs/38 lifetime families**, pending the
+full lit run.
+
+All six type/host/owner CTests have passing focused results: four checks in
+**126.18 seconds** (including two escape checks), then four host/owner checks
+in **37.07 seconds**. Added controls cover **13 source/prepared owner rows**,
+**18 type/presence rows**, ten live type mutations, fingerprints and budgets.
+The two field lit cases pass in **0.18 seconds**. Earlier test expectations
+mistook global `undefined` and mixed call-result refusals for field admission;
+the original sources remain, with independent `void 0` repair positives and
+cross-function census controls. No production change was needed for those
+expectation corrections. Stable clang-format **22.1.8 passes all 745 files**;
+bundled 23 retains the same nine preexisting differences.
+
+**927128a0** independently proves dynamic BigInt Pow retention origins.
+Both operands need their own original category; normal results and independent
+negative/oversized-exponent Errors add no object-retention edge. This establishes
+no native BigInt carrier or completion/effect guarantee. All **eight escape
+CTests pass in 8.95 seconds**. Pow covers **139 rows/51 live states/5299 budget
+cutoffs**. Its source family records **28 literal sites/60 instances/38 retained**
+and four independent Errors; **38 checker mutations** reject. Fixture precision
+improves **72/109 -> 77/115**, with zero oracle violations. The existing VM cap
+for small bases remains an explicit Node/VM difference.
+
+**Full remote build and CTest gate: pending.** Focused results above are measured;
+no full-suite or full-Bootstrap gain is claimed at this checkpoint.
+
+**Next: exact zero from a saved `Map.size` after `clear()`.** Thirteen fresh
+sources agree on typed Node/interpreter results. The historical **49663558**
+eight-call source remains **0/5** in both modes; its **33aa4c4a** repair keeps
+the evaluated size read and uses literal zero, admitting **5/5**. All twelve
+nonliteral controls remain unowned. Exact emptiness needs independent live
+source and native-presence facts; a zero lower bound or empty known-entry list
+cannot prove it. Full Bootstrap and direct browser API integration remain open.
+
+Evidence: `/tmp/ctcompile-string-fields-{focused,execution-gate,execution,precommit-gate}.log`,
+`/tmp/ctcompile-string-fields-{boundary-results,execution-probe}.json`,
+`/tmp/ctcompile-after-string-fields-boundary-{results,sources}.json` and
+`/tmp/ctcompile-bigint-pow-measurement.json`.
+
 ## Owning String globals and recovered execution, 2026-09-09
 
 Resumed **21 uncommitted String files at 0ea9aaed**, identified in the

@@ -1,6 +1,57 @@
 # Next Bootstrap native boundary
 
-## Current continuation: owning String leaf fields, 2026-09-09
+## Current continuation: exact saved zero after Map.clear, 2026-09-09
+
+**d83f6b83/c4fa24e3/a680b093** complete owning String field proof, carrier
+admission/emission and execution. Historical **88d51f7d** now admits **5/5** in
+both modes with its seven calls intact. Twelve native programs, eighteen typed
+reference comparisons and a 128-call saved String lifetime pass. `HANDOFF.md`
+records the complete gate status.
+
+The next historical source is unchanged:
+
+```js
+var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        set(key) { const item = {value: 1}; state.set(key, item); state.clear(); const zero = state.size; state.set(1, item); return state.get(zero) === void 0 ? 1 : 0; }
+    };
+});
+host.slot.size(); var trace = host.slot.set(7);
+```
+
+SHA256: `496635583adf728c73d3a48a71a98d7e4733a2bd9a5d14d17d21b1660359b316`.
+Node and the interpreter agree on Number `trace=1`. Both modes preserve five
+functions/eight raw and prepared calls, but native remains **0/5**, with owner
+reason `property call lacks a current source getter proof`.
+
+The exact repair keeps the evaluated read as `state.size; const zero = 0;`.
+SHA256: `33aa4c4a24bba6adeec8cc2711e406190f25942f3829ee0c35efae2c9dba36a0`.
+It retains the same calls and observation and admits **5/5** in both modes.
+
+A fresh thirteen-source probe agrees on typed Node/interpreter observations in
+all cases. Only the literal repair admits; the other twelve remain **0/5** and
+unowned, including captured aliases, String leaf fields, repeated clear, saved
+zero followed by growth, an equal-zero key, reads before clear/after a write,
+and both-clearing/one-clearing branches with both startup flags. These are
+reference/admission measurements, not new native executions.
+
+`PrimitiveMapKeyEvidence::sizeLowerBound == 0` means no useful lower bound;
+it cannot establish exact zero or SameValueZero equality with literal zero.
+`HostContract/CapturedMapBody.cpp` already tracks complete possible keys after
+clear. Acquire an immutable exact-empty fact at the actual size-read SSA value,
+preserve it through later mutations, and join control-flow facts conservatively.
+`Analysis/NativeMap/Presence.cpp` must independently rederive compatible live
+facts: its intersected known-entry list being empty does not prove the Map is
+empty. Preserve source position, exact Map identity, effects, forged/stale report
+refusals and work budgets. A later clear must not rewrite an earlier saved size.
+
+Evidence: `/tmp/ctcompile-after-string-fields-boundary-{results,sources}.json`.
+The full Bootstrap Data program and direct browser APIs remain unfinished.
+
+## Previous continuation: owning String leaf fields, 2026-09-09
 
 `0e041bba`, `4b0a1199`, `b4505df6` and `417cd0ac` complete the interrupted
 String scalar proof, owning global storage/output and execution tests. The

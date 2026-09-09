@@ -1,4 +1,23 @@
-# Owned scalar component fields
+# Owned component fields
+
+Owning String fields are implemented in **d83f6b83/c4fa24e3**, with execution
+and lifetime gates in **a680b093** (2026-09-09). The exact historical captured
+Map fixture **88d51f7d** advances from 0/5 to 5/5 native in both modes, preserving
+seven calls and `trace=2`.
+
+Source ownership, actual stored SSA types and definite own-field initialization
+remain independent. The complete store census chooses one compatible carrier
+per emitted member name across candidate functions. String fields use owning
+`nullable_string`, scalar fields retain `nullable_scalar`, and initial Undefined
+is preserved. Exact tag checks narrow field loads; a saved String owns its bytes
+through later alias mutation and object destruction. Unsupported mixed fields
+refuse before C++ emission. No Script or VM dependency was added.
+
+Twelve focused programs, eighteen typed Node/interpreter observations, both
+compilers/printing modes and a 128-call sanitizer lifetime pass. See `HANDOFF.md`
+for full gate status and the measured next exact-zero-after-clear boundary.
+
+## Original scalar-field implementation, 2026-09-05
 
 Implemented, 2026-09-05. Bootstrap Data already retains component identity through
 Map insertion, lookup, replacement and removal. The next native slice adds
