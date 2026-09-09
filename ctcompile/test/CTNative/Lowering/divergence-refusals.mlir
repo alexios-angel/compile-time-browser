@@ -55,13 +55,15 @@
 
 // CONCAT: ctnative.not_native = "binary operand is !ctnative.str<utf8>, not a number"
 
-// --- A GLOBAL THAT IS NOT A NUMBER IS REFUSED WHERE IT IS READ -------------
+// --- AN UNPROVED CALL RESULT CANNOT BECOME A GLOBAL OBSERVATION ------------
 //
-// The type in the message is whatever the inference proved, so only the
-// prefix is pinned: the assertion is that the refusal names the GLOBAL, which
-// is the thing a reader has to go and look at.
+// The historical source is unchanged: the definite String store to `label`
+// now has owning storage, but the direct call's return value is not yet proved
+// definite at the store to `f`. Pin that remaining refusal by the destination
+// global, rather than keeping the obsolete String-load refusal.
 //
-// GLOBALSTRING: ctnative.not_native = "global `label` is
+// GLOBALSTRING: ctjs.func @_script_$0
+// GLOBALSTRING-SAME: ctnative.not_native = "store to global `f` requires a Number, Boolean or String global"
 
 //--- equality.js
 function equality() {
