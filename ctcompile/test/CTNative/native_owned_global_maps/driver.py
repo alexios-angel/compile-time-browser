@@ -2032,7 +2032,7 @@ def main():
         **nullable_key_refusals(),
         **nullable_payload_refusals(),
     }.items():
-        if name in PRIMITIVE_ABSENCE_CARRIERS:
+        if name in PRIMITIVE_ABSENCE_CARRIERS | HISTORICAL_STRING_FIELD_CARRIERS:
             continue
         js, rejected, count = boundary.prepare(args, name, source)
         if count != 6:
@@ -2079,7 +2079,7 @@ def main():
     check_leaf_object_refusals(args, positives, node, reference)
     check_leaf_object_refusals(args, positives, node, reference,
         {name: row for name, row in leaf_readback_refusals().items()
-         if name not in LEAF_ABSENCE_PROMOTED_REFUSALS | NUMERIC_ENTRY_PROMOTED})
+         if name not in LEAF_ABSENCE_PROMOTED_REFUSALS | NUMERIC_ENTRY_PROMOTED | HISTORICAL_STRING_FIELD_CARRIERS})
     check_leaf_object_refusals(args, positives, node, reference,
         {name: row for name, row in leaf_absence_refusals().items() if name not in LEAF_CLEAR_PROMOTED})
     check_leaf_object_refusals(args, positives, node, reference, leaf_clear_refusals())
@@ -2090,6 +2090,7 @@ def main():
     check_constant_global_refusals(args, positives, node, reference)
     check_leaf_readback_carriers(args, positives, node, reference, leaf_field_result_refusals())
     check_string_field_refusals(args, positives)
+    check_historical_string_field_refusals(args, positives, node, reference)
     # A result contract does not narrow Map storage or supply an implemented
     # callable signature. Preserve the prepared producer/consumer operands.
     mixed_read_refusals = mixed_nullable_payload_refusals()
@@ -2360,7 +2361,7 @@ def main():
           "preserve definite object origins, strict identities and fixed scalar field reads; "
           "saved aliases observe later field writes across replacement/deletion and saved numeric "
           "callables pass future-argument, reentry and final-owner sanitizer lifetime checks; "
-          f"{len(leaf_readback_refusals().keys() - LEAF_ABSENCE_PROMOTED_REFUSALS - NUMERIC_ENTRY_PROMOTED)} "
+          f"{len(leaf_readback_refusals().keys() - LEAF_ABSENCE_PROMOTED_REFUSALS - NUMERIC_ENTRY_PROMOTED - HISTORICAL_STRING_FIELD_CARRIERS)} "
           "unknown/missing/export/field refusals restore exact sources; "
           f"{len(LEAF_FIELD_RESULTS)} exact raw field results remove only independently proved absence; "
           "saved raw numeric results and callable lifetimes pass future-argument and field mutations; "
@@ -2392,6 +2393,7 @@ def main():
           "14 wrong-tag/null/missing-store observation mutations reach the exact termination check; "
           f"{len(string_field_sources())} owning String-field programs preserve exact tags, bytes and live accesses; "
           "six field refusal/repair families and six emitted field-tag controls remain independent; "
+          "two historical String-field sources retain complete ownership and exact equality/mixed-Map refusals; "
           "saved String callables and snapshots survive 128 future calls, both flags and final Map/leaf release; "
           f"{len(NUMERIC_ENTRY_LIFETIMES)} numeric lifetime families retain 128 future results across both branches, reentry, "
           "final Map release and independent leaf release; "
@@ -2565,3 +2567,116 @@ def check_string_field_tag_mutations(args, compilers, nm):
             if result.returncode != 211 or result.stdout or result.stderr:
                 raise RuntimeError(f'{name}/{mode}: {tag} field bypassed exact String read tag check\n'
                                    f'{result.returncode}: {result.stdout}{result.stderr}')
+
+
+HISTORICAL_STRING_FIELD_CARRIERS = {'leaf_readback_unknown_alias_field', 'nullable_payload_object'}
+
+
+def string_field_method_graph(text, function, prepared):
+    body = re.search(r'^  ctjs\.func(?: private)? @' + re.escape(function) +
+                     r'\([^\n]*\n(.*?)^  \}', text, re.M | re.S)
+    if not body:
+        raise RuntimeError(f'{function}: missing historical String field method')
+    values = {f'%arg{index}': value for index, value in enumerate(('receiver', 'new_target', 'closure'))}
+    if prepared:
+        values['%arg3'] = 'capture0'
+    values['%arg4' if prepared else '%arg3'] = 'actual0'
+    graph = []
+    for raw in body[1].splitlines():
+        line = re.sub(r' \{[^{}\n]*\}$', '', raw.strip())
+        capture = re.fullmatch(r'(%[-\w.$]+) = ctjs\.load_upvalue %arg2\[0\]', line)
+        if capture:
+            values[capture[1]] = 'capture0'
+            continue
+        result = re.match(r'(%[-\w.$]+) = ', line)
+        if result:
+            values[result[1]] = f'value{len(graph)}'
+        try:
+            graph.append(re.sub(r'%[-\w.$]+', lambda match: values[match[0]], line))
+        except KeyError as error:
+            raise RuntimeError(f'{function}: unknown source operand in {line}') from error
+    return graph
+
+
+def check_historical_string_field_preparation(text, original, name):
+    field = name == 'leaf_readback_unknown_alias_field'
+    functions, calls = (5, 6) if field else (6, 11)
+    diagnostic = ('equality operand is !ctnative.str<utf8>, not a number' if field else
+        'native Map needs supported keys and numeric, boolean, closed mixed, owning-string, '
+        'object-identity union or acyclic Map values; inferred '
+        '!ctnative.map<!ctnative.opt<!ctnative.str<utf8>>, !ctnative.boxed>')
+    if (name not in HISTORICAL_STRING_FIELD_CARRIERS
+            or 'ctnative.host_owner_proved = true' not in text
+            or diagnostic not in text or len(boundary.FUNCTION.findall(text)) != functions
+            or boundary.NATIVE.search(text) or len(source_calls(original)) != calls
+            or len(source_calls(text)) != calls):
+        raise RuntimeError(f'{name}: lost exact ownership, native refusal or historical call census')
+    for function in ('fn$3', 'fn$4') if field else ('fn$3', 'fn$4', 'fn$5'):
+        if string_field_method_graph(original, function, False) != string_field_method_graph(text, function, True):
+            raise RuntimeError(f'{name}: preparation changed {function} source field/Map/branch operands')
+    published = re.findall(r'^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) '
+                           r'\{ctnative\.stored_call = 1 : i32\}', text, re.M)
+    actuals = [arguments.split(', ') for _, _, arguments in published]
+    expected = ['fn$3', 'fn$4'] if field else ['fn$4', 'fn$5', 'fn$4', 'fn$5', 'fn$3']
+    arities = [4, 5] if field else [5, 5, 5, 5, 4]
+    if ([target for _, target, _ in published] != expected or list(map(len, actuals)) != arities
+            or f'ctjs.store_global "trace", {published[-1][0]}' not in text):
+        raise RuntimeError(f'{name}: changed prepared source call order, arguments or trace result')
+    getters = dict(re.findall(r'^\s*(%[-\w.$]+) = ctjs\.get_property (%[-\w.$]+)\[', text, re.M))
+    captures = dict(re.findall(r'^\s*(%[-\w.$]+) = ctjs\.load_upvalue (%[-\w.$]+)\[0\]', text, re.M))
+    for arguments in actuals:
+        if getters.get(arguments[2]) != arguments[0] or captures.get(arguments[3]) != arguments[2]:
+            raise RuntimeError(f'{name}: published call lost its current receiver/callee/Map capture')
+    if field:
+        if f'{actuals[1][-1]} = ctjs.constant #ctjs.string<"x">' not in text:
+            raise RuntimeError(f'{name}: lost the source String actual')
+    else:
+        for producer, consumer, flag in ((0, 1, 'false'), (2, 3, 'true')):
+            if (actuals[consumer][-1] != published[producer][0]
+                    or f'{actuals[producer][-1]} = ctjs.constant #ctjs.boolean<{flag}>' not in text):
+                raise RuntimeError(f'{name}: mixed Object/String refusal lost a producer-result actual')
+
+
+def check_historical_string_field_refusals(args, positives, node, reference):
+    controls = {'leaf_readback_unknown_alias_field': leaf_readback_refusals()['leaf_readback_unknown_alias_field']}
+    source, value, old, replacement, _ = nullable_payload_refusals()['nullable_payload_object']
+    controls['nullable_payload_object'] = (source, value, old, replacement, 'nullable_payload_write', 11)
+    for name, (source, value, old, replacement, repair, calls) in controls.items():
+        js, ir, count = boundary.prepare(args, name, source)
+        expected = f'trace={value}\n'
+        if (host.run([node, '-e', boundary.NODE, str(js)]).stdout != expected
+                or host.run([str(reference), str(js)]).stdout != expected
+                or len(source_calls((args.work / f'{name}.raw.mlir').read_text())) != calls
+                or len(source_calls(ir.read_text())) != calls):
+            raise RuntimeError(f'{name}: changed historical source observation or original calls')
+        if source.count(old) != 1 or source.replace(old, replacement) != positives[repair][0]:
+            raise RuntimeError(f'{name}: exact repair no longer restores its independently gated source')
+        _, restored, restored_count = boundary.prepare(args, name + '-restored', positives[repair][0])
+        if count != restored_count:
+            raise RuntimeError(f'{name}: exact repair changed function census')
+        config = contract(args, ir, name)
+        restored_config = contract(args, restored, name + '-restored')
+        for mode, options in (('default', ''), ('disabled', 'optimize=false')):
+            label = name + '-' + mode
+
+            def reject(input_ir, current, current_config):
+                output = owned.lower(args, input_ir, current, current_config, options=options, cleanup=False)
+                check_historical_string_field_preparation(output.read_text(), input_ir.read_text(), name)
+                return output
+
+            reject(ir, label, config)
+            repaired = owned.lower(args, restored, label + '-restored', restored_config, options=options)
+            if 'ctnative.host_owner_proved = true' not in methods.census(repaired, count, label, admitted=count):
+                raise RuntimeError(f'{name}: original exact repair lost its native owner')
+            for payload in ('bool', 'string', 'nullable_string'):
+                current = label + '-forged-' + payload
+                forged = args.work / f'{current}.mlir'
+                forged.write_text(forge_leaf_evidence(ir.read_text(), payload))
+                stale = methods.refused(args, forged, current + '-stale', config, options=options,
+                                        reason='fingerprint mismatch', admitted=0)
+                check_call_preservation(forged.read_text(), stale.read_text(), current + '-stale')
+                fresh = contract(args, forged, current)
+                failed = reject(forged, current + '-fresh', fresh)
+                rerun = methods.refused(args, failed, current + '-rerun', fresh, options=options,
+                                        reason='fingerprint mismatch', admitted=0)
+                check_call_preservation(failed.read_text(), rerun.read_text(), current + '-rerun')
