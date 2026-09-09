@@ -739,7 +739,8 @@ std::optional<HostScalarGlobalRead> analyzer::scalarGlobalRead(ctjs::LoadGlobalO
     result.alternatives =
         entryCategories(result.value, capturedResults, store, 0, &result.dependencies);
     if (result.alternatives.tag() != mlir::TypeID::get<ctjs::NumberAttr>() &&
-        result.alternatives.tag() != mlir::TypeID::get<ctjs::BooleanAttr>()) {
+        result.alternatives.tag() != mlir::TypeID::get<ctjs::BooleanAttr>() &&
+        result.alternatives.tag() != mlir::TypeID::get<ctjs::StringAttr>()) {
         return std::nullopt;
     }
     // Literal-backed scalar expressions have no published-call dependency.

@@ -268,12 +268,84 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
     }
     check(rows == 54, "all historical and Boolean scalar source controls ran");
 
-    for (unsigned origin = 0; origin < 4; ++origin) {
+    const std::string stringLiteral =
+        "    %actual = ctjs.constant #ctjs.string<\"owned scalar\">\n";
+    const auto string = replaced(constant, numberLiteral, stringLiteral);
+    const auto stringTag = mlir::TypeID::get<ctjs::StringAttr>();
+    for (const std::string & value :
+         {std::string("owned scalar"), std::string(),
+          std::string("quote\\22 newline\\0A nul\\00tail % = ;"), std::string(512, 'x')}) {
+        const auto program = replaced(string, "owned scalar", value);
+        variant(program, true, {{}}, "String bytes do not replace exact initialization evidence",
+                stringTag);
+        variant(replaced(program, read, read + "    %savedAgain = ctjs.load_global \"savedSum\"\n"),
+                true, {{}, {}}, "each repeated String read subscribes to its actual sole store",
+                stringTag);
+        variant(replaced(replaced(program, read,
+                                  read + "    ctjs.store_global \"savedAlias\", %savedSum\n"
+                                         "    %savedAlias = ctjs.load_global \"savedAlias\"\n"),
+                         actual, actualUsing("savedAlias")),
+                true, {{}, {}}, "String copy chains preserve independent empty dependencies",
+                stringTag);
+    }
+    variant(replaced(string, constantStore,
+                     "    %kind = ctjs.unary typeof %actual\n"
+                     "    ctjs.store_global \"savedSum\", %kind\n"),
+            true, {{}}, "an exact typeof result retains its original String-producing SSA value",
+            stringTag);
+    variant(replaced(string, constantStore + read, read + constantStore), false, {},
+            "a String read before initialization cannot borrow its future literal");
+    for (const std::string & marker : {constantStore, read, std::string("    %combined =")}) {
+        variant(replaced(string, marker, constantStore + marker), false, {},
+                "a duplicate String write anywhere invalidates sole-store authority");
+        variant(replaced(string, marker, "    ctjs.store_global \"savedSum\", %u\n" + marker),
+                false, {}, "String and Undefined stores cannot acquire a definite String edge");
+        variant(replaced(string, marker, "    %unrelated = ctjs.call %this(%u)\n" + marker), false,
+                {}, "unknown effects invalidate the complete owning String environment");
+    }
+    variant(replaced(string, read, "    %savedSum = ctjs.load_global \"unwritten\"\n"), false, {},
+            "an unwritten binding cannot borrow an owning String initializer");
+    variant(replaced(replaced(string, actual, actualUsing("actual")), read, ""), true, {},
+            "a requested String observation cannot invent a missing source load");
+    variant(replaced(string, "    %sizeKey = ctjs.constant #ctjs.string<\"size\">\n",
+                     "    ctjs.store_global \"savedSum\", %entryKey\n"
+                     "    %sizeKey = ctjs.constant #ctjs.string<\"size\">\n"),
+            false, {}, "a future method String write invalidates the whole initialization proof");
+    for (const char * initializer :
+         {"ctjs.constant #ctjs.number<0>", "ctjs.constant #ctjs.boolean<false>",
+          "ctjs.constant #ctjs.null", "ctjs.constant #ctjs.undefined",
+          "ctjs.constant #ctjs.bigint<\"0\">", "ctjs.create_object"}) {
+        const bool absent = llvm::StringRef(initializer) == "ctjs.constant #ctjs.null" ||
+                            llvm::StringRef(initializer) == "ctjs.constant #ctjs.undefined";
+        variant(replaced(string, constantStore,
+                         std::string("    %nonString = ") + initializer +
+                             "\n    ctjs.store_global \"savedSum\", %nonString\n"),
+                absent, {},
+                absent ? "existing nullable String keys need no invented scalar String edge"
+                       : "another primitive or object cannot join exact String key arguments");
+    }
+    variant(replaced(string, constantStore, "    ctjs.store_global \"savedSum\", %this\n"), false,
+            {}, "an unknown entry parameter cannot acquire String authority from observations");
+    for (const char * operation : {"add", "sub", "mul", "div", "mod", "pow"}) {
+        variant(replaced(string, constantStore,
+                         std::string("    %calculated = ctjs.binary ") + operation +
+                             " %actual, %actual\n"
+                             "    ctjs.store_global \"savedSum\", %calculated\n"),
+                false, {}, "String operands cannot reuse the Number-only arithmetic proof");
+    }
+    check(rows == 93, "all historical, Boolean and String scalar source controls ran");
+
+    for (unsigned origin = 0; origin < 6; ++origin) {
         const bool constantOnly = origin != 0;
-        const bool booleanOnly = origin >= 2;
-        const auto tag = booleanOnly ? booleanTag : mlir::TypeID::get<ctjs::NumberAttr>();
+        const bool booleanOnly = origin == 2 || origin == 3;
+        const bool stringOnly = origin >= 4;
+        const auto tag = stringOnly    ? stringTag
+                         : booleanOnly ? booleanTag
+                                       : mlir::TypeID::get<ctjs::NumberAttr>();
         const Dependencies expected = constantOnly ? Dependencies{{}} : Dependencies{{0, 1}};
-        const auto program = origin == 3
+        const auto program = origin == 5  ? replaced(string, "owned scalar", "")
+                             : stringOnly ? string
+                             : origin == 3
                                  ? replaced(boolean, "#ctjs.boolean<false>", "#ctjs.boolean<true>")
                              : booleanOnly  ? boolean
                              : constantOnly ? constant
@@ -422,16 +494,23 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
         }
         std::printf("scalar reads %s %s: %u rows, %u live edits, all %u host budgets checked\n",
                     prepared ? "prepared" : "source",
-                    origin == 3    ? "Boolean true"
+                    origin == 5    ? "String empty"
+                    : stringOnly   ? "String owning"
+                    : origin == 3  ? "Boolean true"
                     : booleanOnly  ? "Boolean false"
                     : constantOnly ? "constant"
                                    : "published",
                     rows, mutations, completion);
     }
 
-    for (const bool booleanOnly : {false, true}) {
+    for (unsigned origin = 0; origin < 3; ++origin) {
+        const bool booleanOnly = origin == 1;
+        const bool stringOnly = origin == 2;
         const auto scoped =
-            replaced(booleanOnly ? boolean : constant, constantStore,
+            replaced(stringOnly    ? string
+                     : booleanOnly ? boolean
+                                   : constant,
+                     constantStore,
                      "    %condition = ctjs.truthy %actual\n"
                      "    scf.if %condition {\n"
                      "      %thenNumber = ctjs.constant #ctjs.number<0> {test_scope}\n"
@@ -442,11 +521,12 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
                      "    }\n" +
                          constantStore);
         auto program = scoped;
-        if (booleanOnly) {
+        if (booleanOnly || stringOnly) {
             for (const char * name : {"thenNumber", "elseNumber"}) {
                 const auto definition = std::string("%") + name + " = ctjs.constant ";
                 program = replaced(program, definition + "#ctjs.number<0>",
-                                   definition + "#ctjs.boolean<false>");
+                                   definition + (stringOnly ? "#ctjs.string<\"owned scalar\">"
+                                                            : "#ctjs.boolean<false>"));
             }
         }
         auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);

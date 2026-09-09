@@ -525,7 +525,8 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
                 const auto * scalar = globals->scalarRead(load);
                 if (scalar &&
                     (scalar->alternatives.tag() == mlir::TypeID::get<ctjs::NumberAttr>() ||
-                     scalar->alternatives.tag() == mlir::TypeID::get<ctjs::BooleanAttr>())) {
+                     scalar->alternatives.tag() == mlir::TypeID::get<ctjs::BooleanAttr>() ||
+                     scalar->alternatives.tag() == mlir::TypeID::get<ctjs::StringAttr>())) {
                     return;
                 }
             }

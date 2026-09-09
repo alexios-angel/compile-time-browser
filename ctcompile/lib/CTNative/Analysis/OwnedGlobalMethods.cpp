@@ -343,7 +343,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         if (read->getParentOp() != entry || store->getParentOp() != entry ||
             read.getName() != store.getName() || store.getValue() != edge.value ||
             (edge.alternatives.tag() != mlir::TypeID::get<ctjs::NumberAttr>() &&
-             edge.alternatives.tag() != mlir::TypeID::get<ctjs::BooleanAttr>())) {
+             edge.alternatives.tag() != mlir::TypeID::get<ctjs::BooleanAttr>() &&
+             edge.alternatives.tag() != mlir::TypeID::get<ctjs::StringAttr>())) {
             reject("saved scalar read disagrees with the complete host proof");
             return;
         }

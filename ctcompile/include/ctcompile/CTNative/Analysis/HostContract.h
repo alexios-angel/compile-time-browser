@@ -105,7 +105,7 @@ struct HostCallableEdge {
     std::vector<HostPrimitiveArgument> arguments;
 };
 
-// A proved Number or Boolean origin in an ordinary source global. Each read has exactly
+// A proved Number, Boolean or String origin in an ordinary source global. Each read has
 // one earlier entry store; dependencies are the completed published results
 // encountered in its value expression, in traversal order (possibly repeated).
 // The list is empty for constant-only scalar expressions; their source scope,

@@ -1447,12 +1447,18 @@ ctjs.func @scoped(%receiver: !ctjs.value, %new_target: !ctjs.value,
 // same immutable program. No host category supplies a native type here.
 class ScheduledScalarInference final : public TypeInference {
 public:
+    enum class Kind {
+        Number,
+        Boolean,
+        String
+    };
+
     ScheduledScalarInference(mlir::DataFlowSolver & solver,
                              const ctcompile::ctnative::OwnedGlobalRoots * owner,
                              mlir::Operation * literal, mlir::Value saved,
-                             mlir::Operation * observed, bool boolean = false)
+                             mlir::Operation * observed, Kind kind = Kind::Number)
         : TypeInference(solver, owner), solver_(solver), literal_(literal), saved_(saved),
-          observed_(observed), boolean_(boolean) {}
+          observed_(observed), kind_(kind) {}
 
     mlir::LogicalResult visitOperation(mlir::Operation * op,
                                        llvm::ArrayRef<const TypeLattice *> operands,
@@ -1465,12 +1471,16 @@ public:
         using namespace ctcompile::ctnative;
         const auto type = results.front()->getValue().getType();
         auto * context = op->getContext();
-        const mlir::Type initial =
-            boolean_ ? mlir::Type(BoolType::get(context)) : NumType::get(context, NumKind::I32);
+        const mlir::Type initial = kind_ == Kind::String    ? mlir::Type(defaultStringType(context))
+                                   : kind_ == Kind::Boolean ? mlir::Type(BoolType::get(context))
+                                                            : NumType::get(context, NumKind::I32);
         const mlir::Type wider =
-            boolean_ ? mlir::Type(VariantType::get(
-                           context, {BoolType::get(context), NumType::get(context, NumKind::I32)}))
-                     : NumType::get(context, NumKind::F64);
+            kind_ == Kind::String
+                ? mlir::Type(VariantType::get(context, {BoolType::get(context), initial}))
+            : kind_ == Kind::Boolean
+                ? mlir::Type(VariantType::get(
+                      context, {BoolType::get(context), NumType::get(context, NumKind::I32)}))
+                : NumType::get(context, NumKind::F64);
         if (stage_ == 0 && !type) {
             ++stage_;
             solver_.enqueue({solver_.getProgramPointAfter(literal_), this});
@@ -1501,7 +1511,7 @@ private:
     mlir::Operation * literal_;
     mlir::Value saved_;
     mlir::Operation * observed_;
-    bool boolean_;
+    Kind kind_;
     unsigned stage_ = 0;
 };
 
@@ -1710,21 +1720,101 @@ void checkSavedScalarGlobalTypes(mlir::MLIRContext & context) {
                     "dynamic global access keeps Boolean observations boxed");
         }
 
-        for (unsigned origin = 0; origin < 6; ++origin) {
-            const bool constantOnly = origin == 1 || origin == 3 || origin == 5;
-            const bool booleanOnly = origin >= 2;
-            const char * actualType = booleanOnly ? (constantOnly ? "!ctnative.bool" : booleanExact)
-                                      : constantOnly ? "!ctnative.num<i32>"
-                                                     : exact;
+        const auto stringTag = mlir::TypeID::get<ctjs::StringAttr>();
+        const auto string =
+            replaced(literal, std::string("%entryLiteral = ctjs.constant ") + kFive,
+                     "%entryLiteral = ctjs.constant #ctjs.string<\"owned scalar\">");
+        const auto stringCall = replaced(program, kFive, "#ctjs.string<\"owned scalar\">");
+        const char * stringExact = prepared ? "!ctnative.str<utf8>" : "!ctnative.boxed";
+        for (const std::string & value :
+             {std::string("owned scalar"), std::string(),
+              std::string("quote\\22 newline\\0A nul\\00tail % = ;"), std::string(512, 'x')}) {
+            const auto constant = replaced(string, "owned scalar", value);
+            variant(constant, true, 2, "!ctnative.str<utf8>",
+                    "String aliases receive their actual owning literal type for every byte value",
+                    stringTag);
+            variant(replaced(stringCall, "owned scalar", value), true, 2, stringExact,
+                    "a String result category cannot supply the type of an indirect source call",
+                    stringTag);
+            variant(
+                replaced(constant, read, read + "    %savedAgain = ctjs.load_global \"saved\"\n"),
+                true, 3, "!ctnative.str<utf8>",
+                "every repeated String read subscribes independently to the actual stored value",
+                stringTag);
+        }
+        variant(replaced(string, literalStore,
+                         "    %kind = ctjs.unary typeof %entryLiteral\n"
+                         "    ctjs.store_global \"saved\", %kind\n"),
+                true, 2, "!ctnative.str<utf8>",
+                "a typeof initializer retains the ordinary String-producing SSA lattice",
+                stringTag);
+        variant(replaced(string, literalStore, literalStore + literalStore), true, 0,
+                "!ctnative.opt<!ctnative.str<utf8>>",
+                "identical String writes cannot acquire sole-store initialization authority");
+        variant(replaced(string, literalStore + read, read + literalStore), false, 0,
+                "!ctnative.opt<!ctnative.str<utf8>>",
+                "a String read before initialization retains implicit Undefined");
+        for (const char * absent : {"undefined", "null"}) {
+            variant(replaced(string, literalStore,
+                             literalStore + "    %absent = ctjs.constant #ctjs." + absent +
+                                 "\n    ctjs.store_global \"saved\", %absent\n"),
+                    true, 0, "!ctnative.opt<!ctnative.str<utf8>>",
+                    "an actual absent store cannot be removed by the requested String observation");
+        }
+        variant(replaced(string, literalStore,
+                         literalStore + "    %other = ctjs.constant #ctjs.string<\"different\">\n"
+                                        "    ctjs.store_global \"saved\", %other\n"),
+                true, 0, "!ctnative.opt<!ctnative.str<utf8>>",
+                "different String stores retain the ordinary absence seed");
+        variant(replaced(string, literalStore,
+                         literalStore + "    %other = ctjs.constant #ctjs.boolean<true>\n"
+                                        "    ctjs.store_global \"saved\", %other\n"),
+                true, 0, "!ctnative.opt<!ctnative.variant<!ctnative.bool, !ctnative.str<utf8>>>",
+                "a Boolean write keeps the actual mixed Boolean and String lattice");
+        variant(replaced(string, literalStore,
+                         literalStore + "    %other = ctjs.constant " + kFive +
+                             "\n    ctjs.store_global \"saved\", %other\n"),
+                true, 0,
+                "!ctnative.opt<!ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>>>",
+                "a Number write keeps the actual mixed Number and String lattice");
+        variant(replaced(string, literalStore, "    ctjs.store_global \"saved\", %this\n"), true, 0,
+                "!ctnative.boxed",
+                "a requested String observation cannot turn an unknown stored value into String");
+        variant(
+            replaced(string, literalStore, "    %unrelated = ctjs.call %this(%u)\n" + literalStore),
+            false, 0, "!ctnative.opt<!ctnative.str<utf8>>",
+            "unknown effects withhold String initialization despite the literal store");
+        for (const char * name : {"globalThis", "window"}) {
+            variant(replaced(string, literalStore,
+                             std::string("    %dynamic = ctjs.load_global \"") + name + "\"\n" +
+                                 literalStore),
+                    false, 0, "!ctnative.boxed",
+                    "dynamic global access keeps String observations boxed");
+        }
+
+        for (unsigned origin = 0; origin < 10; ++origin) {
+            const bool constantOnly = origin % 2 == 1;
+            const bool booleanOnly = origin >= 2 && origin < 6;
+            const bool stringOnly = origin >= 6;
+            const char * actualType =
+                stringOnly     ? (constantOnly ? "!ctnative.str<utf8>" : stringExact)
+                : booleanOnly  ? (constantOnly ? "!ctnative.bool" : booleanExact)
+                : constantOnly ? "!ctnative.num<i32>"
+                               : exact;
             const char * absentType =
-                booleanOnly    ? (constantOnly || prepared ? "!ctnative.opt<!ctnative.bool>"
+                stringOnly     ? (constantOnly || prepared ? "!ctnative.opt<!ctnative.str<utf8>>"
+                                                           : "!ctnative.boxed")
+                : booleanOnly  ? (constantOnly || prepared ? "!ctnative.opt<!ctnative.bool>"
                                                            : "!ctnative.boxed")
                 : constantOnly ? "!ctnative.opt<!ctnative.num<i32>>"
                                : optional;
-            auto text = booleanOnly ? (constantOnly ? boolean : booleanCall)
-                                    : (constantOnly ? literal : program);
-            if (origin >= 4) {
+            auto text = stringOnly    ? (constantOnly ? string : stringCall)
+                        : booleanOnly ? (constantOnly ? boolean : booleanCall)
+                                      : (constantOnly ? literal : program);
+            if (origin == 4 || origin == 5) {
                 text = replaced(text, "#ctjs.boolean<false>", "#ctjs.boolean<true>");
+            } else if (origin >= 8) {
+                text = replaced(text, "owned scalar", "");
             }
             auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
             require(static_cast<bool>(module), "live-proof fixture parses");
@@ -1766,17 +1856,21 @@ void checkSavedScalarGlobalTypes(mlir::MLIRContext & context) {
                     mlir::DataFlowSolver solver;
                     solver.load<mlir::dataflow::DeadCodeAnalysis>();
                     solver.load<mlir::dataflow::SparseConstantPropagation>();
+                    const auto kind = stringOnly    ? ScheduledScalarInference::Kind::String
+                                      : booleanOnly ? ScheduledScalarInference::Kind::Boolean
+                                                    : ScheduledScalarInference::Kind::Number;
                     auto * inference = solver.load<ScheduledScalarInference>(
-                        &complete, delayed, complete.scalarReads().front().value, observed,
-                        booleanOnly);
+                        &complete, delayed, complete.scalarReads().front().value, observed, kind);
                     require(succeeded(solver.initializeAndRun(*module)),
                             "the scheduled scalar producer converges");
-                    require(inference->stages() == 5,
-                            booleanOnly
-                                ? "alias waits, receives bool, widens to mixed and optional, "
-                                  "then becomes boxed"
-                                : "alias waits, receives i32, widens to f64 and optional, "
-                                  "then becomes boxed");
+                    require(
+                        inference->stages() == 5,
+                        stringOnly ? "alias waits, receives String, widens to mixed and optional, "
+                                     "then becomes boxed"
+                        : booleanOnly ? "alias waits, receives bool, widens to mixed and optional, "
+                                        "then becomes boxed"
+                                      : "alias waits, receives i32, widens to f64 and optional, "
+                                        "then becomes boxed");
                 }
             }
 
@@ -1862,9 +1956,9 @@ void checkSavedScalarGlobalTypes(mlir::MLIRContext & context) {
             restored();
         }
     }
-    require(rows == 74 && states == 48, "all source/prepared rows and live source edits ran");
+    require(rows == 122 && states == 80, "all source/prepared rows and live source edits ran");
     std::printf("scalar global inference: %u source/prepared rows, %u live edits, "
-                "pending/Boolean/i32/f64/mixed/optional/boxed subscription checked\n",
+                "pending/String/Boolean/i32/f64/mixed/optional/boxed subscription checked\n",
                 rows, states);
 }
 
