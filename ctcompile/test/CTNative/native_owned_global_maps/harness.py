@@ -20,6 +20,7 @@ from .sources import (
     leaf_object_sources, LEAF_OBJECT_FIELDS, leaf_readback_sources, LEAF_COMPARISON_CASES,
     leaf_absence_sources, leaf_absence_cases, primitive_absence_sources,
     leaf_clear_sources, leaf_clear_cases,
+    numeric_entry_sources, numeric_entry_cases,
 )
 
 
@@ -1318,6 +1319,8 @@ def standalone(args, output, name, value, compilers, nm):
             check_leaf_readback_calls(cpp, name, mode)
         if name in leaf_absence_sources() or name in leaf_clear_sources():
             check_leaf_absence_calls(cpp, name, mode)
+        if name in numeric_entry_sources():
+            check_numeric_entry_calls(cpp, name, mode)
         if name in RESULT_SIGNATURES:
             result, params, _ = RESULT_SIGNATURES[name]
             getter_params = "js_num" if name in {
@@ -1367,6 +1370,9 @@ def standalone(args, output, name, value, compilers, nm):
         if name in LEAF_CLEAR_LIFETIMES:
             source = args.work / f"{name}.{mode}.identity.cpp"
             source.write_text(leaf_clear_lifetime_cpp(cpp, name))
+        if name in NUMERIC_ENTRY_LIFETIMES:
+            source = args.work / f"{name}.{mode}.identity.cpp"
+            source.write_text(numeric_entry_lifetime_cpp(cpp, name))
         if name in {**nullable_result_sources(), **nullable_key_sources(), **nullable_payload_sources(),
                     **nullable_host_result_sources(), **nullable_nested_result_sources()}:
             key = "std::string" if name == "nullable_homogeneous_key" else "std::variant<bool, std::string>"
@@ -1397,7 +1403,7 @@ def standalone(args, output, name, value, compilers, nm):
             if owned.VM.search(host.run([nm, "-C", str(binary)]).stdout):
                 raise RuntimeError(f"{name}/{mode}: linked a VM symbol")
             traces = 2 if name in {*LEAF_COMPARISON_CASES, *LEAF_ABSENCE_LIFETIMES,
-                                  *LEAF_CLEAR_LIFETIMES} else 1
+                                  *LEAF_CLEAR_LIFETIMES, *NUMERIC_ENTRY_LIFETIMES} else 1
             if host.run([str(binary)]).stdout != f"trace={value}\n" * traces:
                 raise RuntimeError(f"{name}/{mode}: standalone result mismatch")
         if name in {"ordinary", "mutate_map", "growing", "result_seeded_growing"}:
@@ -1425,6 +1431,8 @@ def standalone(args, output, name, value, compilers, nm):
             leaf_absence_lifetime(args, cpp, name, mode, compilers[1])
         if name in LEAF_CLEAR_LIFETIMES:
             leaf_absence_lifetime(args, cpp, name, mode, compilers[1])
+        if name in NUMERIC_ENTRY_LIFETIMES:
+            numeric_entry_lifetime(args, cpp, name, mode, compilers[1])
 
 
 def check_call_preservation(original, output, name):
@@ -1437,7 +1445,7 @@ def check_call_preservation(original, output, name):
         if re.findall(pattern, original, re.M) != re.findall(pattern, output, re.M):
             raise RuntimeError(f"{name}: failed ownership changed live branch/yield operands")
     if name.startswith(("leaf_object", "leaf_readback", "local_", "historical_object")):
-        pattern = r"^\s*((?:%[-\w.$]+ = )?ctjs\.(?:create_object|set_property|get_property|compare|unary)\b[^\n{]*)"
+        pattern = r"^\s*((?:%[-\w.$]+ = )?ctjs\.(?:create_object|set_property|get_property|compare|unary|binary|load_global|store_global)\b[^\n{]*)"
         if ([match.strip() for match in re.findall(pattern, original, re.M)]
                 != [match.strip() for match in re.findall(pattern, output, re.M)]):
             raise RuntimeError(f"{name}: failed ownership changed leaf allocations or field operands")
@@ -1852,3 +1860,177 @@ int main() {
     return changed.replace("CTN_RESEEDED", "true" if reseeded else "false").replace(
         "CTN_PARAMS", "std::string, bool" if branch else "std::string").replace(
         "CTN_FLAG", ", call % 2 != 0" if branch else "")
+
+
+NUMERIC_ENTRY_LIFETIMES = ("local_numeric_saved_lifetime", "local_numeric_branch_lifetime")
+
+
+def check_numeric_entry_calls(cpp, name, mode):
+    source = numeric_entry_sources()[name][0]
+    entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
+    if not entry:
+        raise RuntimeError(f"{name}/{mode}: missing numeric entry")
+    params = ("std::string, js_num, bool" if "set(key, value, flag)" in source else
+              "std::string, js_num" if "set(key, value)" in source else
+              "js_num" if name in {"local_add_result_key", "local_numeric_nested_key",
+                                    "local_numeric_nan_key", "local_clear_zero_literal_repair"}
+              else "std::string")
+    if f"std::function<js_num({params})>" not in cpp:
+        raise RuntimeError(f"{name}/{mode}: arithmetic changed the independently typed callable ABI")
+    allocations = source.count("const item = {};") + source.count("{value:")
+    if cpp.count("std::make_shared<ctnative::identity_object>()") != allocations:
+        raise RuntimeError(f"{name}/{mode}: arithmetic erased a real leaf allocation")
+    for method in ("set", "get", "has", "delete", "clear"):
+        original = len(re.findall(rf"\bstate\.{method}\(", source))
+        lowered = len(re.findall(rf"\bctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(", cpp))
+        if original != lowered:
+            raise RuntimeError(f"{name}/{mode}: changed {original} evaluated Map.{method} calls to {lowered}")
+    methods_by_value = dict(re.findall(
+        r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1]))
+    calls = re.findall(r"ctnative::invoke_callable\((\w+)([^;\n]*)\);", entry[1])
+    expected = re.findall(r"host\.slot\.(size|set)\(", source)
+    if name == "local_numeric_nan_key":
+        expected = ["size", "size", "size", "set", "size", "size", "set"]
+    if [methods_by_value.get(callee) for callee, _ in calls] != expected:
+        raise RuntimeError(f"{name}/{mode}: changed evaluated published call order: {calls}")
+    # Native arithmetic must still consume evaluated operands. Every original
+    # source binary has a corresponding entry expression, not a trace constant.
+    source_entry = source.rsplit("});\n", 1)[1]
+    expected_ops = re.findall(r"\*\*|[+*/%-]", source_entry)
+    cpp_ops = re.findall(r"= [^;\n]+? ([+*/-]) [^;\n]+;", entry[1])
+    for symbol in ("+", "-", "*", "/"):
+        if cpp_ops.count(symbol) < expected_ops.count(symbol):
+            raise RuntimeError(f"{name}/{mode}: erased a source numeric {symbol} operand")
+    if (entry[1].count("std::fmod(") < expected_ops.count("%")
+            or entry[1].count("std::pow(") < expected_ops.count("**")):
+        raise RuntimeError(f"{name}/{mode}: erased evaluated remainder or power operands")
+
+
+def numeric_entry_observer_source(source, name):
+    branch = name == "local_numeric_branch_lifetime"
+    observed = source + """
+(function() {
+    const seen = [], results = [], sizes = [];
+    const originalSet = Map.prototype.set;
+    Map.prototype.set = function(key, value) {
+        seen.push(value); return originalSet.call(this, key, value);
+    };
+    const setter = host.slot.set, size = host.slot.size;
+    host = {};
+    const values = [2, -3, 0, 2.5];
+    for (let call = 0; call < values.length; ++call) {
+        results.push(setter(call < 2 ? 'future-key' : 'other-key', values[call] CTN_FLAG));
+        sizes.push(size());
+    }
+    Map.prototype.set = originalSet;
+    trace = 0;
+""".replace(" CTN_FLAG", ", call % 2 !== 0" if branch else "")
+    checks = ["seen.length === 4", "sizes.every(value => value === 0)",
+              "results.every((value, index) => value === values[index])",
+              "seen.every((value, index) => value.value === values[index])"]
+    checks += [f"seen[{left}] !== seen[{right}]" for left in range(4) for right in range(left + 1, 4)]
+    for check in checks:
+        observed += f"    if ({check}) {{ trace += 1; }}\n"
+    observed += "    for (const item of seen) { item.value = 99; }\n"
+    observed += "    if (results.every((value, index) => value === values[index])) { trace += 1; }\n"
+    return observed + "})();\n", len(checks) + 1
+
+
+def numeric_entry_lifetime_cpp(cpp, name):
+    branch = name == "local_numeric_branch_lifetime"
+    changed = instrument_leaf_objects(cpp)
+    changed = changed.replace(
+        "static std::vector<std::weak_ptr<const void>> ctn_test_objects;",
+        "static std::vector<std::weak_ptr<const void>> ctn_test_objects;\n"
+        "static std::shared_ptr<const void> ctn_test_retained;\n"
+        "static bool ctn_test_keep_leaf = false;")
+    changed = changed.replace(
+        "ctn_test_objects.emplace_back(made); return made;",
+        "ctn_test_objects.emplace_back(made);\n"
+        "    if (ctn_test_keep_leaf) { ctn_test_retained = made; }\n"
+        "    return made;")
+    changed += r'''
+int main() {
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
+        ctn_test_objects.size() != 3) { return 180; }
+    for (const auto & leaf : ctn_test_objects) {
+        if (!leaf.expired()) { return 181; }
+    }
+    auto owner = g_host;
+    auto table = owner->slot;
+    auto setter = table->m_set;
+    auto size = table->m_size;
+    static_assert(std::is_same_v<decltype(size), std::function<js_num()>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<js_num(CTN_PARAMS)>>);
+    std::weak_ptr owner_lifetime = owner;
+    std::weak_ptr table_lifetime = table;
+    g_host.reset(); owner.reset(); table.reset();
+    if (!owner_lifetime.expired() || !table_lifetime.expired() || ctn_test_maps[0].expired()) {
+        return 182;
+    }
+    const std::string original(160, 'k');
+    std::vector<js_num> saved;
+    ctn_test_keep_leaf = true;
+    for (int call = 0; call < 128; ++call) {
+        auto caller = original;
+        if (call % 2) { caller += 'r'; }
+        const auto before = ctn_test_objects.size();
+        const js_num value = static_cast<js_num>(call - 64) / 4;
+        saved.push_back(setter(caller, value CTN_FLAG));
+        caller.assign(original.size(), 'q');
+        if (saved.back() != value || size() != 0 || ctn_test_objects.size() != before + 1) {
+            return 183;
+        }
+        for (std::size_t index = 0; index < before; ++index) {
+            if (!ctn_test_objects[index].expired()) { return 184; }
+        }
+        const auto leaf = std::static_pointer_cast<const ctnative::identity_object>(ctn_test_retained);
+        if (!leaf || ctn_test_objects.back().expired() ||
+            leaf->field_76616c7565.tag != ctnative::nullable_scalar::kind::number ||
+            leaf->field_76616c7565.value != value) { return 185; }
+    }
+    ctn_test_keep_leaf = false;
+    const auto retained_index = ctn_test_objects.size() - 1;
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
+        ctn_test_maps[0].lock() == ctn_test_maps[1].lock() ||
+        size() != 0 || g_host->slot->m_size() != 0) { return 186; }
+    setter = {};
+    if (ctn_test_maps[0].expired()) { return 187; }
+    size = {};
+    if (!ctn_test_maps[0].expired() || ctn_test_maps[1].expired() ||
+        ctn_test_objects[retained_index].expired()) { return 188; }
+    g_host.reset();
+    if (!ctn_test_maps[1].expired()) { return 189; }
+    for (std::size_t index = 0; index < ctn_test_objects.size(); ++index) {
+        if (ctn_test_objects[index].expired() != (index != retained_index)) { return 190; }
+    }
+    for (std::size_t index = 0; index < saved.size(); ++index) {
+        if (saved[index] != (static_cast<js_num>(index) - 64) / 4) { return 191; }
+    }
+    {
+        const auto leaf = std::static_pointer_cast<const ctnative::identity_object>(ctn_test_retained);
+        if (!leaf || leaf->field_76616c7565.tag != ctnative::nullable_scalar::kind::number ||
+            leaf->field_76616c7565.value != saved.back()) { return 192; }
+    }
+    ctn_test_retained.reset();
+    if (!ctn_test_objects[retained_index].expired()) { return 193; }
+    return 0;
+}
+'''
+    return changed.replace("CTN_PARAMS", "std::string, js_num, bool" if branch else "std::string, js_num").replace(
+        "CTN_FLAG", ", call % 2 != 0" if branch else "")
+
+
+def numeric_entry_lifetime(args, cpp, name, mode, compiler):
+    source = args.work / f"{name}.{mode}.lifetime.cpp"
+    source.write_text(numeric_entry_lifetime_cpp(cpp, name))
+    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
+    host.run([compiler, *owned.FLAGS, "-O1", "-g", "-fno-omit-frame-pointer",
+              "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
+              str(source), "-o", str(binary)])
+    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
+        env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+                 UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+    if result.returncode or result.stdout != "trace=14\n" * 2:
+        raise RuntimeError(f"{name}/{mode}: saved numeric lifetime failure (exit {result.returncode})\n"
+                           f"{result.stdout}{result.stderr}")

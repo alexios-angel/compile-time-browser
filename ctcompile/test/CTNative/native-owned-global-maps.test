@@ -228,3 +228,15 @@
 # flags run 128 calls after owner/table release, followed by independent reentry.
 # Weak observers require previous leaves and both Maps to die; one observed
 # leaf survives final Map release until its own last owner is released.
+# Entry Add/Sub/Mul/Div/Mod/Pow consume independently proved Number results.
+# The exact eight-call trace-3 source and its eight-call trace-1 repair retain
+# every call. Size-returning operands distinguish evaluation order; arithmetic
+# result-fed keys retain the complete future-input family and NaN key identity.
+# Saved global results gain complete host ownership but retain the independent
+# Map-identity refusal. Both original arithmetic/global dependency graphs and
+# all calls survive; exact inline repairs keep arithmetic and call order.
+# String/object/Boolean/nullish operands and future mixed results remain refused
+# under fresh/stale forged facts and reruns. Both explicit/deduced forms retain
+# real arithmetic and link no VM. Saved numeric fields and callables run 128
+# future values and both branch flags after owner/table release; Number results
+# survive Map destruction and a separately retained leaf's final owner release.

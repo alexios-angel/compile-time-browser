@@ -7,6 +7,7 @@ import argparse
 from pathlib import Path
 import re
 import shutil
+import struct
 
 from .sources import (
     methods, owned, boundary, host, SOURCE, SHARED, parameter_sources, result_sources,
@@ -31,6 +32,8 @@ from .sources import (
     primitive_absence_sources,
     leaf_clear_cases, leaf_clear_sources, leaf_clear_refusals,
     LEAF_CLEAR_UNOWNED, LEAF_CLEAR_PROMOTED,
+    numeric_entry_cases, numeric_entry_sources, numeric_entry_refusals, NUMERIC_ENTRY_PROMOTED,
+    NUMERIC_ENTRY_CARRIERS,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
@@ -40,6 +43,7 @@ from .harness import (
     LEAF_ABSENCE_LIFETIMES, leaf_absence_observer_source,
     primitive_absence_observer_source,
     LEAF_CLEAR_LIFETIMES, leaf_clear_observer_source,
+    NUMERIC_ENTRY_LIFETIMES, numeric_entry_observer_source,
 )
 
 
@@ -337,8 +341,8 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
         check_leaf_absence_census(args, rejected, name)
         if count != 5 or len(source_calls(rejected.read_text())) != calls:
             raise RuntimeError(f"{name}: changed the exact leaf-object source census")
-        if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != f"trace={value}\n"
-                or host.run([str(reference), str(js)]).stdout != f"trace={value}\n"):
+        if (host.run([node, "-e", numeric_node_observer(value), str(js)]).stdout != f"trace={value}\n"
+                or host.run([str(reference), str(js)]).stdout != numeric_reference_output(name, value)):
             raise RuntimeError(f"{name}: Node/interpreter leaf-object refusal mismatch")
         if source.count(old) != 1 or source.replace(old, replacement) != positives[repaired_name][0]:
             raise RuntimeError(f"{name}: repair no longer restores its independently gated source")
@@ -351,7 +355,8 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
             mode_name = name + "-" + mode
             failed = methods.refused(args, rejected, mode_name, config, options=options, admitted=0)
             check_call_preservation(rejected.read_text(), failed.read_text(), mode_name)
-            postdelete = name in LEAF_ABSENCE_UNOWNED or name in LEAF_CLEAR_UNOWNED
+            postdelete = (name in LEAF_ABSENCE_UNOWNED or name in LEAF_CLEAR_UNOWNED
+                          or name in numeric_entry_refusals())
             if postdelete and "ctnative.host_owner_proved = false" not in failed.read_text():
                 raise RuntimeError(f"{name}: possible absence manufactured a complete host owner")
             repaired = owned.lower(args, restored, mode_name + "-restored", restored_config, options=options)
@@ -511,7 +516,7 @@ def check_comparison_identity_observations(args, node, reference):
 
 
 def check_leaf_absence_census(args, ir, name):
-    case = {**leaf_absence_cases(), **leaf_clear_cases()}.get(name)
+    case = {**leaf_absence_cases(), **leaf_clear_cases(), **numeric_entry_cases()}.get(name)
     if case is None:
         return
     raw = args.work / f"{name}.raw.mlir"
@@ -521,6 +526,148 @@ def check_leaf_absence_census(args, ir, name):
     if ("distinct_branches_" in name or name.startswith("local_clear_both_branches_")) \
             and ir.read_text().count("scf.if") < 2:
         raise RuntimeError(f"{name}: lost the nonidentical two-arm absence join")
+
+
+def numeric_reference_output(name, value):
+    saved = {"local_add_saved_results": "first=1\nsecond=1\nthird=1\n",
+             "local_numeric_saved_snapshot": "first=1\nsecond=2\n"}.get(name, "")
+    return saved + f"trace={'nan' if value == 'NaN' else value}\n"
+
+
+def numeric_node_observer(value):
+    if value != "NaN":
+        return boundary.NODE
+    predicate = "typeof trace !== 'number' || !Number.isFinite(trace)"
+    if boundary.NODE.count(predicate) != 1:
+        raise RuntimeError("exact NaN observer lost the shared finite-number control")
+    return boundary.NODE.replace(predicate, "typeof trace !== 'number' || !Number.isNaN(trace)")
+
+
+def check_numeric_global_preparation(text, original, name):
+    entry = text.split("\n  }", 1)[0]
+    calls = re.findall(r"^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) "
+                       r"\{ctnative\.stored_call = 1 : i32\}", entry, re.M)
+    actuals = [arguments.split(", ") for _, _, arguments in calls]
+    if (len(source_calls(text)) != 8 or len(source_calls(original)) != 8
+            or [(target, len(arguments)) for (_, target, _), arguments in zip(calls, actuals)]
+            != [("fn$3", 4), ("fn$4", 5), ("fn$4", 5), ("fn$4", 5)]):
+        raise RuntimeError(f"{name}: saved-global refusal changed the eight evaluated calls")
+    receivers = dict(re.findall(r"(%[-\w.$]+) = ctjs\.get_property (%[-\w.$]+)\[", entry))
+    captures = dict(re.findall(r"(%[-\w.$]+) = ctjs\.load_upvalue (%[-\w.$]+)\[0\]", entry))
+    for arguments in actuals:
+        if receivers.get(arguments[2]) != arguments[0] or captures.get(arguments[3]) != arguments[2]:
+            raise RuntimeError(f"{name}: saved-global refusal changed receiver/callee/capture provenance")
+    snapshot = "saved_snapshot" in name
+    names = ("first", "second") if snapshot else ("first", "second", "third")
+    for index, binding in enumerate(names, 1):
+        if re.findall(rf'ctjs\.store_global "{binding}", (%[-\w.$]+)', entry) != [calls[index][0]]:
+            raise RuntimeError(f"{name}: changed the live {binding} result store")
+    values, binaries = {}, []
+    for line in entry.splitlines():
+        if match := re.search(r'(%[-\w.$]+) = ctjs\.load_global "([^\"]+)"', line):
+            values[match[1]] = "global:" + match[2]
+        elif match := re.search(r"(%[-\w.$]+) = ctjs\.constant #ctjs\.number<(\d+)>", line):
+            values[match[1]] = struct.unpack("d", struct.pack("Q", int(match[2])))[0]
+        elif match := re.search(r"(%[-\w.$]+) = ctjs\.binary (\w+) (%[-\w.$]+), (%[-\w.$]+)", line):
+            binaries.append((match[2], values.get(match[3]), values.get(match[4])))
+            values[match[1]] = "binary:" + str(len(binaries) - 1)
+    expected = ([("mul", "global:first", 10.0), ("add", "binary:0", "global:second")]
+                if snapshot else [("add", "global:first", "global:second"),
+                                  ("add", "binary:0", "global:third")])
+    trace = re.findall(r'ctjs\.store_global "trace", (%[-\w.$]+)', entry)
+    if binaries != expected or len(trace) != 1 or values.get(trace[0]) != "binary:1":
+        raise RuntimeError(f"{name}: changed saved-global arithmetic operands: {binaries}")
+    for operation in ("scf.if", "scf.yield", "ctjs.create_object", "ctjs.construct"):
+        if text.count(operation) != original.count(operation):
+            raise RuntimeError(f"{name}: saved-global refusal changed live {operation}")
+
+
+def check_numeric_global_carriers(args, positives, node, reference):
+    cases = numeric_entry_cases()
+    for name in sorted(NUMERIC_ENTRY_CARRIERS):
+        case = cases[name]
+        source, value = case["source"], case["expected_trace"]
+        js, ir, count = boundary.prepare(args, name, source)
+        check_leaf_absence_census(args, ir, name)
+        if count != 5 or (host.run([node, "-e", boundary.NODE, str(js)]).stdout != f"trace={value}\n"
+                or host.run([str(reference), str(js)]).stdout != numeric_reference_output(name, value)):
+            raise RuntimeError(f"{name}: saved-global source census or observation changed")
+        repaired_source = source.replace(case["removed_text"], case["replacement_text"])
+        if source.count(case["removed_text"]) != 1 or repaired_source != positives[case["repair"]][0]:
+            raise RuntimeError(f"{name}: saved-global repair no longer restores its exact inline source")
+        _, repaired, repaired_count = boundary.prepare(args, name + "-restored", repaired_source)
+        if repaired_count != count or len(source_calls(repaired.read_text())) != 8:
+            raise RuntimeError(f"{name}: inline repair lost an evaluated method call")
+        config = contract(args, ir, name)
+        repaired_config = contract(args, repaired, name + "-restored")
+        for mode, options in (("default", ""), ("disabled", "optimize=false")):
+            def reject(input_ir, label, current_config):
+                failed = owned.lower(args, input_ir, label, current_config, options=options, cleanup=False)
+                text = methods.census(failed, count, label, admitted=0)
+                reason = "standard Map identity is unproved with other host/global value reads"
+                if "ctnative.host_owner_proved = true" not in text or reason not in text:
+                    raise RuntimeError(f"{label}: lost independent saved-global Map identity refusal")
+                check_numeric_global_preparation(text, input_ir.read_text(), name)
+                return failed
+
+            label = name + "-" + mode
+            reject(ir, label, config)
+            output = owned.lower(args, repaired, label + "-restored", repaired_config, options=options)
+            checked = methods.census(output, count, label + "-restored", admitted=count)
+            if "ctnative.host_owner_proved = true" not in checked:
+                raise RuntimeError(f"{label}: inline arithmetic repair lost complete ownership")
+            for payload in ("bool", "string", "nullable_string"):
+                forged_name = label + "-forged-" + payload
+                forged = args.work / f"{forged_name}.mlir"
+                forged.write_text(forge_leaf_evidence(ir.read_text(), payload))
+                stale = methods.refused(args, forged, forged_name + "-stale", config,
+                    options=options, reason="fingerprint mismatch", admitted=0)
+                check_call_preservation(forged.read_text(), stale.read_text(), forged_name + "-stale")
+                fresh = contract(args, forged, forged_name)
+                failed = reject(forged, forged_name, fresh)
+                rerun = methods.refused(args, failed, forged_name + "-rerun", fresh,
+                    options=options, reason="fingerprint mismatch", admitted=0)
+                check_call_preservation(failed.read_text(), rerun.read_text(), forged_name + "-rerun")
+
+
+def check_numeric_entry_observations(args, node, reference):
+    cases = numeric_entry_cases()
+    for name in NUMERIC_ENTRY_LIFETIMES:
+        source = cases[name]["source"]
+        observed, value = numeric_entry_observer_source(source, name)
+        js = args.work / f"{name}-numeric-future.js"
+        js.write_text(observed)
+        expected = f"trace={value}\n"
+        if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != expected
+                or host.run([str(reference), str(js)]).stdout != expected):
+            raise RuntimeError(f"{name}: saved numeric field or future branch mismatch")
+        mutations = [("return saved.value;", "return 1;"),
+                     ("value: value", "value: 1"),
+                     ("state.clear();", "state.has(key);")]
+        if name == "local_numeric_branch_lifetime":
+            mutations.append(("state.delete(key);", "state.has(key);"))
+        for index, (old, replacement) in enumerate(mutations):
+            if old not in source:
+                raise RuntimeError(f"{name}: lost numeric mutation control {old}")
+            blind, _ = numeric_entry_observer_source(source.replace(old, replacement), name)
+            js = args.work / f"{name}-numeric-blind-{index}.js"
+            js.write_text(blind)
+            if host.run([node, "-e", boundary.NODE, str(js)]).stdout == expected:
+                raise RuntimeError(f"{name}: numeric observer cannot distinguish {replacement}")
+    for name, old, replacement in (
+        ("local_numeric_sub", "host.slot.set('x') - host.slot.set('y')",
+         "host.slot.set('y') - host.slot.set('x')"),
+        ("local_numeric_saved_snapshot", "first * 10 + second", "host.slot.size() * 10 + second"),
+    ):
+        source, value = cases[name]["source"], cases[name]["expected_trace"]
+        if name == "local_numeric_sub":
+            # Reverse evaluation while keeping each original result in its
+            # operand position: swapping only key spellings would be invisible.
+            replacement = "(host.slot.set('y'), host.slot.set('x')) - 1"
+        js = args.work / f"{name}-numeric-blind.js"
+        js.write_text(source.replace(old, replacement))
+        if host.run([node, "-e", boundary.NODE, str(js)]).stdout == f"trace={value}\n":
+            raise RuntimeError(f"{name}: numeric observation cannot distinguish reordered or reread results")
 
 
 def check_leaf_absence_observations(args, node, reference):
@@ -792,6 +939,7 @@ def main():
         **leaf_clear_sources(),
         **{name: row for name, row in leaf_readback_sources().items()
            if name not in LEAF_READBACK_UNOWNED},
+        **numeric_entry_sources(),
         # Keep the original refusal source byte-for-byte. Its method-local
         # empty payload now has the same independently proved leaf owner.
         "object_payload": (refusal_sources()["object_payload"], "host", 1),
@@ -803,6 +951,7 @@ def main():
     check_leaf_absence_observations(args, node, reference)
     check_primitive_absence_observations(args, node, reference)
     check_leaf_clear_observations(args, node, reference)
+    check_numeric_entry_observations(args, node, reference)
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
     blind = args.work / "seeded-dynamic-overwrite-blinded.js"
     blind.write_text(overwrite_source.replace("return state.get(1);", "return 1;"))
@@ -1034,7 +1183,7 @@ def main():
         js, ir, count = boundary.prepare(args, name, source)
         functions = (LEAF_OBJECT_FUNCTIONS[name] if name in LEAF_OBJECT_FUNCTIONS
                      else 5 if name in LEAF_READBACK_CALLS or name in leaf_absence_sources()
-                     or name in leaf_clear_sources()
+                     or name in leaf_clear_sources() or name in numeric_entry_sources()
                      else RESULT_SIGNATURES[name][2] if name in RESULT_SIGNATURES
                      else 6 if name == "shared_three" else 5 if name.startswith("shared") else 4)
         if count != functions:
@@ -1074,7 +1223,7 @@ def main():
             ir = methods.legacy_marker(args, ir, name)
         expected = f"trace={value}\n"
         if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != expected
-                or host.run([str(reference), str(js)]).stdout != expected):
+                or host.run([str(reference), str(js)]).stdout != numeric_reference_output(name, value)):
             raise RuntimeError(f"{name}: Node/interpreter source observation mismatch")
         config = contract(args, ir, name, binding)
         original, manifest = ir.read_text(), config.read_text()
@@ -1088,7 +1237,7 @@ def main():
                     **shortcircuit_sources(), **nullable_result_sources(), **nullable_key_sources(),
                     **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources(),
                     **leaf_object_sources(), **leaf_readback_sources(), **leaf_absence_sources(),
-                    **primitive_absence_sources(), **leaf_clear_sources()}:
+                    **primitive_absence_sources(), **leaf_clear_sources(), **numeric_entry_sources()}:
             disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")
             if disabled.read_text() != output.read_text():
                 raise RuntimeError(f"{name}: saved scalar proof depends on optimization policy")
@@ -1108,6 +1257,8 @@ def main():
     check_leaf_object_forgeries(args, saved,
         ("local_absence_clear_saved_identity", "local_clear_saved_undefined",
          "local_clear_both_branches_false"))
+    check_leaf_object_forgeries(args, saved,
+        ("local_identity_repeated_keys", "local_numeric_nested_key", "local_numeric_branch_lifetime"))
 
     # Valid-looking scalar markers cannot normalize real null keys or narrow
     # the second use of a nullable formal. Fresh proof must emit the same C++.
@@ -1398,10 +1549,12 @@ def main():
     check_leaf_object_refusals(args, positives, node, reference)
     check_leaf_object_refusals(args, positives, node, reference,
         {name: row for name, row in leaf_readback_refusals().items()
-         if name not in LEAF_ABSENCE_PROMOTED_REFUSALS})
+         if name not in LEAF_ABSENCE_PROMOTED_REFUSALS | NUMERIC_ENTRY_PROMOTED})
     check_leaf_object_refusals(args, positives, node, reference,
         {name: row for name, row in leaf_absence_refusals().items() if name not in LEAF_CLEAR_PROMOTED})
     check_leaf_object_refusals(args, positives, node, reference, leaf_clear_refusals())
+    check_leaf_object_refusals(args, positives, node, reference, numeric_entry_refusals())
+    check_numeric_global_carriers(args, positives, node, reference)
     check_leaf_readback_carriers(args, positives, node, reference, leaf_field_result_refusals())
     # A result contract does not narrow Map storage or supply an implemented
     # callable signature. Preserve the prepared producer/consumer operands.
@@ -1573,7 +1726,8 @@ def main():
         if "ctnative.host_owner_proved = false" not in text or "fingerprint mismatch" not in text:
             raise RuntimeError(f"{name}: prepared leaf owner reused the original source authority")
     for name in ((leaf_readback_sources().keys() - LEAF_READBACK_UNOWNED)
-                 | leaf_absence_sources().keys() | leaf_clear_sources().keys()):
+                 | leaf_absence_sources().keys() | leaf_clear_sources().keys()
+                 | numeric_entry_sources().keys()):
         _, config, output = saved[name]
         rerun = owned.lower(args, output, name + "-rerun", config, cleanup=False)
         text = methods.census(rerun, 5, name + "-rerun", admitted=5)
@@ -1595,6 +1749,9 @@ def main():
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
     for name in ("local_absence_clear_saved_identity", "local_clear_both_branches_false"):
+        ir, config, _ = saved[name]
+        rollback += check_budgets(args, ir, config, name, functions=5)
+    for name in ("local_identity_repeated_keys", "local_numeric_nested_key"):
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
@@ -1662,7 +1819,8 @@ def main():
           "preserve definite object origins, strict identities and fixed scalar field reads; "
           "saved aliases observe later field writes across replacement/deletion and saved numeric "
           "callables pass future-argument, reentry and final-owner sanitizer lifetime checks; "
-          f"{len(leaf_readback_refusals()) - 3} unknown/missing/export/field refusals restore exact sources; "
+          f"{len(leaf_readback_refusals().keys() - LEAF_ABSENCE_PROMOTED_REFUSALS - NUMERIC_ENTRY_PROMOTED)} "
+          "unknown/missing/export/field refusals restore exact sources; "
           f"{len(LEAF_FIELD_RESULTS)} exact raw field results remove only independently proved absence; "
           "saved raw numeric results and callable lifetimes pass future-argument and field mutations; "
           f"{len(LEAF_COMPARISON_REPAIRS)} exact comparison-only fresh allocations retain distinct "
@@ -1679,6 +1837,12 @@ def main():
           "retain every source operation under fresh/stale reports and exact admitted repairs; "
           "three clear lifetime families retain saved callables over 128 future calls, release "
           "both Maps after reentry and preserve an observed leaf until its final owner releases; "
+          f"{len(numeric_entry_sources())} numeric entry programs retain evaluated arithmetic and call order; "
+          f"{len(numeric_entry_refusals())} non-Number/future-input refusals retain their exact repairs; "
+          f"{len(NUMERIC_ENTRY_CARRIERS)} saved-global sources keep complete host owners and separate "
+          "Map identity refusals with their original arithmetic/global dependencies; "
+          "two numeric lifetime families retain 128 future results across both branches, reentry, "
+          "final Map release and independent leaf release; "
           f"{len(leaf_field_result_refusals())} complete-schema field results "
           "retain complete host ownership and separate native carrier refusals; "
           f"{len(PRIMITIVE_ABSENCE_CARRIERS)} exact absent-result carrier refusals preserve complete owners, "
