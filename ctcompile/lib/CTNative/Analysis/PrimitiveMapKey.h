@@ -18,7 +18,18 @@ struct PrimitiveMapKeyEvidence {
     // Derived at the actual size read from definite presence in that runtime
     // instance. It describes the immutable numeric snapshot, not later contents.
     unsigned sizeLowerBound = 0;
+    // An independent exact-empty proof at this size read. A zero lower bound
+    // alone means unknown and must never manufacture this fact.
+    bool sizeIsZero = false;
 };
+
+inline bool isPrimitiveMapZero(mlir::Value value, PrimitiveMapKeyEvidence evidence = {}) {
+    if (auto constant = value.getDefiningOp<ctjs::ConstantOp>()) {
+        auto number = llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue());
+        return number && number.getDouble() == 0;
+    }
+    return evidence.sizeIsZero;
+}
 
 // A deterministic subset is sufficient for a lower bound. Limit candidates,
 // not just accepted witnesses, so possibly aliasing keys also bound the work.
@@ -41,6 +52,8 @@ inline PrimitiveMapKeyRelation comparePrimitiveMapKeys(mlir::Value left, mlir::V
         return constant.getValue();
     };
     auto lhs = literal(left), rhs = literal(right);
+    if (!lhs && leftEvidence.sizeIsZero) { lhs = ctjs::NumberAttr::get(left.getContext(), 0.0); }
+    if (!rhs && rightEvidence.sizeIsZero) { rhs = ctjs::NumberAttr::get(right.getContext(), 0.0); }
     auto leftTag = leftEvidence.tag, rightTag = rightEvidence.tag;
     if (lhs) { leftTag = lhs.getTypeID(); }
     if (rhs) { rightTag = rhs.getTypeID(); }

@@ -61,20 +61,24 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     llvm::SmallVector<mlir::Value> possibleKeys;
     llvm::DenseSet<mlir::Operation *> observations;
     llvm::DenseMap<mlir::Value, unsigned> sizeBounds;
+    llvm::DenseSet<mlir::Value> zeroSizes;
     const auto primitiveTag = [&](mlir::Value key) -> std::optional<mlir::TypeID> {
         return alternatives.lookup(key).tag();
     };
     const auto keyEvidence = [&](mlir::Value key) {
-        return PrimitiveMapKeyEvidence{primitiveTag(key), sizeBounds.lookup(key)};
+        return PrimitiveMapKeyEvidence{primitiveTag(key), sizeBounds.lookup(key),
+                                       zeroSizes.contains(key)};
     };
     const auto absent = [&](mlir::Value key, llvm::ArrayRef<entry_fact> facts, bool complete,
                             llvm::ArrayRef<mlir::Value> possible,
                             bool currentPath = true) -> std::optional<bool> {
         for (const auto & entry : facts) {
             if (!step()) { return std::nullopt; }
-            if (comparePrimitiveMapKeys(entry.key, key) == PrimitiveMapKeyRelation::Same) {
-                return entry.absent;
-            }
+            const auto relation =
+                currentPath ? comparePrimitiveMapKeys(entry.key, key, keyEvidence(entry.key),
+                                                      keyEvidence(key))
+                            : comparePrimitiveMapKeys(entry.key, key);
+            if (relation == PrimitiveMapKeyRelation::Same) { return entry.absent; }
         }
         if (!complete) { return false; }
         for (mlir::Value written : possible) {
@@ -430,6 +434,10 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                     const unsigned bound =
                         std::min(sizeBounds.lookup(left), sizeBounds.lookup(right));
                     if (bound) { sizeBounds[value] = bound; }
+                    if (isPrimitiveMapZero(left, keyEvidence(left)) &&
+                        isPrimitiveMapZero(right, keyEvidence(right))) {
+                        zeroSizes.insert(value);
+                    }
                 }
                 // Restore enclosing SSA facts after path-local refinements;
                 // selected results retain the union of their actual yields.
@@ -478,6 +486,12 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                     alternatives.try_emplace(
                         read.getResult(),
                         PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>()));
+                    // Unknown invocation contents are not empty. Only a clear
+                    // on every reaching path with no subsequent possible write
+                    // proves this immutable read is exactly zero.
+                    if (completeKeys && possibleKeys.empty()) {
+                        zeroSizes.insert(read.getResult());
+                    }
                     // Count only a pairwise-distinct subset of definite entries.
                     // Different SSA keys may denote the same runtime key. Saved
                     // bounds belong to this read, surviving later Map mutations.
@@ -568,7 +582,9 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                         }
                         for (const auto & entry : entries) {
                             if (!step()) { return false; }
-                            if (comparePrimitiveMapKeys(entry.key, invoke.getArgs()[0]) ==
+                            if (comparePrimitiveMapKeys(entry.key, invoke.getArgs()[0],
+                                                        keyEvidence(entry.key),
+                                                        keyEvidence(invoke.getArgs()[0])) ==
                                 PrimitiveMapKeyRelation::Same) {
                                 if (entry.present && entry.payload.known) {
                                     primitives.insert(invoke.getResult());
