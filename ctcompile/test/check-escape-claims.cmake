@@ -208,6 +208,7 @@ if(STRICT)
   set(_object_add_concat_rows "")
   set(_object_bigint_equality_rows "")
   set(_object_bigint_relational_rows "")
+  set(_object_bigint_unary_rows "")
   foreach(_line IN LISTS _recording_lines)
     if(_line MATCHES "^program ([0-9a-f]+) ")
       set(_program_hash "${CMAKE_MATCH_1}")
@@ -387,6 +388,16 @@ if(STRICT)
         message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
       endif()
       list(APPEND _object_bigint_relational_rows "${_row} ${CMAKE_MATCH_1}")
+    elseif(_function_name MATCHES "^objectFrameBigIntUnary(Saved|Paths|Opaque|Mixed|Retained)$" AND _line MATCHES "^site ")
+      if(NOT _line MATCHES "^site ([0-9]+) kind obj made ([0-9]+) confined ([0-9]+) escaped ([0-9]+) unresolved ([0-9]+) unchecked ([0-9]+) routes ([^ ]+)$")
+        message(FATAL_ERROR "${_function_name}: unexpected BigInt unary observation: ${_line}")
+      endif()
+      set(_pc "${CMAKE_MATCH_1}")
+      set(_row "${_function_name} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3} ${CMAKE_MATCH_4} ${CMAKE_MATCH_5} ${CMAKE_MATCH_6} ${CMAKE_MATCH_7}")
+      if(NOT _claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_pc} obj ([^\n]+)")
+        message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
+      endif()
+      list(APPEND _object_bigint_unary_rows "${_row} ${CMAKE_MATCH_1}")
     endif()
   endforeach()
   set(_expected_publication_rows
@@ -599,9 +610,9 @@ if(STRICT)
   endif()
   message(STATUS "imported static binary: twelve sites, twenty instances, fifteen retained; live claims agree")
 
-  # Saved primitive origins survive a BigInt field overwrite. Opaque inputs and
-  # successful BigInt results retain conservative Stored claims; observations
-  # of Number inputs alone cannot prove every future numeric conversion safe.
+  # Saved primitive origins survive a BigInt field overwrite. Original BigInt
+  # Neg/BitNot results now retain a separately proved category; opaque inputs
+  # cannot prove every future numeric conversion safe.
   set(_expected_object_arithmetic_unary_rows
       "objectFrameArithmeticUnaryReleased 2 2 0 0 0 - confined"
       "objectFrameArithmeticUnaryReleased 2 0 2 0 0 temporaries:2 escapes:stored"
@@ -615,7 +626,7 @@ if(STRICT)
       "objectFrameArithmeticUnaryOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameArithmeticUnaryOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameArithmeticUnaryOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
-      "objectFrameArithmeticUnaryBigInt 1 1 0 0 0 - escapes:stored"
+      "objectFrameArithmeticUnaryBigInt 1 1 0 0 0 - confined"
       "objectFrameArithmeticUnaryBigInt 1 0 1 0 0 temporaries:1 escapes:stored"
       "objectFrameArithmeticUnaryBigInt 1 0 1 0 0 temporaries:1 escapes:stored"
       "objectFrameArithmeticUnaryBigInt 1 0 1 0 0 temporaries:1 escapes:returned")
@@ -821,6 +832,36 @@ if(STRICT)
     message(FATAL_ERROR "imported BigInt relational evidence mismatch:\nexpected: ${_expected_object_bigint_relational_rows}\nobserved: ${_object_bigint_relational_rows}")
   endif()
   message(STATUS "imported BigInt relational: twenty sites, forty instances, thirty-two retained; live claims agree")
+
+  # Computed BigInt unary results retain exact per-path original categories.
+  # Opaque inputs and mixed comparisons still refuse; saved children stay live.
+  set(_expected_object_bigint_unary_rows
+      "objectFrameBigIntUnarySaved 2 2 0 0 0 - confined"
+      "objectFrameBigIntUnarySaved 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntUnarySaved 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntUnarySaved 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntUnaryPaths 2 2 0 0 0 - confined"
+      "objectFrameBigIntUnaryPaths 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntUnaryPaths 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntUnaryPaths 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntUnaryOpaque 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntUnaryOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntUnaryOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntUnaryOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntUnaryMixed 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntUnaryMixed 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntUnaryMixed 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntUnaryMixed 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntUnaryRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntUnaryRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntUnaryRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntUnaryRetained 2 0 2 0 0 temporaries:2 escapes:returned")
+  list(SORT _object_bigint_unary_rows)
+  list(SORT _expected_object_bigint_unary_rows)
+  if(NOT _object_bigint_unary_rows STREQUAL _expected_object_bigint_unary_rows)
+    message(FATAL_ERROR "imported BigInt unary evidence mismatch:\nexpected: ${_expected_object_bigint_unary_rows}\nobserved: ${_object_bigint_unary_rows}")
+  endif()
+  message(STATUS "imported BigInt unary: twenty sites, forty instances, thirty-two retained; live claims agree")
 endif()
 if(NOT _pyrc EQUAL 0)
   message(FATAL_ERROR "${NAME}: the checker exited ${_pyrc}")

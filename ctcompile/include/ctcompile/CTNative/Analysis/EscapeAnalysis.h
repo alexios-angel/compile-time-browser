@@ -438,7 +438,7 @@ struct ArrayContentsEvidence {
 /// binary operations on independently non-BigInt origins, arithmetic unary
 /// operations, dynamic Sub/Mul/Div/Mod/Pow/Add/Concat, loose equality and relational
 /// comparisons on independently primitive non-BigInt origins or two
-/// independently proved BigInt constants, truthy and return. Object reads
+/// independently proved BigInt constants or Neg/BitNot results, truthy and return. Object reads
 /// require an earlier own write; keys longer than 256 bytes and
 /// __proto__ refuse. Named/computed object deletions erase only the current own
 /// property; absent deletion is a no-op, absent reads still refuse. All earlier
@@ -469,8 +469,13 @@ struct ArrayContentsEvidence {
 /// Neg/Plus/BitNot yield Number only for independently primitive non-BigInt
 /// origins. Fresh objects/arrays and opaque inputs remain refused: excluding
 /// BigInt alone does not exclude object conversion. Saved reads use their
-/// original primitive identity, never a slot's newer contents. BigInt results
-/// and Plus's catchable BigInt TypeError remain outside this Number proof.
+/// original primitive identity, never a slot's newer contents. Neg/BitNot also
+/// accept independently proved BigInt origins and record their independent
+/// BigInt result in a separately charged per-path category set. Chained results
+/// and exact saved/forwarded origins retain that category; downstream non-BigInt
+/// operations must exclude it. Plus's BigInt TypeError remains refused.
+/// Neither unary BigInt operation carries an input object identity or runs user
+/// conversion; VM allocation and C++ temporary allocation success remain unproved.
 /// Neg/Plus still have a catchable recursion-depth guard: its unrelated Error
 /// cannot retain unpublished fresh locals from this call/handler-free subset.
 /// This retention query proves no normal completion or no-throw/effect contract;
@@ -480,15 +485,14 @@ struct ArrayContentsEvidence {
 /// invoke user conversion or the reentry-depth guard. Saved reads retain their
 /// original identity across overwrites; no operand value, key or branch choice
 /// is inferred. An independent alternative admits two exact original
-/// BigInt constants: the VM compares their digits without conversions or input
-/// aliases. Both operand origins must qualify; mixed/opaque/computed BigInt
-/// inputs still refuse. This adds only an independent Boolean origin, never
-/// equality, key, liveness, allocation-success or native effect evidence.
-/// Relational kinds accept those same independently proved original categories;
-/// their normal String/static-number or exact BigInt digit comparisons yield
-/// only an independent Boolean. Both BigInt origins must separately qualify;
-/// mixed and computed BigInt operands stay outside this proof.
-/// Their to_primitive depth guard can throw an unrelated RangeError even for
+/// BigInt constants or proved Neg/BitNot results: the VM compares their digits
+/// without conversions or input aliases. Both operand origins must qualify;
+/// mixed/opaque/other computed BigInt inputs still refuse. This adds only an independent Boolean
+/// origin, never equality, key, liveness, allocation-success or native effect evidence. Relational
+/// kinds accept those same independently proved original categories; their normal
+/// String/static-number or exact BigInt digit comparisons yield only an independent Boolean. Both
+/// BigInt origins must separately qualify; mixed and other computed BigInt operands stay outside
+/// this proof. Their to_primitive depth guard can throw an unrelated RangeError even for
 /// primitives. As with Neg/Plus, the whole-frame query's exclusion of calls,
 /// handlers and publication prevents retention of its unpublished fresh locals;
 /// this is not normal-completion or no-throw/effect evidence. Opaque/object

@@ -1916,3 +1916,47 @@ recognizes admitted unary/binary results as non-BigInt. Extending only the
 operator whitelist would lose that invariant. The new relational producers
 return Booleans and preserve it; the refused conversion discrepancies above
 remain unresolved runtime observations.
+
+
+## Computed BigInt unary categories, 2026-09-09
+
+`Neg` and `BitNot` now retain an independently proved BigInt origin, including
+chained results and saved array/own-field reads across overwrite and deletion.
+A separate per-path set records those original computed results. Every
+non-BigInt consumer excludes that set, and copying a path charges its category
+entries before allocation. Eq/Lt/Le/Gt/Ge accept two independently proved
+BigInt origins; mixed, opaque and other computed BigInt operands still refuse.
+Unary Plus, dynamic/static BigInt binary arithmetic, numeric array indices and
+own String keys retain their separate boundaries. This is retention evidence,
+not native BigInt admission, constant evaluation or a no-throw/effect proof.
+
+This resumes the computed-category boundary after `9f969651`. Root recovered
+the child agent's unfinished audit and formatting after its rate limit. The
+preimplementation Node and live interpreter probe agrees on all sixteen checks
+at **trace=65535**. All historical fixture bytes remain identical, with five
+additive functions measuring **20 sites, 40 instances and 32 retained**. The
+original unary-BigInt child now proves confined; its source and observation
+counts remain unchanged. Fixture precision is **58/89**, combining that
+historical improvement with added coverage. All four oracles report **zero
+violations**, and corpus precision remains **0/64, 0/16, 0/20** (p5 partial=1).
+
+The first warning-free **21-step** combined build passes **19/20 CTests in
+143.14 seconds**. Only the new escape test fails: three test opcode spellings
+used underscores instead of `bitand`, `bitor`, `bitxor`. Correcting those names
+changes no compiler behavior or JavaScript. The **two-step** rebuild passes
+all **eight escape CTests in 9.00 seconds**. Each unary kind passes **83 rows,
+15 live states and 2257 retention cutoffs**; the wide snapshot charges an
+additional **128** work units for 32 computed origins and their categories.
+BigInt Eq repeats **52/30/2448**, each relational kind **60/32/2712**.
+
+Stable formatter 22.1.8 passes all 745 C++ files; changed C++ also passes
+bundled 23, whose full check retains the same nine unrelated differences.
+The full monorepo gate is pending at this checkpoint. Evidence:
+`/tmp/ctcompile-numeric-{focused-build,focused-focused,escape2}.log`,
+`/tmp/ctcompile-numeric-escape-semantics.log` and
+`/tmp/ctcompile-numeric-frozen.json`.
+
+Next: independently categorized BigInt binary results and their exceptional
+cases, additional local producers, loops and callee summaries. No binary
+operator can inherit the non-BigInt result assumption merely from its opcode.
+Native lifetime and effect consumers remain separate work.

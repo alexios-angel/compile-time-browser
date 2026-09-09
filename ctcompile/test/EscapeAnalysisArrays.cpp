@@ -3363,9 +3363,13 @@ void checkArithmeticUnaryProducers(mlir::MLIRContext & context) {
             {.contents = {.what = "an opaque input cannot establish primitive numeric coercion",
                           .body = values + operation + " %p\n" + done,
                           .failure = ArrayContentsFailure::UnsupportedOperation}},
-            {.contents = {.what = "a BigInt cannot borrow primitive Number result evidence",
+            {.contents = {.what = "a BigInt result needs its own category and refuses unary Plus",
                           .body = values + operation + " %big\n" + done,
-                          .failure = ArrayContentsFailure::UnsupportedOperation}},
+                          .failure = kind == ctjs::UnaryKind::Plus
+                                         ? ArrayContentsFailure::UnsupportedOperation
+                                         : ArrayContentsFailure::None,
+                          .arrays = "a:[x]",
+                          .exit = "zero -> {}"}},
             {.contents = {.what = "fresh objects can reenter source unary conversion",
                           .body = values + operation + " %x\n" + done,
                           .failure = ArrayContentsFailure::UnsupportedOperation}},
@@ -3455,7 +3459,8 @@ void checkArithmeticUnaryProducers(mlir::MLIRContext & context) {
         // Path identity and saved SSA values, not a container's current tag,
         // establish which value a coercion actually receives.
         for (const std::string input : {"%zero", "%big", "%x", "%p"}) {
-            const bool primitive = input == "%zero";
+            const bool primitive =
+                input == "%zero" || (input == "%big" && kind != ctjs::UnaryKind::Plus);
             run({.contents = {.what = "every incoming unary operand must be a known primitive",
                               .body = values +
                                       "  %flag = ctjs.truthy %p\n"
@@ -3479,10 +3484,11 @@ void checkArithmeticUnaryProducers(mlir::MLIRContext & context) {
                                       replacement + "\n" + operation +
                                       " %operand {storage_test_id = \"produced\"}\n"
                                       "  ctjs.return %produced\n",
-                              .failure = savedBigInt ? ArrayContentsFailure::UnsupportedOperation
-                                                     : ArrayContentsFailure::None,
-                              .arrays = "a:[ctjs.constant]",
-                              .reads = "a[0]=zero",
+                              .failure = savedBigInt && kind == ctjs::UnaryKind::Plus
+                                             ? ArrayContentsFailure::UnsupportedOperation
+                                             : ArrayContentsFailure::None,
+                              .arrays = savedBigInt ? "a:[zero]" : "a:[ctjs.constant]",
+                              .reads = savedBigInt ? "a[0]=ctjs.constant" : "a[0]=zero",
                               .exit = "produced -> {}"}});
         }
         arithmetic_row wide = rows.front();
@@ -3538,14 +3544,17 @@ void checkArithmeticUnaryProducers(mlir::MLIRContext & context) {
                                            function.getBody().front().getArgument(3)};
             for (mlir::Value bad : invalid) {
                 unary->setOperand(0, bad);
-                inspect(ArrayContentsFailure::UnsupportedOperation);
+                inspect(bad == big.getResult() && kind != ctjs::UnaryKind::Plus
+                            ? ArrayContentsFailure::None
+                            : ArrayContentsFailure::UnsupportedOperation);
                 unary->setOperand(0, number);
                 inspect(ArrayContentsFailure::None);
             }
             auto constant = number.getDefiningOp<ctjs::ConstantOp>();
             const mlir::Attribute oldValue = constant.getValue();
             constant.setValueAttr(big.getValue());
-            inspect(ArrayContentsFailure::UnsupportedOperation);
+            inspect(kind == ctjs::UnaryKind::Plus ? ArrayContentsFailure::UnsupportedOperation
+                                                  : ArrayContentsFailure::None);
             constant.setValueAttr(oldValue);
             inspect(ArrayContentsFailure::None);
             for (const auto admitted :
@@ -3949,6 +3958,282 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
                 liveStates, budgets);
 }
 
+void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
+    const std::string values =
+        "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
+        "  %big = ctjs.constant #ctjs.bigint<\"9007199254740993\"> "
+        "{storage_test_id = \"big\"}\n"
+        "  %x = ctjs.create_object {storage_test_id = \"x\"}\n"
+        "  %a = ctjs.create_array [%x] {storage_test_id = \"a\"}\n";
+    const std::string done = "  ctjs.return %produced\n";
+    const std::string overwrite = "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n";
+    const std::string branch =
+        "  %flag = ctjs.truthy %produced\n  cf.cond_br %flag, ^yes, ^no\n^yes:\n";
+    struct unary_row {
+        contents_row contents;
+        const char * discharged = "x";
+    };
+    for (const auto kind : {ctjs::UnaryKind::Neg, ctjs::UnaryKind::BitNot}) {
+        const std::string spelling = ctjs::stringifyUnaryKind(kind).str();
+        const std::string produce =
+            "  %produced = ctjs.unary " + spelling + " %big {storage_test_id = \"produced\"}\n";
+        const std::vector<unary_row> rows = {
+            {.contents = {.what = "a computed BigInt cannot prune either overwrite path",
+                          .body = values + produce + branch + overwrite + "^no:\n" + overwrite,
+                          .arrays = "a:[zero] | a:[zero]",
+                          .exit = "a -> {a}; a -> {a}"}},
+            {.contents = {.what = "BigInt unary result carries no operand object identity",
+                          .body = values + produce + done,
+                          .arrays = "a:[x]",
+                          .exit = "produced -> {}"}},
+            {.contents = {.what = "storing an independent BigInt releases the old child",
+                          .body = values + produce +
+                                  "  ctjs.set_property %a[%zero], %produced\n  ctjs.return %a\n",
+                          .arrays = "a:[produced]",
+                          .exit = "a -> {a}"}},
+            {.contents = {.what = "a separately saved child stays retained after BigInt overwrite",
+                          .body = values + "  %saved = ctjs.get_property %a[%zero]\n" + produce +
+                                  "  ctjs.set_property %a[%zero], %produced\n"
+                                  "  ctjs.return %saved\n",
+                          .arrays = "a:[produced]",
+                          .reads = "a[0]=x",
+                          .exit = "x -> {x}"},
+             .discharged = ""},
+            {.contents = {.what = "computed BigInt category survives frame and edge transport",
+                          .body = "  %frame = ctjs.frame_enter 8\n" + values + produce +
+                                  "  cf.br ^next(%produced : !ctjs.value)\n"
+                                  "^next(%operand: !ctjs.value):\n"
+                                  "  %next = ctjs.unary " +
+                                  spelling +
+                                  " %operand {storage_test_id = \"next\"}\n"
+                                  "  ctjs.root %next in %frame\n  ctjs.frame_exit %frame\n"
+                                  "  ctjs.return %next\n",
+                          .arrays = "a:[x]",
+                          .exit = "next -> {}"}},
+            {.contents = {.what = "saved computed BigInt array origins survive Number overwrite",
+                          .body = values + produce +
+                                  "  ctjs.set_property %a[%zero], %produced\n"
+                                  "  %saved = ctjs.get_property %a[%zero]\n"
+                                  "  ctjs.set_property %a[%zero], %zero\n"
+                                  "  %next = ctjs.compare eq %saved, %big "
+                                  "{storage_test_id = \"next\"}\n  ctjs.return %next\n",
+                          .arrays = "a:[zero]",
+                          .reads = "a[0]=produced",
+                          .exit = "next -> {}"}},
+            {.contents = {.what = "saved computed BigInt own fields survive overwrite and deletion",
+                          .body = values + produce +
+                                  "  %key = ctjs.constant #ctjs.string<\"value\">\n"
+                                  "  ctjs.set_property %x[%key], %produced\n"
+                                  "  %saved = ctjs.get_property %x[%key]\n"
+                                  "  ctjs.set_property %x[%key], %zero\n"
+                                  "  ctjs.delete_named \"value\" from %x\n"
+                                  "  %next = ctjs.compare eq %saved, %big "
+                                  "{storage_test_id = \"next\"}\n  ctjs.return %next\n",
+                          .arrays = "a:[x]",
+                          .exit = "next -> {}"}},
+            {.contents = {.what = "computed BigInt cannot supply a numeric array index",
+                          .body = values + produce + "  %read = ctjs.get_property %a[%produced]\n" +
+                                  done,
+                          .failure = ArrayContentsFailure::UnknownIndex}},
+            {.contents = {.what = "computed BigInt cannot supply an own String key",
+                          .body = values + produce + "  ctjs.set_property %x[%produced], %zero\n" +
+                                  done,
+                          .failure = ArrayContentsFailure::UnknownPropertyKey}},
+            {.contents = {.what = "computed BigInt remains refused by unary Plus",
+                          .body = values + produce + "  %next = ctjs.unary plus %produced\n" + done,
+                          .failure = ArrayContentsFailure::UnsupportedOperation}},
+            {.contents = {.what = "an unrelated primitive does not establish opaque retention",
+                          .body = values + produce + "  ctjs.return %p\n",
+                          .failure = ArrayContentsFailure::UnknownValue}},
+        };
+        unsigned rowCount = 0;
+        unsigned liveStates = 0;
+        std::size_t budgets = 0;
+        const auto check = [&](mlir::ModuleOp module, const unary_row & expected) {
+            checkArrayContents(module, expected.contents);
+            const bool complete = expected.contents.failure == ArrayContentsFailure::None;
+            budgets +=
+                checkArrayRetention(module, {.what = expected.contents.what,
+                                             .body = expected.contents.body,
+                                             .discharged = complete ? expected.discharged : "",
+                                             .complete = complete});
+        };
+        const auto parse = [&](const unary_row & expected) {
+            return mlir::parseSourceString<mlir::ModuleOp>(
+                std::string{kPrologue} + expected.contents.body + "}\n", &context);
+        };
+        const auto run = [&](const unary_row & expected) {
+            if (auto module = parse(expected)) {
+                check(*module, expected);
+            } else {
+                fail(row{.what = expected.contents.what,
+                         .body = expected.contents.body,
+                         .expected = ""},
+                     "the computed BigInt unary fixture did not parse");
+            }
+            ++rowCount;
+        };
+        for (const auto & expected : rows) { run(expected); }
+        for (const std::string form : {"binary", "binary_static"}) {
+            const std::vector<std::string> kinds =
+                form == "binary"
+                    ? std::vector<std::string>{"add", "sub", "mul", "div", "mod", "pow", "concat"}
+                    : std::vector<std::string>{"add", "bitand", "bitor", "bitxor",
+                                               "shl", "shr",    "ushr"};
+            for (const std::string & operation : kinds) {
+                for (const std::string operands :
+                     {"%produced, %zero", "%zero, %produced", "%produced, %big"}) {
+                    run({.contents = {
+                             .what = "computed BigInt never borrows the non-BigInt binary proof",
+                             .body = values + produce + "  %next = ctjs." + form + " " + operation +
+                                     " " + operands + "\n" + done,
+                             .failure = ArrayContentsFailure::UnsupportedOperation}});
+                }
+            }
+        }
+        for (const std::string comparison : {"eq", "lt", "le", "gt", "ge"}) {
+            for (const bool mixed : {false, true}) {
+                for (const bool left : {false, true}) {
+                    const std::string other = mixed ? "%zero" : "%big";
+                    const std::string operands =
+                        left ? "%produced, " + other : other + ", %produced";
+                    run({.contents = {.what = "both comparison operands independently prove their "
+                                              "original category",
+                                      .body =
+                                          values + produce + "  %next = ctjs.compare " +
+                                          comparison + " " + operands +
+                                          " {storage_test_id = \"next\"}\n  ctjs.return %next\n",
+                                      .failure = mixed ? ArrayContentsFailure::UnsupportedOperation
+                                                       : ArrayContentsFailure::None,
+                                      .arrays = "a:[x]",
+                                      .exit = "next -> {}"}});
+                }
+            }
+        }
+        for (const std::string operation : {"not", "typeof", "void"}) {
+            run({.contents = {
+                     .what = "a later total unary result has its independent non-BigInt category",
+                     .body = values + produce + "  %next = ctjs.unary " + operation +
+                             " %produced\n  %sum = ctjs.binary add %next, %zero "
+                             "{storage_test_id = \"sum\"}\n  ctjs.return %sum\n",
+                     .arrays = "a:[x]",
+                     .exit = "sum -> {}"}});
+        }
+        for (const bool reversed : {false, true}) {
+            const std::string actuals =
+                reversed ? "%zero : !ctjs.value), ^join(%big" : "%big : !ctjs.value), ^join(%zero";
+            const std::string paths =
+                values + "  %flag = ctjs.truthy %p\n  cf.cond_br %flag, ^join(" + actuals +
+                " : !ctjs.value)\n^join(%operand: !ctjs.value):\n"
+                "  %produced = ctjs.unary " +
+                spelling + " %operand {storage_test_id = \"produced\"}\n";
+            run({.contents = {.what = "one SSA producer has independent BigInt and Number "
+                                      "categories on separate paths",
+                              .body = paths + done,
+                              .arrays = "a:[x] | a:[x]",
+                              .exit = "produced -> {}; produced -> {}"}});
+            run({.contents = {.what =
+                                  "either BigInt incoming path blocks a later non-BigInt operation",
+                              .body = paths + "  %next = ctjs.binary add %produced, %zero\n" + done,
+                              .failure = ArrayContentsFailure::UnsupportedOperation}});
+        }
+        for (const std::string effect :
+             {"  ctjs.store_global \"held\", %a\n", "  %called = ctjs.call %p(%a)\n",
+              "  \"test.effect\"(%produced) : (!ctjs.value) -> ()\n"}) {
+            run({.contents = {
+                     .what =
+                         "BigInt production cannot authorize later publication calls or effects",
+                     .body = values + produce + effect + done,
+                     .failure = ArrayContentsFailure::UnsupportedOperation}});
+        }
+        unary_row wide = rows.front();
+        std::string extras;
+        for (unsigned i = 0; i < 32; ++i) {
+            extras += "  %extra_" + std::to_string(i) + " = ctjs.unary " + spelling + " %big\n";
+        }
+        wide.contents.body.insert(wide.contents.body.find("  %flag ="), extras);
+        auto narrowModule = parse(rows.front());
+        auto wideModule = parse(wide);
+        if (narrowModule && wideModule) {
+            const auto narrow = computeArrayContents(*narrowModule->getOps<ctjs::FuncOp>().begin());
+            const auto expanded = computeArrayContents(*wideModule->getOps<ctjs::FuncOp>().begin());
+            if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 128) {
+                fail(row{.what = "BigInt snapshots charge result origins and categories separately",
+                         .body = wide.contents.body,
+                         .expected = ""},
+                     "32 results did not charge their operations, categories and both snapshot "
+                     "entries");
+            }
+            check(*wideModule, wide);
+        } else {
+            fail(row{.what = "wide BigInt unary snapshot",
+                     .body = wide.contents.body,
+                     .expected = ""},
+                 "the BigInt unary snapshot fixture did not parse");
+        }
+        unary_row mutation = rows.front();
+        if (auto module = parse(mutation)) {
+            auto function = *module->getOps<ctjs::FuncOp>().begin();
+            ctjs::UnaryOp unary;
+            ctjs::CreateObjectOp child;
+            ctjs::CreateArrayOp array;
+            module->walk([&](ctjs::UnaryOp op) { unary = op; });
+            module->walk([&](ctjs::CreateObjectOp op) { child = op; });
+            module->walk([&](ctjs::CreateArrayOp op) { array = op; });
+            mlir::OpBuilder builder(unary);
+            function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+            function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
+            child->setAttr("ctnative.confined", builder.getUnitAttr());
+            const auto inspect = [&](ArrayContentsFailure failure) {
+                mutation.contents.failure = failure;
+                check(*module, mutation);
+                ++liveStates;
+            };
+            inspect(ArrayContentsFailure::None);
+            const mlir::Value input = unary.getOperand();
+            const mlir::Value invalidInputs[] = {child.getResult(), array.getResult(),
+                                                 function.getBody().front().getArgument(3)};
+            for (mlir::Value invalid : invalidInputs) {
+                unary->setOperand(0, invalid);
+                inspect(ArrayContentsFailure::UnsupportedOperation);
+                unary->setOperand(0, input);
+                inspect(ArrayContentsFailure::None);
+            }
+            for (const auto other : {ctjs::UnaryKind::Plus, static_cast<ctjs::UnaryKind>(255)}) {
+                unary.setKindAttr(ctjs::UnaryKindAttr::get(&context, other));
+                inspect(ArrayContentsFailure::UnsupportedOperation);
+                unary.setKindAttr(ctjs::UnaryKindAttr::get(&context, kind));
+                inspect(ArrayContentsFailure::None);
+            }
+            auto constant = input.getDefiningOp<ctjs::ConstantOp>();
+            const mlir::Attribute oldValue = constant.getValue();
+            constant.setValueAttr(ctjs::NumberAttr::get(&context, 0));
+            inspect(ArrayContentsFailure::None);
+            constant.setValueAttr(oldValue);
+            inspect(ArrayContentsFailure::None);
+            auto store = llvm::cast<ctjs::SetPropertyOp>(&function.getBody().back().front());
+            const mlir::Value replacement = store.getValue();
+            store->setOperand(2, child.getResult());
+            mutation.contents.arrays = "a:[zero] | a:[x]";
+            mutation.contents.exit = "a -> {a}; a -> {a,x}";
+            mutation.discharged = "";
+            inspect(ArrayContentsFailure::None);
+            store->setOperand(2, replacement);
+            mutation.contents = rows.front().contents;
+            mutation.discharged = "x";
+            inspect(ArrayContentsFailure::None);
+        } else {
+            fail(row{.what = "live computed BigInt unary",
+                     .body = mutation.contents.body,
+                     .expected = ""},
+                 "the BigInt unary mutation fixture did not parse");
+        }
+        std::printf("BigInt unary %s: %u rows, %u live states, one wide snapshot, %zu retention "
+                    "budget cutoffs\n",
+                    spelling.c_str(), rowCount, liveStates, budgets);
+    }
+}
+
 void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind producerKind) {
     const std::string spelling = ctjs::stringifyCompareKind(producerKind).str();
     const std::string values =
@@ -4059,10 +4344,13 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
                      "  %operand = ctjs.binary add %lhs, %rhs\n",
                      "  %operand = ctjs.unary neg %lhs\n",
                  }) {
-                run({.contents = {.what =
-                                      "computed BigInts never borrow original constant provenance",
+                const bool unary = producer.find("ctjs.unary") != std::string::npos;
+                run({.contents = {.what = "computed BigInts require independent category evidence",
                                   .body = values + producer + compareInput("%operand") + done,
-                                  .failure = ArrayContentsFailure::UnsupportedOperation}});
+                                  .failure = unary ? ArrayContentsFailure::None
+                                                   : ArrayContentsFailure::UnsupportedOperation,
+                                  .arrays = "a:[x]",
+                                  .exit = "produced -> {}"}});
             }
             run({.contents = {.what =
                                   "a saved BigInt array value survives a later Number overwrite",
@@ -5181,6 +5469,7 @@ int main() {
     checkTotalUnaryProducers(context);
     checkStaticBinaryProducers(context);
     checkArithmeticUnaryProducers(context);
+    checkBigIntUnaryProducers(context);
     for (const auto kind : {ctjs::CompareKind::Eq, ctjs::CompareKind::Lt, ctjs::CompareKind::Le,
                             ctjs::CompareKind::Gt, ctjs::CompareKind::Ge}) {
         checkBigIntComparison(context, kind);

@@ -918,6 +918,79 @@ function objectFrameBigIntRelationalRetained(choice) {
 H.push(objectFrameBigIntRelationalRetained(false));
 H.push(objectFrameBigIntRelationalRetained(true));
 
+// --- COMPUTED BIGINT UNARY ORIGINS -----------------------------------------
+// Both BigInt unary operations preserve a separately proved original category.
+function objectFrameBigIntUnarySaved(choice) {
+    var child = { id: 1 };
+    var source = { held: child, operand: choice ? 9007199254740993n : 9007199254740992n };
+    var target = { ...source }, saved = target.operand;
+    target.operand = 1;
+    delete source.operand;
+    delete target.operand;
+    var negative = -saved, inverse = ~saved;
+    var restored = -negative, inverted = ~inverse;
+    var equal = restored == saved, less = negative < -9007199254740992n;
+    var lessEqual = negative <= -9007199254740993n;
+    var greater = -9007199254740992n > negative, greaterEqual = inverse >= ~saved;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target, negative: negative, inverse: inverse,
+             restored: restored, inverted: inverted, equal: equal, less: less,
+             lessEqual: lessEqual, greater: greater, greaterEqual: greaterEqual };
+}
+H.push(objectFrameBigIntUnarySaved(false));
+H.push(objectFrameBigIntUnarySaved(true));
+
+// The same unary SSA producers can return Number or BigInt on separate paths.
+function objectFrameBigIntUnaryPaths(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var operand = choice ? 1n : 2;
+    var negative = -operand, inverse = ~operand;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target, negative: negative, inverse: inverse };
+}
+H.push(objectFrameBigIntUnaryPaths(false));
+H.push(objectFrameBigIntUnaryPaths(true));
+
+// Runtime BigInt actuals do not establish an opaque future operand's category.
+function objectFrameBigIntUnaryOpaque(operand) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var negative = -operand, inverse = ~operand;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target, negative: negative, inverse: inverse };
+}
+H.push(objectFrameBigIntUnaryOpaque(1n));
+H.push(objectFrameBigIntUnaryOpaque(2n));
+
+// A computed BigInt never borrows the separate primitive non-BigInt proof.
+function objectFrameBigIntUnaryMixed(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var operand = choice ? 1n : 2n, negative = -operand;
+    var equal = negative == -1, less = negative < -1;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target, negative: negative, equal: equal, less: less };
+}
+H.push(objectFrameBigIntUnaryMixed(false));
+H.push(objectFrameBigIntUnaryMixed(true));
+
+// Independent primitive results do not discard a separately retained child.
+function objectFrameBigIntUnaryRetained(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source }, saved = target.held;
+    var operand = choice ? 1n : 2n, negative = -operand, inverse = ~operand;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target, saved: saved, negative: negative, inverse: inverse };
+}
+H.push(objectFrameBigIntUnaryRetained(false));
+H.push(objectFrameBigIntUnaryRetained(true));
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());

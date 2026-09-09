@@ -31,6 +31,7 @@
 #include "mlir/IR/Location.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringRef.h"
@@ -799,9 +800,12 @@ mlir::StringAttr ownObjectKey(mlir::Value value) {
 
 // This is an ORIGINAL origin already accepted on this exact contents path,
 // not the operation immediately defining a forwarded or loaded SSA value.
-// Keep the list explicit: an unknown origin can be BigInt, and binary_static
-// reaches catchable TypeError/RangeError paths before its static conversions.
-bool primitiveNonBigIntOrigin(mlir::Value origin) {
+// Keep the list explicit and exclude independently proved computed BigInts:
+// the producer opcode alone no longer proves a non-BigInt result category.
+// binary_static reaches catchable errors before its static conversions.
+bool primitiveNonBigIntOrigin(mlir::Value origin,
+                              const llvm::DenseSet<mlir::Value> & bigIntOrigins) {
+    if (bigIntOrigins.contains(origin)) { return false; }
     mlir::Operation * definition = origin.getDefiningOp();
     if (auto constant = llvm::dyn_cast_or_null<ctjs::ConstantOp>(definition)) {
         return llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr, ctjs::BooleanAttr, ctjs::NumberAttr,
@@ -811,12 +815,13 @@ bool primitiveNonBigIntOrigin(mlir::Value origin) {
                                  ctjs::BinaryStaticOp>(definition);
 }
 
-bool nonBigIntOrigin(mlir::Value origin) {
-    return primitiveNonBigIntOrigin(origin) ||
+bool nonBigIntOrigin(mlir::Value origin, const llvm::DenseSet<mlir::Value> & bigIntOrigins) {
+    return primitiveNonBigIntOrigin(origin, bigIntOrigins) ||
            llvm::isa_and_nonnull<ctjs::CreateObjectOp, ctjs::CreateArrayOp>(origin.getDefiningOp());
 }
 
-bool bigIntConstantOrigin(mlir::Value origin) {
+bool bigIntOrigin(mlir::Value origin, const llvm::DenseSet<mlir::Value> & bigIntOrigins) {
+    if (bigIntOrigins.contains(origin)) { return true; }
     auto constant = origin.getDefiningOp<ctjs::ConstantOp>();
     return constant && llvm::isa<ctjs::BigIntAttr>(constant.getValue());
 }
@@ -851,6 +856,10 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
     // and a switch's default edge. Any unsupported path refuses everything.
     struct State {
         llvm::DenseMap<mlir::Value, mlir::Value> origins;
+        // Only original computed results enter this set. Exact saved/forwarded
+        // origins keep their category after a slot changes, while a later
+        // Boolean/Number/String producer must prove its own result separately.
+        llvm::DenseSet<mlir::Value> bigIntOrigins;
         // Imported successors forward every raw register, including unused
         // receiver/parameter values. Keep their exact entry identity separate:
         // forwarding or testing one never proves its contents or retention.
@@ -897,8 +906,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
     const auto alternative = [&](mlir::Block * next, mlir::ValueRange operands) {
         // Path enumeration can be exponential. Charge every copied value,
         // visited block, container and element before allocating the snapshot.
-        if (!spend(state.origins.size()) || !spend(state.opaqueOrigins.size()) ||
-            !spend(state.visited.size())) {
+        if (!spend(state.origins.size()) || !spend(state.bigIntOrigins.size()) ||
+            !spend(state.opaqueOrigins.size()) || !spend(state.visited.size())) {
             return ArrayContentsFailure::WorkLimit;
         }
         for (const auto & [array, elements] : state.arrays) {
@@ -1027,13 +1036,15 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     if (!lhs || !rhs) {
                         return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                     }
-                    // Only BOTH independently proved original BigInt constants
-                    // reach the exact digit comparison. Saved/forwarded reads
-                    // retain that origin; mixed and computed inputs still refuse.
-                    const bool bigIntPair = bigIntConstantOrigin(lhs) && bigIntConstantOrigin(rhs);
+                    // BOTH independently proved original BigInt categories
+                    // reach exact digit comparison. Saved/forwarded reads keep
+                    // the original constant or admitted unary result category;
+                    // mixed and other computed inputs still refuse.
+                    const bool bigIntPair = bigIntOrigin(lhs, state.bigIntOrigins) &&
+                                            bigIntOrigin(rhs, state.bigIntOrigins);
                     if (compare.getKind() == ctjs::CompareKind::Eq && bigIntPair) { break; }
-                    if (!bigIntPair &&
-                        (!primitiveNonBigIntOrigin(lhs) || !primitiveNonBigIntOrigin(rhs))) {
+                    if (!bigIntPair && (!primitiveNonBigIntOrigin(lhs, state.bigIntOrigins) ||
+                                        !primitiveNonBigIntOrigin(rhs, state.bigIntOrigins))) {
                         return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                     }
                     // Relational kinds enter to_primitive's depth guard even
@@ -1079,7 +1090,17 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 case ctjs::UnaryKind::Plus:
                 case ctjs::UnaryKind::BitNot: {
                     const mlir::Value input = origin(unary.getOperand());
-                    if (!input || !primitiveNonBigIntOrigin(input)) {
+                    if (input && unary.getKind() != ctjs::UnaryKind::Plus &&
+                        bigIntOrigin(input, state.bigIntOrigins)) {
+                        // negate_value/bit_not_value allocate independent BigInt
+                        // digits before any conversion or user callback. Record
+                        // the actual category, never a Number or concrete value.
+                        // No allocation-success/native effect claim follows.
+                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                        state.bigIntOrigins.insert(unary.getResult());
+                        break;
+                    }
+                    if (!input || !primitiveNonBigIntOrigin(input, state.bigIntOrigins)) {
                         return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                     }
                     // Known primitive non-BigInt inputs cannot invoke object
@@ -1113,8 +1134,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 const mlir::Value lhs = origin(binary.getLhs());
                 const mlir::Value rhs = origin(binary.getRhs());
-                if (!lhs || !rhs || !primitiveNonBigIntOrigin(lhs) ||
-                    !primitiveNonBigIntOrigin(rhs)) {
+                if (!lhs || !rhs || !primitiveNonBigIntOrigin(lhs, state.bigIntOrigins) ||
+                    !primitiveNonBigIntOrigin(rhs, state.bigIntOrigins)) {
                     return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
                 // With primitive non-BigInt originals, binary_op cannot call
@@ -1147,7 +1168,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 const mlir::Value lhs = origin(binary.getLhs());
                 const mlir::Value rhs = origin(binary.getRhs());
                 if (!lhs || !rhs) { return refuse(ArrayContentsFailure::UnknownValue, &op); }
-                if (!nonBigIntOrigin(lhs) || !nonBigIntOrigin(rhs)) {
+                if (!nonBigIntOrigin(lhs, state.bigIntOrigins) ||
+                    !nonBigIntOrigin(rhs, state.bigIntOrigins)) {
                     return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                 }
                 // binary_op_static's non-BigInt arm uses only static to_number /
