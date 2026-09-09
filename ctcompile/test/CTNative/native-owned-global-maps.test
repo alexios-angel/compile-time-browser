@@ -11,7 +11,7 @@
 # independently typed payload. Possible same-key writes join payload tags while
 # preserving definite presence; repeated writes, saved keys and distinct formal
 # actuals retain runtime lookups, result operands and the shared Map lifetime.
-# Missing, deleted, cleared and incompatibly joined facts refuse. An exact-key
+# Missing and incompatibly joined payload facts refuse. An exact-key
 # reseed restores its own tag without authorizing unsupported payload carriers.
 # Distinct definite keys bound the size of their runtime Map; saved size reads
 # retain that bound after later growth or deletion of every seeded key. Aliases
@@ -206,10 +206,25 @@
 # prepared calls. Two additional nine-call witnesses retain nonidentical safe
 # branches through LiftToSCF; both arms independently prove absence. One-arm
 # deletion and conditional reseeding refuse for both Boolean startup arguments;
-# potentially aliasing String formals and unsupported clear also remain unowned.
+# potentially aliasing String formals also remain unowned.
 # Each refusal preserves calls/branches/allocations under stale/fresh forged
 # reports and restores an independently admitted exact source repair.
 # Saved native callables return the earlier Undefined observation after reseed
 # and exercise both future branch flags over 128 calls after owner/table release.
 # Weak witnesses distinguish current mapped leaves from deleted leaves and prove
 # final Map/object release through independent entry reexecution under sanitizers.
+# Standard zero-argument clear preserves both original seven-call sources and
+# all twenty measured continuation variants. A saved owning leaf remains usable
+# after clear; a fresh read of any key proves Undefined until a potentially
+# aliasing write. Known-disjoint writes, exact reseeding, fluent/captured aliases
+# and two nonidentical clearing branches retain each evaluated Map operation.
+# One clearing arm and possible formal-key writes remain unowned for both
+# startup choices. An ignored clear argument still executes and its unsupported
+# arity refuses; the exact repair evaluates the argument before zero-argument
+# clear. Every refusal has an independently admitted exact source repair.
+# Original raw/prepared call counts and hashes stay fixed. Fresh/stale forged
+# reports, reruns and measured budget cutoffs cannot supply source authority.
+# Saved object fields, saved Undefined across reseeding and both future branch
+# flags run 128 calls after owner/table release, followed by independent reentry.
+# Weak observers require previous leaves and both Maps to die; one observed
+# leaf survives final Map release until its own last owner is released.

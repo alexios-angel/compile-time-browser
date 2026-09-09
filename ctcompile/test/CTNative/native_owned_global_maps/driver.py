@@ -29,6 +29,8 @@ from .sources import (
     leaf_absence_cases, leaf_absence_sources, leaf_absence_refusals,
     LEAF_ABSENCE_UNOWNED, LEAF_ABSENCE_PROMOTED_REFUSALS,
     primitive_absence_sources,
+    leaf_clear_cases, leaf_clear_sources, leaf_clear_refusals,
+    LEAF_CLEAR_UNOWNED, LEAF_CLEAR_PROMOTED,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
@@ -37,6 +39,7 @@ from .harness import (
     leaf_object_observer_source, forge_leaf_evidence, comparison_identity_observer_source,
     LEAF_ABSENCE_LIFETIMES, leaf_absence_observer_source,
     primitive_absence_observer_source,
+    LEAF_CLEAR_LIFETIMES, leaf_clear_observer_source,
 )
 
 
@@ -338,7 +341,7 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
             mode_name = name + "-" + mode
             failed = methods.refused(args, rejected, mode_name, config, options=options, admitted=0)
             check_call_preservation(rejected.read_text(), failed.read_text(), mode_name)
-            postdelete = name in LEAF_ABSENCE_UNOWNED
+            postdelete = name in LEAF_ABSENCE_UNOWNED or name in LEAF_CLEAR_UNOWNED
             if postdelete and "ctnative.host_owner_proved = false" not in failed.read_text():
                 raise RuntimeError(f"{name}: possible absence manufactured a complete host owner")
             repaired = owned.lower(args, restored, mode_name + "-restored", restored_config, options=options)
@@ -498,14 +501,15 @@ def check_comparison_identity_observations(args, node, reference):
 
 
 def check_leaf_absence_census(args, ir, name):
-    case = leaf_absence_cases().get(name)
+    case = {**leaf_absence_cases(), **leaf_clear_cases()}.get(name)
     if case is None:
         return
     raw = args.work / f"{name}.raw.mlir"
     if (len(source_calls(raw.read_text())), len(source_calls(ir.read_text()))) != (
             case["raw_calls"], case["prepared_calls"]):
         raise RuntimeError(f"{name}: changed the independent raw/prepared call census")
-    if "distinct_branches_" in name and ir.read_text().count("scf.if") < 2:
+    if ("distinct_branches_" in name or name.startswith("local_clear_both_branches_")) \
+            and ir.read_text().count("scf.if") < 2:
         raise RuntimeError(f"{name}: lost the nonidentical two-arm absence join")
 
 
@@ -535,6 +539,36 @@ def check_leaf_absence_observations(args, node, reference):
             js.write_text(blind)
             if host.run([node, "-e", boundary.NODE, str(js)]).stdout == expected:
                 raise RuntimeError(f"{name}: absence observer cannot distinguish {replacement}")
+
+
+def check_leaf_clear_observations(args, node, reference):
+    cases = leaf_clear_cases()
+    for name in LEAF_CLEAR_LIFETIMES:
+        source = cases[name]["source"]
+        observed, value = leaf_clear_observer_source(source, name)
+        js = args.work / f"{name}-clear-future.js"
+        js.write_text(observed)
+        expected = f"trace={value}\n"
+        if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != expected
+                or host.run([str(reference), str(js)]).stdout != expected):
+            raise RuntimeError(f"{name}: saved value or future clear branch observation mismatch")
+        mutations = [("state.clear();", "state.has(key);"), ("value: 1", "value: 2")]
+        if name == "local_clear_saved_field":
+            mutations.append(("return saved.value;", "return state.get(key).value;"))
+        elif name == "local_clear_saved_undefined":
+            mutations += [("return saved ===", "return state.get(key) ==="),
+                          ("state.set(key, item); return saved", "state.has(key); return saved")]
+        else:
+            mutations.append(("if (flag) { state.clear(); }", "if (flag) { state.has(key); }"))
+        for index, (old, replacement) in enumerate(mutations):
+            if old not in source:
+                raise RuntimeError(f"{name}: lost independent clear mutation {old}")
+            blind, _ = leaf_clear_observer_source(source.replace(old, replacement), name)
+            js = args.work / f"{name}-clear-blind-{index}.js"
+            js.write_text(blind)
+            throws = replacement == "return state.get(key).value;"
+            if host.run([node, "-e", boundary.NODE, str(js)], success=not throws).stdout == expected:
+                raise RuntimeError(f"{name}: clear observer cannot distinguish {replacement}")
 
 
 def check_nullable_host_result_refusals(args, positives, node, reference, *, names=None):
@@ -745,6 +779,7 @@ def main():
         **nullable_payload_sources(),
         **nullable_host_result_sources(), **nullable_nested_result_sources(),
         **leaf_object_sources(), **leaf_absence_sources(), **primitive_absence_sources(),
+        **leaf_clear_sources(),
         **{name: row for name, row in leaf_readback_sources().items()
            if name not in LEAF_READBACK_UNOWNED},
         # Keep the original refusal source byte-for-byte. Its method-local
@@ -757,6 +792,7 @@ def main():
     check_comparison_identity_observations(args, node, reference)
     check_leaf_absence_observations(args, node, reference)
     check_primitive_absence_observations(args, node, reference)
+    check_leaf_clear_observations(args, node, reference)
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
     blind = args.work / "seeded-dynamic-overwrite-blinded.js"
     blind.write_text(overwrite_source.replace("return state.get(1);", "return 1;"))
@@ -988,6 +1024,7 @@ def main():
         js, ir, count = boundary.prepare(args, name, source)
         functions = (LEAF_OBJECT_FUNCTIONS[name] if name in LEAF_OBJECT_FUNCTIONS
                      else 5 if name in LEAF_READBACK_CALLS or name in leaf_absence_sources()
+                     or name in leaf_clear_sources()
                      else RESULT_SIGNATURES[name][2] if name in RESULT_SIGNATURES
                      else 6 if name == "shared_three" else 5 if name.startswith("shared") else 4)
         if count != functions:
@@ -1041,7 +1078,7 @@ def main():
                     **shortcircuit_sources(), **nullable_result_sources(), **nullable_key_sources(),
                     **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources(),
                     **leaf_object_sources(), **leaf_readback_sources(), **leaf_absence_sources(),
-                    **primitive_absence_sources()}:
+                    **primitive_absence_sources(), **leaf_clear_sources()}:
             disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")
             if disabled.read_text() != output.read_text():
                 raise RuntimeError(f"{name}: saved scalar proof depends on optimization policy")
@@ -1058,6 +1095,9 @@ def main():
     check_leaf_object_forgeries(args, saved,
         ("local_absence_delete_undefined", "local_absence_saved_undefined",
          "local_absence_distinct_branches_false"))
+    check_leaf_object_forgeries(args, saved,
+        ("local_absence_clear_saved_identity", "local_clear_saved_undefined",
+         "local_clear_both_branches_false"))
 
     # Valid-looking scalar markers cannot normalize real null keys or narrow
     # the second use of a nullable formal. Fresh proof must emit the same C++.
@@ -1349,7 +1389,9 @@ def main():
     check_leaf_object_refusals(args, positives, node, reference,
         {name: row for name, row in leaf_readback_refusals().items()
          if name not in LEAF_ABSENCE_PROMOTED_REFUSALS})
-    check_leaf_object_refusals(args, positives, node, reference, leaf_absence_refusals())
+    check_leaf_object_refusals(args, positives, node, reference,
+        {name: row for name, row in leaf_absence_refusals().items() if name not in LEAF_CLEAR_PROMOTED})
+    check_leaf_object_refusals(args, positives, node, reference, leaf_clear_refusals())
     check_leaf_readback_carriers(args, positives, node, reference, leaf_field_result_refusals())
     # A result contract does not narrow Map storage or supply an implemented
     # callable signature. Preserve the prepared producer/consumer operands.
@@ -1520,7 +1562,8 @@ def main():
         text = methods.census(rerun, functions, name + "-rerun", admitted=functions)
         if "ctnative.host_owner_proved = false" not in text or "fingerprint mismatch" not in text:
             raise RuntimeError(f"{name}: prepared leaf owner reused the original source authority")
-    for name in (leaf_readback_sources().keys() - LEAF_READBACK_UNOWNED) | leaf_absence_sources().keys():
+    for name in ((leaf_readback_sources().keys() - LEAF_READBACK_UNOWNED)
+                 | leaf_absence_sources().keys() | leaf_clear_sources().keys()):
         _, config, output = saved[name]
         rerun = owned.lower(args, output, name + "-rerun", config, cleanup=False)
         text = methods.census(rerun, 5, name + "-rerun", admitted=5)
@@ -1539,6 +1582,9 @@ def main():
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
     for name in ("local_absence_delete_undefined", "local_absence_distinct_branches_false"):
+        ir, config, _ = saved[name]
+        rollback += check_budgets(args, ir, config, name, functions=5)
+    for name in ("local_absence_clear_saved_identity", "local_clear_both_branches_false"):
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
@@ -1614,9 +1660,15 @@ def main():
           f"{len(leaf_absence_sources())} absence and historical delete programs preserve exact "
           "raw/prepared calls, definite Undefined and saved-object repairs; "
           "nonidentical two-arm joins survive source preparation and both future flags; "
-          f"{len(leaf_absence_refusals())} unsupported-clear, possible-alias and conditional "
+          f"{len(leaf_absence_refusals()) - len(LEAF_CLEAR_PROMOTED)} possible-alias and conditional "
           "absence refusals reject fresh/stale forgeries and restore exact admitted sources; "
           "saved Undefined across reseed and branch deletion pass final Map/leaf lifetime checks; "
+          f"{len(leaf_clear_sources())} exact clear programs retain fresh arbitrary-key absence, "
+          "saved object/Undefined reads, aliases, reseeding and surviving nonidentical branches; "
+          f"{len(leaf_clear_refusals())} possible-alias, one-arm and evaluated-argument clear refusals "
+          "retain every source operation under fresh/stale reports and exact admitted repairs; "
+          "three clear lifetime families retain saved callables over 128 future calls, release "
+          "both Maps after reentry and preserve an observed leaf until its final owner releases; "
           f"{len(leaf_field_result_refusals())} complete-schema field results "
           "retain complete host ownership and separate native carrier refusals; "
           f"{len(PRIMITIVE_ABSENCE_CARRIERS)} exact absent-result carrier refusals preserve complete owners, "
