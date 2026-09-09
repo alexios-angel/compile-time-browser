@@ -54,9 +54,16 @@ struct state {
     // Bounds on already-read SSA numbers survive known mutations. They are
     // acquired only from a checked size read with exact-instance presence.
     llvm::DenseMap<mlir::Value, unsigned> sizeBounds{};
+    // Emptiness belongs to one runtime instance, never its schema family or
+    // an empty intersected entry list. Saved zero reads belong to immutable SSA.
+    llvm::DenseSet<mlir::Value> emptyInstances, zeroSizes;
     // A scalar get result owns its value. Unlike membership and entry tags,
     // its type remains true after the source entry is overwritten or erased.
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> scalars{};
+
+    PrimitiveMapKeyEvidence keyEvidence(mlir::Value value) const {
+        return {{}, sizeBounds.lookup(value), zeroSizes.contains(value)};
+    }
 
     PrimitiveAlternatives alternatives(mlir::Value value) const {
         if (auto found = scalars.find(value); found != scalars.end()) { return found->second; }
@@ -85,6 +92,12 @@ struct state {
         entries.push_back(value);
     }
     void intersect(const state & other) {
+        for (mlir::Value instance : llvm::make_early_inc_range(emptyInstances)) {
+            if (!other.emptyInstances.contains(instance)) { emptyInstances.erase(instance); }
+        }
+        for (mlir::Value value : llvm::make_early_inc_range(zeroSizes)) {
+            if (!other.zeroSizes.contains(value)) { zeroSizes.erase(value); }
+        }
         llvm::erase_if(entries, [&](const fact & value) { return !other.contains(value); });
         for (fact & value : entries) {
             const auto found = llvm::find_if(
@@ -195,6 +208,11 @@ struct presenceAnalysis {
             current = {};
             return;
         }
+        for (mlir::Value instance : llvm::make_early_inc_range(current.emptyInstances)) {
+            if (effect.written.contains(familyOf(instance))) {
+                current.emptyInstances.erase(instance);
+            }
+        }
         llvm::erase_if(current.entries, [&](const fact & value) {
             return effect.erased.contains(familyOf(value.instance));
         });
@@ -239,9 +257,8 @@ struct presenceAnalysis {
             // A schema family may contain several runtime instances. Without
             // an independent disjointness proof, any of them may be this Map.
             return familyOf(value.instance) == familyOf(affected.instance) &&
-                   comparePrimitiveMapKeys(value.key, affected.key,
-                                           {{}, current.sizeBounds.lookup(value.key)},
-                                           {{}, current.sizeBounds.lookup(affected.key)}) !=
+                   comparePrimitiveMapKeys(value.key, affected.key, current.keyEvidence(value.key),
+                                           current.keyEvidence(affected.key)) !=
                        PrimitiveMapKeyRelation::Distinct;
         };
         for (fact & value : current.entries) {
@@ -258,12 +275,17 @@ struct presenceAnalysis {
     // its alternatives; an unproved write clears them. has supplies no tag.
     void write(state & current, ctjs::CallOp call) const {
         fact added = entry(call);
+        for (mlir::Value instance : llvm::make_early_inc_range(current.emptyInstances)) {
+            if (familyOf(instance) == familyOf(added.instance)) {
+                current.emptyInstances.erase(instance);
+            }
+        }
         added.payload = current.alternatives(call.getArgs()[1]).categories();
         for (fact & previous : current.entries) {
             if (familyOf(previous.instance) != familyOf(added.instance)) { continue; }
-            const auto relation = comparePrimitiveMapKeys(
-                previous.key, added.key, {{}, current.sizeBounds.lookup(previous.key)},
-                {{}, current.sizeBounds.lookup(added.key)});
+            const auto relation =
+                comparePrimitiveMapKeys(previous.key, added.key, current.keyEvidence(previous.key),
+                                        current.keyEvidence(added.key));
             if (relation == PrimitiveMapKeyRelation::Distinct) { continue; }
             if (previous.instance == added.instance && relation == PrimitiveMapKeyRelation::Same) {
                 previous.payload = added.payload;
@@ -288,15 +310,18 @@ struct presenceAnalysis {
         if (sizes.contains(op)) {
             auto read = llvm::cast<ctjs::GetPropertyOp>(op);
             const auto instance = instanceOf(read.getObject());
+            if (current.emptyInstances.contains(instance)) {
+                current.zeroSizes.insert(read.getResult());
+            }
             llvm::SmallVector<mlir::Value> distinct;
             unsigned candidates = 0;
             for (const fact & value : current.entries) {
                 if (!value.present || value.instance != instance) { continue; }
                 if (candidates++ == kMaxPrimitiveMapSizeCandidates) { break; }
                 if (llvm::all_of(distinct, [&](mlir::Value previous) {
-                        return comparePrimitiveMapKeys(
-                                   previous, value.key, {{}, current.sizeBounds.lookup(previous)},
-                                   {{}, current.sizeBounds.lookup(value.key)}) ==
+                        return comparePrimitiveMapKeys(previous, value.key,
+                                                       current.keyEvidence(previous),
+                                                       current.keyEvidence(value.key)) ==
                                PrimitiveMapKeyRelation::Distinct;
                     })) {
                     distinct.push_back(value.key);
@@ -328,6 +353,13 @@ struct presenceAnalysis {
             if (thenYield && elseYield && thenYield.getNumOperands() == branch.getNumResults() &&
                 elseYield.getNumOperands() == branch.getNumResults()) {
                 for (unsigned index = 0; index < branch.getNumResults(); ++index) {
+                    const auto left = thenYield.getOperand(index),
+                               right = elseYield.getOperand(index);
+                    if (isPrimitiveMapZero(left, thenState.keyEvidence(left)) &&
+                        isPrimitiveMapZero(right, elseState.keyEvidence(right))) {
+                        thenState.zeroSizes.insert(branch.getResult(index));
+                        elseState.zeroSizes.insert(branch.getResult(index));
+                    }
                     const auto joined =
                         thenState.alternatives(thenYield.getOperand(index))
                             .joined(elseState.alternatives(elseYield.getOperand(index)));
@@ -390,7 +422,12 @@ struct presenceAnalysis {
             } else if (action == "get") {
                 const auto wanted = entry(call);
                 for (const fact & value : current.entries) {
-                    if (!value.present || !value.matches(wanted)) { continue; }
+                    if (!value.present || value.instance != wanted.instance ||
+                        comparePrimitiveMapKeys(
+                            value.key, wanted.key, current.keyEvidence(value.key),
+                            current.keyEvidence(wanted.key)) != PrimitiveMapKeyRelation::Same) {
+                        continue;
+                    }
                     proved.insert(op);
                     if (value.payload.known) {
                         payloads[op] = value.payload;
@@ -405,6 +442,7 @@ struct presenceAnalysis {
                 effects erase;
                 erase.erased.insert(familyOf(call.getReceiver()));
                 invalidate(current, erase);
+                current.emptyInstances.insert(instanceOf(call.getReceiver()));
             } else if (action.empty()) {
                 current = {};
             }

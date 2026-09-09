@@ -805,6 +805,215 @@ void checkIdentityMapFieldRows(mlir::MLIRContext & context) {
     }
 }
 
+void checkMapZeroSizePresence(mlir::MLIRContext & context) {
+    using namespace ctcompile;
+    const std::string prelude = R"mlir(
+  %one = ctjs.constant #ctjs.number<4607182418800017408>
+  %two = ctjs.constant #ctjs.number<4611686018427387904>
+  %literalZero = ctjs.constant #ctjs.number<0>
+  %negativeZero = ctjs.constant #ctjs.number<9223372036854775808>
+  %nil = ctjs.constant #ctjs.undefined
+  %setName = ctjs.constant #ctjs.string<"set">
+  %getName = ctjs.constant #ctjs.string<"get">
+  %clearName = ctjs.constant #ctjs.string<"clear">
+  %sizeName = ctjs.constant #ctjs.string<"size">
+  %constructor = ctjs.load_global "Map"
+  %map = ctjs.construct %constructor(%constructor)
+  %setter = ctjs.get_property %map[%setName]
+  %getter = ctjs.get_property %map[%getName]
+  %clearer = ctjs.get_property %map[%clearName]
+)mlir";
+    const std::string seed = "  %seeded = ctjs.call %setter(%map, %one, %one)\n";
+    const std::string clear = "  %cleared = ctjs.call %clearer(%map) {mutate_clear}\n";
+    const std::string size = "  %zero = ctjs.get_property %map[%sizeName] {snapshot}\n";
+    const std::string store = "  %stored = ctjs.call %setter(%map, %zero, %one) {mutate_store}\n";
+    const std::string read = "  %observed = ctjs.call %getter(%map, %literalZero) {check}\n";
+    const auto replace = [](std::string text, llvm::StringRef from, llvm::StringRef to) {
+        const auto position = text.find(from.str());
+        if (position == std::string::npos) {
+            std::printf("FAIL exact-zero fixture replacement did not match\n");
+            ++failures;
+            return text;
+        }
+        text.replace(position, from.size(), to.str());
+        return text;
+    };
+    const auto both = "  %bit = ctjs.truthy %p\n  scf.if %bit {\n" + clear +
+                      "  } else {\n    %again = ctjs.call %clearer(%map)\n"
+                      "    %twice = ctjs.call %clearer(%map)\n  }\n";
+    const std::string branchEntries =
+        "  %bit = ctjs.truthy %p\n  scf.if %bit {\n"
+        "    %left = ctjs.call %setter(%map, %one, %one)\n"
+        "  } else {\n    %right = ctjs.call %setter(%map, %two, %one)\n  }\n";
+    const std::string selected = "  %bit = ctjs.truthy %p\n"
+                                 "  %zero = scf.if %bit -> (!ctjs.value) {\n"
+                                 "    %left = ctjs.get_property %map[%sizeName]\n"
+                                 "    scf.yield %left : !ctjs.value\n"
+                                 "  } else {\n    scf.yield %negativeZero : !ctjs.value\n  }\n";
+    struct presenceRow {
+        const char * what;
+        std::string body;
+        bool present;
+    };
+    const std::vector<presenceRow> rows = {
+        {"saved size after clear is the literal zero Map key", seed + clear + size + store + read,
+         true},
+        {"negative zero is the same key as a saved empty size",
+         seed + clear + size + store + replace(read, "%literalZero", "%negativeZero"), true},
+        {"clearing without known entries still establishes exact empty size",
+         clear + size + store + read, true},
+        {"an earlier nonempty size does not become zero after clear",
+         seed + size + clear + store + read, false},
+        {"a post-growth size does not retain a prior empty-instance fact",
+         clear + seed + size + store + read, false},
+        {"no known-entry fact does not establish exact cardinality", size + store + read, false},
+        {"empty intersection of different branch entries is not an empty Map",
+         branchEntries + size + store + read, false},
+        {"clearing on every structural arm establishes exact zero",
+         seed + both + size + store + read, true},
+        {"a single clearing arm retains an unknown nonempty path",
+         seed + "  %bit = ctjs.truthy %p\n  scf.if %bit {\n" + clear + "  }\n" + size + store +
+             read,
+         false},
+        {"a saved zero survives later clear and growth",
+         clear + size + seed + "  %again = ctjs.call %clearer(%map)\n" + store + read, true},
+        {"a later clear removes a zero-key membership fact",
+         clear + size + store + "  %again = ctjs.call %clearer(%map)\n" + read, false},
+        {"zero snapshots from a size and a literal join as zero", clear + selected + store + read,
+         true},
+        {"a selected nonzero literal prevents an exact-zero join",
+         clear + replace(selected, "scf.yield %negativeZero", "scf.yield %one") + store + read,
+         false},
+        {"a saved zero remains distinct from a nonzero key",
+         clear + size + store + replace(read, "%literalZero", "%one"), false},
+    };
+    const auto marked = [](mlir::ModuleOp module, llvm::StringRef name) {
+        mlir::Operation * result = nullptr;
+        module.walk([&](mlir::Operation * op) {
+            if (op->hasAttr(name)) { result = op; }
+        });
+        return result;
+    };
+    const auto verify = [&](mlir::ModuleOp module, const char * what, bool expected,
+                            bool mixed = true) {
+        // The same live preparation is run on a reused module and an exact
+        // fresh clone. Previously attached reports are deliberately hostile.
+        for (bool clone : {false, true}) {
+            mlir::OwningOpRef<mlir::ModuleOp> fresh;
+            auto current = module;
+            if (clone) {
+                fresh = mlir::OwningOpRef<mlir::ModuleOp>{module.clone()};
+                current = *fresh;
+            }
+            std::vector<mlir::Operation *> before;
+            std::vector<std::vector<mlir::Value>> operands;
+            current.walk([&](mlir::Operation * op) {
+                before.push_back(op);
+                operands.emplace_back(op->operand_begin(), op->operand_end());
+            });
+            ctnative::prepareNativeMaps(current);
+            auto * observed = marked(current, "check");
+            if (!observed || ctnative::nativeMapAction(observed) != "get" ||
+                observed->hasAttr(ctnative::kNativeMapPresent) != expected) {
+                std::printf("FAIL %s: %s current Map membership differs from %d\n", what,
+                            clone ? "fresh" : "reused", static_cast<int>(expected));
+                ++failures;
+            }
+            std::vector<mlir::Operation *> after;
+            current.walk([&](mlir::Operation * op) { after.push_back(op); });
+            bool intact = before == after;
+            for (size_t index = 0; intact && index < before.size(); ++index) {
+                intact &= llvm::equal(before[index]->getOperands(), operands[index]);
+            }
+            if (!intact) {
+                std::printf("FAIL %s: exact-zero preparation changed executable source\n", what);
+                ++failures;
+            }
+            check(current, what,
+                  !mixed ? "!ctnative.opt<!ctnative.num<i32>>"
+                  : expected
+                      ? "!ctnative.num<f64>"
+                      : "!ctnative.opt<!ctnative.variant<!ctnative.bool, !ctnative.num<i32>>>");
+        }
+    };
+    // The original homogeneous Number source retains its optional result:
+    // preparation currently requests public presence only for published or
+    // mixed reads. Adding a later Boolean write independently requests the
+    // mixed read proof without changing any read-time operation or operand.
+    const std::string mixedSuffix = "  %boolean = ctjs.constant #ctjs.boolean<false>\n"
+                                    "  %booleanWrite = ctjs.call %setter(%map, %two, %boolean)\n";
+    for (const presenceRow & r : rows) {
+        auto homogeneous = mlir::parseSourceString<mlir::ModuleOp>(
+            prologue() + prelude + r.body + "  ctjs.return %observed\n}\n", &context);
+        if (!homogeneous) {
+            std::printf("FAIL %s: homogeneous zero-size fixture did not parse\n", r.what);
+            ++failures;
+            continue;
+        }
+        verify(*homogeneous, r.what, false, false);
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(
+            prologue() + prelude + r.body + mixedSuffix + "  ctjs.return %observed\n}\n", &context);
+        if (!module) {
+            std::printf("FAIL %s: zero-size presence fixture did not parse\n", r.what);
+            ++failures;
+            continue;
+        }
+        mlir::Builder attrs(&context);
+        module->walk([&](mlir::Operation * op) {
+            op->setAttr("ctnative.map_empty", attrs.getBoolAttr(true));
+            op->setAttr("ctnative.map_size_zero", attrs.getBoolAttr(true));
+            if (op->hasAttr("check")) {
+                op->setAttr(ctnative::kNativeMapPresent, attrs.getUnitAttr());
+                op->setAttr(ctnative::kNativeMapReadType, attrs.getStringAttr("number"));
+            }
+        });
+        verify(*module, r.what, r.present);
+    }
+
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(prologue() + prelude + seed + clear +
+                                                              size + store + read + mixedSuffix +
+                                                              "  ctjs.return %observed\n}\n",
+                                                          &context);
+    if (!module) {
+        std::printf("FAIL live exact-zero presence fixture did not parse\n");
+        ++failures;
+        return;
+    }
+    auto * snapshot = marked(*module, "snapshot");
+    auto * clearing = marked(*module, "mutate_clear");
+    auto * storing = marked(*module, "mutate_store");
+    if (!snapshot || !clearing || !storing) {
+        std::printf("FAIL live exact-zero presence fixture lost its source positions\n");
+        ++failures;
+        return;
+    }
+    verify(*module, "live zero-size source before mutation", true);
+    snapshot->moveBefore(clearing);
+    verify(*module, "moving size before clear invalidates its prior zero evidence", false);
+    snapshot->moveAfter(clearing);
+    verify(*module, "restoring size after clear recovers current zero evidence", true);
+    const auto key = storing->getOperand(2);
+    auto setter = llvm::cast<ctjs::CallOp>(storing);
+    auto * one = setter.getArgs()[1].getDefiningOp();
+    storing->setOperand(2, one->getResult(0));
+    verify(*module, "a live nonzero store key cannot inherit saved-zero membership", false);
+    storing->setOperand(2, key);
+    verify(*module, "restoring the exact saved key recovers membership", true);
+    auto * observed = marked(*module, "check");
+    clearing->moveAfter(storing);
+    verify(*module, "moving clear after the set invalidates prior membership", false);
+    clearing->moveBefore(snapshot);
+    verify(*module, "restoring clear before the read recovers the proof", true);
+    const auto readKey = observed->getOperand(2);
+    observed->setOperand(2, one->getResult(0));
+    verify(*module, "a live nonzero lookup key cannot borrow zero membership", false);
+    observed->setOperand(2, readKey);
+    verify(*module, "restoring the lookup key restores independently derived presence", true);
+    std::printf("exact-zero Map presence: %zu source/mixed rows and eight live edits, reused/fresh "
+                "modules\n",
+                rows.size() * 2);
+}
+
 void checkStaleFieldEffects(mlir::MLIRContext & context) {
     const auto checkBoth = [&](mlir::ModuleOp module, const char * what, bool assigned) {
         const char * expected =
@@ -2376,6 +2585,7 @@ int main() {
     for (const row & r : rows) { check(context, r); }
     checkIdentityFieldRows(context);
     checkIdentityMapFieldRows(context);
+    checkMapZeroSizePresence(context);
     checkComparisonIdentityRows(context);
     checkComparisonIdentityMutations(context);
     checkStaleFieldEffects(context);

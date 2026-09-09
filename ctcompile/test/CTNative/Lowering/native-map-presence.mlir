@@ -30,6 +30,20 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/n28_recursive_callee_clear.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/n29_returned_closure_clear.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
 
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_saved_before_growth.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ZERO --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_signed_key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ZERO --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_both_clearing_arms.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ZERO --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_selected_snapshot.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ZERO --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_size_before_clear.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_size_after_growth.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_one_clearing_arm.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_empty_entry_intersection.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_same_schema_distinct_instance.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_selected_nonzero_arm.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PRESENCE
+
+// ZERO: emitc.func
+// ZERO: call_opaque "ctnative::map_get_present"
+
 // NATIVE: emitc.func @ensure_2
 // NATIVE: call_opaque "ctnative::map_get_present"
 // PRESENCE: ctnative.not_native = "nested native Map get requires presence on every reaching path for the same instance and key; has observations must survive intervening effects"
@@ -461,3 +475,134 @@ var outer = new Map();
     return 0;
 }
 var result = probe();
+
+//--- zero_saved_before_growth.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    const zero = outer.size;
+    outer.set(1, inner);
+    outer.set(zero, inner);
+    return outer.get(0).size;
+}
+var result = probe(true);
+
+//--- zero_signed_key.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    const zero = outer.size;
+    outer.set(zero, inner);
+    return outer.get(-0).size;
+}
+var result = probe(true);
+
+//--- zero_both_clearing_arms.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.set(1, inner);
+    if (flag) { outer.clear(); } else { outer.clear(); outer.clear(); }
+    const zero = outer.size;
+    outer.set(zero, inner);
+    return outer.get(0).size;
+}
+var result = probe(true);
+
+//--- zero_selected_snapshot.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    const zero = flag ? outer.size : -0;
+    outer.set(zero, inner);
+    return outer.get(0).size;
+}
+var result = probe(true);
+
+//--- zero_size_before_clear.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.set(1, inner);
+    const saved = outer.size;
+    outer.clear();
+    outer.set(saved, inner);
+    return outer.get(0).size;
+}
+var result = probe(true);
+
+//--- zero_size_after_growth.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    outer.set(1, inner);
+    const saved = outer.size;
+    outer.set(saved, inner);
+    return outer.get(0).size;
+}
+var result = probe(true);
+
+//--- zero_one_clearing_arm.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.set(1, inner);
+    if (flag) { outer.clear(); }
+    const saved = outer.size;
+    outer.set(saved, inner);
+    return outer.get(0).size;
+}
+var result = probe(true);
+
+//--- zero_empty_entry_intersection.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    if (flag) { outer.set(1, inner); } else { outer.set(2, inner); }
+    const saved = outer.size;
+    outer.set(saved, inner);
+    return outer.get(0).size;
+}
+var result = probe(true);
+
+//--- zero_same_schema_distinct_instance.js
+function identity(map) { return map; }
+function probe(flag) {
+    const first = new Map();
+    const second = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    first.set(1, inner);
+    second.set(1, inner);
+    identity(first);
+    identity(second);
+    first.clear();
+    const saved = second.size;
+    second.set(saved, inner);
+    return second.get(0).size;
+}
+var result = probe(true);
+
+//--- zero_selected_nonzero_arm.js
+function probe(flag) {
+    const outer = new Map();
+    const inner = new Map();
+    inner.set(0, 42);
+    outer.clear();
+    const saved = flag ? outer.size : 1;
+    outer.set(saved, inner);
+    return outer.get(0).size;
+}
+var result = probe(true);
