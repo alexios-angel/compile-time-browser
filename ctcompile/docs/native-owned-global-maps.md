@@ -1,5 +1,29 @@
 # Native captured Maps across global publication
 
+## Saved Number global reads, 2026-09-09
+
+`801794d8` supplies per-load initialization/value/result-dependency edges only
+after the complete current host and owner proofs. NativeMap uses them only to
+exclude an independently proved Number read from its global identity refusal;
+ordinary ownership lookup and native type inference remain separate. Every
+source write, SSA scope, source order, actual callable and future method input
+must still qualify. Partial budgets and stale/forged reports expose no edges.
+
+The exact d74ae2ee saved sum and 867378b1 size snapshot now admit **5/5** in both
+modes, retaining all eight calls and trace=3/12. Both compile/run with exact
+requested scalar observations under explicit/deduced GCC/Clang and no-VM checks.
+All five host/owner CTests pass in **126.27 seconds**, including 16 rows and
+11 live edits per form, every 7802/7873 host cutoff and prior owner budgets.
+The broader execution/lifetime and full-suite gates remain pending; measured
+gates and frozen hashes are in [HANDOFF.md](HANDOFF.md).
+
+A saved alias `const alias = first` now passes Map identity but fails final
+global observation because inference still adds Undefined at every global
+load. Keep that independent refusal and the original source; the exact
+`first + 0` repair retains calls, the alias store and its read and admits.
+[bootstrap-provider-next.md](bootstrap-provider-next.md) records the exact
+next source and the initialization/lattice proof it needs.
+
 ## Entry arithmetic over published Number results, 2026-09-09
 
 `0468fed4` admits Add/Sub/Mul/Div/Mod/Pow only from independently exact Number

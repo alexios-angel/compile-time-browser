@@ -1,6 +1,61 @@
 # Next Bootstrap native boundary
 
-## Current continuation: saved scalar globals, 2026-09-09
+## Current continuation: definite scalar-global initialization, 2026-09-09
+
+`801794d8` closes the saved Number Map-identity boundary. The unchanged
+**d74ae2ee** and **867378b1** eight-call sources now reach **5/5 native** in
+both modes, trace=3/12. Both execute under explicit/deduced GCC/Clang with exact
+requested scalar observations and no Script/VM/AOT symbols. All five host/owner
+CTests pass; the broader execution/lifetime and full gates are still pending.
+No full-Bootstrap gain is claimed; see [HANDOFF.md](HANDOFF.md).
+
+The next exact source passes the complete host, owner and Map identity proofs:
+
+```js
+var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        set(key) { const item = {}; state.set(key, item); const saved = state.get(key); return state.size; }
+    };
+});
+host.slot.size(); const first = host.slot.set('x'); const second = host.slot.set('y'); host.slot.set('z'); const alias = first; var trace = alias * 10 + second;
+```
+
+Source SHA-256, including its final newline:
+`8003b4bc3a35bc936752067dc66c97ab02b36294db685d776d10a53f1a42b388`.
+Node/interpreter agree: `alias=1`, `first=1`, `second=2`, **trace=12**. The
+source retains five functions, eight calls and its alias store/read, but both
+modes remain **0/5 native**, diagnosed as
+`store to global alias may be null or undefined; native global observations require a definite number`.
+The exact repair changes only `const alias = first;` to
+`const alias = first + 0;`; every call, alias store/read, final multiplication
+and addition remains. It reaches **5/5**, preserving all observations.
+
+`Analysis/TypeInference.cpp` currently starts each closed-world global-load
+join with `absentType`. It cannot yet consume the fresh `OwnedGlobalRoots`
+per-load initialization edge. Extend that existing join only when the actual
+load, single indexed store and saved value agree with the live edge. Drop the
+implicit Undefined seed for that load, then subscribe to and join the real
+store operand's lattice. An uninitialized producer must remain pending and
+revisit when its type arrives or widens. A boxed producer remains boxed even
+when HostContract separately knows a Number category. Neither the category,
+an observation name nor a report may manufacture a native NumType.
+
+Keep dynamic globals, multiple writes, read-before-initialization and
+stale/exhausted proofs conservative. Do not relax `admission::printable()` or
+replace tagged global storage as a shortcut. The raw indirect-call case, whose
+host Number evidence coexists with an unproved native type, is a required
+independent negative control. The seven-call direct `trace = first` source
+hits the same final observation boundary; its `first + 0` repair admits.
+
+All **18** new probes agree on Node/VM and both classifications: ten native,
+four unowned, four complete-owner refusals. All original sources remain intact.
+Exact zero-size after clear, String leaf fields, full Bootstrap and direct
+browser APIs remain separate unfinished boundaries.
+
+## Previous continuation: saved scalar globals, 2026-09-09
 
 `0468fed4` proves entry Number arithmetic and `83c32f0c` gates it. The original
 379ccc eight-call sum now reaches **5/5 native**, trace=3, in both modes.

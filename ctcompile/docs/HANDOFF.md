@@ -6,6 +6,78 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Saved Number globals and BigInt binary origins, 2026-09-09
+
+Resumed the exact **d74ae2ee/867378b1** saved-global continuation in
+**1d965169**, `bootstrap-provider-next.md` and the **05:14:01 UTC** journal.
+The tree/index started clean; the older codex-wip recovery and browser source
+split repairs were already merged. Three agents handled query tests,
+execution/lifetimes and the independent escape increment; root owns every
+devbox gate and commit. No browser/runtime source changed and no push occurred.
+
+**801794d8** proves per-load saved Number edges through the existing
+HostContract/OwnedGlobalRoots seam. Each edge records its single earlier entry
+store, original SSA value and completed published-result dependencies. Source
+order, scope, all writes, current callable identities and the whole method
+family prove independently. Both host and owner publish these edges only after
+complete success within their shared budget. NativeMap exempts only those exact
+reads; constructor, prototype, reflection and unknown-effect guards remain.
+Categories never become values or native types. Existing lowering is reused.
+
+The unchanged eight-call saved-results and saved-size witnesses advance
+**0/5 -> 5/5 native** in both modes, preserving **trace=3/12**. Their three/two
+scalar stores and loads, arithmetic and every call remain. Both execute under
+explicit/deduced GCC 13 and Clang 18 with exact interpreter output for every
+requested scalar global and no Script/VM/AOT symbols. All **31** historical
+continuations agree on Node/interpreter observations: **22 native, nine unowned**.
+
+The first **33-step** tool build is warning-free. A new test range-loop copy
+warning was corrected with a const reference; the warning-free **eight-step**
+rebuild passes all **five host/owner CTests in 126.27 seconds**. Source/prepared
+queries each check **16 rows, 11 live edits and every 7802/7873 host cutoff**,
+plus existing owner cutoff families. Stable formatter **22.1.8 passes all 745
+files**; bundled 23 retains the same nine unrelated differences, with changed
+C++ passing both versions. Fourteen committed core code/test hashes match
+their frozen inputs and HEAD. Full compiler/lit validation remains pending.
+
+**b953ab00** proves independently original BigInt Add/Sub/Mul result origins.
+Their separate per-path category cannot flow into a non-BigInt assumption.
+Mixed/object inputs, static BigInt operations and Div/Mod/Pow remain refused;
+this is retention evidence, not native BigInt emission or an effect guarantee.
+The warning-free **ten-step** build passes **eight escape CTests in 9.32
+seconds**. Each operator checks **97 rows, 29 live states and 3098 cutoffs**,
+plus a **128-work** snapshot. Five new sources measure **20 sites, 40 instances
+and 32 retained**; one unchanged historical child newly proves confined.
+Fixture precision is **61/93** and all four oracles report zero violations;
+corpus precision stays **0/64, 0/16, 0/20**. Fifteen arithmetic premeasurement
+checks agree; the separately refused object-conversion check differs (Node
+65535 versus VM 32767 overall), recorded for the runtime owner.
+
+The **18 new scalar probes** also agree on Node/interpreter observations:
+**ten native, four unowned and four complete-owner refusals**. Their execution,
+forgery, exact-repair and lifetime gate is in progress; these classifications
+alone do not establish that gate. All original 31 and first 15 new source
+bodies remain unchanged.
+
+**Next: definite initialization in native global-load type inference.**
+The exact eight-call alias source **8003b4bc**, trace=12, now passes Map
+identity but refuses at `store to global alias may be null or undefined`.
+The existing global lattice starts with Undefined even for this exact earlier
+store. Use the fresh scalar edge only as initialization evidence, then subscribe
+to and join the actual stored-value lattice; never manufacture NumType from a
+host category. Preserve dynamic-global, multiple-write and stale/incomplete
+proof refusals and leave the final observation gate intact. Its exact `first + 0`
+repair preserves every call and both alias operations and reaches 5/5. The
+seven-call direct `trace = first` source reaches the same separate boundary.
+Exact zero-size after clear, String leaf fields, full Bootstrap and direct
+browser API integration remain unfinished; no full-Bootstrap coverage gain is
+claimed. Previous full corpus measurements remain below, pending the new gate.
+
+Evidence: `/tmp/ctcompile-scalars-{first,final-census}.json`,
+`/tmp/ctcompile-scalars-{query2,escape,smoke}.log`,
+`/tmp/ctcompile-scalars-{proof,core}-frozen.json`, and
+`/tmp/ctcompile-scalars-{sum,snapshot}.cpp`.
+
 ## Published Number arithmetic and BigInt unary origins, 2026-09-09
 
 Resumed interrupted iteration 21 from **62282da1**, the **03:29:26 UTC**
