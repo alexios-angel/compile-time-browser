@@ -14,8 +14,13 @@ modes, retaining all eight calls and trace=3/12. Both compile/run with exact
 requested scalar observations under explicit/deduced GCC/Clang and no-VM checks.
 All five host/owner CTests pass in **126.27 seconds**, including 16 rows and
 11 live edits per form, every 7802/7873 host cutoff and prior owner budgets.
-The broader execution/lifetime and full-suite gates remain pending; measured
-gates and frozen hashes are in [HANDOFF.md](HANDOFF.md).
+`1bd5b5ac` passes fourteen focused programs, four unowned and four complete-owner
+refusal families with exact repairs, live dataflow/forgery controls and the new
+128-call sanitizer lifetime. Number snapshots outlive all Map/leaf mutations
+and owner release. Budgets 9920/9249 check 30/32 cutoffs. The 173-case refusal
+census preserves all 169 historical classifications and hashes. The full
+245-program/33-lifetime suite is running on eighteen frozen code/test files;
+[HANDOFF.md](HANDOFF.md) records focused measurements and pending full results.
 
 A saved alias `const alias = first` now passes Map identity but fails final
 global observation because inference still adds Undefined at every global

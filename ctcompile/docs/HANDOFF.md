@@ -53,11 +53,30 @@ corpus precision stays **0/64, 0/16, 0/20**. Fifteen arithmetic premeasurement
 checks agree; the separately refused object-conversion check differs (Node
 65535 versus VM 32767 overall), recorded for the runtime owner.
 
-The **18 new scalar probes** also agree on Node/interpreter observations:
-**ten native, four unowned and four complete-owner refusals**. Their execution,
-forgery, exact-repair and lifetime gate is in progress; these classifications
-alone do not establish that gate. All original 31 and first 15 new source
-bodies remain unchanged.
+**1bd5b5ac** gates **14 programs** (two historical saved sources, their two
+inline repairs and ten new positives), **four unowned/four complete-owner
+refusal families**, exact repairs, prepared/emitted dataflow, fresh/stale
+forgeries and reruns. One new ASan/UBSan/leak lifetime family exercises **128
+future calls**, both Boolean arms, owner/table release, reentry, final Map
+release and an independently retained leaf. Number snapshots survive every
+mutation and owner release. Budgets complete at **9920/9249**, checking
+**30/32 cutoffs**, with no speculative rollback interval. The integrated full
+gate now contains **245 programs and 33 lifetime families**; that complete run
+is still pending.
+
+All **18** new Node/interpreter probes agree: **ten native, four unowned and
+four complete-owner refusals**. The final **173-case** refusal census has no
+errors; all **169 historical cases** retain source hashes, function/call counts
+and both-mode classifications. All **472 historical helper rows across 50
+helpers**, the original 31 continuation sources and first 15 new probes
+preserve their source bytes. The first focused test run caught two new
+expectation errors: the result-fed key uses the existing nullable scalar
+parameter carrier, and duplicate writes plus arithmetic fail host proof.
+Only expectations changed; the corrected full focused gate passes.
+
+All **18 final code/test hashes** match the frozen snapshot and committed HEAD.
+The full `remote-build.sh` gate is running on those files; final CTest/lit
+results and devbox hashes remain pending in `/tmp/ctcompile-scalars-full.log`.
 
 **Next: definite initialization in native global-load type inference.**
 The exact eight-call alias source **8003b4bc**, trace=12, now passes Map

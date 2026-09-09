@@ -6,8 +6,11 @@
 **d74ae2ee** and **867378b1** eight-call sources now reach **5/5 native** in
 both modes, trace=3/12. Both execute under explicit/deduced GCC/Clang with exact
 requested scalar observations and no Script/VM/AOT symbols. All five host/owner
-CTests pass; the broader execution/lifetime and full gates are still pending.
-No full-Bootstrap gain is claimed; see [HANDOFF.md](HANDOFF.md).
+CTests pass. `1bd5b5ac` also passes fourteen focused native programs, eight
+refusal/repair families and the new 128-call sanitizer lifetime; the final
+173-case census preserves all 169 historical refusal classifications. The full
+gate is running on eighteen frozen code/test files. No full-Bootstrap gain is
+claimed; see [HANDOFF.md](HANDOFF.md).
 
 The next exact source passes the complete host, owner and Map identity proofs:
 
