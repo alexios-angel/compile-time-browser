@@ -509,9 +509,14 @@ struct ArrayContentsEvidence {
 /// infinity or signed zero, with no constant/index/key inference. Each operand's
 /// to_number_value depth guard has the same retention-only early-exit argument
 /// as Neg/Plus; this adds no completion/effect guarantee. Dynamic Add/Concat
-/// require the same original primitive non-BigInt inputs. Add yields Number or
-/// String without a concrete tag fact; Concat yields String, still without
-/// constant/key inference. Add enters to_primitive's guard and shares the same
+/// accept the same original primitive non-BigInt inputs. Concat also accepts
+/// independently proved BigInts; Add accepts String/BigInt only when one original
+/// independently proves String. String literals, TypeOf and Concat are exact
+/// categories; proved String-producing Add results enter a separately charged
+/// per-path set. Saved/forwarded results preserve their original category after
+/// overwrite/deletion, while ambiguous Number/String Add results cannot authorize
+/// a later BigInt operand. No constant/key inference follows. Add enters
+/// to_primitive's guard and shares the same
 /// retention-only argument; primitive Concat uses static to_string. String
 /// results allocate in the VM; allocation success remains unproved. Dynamic
 /// Add/Sub/Mul/Div/Mod/Pow additionally accept two independently proved original
@@ -523,7 +528,7 @@ struct ArrayContentsEvidence {
 /// Error has no local object edge, while the whole-frame proof excludes calls,
 /// handlers and publication. Pow keeps the VM's unconditional exponent cap for
 /// small bases as an explicit source-semantics divergence. Static Pow/unsigned
-/// shifts, dynamic Concat/bitwise/shifts and mixed/object/opaque
+/// shifts, dynamic bitwise/shifts and other mixed/object/opaque
 /// inputs remain outside this bounded BigInt proof. No allocation-success,
 /// normal-completion or native effect guarantee follows.
 /// Joins keep exact separate states rather than unioning overwrite targets. Truthy

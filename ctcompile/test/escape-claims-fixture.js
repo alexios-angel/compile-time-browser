@@ -991,6 +991,109 @@ function objectFrameBigIntUnaryRetained(choice) {
 H.push(objectFrameBigIntUnaryRetained(false));
 H.push(objectFrameBigIntUnaryRetained(true));
 
+// --- STRING/BIGINT ADD AND CONCAT ORIGINS ---------------------------------
+// Saved String and BigInt categories survive overwrites, deletion and copies.
+function objectFrameStringBigIntSaved(choice) {
+    var child = { id: 1 };
+    var source = { held: child, text: choice ? "saved:\u0000\u00e9" : "",
+                   number: choice ? 9007199254740993n : -2n };
+    var target = { ...source }, text = target.text, number = source.number;
+    target.text = 0; source.number = "changed";
+    delete source.text; delete target.text;
+    delete source.number; delete target.number;
+    var left = text + number, right = number + text, chained = left + 3n;
+    var typed = typeof child + number, template = `${number}:${left}`;
+    delete source.held; delete target.held;
+    return { source: source, target: target, left: left, right: right,
+             chained: chained, typed: typed, template: template };
+}
+H.push(objectFrameStringBigIntSaved(false));
+H.push(objectFrameStringBigIntSaved(true));
+
+// One source Add has independent String and BigInt results on its live paths.
+function objectFrameStringBigIntPaths(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var operand = choice ? "prefix:" : 2n, produced = operand + 3n;
+    var converted = `${produced}`, chained = converted + 4n;
+    var again = chained + -1n;
+    delete source.held; delete target.held;
+    return { source: source, target: target, produced: produced,
+             converted: converted, chained: chained, again: again };
+}
+H.push(objectFrameStringBigIntPaths(false));
+H.push(objectFrameStringBigIntPaths(true));
+
+// Primitive template conversions stay independent even without a String input.
+function objectFrameStringBigIntTemplate(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var number = choice ? 9007199254740993n : -2n;
+    var converted = `${number}${number + 1n}${true}${null}${void 0}${-0}`;
+    var chained = number + converted + 5n;
+    delete source.held; delete target.held;
+    return { source: source, target: target, converted: converted, chained: chained };
+}
+H.push(objectFrameStringBigIntTemplate(false));
+H.push(objectFrameStringBigIntTemplate(true));
+
+// Successful actuals cannot prove an opaque future Add operand to be String.
+function objectFrameStringBigIntOpaqueAdd(operand) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var produced = operand + 1n;
+    delete source.held; delete target.held;
+    return { source: source, target: target, produced: produced };
+}
+H.push(objectFrameStringBigIntOpaqueAdd("saved:"));
+H.push(objectFrameStringBigIntOpaqueAdd(""));
+
+// Template syntax cannot authorize an opaque object's conversion callbacks.
+function objectFrameStringBigIntOpaqueTemplate(operand) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var produced = `${operand}:` + 1n;
+    delete source.held; delete target.held;
+    return { source: source, target: target, produced: produced };
+}
+H.push(objectFrameStringBigIntOpaqueTemplate(1n));
+H.push(objectFrameStringBigIntOpaqueTemplate(2n));
+
+// The object path remains refused even when its current default conversion succeeds.
+function objectFrameStringBigIntObject(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var operand = choice ? child : "saved:", produced = `${operand}` + 1n;
+    delete source.held; delete target.held;
+    return { source: source, target: target, produced: produced };
+}
+H.push(objectFrameStringBigIntObject(false));
+H.push(objectFrameStringBigIntObject(true));
+
+// A proved String result supplies no mixed String/BigInt comparison contract.
+function objectFrameStringBigIntMixed(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var number = choice ? 1n : 2n, produced = "" + number;
+    var equal = produced == number, less = produced < number;
+    delete source.held; delete target.held;
+    return { source: source, target: target, produced: produced, equal: equal, less: less };
+}
+H.push(objectFrameStringBigIntMixed(false));
+H.push(objectFrameStringBigIntMixed(true));
+
+// Independent String digits do not discard a separately saved object identity.
+function objectFrameStringBigIntRetained(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source }, saved = target.held;
+    var number = choice ? 9007199254740993n : -2n;
+    var produced = "saved:" + number, chained = number + produced;
+    delete source.held; delete target.held;
+    return { source: source, target: target, saved: saved, produced: produced, chained: chained };
+}
+H.push(objectFrameStringBigIntRetained(false));
+H.push(objectFrameStringBigIntRetained(true));
+
 // --- COMPUTED BIGINT BINARY ORIGINS ----------------------------------------
 // Both operands keep their original category through saved reads and mutation.
 function objectFrameBigIntBinarySaved(choice) {

@@ -257,6 +257,26 @@ if(STRICT)
   if(NOT _pow_error_hash STREQUAL "31462dc9b17e9c47e4ad4255559bbffda5aea3dc9100e7044c25a7fbb93bbea1")
     message(FATAL_ERROR "the BigInt Pow Cap source changed; remeasure its bytecode coordinate before updating this case")
   endif()
+  # Every String/BigInt producer and refusal body is pinned independently.
+  foreach(_source_pair IN ITEMS
+      "objectFrameStringBigIntSaved aec68c23e5f9bf8bfa9e5ab52c5ede7b1b8c9822da89811035d45d1ac3a6369e"
+      "objectFrameStringBigIntPaths 2dc79c09d7cbc6a9d8e5d065665b77ff0eb33085c3c4fd9955a5e54ddb8168ff"
+      "objectFrameStringBigIntTemplate cb31d3c6a5118ab6b13b36d6808ea45026d20cac641034055c7f28c0df0c3ea5"
+      "objectFrameStringBigIntOpaqueAdd 835de91a4f59b61a11fc748a7913ba7494eef65bd9308f3adda8474f868dddcf"
+      "objectFrameStringBigIntOpaqueTemplate 88f98df0ce48c181f8721038543339eac0c07a5b46684c19fcc61e576d541250"
+      "objectFrameStringBigIntObject ad31a100dc70a5e182d7fe01bdf6fd37874e991a03d6fa8d03e47e7dcbcbe7cf"
+      "objectFrameStringBigIntMixed 93be77d12ea361ed413761a2c919cb9d5e1d9e0dd569cb5ba5a5650558a7f88b"
+      "objectFrameStringBigIntRetained de5ad600d8d125470e50e0ae2c8ea40c0d88f5ccdd6ce90f1de9f7c9e6e6af32"
+)
+    string(REPLACE " " ";" _source_fields "${_source_pair}")
+    list(GET _source_fields 0 _source_name)
+    list(GET _source_fields 1 _source_hash)
+    string(REGEX MATCH "function ${_source_name}\\([^\n]*\\) \\{[^\n]*\n(    [^\n]*\n)*\\}" _source_body "${_fixture_source}")
+    string(SHA256 _observed_source_hash "${_source_body}")
+    if(NOT _observed_source_hash STREQUAL _source_hash)
+      message(FATAL_ERROR "${_source_name}: String BigInt source changed; preserve or remeasure its evidence")
+    endif()
+  endforeach()
   foreach(_line IN LISTS _recording_lines)
     if(_line MATCHES "^program ([0-9a-f]+) ")
       set(_program_hash "${CMAKE_MATCH_1}")
@@ -416,6 +436,26 @@ if(STRICT)
         message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
       endif()
       list(APPEND _object_add_concat_rows "${_row} ${CMAKE_MATCH_1}")
+    elseif(_function_name MATCHES "^objectFrameStringBigInt(Saved|Paths|Template|OpaqueAdd|OpaqueTemplate|Object|Mixed|Retained)$" AND _line MATCHES "^alloc ")
+      if(NOT _line MATCHES "^alloc ([0-9]+) kind obj$")
+        message(FATAL_ERROR "${_function_name}: unexpected String BigInt source allocation: ${_line}")
+      endif()
+      list(APPEND _object_string_bigint_literal_pcs "${_function_name} ${CMAKE_MATCH_1}")
+    elseif(_function_name MATCHES "^objectFrameStringBigInt(Saved|Paths|Template|OpaqueAdd|OpaqueTemplate|Object|Mixed|Retained)$" AND _line MATCHES "^site ")
+      if(NOT _line MATCHES "^site ([0-9]+) kind obj made ([0-9]+) confined ([0-9]+) escaped ([0-9]+) unresolved ([0-9]+) unchecked ([0-9]+) routes ([^ ]+)$")
+        message(FATAL_ERROR "${_function_name}: unexpected String BigInt observation: ${_line}")
+      endif()
+      set(_pc "${CMAKE_MATCH_1}")
+      set(_row "${_function_name} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3} ${CMAKE_MATCH_4} ${CMAKE_MATCH_5} ${CMAKE_MATCH_6} ${CMAKE_MATCH_7}")
+      string(REGEX MATCHALL "escape ${_program_hash} ${_function_index} ${_pc} obj [^\n]+" _string_bigint_claims "${_claim_text}")
+      list(LENGTH _string_bigint_claims _string_bigint_claim_count)
+      if(NOT _string_bigint_claim_count EQUAL 1)
+        message(FATAL_ERROR "${_function_name}: missing or duplicate String BigInt claim at pc ${_pc}")
+      endif()
+      if(NOT _claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_pc} obj ([^\n]+)")
+        message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
+      endif()
+      list(APPEND _object_string_bigint_rows "${_row} ${CMAKE_MATCH_1} pc${_pc}")
     elseif(_function_name MATCHES "^objectFrameBigIntEquality(Saved|Opaque|Mixed|Retained)$" AND _line MATCHES "^site ")
       if(NOT _line MATCHES "^site ([0-9]+) kind obj made ([0-9]+) confined ([0-9]+) escaped ([0-9]+) unresolved ([0-9]+) unchecked ([0-9]+) routes ([^ ]+)$")
         message(FATAL_ERROR "${_function_name}: unexpected BigInt equality observation: ${_line}")
@@ -908,7 +948,7 @@ if(STRICT)
       "objectFrameAddConcatOpaqueTemplate 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameAddConcatOpaqueTemplate 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameAddConcatOpaqueTemplate 2 0 2 0 0 temporaries:2 escapes:returned"
-      "objectFrameAddConcatBigInt 2 2 0 0 0 - escapes:stored"
+      "objectFrameAddConcatBigInt 2 2 0 0 0 - confined"
       "objectFrameAddConcatBigInt 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameAddConcatBigInt 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameAddConcatBigInt 2 0 2 0 0 temporaries:2 escapes:returned"
@@ -1191,6 +1231,86 @@ if(STRICT)
     message(FATAL_ERROR "missing or duplicate independent BigInt Pow exception evidence: ${_object_bigint_pow_error_rows}")
   endif()
   message(STATUS "imported BigInt Pow Errors: two negative and two VM-cap objects retained through unwinding at exact source coordinates, no source allocation claims")
+
+  set(_expected_object_string_bigint_literal_pcs
+      "objectFrameStringBigIntSaved 10"
+      "objectFrameStringBigIntSaved 14"
+      "objectFrameStringBigIntSaved 31"
+      "objectFrameStringBigIntSaved 91"
+      "objectFrameStringBigIntPaths 8"
+      "objectFrameStringBigIntPaths 12"
+      "objectFrameStringBigIntPaths 16"
+      "objectFrameStringBigIntPaths 50"
+      "objectFrameStringBigIntTemplate 6"
+      "objectFrameStringBigIntTemplate 10"
+      "objectFrameStringBigIntTemplate 14"
+      "objectFrameStringBigIntTemplate 56"
+      "objectFrameStringBigIntOpaqueAdd 4"
+      "objectFrameStringBigIntOpaqueAdd 8"
+      "objectFrameStringBigIntOpaqueAdd 12"
+      "objectFrameStringBigIntOpaqueAdd 26"
+      "objectFrameStringBigIntOpaqueTemplate 4"
+      "objectFrameStringBigIntOpaqueTemplate 8"
+      "objectFrameStringBigIntOpaqueTemplate 12"
+      "objectFrameStringBigIntOpaqueTemplate 31"
+      "objectFrameStringBigIntObject 5"
+      "objectFrameStringBigIntObject 9"
+      "objectFrameStringBigIntObject 13"
+      "objectFrameStringBigIntObject 36"
+      "objectFrameStringBigIntMixed 7"
+      "objectFrameStringBigIntMixed 11"
+      "objectFrameStringBigIntMixed 15"
+      "objectFrameStringBigIntMixed 43"
+      "objectFrameStringBigIntRetained 7"
+      "objectFrameStringBigIntRetained 11"
+      "objectFrameStringBigIntRetained 15"
+      "objectFrameStringBigIntRetained 43"
+)
+  list(SORT _expected_object_string_bigint_literal_pcs)
+  list(SORT _object_string_bigint_literal_pcs)
+  if(NOT _object_string_bigint_literal_pcs STREQUAL _expected_object_string_bigint_literal_pcs)
+    message(FATAL_ERROR "String BigInt source allocation coordinates changed: ${_object_string_bigint_literal_pcs}")
+  endif()
+  set(_expected_object_string_bigint_rows
+      "objectFrameStringBigIntSaved 2 2 0 0 0 - confined pc10"
+      "objectFrameStringBigIntSaved 2 0 2 0 0 temporaries:2 escapes:stored pc14"
+      "objectFrameStringBigIntSaved 2 0 2 0 0 temporaries:2 escapes:stored pc31"
+      "objectFrameStringBigIntSaved 2 0 2 0 0 temporaries:2 escapes:returned pc91"
+      "objectFrameStringBigIntPaths 2 2 0 0 0 - confined pc8"
+      "objectFrameStringBigIntPaths 2 0 2 0 0 temporaries:2 escapes:stored pc12"
+      "objectFrameStringBigIntPaths 2 0 2 0 0 temporaries:2 escapes:stored pc16"
+      "objectFrameStringBigIntPaths 2 0 2 0 0 temporaries:2 escapes:returned pc50"
+      "objectFrameStringBigIntTemplate 2 2 0 0 0 - confined pc6"
+      "objectFrameStringBigIntTemplate 2 0 2 0 0 temporaries:2 escapes:stored pc10"
+      "objectFrameStringBigIntTemplate 2 0 2 0 0 temporaries:2 escapes:stored pc14"
+      "objectFrameStringBigIntTemplate 2 0 2 0 0 temporaries:2 escapes:returned pc56"
+      "objectFrameStringBigIntOpaqueAdd 2 2 0 0 0 - escapes:stored pc4"
+      "objectFrameStringBigIntOpaqueAdd 2 0 2 0 0 temporaries:2 escapes:stored pc8"
+      "objectFrameStringBigIntOpaqueAdd 2 0 2 0 0 temporaries:2 escapes:stored pc12"
+      "objectFrameStringBigIntOpaqueAdd 2 0 2 0 0 temporaries:2 escapes:returned pc26"
+      "objectFrameStringBigIntOpaqueTemplate 2 2 0 0 0 - escapes:stored pc4"
+      "objectFrameStringBigIntOpaqueTemplate 2 0 2 0 0 temporaries:2 escapes:stored pc8"
+      "objectFrameStringBigIntOpaqueTemplate 2 0 2 0 0 temporaries:2 escapes:stored pc12"
+      "objectFrameStringBigIntOpaqueTemplate 2 0 2 0 0 temporaries:2 escapes:returned pc31"
+      "objectFrameStringBigIntObject 2 2 0 0 0 - escapes:stored pc5"
+      "objectFrameStringBigIntObject 2 0 2 0 0 temporaries:2 escapes:stored pc9"
+      "objectFrameStringBigIntObject 2 0 2 0 0 temporaries:2 escapes:stored pc13"
+      "objectFrameStringBigIntObject 2 0 2 0 0 temporaries:2 escapes:returned pc36"
+      "objectFrameStringBigIntMixed 2 2 0 0 0 - escapes:stored pc7"
+      "objectFrameStringBigIntMixed 2 0 2 0 0 temporaries:2 escapes:stored pc11"
+      "objectFrameStringBigIntMixed 2 0 2 0 0 temporaries:2 escapes:stored pc15"
+      "objectFrameStringBigIntMixed 2 0 2 0 0 temporaries:2 escapes:returned pc43"
+      "objectFrameStringBigIntRetained 2 0 2 0 0 temporaries:2 escapes:stored pc7"
+      "objectFrameStringBigIntRetained 2 0 2 0 0 temporaries:2 escapes:stored pc11"
+      "objectFrameStringBigIntRetained 2 0 2 0 0 temporaries:2 escapes:stored pc15"
+      "objectFrameStringBigIntRetained 2 0 2 0 0 temporaries:2 escapes:returned pc43"
+  )
+  list(SORT _expected_object_string_bigint_rows)
+  list(SORT _object_string_bigint_rows)
+  if(NOT _object_string_bigint_rows STREQUAL _expected_object_string_bigint_rows)
+    message(FATAL_ERROR "String BigInt evidence mismatch:\nexpected: ${_expected_object_string_bigint_rows}\nobserved: ${_object_string_bigint_rows}")
+  endif()
+  message(STATUS "imported String BigInt: thirty-two literal sites, sixty-four instances, fifty retained; live claims agree")
 
   set(_expected_object_bigint_pow_rows
       "objectFrameBigIntPowSaved 2 2 0 0 0 - confined"

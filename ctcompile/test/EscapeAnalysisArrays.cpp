@@ -3616,6 +3616,13 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
             return ctjs::stringifyBinaryKind(producerKind).str();
         }
     }();
+    const bool isConcat = [&] {
+        if constexpr (isComparison) {
+            return false;
+        } else {
+            return producerKind == ctjs::BinaryKind::Concat;
+        }
+    }();
     const std::string mnemonic = isComparison ? "ctjs.compare" : "ctjs.binary";
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
@@ -3749,7 +3756,11 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
         for (const std::string input : {"%big", "%x", "%a", "%p"}) {
             run({.contents = {.what = "neither comparison side borrows the other primitive proof",
                               .body = values + compareInput(input) + done,
-                              .failure = ArrayContentsFailure::UnsupportedOperation}});
+                              .failure = isConcat && input == "%big"
+                                             ? ArrayContentsFailure::None
+                                             : ArrayContentsFailure::UnsupportedOperation,
+                              .arrays = "a:[x]",
+                              .exit = "zero -> {}"}});
         }
         for (const std::string input : {"%zero", "%big", "%x", "%a", "%p"}) {
             run({.contents = {.what = "every structural comparison input needs a primitive origin",
@@ -3758,7 +3769,7 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
                                       "  cf.cond_br %flag, ^join(%number : !ctjs.value), ^join(" +
                                       input + " : !ctjs.value)\n^join(%operand: !ctjs.value):\n" +
                                       compareInput("%operand") + "  ctjs.return %produced\n",
-                              .failure = input == "%zero"
+                              .failure = input == "%zero" || (isConcat && input == "%big")
                                              ? ArrayContentsFailure::None
                                              : ArrayContentsFailure::UnsupportedOperation,
                               .arrays = "a:[x] | a:[x]",
@@ -3774,11 +3785,11 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
                                       "  ctjs.set_property %a[%zero], " +
                                       replacement + "\n" + compareInput("%operand") +
                                       "  ctjs.return %produced\n",
-                              .failure = saved == "%zero"
+                              .failure = saved == "%zero" || (isConcat && saved == "%big")
                                              ? ArrayContentsFailure::None
                                              : ArrayContentsFailure::UnsupportedOperation,
-                              .arrays = "a:[ctjs.constant]",
-                              .reads = "a[0]=zero",
+                              .arrays = saved == "%zero" ? "a:[ctjs.constant]" : "a:[zero]",
+                              .reads = saved == "%zero" ? "a[0]=zero" : "a[0]=ctjs.constant",
                               .exit = "produced -> {}"}});
         }
         for (const bool savedBigInt : {false, true}) {
@@ -3792,8 +3803,9 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
                              "  ctjs.set_property %x[%key], " +
                              replacement + "\n  ctjs.delete_named \"operand\" from %x\n" +
                              compareInput("%operand") + "  ctjs.return %produced\n",
-                     .failure = savedBigInt ? ArrayContentsFailure::UnsupportedOperation
-                                            : ArrayContentsFailure::None,
+                     .failure = savedBigInt && !isConcat
+                                    ? ArrayContentsFailure::UnsupportedOperation
+                                    : ArrayContentsFailure::None,
                      .arrays = "a:[x]",
                      .exit = "produced -> {}"}});
         }
@@ -3904,14 +3916,18 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
         for (unsigned position = 0; position < 2; ++position) {
             for (mlir::Value bad : invalid) {
                 comparison->setOperand(position, bad);
-                inspect(ArrayContentsFailure::UnsupportedOperation);
+                inspect(isConcat && bad == big.getResult()
+                            ? ArrayContentsFailure::None
+                            : ArrayContentsFailure::UnsupportedOperation);
                 comparison->setOperand(position, original[position]);
                 inspect(ArrayContentsFailure::None);
             }
             auto constant = original[position].template getDefiningOp<ctjs::ConstantOp>();
             const mlir::Attribute oldValue = constant.getValue();
             constant.setValueAttr(big.getValue());
-            inspect(ArrayContentsFailure::UnsupportedOperation);
+            inspect(isConcat ? (position == 1 ? ArrayContentsFailure::UnknownIndex
+                                              : ArrayContentsFailure::None)
+                             : ArrayContentsFailure::UnsupportedOperation);
             constant.setValueAttr(oldValue);
             inspect(ArrayContentsFailure::None);
         }
@@ -4098,13 +4114,14 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
                 for (const std::string operands :
                      {"%produced, %zero", "%zero, %produced", "%produced, %big"}) {
                     const bool supported =
-                        operands == "%produced, %big" &&
-                        (form == "binary"
-                             ? operation == "add" || operation == "sub" || operation == "mul" ||
-                                   operation == "div" || operation == "mod" || operation == "pow"
-                             : operation == "add" || operation == "bitand" ||
-                                   operation == "bitor" || operation == "bitxor" ||
-                                   operation == "shl" || operation == "shr");
+                        (form == "binary" && operation == "concat") ||
+                        (operands == "%produced, %big" &&
+                         (form == "binary"
+                              ? operation == "add" || operation == "sub" || operation == "mul" ||
+                                    operation == "div" || operation == "mod" || operation == "pow"
+                              : operation == "add" || operation == "bitand" ||
+                                    operation == "bitor" || operation == "bitxor" ||
+                                    operation == "shl" || operation == "shr"));
                     run({.contents = {
                              .what =
                                  "computed BigInt requires an independent binary category proof",
@@ -4377,11 +4394,16 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
             }
             for (const std::string attribute :
                  {"#ctjs.undefined", "#ctjs.null", "#ctjs.boolean<true>", "#ctjs.string<\"2\">"}) {
-                run({.contents = {.what =
-                                      "mixed primitive arithmetic remains an independent boundary",
-                                  .body = values + "  %input = ctjs.constant " + attribute + "\n" +
-                                          operate("%input") + done,
-                                  .failure = ArrayContentsFailure::UnsupportedOperation}});
+                run({.contents = {
+                         .what = "mixed primitive arithmetic needs an independent operation proof",
+                         .body = values + "  %input = ctjs.constant " + attribute + "\n" +
+                                 operate("%input") + done,
+                         .failure = !isStatic && kind == ctjs::BinaryKind::Add &&
+                                            attribute == "#ctjs.string<\"2\">"
+                                        ? ArrayContentsFailure::None
+                                        : ArrayContentsFailure::UnsupportedOperation,
+                         .arrays = "a:[x]",
+                         .exit = "produced -> {}"}});
             }
             for (const std::string operation : {"add", "sub", "mul", "div", "mod", "pow"}) {
                 run({.contents = {
@@ -4451,7 +4473,8 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                              .body = values + produce + "  %next = ctjs." + consumerForm + " " +
                                      operation + " " + operands +
                                      " {storage_test_id = \"next\"}\n  ctjs.return %next\n",
-                             .failure = supported && operands == "%produced, %rhs"
+                             .failure = (supported && operands == "%produced, %rhs") ||
+                                                (consumerForm == "binary" && operation == "concat")
                                             ? ArrayContentsFailure::None
                                             : ArrayContentsFailure::UnsupportedOperation,
                              .arrays = "a:[x]",
@@ -4727,13 +4750,14 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
             };
             for (const auto other : otherKinds) {
                 setKind(other);
-                inspect((isStatic &&
-                         (other == ctjs::BinaryKind::Shl || other == ctjs::BinaryKind::Shr)) ||
-                                (!isStatic &&
-                                 (other == ctjs::BinaryKind::Div ||
-                                  other == ctjs::BinaryKind::Mod || other == ctjs::BinaryKind::Pow))
-                            ? ArrayContentsFailure::None
-                            : ArrayContentsFailure::UnsupportedOperation);
+                inspect(
+                    (isStatic &&
+                     (other == ctjs::BinaryKind::Shl || other == ctjs::BinaryKind::Shr)) ||
+                            (!isStatic &&
+                             (other == ctjs::BinaryKind::Div || other == ctjs::BinaryKind::Mod ||
+                              other == ctjs::BinaryKind::Pow || other == ctjs::BinaryKind::Concat))
+                        ? ArrayContentsFailure::None
+                        : ArrayContentsFailure::UnsupportedOperation);
                 setKind(kind);
                 inspect(ArrayContentsFailure::None);
             }
@@ -4790,6 +4814,335 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                     "retention "
                     "budget cutoffs\n",
                     form.c_str(), spelling.c_str(), rowCount, liveStates, budgets);
+    }
+}
+
+void checkStringBigIntConcatenation(mlir::MLIRContext & context) {
+    const std::string values =
+        "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
+        "  %text = ctjs.constant #ctjs.string<\"saved:\"> {storage_test_id = \"text\"}\n"
+        "  %big = ctjs.constant #ctjs.bigint<\"9007199254740993\"> "
+        "{storage_test_id = \"big\"}\n"
+        "  %x = ctjs.create_object {storage_test_id = \"x\"}\n"
+        "  %a = ctjs.create_array [%x] {storage_test_id = \"a\"}\n";
+    const std::string done = "  ctjs.return %produced\n";
+    const std::string overwrite = "  ctjs.set_property %a[%zero], %zero\n  ctjs.return %a\n";
+    const std::string branch =
+        "  %flag = ctjs.truthy %produced\n  cf.cond_br %flag, ^yes, ^no\n^yes:\n";
+    struct string_row {
+        contents_row contents;
+        const char * discharged = "x";
+    };
+    for (const auto kind : {ctjs::BinaryKind::Add, ctjs::BinaryKind::Concat}) {
+        const bool concat = kind == ctjs::BinaryKind::Concat;
+        const std::string spelling = ctjs::stringifyBinaryKind(kind).str();
+        const auto binary = [&](const std::string & lhs, const std::string & rhs) {
+            return "  %produced = ctjs.binary " + spelling + " " + lhs + ", " + rhs +
+                   " {storage_test_id = \"produced\"}\n";
+        };
+        const std::string produce = binary("%text", "%big");
+        const std::vector<string_row> rows = {
+            {.contents = {.what = "String BigInt conversion cannot select a structural arm",
+                          .body = values + produce + branch + overwrite + "^no:\n" + overwrite,
+                          .arrays = "a:[zero] | a:[zero]",
+                          .exit = "a -> {a}; a -> {a}"}},
+            {.contents = {.what = "String BigInt results do not retain either input object",
+                          .body = values + produce + done,
+                          .arrays = "a:[x]",
+                          .exit = "produced -> {}"}},
+            {.contents = {.what = "a String result replaces the stored child identity",
+                          .body = values + produce +
+                                  "  ctjs.set_property %a[%zero], %produced\n  ctjs.return %a\n",
+                          .arrays = "a:[produced]",
+                          .exit = "a -> {a}"}},
+            {.contents = {.what = "a saved child remains retained beside String BigInt results",
+                          .body =
+                              values + "  %saved = ctjs.get_property %a[%zero]\n" + produce +
+                              "  ctjs.set_property %a[%zero], %produced\n  ctjs.return %saved\n",
+                          .arrays = "a:[produced]",
+                          .reads = "a[0]=x",
+                          .exit = "x -> {x}"},
+             .discharged = ""},
+            {.contents = {.what = "String BigInt categories survive frame and edge transport",
+                          .body = "  %frame = ctjs.frame_enter 8\n" + values + produce +
+                                  "  cf.br ^next(%produced : !ctjs.value)\n"
+                                  "^next(%input: !ctjs.value):\n"
+                                  "  %next = ctjs.binary add %big, %input "
+                                  "{storage_test_id = \"next\"}\n"
+                                  "  ctjs.root %next in %frame\n  ctjs.frame_exit %frame\n"
+                                  "  ctjs.return %next\n",
+                          .arrays = "a:[x]",
+                          .exit = "next -> {}"}},
+            {.contents = {.what = "String BigInt category supplies no concrete array index",
+                          .body = values + produce + "  %read = ctjs.get_property %a[%produced]\n" +
+                                  done,
+                          .failure = ArrayContentsFailure::UnknownIndex}},
+            {.contents = {.what = "String BigInt category supplies no concrete object key",
+                          .body = values + produce + "  ctjs.set_property %x[%produced], %zero\n" +
+                                  done,
+                          .failure = ArrayContentsFailure::UnknownPropertyKey}},
+        };
+        unsigned rowCount = 0;
+        unsigned liveStates = 0;
+        std::size_t budgets = 0;
+        const auto parse = [&](const string_row & expected) {
+            return mlir::parseSourceString<mlir::ModuleOp>(
+                std::string{kPrologue} + expected.contents.body + "}\n", &context);
+        };
+        const auto check = [&](mlir::ModuleOp module, const string_row & expected) {
+            checkArrayContents(module, expected.contents);
+            const bool complete = expected.contents.failure == ArrayContentsFailure::None;
+            budgets +=
+                checkArrayRetention(module, {.what = expected.contents.what,
+                                             .body = expected.contents.body,
+                                             .discharged = complete ? expected.discharged : "",
+                                             .complete = complete});
+        };
+        const auto run = [&](const string_row & expected) {
+            if (auto module = parse(expected)) {
+                check(*module, expected);
+            } else {
+                fail(row{.what = expected.contents.what,
+                         .body = expected.contents.body,
+                         .expected = ""},
+                     "the String BigInt fixture did not parse");
+            }
+            ++rowCount;
+        };
+        for (const auto & expected : rows) { run(expected); }
+        for (const bool left : {false, true}) {
+            const auto withBig = [&](const std::string & input) {
+                return left ? binary(input, "%big") : binary("%big", input);
+            };
+            for (const std::string input : {"  %input = ctjs.constant #ctjs.string<\"\">\n",
+                                            "  %input = ctjs.unary typeof %p\n",
+                                            "  %input = ctjs.binary concat %big, %zero\n",
+                                            "  %input = ctjs.binary add %text, %zero\n",
+                                            "  %input = ctjs.binary add %big, %text\n"}) {
+                run({.contents = {
+                         .what = "each original computed String category independently qualifies",
+                         .body = values + input + withBig("%input") + done,
+                         .arrays = "a:[x]",
+                         .exit = "produced -> {}"}});
+            }
+            for (const std::string input :
+                 {"  %input = ctjs.constant #ctjs.undefined\n",
+                  "  %input = ctjs.constant #ctjs.null\n",
+                  "  %input = ctjs.constant #ctjs.boolean<true>\n",
+                  "  %input = ctjs.constant #ctjs.number<17>\n",
+                  "  %input = ctjs.compare strict_eq %p, %zero\n",
+                  "  %input = ctjs.convert to_boolean %p\n", "  %input = ctjs.unary not %p\n",
+                  "  %input = ctjs.unary void %p\n", "  %input = ctjs.unary neg %zero\n",
+                  "  %input = ctjs.binary_static add %zero, %zero\n",
+                  "  %input = ctjs.binary add %zero, %zero\n"}) {
+                run({.contents = {
+                         .what = "primitive provenance alone cannot prove String for mixed Add",
+                         .body = values + input + withBig("%input") + done,
+                         .failure = concat ? ArrayContentsFailure::None
+                                           : ArrayContentsFailure::UnsupportedOperation,
+                         .arrays = "a:[x]",
+                         .exit = "produced -> {}"}});
+                run({.contents = {
+                         .what = "a separately proved String accepts every non-BigInt primitive",
+                         .body = values + input +
+                                 (left ? binary("%input", "%text") : binary("%text", "%input")) +
+                                 done,
+                         .arrays = "a:[x]",
+                         .exit = "produced -> {}"}});
+            }
+            for (const std::string input : {"%p", "%x", "%a"}) {
+                run({.contents = {.what = "String conversion cannot borrow another operand's proof",
+                                  .body = values + withBig(input) + done,
+                                  .failure = ArrayContentsFailure::UnsupportedOperation}});
+                run({.contents = {
+                         .what = "a known String does not authorize object or opaque conversion",
+                         .body = values + (left ? binary(input, "%text") : binary("%text", input)) +
+                                 done,
+                         .failure = ArrayContentsFailure::UnsupportedOperation}});
+            }
+            for (const std::string saved : {"%text", "%zero", "%big", "%x"}) {
+                const bool supported = saved != "%x" && (concat || saved != "%zero");
+                run({.contents = {
+                         .what = "saved array origins survive String Number and object overwrite",
+                         .body = values + "  ctjs.set_property %a[%zero], " + saved +
+                                 "\n  %input = ctjs.get_property %a[%zero]\n"
+                                 "  ctjs.set_property %a[%zero], %zero\n" +
+                                 withBig("%input") + done,
+                         .failure = supported ? ArrayContentsFailure::None
+                                              : ArrayContentsFailure::UnsupportedOperation,
+                         .arrays = "a:[zero]",
+                         .reads = saved == "%text"  ? "a[0]=text"
+                                  : saved == "%big" ? "a[0]=big"
+                                                    : "a[0]=zero",
+                         .exit = "produced -> {}"}});
+                run({.contents = {.what = "saved own fields survive category changes and deletion",
+                                  .body = values +
+                                          "  %key = ctjs.constant #ctjs.string<\"operand\">\n"
+                                          "  ctjs.set_property %x[%key], " +
+                                          saved +
+                                          "\n  %input = ctjs.get_property %x[%key]\n"
+                                          "  ctjs.set_property %x[%key], %text\n"
+                                          "  ctjs.delete_named \"operand\" from %x\n" +
+                                          withBig("%input") + done,
+                                  .failure = supported ? ArrayContentsFailure::None
+                                                       : ArrayContentsFailure::UnsupportedOperation,
+                                  .arrays = "a:[x]",
+                                  .exit = "produced -> {}"}});
+            }
+        }
+        for (const std::string input : {"%text", "%zero", "%big"}) {
+            run({.contents = {
+                     .what = "one Add result has separate String Number and BigInt path categories",
+                     .body = values +
+                             "  %flag = ctjs.truthy %p\n"
+                             "  cf.cond_br %flag, ^join(%text, %zero : !ctjs.value, !ctjs.value), "
+                             "^join(" +
+                             input + ", " + input +
+                             " : !ctjs.value, !ctjs.value)\n"
+                             "^join(%left: !ctjs.value, %right: !ctjs.value):\n"
+                             "  %input = ctjs.binary add %left, %right\n" +
+                             binary("%input", "%big") + done,
+                     .failure = !concat && input == "%zero"
+                                    ? ArrayContentsFailure::UnsupportedOperation
+                                    : ArrayContentsFailure::None,
+                     .arrays = "a:[x] | a:[x]",
+                     .exit = "produced -> {}; produced -> {}"}});
+        }
+        for (const std::string effect :
+             {"  ctjs.store_global \"held\", %x\n", "  %call = ctjs.call %p(%x)\n",
+              "  \"test.effect\"(%produced) : (!ctjs.value) -> ()\n"}) {
+            run({.contents = {
+                     .what =
+                         "String BigInt conversion never authorizes publication calls or effects",
+                     .body = values + produce + effect + done,
+                     .failure = ArrayContentsFailure::UnsupportedOperation}});
+        }
+        run({.contents = {.what = "String BigInt conversion retains explicit throw refusal",
+                          .body = values + produce + "  ctjs.throw %x\n",
+                          .failure = ArrayContentsFailure::UnsupportedOperation}});
+        run({.contents = {.what =
+                              "String BigInt conversion supplies no handler or completion proof",
+                          .body = values + "  ctjs.push_handler ^body catch ^pad\n^body:\n" +
+                                  produce + "  ctjs.pop_handler\n" + overwrite +
+                                  "^pad:\n  %id, %exception = ctjs.catch_land\n  ctjs.return %a\n",
+                          .failure = ArrayContentsFailure::UnsupportedControlFlow}});
+        string_row wide = rows.front();
+        std::string extras;
+        for (unsigned i = 0; i < 32; ++i) {
+            extras +=
+                "  %extra_" + std::to_string(i) + " = ctjs.binary " + spelling + " %text, %big\n";
+        }
+        wide.contents.body.insert(wide.contents.body.find("  %flag ="), extras);
+        auto narrowModule = parse(rows.front());
+        auto wideModule = parse(wide);
+        if (narrowModule && wideModule) {
+            const auto narrow = computeArrayContents(*narrowModule->getOps<ctjs::FuncOp>().begin());
+            const auto expanded = computeArrayContents(*wideModule->getOps<ctjs::FuncOp>().begin());
+            if (!narrow.complete || !expanded.complete ||
+                expanded.work != narrow.work + (concat ? 64 : 128)) {
+                fail(row{.what = "String Add snapshots independently charge result origins and "
+                                 "categories",
+                         .body = wide.contents.body,
+                         .expected = ""},
+                     "String snapshot accounting changed");
+            }
+            check(*wideModule, wide);
+        } else {
+            fail(row{.what = "wide String BigInt snapshot",
+                     .body = wide.contents.body,
+                     .expected = ""},
+                 "the wide String BigInt fixture did not parse");
+        }
+        string_row mutation = rows.front();
+        mutation.contents.what = "live String categories and concrete indices remain independent";
+        mutation.contents.body = values + binary("%text", "%zero") +
+                                 "  %next = ctjs.binary add %produced, %big\n" + branch +
+                                 overwrite + "^no:\n" + overwrite;
+        if (auto module = parse(mutation)) {
+            ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
+            ctjs::BinaryOp producer;
+            ctjs::CreateObjectOp child;
+            ctjs::CreateArrayOp array;
+            module->walk([&](ctjs::BinaryOp op) {
+                if (op->getAttrOfType<mlir::StringAttr>("storage_test_id")) { producer = op; }
+            });
+            module->walk([&](ctjs::CreateObjectOp op) { child = op; });
+            module->walk([&](ctjs::CreateArrayOp op) { array = op; });
+            mlir::OpBuilder builder(producer);
+            function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
+            function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
+            child->setAttr("ctnative.confined", builder.getUnitAttr());
+            mlir::DataFlowSolver stale;
+            stale.load<mlir::dataflow::DeadCodeAnalysis>();
+            stale.load<mlir::dataflow::SparseConstantPropagation>();
+            stale.load<EscapeAnalysis>();
+            if (failed(stale.initializeAndRun(*module))) {
+                fail(row{.what = "String BigInt stale solver",
+                         .body = mutation.contents.body,
+                         .expected = ""},
+                     "the baseline solver did not converge");
+            }
+            const auto inspect = [&](ArrayContentsFailure failure) {
+                mutation.contents.failure = failure;
+                check(*module, mutation);
+                const auto verdicts = computeVerdicts(stale, function);
+                const bool complete = failure == ArrayContentsFailure::None;
+                if (verdicts.arrayRetentionComplete != complete ||
+                    verdicts.confinedStoredSites != (complete ? 1U : 0U)) {
+                    fail(row{.what =
+                                 "live String categories defeat stale solvers and forged markers",
+                             .body = mutation.contents.body,
+                             .expected = ""},
+                         "a cached String category survived live mutation");
+                }
+                ++liveStates;
+            };
+            inspect(ArrayContentsFailure::None);
+            for (unsigned position = 0; position < 2; ++position) {
+                const mlir::Value saved = producer->getOperand(position);
+                const mlir::Value invalidInputs[] = {child.getResult(), array.getResult(),
+                                                     function.getBody().front().getArgument(3)};
+                for (const mlir::Value invalid : invalidInputs) {
+                    producer->setOperand(position, invalid);
+                    inspect(ArrayContentsFailure::UnsupportedOperation);
+                    producer->setOperand(position, saved);
+                    inspect(ArrayContentsFailure::None);
+                }
+                auto constant = saved.getDefiningOp<ctjs::ConstantOp>();
+                const auto old = constant.getValue();
+                for (const mlir::Attribute replacement :
+                     {mlir::Attribute(ctjs::NumberAttr::get(&context, 0)),
+                      mlir::Attribute(ctjs::BigIntAttr::get(&context, "2")),
+                      mlir::Attribute(ctjs::StringAttr::get(&context, ""))}) {
+                    constant.setValueAttr(replacement);
+                    inspect(position == 1 && !llvm::isa<ctjs::NumberAttr>(replacement)
+                                ? ArrayContentsFailure::UnknownIndex
+                            : !concat && position == 0 && !llvm::isa<ctjs::StringAttr>(replacement)
+                                ? ArrayContentsFailure::UnsupportedOperation
+                                : ArrayContentsFailure::None);
+                    constant.setValueAttr(old);
+                    inspect(ArrayContentsFailure::None);
+                }
+            }
+            for (const auto other : {ctjs::BinaryKind::Add, ctjs::BinaryKind::Concat,
+                                     ctjs::BinaryKind::Sub, ctjs::BinaryKind::Mul,
+                                     ctjs::BinaryKind::Pow, static_cast<ctjs::BinaryKind>(255)}) {
+                producer.setKindAttr(ctjs::BinaryKindAttr::get(&context, other));
+                inspect(other == ctjs::BinaryKind::Add || other == ctjs::BinaryKind::Concat
+                            ? ArrayContentsFailure::None
+                            : ArrayContentsFailure::UnsupportedOperation);
+                producer.setKindAttr(ctjs::BinaryKindAttr::get(&context, kind));
+                inspect(ArrayContentsFailure::None);
+            }
+        } else {
+            fail(row{.what = "live String BigInt categories",
+                     .body = mutation.contents.body,
+                     .expected = ""},
+                 "the live String BigInt fixture did not parse");
+        }
+        std::printf("String BigInt %s: %u rows, %u stale/fresh live states, one wide snapshot, %zu "
+                    "retention budget cutoffs\n",
+                    spelling.c_str(), rowCount, liveStates, budgets);
     }
 }
 
@@ -6027,6 +6380,7 @@ int main() {
     checkArithmeticUnaryProducers(context);
     checkBigIntUnaryProducers(context);
     checkBigIntBinaryProducers(context);
+    checkStringBigIntConcatenation(context);
     for (const auto kind : {ctjs::CompareKind::Eq, ctjs::CompareKind::Lt, ctjs::CompareKind::Le,
                             ctjs::CompareKind::Gt, ctjs::CompareKind::Ge}) {
         checkBigIntComparison(context, kind);

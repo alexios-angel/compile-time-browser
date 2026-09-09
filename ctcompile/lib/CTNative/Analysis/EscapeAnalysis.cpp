@@ -826,6 +826,18 @@ bool bigIntOrigin(mlir::Value origin, const llvm::DenseSet<mlir::Value> & bigInt
     return constant && llvm::isa<ctjs::BigIntAttr>(constant.getValue());
 }
 
+bool stringOrigin(mlir::Value origin, const llvm::DenseSet<mlir::Value> & stringAddOrigins) {
+    if (stringAddOrigins.contains(origin)) { return true; }
+    if (auto constant = origin.getDefiningOp<ctjs::ConstantOp>()) {
+        return llvm::isa<ctjs::StringAttr>(constant.getValue());
+    }
+    if (auto unary = origin.getDefiningOp<ctjs::UnaryOp>()) {
+        return unary.getKind() == ctjs::UnaryKind::TypeOf;
+    }
+    auto binary = origin.getDefiningOp<ctjs::BinaryOp>();
+    return binary && binary.getKind() == ctjs::BinaryKind::Concat;
+}
+
 } // namespace
 
 ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t workLimit) {
@@ -860,6 +872,9 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         // origins keep their category after a slot changes, while a later
         // Boolean/Number/String producer must prove its own result separately.
         llvm::DenseSet<mlir::Value> bigIntOrigins;
+        // Only Add needs a path-dependent String category. TypeOf/Concat
+        // always yield String once their original result is proved.
+        llvm::DenseSet<mlir::Value> stringAddOrigins;
         // Imported successors forward every raw register, including unused
         // receiver/parameter values. Keep their exact entry identity separate:
         // forwarding or testing one never proves its contents or retention.
@@ -907,7 +922,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
         // Path enumeration can be exponential. Charge every copied value,
         // visited block, container and element before allocating the snapshot.
         if (!spend(state.origins.size()) || !spend(state.bigIntOrigins.size()) ||
-            !spend(state.opaqueOrigins.size()) || !spend(state.visited.size())) {
+            !spend(state.stringAddOrigins.size()) || !spend(state.opaqueOrigins.size()) ||
+            !spend(state.visited.size())) {
             return ArrayContentsFailure::WorkLimit;
         }
         for (const auto & [array, elements] : state.arrays) {
@@ -1134,6 +1150,30 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 }
                 const mlir::Value lhs = origin(binary.getLhs());
                 const mlir::Value rhs = origin(binary.getRhs());
+                if (lhs && rhs &&
+                    (primitiveNonBigIntOrigin(lhs, state.bigIntOrigins) ||
+                     bigIntOrigin(lhs, state.bigIntOrigins)) &&
+                    (primitiveNonBigIntOrigin(rhs, state.bigIntOrigins) ||
+                     bigIntOrigin(rhs, state.bigIntOrigins)) &&
+                    (binary.getKind() == ctjs::BinaryKind::Concat ||
+                     (binary.getKind() == ctjs::BinaryKind::Add &&
+                      (stringOrigin(lhs, state.stringAddOrigins) ||
+                       stringOrigin(rhs, state.stringAddOrigins))))) {
+                    // Concat converts both primitives before bigint_binary;
+                    // Add selects its String arm before mixed-BigInt errors.
+                    // BigInt conversion copies digits, never an input object
+                    // or a user callback. Only an independently proved String
+                    // permits Add: a generic non-BigInt result can be Number.
+                    // Add's guarded ToPrimitive still has an unrelated Error
+                    // exit. The entire frame's call/publication/handler refusals
+                    // apply; this proves neither completion nor native effects.
+                    if (binary.getKind() == ctjs::BinaryKind::Add) {
+                        if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
+                        state.stringAddOrigins.insert(binary.getResult());
+                    }
+                    state.origins[binary.getResult()] = binary.getResult();
+                    continue;
+                }
                 if (lhs && rhs && bigIntOrigin(lhs, state.bigIntOrigins) &&
                     bigIntOrigin(rhs, state.bigIntOrigins) &&
                     (binary.getKind() == ctjs::BinaryKind::Add ||

@@ -2627,3 +2627,96 @@ This is one completed full run. Evidence:
 `/tmp/ctcompile-bigint-pow-final-audit.json`. The Pow cap divergence and separate
 native BigInt, String/BigInt conversion and effect/completion boundaries above
 remain unchanged.
+
+
+## Successful String/BigInt Add and Concat, 2026-09-09
+
+Continued the explicit next escape boundary in **c8cd482a** and the preceding
+Pow checkpoint. Dynamic Concat now accepts independently proved original
+primitive operands, including BigInt. Dynamic Add accepts String/BigInt only
+when an original operand independently proves String. String literals, TypeOf
+and admitted Concat results have their fixed category; an Add result acquires a
+separately charged String category only on a path that proved a String input.
+Unknown Number/String Add results never borrow that fact. Saved array and own
+field reads preserve their original category after overwrite, deletion and
+forwarding; independent paths can give one Add SSA result different categories.
+No constant value, key, array index, native BigInt carrier or type-lattice fact
+is inferred from this retention evidence.
+
+The unchanged VM `Script/vm/coerce.cpp` processes Concat before `bigint_binary`,
+converting primitive BigInt digits directly through `to_string`. Add first calls
+`to_primitive`, then selects String concatenation before mixed-BigInt errors.
+These primitive conversions neither call user code nor retain an input object.
+Add's depth guard still permits an independent Error exit. Complete frame
+proofs continue refusing publication, calls, handlers, explicit throws and
+unknown effects; no allocation-success, normal-completion or native no-throw
+contract follows. Symbols, object/opaque coercions, other mixed arithmetic and
+mixed String/BigInt comparisons remain separate refused boundaries.
+
+The raw matrix checks both operands and independently produced categories,
+String/Number/BigInt path separation, stale solvers, forged completion markers,
+saved reads, retained children, frame/edge transport, exact-index refusal and
+all incomplete retention budgets. A wide snapshot adds 32 results: String Add
+charges 128 units for producers, categories and both copied sets; Concat charges
+64 because its String category is intrinsic to the admitted operation.
+
+Eight new source families record **32 literal sites, 64 instances, 50 retained
+and 14 confined**. The unchanged `objectFrameAddConcatBigInt` source now proves
+its child confined. **385/386 historical checker rows** remain identical; that
+child is the sole promoted row. Removing the new fragment restores every byte
+of the prior fixture. The checker independently pins all eight source bodies,
+32 allocation/observation coordinates and unique source claims. Its replay
+passes the baseline and rejects **96 independent corruptions** of allocations,
+observations, claims and source operations.
+
+The first focused run passed **7/8 escape CTests in 9.09 seconds**. The sole
+failure was in five new/promoted live mutation expectations: changing the shared
+zero constant to BigInt/String also changed the later array index. The analysis
+correctly refused `UnknownIndex`; the tests now require that exact boundary,
+with all source and production bytes unchanged. The source fixture passed in
+**0.51 seconds**. Independent recorder replay reports **zero violations,
+partial or pending claims**, **617 claims, 625 observed sites and nine unclaimed
+sites**, with fixture precision **81/122**, up from **77/115**.
+
+Corrected arrays, strengthened fixture, the typed interpreter probe and the
+full suite are pending at this checkpoint; no fresh full gate is claimed.
+Local Node passes all **16** exact-fragment typed cases (`stringBigIntTrace=65535`)
+and the two separately recorded mixed comparisons (`stringBigIntMixedTrace=3`).
+Existing source semantics gaps, including the Pow exponent cap, remain unchanged.
+The next independent escape increment is mixed primitive BigInt comparison
+retention, starting from the still-Stored `objectFrameStringBigIntMixed` source;
+its observed values cannot establish native semantics or effects.
+
+Evidence: `/tmp/ctcompile-map-zero-escape.log`,
+`/tmp/ctcompile-string-bigint-{arrays.log,fixture.rec,fixture.claims}`,
+`/tmp/ctcompile-string-bigint-{frozen,measurement,node}.json`,
+`/tmp/ctcompile-string-bigint-checker-audit/audit.json` and the typed probe
+`/tmp/ctcompile-string-bigint-semantics.js`, SHA256
+`331cf5104aa9574cd6307d71b903c9a2d727c9107cf79f5ba9139690860f6e05`.
+
+
+**Corrected focused gate, 2026-09-09.** The pending focused checks and typed
+interpreter probe above are complete. A warning-free four-step rebuild passes
+**9/9 CTests in 9.11 seconds**, including **all eight escape CTests** and the
+independent type-inference test. Arrays pass in **0.47 seconds** and the
+strengthened fixture in **0.38**. Add covers **97 rows, 37 stale/fresh live
+states and 3850 retention budget cutoffs**; Concat covers **97 rows, 37 live
+states and 4104 cutoffs**. Both wide snapshot checks pass. Pow retains **139
+rows/51 states/5377 cutoffs**, and Div/Mod each retain **132/47/5043** after
+additional valid Concat consumers. The initial **29 failed assertions across
+five mutation states** remain in the earlier log; only their exact-index
+expectations changed, with no production or source change.
+
+The interpreter prints **stringBigIntTrace=65535** and
+**stringBigIntMixedTrace=3**, exactly matching Node for all sixteen typed source
+calls and the two separate mixed-comparison observations. Both output globals
+are independently reported as Numbers; the object holder and eight function
+globals are explicitly skipped. This agreement does not admit the mixed
+comparison retention boundary or change known wider comparison differences.
+All five code/test inputs match the frozen manifest. The source-coordinate
+checker, its **96 rejected corruptions**, historical source preservation and
+**81/122 zero-violation** fixture evidence above remain unchanged. Full-suite
+validation is still pending. Evidence:
+`/tmp/ctcompile-map-zero-corrected.log`,
+`/tmp/ctcompile-string-bigint-arrays-corrected.log` and
+`/tmp/ctcompile-string-bigint-vm-corrected.log`.
