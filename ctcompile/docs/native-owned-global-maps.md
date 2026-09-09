@@ -8,7 +8,7 @@ programs advance **0/5 -> 5/5 native**, both with trace=0; exact saved-object
 repairs remain **5/5**, trace=1. `316818b2` gates all four under explicit/deduced
 GCC/Clang, matching Node and the interpreter, without Script/VM symbols.
 
-Comparison operands retain distinct schema groups and real allocations. Scalar
+Comparisons do not merge operand schema groups or allocation identities. Scalar
 field families prove their own closed property environment, including live Map
 spelling/receiver/arity, known source calls and operand dominance. Unknown effects,
 coercing observations, dynamic/prototype/accessor fields, outgoing ownership edges
@@ -25,12 +25,24 @@ CTests**: the five existing browser failures and one diagnostic lit failure.
 The published Map test passes all **172 programs/25 lifetime families**.
 `8e603ce5` preserves the earlier closure census's specific refusal sentence;
 its rebuilt type test and original diagnostic lit pass, with no source/expectation
-changes. The complete lit rerun is pending.
+changes. The complete corrected lit rerun passes **165/165 in 658.71 seconds**;
+all **372 compiler tests have passing results across the full run and rerun**.
+Thirteen code/test paths match HEAD, final frozen input and final devbox sources.
 
-Next, the exact seven/nine-call post-delete controls still remain unowned **0/5**.
-They require definite absence independently of possible absence; `present=false`
-is insufficient. Saved reads must retain their pre-delete value. Full Bootstrap
-Data and browser API integration remain open. See [HANDOFF.md](HANDOFF.md).
+Next is definite absence for **object-valued** captured Maps. Thirty-one
+unchanged probes agree with Node/interpreter and in both modes: **13 reach 5/5,
+18 remain unowned 0/5**. Setting an object, deleting its exact key and comparing
+a fresh `get` with `void 0` remains **0/5**, seven calls, trace=1. The unseeded
+six-call and numeric-payload seven-call controls already reach **5/5**. The exact
+historical seven/nine-call object comparisons remain unowned **0/5**; saved-before-
+delete repairs stay admitted. `present=false` is insufficient to prove absence.
+Saved values, possible key aliases, disjoint writes and branch joins need
+independent facts; exact reseeding already works. `clear()` is a separate host
+method gap, including when comparing a saved object. Four identical-arm probes
+collapse eight raw calls into seven prepared calls; they do not validate a live
+two-arm join. Full Bootstrap Data and browser API integration remain open. See
+[bootstrap-provider-next.md](bootstrap-provider-next.md) for the exact source,
+and [HANDOFF.md](HANDOFF.md) for final gate evidence.
 
 ## Initialized local fields, 2026-09-08
 

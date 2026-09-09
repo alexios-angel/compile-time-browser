@@ -1587,7 +1587,45 @@ executable. No source, proof or expectation changes are needed. The corrected
 seconds**, including **all eight escape CTests**. The source-family and unit
 measurements above are from this corrected gate. Evidence:
 `/tmp/ctcompile-comparison-identity-{build3.log,focused.log,build4.log,focused2.log}`
-and `-format22.log`. Full generated build/CTest results remain pending.
+and `-format22.log`.
+
+The Add/Concat increment is committed as **`267545cd`**. The full **245-step
+generated devbox build completes with zero warnings**. Its CTest result is
+**511/517 in 1313.13 seconds**: **371/372 compiler tests** and **140/145 browser
+tests** pass. The compiler failure is `ctcompile_lit`, where **164/165 cases
+pass in 658.70 seconds** (CTest **658.90 seconds**). The unchanged
+`object-argument-refusals.mlir` catches an unrelated native identity census
+clearing an earlier, more specific refusal diagnostic. **`8e603ce5`** limits
+that cleanup to the census's own strict-comparison reasons; no source test,
+proof semantics or escape implementation changes. The complete corrected lit
+rerun passes **165/165 in 658.71 seconds** (CTest **658.78 seconds**, command
+elapsed **658.79 seconds**). Thus all **372 compiler tests have passing results
+across the initial run and corrected rerun**. This is not a second complete
+517-test CTest run. The five browser failures remain `selectors`, `frames`,
+`element_attrs`, `vm_async` and `early_errors`. Exception recovery passes in
+**1.18 seconds** in the full run.
+
+All eight escape CTests pass again in the full run. The comparison kinds repeat
+**84 rows, 34 live states and 3,527 retention cutoffs**; all seven dynamic binary
+kinds repeat **84 rows, 49 live states and 4,127 retention cutoffs**. Four
+execution oracles again report **zero soundness violations**. Fixture precision
+stays **52/78**, zero partial/pending, with exact new **28/56/44** observations
+and unchanged historical families. Bootstrap/p5/Phaser remain **0/64, 0/16,
+0/20**, including p5's existing single partial observation. Native corpus
+counts remain Bootstrap **19/574**, p5 **39/4754** and Phaser **45/7725** in
+both modes, zero pruned; exact Data stays **0/7 browser/CommonJS and 0/8 AMD**.
+These native counts are separate from the escape proof's additional coverage.
+
+All **thirteen final code/test paths** match committed HEAD, final frozen
+input and final devbox sources. Both actual emitted distinct-identity and
+lifetime C++ artifacts contain no Script/VM context/value or AOT runtime
+symbols. The distinct-identity method retains three fresh allocations and
+field writes, an owning saved Map read, two Map writes, deletion and a runtime
+identity comparison. The sanitizer observer remains separate test code.
+Evidence: `/tmp/ctcompile-comparison-identity-{full.log,full-detail.log,lit-rerun.log,lit-detail.log,evidence.json}`,
+`-final-hashes.json`, `-final-remote-hashes.log`, `-final-distinct.cpp` and
+`-final-lifetime.cpp`. The full-run failure and corrected rerun are retained as
+separate evidence, and the escape precision claim is unchanged.
 
 Remaining producer boundaries include primitive conversions and BigInt
 categories; loops, callee summaries and native lifetime/effect consumers also

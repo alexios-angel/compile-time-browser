@@ -66,7 +66,8 @@ sources or expectations. Independent review found unsupported region yields and
 unrelated malformed field operands missing from the new census; both were fixed
 and regression-tested before committing. Formatter **22.1.8 passes all 745 files**;
 `tools/format.sh --check` with bundled development 23 retains the nine existing
-unrelated differences. All **thirteen code/test hashes** match the corrected committed gate input.
+unrelated differences. All **thirteen code/test hashes** match committed HEAD,
+the corrected frozen input and final devbox sources.
 The full **245-step generated build passes with zero warnings**. Initial CTest
 finishes **511/517 in 1313.13 seconds**: **371/372 compiler** and **140/145 browser**
 tests pass. Lit is **164/165 in 658.70 seconds** (CTest **658.90 seconds**); its
@@ -76,7 +77,10 @@ compiler failure is an existing diagnostic assertion: blanket clearing of
 refusal. **`8e603ce5`** clears only this new comparison census's reason prefix.
 The original source/test expectations remain unchanged. Its warning-free four-step
 rebuild, type CTest (**0.04 seconds**) and exact diagnostic lit (**0.10 seconds**)
-pass; the complete lit rerun is pending. The five established browser failures
+pass. The complete corrected lit rerun passes **165/165 in 658.71 seconds**
+(CTest **658.78 seconds**, command **658.79 seconds**). All **372 compiler tests
+have passing results across the original full run and corrected rerun**; a second
+complete 517-test run was not performed. The five established browser failures
 remain `selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`.
 ExceptionRecovery passes in **1.18 seconds**. Fresh native corpus counts remain
 Bootstrap **19/574**, p5 **39/4754** and Phaser **45/7725** in both modes, zero
@@ -84,23 +88,40 @@ pruned; exact Data remains **0/7 browser/CommonJS and 0/8 AMD**. Actual emitted
 C++ retains three fresh leaves, three numeric field writes, the saved owning Map
 read and live strict comparison without Script/VM symbols.
 
-**Next boundary: exact-key definite absence in the host method proof.** The
-unchanged local/historical post-delete comparisons still remain unowned **0/5**.
-`present=false` means possible absence as well as absence, so it cannot authorize
-Undefined. Track known absence separately across exact-key deletion, potentially
-aliasing writes and branch joins; saved earlier reads must keep their old values.
-Thirty-one independent source probes separate this from clear support and
-representation boundaries. Their first run exposed a temporary runner count
-assumption: LiftToSCF merges identical branch blocks, so eight syntactic calls
-can become seven prepared calls. Sources remain unchanged; the corrected runner
-records syntactic/raw/prepared counts separately and awaits the lit rerun. Entry numeric addition,
+**Next boundary: definite absence for object-valued captured Map reads.** All
+**31 unchanged probes** agree across Node and the interpreter and have identical
+admission in both modes: **13 reach 5/5; 18 remain unowned 0/5**. The exact
+`local_absence_delete_undefined` source sets an object, deletes that same key,
+then compares the fresh `get` result with `void 0`: **five functions, seven calls,
+trace=1, 0/5 native**. Its full source and hash are recorded in
+[bootstrap-provider-next.md](bootstrap-provider-next.md). Unseeded six-call and
+numeric-payload seven-call absence controls **already reach 5/5**. Preserve these
+positive controls. The historical seven/nine-call object comparisons remain
+unowned 0/5; the saved-before-delete repair remains 5/5.
+
+In `HostContract/CapturedMapBody.cpp`, `present=false` covers possible absence
+as well as absence and cannot authorize Undefined. Track known absence separately
+across exact-key deletion, potentially aliasing writes and branch joins; saved
+earlier reads retain their own values. Repeated deletion, saved Undefined across
+reseeding, known disjoint writes and possible formal-key aliases remain refused.
+Exact reseeding already reaches 5/5. `clear()` is a separate unsupported host
+method: even its saved-identity control refuses, while replacing it with exact
+`delete()` reaches 5/5.
+
+The temporary runner initially assumed source and prepared call counts matched.
+LiftToSCF merges identical branch blocks in four probes, reducing eight raw calls
+to seven prepared calls. The completed runner preserves every source hash and
+records both counts; refusals preserve all prepared calls. These collapsed
+branches cannot validate a surviving two-arm absence join. Add a nonidentical
+safe branch-positive witness in the next slice; one-arm deletion and conditional
+reseeding remain refused for both Boolean startup values. Entry numeric addition,
 String/object carriers, exact Bootstrap Data, full native Bootstrap initialization
 and direct browser API integration remain unfinished. No full-bundle coverage
 gain is claimed.
 
-Evidence: `/tmp/ctcompile-comparison-identity-{build4,focused2,execution3,full}.log`,
-`-root-hashes.json` and `-format22-final.log`. The full-detail, next-probe and final
-source-hash evidence will be appended after the serialized gate completes.
+Evidence: `/tmp/ctcompile-comparison-identity-{build4,focused2,execution3,full,full-detail,lit-rerun,lit-detail,next-final}.log`,
+`-evidence.json`, `-next.json`, `-final-hashes.json`, `-final-remote-hashes.log`,
+`-format22-corrected.log`, `-final-distinct.cpp` and `-final-lifetime.cpp`.
 
 ## Initialized own-field results and arithmetic escape gates, 2026-09-08
 

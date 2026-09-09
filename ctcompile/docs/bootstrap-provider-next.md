@@ -1,6 +1,6 @@
 # Next Bootstrap native boundary
 
-## Current continuation: definite post-delete absence, 2026-09-08
+## Current continuation: object-valued Map absence, 2026-09-08
 
 `2593acd7` and `316818b2` close the comparison-only fresh identity boundary from
 `bf2fd02e`. The exact local six-call and historical eight-call sources advance
@@ -12,20 +12,61 @@ calls, reentry, Map/owner release and distinct retained-leaf ASan/UBSan/leak che
 The focused CTest gate is **15/15**. First full CTest is **511/517** after a
 warning-free 245-step build: the same five browser failures plus an existing
 specific-diagnostic assertion. `8e603ce5` restores that diagnostic; rebuilt type
-and exact diagnostic tests pass, complete lit rerun pending. The published Map
-gate passes **172 programs/25 lifetimes**. Native Bootstrap stays **19/574**;
+and exact diagnostic tests pass. The complete corrected lit rerun passes
+**165/165 in 658.71 seconds**; all **372 compiler tests have passing results across
+the full run and rerun**. The published Map gate passes **172 programs/25 lifetimes**.
+Native Bootstrap stays **19/574**;
 exact Data stays **0/7 browser/CommonJS and 0/8 AMD**.
 
-The unchanged local/historical fresh post-delete controls (**five functions,
-seven/nine calls, trace=0**) still stay unowned **0/5**, with all calls intact.
-The host method proof needs exact-key **definite absence**. Its current
-`present=false` also covers maybe absent, so it cannot prove Undefined.
-A later implementation must preserve definite absence across exact deletes and
-known disjoint writes, invalidate it after potentially aliasing writes, and
-intersect it at branch joins. Saved reads retain their earlier object independently
-of later Map mutations. Thirty-one queued probes distinguish this from clear
-support, later reseeding and native representation boundaries; their measurements
-will follow the full gate.
+The completed **31-probe** run preserves every source hash and agrees across
+Node and the interpreter. Both modes give **13 admitted 5/5 and 18 unowned 0/5**.
+The next exact source, `local_absence_delete_undefined`, has **five functions,
+seven raw/prepared calls, trace=1**, and remains **0/5 native** with the diagnostic
+`property call lacks a current source getter proof`:
+
+```js
+var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        set(key) { const item = {value: 1}; state.set(key, item); state.delete(key); return state.get(key) === void 0 ? 1 : 0; }
+    };
+});
+host.slot.size(); var trace = host.slot.set('x');
+```
+
+Source SHA-256 (including its final newline):
+`f3350b8928408e7ca35dfd7a66da79a26d0c917e3d15ff70b4fb4c8901ea4fb5`.
+The exact saved-before-delete repair remains **5/5**, seven calls, trace=1.
+Unseeded six-call and numeric-payload seven-call absence controls **already reach
+5/5**; the new work concerns object-valued Maps. The unchanged local/historical
+fresh post-delete object comparisons (**seven/nine calls, trace=0**) remain
+unowned **0/5**, preserving every prepared call.
+
+The host method proof in `HostContract/CapturedMapBody.cpp` needs exact-key
+**definite absence**. Its current `present=false` also covers maybe absent, so it
+cannot prove Undefined. Preserve absence across exact deletes and known disjoint
+writes, invalidate it after potentially aliasing writes, and intersect it at
+branch joins. Saved reads retain their earlier values independently of later
+Map mutations. Repeated deletion, saving Undefined before reseeding, disjoint
+overwrites and possible formal-key aliases all remain refused. Exact same-key
+reseeding already reaches **5/5**. Keep the original refused sources and their
+exact repairs as independent controls.
+
+`clear()` is a separate unsupported host method. Both fresh-read and saved-object
+identity variants remain **0/5**, seven calls, trace=1; replacing `clear()` with
+exact `delete()` in the saved-object variant reaches **5/5**. Do not attribute
+that refusal solely to an absence result.
+
+Four identical-arm sources have **eight raw calls but seven prepared calls**:
+LiftToSCF merges their identical blocks. The deleting versions refuse; their
+nondestructive repairs reach 5/5. These probes do not validate a surviving
+two-arm join; add a nonidentical safe positive witness for that proof. One-arm
+deletion (eight calls) and conditional reseeding (nine calls) remain refused
+with both Boolean startup values. The corrected temporary runner records raw
+and prepared counts separately without changing any JavaScript. Evidence:
+`/tmp/ctcompile-comparison-identity-next.json` and `-next-final.log`.
 
 Entry numeric addition, String/object field carriers, exact Data, full native
 Bootstrap initialization and direct browser API integration remain open.
