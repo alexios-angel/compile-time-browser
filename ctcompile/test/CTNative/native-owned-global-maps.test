@@ -316,3 +316,13 @@
 # caller mutation, owner/table release and independent reentry. Weak witnesses
 # require Map/leaf destruction, while saved owning strings survive field mutation,
 # deletion, final Map release and the last separately retained leaf under sanitizers.
+# Exact size zero after clear preserves the 49663558 eight-call source and its
+# evaluated-read/literal repair. Aliases, String fields, repeated clear, later
+# growth, equal zero keys and both-clearing arms keep each real size read and
+# runtime Map call. Empty intersections of known-key lists, one-clearing arms,
+# reads before clear/after growth, unary -0 keys and a nonzero conditional alternative remain
+# refusals under fresh/stale reports, reruns and exact separately executed repairs.
+# Typed observations distinguish saved zero from a current size; both future flags
+# execute through saved native callables. Saved zero selects the original object
+# before clear/growth across 128 calls, owner/table release, independent reentry,
+# final Map reclamation and final separately retained leaf release under sanitizers.

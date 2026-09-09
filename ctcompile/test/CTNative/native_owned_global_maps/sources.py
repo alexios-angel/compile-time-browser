@@ -2173,7 +2173,7 @@ def numeric_entry_cases():
 
 
 NUMERIC_ENTRY_UNOWNED = {
-    'local_add_string_control', 'local_add_object_control', 'local_clear_zero_size_key',
+    'local_add_string_control', 'local_add_object_control',
     'local_numeric_future_bool', 'local_numeric_later_bool',
     'local_numeric_bool', 'local_numeric_null', 'local_numeric_undefined',
 }
@@ -2696,3 +2696,97 @@ def string_field_cases():
 def string_field_sources():
     return {name: (row['source'], 'host', row['expected_trace'])
             for name, row in string_field_cases().items() if row['admitted']}
+
+
+# Exact sources of the thirteen-row post-String-field continuation probe.
+ZERO_SIZE_HISTORY = {
+    'local_clear_zero_size_key': (8, '496635583adf728c73d3a48a71a98d7e4733a2bd9a5d14d17d21b1660359b316'),
+    'local_clear_zero_literal_repair': (8, '33aa4c4a24bba6adeec8cc2711e406190f25942f3829ee0c35efae2c9dba36a0'),
+    'zero_size_captured_alias': (8, 'cceb9728650e2925ba748fd9a27fc57f4d30553e16730fa0ee4de0b42d4d9ef4'),
+    'zero_size_string_leaf': (8, '1e44bcc417f20088f63c93a7a4c2fb91aa17781d30c7e9606c8a0d6eec06ddfc'),
+    'zero_size_repeated_clear': (9, '191a9cb3efcae5015bafda9da3c20c6756b8f8a5e439c07204f34b75d365e492'),
+    'zero_size_saved_growth': (9, '4071dc58f3ec2f5d482627ddad087468a206f16587a653299a3fcde5ba2b23ec'),
+    'zero_size_equal_key': (8, 'cc2c90639e721c7a96232f1498b12982c3c18123bbb6c0641d4d1ce9bc3ab71e'),
+    'zero_size_read_after_write': (8, '544f425bc1c5766d6176bbc358947a58ebdd423f4d6a517546c93fa22f67627e'),
+    'zero_size_read_before_clear': (8, '0dd2cee611397cd0d548a6492c40fb094fac983aeed235b4277664792b7b4e16'),
+    'zero_size_both_clear_false': (10, '300e1269bf254ab5d3412b4bdc6e93d7ba597c8c830bf78bea428c24a2414cf2'),
+    'zero_size_both_clear_true': (10, '657c263d050eff8303d8fae6a9b510c8be40b07dd142c98c05fbb65e3633df2b'),
+    'zero_size_one_clear_false': (9, 'b98bd0d0bc499ddbb41fda01a808acaacfe7ad0170f12728eb3a1603e447bbe6'),
+    'zero_size_one_clear_true': (9, '9cc3dd808711f667c9241c2b882905a7c23357e059eac7889e172b6a6f2203df'),
+}
+
+
+def zero_size_cases():
+    rows = {}
+    old = numeric_entry_cases()
+    base = old['local_clear_zero_size_key']['source']
+
+    def add(name, source, value, calls, admitted=True, repair=None):
+        digest = hashlib.sha256(source.encode()).hexdigest()
+        if name in ZERO_SIZE_HISTORY:
+            assert (calls, digest) == ZERO_SIZE_HISTORY[name], name
+        row = dict(source=source, expected_trace=value, raw_calls=calls, prepared_calls=calls,
+                   sha256=digest, admitted=admitted)
+        if repair:
+            before, after, target = repair
+            assert source.count(before) == 1 and source.replace(before, after) == rows[target]['source'], name
+            row.update(removed_text=before, replacement_text=after, repair=target)
+        rows[name] = row
+
+    add('local_clear_zero_size_key', base, 1, 8)
+    add('local_clear_zero_literal_repair', old['local_clear_zero_literal_repair']['source'], 1, 8)
+    add('zero_size_captured_alias', base.replace('state.clear(); const zero = state.size;',
+        'const alias = state; alias.clear(); const zero = alias.size;'), 1, 8)
+    add('zero_size_string_leaf', base.replace('{value: 1}', "{value: 'instance'}"), 1, 8)
+    add('zero_size_repeated_clear', base.replace('state.clear();', 'state.clear(); state.clear();'), 1, 9)
+    add('zero_size_saved_growth', base.replace('state.set(1, item);',
+        'state.set(1, item); state.set(2, item);'), 1, 9)
+    add('zero_size_equal_key', base.replace('state.set(1, item);', 'state.set(0, item);'), 0, 8)
+    # Unary Neg still lacks the host key-value proof. Keep this source intact;
+    # raw Number negative-zero bits exercise SameValueZero independently.
+    add('zero_size_negative_zero', base.replace('state.set(1, item);', 'state.set(-0, item);'), 0, 8, False,
+        ('state.set(-0, item);', 'state.set(0, item);', 'zero_size_equal_key'))
+    add('zero_size_read_after_write', base.replace('const zero = state.size; state.set(1, item);',
+        'state.set(1, item); const zero = state.size;'), 0, 8, False,
+        ('state.set(1, item); const zero = state.size;', 'const zero = state.size; state.set(1, item);',
+         'local_clear_zero_size_key'))
+    add('zero_size_read_before_clear', base.replace('state.clear(); const zero = state.size;',
+        'const zero = state.size; state.clear();'), 0, 8, False,
+        ('const zero = state.size; state.clear();', 'state.clear(); const zero = state.size;',
+         'local_clear_zero_size_key'))
+    branch = base.replace('set(key)', 'set(key, flag)')
+    for flag in ('false', 'true'):
+        source = branch.replace('host.slot.set(7)', 'host.slot.set(7, ' + flag + ')')
+        both = source.replace('state.clear();',
+            'if (flag) { state.clear(); } else { state.clear(); state.has(key); }')
+        both_name = 'zero_size_both_clear_' + flag
+        add(both_name, both, 1, 10)
+        add('zero_size_one_clear_' + flag, both.replace('else { state.clear(); state.has(key); }',
+            'else { state.has(key); }'), int(flag == 'true'), 9, False,
+            ('else { state.has(key); }', 'else { state.clear(); state.has(key); }', both_name))
+        # Intersecting the known-key lists produces no common entries although
+        # every runtime path is nonempty. Only a later real clear repairs it.
+        intersect = source.replace('state.clear();',
+            'state.clear(); if (flag) { state.set(1, item); } else { state.set(2, item); }')
+        repaired = intersect.replace('} const zero = state.size;', '} state.clear(); const zero = state.size;')
+        repair_name = 'zero_size_cleared_join_' + flag
+        add(repair_name, repaired, 1, 11)
+        add('zero_size_empty_intersection_' + flag, intersect, 0, 10, False,
+            ('} const zero = state.size;', '} state.clear(); const zero = state.size;', repair_name))
+        joined = source.replace('const zero = state.size;', 'const zero = flag ? state.size : 0;')
+        joined_name = 'zero_size_joined_zero_' + flag
+        add(joined_name, joined, 1, 8)
+        add('zero_size_joined_nonzero_' + flag, joined.replace('flag ? state.size : 0;',
+            'flag ? state.size : 1;'), int(flag == 'true'), 8, False,
+            ('flag ? state.size : 1;', 'flag ? state.size : 0;', joined_name))
+    lifetime = rows['zero_size_both_clear_false']['source']
+    lifetime = lifetime.replace('state.set(1, item); return state.get(zero) === void 0 ? 1 : 0;',
+        'state.set(0, item); const saved = state.get(zero); state.clear(); state.set(1, item); '
+        'return saved === item ? (flag ? 2 : 1) : 0;')
+    add('zero_size_saved_lifetime', lifetime, 1, 12)
+    return rows
+
+
+def zero_size_sources():
+    return {name: (row['source'], 'host', row['expected_trace'])
+            for name, row in zero_size_cases().items() if row['admitted']}

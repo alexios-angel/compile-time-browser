@@ -41,6 +41,7 @@ from .sources import (
     constant_global_cases, constant_global_sources, normalized_scalar_output,
     CONSTANT_GLOBAL_UNOWNED, CONSTANT_GLOBAL_CARRIERS, CONSTANT_GLOBAL_EXISTING,
     StringValue, string_field_cases, string_field_sources, STRING_FIELD_PROMOTED,
+    zero_size_cases, zero_size_sources,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
@@ -51,6 +52,7 @@ from .harness import (
     primitive_absence_observer_source,
     LEAF_CLEAR_LIFETIMES, leaf_clear_observer_source,
     NUMERIC_ENTRY_LIFETIMES, numeric_entry_observer_source, string_field_observer_source,
+    zero_size_observer_source,
 )
 
 
@@ -1432,7 +1434,7 @@ def main():
         **numeric_entry_sources(),
         **scalar_global_sources(),
         **constant_global_sources(),
-        **string_field_sources(),
+        **string_field_sources(), **zero_size_sources(),
         # Keep the original refusal source byte-for-byte. Its method-local
         # empty payload now has the same independently proved leaf owner.
         "object_payload": (refusal_sources()["object_payload"], "host", 1),
@@ -1446,6 +1448,7 @@ def main():
     check_leaf_clear_observations(args, node, reference)
     check_numeric_entry_observations(args, node, reference)
     check_string_field_observations(args, node, reference)
+    check_zero_size_observations(args, node, reference)
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
     blind = args.work / "seeded-dynamic-overwrite-blinded.js"
     blind.write_text(overwrite_source.replace("return state.get(1);", "return 1;"))
@@ -1679,7 +1682,7 @@ def main():
                      else 5 if name in LEAF_READBACK_CALLS or name in leaf_absence_sources()
                      or name in leaf_clear_sources() or name in numeric_entry_sources() or name in scalar_global_sources()
                      or name in constant_global_sources()
-                     or name in string_field_sources()
+                     or name in string_field_sources() or name in zero_size_sources()
                      else RESULT_SIGNATURES[name][2] if name in RESULT_SIGNATURES
                      else 6 if name == "shared_three" else 5 if name.startswith("shared") else 4)
         if count != functions:
@@ -1714,6 +1717,7 @@ def main():
             raise RuntimeError(f"{name}: changed the exact {LEAF_READBACK_CALLS[name]}-call readback boundary")
         check_leaf_absence_census(args, ir, name)
         check_string_field_census(args, ir, name)
+        check_zero_size_census(args, ir, name)
         if name in primitive_absence_sources() and (
                 len(source_calls((args.work / f"{name}.raw.mlir").read_text())) != 10
                 or len(source_calls(ir.read_text())) != 10):
@@ -2090,6 +2094,8 @@ def main():
     check_constant_global_refusals(args, positives, node, reference)
     check_leaf_readback_carriers(args, positives, node, reference, leaf_field_result_refusals())
     check_string_field_refusals(args, positives)
+    check_zero_size_refusals(args, positives)
+    check_leaf_object_forgeries(args, saved, ("local_clear_zero_size_key", "zero_size_saved_lifetime"))
     check_historical_string_field_refusals(args, positives, node, reference)
     # A result contract does not narrow Map storage or supply an implemented
     # callable signature. Preserve the prepared producer/consumer operands.
@@ -2263,7 +2269,8 @@ def main():
     for name in ((leaf_readback_sources().keys() - LEAF_READBACK_UNOWNED)
                  | leaf_absence_sources().keys() | leaf_clear_sources().keys()
                  | numeric_entry_sources().keys() | scalar_global_sources().keys()
-                 | constant_global_sources().keys() | string_field_sources().keys()):
+                 | constant_global_sources().keys() | string_field_sources().keys()
+                 | zero_size_sources().keys()):
         _, config, output = saved[name]
         rerun = owned.lower(args, output, name + "-rerun", config, cleanup=False)
         text = methods.census(rerun, 5, name + "-rerun", admitted=5)
@@ -2292,7 +2299,8 @@ def main():
                  "scalar_alias_chain", "scalar_constant_only", "constant_alias_arithmetic",
                  "constant_boolean", "constant_boolean_alias_chain",
                  "constant_string", "constant_string_alias_chain",
-                 "field_string_read", "field_string_lifetime"):
+                 "field_string_read", "field_string_lifetime",
+                 "local_clear_zero_size_key", "zero_size_saved_lifetime"):
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
@@ -2391,6 +2399,11 @@ def main():
           "constant-only alias/arithmetic edges and mixed saved-Map lifetimes pass; "
           "Boolean aliases/results retain true/false output with independent Number/Boolean tags; "
           "14 wrong-tag/null/missing-store observation mutations reach the exact termination check; "
+          f"{len(zero_size_sources())} exact zero-size programs preserve all thirteen historical sources, "
+          "live reads/calls, SameValueZero and saved facts through growth; "
+          f"{len(zero_size_cases()) - len(zero_size_sources())} unproved size/branch refusals keep calls "
+          "under stale/fresh forgeries and exact repairs; one saved-zero lifetime runs 128 future "
+          "calls/both flags through owner/table release, reentry and final Map/leaf destruction; "
           f"{len(string_field_sources())} owning String-field programs preserve exact tags, bytes and live accesses; "
           "six field refusal/repair families and six emitted field-tag controls remain independent; "
           "two historical String-field sources retain complete ownership and exact equality/mixed-Map refusals; "
@@ -2679,4 +2692,118 @@ def check_historical_string_field_refusals(args, positives, node, reference):
                 failed = reject(forged, current + '-fresh', fresh)
                 rerun = methods.refused(args, failed, current + '-rerun', fresh, options=options,
                                         reason='fingerprint mismatch', admitted=0)
+                check_call_preservation(failed.read_text(), rerun.read_text(), current + '-rerun')
+
+
+
+def check_zero_size_census(args, ir, name):
+    if name not in zero_size_cases():
+        return
+    row = zero_size_cases()[name]
+    raw = (args.work / f'{name}.raw.mlir').read_text()
+    if (len(boundary.FUNCTION.findall(raw)) != 5
+            or len(source_calls(raw)) != row['raw_calls']
+            or len(source_calls(ir.read_text())) != row['prepared_calls']):
+        raise RuntimeError(f'{name}: changed exact zero-size function/call census')
+
+
+def check_zero_size_observations(args, node, reference):
+    cases = zero_size_cases()
+    for name, row in cases.items():
+        js = args.work / f'{name}-zero-observed.js'
+        js.write_text(row['source'])
+        expected = f'trace={row["expected_trace"]}\n'
+        if host.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout != expected:
+            raise RuntimeError(f'{name}: typed Node zero-size observation changed')
+        if reference:
+            result = host.run([str(reference), str(js)])
+            if (result.stdout != expected
+                    or '(1 number, 0 boolean, 0 string, 0 null, 0 undefined)' not in result.stderr):
+                raise RuntimeError(f'{name}: interpreter lost zero-size Number observation')
+    for name, old, replacement in (
+        ('local_clear_zero_size_key', 'state.clear();', 'state.has(key);'),
+        ('local_clear_zero_size_key', 'state.get(zero)', 'state.get(state.size)'),
+        ('zero_size_equal_key', 'state.get(zero)', 'state.get(state.size)'),
+        ('zero_size_negative_zero', 'state.get(zero)', 'state.get(state.size)'),
+        ('zero_size_repeated_clear', 'state.get(zero)', 'state.get(state.size)'),
+        ('zero_size_saved_growth', 'state.get(zero)', 'state.get(state.size)'),
+        ('zero_size_read_before_clear', 'const zero = state.size; state.clear();',
+         'state.clear(); const zero = state.size;'),
+        ('zero_size_read_after_write', 'state.set(1, item); const zero = state.size;',
+         'const zero = state.size; state.set(1, item);'),
+    ):
+        row = cases[name]
+        assert row['source'].count(old) == 1, name
+        js = args.work / f'{name}-zero-blind.js'
+        js.write_text(row['source'].replace(old, replacement))
+        if host.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout == f'trace={row["expected_trace"]}\n':
+            raise RuntimeError(f'{name}: observer cannot distinguish saved/live zero from {replacement}')
+    name = 'zero_size_saved_lifetime'
+    source = cases[name]['source']
+    observed, value = zero_size_observer_source(source)
+    js = args.work / f'{name}-future.js'
+    js.write_text(observed)
+    expected = f'trace={value}\n'
+    if (host.run([node, '-e', boundary.NODE, str(js)]).stdout != expected
+            or reference and host.run([str(reference), str(js)]).stdout != expected):
+        raise RuntimeError(f'{name}: future flags or saved-zero object identity changed')
+    for index, (old, replacement) in enumerate((
+        ('state.get(zero)', 'state.get(state.size)'),
+        ('state.set(0, item);', 'state.set(2, item);'),
+        ('const saved = state.get(zero);', 'const saved = void 0;'),
+        ('(flag ? 2 : 1)', '(flag ? 1 : 2)'),
+        ('state.clear(); state.set(1, item);', 'state.has(key); state.set(1, item);'),
+    )):
+        assert source.count(old) == 1, name
+        blind, _ = zero_size_observer_source(source.replace(old, replacement))
+        js = args.work / f'{name}-future-blind-{index}.js'
+        js.write_text(blind)
+        if host.run([node, '-e', boundary.NODE, str(js)]).stdout == expected:
+            raise RuntimeError(f'{name}: future observer cannot distinguish {replacement}')
+
+
+def check_zero_size_refusals(args, positives):
+    for name, row in zero_size_cases().items():
+        if row['admitted']:
+            continue
+        _, ir, count = boundary.prepare(args, name, row['source'])
+        check_zero_size_census(args, ir, name)
+        repair = row['repair']
+        if row['source'].replace(row['removed_text'], row['replacement_text']) != positives[repair][0]:
+            raise RuntimeError(f'{name}: exact repair no longer restores executed zero-size source')
+        _, restored, repaired_count = boundary.prepare(args, name + '-restored', positives[repair][0])
+        if count != 5 or repaired_count != 5:
+            raise RuntimeError(f'{name}: exact zero-size repair changed function count')
+        config = contract(args, ir, name)
+        repaired_config = contract(args, restored, name + '-restored')
+        for mode, options in (('default', ''), ('disabled', 'optimize=false')):
+            label = name + '-' + mode
+
+            def reject(input_ir, current, current_config):
+                failed = methods.refused(args, input_ir, current, current_config, options=options, admitted=0)
+                text = failed.read_text()
+                if ('ctnative.host_owner_proved = false' not in text
+                        or 'property call lacks a current source getter proof' not in text
+                        or 'fingerprint mismatch' in text):
+                    raise RuntimeError(f'{current}: unknown size bypassed independent current source proof')
+                check_call_preservation(input_ir.read_text(), text, current)
+                return failed
+
+            stale = methods.refused(args, ir, label + '-changed-source', repaired_config, options=options,
+                                    reason='fingerprint mismatch', admitted=0)
+            check_call_preservation(ir.read_text(), stale.read_text(), label + '-changed-source')
+            reject(ir, label, config)
+            repaired = owned.lower(args, restored, label + '-restored', repaired_config, options=options)
+            if 'ctnative.host_owner_proved = true' not in methods.census(repaired, 5, label, admitted=5):
+                raise RuntimeError(f'{label}: exact zero repair lost native ownership')
+            for payload in ('bool', 'string', 'nullable_string'):
+                current = label + '-forged-' + payload
+                forged = args.work / f'{current}.mlir'
+                forged.write_text(forge_leaf_evidence(ir.read_text(), payload))
+                stale = methods.refused(args, forged, current + '-stale', config, options=options,
+                                        reason='fingerprint mismatch', admitted=0)
+                check_call_preservation(forged.read_text(), stale.read_text(), current + '-stale')
+                fresh = contract(args, forged, current)
+                failed = reject(forged, current + '-fresh', fresh)
+                rerun = methods.refused(args, failed, current + '-rerun', fresh, options=options, admitted=0)
                 check_call_preservation(failed.read_text(), rerun.read_text(), current + '-rerun')

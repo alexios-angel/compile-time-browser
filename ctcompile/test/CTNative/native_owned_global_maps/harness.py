@@ -24,7 +24,7 @@ from .sources import (
     scalar_global_values, NUMERIC_ENTRY_SAVED_GLOBALS,
     constant_global_cases, constant_global_sources, normalized_scalar_output,
     STRING_GLOBAL_LONG, StringValue, string_field_cases, string_field_sources,
-    STRING_FIELD_BYTES, STRING_FIELD_LONG,
+    STRING_FIELD_BYTES, STRING_FIELD_LONG, zero_size_cases, zero_size_sources,
 )
 
 
@@ -1340,6 +1340,8 @@ def standalone(args, output, name, value, compilers, nm):
             check_leaf_object_calls(cpp, name, mode)
         if name in string_field_sources():
             check_string_field_calls(cpp, name, mode)
+        if name in zero_size_sources():
+            check_zero_size_calls(cpp, name, mode)
         if name in leaf_readback_sources():
             check_leaf_readback_calls(cpp, name, mode)
         if name in leaf_absence_sources() or name in leaf_clear_sources():
@@ -1385,6 +1387,9 @@ def standalone(args, output, name, value, compilers, nm):
         if name == "field_string_lifetime":
             source = args.work / f"{name}.{mode}.identity.cpp"
             source.write_text(string_field_lifetime_cpp(cpp))
+        if name == "zero_size_saved_lifetime":
+            source = args.work / f"{name}.{mode}.identity.cpp"
+            source.write_text(zero_size_lifetime_cpp(cpp))
         if name in primitive_absence_sources():
             source = args.work / f"{name}.{mode}.observed.cpp"
             source.write_text(primitive_absence_cpp(cpp))
@@ -1435,7 +1440,7 @@ def standalone(args, output, name, value, compilers, nm):
                 raise RuntimeError(f"{name}/{mode}: linked a VM symbol")
             traces = 2 if name in {*LEAF_COMPARISON_CASES, *LEAF_ABSENCE_LIFETIMES,
                                   *LEAF_CLEAR_LIFETIMES, *NUMERIC_ENTRY_LIFETIMES,
-                                  "field_string_lifetime"} else 1
+                                  "field_string_lifetime", "zero_size_saved_lifetime"} else 1
             if normalized_scalar_output(host.run([str(binary)]).stdout) != scalar_global_output(name, value) * traces:
                 raise RuntimeError(f"{name}/{mode}: standalone result mismatch")
         if name in {"ordinary", "mutate_map", "growing", "result_seeded_growing"}:
@@ -1467,18 +1472,20 @@ def standalone(args, output, name, value, compilers, nm):
             numeric_entry_lifetime(args, cpp, name, mode, compilers[1])
         if name == "field_string_lifetime":
             string_field_lifetime(args, cpp, name, mode, compilers[1])
+        if name == "zero_size_saved_lifetime":
+            zero_size_lifetime(args, cpp, name, mode, compilers[1])
 
 
 def check_call_preservation(original, output, name):
     if source_calls(original) != source_calls(output):
         raise RuntimeError(f"{name}: failed ownership changed live source call operands")
     if name.startswith(("saved_join", "guarded_saved", "shortcircuit", "nullable", "leaf_object",
-                        "leaf_readback", "local_", "historical_object", "field_")):
+                        "leaf_readback", "local_", "historical_object", "field_", "zero_size_")):
         pattern = (r"^\s*(?:%[-\w.$]+(?::\d+)? = )?((?:ctjs\.(?:truthy|cond_br|br)|"
                    r"scf\.(?:if|yield))\b[^\n]*)")
         if re.findall(pattern, original, re.M) != re.findall(pattern, output, re.M):
             raise RuntimeError(f"{name}: failed ownership changed live branch/yield operands")
-    if name.startswith(("leaf_object", "leaf_readback", "local_", "historical_object", "field_")):
+    if name.startswith(("leaf_object", "leaf_readback", "local_", "historical_object", "field_", "zero_size_")):
         pattern = r"^\s*((?:%[-\w.$]+ = )?ctjs\.(?:create_object|set_property|get_property|compare|unary|binary|load_global|store_global)\b[^\n{]*)"
         if ([match.strip() for match in re.findall(pattern, original, re.M)]
                 != [match.strip() for match in re.findall(pattern, output, re.M)]):
@@ -1910,7 +1917,7 @@ def check_numeric_entry_calls(cpp, name, mode):
     params = ("std::string, js_num, bool" if "set(key, value, flag)" in source else
               "std::string, js_num" if "set(key, value)" in source else
               "js_num" if name in {"local_add_result_key", "local_numeric_nested_key",
-                                    "local_numeric_nan_key", "local_clear_zero_literal_repair", "scalar_result_key"}
+                                    "local_numeric_nan_key", "local_clear_zero_literal_repair", "local_clear_zero_size_key", "scalar_result_key"}
               else "std::string")
     result = "bool" if name == "constant_boolean_saved_result" else "js_num"
     if f"std::function<{result}({params})>" not in cpp:
@@ -2428,3 +2435,125 @@ def string_field_lifetime(args, cpp, name, mode, compiler):
     if result.returncode or result.stdout != scalar_global_output(name, STRING_FIELD_LONG) * 2:
         raise RuntimeError(f'{name}/{mode}: owning String field lifetime failed ({result.returncode})\n'
                            f'{result.stdout}{result.stderr}')
+
+
+
+def check_zero_size_calls(cpp, name, mode):
+    source = zero_size_cases()[name]['source']
+    params = 'js_num, bool' if 'set(key, flag)' in source else 'js_num'
+    if (f'std::function<js_num({params})>' not in cpp
+            or cpp.count('std::make_shared<ctnative::identity_object>()') != 1):
+        raise RuntimeError(f'{name}/{mode}: lost the typed zero-size callable or live leaf allocation')
+    for method in ('set', 'get', 'has', 'delete', 'clear'):
+        original = len(re.findall(rf'\b(?:state|alias)\.{method}\(', source))
+        emitted = len(re.findall(rf'\bctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(', cpp))
+        if original != emitted:
+            raise RuntimeError(f'{name}/{mode}: changed {original} live Map.{method} calls to {emitted}')
+    size_reads = len(re.findall(r'\b(?:state|alias)\.size\b', source))
+    if len(re.findall(r'\bctnative::map_size\(', cpp)) != size_reads:
+        raise RuntimeError(f'{name}/{mode}: exact proof erased an evaluated size read')
+    entry = re.search(r'\bmain\(\)\s*\{(.*?)^\}', cpp, re.M | re.S)
+    if not entry or entry[1].count('ctnative::invoke_callable(') != 2:
+        raise RuntimeError(f'{name}/{mode}: lost original published size/set calls')
+
+
+def zero_size_observer_source(source):
+    observed = source + r"""
+(function() {
+    const setter = host.slot.set;
+    const size = host.slot.size;
+    const startup = trace;
+    const a = setter(101, false);
+    const aSize = size();
+    const b = setter(-8, true);
+    const bSize = size();
+    const c = setter(0, false);
+    const d = setter(1, true);
+    trace = (typeof startup === 'number' && startup === 1 ? 1 : 0) |
+            (typeof a === 'number' && a === 1 ? 2 : 0) |
+            (typeof b === 'number' && b === 2 ? 4 : 0) |
+            (typeof c === 'number' && c === 1 ? 8 : 0) |
+            (typeof d === 'number' && d === 2 ? 16 : 0) |
+            (aSize === 1 && bSize === 1 && size() === 1 ? 32 : 0);
+})();
+"""
+    return observed, 63
+
+
+def zero_size_lifetime_cpp(cpp):
+    changed = instrument_leaf_objects(cpp)
+    changed = changed.replace('static std::vector<std::weak_ptr<const void>> ctn_test_objects;',
+        'static std::vector<std::weak_ptr<const void>> ctn_test_objects;\n'
+        'static std::shared_ptr<const void> ctn_test_retained;\n'
+        'static bool ctn_test_keep_leaf = false;')
+    changed = changed.replace('ctn_test_objects.emplace_back(made); return made;',
+        'ctn_test_objects.emplace_back(made);\n'
+        '    if (ctn_test_keep_leaf) { ctn_test_retained = made; }\n    return made;')
+    return changed + r"""
+int main() {
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
+        ctn_test_objects.size() != 1 || ctn_test_objects[0].expired()) { return 180; }
+    auto owner = g_host;
+    auto table = owner->slot;
+    auto setter = table->m_set;
+    auto size = table->m_size;
+    static_assert(std::is_same_v<decltype(size), std::function<js_num()>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<js_num(js_num, bool)>>);
+    std::weak_ptr owner_lifetime = owner;
+    std::weak_ptr table_lifetime = table;
+    g_host.reset(); owner.reset(); table.reset();
+    if (!owner_lifetime.expired() || !table_lifetime.expired() || ctn_test_maps[0].expired()) {
+        return 181;
+    }
+    ctn_test_keep_leaf = true;
+    std::vector<js_num> results;
+    for (int call = 0; call < 128; ++call) {
+        const bool flag = call % 2 != 0;
+        const auto before = ctn_test_objects.size();
+        results.push_back(setter(static_cast<js_num>(call % 3 == 0 ? 0 : 100 + call), flag));
+        if (results.back() != (flag ? 2 : 1) || size() != 1 ||
+            ctn_test_objects.size() != before + 1) { return 182; }
+        for (std::size_t index = 0; index < before; ++index) {
+            if (!ctn_test_objects[index].expired()) { return 183; }
+        }
+        const auto leaf = std::static_pointer_cast<const ctnative::identity_object>(ctn_test_retained);
+        if (!leaf || leaf->field_76616c7565.tag != ctnative::nullable_scalar::kind::number ||
+            leaf->field_76616c7565.value != 1) { return 184; }
+    }
+    ctn_test_keep_leaf = false;
+    const auto retained_index = ctn_test_objects.size() - 1;
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
+        ctn_test_maps[0].lock() == ctn_test_maps[1].lock() || size() != 1 ||
+        g_host->slot->m_size() != 1) { return 185; }
+    setter = {};
+    if (ctn_test_maps[0].expired()) { return 186; }
+    size = {};
+    if (!ctn_test_maps[0].expired() || ctn_test_maps[1].expired() ||
+        ctn_test_objects[retained_index].expired()) { return 187; }
+    g_host.reset();
+    if (!ctn_test_maps[1].expired()) { return 188; }
+    for (std::size_t index = 0; index < ctn_test_objects.size(); ++index) {
+        if (ctn_test_objects[index].expired() != (index != retained_index)) { return 189; }
+    }
+    for (std::size_t index = 0; index < results.size(); ++index) {
+        if (results[index] != (index % 2 != 0 ? 2 : 1)) { return 190; }
+    }
+    ctn_test_retained.reset();
+    if (!ctn_test_objects[retained_index].expired()) { return 191; }
+    return 0;
+}
+"""
+
+
+def zero_size_lifetime(args, cpp, name, mode, compiler):
+    source = args.work / f'{name}.{mode}.lifetime.cpp'
+    source.write_text(zero_size_lifetime_cpp(cpp))
+    binary = source.with_suffix('.sanitized').resolve()
+    host.run([compiler, *owned.FLAGS, '-fsanitize=address,undefined', '-fno-omit-frame-pointer',
+              str(source), '-o', str(binary)])
+    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=30,
+        env={**os.environ, 'ASAN_OPTIONS': 'detect_leaks=1:halt_on_error=1',
+             'UBSAN_OPTIONS': 'halt_on_error=1'})
+    if result.returncode or result.stdout != 'trace=1\n' * 2 or result.stderr:
+        raise RuntimeError(f'{name}/{mode}: saved zero/leaf lifetime failed\n'
+                           f'{result.returncode}: {result.stdout}{result.stderr}')
