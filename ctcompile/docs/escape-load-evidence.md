@@ -1970,3 +1970,72 @@ Next: independently categorized BigInt binary results and their exceptional
 cases, additional local producers, loops and callee summaries. No binary
 operator can inherit the non-BigInt result assumption merely from its opcode.
 Native lifetime and effect consumers remain separate work.
+
+## Computed BigInt Add/Sub/Mul categories, 2026-09-09
+
+Continues the exact binary-category boundary after `6f62fbaf`, named in the
+preceding section and latest HANDOFF. Dynamic `Add`, `Sub` and `Mul` now accept
+two independently proved original BigInt operands. Each result enters the
+existing separately charged per-path BigInt set. Constant, computed, saved and
+forwarded origins retain their own category across overwrites and deletions;
+no operand grants category evidence to the other. The same binary SSA result
+can independently be a Number or BigInt on different structural paths.
+Non-BigInt consumers still exclude the BigInt set, including after a branch
+snapshot or a saved array/field read. No source branch is selected from these
+category facts.
+
+The VM's `binary_op`/`bigint_binary` paths in `vm/coerce.cpp` combine BigInt
+digits into an independent result. Add first enters `to_primitive`'s depth
+guard. The whole-frame proof rejects publication, calls and handlers, so its
+unrelated early Error cannot retain unpublished local objects. This remains
+retention evidence only: allocation success, normal completion, native BigInt
+admission and no-throw/effect contracts are unproved. Static BigInt arithmetic,
+dynamic Div/Mod/Pow/Concat, mixed categories and object/opaque conversion
+remain separate refusals. Explicit zero-divisor, negative-exponent, handler
+and thrown-object tests keep those boundaries visible.
+
+Before implementation, the unchanged sixteen-check source
+`/tmp/ctcompile-escape-bigint-binary-semantics.js` measured **Node trace=65535**
+and **interpreter trace=32767**. The first fifteen checks agree: signed values
+beyond exact Number range, Add/Sub/Mul, chained results, unary consumers,
+saved field/array reads, mixed String addition and mixed Number TypeErrors.
+The last object `valueOf` returning a BigInt control disagrees. That source and
+its differing observation are preserved; object inputs remain refused and no
+runtime behavior was changed. The interpreter log is
+`/tmp/ctcompile-scalars-bigint-semantics.log`.
+
+The warning-free **ten-step** devbox build passes all **eight escape CTests
+in 9.32 seconds**. Each binary operator passes **97 rows, 29 stale/fresh live
+states and 3098 retention budget cutoffs**, including exhaustive incomplete
+contents budgets and exact completion endpoints. A 32-result path snapshot
+checks **128 additional work units** for operations, categories and both
+snapshot entries. Both unary families now pass **83 rows, 15 live states and
+2296 cutoffs**; Eq passes **52/30/2448** and each relational family passes
+**60/32/2740**. The array test completes in **0.32 seconds**.
+
+Five additive JavaScript functions cover saved operands, separate Number/BigInt
+paths, opaque actuals, mixed comparisons and an independently retained child.
+Local Node verifies all **ten calls and twelve discriminating mutations**, plus
+exact arithmetic and object identities. All historical JavaScript bytes are
+unchanged. The source-coordinate oracle measures **20 sites, 40 instances and
+32 retained** for the new family. The old `objectFrameBigIntRelationalComputed`
+child now has its own Add category proof, so only that historical verdict is
+promoted; its source and allocation/retention counts remain intact. Fixture
+precision is **61/93**, compared with the preceding **58/89**: the numerator
+includes one historical improvement and two newly covered confined sites.
+The fixture reports **61 sound claims, zero partial and zero pending**, and
+all four execution oracles report **zero violations**. Corpus precision stays
+**0/64 Bootstrap, 0/16 p5 and 0/20 Phaser**; p5 retains its existing one partial.
+The existing early corpus runtime errors still bound those observations.
+
+Stable clang-format 22.1.8 passes all **745 C++ files**; changed C++ also passes
+bundled 23. Whitespace and JavaScript syntax checks pass. The five code/test
+hashes still match their frozen inputs; the doc-only measurement update has
+its own refreshed hash in `/tmp/ctcompile-escape-bigint-binary-frozen.json`.
+The complete compiler/lit gate and final devbox hash comparison remain pending;
+this records the focused escape gate only. No browser/runtime source changed.
+Evidence: `/tmp/ctcompile-scalars-escape-build.log`,
+`/tmp/ctcompile-scalars-escape.log`, `/tmp/ctcompile-scalars-format22.log`,
+`/tmp/ctcompile-escape-bigint-binary-node.js` and the frozen hash file.
+Remaining boundaries include static and exceptional BigInt arithmetic, mixed
+conversions, loops, callee summaries and native lifetime/effect consumers.

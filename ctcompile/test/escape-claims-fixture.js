@@ -991,6 +991,75 @@ function objectFrameBigIntUnaryRetained(choice) {
 H.push(objectFrameBigIntUnaryRetained(false));
 H.push(objectFrameBigIntUnaryRetained(true));
 
+// --- COMPUTED BIGINT BINARY ORIGINS ----------------------------------------
+// Both operands keep their original category through saved reads and mutation.
+function objectFrameBigIntBinarySaved(choice) {
+    var child = { id: 1 };
+    var source = { held: child, left: choice ? 9007199254740993n : 9007199254740992n,
+                   right: 2n };
+    var target = { ...source }, left = target.left, right = source.right;
+    target.left = 1; source.right = 0;
+    delete source.left; delete target.left;
+    delete source.right; delete target.right;
+    var sum = left + right, difference = left - right, product = left * right;
+    var recovered = sum - right, inverse = ~product;
+    var equal = recovered == left, smaller = difference < left;
+    delete source.held; delete target.held;
+    return { source: source, target: target, sum: sum, difference: difference,
+             product: product, recovered: recovered, inverse: inverse,
+             equal: equal, smaller: smaller };
+}
+H.push(objectFrameBigIntBinarySaved(false));
+H.push(objectFrameBigIntBinarySaved(true));
+
+// One binary SSA result can have different categories on independent paths.
+function objectFrameBigIntBinaryPaths(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var operand = choice ? 1n : 2;
+    var sum = operand + operand, difference = sum - operand, product = sum * operand;
+    delete source.held; delete target.held;
+    return { source: source, target: target, sum: sum, difference: difference, product: product };
+}
+H.push(objectFrameBigIntBinaryPaths(false));
+H.push(objectFrameBigIntBinaryPaths(true));
+
+// Successful runtime BigInt actuals never prove an opaque future operand.
+function objectFrameBigIntBinaryOpaque(operand) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var sum = operand + 2n, difference = operand - 2n, product = operand * 2n;
+    delete source.held; delete target.held;
+    return { source: source, target: target, sum: sum, difference: difference, product: product };
+}
+H.push(objectFrameBigIntBinaryOpaque(1n));
+H.push(objectFrameBigIntBinaryOpaque(2n));
+
+// An independently computed BigInt never supplies mixed-comparison permission.
+function objectFrameBigIntBinaryMixed(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var operand = choice ? 1n : 2n, product = operand * 2n;
+    var equal = product == 2, smaller = product < 3;
+    delete source.held; delete target.held;
+    return { source: source, target: target, product: product, equal: equal, smaller: smaller };
+}
+H.push(objectFrameBigIntBinaryMixed(false));
+H.push(objectFrameBigIntBinaryMixed(true));
+
+// Independent BigInt results do not remove a separately retained object edge.
+function objectFrameBigIntBinaryRetained(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source }, saved = target.held;
+    var operand = choice ? 1n : 2n;
+    var sum = operand + 2n, difference = operand - 2n, product = operand * 2n;
+    delete source.held; delete target.held;
+    return { source: source, target: target, saved: saved,
+             sum: sum, difference: difference, product: product };
+}
+H.push(objectFrameBigIntBinaryRetained(false));
+H.push(objectFrameBigIntBinaryRetained(true));
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());

@@ -438,7 +438,7 @@ struct ArrayContentsEvidence {
 /// binary operations on independently non-BigInt origins, arithmetic unary
 /// operations, dynamic Sub/Mul/Div/Mod/Pow/Add/Concat, loose equality and relational
 /// comparisons on independently primitive non-BigInt origins or two
-/// independently proved BigInt constants or Neg/BitNot results, truthy and return. Object reads
+/// independently proved BigInt constants or computed results, truthy and return. Object reads
 /// require an earlier own write; keys longer than 256 bytes and
 /// __proto__ refuse. Named/computed object deletions erase only the current own
 /// property; absent deletion is a no-op, absent reads still refuse. All earlier
@@ -485,13 +485,13 @@ struct ArrayContentsEvidence {
 /// invoke user conversion or the reentry-depth guard. Saved reads retain their
 /// original identity across overwrites; no operand value, key or branch choice
 /// is inferred. An independent alternative admits two exact original
-/// BigInt constants or proved Neg/BitNot results: the VM compares their digits
-/// without conversions or input aliases. Both operand origins must qualify;
-/// mixed/opaque/other computed BigInt inputs still refuse. This adds only an independent Boolean
+/// BigInt constants or proved Neg/BitNot and dynamic Add/Sub/Mul results: the VM compares their
+/// digits without conversions or input aliases. Both operand origins must qualify;
+/// mixed/opaque/unproved computed BigInt inputs still refuse. This adds only an independent Boolean
 /// origin, never equality, key, liveness, allocation-success or native effect evidence. Relational
 /// kinds accept those same independently proved original categories; their normal
 /// String/static-number or exact BigInt digit comparisons yield only an independent Boolean. Both
-/// BigInt origins must separately qualify; mixed and other computed BigInt operands stay outside
+/// BigInt origins must separately qualify; mixed and unproved computed BigInt operands stay outside
 /// this proof. Their to_primitive depth guard can throw an unrelated RangeError even for
 /// primitives. As with Neg/Plus, the whole-frame query's exclusion of calls,
 /// handlers and publication prevents retention of its unpublished fresh locals;
@@ -506,8 +506,15 @@ struct ArrayContentsEvidence {
 /// String without a concrete tag fact; Concat yields String, still without
 /// constant/key inference. Add enters to_primitive's guard and shares the same
 /// retention-only argument; primitive Concat uses static to_string. String
-/// results allocate in the VM; allocation success remains unproved. BigInt and
-/// object/opaque inputs stay outside this bounded proof.
+/// results allocate in the VM; allocation success remains unproved. Dynamic
+/// Add/Sub/Mul additionally accept two independently proved original BigInts,
+/// preserving their independent result category in the same charged per-path
+/// set as Neg/BitNot. Saved reads and chained results retain that category;
+/// neither operand supplies authority for the other. Add's depth guard has the
+/// same retention-only early-exit argument. Static BigInt operations, dynamic
+/// Div/Mod/Pow/Concat, mixed and object/opaque inputs remain outside this bounded
+/// BigInt proof. No allocation-success, normal-completion or native effect
+/// guarantee follows.
 /// Joins keep exact separate states rather than unioning overwrite targets. Truthy
 /// accepts an external value only as a noncapturing predicate, never an element.
 /// Exact entry !ctjs.value identities may travel through unused register arguments
