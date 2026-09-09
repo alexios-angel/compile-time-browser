@@ -6,6 +6,69 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Definite Boolean globals and recovered execution gate, 2026-09-09
+
+Resumed four uncommitted Boolean execution files at **1138dbfd**, identified
+in the **11:02:47/12:11:22 UTC** synchronization journal and the interrupted
+execution log; the **12:13:13** loop exit explicitly abandoned their claims.
+The older codex-wip recovery and browser source-split repairs were already
+landed. Three agents recovered execution controls, audited escape evidence
+and investigated the next String boundary. No browser/runtime source changed.
+
+Previously committed **df304fdf** extends the live scalar-global proof to
+Boolean origins. Actual stored SSA lattices still determine types, and the
+complete source-store census independently chooses Number or Boolean output.
+Both observation helpers require the exact runtime tag; output preserves
+`true`/`false` rather than accepting numerically equal values.
+
+**ab61f9ac** completes the interrupted execution gate. The original
+**681c8895** Boolean copy and **d3a90c01** literal-copy candidate now admit
+**5/5 native** in both modes, preserving five typed observations and eight
+source calls. A fresh devbox run passes **34 native programs**, **49 typed
+source/candidate probes**, **14 wrong-tag/null/missing-store mutations**, fresh
+and stale forgeries, prepared reruns, and the new mixed Number/Boolean Map
+lifetime. The lifetime retains snapshots across **128 future calls**, both
+branches, owner/table release, independent reentry and final Map/leaf release.
+Explicit/deduced GCC/Clang output links no VM symbols. Boolean budgets
+**9271/9351** check **31/29 cutoffs**, with no rollback interval.
+
+The interrupted failure was a test classification: optional and mixed Boolean
+initializers contain conditional entry operations and fail the ownership
+proof. The corrected gate checks **eight ownership**, **five Map-identity**
+and **two global-storage** refusals and their exact repairs. All **557**
+historical helper rows, **24** historical source hashes and **49** current
+source strings remain unchanged by the correction. Saved devbox temporary
+artifacts were unavailable, so the final focused run regenerated every native
+program instead of relying on those earlier binaries.
+
+The fresh no-work tools build passes **all 14 focused CTests in 149.81 seconds**,
+including type inference, host/owner queries and all eight escape checks.
+Source/prepared scalar queries each cover **54 rows** and exhaustive live
+proof budgets. Already committed **1138dbfd** proves dynamic BigInt Div/Mod
+retention origins; its five frozen code/test hashes, exact source-row checker
+and **34** mutation controls were independently audited. The fresh fixture
+reports **72/109** precision and all four escape oracles report zero violations.
+This proves retention only, not native BigInt admission or completion/effects.
+
+The final full devbox build/CTest gate is running; its measurements are pending.
+Stable clang-format **22.1.8 passes all 745 files**; bundled 23 reports the same
+nine preexisting differences. The earlier full-gate corpus counts below are
+historical until the current gate finishes.
+
+**Next: owning String globals and exact typed observations.** The unchanged
+**3a99e34c** String copy remains **0/5** at the scalar-read/Map-identity boundary;
+its **f0a03c19** literal-copy candidate remains **0/5** at Number/Boolean-only
+global storage. Extend live String evidence together with independently typed,
+owning per-binding storage and byte-preserving output. Empty, missing and null
+must remain distinct; actual optional/mixed/boxed lattices remain authoritative.
+String leaf fields, exact zero after clear, full Bootstrap initialization and
+direct browser API integration remain open. See `bootstrap-provider-next.md`.
+
+Evidence: `/tmp/ctcompile-boolean-gate-{focused,execution}.log`,
+`/tmp/ctcompile-boolean-completion-census.json`,
+`/tmp/ctcompile-boolean-execution-completed-frozen.json` and
+`/tmp/ctcompile-boolean-gate-source-hashes.json`.
+
 ## Constant-only Number globals and signed BigInt shifts, 2026-09-09
 
 Resumed the exact **3c1dfd95** constant-only Number continuation from

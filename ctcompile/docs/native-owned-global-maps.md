@@ -1,5 +1,34 @@
 # Native captured Maps across global publication
 
+## Definite Boolean globals, 2026-09-09
+
+**df304fdf** extends exact scalar-read evidence to Boolean origins and adds
+independently typed Number/Boolean global observations. Types still come from
+actual stored SSA lattices and the complete store set; each output helper
+checks the exact runtime tag. The original **681c8895** and literal-copy
+**d3a90c01** advance to **5/5 native** with eight calls and five observations.
+
+**ab61f9ac** completes the interrupted execution tests: **34 native programs**,
+**49 typed probes**, **14 wrong-tag/null/missing-store controls**, forgeries,
+prepared reruns and a new **128-future-call** mixed Boolean/Number/Map lifetime
+pass on the devbox. Explicit/deduced GCC/Clang binaries contain no VM symbols.
+Snapshots survive both branches, owner/table release, independent reentry and
+final Map/leaf destruction. Budgets **9271/9351** check **31/29 cutoffs**.
+
+The corrected refusal census has **eight ownership**, **five Map-identity**
+and **two global-storage** cases. Optional/mixed Boolean entry conditionals
+fail the complete ownership proof, before storage admission. Exact diagnostics
+and repairs are checked; **557** historical helper rows, **24** historical
+hashes and all **49** current source strings remain unchanged by the repair.
+Fresh **14/14 focused CTests pass in 149.81 seconds**. The full gate is running;
+final integrated program/lifetime and corpus measurements remain pending.
+
+Next are owning String globals: unchanged **3a99e34c/f0a03c19** copy/literal
+sources remain **0/5**, respectively at live scalar-read/Map identity and
+Number/Boolean-only storage. String proof, actual type subscriptions, owning
+storage and exact byte/tag observations must advance together. Full Bootstrap
+and direct platform integration remain unfinished; see `bootstrap-provider-next.md`.
+
 ## Constant-only Number globals, 2026-09-09
 
 `06c4a649` extends the existing exact scalar-load evidence to constant-only
