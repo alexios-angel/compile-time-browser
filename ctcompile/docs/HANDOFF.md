@@ -64,9 +64,26 @@ admission, allocation success or a no-throw/effect contract.
 
 Stable formatter **22.1.8 passes all 745 files**; changed C++ also passes
 bundled 23, whose complete check retains the same nine unrelated differences.
-The complete monorepo build/CTest gate is pending. Full-bundle coverage has not
-yet been remeasured this session; the previous gate was Bootstrap 19/574,
-p5 39/4754, Phaser 45/7725, exact Data 0/7 browser/CommonJS and 0/8 AMD.
+The complete warning-free **250-step** build finishes **512/517 CTests in
+1583.01 seconds** (CTest exit 8). All **372 compiler tests pass**. Only the
+five established browser failures remain: `selectors`, `frames`,
+`element_attrs`, `vm_async`, `early_errors`. Lit passes **165/165 in 874.79
+seconds** (CTest 874.98), including **233 published Map programs and 32
+sanitizer lifetime families**. The final owner and seeded-host queries pass
+in **84.19/35.63 seconds**; ExceptionRecovery passes in **1.18 seconds**.
+
+Remeasured native coverage stays **Bootstrap 19/574, p5 39/4754, Phaser
+45/7725** in both modes, zero pruned. Exact Data remains **0/7
+browser/CommonJS and 0/8 AMD**. All four escape oracles again report zero
+violations, with the fixture/corpus counts above. No full-Bootstrap gain is
+claimed from the isolated arithmetic improvement.
+
+All **fourteen final code/test hashes** match local files, committed HEAD,
+the frozen snapshot and the devbox after the gate. Inspected focused sum and
+lifetime C++ retains actual Number arithmetic, Map mutation, leaf fields and
+owning saved callables; it contains no `ctbrowser::script` symbol or VM/AOT
+runtime dependency. The lifetime observer separately checks final Map/leaf
+release.
 
 **Next: native Map identity across independently proved saved scalar globals.**
 The exact eight-call saved-results source **d74ae2ee** now has a complete host
@@ -84,9 +101,11 @@ Full native Bootstrap and direct browser API integration remain unfinished.
 Evidence: `/tmp/ctcompile-numeric-{baseline,first,census}.json`,
 `/tmp/ctcompile-numeric-{focused-build,focused-focused,escape2,execution}.log`,
 `/tmp/ctcompile-numeric-refusal-census.log`,
-`/tmp/ctcompile-numeric-{frozen,execution-frozen}.json`, and
+`/tmp/ctcompile-numeric-{full,full-detail,full-hashes}.log`,
+`/tmp/ctcompile-numeric-{final-frozen,final-evidence}.json`,
+`/tmp/ctcompile-numeric-final-{sum,lifetime}.cpp`, and
 `/tmp/ctcompile-numeric-saved.mlir`. See `bootstrap-provider-next.md` for the
-exact next source.
+exact next source and its independently gated repair.
 
 ## Captured Map.clear and exact BigInt relations, 2026-09-08
 

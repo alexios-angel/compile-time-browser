@@ -8,7 +8,11 @@ All eighteen focused programs pass Node/interpreter, explicit/deduced GCC/Clang,
 no-VM checks and two sanitizer lifetime families. Nine unowned and two
 owner-complete refusal families retain exact repairs and live operands. All
 169 historical refusal cases were audited without another classification change.
-The full monorepo gate remains pending; see [HANDOFF.md](HANDOFF.md).
+The warning-free full 250-step build passes **512/517 CTests**, including all
+**372 compiler tests**; only the five established browser failures remain.
+Lit passes **165/165 in 874.79 seconds**, including **233 published Map
+programs and 32 sanitizer lifetime families**. Full Bootstrap coverage remains
+**19/574** in both modes; see [HANDOFF.md](HANDOFF.md) for measured gates.
 
 The next exact boundary is the unchanged saved-results source:
 
@@ -41,6 +45,11 @@ actual scalar definitions and uses. Check source ordering, all writes,
 current callable/result origins, unknown effects and stale/fresh reports;
 never infer a harmless global from its spelling or observed startup value.
 Type inference and final native ownership remain independent obligations.
+Start with a per-load Number edge recording its single earlier StoreGlobal,
+saved SSA value and completed result dependency. Publish it only after the
+complete host family and owner checks succeed, sharing their bounded work and
+current fingerprint. Rebuild that proof after source transformations; preserve
+the constructor, prototype, reflection and unknown-call guards in NativeMap.
 
 The separate eight-call saved size-snapshot source, SHA-256
 `867378b10e4c6d18a1902135efc101813e3daadad13b33091c8af25fb89f9a42`,
@@ -49,6 +58,9 @@ every call, multiplication and addition and reaches 5/5. Both saved-global
 refusals preserve prepared receiver/callee/capture, store/load and binary edges
 under fresh/stale forgeries and reruns. All 31 measured cases agree on Node/VM
 and both admission modes: **20 native, nine unowned, two owner-complete**.
+The repairs preserve call order and arithmetic dependencies but move pure
+Number arithmetic earlier. The snapshot repair also publishes `trace` before
+the final setter, which neither reads it nor reenters.
 
 Host-only SCF category proofs also require a valid condition and independently
 scoped yield operands; entry SCF still has the existing native owner refusal.

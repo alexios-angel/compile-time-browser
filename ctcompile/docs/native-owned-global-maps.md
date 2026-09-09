@@ -27,8 +27,16 @@ NativeMap's global-read guard recognizes owned root loads but has no independent
 scalar-read proof. Their exact inline repairs preserve arithmetic and calls and
 are **5/5**. This is the next boundary; see
 [bootstrap-provider-next.md](bootstrap-provider-next.md) for exact sources and
-[HANDOFF.md](HANDOFF.md) for measured gates. The full monorepo gate is pending
-at this checkpoint. Full native Bootstrap and browser API integration are open.
+[HANDOFF.md](HANDOFF.md) for measured gates. The complete warning-free 250-step
+build passes **512/517 CTests in 1583.01 seconds**: all **372 compiler tests**
+pass, with only the five established browser failures. Lit passes **165/165
+in 874.79 seconds**, including **233 published Map programs and 32 sanitizer
+lifetime families**. Fourteen final code/test hashes match committed HEAD and
+the devbox. Inspected generated sum/lifetime C++ retains real Number arithmetic,
+Map/leaf ownership and callable captures without a Script or AOT runtime.
+Remeasured full Bootstrap stays **19/574** in both modes; exact Data remains
+**0/7 browser/CommonJS, 0/8 AMD**. Full native Bootstrap and direct browser API
+integration are open.
 
 ## Standard clear and arbitrary-key absence, 2026-09-08
 

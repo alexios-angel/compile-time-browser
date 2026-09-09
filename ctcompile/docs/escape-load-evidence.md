@@ -1951,10 +1951,20 @@ BigInt Eq repeats **52/30/2448**, each relational kind **60/32/2712**.
 
 Stable formatter 22.1.8 passes all 745 C++ files; changed C++ also passes
 bundled 23, whose full check retains the same nine unrelated differences.
-The full monorepo gate is pending at this checkpoint. Evidence:
+The complete warning-free **250-step** build passes **512/517 CTests in
+1583.01 seconds** (CTest exit 8). All **372 compiler tests pass**; only the
+five established browser failures remain. Lit passes **165/165 in 874.79
+seconds**, including **233 native Map programs and 32 lifetime families**.
+The full run repeats both unary **83/15/2257** checks, fixture **58/89**, all
+four zero-violation oracles and corpus precision **0/64, 0/16, 0/20**.
+Native corpus counts remain **19/574, 39/4754, 45/7725** in both modes, zero
+pruned; exact Data remains **0/7 browser/CommonJS and 0/8 AMD**. All fourteen
+final code/test hashes match local files, committed HEAD and devbox sources.
+Evidence:
 `/tmp/ctcompile-numeric-{focused-build,focused-focused,escape2}.log`,
-`/tmp/ctcompile-numeric-escape-semantics.log` and
-`/tmp/ctcompile-numeric-frozen.json`.
+`/tmp/ctcompile-numeric-escape-semantics.log`,
+`/tmp/ctcompile-numeric-{full,full-detail,full-hashes}.log`,
+`/tmp/ctcompile-numeric-{final-frozen,final-evidence}.json`.
 
 Next: independently categorized BigInt binary results and their exceptional
 cases, additional local producers, loops and callee summaries. No binary
