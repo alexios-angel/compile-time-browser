@@ -27,6 +27,7 @@ struct analyzer {
     std::vector<HostCallableEdge> checkedCalls;
     llvm::DenseMap<mlir::Operation *, HostCallableEdge> capturedCalls;
     llvm::DenseSet<mlir::Operation *> capturedOperations;
+    llvm::DenseMap<mlir::Value, PrimitiveAlternatives> capturedResults;
 
     analyzer(mlir::ModuleOp module, const HostContract & contract, unsigned steps);
     bool step();
@@ -42,6 +43,9 @@ struct analyzer {
                                llvm::ArrayRef<mlir::Operation *> calls,
                                const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
                                HostMethodParameters & result);
+    PrimitiveAlternatives entryCategories(
+        mlir::Value value, const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
+        mlir::Operation * consumer = nullptr, unsigned depth = 0);
     bool capturedMapBody(ctjs::FuncOp function, bool prepared, bool primitiveContents,
                          const HostMethodParameters & parameters, HostCapturedMap & result,
                          PrimitiveAlternatives & returnAlternatives);

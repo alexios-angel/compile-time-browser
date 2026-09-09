@@ -52,7 +52,18 @@ std::string analyzer::environmentProblem() {
         });
     }
     module.walk([&](mlir::Operation * operation) {
-        if (!step() || !active(operation)) { return; }
+        if (!step()) { return; }
+        if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(operation)) {
+            // Even an inactive source arm must have real SSA operands. A
+            // selected-arm effect anchor cannot export its local definitions.
+            for (mlir::Value operand : binary->getOperands()) {
+                if (!step() || !dominance.dominates(operand, operation)) {
+                    reject("numeric provider operand is outside its source scope");
+                    return;
+                }
+            }
+        }
+        if (!active(operation)) { return; }
         if (capturedOperations.contains(operation)) { return; }
         if (auto function = llvm::dyn_cast<ctjs::FuncOp>(operation)) {
             if (function.getBody().empty()) { reject("external function provider is unsupported"); }
@@ -145,6 +156,13 @@ std::string analyzer::environmentProblem() {
             if (compare.getKind() != ctjs::CompareKind::StrictEq &&
                 !primitive(compare.getResult())) {
                 reject("unproved comparison behavior is unsupported");
+            }
+            return;
+        }
+        if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(operation)) {
+            if (entryCategories(binary.getResult(), capturedResults).tag() !=
+                mlir::TypeID::get<ctjs::NumberAttr>()) {
+                reject("unsupported provider behavior through `ctjs.binary`");
             }
             return;
         }

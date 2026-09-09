@@ -593,6 +593,13 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         }
     }
     if (exhausted) { return {}; }
+    // Only the completed whole-family proof supplies entry expression facts.
+    // The invocation worklist above uses its own map, so provisional or cyclic
+    // dependencies cannot borrow these published facts to prove themselves.
+    for (const auto & [value, alternatives] : completedResults) {
+        if (!step()) { return {}; }
+        capturedResults[value] = alternatives.categories();
+    }
     return result;
 }
 
@@ -641,6 +648,76 @@ bool analyzer::capturedMapCalls(ctjs::FuncOp function, ctjs::SetPropertyOp publi
     return !census.wasInterrupted() && !exhausted;
 }
 
+PrimitiveAlternatives analyzer::entryCategories(
+    mlir::Value value, const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
+    mlir::Operation * consumer, unsigned depth) {
+    if (!value || depth > 64 || !step()) { return {}; }
+    auto * definition = value.getDefiningOp();
+    // A source-order anchor can order global effects across a selected arm or
+    // an invocation. It cannot make an SSA value visible outside its region.
+    if (!definition || (consumer && (definition->getParentOfType<ctjs::FuncOp>() !=
+                                         consumer->getParentOfType<ctjs::FuncOp>() ||
+                                     !dominance.properlyDominates(definition, consumer)))) {
+        return {};
+    }
+    if (auto known = results.find(value); known != results.end()) {
+        return known->second.categories();
+    }
+    if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(definition)) {
+        const auto & stores = globals[load.getName()];
+        if (stores.empty() && llvm::is_contained(contract.undefinedBindings, load.getName())) {
+            return PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::UndefinedAttr>());
+        }
+        if (stores.size() != 1 || !before(stores.front(), load)) { return {}; }
+        auto store = stores.front();
+        return entryCategories(store.getValue(), results, store, depth + 1);
+    }
+    if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(definition)) {
+        switch (binary.getKind()) {
+        case ctjs::BinaryKind::Add:
+        case ctjs::BinaryKind::Sub:
+        case ctjs::BinaryKind::Mul:
+        case ctjs::BinaryKind::Div:
+        case ctjs::BinaryKind::Mod:
+        case ctjs::BinaryKind::Pow: break;
+        default: return {};
+        }
+        const auto number = mlir::TypeID::get<ctjs::NumberAttr>();
+        if (entryCategories(binary.getLhs(), results, binary, depth + 1).tag() != number ||
+            entryCategories(binary.getRhs(), results, binary, depth + 1).tag() != number) {
+            return {};
+        }
+        // This is a category, never an evaluated Number. Zero, signed zero,
+        // NaN and infinities remain possible; primitive()/truth() must not
+        // consume this evidence to select a source arm or substitute a value.
+        return PrimitiveAlternatives::forTag(number);
+    }
+    if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(definition)) {
+        auto result = llvm::cast<mlir::OpResult>(value);
+        std::optional<PrimitiveAlternatives> joined;
+        // A category is not a branch predicate. Both live yield operands must
+        // prove their own scope and category, even for a constant condition.
+        for (mlir::Region & arm : branch->getRegions()) {
+            if (!step() || !llvm::hasSingleElement(arm)) { return {}; }
+            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(arm.front().getTerminator());
+            if (!yield || result.getResultNumber() >= yield.getNumOperands()) { return {}; }
+            auto categories = entryCategories(yield.getOperand(result.getResultNumber()), results,
+                                              yield, depth + 1);
+            joined = joined ? joined->joined(categories) : categories;
+        }
+        return joined.value_or(PrimitiveAlternatives{});
+    }
+    if (!llvm::isa<ctjs::ConstantOp, mlir::arith::ConstantOp, ctjs::UnaryOp, ctjs::CompareOp>(
+            definition)) {
+        return {};
+    }
+    for (mlir::Value operand : definition->getOperands()) {
+        if (!entryCategories(operand, results, definition, depth + 1).known) { return {}; }
+    }
+    auto constant = primitive(value, depth + 1);
+    return constant ? PrimitiveAlternatives::forTag(constant.getTypeID()) : PrimitiveAlternatives{};
+}
+
 bool analyzer::capturedMapParameters(
     ctjs::FuncOp function, bool prepared, llvm::ArrayRef<mlir::Operation *> calls,
     const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
@@ -654,16 +731,9 @@ bool analyzer::capturedMapParameters(
         std::vector<PrimitiveAlternatives> tags;
         for (mlir::Value actual : args.drop_front(prepared ? 1u : 0u)) {
             if (!step()) { return false; }
-            auto value = primitive(actual);
-            if (llvm::isa_and_nonnull<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
-                                      ctjs::NullAttr, ctjs::UndefinedAttr>(value)) {
-                tags.push_back(PrimitiveAlternatives::forTag(value.getTypeID()));
-            } else if (auto known = results.find(actual); known != results.end()) {
-                if (!before(actual.getDefiningOp(), operation)) { return false; }
-                tags.push_back(known->second.categories());
-            } else {
-                return false;
-            }
+            const auto categories = entryCategories(actual, results, operation);
+            if (!categories.known || !(categories.truthy | categories.falsy)) { return false; }
+            tags.push_back(categories);
         }
         if (found) {
             if (found->size() != tags.size()) { return false; }
