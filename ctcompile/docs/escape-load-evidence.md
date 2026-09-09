@@ -1823,14 +1823,13 @@ fixture run reports **55/85 precision**, zero violations, partial or pending
 claims, then fails one historical verdict expectation. The original
 `objectFrameRelationalBigInt` compares branch-selected original `1n`/`2n`
 constants against `2n` through all four kinds; its deleted child now proves
-confined. Only that expected verdict changes from Stored to confined. The corrected
-fixture rerun passes **1/1 in 0.21 seconds** (test **0.20 seconds**) and checks
+confined. Only that expected verdict changes from Stored to confined. The
+corrected fixture rerun passes **1/1 in 0.21 seconds** (test **0.20 seconds**) and checks
 the new **20 sites, 40 instances and 32 retained** exactly. All historical
 family counts pass, including the earlier BigInt Eq family's **16/32/26**.
 The precision increase from **53/81 to 55/85** includes one newly confined
 historical child plus one proved-confined and four observed-confined sites
-in the added source family. Corpus
-precision stays **0/64, 0/16, 0/20**, including p5's existing one partial
+in the added source family. Corpus precision stays **0/64, 0/16, 0/20**, including p5's existing one partial
 observation; all four oracles report zero soundness violations.
 
 Local Node checks **97 combined fixture calls and 51 new discriminating
@@ -1854,8 +1853,66 @@ this is not a second complete twenty-test run. The complete formatter using
 22.1.8 passes all **745 files**. All five code/test hashes independently match
 the parent's corrected frozen input. Evidence:
 `/tmp/ctcompile-map-clear-{build2,fixture2,fixture2-detail,format22}.log` and
-`-frozen.json`. The full generated CTest gate remains pending.
+`-frozen.json`.
+
+The increment is committed as **`9f969651`**. The full **240-step generated
+build completes with zero warnings**. Initial CTest finishes **511/517 in
+1420.17 seconds**: **371/372 compiler** and **140/145 browser** tests pass.
+Lit is **164/165 in 738.29 seconds** (CTest **738.36 seconds**). Its sole
+failing case reaches the historical `seeded_cleared` expectation: this
+unchanged nine-call program now has complete ownership after clear, while
+native admission still refuses the unsupported nullable Number Map-key
+carrier. This initial run is not a complete compiler pass. The five browser
+failures remain `selectors`, `frames`, `element_attrs`, `vm_async` and
+`early_errors`; exception recovery passes in **1.20 seconds**.
+
+All eight escape tests pass again in that full run. BigInt Eq repeats
+**52/30/2448**, and each relational kind repeats **60/32/2684** with its
+64-work snapshot. Primitive comparison and dynamic binary families retain
+**84/34/3527** and **84/49/4127**. The four execution oracles again report
+**zero soundness violations**. Fixture precision stays **55/85**, with zero
+partial or pending claims, exact new **20/40/32** observations and every
+historical family count preserved. Bootstrap/p5/Phaser escape precision stays
+**0/64, 0/16, 0/20**, including p5's existing one partial observation. Native
+corpus counts separately remain **19/574, 39/4754, 45/7725** in both modes,
+zero pruned; exact Data stays **0/7 browser/CommonJS and 0/8 AMD**.
+
+**`7011c79e`** corrects only the historical native test classification,
+preserving the original source, nine-call clear-to-has repair, unsupported
+carrier diagnostic and prepared producer/consumer/capture operands. The
+focused check passes all **twelve absent-result carrier families** in both
+modes, including original/repair observations, fresh/stale forgeries and
+prepared reruns. The complete corrected lit run passes **165/165 in
+776.42 seconds** (CTest **776.49 seconds**, total **776.50 seconds**, exit
+**0**), including **215 native programs and 30 lifetime families**. All
+**372 compiler tests have passing results across the initial full run and
+corrected rerun**. This is not a second complete 517-test run; the five
+established browser failures remain.
+
+A later summary-only correction, **`5f7b5a2f`**, reports the actual **nine
+ordinary seeded refusals plus three carrier refusals**. Independent AST
+comparison confirms that only `main()`'s final print changes; every test
+function, generated source, call and loop matches the executed driver. Its
+final no-work build and summary check pass, with no second semantic-run claim.
+The executed driver and final reporting driver retain separate hashes and
+frozen inputs.
+
+All **twelve executed code/test hashes** match the corrected snapshot and the
+devbox immediately after lit. All **twelve final code/test hashes** separately
+match current files, committed HEAD, the reporting snapshot and the final
+devbox. The five escape code/test hashes remain unchanged from their original
+corrected fixture freeze throughout these gates and report-only changes.
+Evidence: `/tmp/ctcompile-map-clear-{full,full-detail,corrected-lit,corrected-lit-detail,corrected-remote-hashes,final-report-check}.log`,
+`-corrected-lit-exit.txt`, `-evidence.json`, `-report-audit.json`,
+`-corrected-frozen.json` and `-final-report-frozen.json`. Independent local
+hash audits use the same prefix with `-child-first-full-audit.json`,
+`-child-corrected-hash-audit.json` and `-child-final-hash-audit.json`.
 
 Remaining producer boundaries include mixed/computed BigInt conversions and
 arithmetic, other primitive conversions, loops, callee summaries and native
-lifetime/effect consumers.
+lifetime/effect consumers. Computed BigInt arithmetic needs explicit original
+category evidence before admission: `primitiveNonBigIntOrigin` currently
+recognizes admitted unary/binary results as non-BigInt. Extending only the
+operator whitelist would lose that invariant. The new relational producers
+return Booleans and preserve it; the refused conversion discrepancies above
+remain unresolved runtime observations.

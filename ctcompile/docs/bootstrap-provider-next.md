@@ -12,7 +12,10 @@ escape expectation rerun. The warning-free full 240-step build completes with
 classification (lit **164/165**). **`7011c79e`** retains the historical nine-call
 clear source and checks its exact unsupported nullable Number Map-key carrier;
 its nine-call repair admits. All twelve focused carrier families and HostContract
-CTest pass. The complete corrected lit rerun is pending.
+CTest pass.
+The complete corrected lit rerun passes **165/165 in 776.42 seconds**, including
+**215 published Map programs and 30 lifetime families**. All **372 compiler
+tests have passing results across the full run and corrected rerun**.
 
 The next exact boundary is **entry arithmetic over published method results**:
 
@@ -32,7 +35,8 @@ Logical source SHA-256 (including its final newline):
 `379ccc667b2d463c5fbdc531c53a90ec01c7ba7d8ab578ef1493c3e62f4e281e`.
 This unchanged source has **five functions, eight raw/prepared calls, two binary
 operations and trace=3**, but stays unowned **0/5** in both modes, diagnosed as
-``unsupported provider behavior through `ctjs.binary` ``. Replacing only its final declaration with
+`` unsupported provider behavior through `ctjs.binary` ``. Replacing only its
+final declaration with
 `host.slot.set('x'); host.slot.set('x'); var trace = host.slot.set('y');`
 retains **all eight calls**, reaches **5/5** and returns trace=1. The older
 one-call repair also stays admitted, with six total calls.
@@ -45,6 +49,14 @@ joins and effect checks remain mandatory. Reports or observed startup numbers
 cannot supply type authority. Keep the evaluated operands and every call.
 A later method key computed from earlier results needs the same bounded
 result-dependency proof, without allowing a circular method summary.
+
+Concretely, `capturedMapParameters()` currently accepts a primitive constant or
+an exact key in the invocation worklist's local `completedResults`; it cannot
+trace a binary expression. Publish no provisional result category until the
+complete family recheck succeeds. Keep this category proof separate from
+`primitive()`/`truth()`, whose attributes denote actual values and select UMD
+branches: an unknown Number result must never become a fabricated Number
+constant. Saved global aliases also need their current source order checked.
 
 All **twelve probes** agree across Node/interpreter and both modes: four admitted
 5/5 and eight unowned 0/5. Saved results, Number-plus-literal and result-fed keys

@@ -27,7 +27,12 @@ the unchanged nine-call `seeded_cleared` source was incorrectly required to stay
 unowned. **`7011c79e`** checks its now-complete owner and exact unsupported nullable
 Number Map-key carrier instead, preserving all source calls and operands. Its
 clear-to-has repair also retains nine calls. All twelve carrier families and
-HostContract CTest pass after the correction; complete lit rerun is pending.
+HostContract CTest pass after the correction. The complete corrected lit rerun
+passes **165/165 in 776.42 seconds**, completing **215 programs and 30 lifetime
+families**. All **372 compiler tests have passing results across the full run
+and corrected rerun**; no second 517-test run is claimed. A separate report-only
+fix, `5f7b5a2f`, counts the nine ordinary seeded refusals from the named case set;
+all checks outside the final print remain identical to the executed driver.
 See [HANDOFF.md](HANDOFF.md) for measurements and source evidence.
 
 Next is entry numeric addition over proved method results. The exact eight-call

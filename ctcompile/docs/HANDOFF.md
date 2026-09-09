@@ -76,10 +76,22 @@ diagnostics and prepared producer/consumer, receiver, callee and capture edges.
 Its repair substitutes `has(0)` for `clear()`, retaining all nine calls. After a
 no-work rebuild, all **twelve carrier families** pass in both modes with exact
 repairs, fresh/stale forgeries and reruns; HostContract CTest passes **1/1 in
-0.16 seconds**. The complete corrected lit rerun is running. The final frozen
-inventory differs only in this test driver. Actual emitted saved-field and
-saved-Undefined lifetime C++ preserves real allocation, field writes, Map
-set/get/clear and reseeding, with no Script/context/value or AOT runtime symbols.
+0.16 seconds**. The complete corrected lit rerun passes **165/165 in 776.42
+seconds** (CTest 776.49, total 776.50). All **372 compiler tests have passing
+results across the full run and corrected rerun**; this is not a second
+517-test run. The published Map gate completes **215 programs and 30 lifetime
+families**. The corrected execution inventory differs only in this test driver.
+Actual emitted saved-field and saved-Undefined lifetime C++ preserves real
+allocation, field writes, Map set/get/clear and reseeding, with no
+Script/context/value or AOT runtime symbols.
+
+**`5f7b5a2f`** separately corrects only the final printed seeded-refusal count:
+the named case sets contain **nine ordinary refusals and three carrier refusals**.
+Local, child and devbox audits prove the entire driver AST outside that final
+print is identical to the executed version. The report-only devbox sync requires
+no build work and checks the corrected counts. All twelve final code/test hashes
+match local sources, committed HEAD and final devbox sources; the first-full,
+corrected-execution and report-only snapshots are retained separately.
 
 The fresh full corpus gate remains Bootstrap **19/574**, p5 **39/4754**, Phaser
 **45/7725** in both modes, zero pruned; exact Data remains **0/7 browser/CommonJS,
@@ -89,12 +101,16 @@ The fresh full corpus gate remains Bootstrap **19/574**, p5 **39/4754**, Phaser
 All **twelve continuation sources** agree on Node/interpreter observations and
 both admission modes: **four reach 5/5, eight remain unowned 0/5**. The exact
 original eight-call expression adds three Number-returning method calls and
-returns trace=3, but fails at `unsupported provider behavior through ctjs.binary`.
+returns trace=3, but fails at
+`` unsupported provider behavior through `ctjs.binary` ``.
 The eight-call repair retains all three calls and removes only their addition;
 it reaches 5/5, trace=1. Saved-result addition, Number-plus-literal and an added
 result used as the next method's key also refuse. Preserve actual operands,
 source order and all future method input categories when proving arithmetic;
 String concatenation and object coercion need their own evidence.
+`capturedMapParameters()` needs to trace expressions over its completed-result
+categories. Keep those categories separate from `primitive()`/`truth()` values;
+an unknown Number must never become a fabricated constant that selects a branch.
 
 The exact zero-size read after clear is a separate boundary: an eight-call
 Number-key witness remains 0/5, while its literal-zero repair preserves the
@@ -103,9 +119,11 @@ seven-call String leaf-field source also remains 0/5; its numeric repair is 5/5.
 Full native Bootstrap and direct browser API integration remain unfinished.
 
 Evidence: `/tmp/ctcompile-map-clear-{build,focused,fixture2,execution,full}.log`,
-`/tmp/ctcompile-map-clear-{frozen,next,first}.json`, and
-`/tmp/ctcompile-map-clear-{evidence,corrected-frozen}.json`,
-`/tmp/ctcompile-map-clear-{carrier-focused,carrier-ctest,corrected-lit}.log` and
+`/tmp/ctcompile-map-clear-{frozen,next,first}.json`,
+`/tmp/ctcompile-map-clear-{corrected-evidence,corrected-frozen,final-report-frozen}.json`,
+`/tmp/ctcompile-map-clear-{carrier-focused,carrier-ctest,corrected-lit}.log`,
+`/tmp/ctcompile-map-clear-{final-report-check,corrected-remote-hashes}.log`,
+`/tmp/ctcompile-map-clear-final-{field,lifetime}.cpp`, and
 `/tmp/ctcompile-map-clear-next.py`. The temporary continuation runner was corrected
 to account for the saved-result source's three additional numeric globals; no
 source or observation was changed.
