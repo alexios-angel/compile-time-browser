@@ -262,7 +262,7 @@
 # binary operand through preparation and both emitted C++ forms. NaN observers
 # check its Number tag and allow only the reference's irrelevant sign spelling;
 # signed-zero aliases retain their sign and a negative-infinity reciprocal.
-# Boolean/String/Undefined originals and literal substitutions remain refused
+# String/Undefined originals and literal substitutions remain refused
 # at their separate Map-identity or numeric-global boundaries; duplicate writes,
 # reads before initialization, dynamic globals and future method writes retain
 # independent ownership refusals and exact admitted repairs. Fresh/stale forged
@@ -271,3 +271,20 @@
 # 128 future calls, both flags, owner/table release, independent entry execution
 # and final Map/leaf reclamation. Full scalar observations before reentry prevent
 # later entry writes from hiding a corrupted constant alias.
+# The exact 681c8895 Boolean-copy source and d3a90c01 literal-copy candidate
+# preserve all eight calls, three Number observations and two Boolean observations.
+# False/true aliases, a Boolean published result and Boolean trace globals retain
+# their actual stores and loads in source, preparation and both emitted C++ forms.
+# Independently checked observation tags print true/false; Number observations
+# retain their exact Number check. Numeric 0/1 substitutions, Null and missing
+# stores cannot imitate either Boolean, and Boolean/absent stores cannot imitate
+# Numbers. These post-emission mutations must reach the exact termination check.
+# Duplicate/mixed writes retain their Map-identity refusal, while reads before
+# initialization, dynamic/future effects and optional/mixed entry branches retain
+# their exact independent owner refusals and admitted repairs. String/Undefined
+# literal-copy candidates retain their separate global-storage diagnostics.
+# Fresh/stale forgeries, prepared reruns and bounded proofs cannot manufacture a
+# Boolean fact or erase evaluated calls. Every earlier source hash stays fixed.
+# A mixed Number/Boolean snapshot lifetime runs 128 future saved Map calls with
+# both flags after owner/table release, checks globals before independent reentry,
+# and preserves Boolean tags and values after final Map/leaf destruction.

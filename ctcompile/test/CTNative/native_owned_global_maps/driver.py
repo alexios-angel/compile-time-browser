@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import struct
+import subprocess
 
 from .sources import (
     methods, owned, boundary, host, SOURCE, SHARED, parameter_sources, result_sources,
@@ -701,7 +702,9 @@ def check_scalar_global_source(ir, name):
             early.append(event[1])
     expected_early = {"scalar_read_before_write": ["first"],
                       "constant_read_before_write": ["fixed"],
-                      "constant_dynamic_global": ["globalThis"]}.get(name, [])
+                      "constant_dynamic_global": ["globalThis"],
+                      "constant_boolean_read_before_write": ["fixed"],
+                      "constant_boolean_dynamic_global": ["globalThis"]}.get(name, [])
     if early != expected_early:
         raise RuntimeError(f"{name}: changed source store/load order: {early}")
     first_writes = sum(event[:2] == ("store", "first") for event in stores)
@@ -720,10 +723,12 @@ def check_scalar_global_source(ir, name):
         "constant_branch_lifetime": [("left", "first"), ("middle", "second"),
                                      ("right", "third"), ("offset", "fixed"), ("copy", "offset")],
     }.get(name, [])
-    if name == "constant_duplicate_write" and sum(event[:2] == ("store", "fixed") for event in stores) != 2:
+    if name in {"constant_duplicate_write", "constant_boolean_duplicate_write",
+                "constant_boolean_mixed_write"} and sum(
+            event[:2] == ("store", "fixed") for event in stores) != 2:
         raise RuntimeError(f"{name}: erased the second constant-only global write")
     constant = constant_global_cases().get(name)
-    if constant and name != "constant_branch_lifetime":
+    if constant:
         source = constant["source"]
         aliases += [(destination, origin) for destination, origin in re.findall(
             r"(?:const|var) (\w+) = (\w+);", source.rsplit("});\n", 1)[1])
@@ -744,7 +749,7 @@ def check_scalar_global_emission(args, ir, name):
         entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
         if not entry:
             raise RuntimeError(f"{name}/{mode}: lost the scalar entry")
-        observed = set(re.findall(r"ctnative::global_number\((\w+)\)", entry[1]))
+        observed = set(re.findall(r"ctnative::global_(?:number|boolean)\((\w+)\)", entry[1]))
         methods_by_value = dict(re.findall(
             r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1]))
         values, actual, calls, binaries = {}, [], 0, 0
@@ -767,7 +772,7 @@ def check_scalar_global_emission(args, ir, name):
                 values[result] = "global:" + expression[2:]
                 if expression != "g_host" and result not in observed:
                     actual.append(("load", expression[2:]))
-            elif match := re.fullmatch(r"ctnative::(?:to_number|to_nullable)\((\w+)\)", expression):
+            elif match := re.fullmatch(r"ctnative::(?:to_number|to_nullable|scalar_truthy)\((\w+)\)", expression):
                 values[result] = values.get(match[1], "unknown")
             elif match := re.fullmatch(r'ctnative::js_string\("([^\"]*)"\)|std::string\("([^\"]*)", \d+\)', expression):
                 values[result] = ("string", match[1] if match[1] is not None else match[2])
@@ -785,6 +790,16 @@ def check_scalar_global_emission(args, ir, name):
                 values[result] = values[expression]
         if actual != expected:
             raise RuntimeError(f"{name}/{mode}: emitted scalar dataflow changed\n{expected}\n{actual}")
+        case = constant_global_cases().get(name)
+        if case:
+            requested = {**case["saved"], "trace": case["expected_trace"]}
+            for binding, value in requested.items():
+                tag = "boolean" if isinstance(value, bool) else "number"
+                loaded = re.findall(rf"\b(\w+)\s*=\s*g_{binding};", entry[1])
+                checked = [temporary for temporary in loaded if re.search(
+                    rf"ctnative::global_{tag}\({temporary}\)", entry[1])]
+                if len(checked) != 1:
+                    raise RuntimeError(f"{name}/{mode}: {binding} lost its exact {tag} observation check")
 
 
 def check_scalar_global_carriers(args, positives, node, reference):
@@ -890,6 +905,13 @@ def check_constant_global_observations(args, node, reference):
         ("constant_nan", "0 / 0", "void 0"),
         ("constant_nan", "0 / 0", "'NaN'"),
         ("constant_boolean", "const fixed = false;", "const fixed = 0;"),
+        ("constant_boolean", "const copy = fixed;", "const copy = true;"),
+        ("constant_boolean_true", "const copy = fixed;", "const copy = 1;"),
+        ("constant_boolean_alias_chain", "const copy = offset;", "const copy = enabled;"),
+        ("constant_boolean_trace_false", "var trace = copy;", "var trace = 0;"),
+        ("constant_boolean_trace_true", "var trace = copy;", "var trace = 1;"),
+        ("constant_boolean_saved_result", "const copy = first;", "const copy = fixed;"),
+        ("constant_boolean_branch_lifetime", "const copy_flag = fixed_flag;", "const copy_flag = enabled;"),
         ("constant_string", "'owned scalar'", "7"),
         ("constant_undefined", "void 0", "0 / 0"),
         ("constant_alias_chain", "const copy = offset;", "const copy = first;"),
@@ -906,6 +928,50 @@ def check_constant_global_observations(args, node, reference):
             raise RuntimeError(f"{name}: typed observation cannot distinguish {replacement}")
 
 
+def check_boolean_observation_mutations(args, compilers, nm):
+    # Mutate only an emitted store after all source proofs and successful native
+    # executions. A missing store or a numerically equal value of another tag
+    # must fail the final observation instead of printing a plausible Boolean.
+    for name, binding, replacement in (
+        ("constant_boolean", "copy", "ctnative::nullable_scalar(0.0)"),
+        ("constant_boolean_true", "copy", "ctnative::nullable_scalar(1.0)"),
+        ("constant_boolean", "copy", "ctnative::nullable_scalar::null()"),
+        ("constant_boolean", "copy", None),
+        ("constant_boolean_true", "copy", None),
+        ("constant_boolean", "first", "ctnative::nullable_scalar(true)"),
+        ("constant_boolean", "first", None),
+    ):
+        kind = "missing" if replacement is None else (
+            "null" if "::null" in replacement else "wrong-tag")
+        row = constant_global_cases()[name]
+        output = scalar_global_output(name, row["expected_trace"])
+        preceding = output.split(binding + "=", 1)[0]
+        for mode in ("explicit", "deduced"):
+            original = (args.work / f"{name}.{mode}.cpp").read_text()
+            pattern = rf"(?m)^(\s*)g_{binding} = ([^;\n]+);$"
+            matches = list(re.finditer(pattern, original))
+            if len(matches) != 1:
+                raise RuntimeError(f"{name}/{mode}: lost unique {binding} store mutation")
+            match = matches[0]
+            assignment = (f"{match[1]}(void){match[2]};" if replacement is None else
+                          f"{match[1]}g_{binding} = {replacement};\n{match[1]}(void){match[2]};")
+            changed = original[:match.start()] + assignment + original[match.end():]
+            changed, count = re.subn(r"(\bmain\(\)\s*\{)",
+                r"\1\n    std::set_terminate([] { std::fflush(stdout); std::_Exit(211); });", changed)
+            if count != 1:
+                raise RuntimeError(f"{name}/{mode}: lost exact observation termination witness")
+            source = args.work / f"{name}.{mode}.{binding}-{kind}.cpp"
+            source.write_text("#include <cstdio>\n#include <cstdlib>\n#include <exception>\n" + changed)
+            binary = source.with_suffix(".mutated").resolve()
+            host.run([compilers[1], *owned.FLAGS, str(source), "-o", str(binary)])
+            if owned.VM.search(host.run([nm, "-C", str(binary)]).stdout):
+                raise RuntimeError(f"{name}/{mode}: observation control linked a VM symbol")
+            result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=30)
+            if result.returncode != 211 or result.stdout != preceding or result.stderr:
+                raise RuntimeError(f"{name}/{mode}: {binding} {kind} bypassed exact observation tag check "
+                                   f"(exit {result.returncode})\n{result.stdout}{result.stderr}")
+
+
 def check_constant_global_refusals(args, positives, node, reference):
     cases = constant_global_cases()
     for name in sorted(CONSTANT_GLOBAL_UNOWNED | CONSTANT_GLOBAL_CARRIERS):
@@ -915,7 +981,7 @@ def check_constant_global_refusals(args, positives, node, reference):
         if repair in constant_global_sources():
             old, replacement = row["removed_text"], row["replacement_text"]
         else:
-            # Literal substitution alone does not repair a non-Number global.
+            # Literal substitution alone does not repair an unsupported global.
             # Restore both declarations to the exact independently gated source.
             old = source.rsplit("\n", 2)[-2]
             replacement = "const fixed = 7; const copy = fixed;"
@@ -937,11 +1003,31 @@ def check_constant_global_refusals(args, positives, node, reference):
                 owner = name not in CONSTANT_GLOBAL_UNOWNED
                 if f"ctnative.host_owner_proved = {str(owner).lower()}" not in text:
                     raise RuntimeError(f"{label}: constant-global refusal changed its independent owner boundary")
-                reason = ("requires a numeric global" if name.endswith("_candidate") and "undefined" not in name
-                          else "may be null or undefined" if name.endswith("_candidate")
-                          else "standard Map identity is unproved with other host/global value reads")
-                if owner and reason not in text:
-                    raise RuntimeError(f"{label}: lost its independent Map identity/global carrier boundary")
+                if owner:
+                    attribute = "ctnative.not_native"
+                    reason = {
+                        "constant_string_candidate":
+                            "store to global `fixed` requires a Number or Boolean global",
+                        "constant_undefined_candidate":
+                            "store to global `fixed` may be null or undefined; "
+                            "native global observations require a definite Number or Boolean",
+                    }.get(name, "standard Map identity is unproved with other host/global value reads")
+                else:
+                    attribute = "ctnative.host_owner_reason"
+                    reason = {
+                        "constant_read_before_write": "global read lacks definite source initialization",
+                        "constant_boolean_read_before_write": "global read lacks definite source initialization",
+                        "constant_dynamic_global": "unproved host binding `globalThis`",
+                        "constant_boolean_dynamic_global": "unproved host binding `globalThis`",
+                        "constant_future_method_write": "property call lacks a current source getter proof",
+                        "constant_boolean_future_method_write": "property call lacks a current source getter proof",
+                        "constant_boolean_optional":
+                            "owned global method table requires unconditional straight-line operations",
+                        "constant_boolean_mixed":
+                            "owned global method table requires unconditional straight-line operations",
+                    }[name]
+                if f'{attribute} = "{reason}"' not in text:
+                    raise RuntimeError(f"{label}: lost its independent ownership/Map identity/global carrier boundary")
                 check_scalar_global_preparation(text, input_ir.read_text(), name)
                 if not owner:
                     check_call_preservation(input_ir.read_text(), text, label)
@@ -980,7 +1066,7 @@ def check_numeric_entry_observations(args, node, reference):
                      ("value: value", "value: 1"),
                      ("state.clear();", "state.has(key);")]
         if name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime",
-                    "scalar_alias_branch_lifetime", "constant_branch_lifetime"}:
+                    "scalar_alias_branch_lifetime", "constant_branch_lifetime", "constant_boolean_branch_lifetime"}:
             mutations.append(("state.delete(key);", "state.has(key);"))
         for index, (old, replacement) in enumerate(mutations):
             if old not in source:
@@ -1566,7 +1652,12 @@ def main():
         if name.startswith("legacy_"):
             ir = methods.legacy_marker(args, ir, name)
         expected = f"trace={value}\n"
-        if (host.run([node, "-e", numeric_node_observer(value), str(js)]).stdout != expected
+        node_command = [node, "-e", numeric_node_observer(value), str(js)]
+        if name in constant_global_cases():
+            names = json.dumps(sorted(["trace", *constant_global_cases()[name]["saved"]]))
+            node_command = [node, "-e", CONSTANT_GLOBAL_NODE, str(js), names]
+            expected = numeric_reference_output(name, value)
+        if (host.run(node_command).stdout != expected
                 or normalized_scalar_output(host.run([str(reference), str(js)]).stdout)
                 != numeric_reference_output(name, value)):
             raise RuntimeError(f"{name}: Node/interpreter source observation mismatch")
@@ -1612,6 +1703,10 @@ def main():
     check_leaf_object_forgeries(args, saved,
         (*sorted(SCALAR_GLOBAL_INITIALIZED), "scalar_alias_chain", "scalar_alias_branch_lifetime"))
     check_leaf_object_forgeries(args, saved, ("scalar_constant_only", "constant_alias_arithmetic"))
+    check_leaf_object_forgeries(args, saved,
+        ("constant_boolean", "constant_boolean_true", "constant_boolean_alias_chain",
+         "constant_boolean_saved_result", "constant_boolean_branch_lifetime"))
+    check_boolean_observation_mutations(args, compilers, nm)
 
     # Valid-looking scalar markers cannot normalize real null keys or narrow
     # the second use of a nullable formal. Fresh proof must emit the same C++.
@@ -2110,7 +2205,8 @@ def main():
         rollback += check_budgets(args, ir, config, name, functions=5)
     for name in ("local_identity_repeated_keys", "local_numeric_nested_key",
                  "local_add_saved_results", "scalar_result_key", "scalar_alias",
-                 "scalar_alias_chain", "scalar_constant_only", "constant_alias_arithmetic"):
+                 "scalar_alias_chain", "scalar_constant_only", "constant_alias_arithmetic",
+                 "constant_boolean", "constant_boolean_alias_chain"):
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
@@ -2204,8 +2300,10 @@ def main():
           f"{len(SCALAR_GLOBAL_CARRIERS)} scalar Map identity refusals retain exact repairs; "
           f"{len(SCALAR_GLOBAL_INITIALIZED)} original alias/direct observations retain definite stored-value types; "
           f"{len(constant_global_cases())} constant-global probes/candidate edits preserve exact scalar observations; "
-          f"{len(CONSTANT_GLOBAL_UNOWNED)} unowned/{len(CONSTANT_GLOBAL_CARRIERS)} carrier refusals, "
-          "constant-only alias/arithmetic edges and a mixed saved-Map lifetime pass; "
+          f"{len(CONSTANT_GLOBAL_UNOWNED)} unowned/{len(CONSTANT_GLOBAL_CARRIERS)} complete-owner refusals, "
+          "constant-only alias/arithmetic edges and mixed saved-Map lifetimes pass; "
+          "Boolean aliases/results retain true/false output with independent Number/Boolean tags; "
+          "14 wrong-tag/null/missing-store observation mutations reach the exact termination check; "
           f"{len(NUMERIC_ENTRY_LIFETIMES)} numeric lifetime families retain 128 future results across both branches, reentry, "
           "final Map release and independent leaf release; "
           f"{len(leaf_field_result_refusals())} complete-schema field results "

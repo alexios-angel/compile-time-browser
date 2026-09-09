@@ -1872,7 +1872,8 @@ int main() {
 
 
 NUMERIC_ENTRY_LIFETIMES = ("local_numeric_saved_lifetime", "local_numeric_branch_lifetime",
-                           "scalar_saved_branch_lifetime", "scalar_alias_branch_lifetime", "constant_branch_lifetime")
+                           "scalar_saved_branch_lifetime", "scalar_alias_branch_lifetime",
+                           "constant_branch_lifetime", "constant_boolean_branch_lifetime")
 
 
 def check_numeric_entry_calls(cpp, name, mode):
@@ -1885,7 +1886,8 @@ def check_numeric_entry_calls(cpp, name, mode):
               "js_num" if name in {"local_add_result_key", "local_numeric_nested_key",
                                     "local_numeric_nan_key", "local_clear_zero_literal_repair", "scalar_result_key"}
               else "std::string")
-    if f"std::function<js_num({params})>" not in cpp:
+    result = "bool" if name == "constant_boolean_saved_result" else "js_num"
+    if f"std::function<{result}({params})>" not in cpp:
         raise RuntimeError(f"{name}/{mode}: arithmetic changed the independently typed callable ABI")
     if name == "scalar_result_key" and (
             "std::shared_ptr<ctnative::map_storage<double, ctnative::object_value>>" not in cpp):
@@ -1921,7 +1923,7 @@ def check_numeric_entry_calls(cpp, name, mode):
 
 def numeric_entry_observer_source(source, name):
     branch = name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime",
-                      "scalar_alias_branch_lifetime", "constant_branch_lifetime"}
+                      "scalar_alias_branch_lifetime", "constant_branch_lifetime", "constant_boolean_branch_lifetime"}
     observed = source + """
 (function() {
     const seen = [], results = [], sizes = [];
@@ -1952,7 +1954,7 @@ def numeric_entry_observer_source(source, name):
 
 def numeric_entry_lifetime_cpp(cpp, name):
     branch = name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime",
-                      "scalar_alias_branch_lifetime", "constant_branch_lifetime"}
+                      "scalar_alias_branch_lifetime", "constant_branch_lifetime", "constant_boolean_branch_lifetime"}
     changed = instrument_leaf_objects(cpp)
     changed = changed.replace(
         "static std::vector<std::weak_ptr<const void>> ctn_test_objects;",
@@ -2032,7 +2034,8 @@ int main() {
     return 0;
 }
 '''
-    if name in {"scalar_saved_branch_lifetime", "scalar_alias_branch_lifetime", "constant_branch_lifetime"}:
+    if name in {"scalar_saved_branch_lifetime", "scalar_alias_branch_lifetime", "constant_branch_lifetime",
+                "constant_boolean_branch_lifetime"}:
         changed = changed.replace("    auto owner = g_host;", """
     const auto first_snapshot = ctnative::global_number(g_first);
     const auto second_snapshot = ctnative::global_number(g_second);
@@ -2059,7 +2062,7 @@ int main() {
             third_snapshot != 4 || ctnative::global_number(g_first) != 2) { return 196; }
     }
     ctn_test_retained.reset();""")
-    if name in {"scalar_alias_branch_lifetime", "constant_branch_lifetime"}:
+    if name in {"scalar_alias_branch_lifetime", "constant_branch_lifetime", "constant_boolean_branch_lifetime"}:
         changed = changed.replace("    auto owner = g_host;", """
     const auto left_snapshot = ctnative::global_number(g_left);
     const auto middle_snapshot = ctnative::global_number(g_middle);
@@ -2085,7 +2088,7 @@ int main() {
         return 198;
     }
     ctn_test_retained.reset();""")
-    if name == "constant_branch_lifetime":
+    if name in {"constant_branch_lifetime", "constant_boolean_branch_lifetime"}:
         changed = changed.replace("    auto owner = g_host;", """
     const auto fixed_snapshot = ctnative::global_number(g_fixed);
     const auto offset_snapshot = ctnative::global_number(g_offset);
@@ -2107,6 +2110,30 @@ int main() {
 """
         # Check once after 128 calls and owner destruction, before reentry can
         # overwrite globals, then again after both Maps and the retained leaf die.
+        changed = changed.replace("    ctn_test_keep_leaf = false;", checks + "    ctn_test_keep_leaf = false;")
+        released = "    if (!ctn_test_objects[retained_index].expired()) { return 193; }"
+        assert changed.count(released) == 1
+        changed = changed.replace(released, released + checks)
+    if name == "constant_boolean_branch_lifetime":
+        changed = changed.replace("    auto owner = g_host;", """
+    const auto fixed_flag_snapshot = ctnative::global_boolean(g_fixed_flag);
+    const auto enabled_snapshot = ctnative::global_boolean(g_enabled);
+    const auto copy_flag_snapshot = ctnative::global_boolean(g_copy_flag);
+    const auto active_snapshot = ctnative::global_boolean(g_active);
+    static_assert(std::is_same_v<decltype(copy_flag_snapshot), const bool>);
+    if (fixed_flag_snapshot || !enabled_snapshot || copy_flag_snapshot || !active_snapshot) {
+        return 202;
+    }
+    auto owner = g_host;""")
+        checks = """
+    if (fixed_flag_snapshot || !enabled_snapshot || copy_flag_snapshot || !active_snapshot ||
+        ctnative::global_boolean(g_fixed_flag) != fixed_flag_snapshot ||
+        ctnative::global_boolean(g_enabled) != enabled_snapshot ||
+        ctnative::global_boolean(g_copy_flag) != copy_flag_snapshot ||
+        ctnative::global_boolean(g_active) != active_snapshot) {
+        return 203;
+    }
+"""
         changed = changed.replace("    ctn_test_keep_leaf = false;", checks + "    ctn_test_keep_leaf = false;")
         released = "    if (!ctn_test_objects[retained_index].expired()) { return 193; }"
         assert changed.count(released) == 1

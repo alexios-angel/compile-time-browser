@@ -2381,8 +2381,8 @@ def scalar_global_output(name, value):
 
 
 # The twelve original probes and twelve candidate edits were measured before
-# constant-only Number admission. Keep their exact bytes and candidate status:
-# replacing an alias with a literal never repairs a nonnumeric global carrier.
+# constant-only Number admission. Keep their exact bytes; Boolean originals and
+# candidates now need both live scalar proof and independently typed observations.
 CONSTANT_GLOBAL_HISTORY = {
     'constant_exact_historical': ('3c1dfd95d22834d6ce64c352ab515f628fddd4e03168acf709642d62243c1491',
         '41a33e4066ff78c262289225670eb38736d06e7cbd2c3f55be2176668b084f71'),
@@ -2411,10 +2411,13 @@ CONSTANT_GLOBAL_HISTORY = {
 }
 CONSTANT_GLOBAL_UNOWNED = {
     "constant_read_before_write", "constant_dynamic_global", "constant_future_method_write",
+    "constant_boolean_read_before_write", "constant_boolean_dynamic_global",
+    "constant_boolean_future_method_write", "constant_boolean_optional", "constant_boolean_mixed",
 }
 CONSTANT_GLOBAL_CARRIERS = {
-    "constant_boolean", "constant_string", "constant_undefined", "constant_duplicate_write",
-    "constant_boolean_candidate", "constant_string_candidate", "constant_undefined_candidate",
+    "constant_string", "constant_undefined", "constant_duplicate_write",
+    "constant_string_candidate", "constant_undefined_candidate",
+    "constant_boolean_duplicate_write", "constant_boolean_mixed_write",
 }
 CONSTANT_GLOBAL_EXISTING = {
     "constant_exact_historical": "scalar_constant_only",
@@ -2483,6 +2486,50 @@ def constant_global_cases():
         "var trace = left + middle * right;", "const fixed = 7; const offset = fixed; "
         "const copy = offset; var trace = left + middle * right + copy - fixed;"),
         14, {**branch["saved"], "fixed": 7, "offset": 7, "copy": 7})
+    boolean = rows["constant_boolean"]["source"]
+    flags = {**values, "fixed": False, "copy": False}
+    add("constant_boolean_true", boolean.replace("const fixed = false;", "const fixed = true;"),
+        12, {**flags, "fixed": True, "copy": True}, "const copy = fixed;", "const copy = true;")
+    add("constant_boolean_alias_chain", boolean.replace("const copy = fixed;",
+        "const enabled = true; const offset = fixed; const copy = offset;"),
+        12, {**flags, "enabled": True, "offset": False})
+    add("constant_boolean_builtin_spelling", boolean.replace("fixed", "Reflect").replace("copy", "prototype"),
+        12, {"first": 1, "second": 2, "Reflect": False, "prototype": False})
+    for flag, value in (("false", False), ("true", True)):
+        add("constant_boolean_trace_" + flag, prefix +
+            "const fixed = " + flag + "; const copy = fixed; var trace = copy;\n",
+            value, {**flags, "fixed": value, "copy": value})
+    result = boolean.replace("return state.size; }\n", "return saved === item; }\n").replace(
+        "var trace = first * 10 + second;", "var trace = 12;").replace(
+        "const copy = fixed;", "const copy = first;")
+    assert result != boolean and "return saved === item;" in result
+    add("constant_boolean_saved_result", result, 12,
+        {"first": True, "second": True, "fixed": False, "copy": True})
+    add("constant_boolean_duplicate_write", snapshot +
+        "var fixed = false; const copy = fixed; fixed = true;\n", 12,
+        {**flags, "fixed": True}, "fixed = true;", "const later = true;", {**flags, "later": True})
+    add("constant_boolean_mixed_write", snapshot +
+        "var fixed = false; const copy = fixed; fixed = 1;\n", 12,
+        {**flags, "fixed": 1}, "fixed = 1;", "const later = 1;", {**flags, "later": 1})
+    add("constant_boolean_read_before_write", snapshot + "var copy = fixed; var fixed = false;\n",
+        12, {**flags, "copy": "undefined"}, "var copy = fixed; var fixed = false;",
+        "var fixed = false; var copy = fixed;", flags)
+    add("constant_boolean_dynamic_global", snapshot +
+        "var fixed = false; const copy = fixed; globalThis.fixed = true;\n", 12,
+        {**flags, "fixed": True}, "globalThis.fixed = true;", "const later = true;",
+        {**flags, "later": True})
+    future = "var fixed = false;\n" + snapshot.replace("set(key) {", "set(key) { fixed = true;")
+    add("constant_boolean_future_method_write", future + "const copy = fixed;\n", 12,
+        {**flags, "fixed": True, "copy": True}, "fixed = true;", "const future = true;", flags)
+    for kind, other in (("optional", "void 0"), ("mixed", "0")):
+        initializer = "const fixed = first ? false : " + other + ";"
+        add("constant_boolean_" + kind, boolean.replace("const fixed = false;", initializer),
+            12, flags, initializer, "const fixed = false;")
+    lifetime = rows["constant_branch_lifetime"]
+    add("constant_boolean_branch_lifetime", lifetime["source"] +
+        "const fixed_flag = false; const enabled = true; "
+        "const copy_flag = fixed_flag; const active = enabled;\n", 14,
+        {**lifetime["saved"], "fixed_flag": False, "enabled": True, "copy_flag": False, "active": True})
     for name, (original, candidate) in CONSTANT_GLOBAL_HISTORY.items():
         assert rows[name]["raw_calls"] == 8, name
         for key, digest in ((name, original), (name + "_candidate", candidate)):
