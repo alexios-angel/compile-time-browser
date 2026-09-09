@@ -2430,3 +2430,19 @@ Evidence: `/tmp/ctcompile-boolean-gate-full{,-detail}.log`,
 `/tmp/ctcompile-boolean-gate-initial-evidence.json` and the independent
 `/tmp/ctcompile-escape-bigint-divmod-full-audit.json`. The initial failed full
 run is retained separately from the pending corrected lit result.
+
+**Corrected lit gate, 2026-09-09.** The complete rerun passes **165/165 lit
+cases in 1040.72 seconds** (CTest **1040.78**, total **1040.80**), including
+the **284-program/36-lifetime-family** Map integration gate. Combined with the
+initial full run, **all 372 compiler checks and 512/517 CTests pass**; the five
+browser failures listed above remain. These measurements comprise the initial
+517-test run and a lit-only rerun. All **28** final code/test hashes agree
+across the frozen manifest, local files, HEAD and devbox sources; the five escape
+files still match **1138dbfd**. The escape results above and every prior lifetime
+family remain unchanged. Evidence is
+`/tmp/ctcompile-boolean-corrected-lit.log`,
+`/tmp/ctcompile-boolean-gate-final-evidence.json` and the updated independent
+`/tmp/ctcompile-escape-bigint-divmod-full-audit.json`. The next escape review
+remains BigInt Pow's negative and oversized exponent errors, including the VM's
+unconditional cap for small bases; native BigInt, completion and effect admission
+remain separate unimplemented boundaries.
