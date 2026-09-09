@@ -108,6 +108,7 @@ struct lowering {
     llvm::DenseMap<mlir::Operation *, std::string> accessKey; // get/set -> member name
     llvm::DenseMap<mlir::Operation *, mlir::Type> accessType;
     std::set<std::string> identityFields;
+    llvm::StringMap<mlir::Type> identityFieldTypes;
     llvm::DenseMap<mlir::Operation *, std::string> identityAccess;
     void censusIdentityFields(llvm::ArrayRef<ctjs::FuncOp> accepted);
     std::string identityDefinition() const;

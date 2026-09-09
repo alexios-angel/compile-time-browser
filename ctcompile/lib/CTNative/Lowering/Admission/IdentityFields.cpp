@@ -45,10 +45,12 @@ bool admission::identityField(mlir::Operation * op) {
                       "a strict identity or optional-object truthiness guard is required");
     }
     if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
-        return isScalarCarrier(carrierOf(typeOf(store.getValue()))) ||
-               refuse("owning object fields require number/boolean/null/undefined values");
+        const auto value = carrierOf(typeOf(store.getValue()));
+        return isScalarCarrier(value) || isStringCarrier(value) ||
+               refuse("owning object fields require number/boolean/string/null/undefined values");
     }
-    return isScalarCarrier(carrierOf(typeOf(op->getResult(0)))) ||
+    const auto value = carrierOf(typeOf(op->getResult(0)));
+    return isScalarCarrier(value) || isStringCarrier(value) ||
            refuse("an owning field read has an unsupported scalar schema");
 }
 

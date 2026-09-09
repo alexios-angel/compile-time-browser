@@ -146,12 +146,12 @@ inline bool boolean_string_truthy(const std::variant<bool, std::string> & value)
 } // namespace ctnative
 )cpp"));
     }
+    if (needsNullableString) {
+        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNullableStringHelpers));
+    }
     if (needsObjectIdentity) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("memory"), b.getUnitAttr());
         ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(identityDefinition()));
-    }
-    if (needsNullableString) {
-        ec::VerbatimOp::create(b, module.getLoc(), b.getStringAttr(kNullableStringHelpers));
     }
     if (needsObjectValue) {
         ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("utility"), b.getUnitAttr());

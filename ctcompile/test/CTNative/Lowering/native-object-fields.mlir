@@ -6,7 +6,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/loose-guard.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=RECEIVER
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/different-lookup.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=RECEIVER
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/wrong-arm.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=RECEIVER
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-leaf.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=LEAF
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-leaf.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=STRING --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/cycle.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=REFUSED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic-key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=REFUSED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/inherited.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=REFUSED
@@ -19,7 +19,8 @@
 // NATIVE-DAG: call_opaque "ctnative::object_get_field_76616c7565"
 // NATIVE-DAG: call_opaque "ctnative::object_set_field_76616c7565"
 // RECEIVER: ctnative.not_native = "an owning field receiver may be scalar, null or undefined;
-// LEAF: ctnative.not_native = "owning object fields require number/boolean/null/undefined values"
+// STRING-DAG: nullable_string field_76616c7565;
+// STRING-DAG: call_opaque "ctnative::object_set_field_76616c7565"
 // REFUSED: ctnative.not_native =
 
 //--- unguarded.js

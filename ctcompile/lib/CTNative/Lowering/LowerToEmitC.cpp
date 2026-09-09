@@ -300,6 +300,27 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             }
         }
 
+        // Identity members are shared by property name across allocation sites.
+        // Check every candidate store before removing any call component; neither
+        // a final narrowed read nor a separately admitted function may choose an
+        // incompatible carrier for the same emitted member.
+        const auto fieldTypes = identityFieldStoreTypes(solver, accepted);
+        llvm::erase_if(accepted, [&](ctjs::FuncOp fn) {
+            std::string reason;
+            fn.getBody().walk([&](mlir::Operation * op) {
+                if (!reason.empty() || nativeObjectFieldGroup(op) < 0) { return; }
+                const auto key = admission::keyOf(op->getOperand(1));
+                const auto storage = carrierOf(fieldTypes.lookup(key));
+                if (!isScalarCarrier(storage) && !isStringCarrier(storage)) {
+                    reason = "owning field `" + key.str() +
+                             "` has incompatible types across its complete store census";
+                }
+            });
+            if (reason.empty()) { return false; }
+            fn->setAttr("ctnative.not_native", mlir::StringAttr::get(&getContext(), reason));
+            return true;
+        });
+
         // THE FIXPOINT: a function is native only if every function it calls
         // directly is. Drop any accepted function that calls a refused one,
         // name the callee in its diagnostic, and repeat until nothing moves -

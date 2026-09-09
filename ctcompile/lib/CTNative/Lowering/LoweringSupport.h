@@ -114,5 +114,9 @@ std::optional<unsigned> functionIndexOf(ctjs::FuncOp fn);
 inline constexpr unsigned kFirstCapture = 2;
 bool isUndefinedConstant(mlir::Value value);
 llvm::StringRef constantKeyOf(mlir::Value key);
+// All source stores to each emitted identity member, before any retyping.
+// A read's narrower result never selects storage shared by other allocations.
+llvm::StringMap<mlir::Type> identityFieldStoreTypes(mlir::DataFlowSolver & solver,
+                                                    llvm::ArrayRef<ctjs::FuncOp> functions);
 
 } // namespace ctcompile::ctnative::lowering_detail
