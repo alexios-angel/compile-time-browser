@@ -517,9 +517,16 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
         } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
                    load && load.getName() != "Map" && !copies.builtins.contains(op)) {
             // A complete live source-owner proof identifies this load as the
-            // ordinary exported root. It cannot expose or replace the realm's
-            // Map binding. Arbitrary host reads keep the existing refusal.
-            if (globals && globals->proved() && globals->lookup(load)) { return; }
+            // ordinary exported root or an independently proved saved Number.
+            // Both require the complete live family and source effects; names,
+            // observations and native annotations never authorize a read.
+            if (globals && globals->proved()) {
+                if (globals->lookup(load)) { return; }
+                const auto * scalar = globals->scalarRead(load);
+                if (scalar && scalar->alternatives.tag() == mlir::TypeID::get<ctjs::NumberAttr>()) {
+                    return;
+                }
+            }
             for (mlir::OpOperand & use : load.getResult().getUses()) {
                 if (!llvm::isa<ctjs::CallDirectOp>(use.getOwner()) || use.getOperandNumber() != 2) {
                     reason = "standard Map identity is unproved with other host/global value reads";

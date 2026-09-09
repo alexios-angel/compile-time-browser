@@ -233,7 +233,20 @@ HostContractAnalysis::HostContractAnalysis(mlir::ModuleOp module, const HostCont
             }
         }
     }
-    if (refusal.empty()) { checkedCalls = std::move(analysis.checkedCalls); }
+    std::vector<HostScalarGlobalRead> scalarReads;
+    if (refusal.empty()) {
+        module.walk([&](ctjs::LoadGlobalOp read) {
+            if (analysis.exhausted) { return; }
+            if (auto edge = analysis.scalarGlobalRead(read)) {
+                scalarReads.push_back(std::move(*edge));
+            }
+        });
+        if (analysis.exhausted) { refusal = "host contract analysis work budget exhausted"; }
+    }
+    if (refusal.empty()) {
+        checkedCalls = std::move(analysis.checkedCalls);
+        checkedScalarReads = std::move(scalarReads);
+    }
 }
 
 const HostSlotEdge * HostContractAnalysis::property(ctjs::GetPropertyOp read) const {
@@ -249,6 +262,13 @@ const HostSlotEdge * HostContractAnalysis::property(ctjs::GetPropertyOp read) co
 const HostCallableEdge * HostContractAnalysis::callable(mlir::Operation * call) const {
     for (const HostCallableEdge & edge : checkedCalls) {
         if (edge.call == call) { return &edge; }
+    }
+    return nullptr;
+}
+
+const HostScalarGlobalRead * HostContractAnalysis::scalarRead(ctjs::LoadGlobalOp read) const {
+    for (const HostScalarGlobalRead & edge : checkedScalarReads) {
+        if (edge.read == read) { return &edge; }
     }
     return nullptr;
 }

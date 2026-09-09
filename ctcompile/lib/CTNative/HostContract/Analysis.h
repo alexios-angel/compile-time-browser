@@ -45,7 +45,9 @@ struct analyzer {
                                HostMethodParameters & result);
     PrimitiveAlternatives entryCategories(
         mlir::Value value, const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
-        mlir::Operation * consumer = nullptr, unsigned depth = 0);
+        mlir::Operation * consumer = nullptr, unsigned depth = 0,
+        std::vector<mlir::Value> * dependencies = nullptr);
+    std::optional<HostScalarGlobalRead> scalarGlobalRead(ctjs::LoadGlobalOp read);
     bool capturedMapBody(ctjs::FuncOp function, bool prepared, bool primitiveContents,
                          const HostMethodParameters & parameters, HostCapturedMap & result,
                          PrimitiveAlternatives & returnAlternatives);

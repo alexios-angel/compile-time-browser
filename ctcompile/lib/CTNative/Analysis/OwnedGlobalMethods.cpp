@@ -334,6 +334,30 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         }
     }
 
+    llvm::SmallVector<HostScalarGlobalRead> scalarReads;
+    llvm::DenseMap<mlir::Operation *, unsigned> scalarIndex;
+    for (const HostScalarGlobalRead & edge : host.scalarReads()) {
+        if (!spend()) { return; }
+        auto read = edge.read;
+        auto store = edge.initialization;
+        if (read->getParentOp() != entry || store->getParentOp() != entry ||
+            read.getName() != store.getName() || store.getValue() != edge.value ||
+            edge.alternatives.tag() != mlir::TypeID::get<ctjs::NumberAttr>() ||
+            edge.dependencies.empty()) {
+            reject("saved scalar read disagrees with the complete host proof");
+            return;
+        }
+        for (mlir::Value dependency : edge.dependencies) {
+            if (!spend()) { return; }
+            if (!methodCalls.contains(dependency.getDefiningOp())) {
+                reject("saved scalar result is outside the complete owned method family");
+                return;
+            }
+        }
+        scalarIndex[read] = static_cast<unsigned>(scalarReads.size());
+        scalarReads.push_back(edge);
+    }
+
     // The query exposes only source ownership. A later consumer must prove a
     // callable carrier and native call component; no annotation closes them.
     OwnedGlobalRoot result{owner, initialization, std::move(loads), field,
@@ -357,6 +381,8 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
     committed[field] = 0;
     checked.push_back(std::move(result));
     edges = std::move(committed);
+    checkedScalarReads = std::move(scalarReads);
+    scalarEdges = std::move(scalarIndex);
 }
 
 } // namespace ctcompile::ctnative

@@ -56,6 +56,12 @@ public:
     [[nodiscard]] llvm::ArrayRef<OwnedGlobalRoot> roots() const { return checked; }
     // Covers the allocation, global initialization/loads and field write/reads.
     [[nodiscard]] const OwnedGlobalRoot * lookup(mlir::Operation * operation) const;
+    // Separate from object ownership: a saved scalar cannot authorize an
+    // ordinary root, field or native schema. Available only after both proofs.
+    [[nodiscard]] llvm::ArrayRef<HostScalarGlobalRead> scalarReads() const {
+        return checkedScalarReads;
+    }
+    [[nodiscard]] const HostScalarGlobalRead * scalarRead(ctjs::LoadGlobalOp read) const;
     [[nodiscard]] unsigned steps() const { return workSteps; }
     [[nodiscard]] bool exhausted() const { return budgetExhausted; }
 
@@ -64,6 +70,8 @@ private:
                             const HostContractAnalysis & host, unsigned maxSteps);
     llvm::SmallVector<OwnedGlobalRoot, 1> checked;
     llvm::DenseMap<mlir::Operation *, unsigned> edges;
+    llvm::SmallVector<HostScalarGlobalRead> checkedScalarReads;
+    llvm::DenseMap<mlir::Operation *, unsigned> scalarEdges;
     std::string refusal;
     unsigned workSteps = 0;
     bool budgetExhausted = false;

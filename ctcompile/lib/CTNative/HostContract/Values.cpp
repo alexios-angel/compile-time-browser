@@ -650,7 +650,7 @@ bool analyzer::capturedMapCalls(ctjs::FuncOp function, ctjs::SetPropertyOp publi
 
 PrimitiveAlternatives analyzer::entryCategories(
     mlir::Value value, const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> & results,
-    mlir::Operation * consumer, unsigned depth) {
+    mlir::Operation * consumer, unsigned depth, std::vector<mlir::Value> * dependencies) {
     if (!value || depth > 64 || !step()) { return {}; }
     auto * definition = value.getDefiningOp();
     // A source-order anchor can order global effects across a selected arm or
@@ -661,6 +661,10 @@ PrimitiveAlternatives analyzer::entryCategories(
         return {};
     }
     if (auto known = results.find(value); known != results.end()) {
+        if (dependencies) {
+            if (!step()) { return {}; }
+            dependencies->push_back(value);
+        }
         return known->second.categories();
     }
     if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(definition)) {
@@ -670,7 +674,7 @@ PrimitiveAlternatives analyzer::entryCategories(
         }
         if (stores.size() != 1 || !before(stores.front(), load)) { return {}; }
         auto store = stores.front();
-        return entryCategories(store.getValue(), results, store, depth + 1);
+        return entryCategories(store.getValue(), results, store, depth + 1, dependencies);
     }
     if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(definition)) {
         switch (binary.getKind()) {
@@ -683,8 +687,10 @@ PrimitiveAlternatives analyzer::entryCategories(
         default: return {};
         }
         const auto number = mlir::TypeID::get<ctjs::NumberAttr>();
-        if (entryCategories(binary.getLhs(), results, binary, depth + 1).tag() != number ||
-            entryCategories(binary.getRhs(), results, binary, depth + 1).tag() != number) {
+        if (entryCategories(binary.getLhs(), results, binary, depth + 1, dependencies).tag() !=
+                number ||
+            entryCategories(binary.getRhs(), results, binary, depth + 1, dependencies).tag() !=
+                number) {
             return {};
         }
         // This is a category, never an evaluated Number. Zero, signed zero,
@@ -703,7 +709,7 @@ PrimitiveAlternatives analyzer::entryCategories(
             auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(arm.front().getTerminator());
             if (!yield || result.getResultNumber() >= yield.getNumOperands()) { return {}; }
             auto categories = entryCategories(yield.getOperand(result.getResultNumber()), results,
-                                              yield, depth + 1);
+                                              yield, depth + 1, dependencies);
             joined = joined ? joined->joined(categories) : categories;
         }
         return joined.value_or(PrimitiveAlternatives{});
@@ -713,10 +719,45 @@ PrimitiveAlternatives analyzer::entryCategories(
         return {};
     }
     for (mlir::Value operand : definition->getOperands()) {
-        if (!entryCategories(operand, results, definition, depth + 1).known) { return {}; }
+        if (!entryCategories(operand, results, definition, depth + 1, dependencies).known) {
+            return {};
+        }
     }
     auto constant = primitive(value, depth + 1);
     return constant ? PrimitiveAlternatives::forTag(constant.getTypeID()) : PrimitiveAlternatives{};
+}
+
+std::optional<HostScalarGlobalRead> analyzer::scalarGlobalRead(ctjs::LoadGlobalOp read) {
+    if (!step() || read->getParentOp() != entry || !llvm::hasSingleElement(entry.getBody())) {
+        return std::nullopt;
+    }
+    const auto & stores = globals[read.getName()];
+    if (stores.size() != 1) { return std::nullopt; }
+    auto store = stores.front();
+    if (store->getParentOp() != entry || !before(store, read)) { return std::nullopt; }
+    HostScalarGlobalRead result{store, read, store.getValue(), {}, {}};
+    result.alternatives =
+        entryCategories(result.value, capturedResults, store, 0, &result.dependencies);
+    if (result.alternatives.tag() != mlir::TypeID::get<ctjs::NumberAttr>() ||
+        result.dependencies.empty()) {
+        return std::nullopt;
+    }
+    // The worklist only supplies categories. Require the actual completed
+    // calls in the final environment census too, with entry order and scope.
+    for (mlir::Value dependency : result.dependencies) {
+        if (!step()) { return std::nullopt; }
+        auto * call = dependency.getDefiningOp();
+        if (!call || call->getParentOp() != entry || !dominance.properlyDominates(call, store)) {
+            return std::nullopt;
+        }
+        bool found = false;
+        for (const HostCallableEdge & edge : checkedCalls) {
+            if (!step()) { return std::nullopt; }
+            found |= edge.call == call && edge.capturedMap.has_value();
+        }
+        if (!found) { return std::nullopt; }
+    }
+    return result;
 }
 
 bool analyzer::capturedMapParameters(

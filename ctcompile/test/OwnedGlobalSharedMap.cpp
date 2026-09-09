@@ -8,10 +8,274 @@
 
 #include "OwnedGlobalMethodsFixtures.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "llvm/ADT/STLExtras.h"
 
 using namespace ctcompile::test::owned_global_methods;
 
 namespace {
+
+template <typename Query> bool scalarReadsEmpty(mlir::ModuleOp module, const Query & query) {
+    bool result = query.scalarReads().empty();
+    module.walk([&](ctjs::LoadGlobalOp load) { result &= query.scalarRead(load) == nullptr; });
+    return result;
+}
+
+void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & source, bool prepared) {
+    using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
+    using Dependencies = std::vector<std::vector<unsigned>>;
+    const auto requested = [](mlir::ModuleOp module) {
+        auto contract = contractFor(module);
+        contract.initialIntrinsics = {"Map"};
+        module.walk([&](ctjs::StoreGlobalOp store) {
+            const auto name = store.getName().str();
+            if (name != "host" && name != "trace" &&
+                !llvm::is_contained(contract.observations, name)) {
+                contract.observations.push_back(name);
+            }
+        });
+        return contract;
+    };
+    const auto evidence = [&](mlir::ModuleOp module, const HostContractAnalysis & host,
+                              const OwnedGlobalRoots & owner, const Dependencies & expected) {
+        check(host.scalarReads().size() == expected.size() &&
+                  owner.scalarReads().size() == expected.size(),
+              "host and owner expose every independently proved scalar load exactly once");
+        check(owner.roots().size() == 1 && owner.roots().front().methodTable &&
+                  owner.roots().front().methodTable->calls.size() == 4,
+              "scalar evidence requires the complete original four-call published family");
+        if (owner.roots().size() != 1 || !owner.roots().front().methodTable ||
+            owner.roots().front().methodTable->calls.size() != 4) {
+            return;
+        }
+        const auto & calls = owner.roots().front().methodTable->calls;
+        const auto numbers = Alternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>());
+        unsigned position = 0;
+        auto entry = module.lookupSymbol<ctjs::FuncOp>("script$0");
+        module.walk([&](ctjs::LoadGlobalOp load) {
+            const auto * scalar = owner.scalarRead(load);
+            const auto * hostScalar = host.scalarRead(load);
+            if (!scalar) {
+                check(!hostScalar,
+                      "host and owner agree that an unrelated read has no scalar edge");
+                return;
+            }
+            check(hostScalar && position < expected.size(),
+                  "each scalar load has one matching host proof and expected dependency row");
+            if (!hostScalar || position >= expected.size()) { return; }
+            ctjs::StoreGlobalOp initialization;
+            unsigned writes = 0;
+            module.walk([&](ctjs::StoreGlobalOp store) {
+                if (store.getName() != load.getName()) { return; }
+                initialization = store;
+                ++writes;
+            });
+            check(writes == 1 && scalar->initialization == initialization && scalar->read == load &&
+                      scalar->value == initialization.getValue() &&
+                      scalar->alternatives == numbers && load->getParentOp() == entry &&
+                      initialization->getParentOp() == entry &&
+                      initialization->isBeforeInBlock(load) && !owner.lookup(load),
+                  "the scalar edge records the exact earlier store, stored value and live load");
+            check(hostScalar->initialization == scalar->initialization &&
+                      hostScalar->read == scalar->read && hostScalar->value == scalar->value &&
+                      hostScalar->alternatives == scalar->alternatives &&
+                      hostScalar->dependencies == scalar->dependencies,
+                  "owner scalar edges retain the complete host proof without inventing evidence");
+            const auto & dependencies = expected[position++];
+            check(!dependencies.empty() && scalar->dependencies.size() == dependencies.size(),
+                  "constant-only globals cannot acquire published-result evidence");
+            if (scalar->dependencies.size() != dependencies.size()) { return; }
+            for (unsigned index = 0; index < dependencies.size(); ++index) {
+                const auto & call = calls[dependencies[index]];
+                check(scalar->dependencies[index] == call.call->getResult(0) &&
+                          call.call->isBeforeInBlock(initialization) && call.capturedMap &&
+                          call.capturedMap->parameters.size() == 2 && host.callable(call.call),
+                      "each dependency occurrence names its exact completed published call");
+            }
+        });
+        check(position == expected.size(), "no scalar edge is keyed by a different live load");
+    };
+    unsigned rows = 0;
+    const auto variant = [&](const std::string & text, bool expected,
+                             const Dependencies & dependencies, const char * message) {
+        ++rows;
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+        check(static_cast<bool>(module), "saved scalar source/prepared fixture parses");
+        if (!module) { return; }
+        const auto contract = requested(*module);
+        HostContractAnalysis host(*module, contract);
+        OwnedGlobalRoots owner(*module, contract);
+        check(host.proved() == expected && owner.proved() == expected && !host.exhausted() &&
+                  !owner.exhausted(),
+              message);
+        if (host.proved() != expected || owner.proved() != expected) {
+            std::fprintf(stderr, "scalar reads %s row %u: host=%s owner=%s\n",
+                         prepared ? "prepared" : "source", rows, host.reason().str().c_str(),
+                         owner.reason().str().c_str());
+        }
+        if (expected && host.proved() && owner.proved()) {
+            evidence(*module, host, owner, dependencies);
+        } else if (!expected) {
+            check(scalarReadsEmpty(*module, host) && scalarReadsEmpty(*module, owner) &&
+                      empty(*module, owner),
+                  "failed complete proofs expose no scalar loads or partial owner");
+        }
+        check(hostContractFingerprint(*module) == contract.moduleSha256,
+              "scalar queries preserve the original global, arithmetic and call operations");
+    };
+    const std::string store = "    ctjs.store_global \"savedSum\", %sum\n";
+    const std::string read = "    %savedSum = ctjs.load_global \"savedSum\"\n";
+    const std::string sum = "ctjs.binary add %putResult, %secondResult";
+    const std::string actual = prepared ? "%thirdPutterEnv, %savedSum)" : "%owned, %savedSum)";
+    const auto actualUsing = [&](const std::string & name) {
+        return prepared ? "%thirdPutterEnv, %" + name + ")" : "%owned, %" + name + ")";
+    };
+    variant(source, true, {{0, 1}}, "the original saved arithmetic has exact per-load evidence");
+    variant(replaced(source, store, "    ctjs.store_global \"savedSum\", %putResult\n"), true,
+            {{0}}, "a saved first result records its actual producing call");
+    variant(replaced(source, store, "    ctjs.store_global \"savedSum\", %secondResult\n"), true,
+            {{1}}, "a saved second result cannot borrow the first invocation's identity");
+    variant(replaced(source, sum, "ctjs.binary add %putResult, %putResult"), true, {{0, 0}},
+            "two arithmetic occurrences retain the same exact dependency twice");
+    variant(replaced(source, sum, "ctjs.binary add %putResult, %actual"), true, {{0}},
+            "literal operands do not fabricate a published-call dependency");
+    auto repeated =
+        replaced(source, read, read + "    %savedAgain = ctjs.load_global \"savedSum\"\n");
+    repeated = replaced(repeated, actual, actualUsing("savedAgain"));
+    variant(repeated, true, {{0, 1}, {0, 1}},
+            "two reads of one sole store have separate exact load edges");
+    auto alias = replaced(source, read,
+                          read + "    ctjs.store_global \"savedAlias\", %savedSum\n"
+                                 "    %savedAlias = ctjs.load_global \"savedAlias\"\n");
+    alias = replaced(alias, actual, actualUsing("savedAlias"));
+    variant(alias, true, {{0, 1}, {0, 1}},
+            "an ordered saved alias retains every original published-result dependency");
+    auto later = replaced(source, "    %combined =",
+                          "    ctjs.store_global \"savedLater\", %thirdResult\n"
+                          "    %savedLater = ctjs.load_global \"savedLater\"\n"
+                          "    %combined =");
+    later = replaced(later, "ctjs.binary add %sum, %thirdResult",
+                     "ctjs.binary add %savedSum, %savedLater");
+    variant(later, true, {{0, 1}, {2}},
+            "independent saved globals preserve their separate source producing calls");
+    variant(replaced(source, store, "    ctjs.store_global \"savedSum\", %actual\n"), true, {},
+            "an observed Number literal has no published-result scalar-read authority");
+    variant(replaced(source, store, "    ctjs.store_global \"savedSum\", %u\n"), false, {},
+            "Undefined cannot borrow the observation's previously proved Number category");
+    for (const std::string & marker : {store, read, std::string("    %combined =")}) {
+        variant(replaced(source, marker, "    ctjs.store_global \"savedSum\", %actual\n" + marker),
+                false, {}, "an additional write at any source position invalidates the sole store");
+    }
+    const auto renamed = replaced(
+        replaced(source, "ctjs.store_global \"savedSum\"", "ctjs.store_global \"ordinaryNumber\""),
+        "ctjs.load_global \"savedSum\"", "ctjs.load_global \"ordinaryNumber\"");
+    variant(renamed, true, {{0, 1}}, "the binding's spelling supplies no scalar proof authority");
+    variant(replaced(source, read, "    %savedSum = ctjs.load_global \"unwritten\"\n"), false, {},
+            "an unrelated global cannot borrow the saved store's Number proof");
+    variant(replaced(source, "    %combined =",
+                     "    %unrelated = ctjs.load_global \"unwritten\"\n"
+                     "    %combined ="),
+            false, {}, "an unproved extra global withholds every completed scalar edge");
+    check(rows == 16, "all independently saved scalar source controls ran");
+
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
+    check(static_cast<bool>(module), "saved scalar live-mutation fixture parses");
+    if (!module) { return; }
+    auto contract = requested(*module);
+    HostContractAnalysis complete(*module, contract);
+    check(complete.proved() && complete.steps() < 18000,
+          "complete saved scalar host evidence is bounded");
+    if (!complete.proved() || complete.steps() >= 18000) { return; }
+    const unsigned completion = complete.steps();
+    for (unsigned budget = 0; budget < completion; ++budget) {
+        HostContractAnalysis limited(*module, contract, budget);
+        check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                  scalarReadsEmpty(*module, limited),
+              "every incomplete host budget withholds every saved scalar edge");
+    }
+    HostContractAnalysis exact(*module, contract, completion);
+    OwnedGlobalRoots original(*module, contract);
+    check(exact.proved() && exact.steps() == completion && original.proved(),
+          "the exact host completion budget publishes the complete scalar proof");
+    if (!exact.proved() || !original.proved()) { return; }
+    evidence(*module, exact, original, {{0, 1}});
+    mlir::Builder attributes(&context);
+    module->walk([&](mlir::Operation * operation) {
+        operation->setAttr("ctnative.host_proved", attributes.getBoolAttr(true));
+        operation->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
+        operation->setAttr("ctnative.scalar_global", attributes.getStringAttr("number"));
+        operation->setAttr("ctnative.map_read_type", attributes.getStringAttr("number"));
+        operation->setAttr("ctnative.inferred_result", attributes.getStringAttr("number"));
+    });
+    contract = requested(*module);
+    HostContractAnalysis forgedHost(*module, contract);
+    OwnedGlobalRoots forgedOwner(*module, contract);
+    check(forgedHost.proved() && forgedOwner.proved(),
+          "forged reports do not alter independently proved scalar source edges");
+    if (!forgedHost.proved() || !forgedOwner.proved()) { return; }
+    evidence(*module, forgedHost, forgedOwner, {{0, 1}});
+    const auto scalar = forgedOwner.scalarReads().front();
+    auto initialization = scalar.initialization;
+    auto load = scalar.read;
+    auto entry = module->lookupSymbol<ctjs::FuncOp>("script$0");
+    const auto calls = forgedOwner.roots().front().methodTable->calls;
+    unsigned mutations = 0;
+    const auto refusal = [&]() {
+        HostContractAnalysis staleHost(*module, contract);
+        OwnedGlobalRoots staleOwner(*module, contract);
+        check(!staleHost.proved() && !staleOwner.proved() &&
+                  staleHost.reason().contains("fingerprint") &&
+                  staleOwner.reason().contains("fingerprint") &&
+                  scalarReadsEmpty(*module, staleHost) && scalarReadsEmpty(*module, staleOwner),
+              "stale fingerprints expose no previously saved scalar evidence");
+        const auto freshContract = requested(*module);
+        HostContractAnalysis freshHost(*module, freshContract);
+        OwnedGlobalRoots freshOwner(*module, freshContract);
+        check(!freshHost.proved() && !freshOwner.proved() && !freshHost.exhausted() &&
+                  !freshOwner.exhausted() && scalarReadsEmpty(*module, freshHost) &&
+                  scalarReadsEmpty(*module, freshOwner) && empty(*module, freshOwner),
+              "fresh fingerprints and Number reports cannot repair changed scalar source edges");
+        ++mutations;
+    };
+    const auto restored = [&]() {
+        HostContractAnalysis host(*module, contract);
+        OwnedGlobalRoots owner(*module, contract);
+        check(host.proved() && owner.proved(), "restoring source edges restores the scalar proof");
+        if (host.proved() && owner.proved()) { evidence(*module, host, owner, {{0, 1}}); }
+    };
+    const auto operand = [&](mlir::Operation * operation, unsigned index, mlir::Value value) {
+        const auto old = operation->getOperand(index);
+        operation->setOperand(index, value);
+        refusal();
+        operation->setOperand(index, old);
+        restored();
+    };
+    operand(initialization, 0, load.getResult());
+    operand(initialization, 0, calls[2].call->getResult(0));
+    operand(initialization, 0, entry.getBody().front().getArgument(0));
+    operand(calls[0].call, prepared ? 4u : 2u, load.getResult());
+    operand(calls[2].call, prepared ? 0u : 1u, entry.getBody().front().getArgument(0));
+    auto lastRead = calls[3].read;
+    operand(calls[2].call, prepared ? 2u : 0u, lastRead.getResult());
+    initialization->moveAfter(load);
+    refusal();
+    initialization->moveBefore(load);
+    restored();
+    auto * previous = load->getPrevNode();
+    load->moveBefore(calls[0].call);
+    refusal();
+    load->moveAfter(previous);
+    restored();
+    load->setAttr("name", attributes.getStringAttr("trace"));
+    refusal();
+    load->setAttr("name", attributes.getStringAttr("savedSum"));
+    restored();
+    auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
+    auto getter = module->lookupSymbol<ctjs::FuncOp>("get$3");
+    operand(setter.getBody().front().getTerminator(), 0, setter.getBody().front().getArgument(0));
+    operand(getter.getBody().front().getTerminator(), 0, getter.getBody().front().getArgument(0));
+    std::printf("scalar reads %s: %u rows, %u live edits, all %u host budgets checked\n",
+                prepared ? "prepared" : "source", rows, mutations, completion);
+}
 
 void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & shared) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
@@ -49,7 +313,7 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
         return contract;
     };
     const auto withheld = [](mlir::ModuleOp module, const OwnedGlobalRoots & query) {
-        return empty(module, query);
+        return empty(module, query) && scalarReadsEmpty(module, query);
     };
     for (const bool prepared : {false, true}) {
         auto program = source;
@@ -98,6 +362,7 @@ void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & sha
                                     "    %savedSum = ctjs.load_global \"savedSum\"\n");
         saved = replaced(saved, thirdActual,
                          prepared ? "%thirdPutterEnv, %savedSum)" : "%owned, %savedSum)");
+        checkSavedScalarReads(context, saved, prepared);
         const auto census = [&](mlir::ModuleOp module, const OwnedGlobalRoots & query,
                                 unsigned count) {
             check(query.roots().size() == 1 && query.roots().front().methodTable &&

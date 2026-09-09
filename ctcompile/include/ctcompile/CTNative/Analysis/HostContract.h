@@ -105,6 +105,18 @@ struct HostCallableEdge {
     std::vector<HostPrimitiveArgument> arguments;
 };
 
+// A saved Number result in an ordinary source global. Each read has exactly
+// one earlier entry store; dependencies are the completed published results
+// encountered in its value expression, in traversal order (possibly repeated).
+// These are live source edges, not constant values or a native type promise.
+struct HostScalarGlobalRead {
+    ctjs::StoreGlobalOp initialization;
+    ctjs::LoadGlobalOp read;
+    mlir::Value value;
+    PrimitiveAlternatives alternatives;
+    std::vector<mlir::Value> dependencies;
+};
+
 struct HostSlotReport {
     std::string binding;
     std::string property;
@@ -134,12 +146,17 @@ public:
     [[nodiscard]] const HostSlotEdge * property(ctjs::GetPropertyOp read) const;
     [[nodiscard]] llvm::ArrayRef<HostCallableEdge> callables() const { return checkedCalls; }
     [[nodiscard]] const HostCallableEdge * callable(mlir::Operation * call) const;
+    [[nodiscard]] llvm::ArrayRef<HostScalarGlobalRead> scalarReads() const {
+        return checkedScalarReads;
+    }
+    [[nodiscard]] const HostScalarGlobalRead * scalarRead(ctjs::LoadGlobalOp read) const;
 
 private:
     std::string refusal;
     std::vector<HostSlotReport> reports;
     std::vector<ctjs::StoreGlobalOp> observed;
     std::vector<HostCallableEdge> checkedCalls;
+    std::vector<HostScalarGlobalRead> checkedScalarReads;
     unsigned workSteps = 0;
     bool budgetExhausted = false;
 };
