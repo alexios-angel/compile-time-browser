@@ -1,6 +1,7 @@
 // EmitC/Operations.cpp - native lowering implementation.
 #include "../Admission/Admission.h"
 #include "Emitter.h"
+#include "ctcompile/Support/CppLiterals.hpp"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -492,23 +493,39 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     if (auto store = llvm::dyn_cast<StoreGlobalOp>(o)) {
         ec::AssignOp::create(
             b, where, lvalueOfGlobal(b, where, store.getName()),
-            convertScalar(b, where, store.getValue(), carrierType(context, carrier::nullable)));
+            convertScalar(b, where, store.getValue(), globalStorageType(store.getName())));
         eraseIfUnused(o);
         return;
     }
     if (auto ret = llvm::dyn_cast<ReturnOp>(o)) {
         if (isEntry) {
             // Print each global with its independently proved source-store
-            // tag, one line per name. Both helpers check the generated tag.
+            // tag, one line per name. Every helper checks the generated tag.
             const auto & printedGlobals = explicitObservations ? observations : globals;
             llvm::SmallVector<llvm::StringRef> names(printedGlobals.keys().begin(),
                                                      printedGlobals.keys().end());
             llvm::sort(names);
             for (llvm::StringRef name : names) {
                 const auto storedType = globalTypes.lookup(name);
-                if (!llvm::isa_and_nonnull<NumType, BoolType>(storedType)) {
+                if (!llvm::isa_and_nonnull<NumType, BoolType, StrType>(storedType)) {
                     llvm::report_fatal_error(
                         "native global observation lacks one proved scalar type");
+                }
+                if (llvm::isa<StrType>(storedType)) {
+                    mlir::Value loaded = convertScalar(b, where, lvalueOfGlobal(b, where, name),
+                                                       globalStorageType(name));
+                    mlir::Value current =
+                        callWithConstValueOperands(
+                            b, where, mlir::TypeRange{carrierType(context, carrier::string)},
+                            b.getStringAttr("ctnative::global_string"), mlir::ValueRange{loaded})
+                            .getResult(0);
+                    mlir::Value label = ec::LiteralOp::create(
+                        b, where, ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
+                        b.getStringAttr(cpp::c_string_literal(name.str())));
+                    callWithConstValueOperands(b, where, mlir::TypeRange{},
+                                               b.getStringAttr("ctnative::print_string"),
+                                               mlir::ValueRange{label, current});
+                    continue;
                 }
                 const bool isBoolean = llvm::isa<BoolType>(storedType);
                 const auto textType =

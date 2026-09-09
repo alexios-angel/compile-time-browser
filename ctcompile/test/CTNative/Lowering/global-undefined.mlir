@@ -1,8 +1,8 @@
-// Global observations require one definite Number or Boolean source type.
+// Global observations require one definite Number, Boolean or String source type.
 // Tagged scalar storage preserves early undefined reads, but absence and mixed
 // tags remain refused at output. Every source store contributes to the census;
 // neither a constant last write nor a requested observation manufactures a type.
-// The exact runtime tag is checked again before printing Numbers or Booleans.
+// The exact runtime tag is checked again before printing any scalar.
 //
 // ONE PROGRAM PER FILE, VIA split-file, for the reason divergence-refusals.mlir
 // gives: admission reports the FIRST refusal per function and every global
@@ -49,6 +49,28 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
 // RUN:   | FileCheck %s --check-prefix=BOOLEAN_CALLEE
 
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | FileCheck %s --check-prefix=STRING
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-optional.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | FileCheck %s --check-prefix=STRING_OPTIONAL
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-mixed.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | FileCheck %s --check-prefix=STRING_MIXED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-writes.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | FileCheck %s --check-prefix=STRING_WRITES
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-callee.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | FileCheck %s --check-prefix=STRING_CALLEE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-overwrite.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | FileCheck %s --check-prefix=STRING_OVERWRITE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string-early.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | FileCheck %s --check-prefix=STRING_EARLY
+
 // --- THE SHAPE WITH NO CLOSURE IN IT ---------------------------------------
 //
 // `var u; var z = u;` is the whole defect, and it is older than any closure
@@ -61,7 +83,7 @@
 // THE FIRST STORE IS THE ONE PINNED. Both refuse, admission reports the first,
 // and `u` is it.
 //
-// HOISTED: ctnative.not_native = "store to global `u` may be null or undefined; native global observations require a definite Number or Boolean"
+// HOISTED: ctnative.not_native = "store to global `u` may be null or undefined; native global observations require a definite Number, Boolean or String"
 
 // --- AND THE SHAPE SLICE 2 STEP 2 INTRODUCED -------------------------------
 //
@@ -76,7 +98,7 @@
 // other half of this slice: typing `v` as `num` here would not refuse anything,
 // it would PRINT A NUMBER where the interpreter prints `undefined`.
 //
-// PICK: ctnative.not_native = "store to global `out` may be null or undefined; native global observations require a definite Number or Boolean"
+// PICK: ctnative.not_native = "store to global `out` may be null or undefined; native global observations require a definite Number, Boolean or String"
 
 // --- THE STORE, NOT THE VALUE, AND THAT DISTINCTION HAS BEEN WRONG BEFORE --
 //
@@ -101,7 +123,7 @@
 // neither is a check-prefix in closure-refusals.mlir any more; the lesson is
 // why this file pins PICK and OUTERSTORE separately.
 //
-// OUTERSTORE: ctnative.not_native = "store to global `out2` may be null or undefined; native global observations require a definite Number or Boolean"
+// OUTERSTORE: ctnative.not_native = "store to global `out2` may be null or undefined; native global observations require a definite Number, Boolean or String"
 
 // --- AND THE SHAPES THE NARROWING EXISTS FOR -------------------------------
 //
@@ -142,7 +164,7 @@
 // `undefined` there. This is the field half's dominance clause, and it is the
 // one witness that separates "a store exists" from "a store comes first".
 //
-// READBEFORE: ctnative.not_native = "store to global `e` may be null or undefined; native global observations require a definite Number or Boolean"
+// READBEFORE: ctnative.not_native = "store to global `e` may be null or undefined; native global observations require a definite Number, Boolean or String"
 
 // --- AND A STORE ON ONE PATH OF AN `if` ------------------------------------
 //
@@ -153,7 +175,7 @@
 // rule that asked for "a store anywhere in this function" would pass the
 // second while getting the first right.
 //
-// ONEPATH: ctnative.not_native = "store to global `mm` may be null or undefined; native global observations require a definite Number or Boolean"
+// ONEPATH: ctnative.not_native = "store to global `mm` may be null or undefined; native global observations require a definite Number, Boolean or String"
 
 //--- hoisted.js
 var u;
@@ -220,8 +242,8 @@ var mm = maybe(0 - 1);
 // BOOLEAN: call_opaque "ctnative::global_boolean"
 // BOOLEAN: call_opaque "ctnative::global_boolean"
 // BOOLEAN-NOT: ctnative.not_native
-// BOOLEAN_OPTIONAL: ctnative.not_native = "store to global `result` may be null or undefined; native global observations require a definite Number or Boolean"
-// BOOLEAN_MIXED: ctnative.not_native = "store to global `result` is !ctnative.variant<!ctnative.bool, !ctnative.num<i32>>; native global observations require a definite Number or Boolean"
+// BOOLEAN_OPTIONAL: ctnative.not_native = "store to global `result` may be null or undefined; native global observations require a definite Number, Boolean or String"
+// BOOLEAN_MIXED: ctnative.not_native = "store to global `result` is !ctnative.variant<!ctnative.bool, !ctnative.num<i32>>; native global observations require a definite Number, Boolean or String"
 // BOOLEAN_WRITES: ctnative.not_native = "store to global `result` has inconsistent global observation types"
 // BOOLEAN_CALLEE: ctnative.not_native = "store to global `result` has inconsistent global observation types"
 
@@ -246,3 +268,56 @@ result = 1;
 function overwrite() { result = 1; }
 var result = false;
 overwrite();
+
+// String storage is owning, and the full store census decides its tag.
+// Early typeof observes initial Undefined without borrowing a later String.
+// STRING-NOT: ctnative.not_native
+// STRING: emitc.global static @g_empty : !emitc.opaque<"ctnative::nullable_string">
+// STRING: call_opaque "ctnative::global_string"
+// STRING: call_opaque "ctnative::print_string"
+// STRING-NOT: ctnative.not_native
+// STRING_OPTIONAL: ctnative.not_native = "store to global `result` requires a Number, Boolean or String global"
+// STRING_MIXED: ctnative.not_native = "store to global `result` requires a Number, Boolean or String global"
+// STRING_WRITES: ctnative.not_native = "store to global `result` has inconsistent global observation types"
+// STRING_CALLEE: ctnative.not_native = "store to global `result` has inconsistent global observation types"
+// STRING_OVERWRITE-NOT: ctnative.not_native
+// STRING_OVERWRITE: emitc.global static @g_result : !emitc.opaque<"ctnative::nullable_string">
+// STRING_OVERWRITE: call_opaque "ctnative::global_string"
+// STRING_OVERWRITE: emitc.func @overwrite_1
+// STRING_OVERWRITE-NOT: ctnative.not_native
+// STRING_EARLY-NOT: ctnative.not_native
+// STRING_EARLY: emitc.global static @g_fixed : !emitc.opaque<"ctnative::nullable_string">
+// STRING_EARLY: call_opaque "ctnative::string_typeof"
+// STRING_EARLY: call_opaque "ctnative::global_string"
+// STRING_EARLY-NOT: ctnative.not_native
+
+//--- string.js
+var empty = '';
+var text = 'owned';
+var count = 2;
+
+//--- string-optional.js
+function choose(flag) { if (flag) { return 'owned'; } }
+var result = choose(false);
+
+//--- string-mixed.js
+function choose(flag) { return flag ? 'owned' : false; }
+var result = choose(false);
+
+//--- string-writes.js
+var result = 'owned';
+result = 1;
+
+//--- string-callee.js
+function overwrite() { result = false; }
+var result = 'owned';
+overwrite();
+
+//--- string-overwrite.js
+function overwrite() { result = 'later'; }
+var result = 'first';
+overwrite();
+
+//--- string-early.js
+var tag = typeof fixed;
+var fixed = 'x';

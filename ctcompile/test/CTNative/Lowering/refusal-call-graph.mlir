@@ -26,6 +26,9 @@
 // RUN:   | FileCheck %s --check-prefix=CALLS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/calledby.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=STRING
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/absent-calledby.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=CALLEDBY
 
 // --- FORWARDS: a refused callee refuses its caller --------------------------
@@ -49,7 +52,7 @@
 //
 // `helper` is native by every rule the admission check has: one numeric
 // parameter a caller proves, one multiplication, one numeric return. It is
-// refused anyway, because the top level stores a string global and keeps a
+// refused anyway, because the top level stores an absent global and keeps a
 // ctjs.call_direct that must still find a ctjs.func with a body.
 //
 // THIS IS THE DIRECTION THAT SURPRISES PEOPLE, and it is the one that makes a
@@ -58,9 +61,15 @@
 // rather than improved.
 //
 // CALLEDBY: ctjs.func {{.*}}@_script_$0
-// CALLEDBY-SAME: ctnative.not_native = "store to global `t` requires a Number or Boolean global"
+// CALLEDBY-SAME: ctnative.not_native = "store to global `t` may be null or undefined; native global observations require a definite Number, Boolean or String"
 // CALLEDBY: ctjs.func {{.*}}@helper$1
 // CALLEDBY-SAME: ctnative.not_native = "called by `_script_$0`, which is not native"
+
+// The original String global now emits both functions and a typed observation.
+// STRING: emitc.func @main
+// STRING: call_opaque "ctnative::global_string"
+// STRING: emitc.func @helper_1
+// STRING-NOT: ctnative.not_native
 
 //--- calls.js
 function bad(x) { return this ? x * 2 : x * 4; }
@@ -70,4 +79,9 @@ var r = good(3);
 //--- calledby.js
 function helper(x) { return x * 2; }
 var t = "text";
+var r = helper(3);
+
+//--- absent-calledby.js
+function helper(x) { return x * 2; }
+var t = null;
 var r = helper(3);

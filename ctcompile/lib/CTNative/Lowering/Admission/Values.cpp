@@ -34,12 +34,12 @@ bool admission::boolean(mlir::Value v, llvm::StringRef where) {
 bool admission::printable(mlir::Value v, llvm::StringRef where) {
     if (mayBeUndefined(typeOf(v))) {
         return refuse((where + " may be null or undefined; native global observations require "
-                               "a definite Number or Boolean")
+                               "a definite Number, Boolean or String")
                           .str());
     }
-    if (!llvm::isa<NumType, BoolType>(typeOf(v))) {
+    if (!llvm::isa<NumType, BoolType, StrType>(typeOf(v))) {
         return refuse((where + " is " + printed(typeOf(v)) +
-                       "; native global observations require a definite Number or Boolean")
+                       "; native global observations require a definite Number, Boolean or String")
                           .str());
     }
     return true;

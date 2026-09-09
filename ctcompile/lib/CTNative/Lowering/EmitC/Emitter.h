@@ -202,6 +202,7 @@ struct lowering {
     mlir::Value stringConstant(mlir::OpBuilder & builder, mlir::Location where,
                                llvm::StringRef value);
 
+    mlir::Type globalStorageType(llvm::StringRef name) const;
     mlir::Value lvalueOfGlobal(mlir::OpBuilder & b, mlir::Location where, llvm::StringRef name);
 
     mlir::Value truthyNumber(mlir::OpBuilder & b, mlir::Location where, mlir::Value x);

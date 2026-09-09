@@ -151,7 +151,7 @@
 // this is a refusal here and not a fixture.
 //
 // BOOLFIELD: ctjs.func {{.*}}@_script_$0
-// BOOLFIELD-SAME: ctnative.not_native = "store to global `shown` may be null or undefined; native global observations require a definite Number or Boolean"
+// BOOLFIELD-SAME: ctnative.not_native = "store to global `shown` may be null or undefined; native global observations require a definite Number, Boolean or String"
 
 // --- A `this.other()` WHOSE CALLEE WAS REFUSED ------------------------------
 //

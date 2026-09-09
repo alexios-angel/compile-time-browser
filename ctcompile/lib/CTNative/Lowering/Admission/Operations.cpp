@@ -547,7 +547,8 @@ bool admission::op(mlir::Operation * o) {
     if (auto load = llvm::dyn_cast<LoadGlobalOp>(o)) {
         if (carrierOf(typeOf(load.getResult())) != carrier::number &&
             carrierOf(typeOf(load.getResult())) != carrier::boolean &&
-            carrierOf(typeOf(load.getResult())) != carrier::nullable) {
+            carrierOf(typeOf(load.getResult())) != carrier::nullable &&
+            !isStringCarrier(carrierOf(typeOf(load.getResult())))) {
             return refuse(("global `" + load.getName() + "` is " +
                            printed(typeOf(load.getResult())) + ", not a number")
                               .str());
@@ -556,21 +557,22 @@ bool admission::op(mlir::Operation * o) {
     }
     if (auto store = llvm::dyn_cast<StoreGlobalOp>(o)) {
         // Tagged storage preserves early reads as undefined. Output requires
-        // one definite Number or Boolean tag across every source store,
+        // one definite Number, Boolean or String tag across every source store,
         // including writes in callees and on other paths. A single local
         // dominating write cannot establish the final observation type.
         const std::string where = ("store to global `" + store.getName() + "`").str();
         const auto stored = carrierOf(typeOf(store.getValue()));
         if ((stored != carrier::number && stored != carrier::boolean &&
-             stored != carrier::nullable) ||
+             stored != carrier::nullable && stored != carrier::string) ||
             !printable(store.getValue(), where)) {
-            return refuse(where + " requires a Number or Boolean global");
+            return refuse(where + " requires a Number, Boolean or String global");
         }
         bool consistent = true;
         store->getParentOfType<mlir::ModuleOp>().walk([&](StoreGlobalOp other) {
             if (other.getName() != store.getName()) { return; }
-            consistent &= carrierOf(typeOf(other.getValue())) == stored &&
-                          llvm::isa_and_nonnull<NumType, BoolType>(typeOf(other.getValue()));
+            consistent &=
+                carrierOf(typeOf(other.getValue())) == stored &&
+                llvm::isa_and_nonnull<NumType, BoolType, StrType>(typeOf(other.getValue()));
         });
         return consistent || refuse(where + " has inconsistent global observation types");
     }

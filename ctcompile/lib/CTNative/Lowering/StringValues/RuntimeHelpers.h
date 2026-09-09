@@ -37,6 +37,28 @@ inline std::string string_text(const nullable_string & value) {
     return value.tag == nullable_string::kind::undefined ? "undefined"
            : value.tag == nullable_string::kind::null_value ? "null" : value.value;
 }
+// Observation never coerces a missing store or a wrong tag into String text.
+// Return an owning copy so subsequent stores cannot change the saved value.
+inline std::string global_string(const nullable_string & value) {
+    if (value.tag != nullable_string::kind::string) { std::terminate(); }
+    return value.value;
+}
+inline void print_string(const char * name, const std::string & value) {
+    std::printf("%s=\"", name);
+    static constexpr char hex[] = "0123456789ABCDEF";
+    for (const char raw : value) {
+        const auto c = static_cast<unsigned char>(raw);
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+            c == '-' || c == '.' || c == '_' || c == '~') {
+            std::putchar(c);
+        } else {
+            std::putchar('%');
+            std::putchar(hex[c >> 4]);
+            std::putchar(hex[c & 15]);
+        }
+    }
+    std::printf("\"\n");
+}
 template <class L, class R> bool string_strict_equal(const L & left, const R & right) {
     const auto a = to_nullable_string(left), b = to_nullable_string(right);
     return a.tag == b.tag && (a.tag != nullable_string::kind::string || a.value == b.value);

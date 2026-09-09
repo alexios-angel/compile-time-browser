@@ -228,13 +228,12 @@ inline bool boolean_string_truthy(const std::variant<bool, std::string> & value)
     llvm::sort(names);
     for (llvm::StringRef name : names) {
         // Default tagged storage is undefined until the first generated
-        // store. global_number checks the tag at the output boundary, so a
-        // missing store cannot imitate a computed NaN and hide a compiler bug.
-        auto global =
-            ec::GlobalOp::create(b, module.getLoc(), ("g_" + name).str(),
-                                 carrierType(context, carrier::nullable), mlir::Attribute{},
-                                 /*extern_specifier=*/false, /*static_specifier=*/true,
-                                 /*const_specifier=*/false);
+        // store. Each observation checks its exact tag, so a missing store
+        // cannot imitate a computed NaN, false or an empty String.
+        auto global = ec::GlobalOp::create(b, module.getLoc(), ("g_" + name).str(),
+                                           globalStorageType(name), mlir::Attribute{},
+                                           /*extern_specifier=*/false, /*static_specifier=*/true,
+                                           /*const_specifier=*/false);
         global->setAttr("ctnative.provenance", b.getStringAttr("global " + name.str()));
     }
 }

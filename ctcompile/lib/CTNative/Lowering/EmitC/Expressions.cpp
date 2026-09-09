@@ -28,6 +28,14 @@ mlir::Value lowering::stringConstant(mlir::OpBuilder & builder, mlir::Location w
                                   ec::OpaqueAttr::get(context, initializer));
 }
 
+mlir::Type lowering::globalStorageType(llvm::StringRef name) const {
+    // The entire source-store census selects one owning carrier per binding.
+    // Its initial absence tag preserves early reads independently of output.
+    return carrierType(context, llvm::isa_and_nonnull<StrType>(globalTypes.lookup(name))
+                                    ? carrier::nullableString
+                                    : carrier::nullable);
+}
+
 mlir::Value lowering::lvalueOfGlobal(mlir::OpBuilder & b, mlir::Location where,
                                      llvm::StringRef name) {
     if (auto owned = ownedGlobals.find(name); owned != ownedGlobals.end()) {
@@ -35,9 +43,10 @@ mlir::Value lowering::lvalueOfGlobal(mlir::OpBuilder & b, mlir::Location where,
                                        mlir::FlatSymbolRefAttr::get(context, ("g_" + name).str()));
     }
     globals.insert(name);
+    const auto storage = globalStorageType(name);
+    needsNullableString |= isNullableStringCarrier(storage);
     needsNullable = true;
-    return ec::GetGlobalOp::create(b, where,
-                                   ec::LValueType::get(carrierType(context, carrier::nullable)),
+    return ec::GetGlobalOp::create(b, where, ec::LValueType::get(storage),
                                    mlir::FlatSymbolRefAttr::get(context, ("g_" + name).str()));
 }
 
