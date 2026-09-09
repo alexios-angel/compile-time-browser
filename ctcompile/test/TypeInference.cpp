@@ -1450,9 +1450,9 @@ public:
     ScheduledScalarInference(mlir::DataFlowSolver & solver,
                              const ctcompile::ctnative::OwnedGlobalRoots * owner,
                              mlir::Operation * literal, mlir::Value saved,
-                             mlir::Operation * observed)
+                             mlir::Operation * observed, bool boolean = false)
         : TypeInference(solver, owner), solver_(solver), literal_(literal), saved_(saved),
-          observed_(observed) {}
+          observed_(observed), boolean_(boolean) {}
 
     mlir::LogicalResult visitOperation(mlir::Operation * op,
                                        llvm::ArrayRef<const TypeLattice *> operands,
@@ -1464,20 +1464,25 @@ public:
         if (op != observed_) { return mlir::success(); }
         using namespace ctcompile::ctnative;
         const auto type = results.front()->getValue().getType();
+        auto * context = op->getContext();
+        const mlir::Type initial =
+            boolean_ ? mlir::Type(BoolType::get(context)) : NumType::get(context, NumKind::I32);
+        const mlir::Type wider =
+            boolean_ ? mlir::Type(VariantType::get(
+                           context, {BoolType::get(context), NumType::get(context, NumKind::I32)}))
+                     : NumType::get(context, NumKind::F64);
         if (stage_ == 0 && !type) {
             ++stage_;
             solver_.enqueue({solver_.getProgramPointAfter(literal_), this});
-        } else if (stage_ == 1 && type == NumType::get(op->getContext(), NumKind::I32)) {
+        } else if (stage_ == 1 && type == initial) {
             ++stage_;
-            widen(NumType::get(op->getContext(), NumKind::F64));
-        } else if (stage_ == 2 && type == NumType::get(op->getContext(), NumKind::F64)) {
+            widen(wider);
+        } else if (stage_ == 2 && type == wider) {
             ++stage_;
-            widen(OptType::get(op->getContext(), type));
-        } else if (stage_ == 3 &&
-                   type == OptType::get(op->getContext(),
-                                        NumType::get(op->getContext(), NumKind::F64))) {
+            widen(OptType::get(context, type));
+        } else if (stage_ == 3 && type == OptType::get(context, wider)) {
             ++stage_;
-            widen(BoxedType::get(op->getContext()));
+            widen(BoxedType::get(context));
         } else if (stage_ == 4 && type && llvm::isa<BoxedType>(type)) {
             ++stage_;
         }
@@ -1496,6 +1501,7 @@ private:
     mlir::Operation * literal_;
     mlir::Value saved_;
     mlir::Operation * observed_;
+    bool boolean_;
     unsigned stage_ = 0;
 };
 
@@ -1548,7 +1554,8 @@ void checkSavedScalarGlobalTypes(mlir::MLIRContext & context) {
         const char * exact = prepared ? "!ctnative.num<i32>" : "!ctnative.boxed";
         const char * optional = prepared ? "!ctnative.opt<!ctnative.num<i32>>" : "!ctnative.boxed";
         const auto variant = [&](const std::string & text, bool proved, unsigned reads,
-                                 const char * expected, const char * message) {
+                                 const char * expected, const char * message,
+                                 mlir::TypeID tag = mlir::TypeID::get<ctjs::NumberAttr>()) {
             ++rows;
             auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
             require(static_cast<bool>(module), "source/prepared fixture parses");
@@ -1561,6 +1568,11 @@ void checkSavedScalarGlobalTypes(mlir::MLIRContext & context) {
                     message);
             require(host.scalarReads().size() == reads && owner.scalarReads().size() == reads,
                     "only complete live proofs supply the expected scalar edges");
+            for (const auto & edge : owner.scalarReads()) {
+                auto initialization = edge.initialization;
+                require(edge.alternatives.tag() == tag && edge.value == initialization.getValue(),
+                        "the scalar category describes the actual stored SSA value");
+            }
             check(*module, message, expected, &owner);
             require(ctcompile::ctnative::hostContractFingerprint(*module) == contract.moduleSha256,
                     "solving leaves every source operation unchanged");
@@ -1632,11 +1644,89 @@ void checkSavedScalarGlobalTypes(mlir::MLIRContext & context) {
                     "dynamic global access keeps constant-only observations boxed");
         }
 
-        for (const bool constantOnly : {false, true}) {
-            const char * actualType = constantOnly ? "!ctnative.num<i32>" : exact;
-            const char * absentType = constantOnly ? "!ctnative.opt<!ctnative.num<i32>>" : optional;
-            auto module =
-                mlir::parseSourceString<mlir::ModuleOp>(constantOnly ? literal : program, &context);
+        const auto booleanTag = mlir::TypeID::get<ctjs::BooleanAttr>();
+        const auto boolean =
+            replaced(literal, std::string("%entryLiteral = ctjs.constant ") + kFive,
+                     "%entryLiteral = ctjs.constant #ctjs.boolean<false>");
+        const auto booleanCall = replaced(program, kFive, "#ctjs.boolean<false>");
+        const char * booleanExact = prepared ? "!ctnative.bool" : "!ctnative.boxed";
+        for (const bool truth : {false, true}) {
+            const auto constant =
+                truth ? replaced(boolean, "#ctjs.boolean<false>", "#ctjs.boolean<true>") : boolean;
+            const auto called =
+                truth ? replaced(booleanCall, "#ctjs.boolean<false>", "#ctjs.boolean<true>")
+                      : booleanCall;
+            variant(constant, true, 2, "!ctnative.bool",
+                    "false and true aliases infer Boolean from the actual stored literal",
+                    booleanTag);
+            variant(called, true, 2, booleanExact,
+                    "a Boolean host result category cannot unbox an indirect source call",
+                    booleanTag);
+            variant(
+                replaced(constant, read, read + "    %savedAgain = ctjs.load_global \"saved\"\n"),
+                true, 3, "!ctnative.bool",
+                "every repeated Boolean load retains its own actual-store subscription",
+                booleanTag);
+            variant(replaced(constant, literalStore,
+                             "    %inverted = ctjs.unary not %entryLiteral\n"
+                             "    ctjs.store_global \"saved\", %inverted\n"),
+                    true, 2, "!ctnative.bool",
+                    "a definite negated Boolean uses the ordinary unary-result lattice",
+                    booleanTag);
+        }
+        variant(replaced(boolean, literalStore, literalStore + literalStore), true, 0,
+                "!ctnative.opt<!ctnative.bool>",
+                "identical Boolean stores cannot manufacture a sole initialization edge");
+        variant(replaced(boolean, literalStore + read, read + literalStore), false, 0,
+                "!ctnative.opt<!ctnative.bool>",
+                "a Boolean load before its initializer retains implicit Undefined");
+        variant(
+            replaced(boolean, literalStore, literalStore + "    ctjs.store_global \"saved\", %u\n"),
+            true, 0, "!ctnative.opt<!ctnative.bool>",
+            "an actual Undefined write retains optional Boolean regardless of observations");
+        variant(replaced(boolean, literalStore,
+                         literalStore + "    %other = ctjs.constant #ctjs.boolean<true>\n"
+                                        "    ctjs.store_global \"saved\", %other\n"),
+                true, 0, "!ctnative.opt<!ctnative.bool>",
+                "different Boolean stores retain absence without single-store authority");
+        variant(replaced(boolean, literalStore,
+                         literalStore + "    %other = ctjs.constant " + kFive +
+                             "\n"
+                             "    ctjs.store_global \"saved\", %other\n"),
+                true, 0, "!ctnative.opt<!ctnative.variant<!ctnative.bool, !ctnative.num<i32>>>",
+                "a Number write keeps the actual mixed Boolean and Number lattice");
+        variant(replaced(boolean, literalStore, "    ctjs.store_global \"saved\", %this\n"), true,
+                0, "!ctnative.boxed",
+                "a requested Boolean observation cannot turn an unknown stored value into bool");
+        variant(replaced(boolean, literalStore,
+                         "    %unrelated = ctjs.call %this(%u)\n" + literalStore),
+                false, 0, "!ctnative.opt<!ctnative.bool>",
+                "unknown effects withhold Boolean initialization despite its literal store");
+        for (const char * name : {"globalThis", "window"}) {
+            variant(replaced(boolean, literalStore,
+                             std::string("    %dynamic = ctjs.load_global \"") + name + "\"\n" +
+                                 literalStore),
+                    false, 0, "!ctnative.boxed",
+                    "dynamic global access keeps Boolean observations boxed");
+        }
+
+        for (unsigned origin = 0; origin < 6; ++origin) {
+            const bool constantOnly = origin == 1 || origin == 3 || origin == 5;
+            const bool booleanOnly = origin >= 2;
+            const char * actualType = booleanOnly ? (constantOnly ? "!ctnative.bool" : booleanExact)
+                                      : constantOnly ? "!ctnative.num<i32>"
+                                                     : exact;
+            const char * absentType =
+                booleanOnly    ? (constantOnly || prepared ? "!ctnative.opt<!ctnative.bool>"
+                                                           : "!ctnative.boxed")
+                : constantOnly ? "!ctnative.opt<!ctnative.num<i32>>"
+                               : optional;
+            auto text = booleanOnly ? (constantOnly ? boolean : booleanCall)
+                                    : (constantOnly ? literal : program);
+            if (origin >= 4) {
+                text = replaced(text, "#ctjs.boolean<false>", "#ctjs.boolean<true>");
+            }
+            auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
             require(static_cast<bool>(module), "live-proof fixture parses");
             if (!module) { continue; }
             auto contract = requested(*module);
@@ -1677,11 +1767,16 @@ void checkSavedScalarGlobalTypes(mlir::MLIRContext & context) {
                     solver.load<mlir::dataflow::DeadCodeAnalysis>();
                     solver.load<mlir::dataflow::SparseConstantPropagation>();
                     auto * inference = solver.load<ScheduledScalarInference>(
-                        &complete, delayed, complete.scalarReads().front().value, observed);
+                        &complete, delayed, complete.scalarReads().front().value, observed,
+                        booleanOnly);
                     require(succeeded(solver.initializeAndRun(*module)),
                             "the scheduled scalar producer converges");
-                    require(inference->stages() == 5, "alias waits, receives i32, widens to f64 "
-                                                      "and optional, then becomes boxed");
+                    require(inference->stages() == 5,
+                            booleanOnly
+                                ? "alias waits, receives bool, widens to mixed and optional, "
+                                  "then becomes boxed"
+                                : "alias waits, receives i32, widens to f64 and optional, "
+                                  "then becomes boxed");
                 }
             }
 
@@ -1767,9 +1862,9 @@ void checkSavedScalarGlobalTypes(mlir::MLIRContext & context) {
             restored();
         }
     }
-    require(rows == 40 && states == 16, "all source/prepared rows and live source edits ran");
+    require(rows == 74 && states == 48, "all source/prepared rows and live source edits ran");
     std::printf("scalar global inference: %u source/prepared rows, %u live edits, "
-                "pending/i32/f64/optional/boxed subscription checked\n",
+                "pending/Boolean/i32/f64/mixed/optional/boxed subscription checked\n",
                 rows, states);
 }
 

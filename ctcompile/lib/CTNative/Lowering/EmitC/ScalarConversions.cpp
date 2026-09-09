@@ -76,6 +76,12 @@ void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted) {
         return carrierType(context, c);
     };
     for (ctjs::FuncOp fn : accepted) {
+        fn.getBody().walk([&](ctjs::StoreGlobalOp store) {
+            if (!globals.contains(store.getName())) { return; }
+            auto [position, inserted] =
+                globalTypes.try_emplace(store.getName(), typeOf(store.getValue()));
+            if (!inserted) { position->second = meet(position->second, typeOf(store.getValue())); }
+        });
         resultTypes[fn.getSymName()] = scalarType(joinedReturnType(fn));
         auto & params = parameterTypes[fn.getSymName()];
         for (mlir::BlockArgument arg : fn.getBody().front().getArguments()) {

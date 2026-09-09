@@ -546,6 +546,7 @@ bool admission::op(mlir::Operation * o) {
     }
     if (auto load = llvm::dyn_cast<LoadGlobalOp>(o)) {
         if (carrierOf(typeOf(load.getResult())) != carrier::number &&
+            carrierOf(typeOf(load.getResult())) != carrier::boolean &&
             carrierOf(typeOf(load.getResult())) != carrier::nullable) {
             return refuse(("global `" + load.getName() + "` is " +
                            printed(typeOf(load.getResult())) + ", not a number")
@@ -554,16 +555,24 @@ bool admission::op(mlir::Operation * o) {
         return true;
     }
     if (auto store = llvm::dyn_cast<StoreGlobalOp>(o)) {
-        // Tagged storage preserves an early global read as undefined, but
-        // the standalone observation convention still prints only numbers.
-        // A possibly absent store must therefore refuse. Narrowing globals
-        // needs the closed world's complete store set: a local dominating
-        // write alone cannot rule out mutations by a callee.
+        // Tagged storage preserves early reads as undefined. Output requires
+        // one definite Number or Boolean tag across every source store,
+        // including writes in callees and on other paths. A single local
+        // dominating write cannot establish the final observation type.
         const std::string where = ("store to global `" + store.getName() + "`").str();
-        return (carrierOf(typeOf(store.getValue())) == carrier::number ||
-                carrierOf(typeOf(store.getValue())) == carrier::nullable ||
-                refuse(where + " requires a numeric global")) &&
-               printable(store.getValue(), where);
+        const auto stored = carrierOf(typeOf(store.getValue()));
+        if ((stored != carrier::number && stored != carrier::boolean &&
+             stored != carrier::nullable) ||
+            !printable(store.getValue(), where)) {
+            return refuse(where + " requires a Number or Boolean global");
+        }
+        bool consistent = true;
+        store->getParentOfType<mlir::ModuleOp>().walk([&](StoreGlobalOp other) {
+            if (other.getName() != store.getName()) { return; }
+            consistent &= carrierOf(typeOf(other.getValue())) == stored &&
+                          llvm::isa_and_nonnull<NumType, BoolType>(typeOf(other.getValue()));
+        });
+        return consistent || refuse(where + " has inconsistent global observation types");
     }
     if (auto attempt = llvm::dyn_cast<TryOp>(o)) { return exceptionRegion(attempt); }
     if (llvm::isa<TryExitOp, TryYieldOp>(o)) { return true; }

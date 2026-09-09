@@ -1,27 +1,8 @@
-// A GLOBAL IS WHERE undefined-AS-NaN STOPS BEING EXACT - part 24 Phase 59
-// slice 2 step 3, and ND-7's printing row in
-// ctcompile/docs/native-divergences.md.
-//
-// The tier carries `undefined` as NaN and that is exact in arithmetic, in
-// relational comparison and in truthiness. It is not exact in a PRINT: the
-// convention is `%.17g` of the double, which has no spelling for `undefined`
-// at all, so a global holding a possibly-undefined value prints `nan` where the
-// interpreter prints `undefined`. That is a WRONG ANSWER and not a refusal, and
-// no gate outside the differential comparison can see it - the differential
-// reference skips a global that is not a Number, so the binary prints a line
-// the reference does not have.
-//
-// SO THE STORE REFUSES, AND THE REFUSAL NAMES THE CONVENTION. A reader meeting
-// it has to know why a global is different from every other use of the same
-// value, and "may be undefined" does not say that: `o.later + 1` is admitted on
-// the same type, one line away.
-//
-// AND THE OTHER HALF OF THE SLICE IS WHY THAT COSTS NOTHING. A carried shared
-// binding is emitted as a frame-scope variable holding the box's hoisted
-// `undefined`, so its type was `opt<num>` FLOW-INSENSITIVELY - at a read a
-// write dominates just as much as at one it does not. DOMINATES below is that
-// shape and it must COMPILE; PICK and OUTERSTORE are the two shapes where no
-// write dominates the read and they must not.
+// Global observations require one definite Number or Boolean source type.
+// Tagged scalar storage preserves early undefined reads, but absence and mixed
+// tags remain refused at output. Every source store contributes to the census;
+// neither a constant last write nor a requested observation manufactures a type.
+// The exact runtime tag is checked again before printing Numbers or Booleans.
 //
 // ONE PROGRAM PER FILE, VIA split-file, for the reason divergence-refusals.mlir
 // gives: admission reports the FIRST refusal per function and every global
@@ -52,6 +33,22 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=ONEPATH
 
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | FileCheck %s --check-prefix=BOOLEAN
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-optional.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | FileCheck %s --check-prefix=BOOLEAN_OPTIONAL
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-mixed.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | FileCheck %s --check-prefix=BOOLEAN_MIXED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-writes.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | FileCheck %s --check-prefix=BOOLEAN_WRITES
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boolean-callee.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
+// RUN:   | FileCheck %s --check-prefix=BOOLEAN_CALLEE
+
 // --- THE SHAPE WITH NO CLOSURE IN IT ---------------------------------------
 //
 // `var u; var z = u;` is the whole defect, and it is older than any closure
@@ -64,7 +61,7 @@
 // THE FIRST STORE IS THE ONE PINNED. Both refuse, admission reports the first,
 // and `u` is it.
 //
-// HOISTED: ctnative.not_native = "store to global `u` may be null or undefined; native global observations require a definite number"
+// HOISTED: ctnative.not_native = "store to global `u` may be null or undefined; native global observations require a definite Number or Boolean"
 
 // --- AND THE SHAPE SLICE 2 STEP 2 INTRODUCED -------------------------------
 //
@@ -79,7 +76,7 @@
 // other half of this slice: typing `v` as `num` here would not refuse anything,
 // it would PRINT A NUMBER where the interpreter prints `undefined`.
 //
-// PICK: ctnative.not_native = "store to global `out` may be null or undefined; native global observations require a definite number"
+// PICK: ctnative.not_native = "store to global `out` may be null or undefined; native global observations require a definite Number or Boolean"
 
 // --- THE STORE, NOT THE VALUE, AND THAT DISTINCTION HAS BEEN WRONG BEFORE --
 //
@@ -104,7 +101,7 @@
 // neither is a check-prefix in closure-refusals.mlir any more; the lesson is
 // why this file pins PICK and OUTERSTORE separately.
 //
-// OUTERSTORE: ctnative.not_native = "store to global `out2` may be null or undefined; native global observations require a definite number"
+// OUTERSTORE: ctnative.not_native = "store to global `out2` may be null or undefined; native global observations require a definite Number or Boolean"
 
 // --- AND THE SHAPES THE NARROWING EXISTS FOR -------------------------------
 //
@@ -145,7 +142,7 @@
 // `undefined` there. This is the field half's dominance clause, and it is the
 // one witness that separates "a store exists" from "a store comes first".
 //
-// READBEFORE: ctnative.not_native = "store to global `e` may be null or undefined; native global observations require a definite number"
+// READBEFORE: ctnative.not_native = "store to global `e` may be null or undefined; native global observations require a definite Number or Boolean"
 
 // --- AND A STORE ON ONE PATH OF AN `if` ------------------------------------
 //
@@ -156,7 +153,7 @@
 // rule that asked for "a store anywhere in this function" would pass the
 // second while getting the first right.
 //
-// ONEPATH: ctnative.not_native = "store to global `mm` may be null or undefined; native global observations require a definite number"
+// ONEPATH: ctnative.not_native = "store to global `mm` may be null or undefined; native global observations require a definite Number or Boolean"
 
 //--- hoisted.js
 var u;
@@ -214,3 +211,38 @@ function maybe(k) {
   return o.hit;
 }
 var mm = maybe(0 - 1);
+
+// Both Boolean values use exact Boolean observations; a neighboring Number
+// still calls global_number. Optional or mixed returns retain their real types.
+// BOOLEAN-NOT: ctnative.not_native
+// BOOLEAN: emitc.global static @g_off : !emitc.opaque<"ctnative::nullable_scalar">
+// BOOLEAN: call_opaque "ctnative::global_number"
+// BOOLEAN: call_opaque "ctnative::global_boolean"
+// BOOLEAN: call_opaque "ctnative::global_boolean"
+// BOOLEAN-NOT: ctnative.not_native
+// BOOLEAN_OPTIONAL: ctnative.not_native = "store to global `result` may be null or undefined; native global observations require a definite Number or Boolean"
+// BOOLEAN_MIXED: ctnative.not_native = "store to global `result` is !ctnative.variant<!ctnative.bool, !ctnative.num<i32>>; native global observations require a definite Number or Boolean"
+// BOOLEAN_WRITES: ctnative.not_native = "store to global `result` has inconsistent global observation types"
+// BOOLEAN_CALLEE: ctnative.not_native = "store to global `result` has inconsistent global observation types"
+
+//--- boolean.js
+var off = false;
+var on = true;
+var count = 2;
+
+//--- boolean-optional.js
+function choose(flag) { if (flag) { return true; } }
+var result = choose(false);
+
+//--- boolean-mixed.js
+function choose(flag) { return flag ? true : 1; }
+var result = choose(false);
+
+//--- boolean-writes.js
+var result = false;
+result = 1;
+
+//--- boolean-callee.js
+function overwrite() { result = 1; }
+var result = false;
+overwrite();

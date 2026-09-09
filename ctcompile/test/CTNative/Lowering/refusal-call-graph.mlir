@@ -58,7 +58,7 @@
 // rather than improved.
 //
 // CALLEDBY: ctjs.func {{.*}}@_script_$0
-// CALLEDBY-SAME: ctnative.not_native = "store to global `t` requires a numeric global"
+// CALLEDBY-SAME: ctnative.not_native = "store to global `t` requires a Number or Boolean global"
 // CALLEDBY: ctjs.func {{.*}}@helper$1
 // CALLEDBY-SAME: ctnative.not_native = "called by `_script_$0`, which is not native"
 

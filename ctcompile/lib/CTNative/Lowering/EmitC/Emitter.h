@@ -26,7 +26,10 @@ struct lowering {
     mlir::FrozenRewritePatternSet declarative;
     lowering(mlir::DataFlowSolver & s, mlir::MLIRContext * c, mlir::ModuleOp m)
         : solver(s), context(c), module(m), declarative(declarativePatterns(c)) {}
-    llvm::StringSet<> globals; // numeric globals the emitted unit declares
+    llvm::StringSet<> globals; // scalar globals the emitted unit declares
+    // Actual source-store lattices, joined before any source value is retyped.
+    // Observation requests and host categories never choose an output type.
+    llvm::StringMap<mlir::Type> globalTypes;
     llvm::StringSet<> observations;
     bool explicitObservations = false;
     // Committed after whole-function admission while source operations still

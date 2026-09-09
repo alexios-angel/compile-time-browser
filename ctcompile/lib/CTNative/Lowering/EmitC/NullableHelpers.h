@@ -33,6 +33,10 @@ inline double global_number(nullable_scalar value) {
     if (value.tag != nullable_scalar::kind::number) { std::terminate(); }
     return value.value;
 }
+inline bool global_boolean(nullable_scalar value) {
+    if (value.tag != nullable_scalar::kind::boolean) { std::terminate(); }
+    return value.value != 0.0;
+}
 inline bool scalar_truthy(nullable_scalar value) {
     return (value.tag == nullable_scalar::kind::number ||
             value.tag == nullable_scalar::kind::boolean) &&

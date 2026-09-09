@@ -36,7 +36,8 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
         return contract;
     };
     const auto evidence = [&](mlir::ModuleOp module, const HostContractAnalysis & host,
-                              const OwnedGlobalRoots & owner, const Dependencies & expected) {
+                              const OwnedGlobalRoots & owner, const Dependencies & expected,
+                              mlir::TypeID tag = mlir::TypeID::get<ctjs::NumberAttr>()) {
         check(host.scalarReads().size() == expected.size() &&
                   owner.scalarReads().size() == expected.size(),
               "host and owner expose every independently proved scalar load exactly once");
@@ -48,7 +49,7 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
             return;
         }
         const auto & calls = owner.roots().front().methodTable->calls;
-        const auto numbers = Alternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>());
+        const auto alternatives = Alternatives::forTag(tag);
         unsigned position = 0;
         auto entry = module.lookupSymbol<ctjs::FuncOp>("script$0");
         module.walk([&](ctjs::LoadGlobalOp load) {
@@ -71,7 +72,7 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
             });
             check(writes == 1 && scalar->initialization == initialization && scalar->read == load &&
                       scalar->value == initialization.getValue() &&
-                      scalar->alternatives == numbers && load->getParentOp() == entry &&
+                      scalar->alternatives == alternatives && load->getParentOp() == entry &&
                       initialization->getParentOp() == entry &&
                       initialization->isBeforeInBlock(load) && !owner.lookup(load),
                   "the scalar edge records the exact earlier store, stored value and live load");
@@ -96,7 +97,8 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
     };
     unsigned rows = 0;
     const auto variant = [&](const std::string & text, bool expected,
-                             const Dependencies & dependencies, const char * message) {
+                             const Dependencies & dependencies, const char * message,
+                             mlir::TypeID tag = mlir::TypeID::get<ctjs::NumberAttr>()) {
         ++rows;
         auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
         check(static_cast<bool>(module), "saved scalar source/prepared fixture parses");
@@ -113,7 +115,7 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
                          owner.reason().str().c_str());
         }
         if (expected && host.proved() && owner.proved()) {
-            evidence(*module, host, owner, dependencies);
+            evidence(*module, host, owner, dependencies, tag);
         } else if (!expected) {
             check(scalarReadsEmpty(*module, host) && scalarReadsEmpty(*module, owner) &&
                       empty(*module, owner),
@@ -207,10 +209,76 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
     }
     check(rows == 28, "all independently saved and constant-only scalar source controls ran");
 
-    for (const bool constantOnly : {false, true}) {
+    // Keep the numeric results and arithmetic unchanged, while every key
+    // actual becomes Boolean. The saved load must still prove its own origin
+    // before the third call can join the complete future-call census.
+    const std::string numberLiteral =
+        "    %actual = ctjs.constant #ctjs.number<4607182418800017408>\n";
+    const std::string booleanLiteral = "    %actual = ctjs.constant #ctjs.boolean<false>\n";
+    const auto boolean = replaced(constant, numberLiteral, booleanLiteral);
+    const auto booleanTag = mlir::TypeID::get<ctjs::BooleanAttr>();
+    for (const bool truth : {false, true}) {
+        const auto program =
+            truth ? replaced(boolean, "#ctjs.boolean<false>", "#ctjs.boolean<true>") : boolean;
+        variant(program, true, {{}},
+                "both Boolean literals retain exact origins without borrowing a Number category",
+                booleanTag);
+        variant(replaced(program, read, read + "    %savedAgain = ctjs.load_global \"savedSum\"\n"),
+                true, {{}, {}}, "repeated Boolean reads each name their actual sole store",
+                booleanTag);
+        variant(replaced(replaced(program, read,
+                                  read + "    ctjs.store_global \"savedAlias\", %savedSum\n"
+                                         "    %savedAlias = ctjs.load_global \"savedAlias\"\n"),
+                         actual, actualUsing("savedAlias")),
+                true, {{}, {}}, "Boolean aliases preserve actual source-order initialization",
+                booleanTag);
+        variant(replaced(program, constantStore,
+                         "    %inverted = ctjs.unary not %actual\n"
+                         "    ctjs.store_global \"savedSum\", %inverted\n"),
+                true, {{}}, "a proved Boolean negation retains its independent scalar category",
+                booleanTag);
+    }
+    variant(replaced(boolean, constantStore + read, read + constantStore), false, {},
+            "a Boolean read before initialization cannot borrow its future literal");
+    for (const std::string & marker : {constantStore, read, std::string("    %combined =")}) {
+        variant(replaced(boolean, marker, constantStore + marker), false, {},
+                "a second Boolean write anywhere removes single-store argument authority");
+        variant(replaced(boolean, marker, "    ctjs.store_global \"savedSum\", %u\n" + marker),
+                false, {}, "a possibly absent Boolean origin cannot borrow a definite category");
+        variant(replaced(boolean, marker, "    %unrelated = ctjs.call %this(%u)\n" + marker), false,
+                {}, "unrelated effects invalidate the complete Boolean environment");
+    }
+    variant(replaced(boolean, read, "    %savedSum = ctjs.load_global \"unwritten\"\n"), false, {},
+            "a different unwritten binding cannot acquire the Boolean store's proof");
+    variant(replaced(replaced(boolean, actual, actualUsing("actual")), read, ""), true, {},
+            "a requested Boolean observation cannot manufacture a missing scalar read");
+    variant(replaced(boolean, "    %sizeKey = ctjs.constant #ctjs.string<\"size\">\n",
+                     "    ctjs.store_global \"savedSum\", %entryKey\n"
+                     "    %sizeKey = ctjs.constant #ctjs.string<\"size\">\n"),
+            false, {}, "a future published method write invalidates Boolean global authority");
+    for (const char * initializer :
+         {"ctjs.constant #ctjs.number<0>", "ctjs.constant #ctjs.string<\"false\">",
+          "ctjs.constant #ctjs.undefined", "ctjs.constant #ctjs.bigint<\"0\">",
+          "ctjs.create_object"}) {
+        variant(replaced(boolean, constantStore,
+                         std::string("    %nonBoolean = ") + initializer +
+                             "\n    ctjs.store_global \"savedSum\", %nonBoolean\n"),
+                false, {},
+                "a different scalar or object origin cannot join the Boolean actual census");
+    }
+    check(rows == 54, "all historical and Boolean scalar source controls ran");
+
+    for (unsigned origin = 0; origin < 4; ++origin) {
+        const bool constantOnly = origin != 0;
+        const bool booleanOnly = origin >= 2;
+        const auto tag = booleanOnly ? booleanTag : mlir::TypeID::get<ctjs::NumberAttr>();
         const Dependencies expected = constantOnly ? Dependencies{{}} : Dependencies{{0, 1}};
-        auto module =
-            mlir::parseSourceString<mlir::ModuleOp>(constantOnly ? constant : source, &context);
+        const auto program = origin == 3
+                                 ? replaced(boolean, "#ctjs.boolean<false>", "#ctjs.boolean<true>")
+                             : booleanOnly  ? boolean
+                             : constantOnly ? constant
+                                            : source;
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
         check(static_cast<bool>(module), "saved scalar live-mutation fixture parses");
         if (!module) { return; }
         auto contract = requested(*module);
@@ -230,7 +298,7 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
         check(exact.proved() && exact.steps() == completion && original.proved(),
               "the exact host completion budget publishes the complete scalar proof");
         if (!exact.proved() || !original.proved()) { return; }
-        evidence(*module, exact, original, expected);
+        evidence(*module, exact, original, expected, tag);
         const unsigned ownerCompletion = original.steps();
         for (const unsigned budget : {0u, ownerCompletion / 2, ownerCompletion - 1}) {
             OwnedGlobalRoots limited(*module, contract, budget);
@@ -255,7 +323,16 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
         check(forgedHost.proved() && forgedOwner.proved(),
               "forged reports do not alter independently proved scalar source edges");
         if (!forgedHost.proved() || !forgedOwner.proved()) { return; }
-        evidence(*module, forgedHost, forgedOwner, expected);
+        evidence(*module, forgedHost, forgedOwner, expected, tag);
+        mlir::OwningOpRef<mlir::ModuleOp> clone{llvm::cast<mlir::ModuleOp>(module->clone())};
+        const auto clonedContract = requested(*clone);
+        HostContractAnalysis clonedHost(*clone, clonedContract);
+        OwnedGlobalRoots clonedOwner(*clone, clonedContract);
+        check(clonedHost.proved() && clonedOwner.proved(),
+              "a fresh clone rederives scalar edges against its own live operations");
+        if (clonedHost.proved() && clonedOwner.proved()) {
+            evidence(*clone, clonedHost, clonedOwner, expected, tag);
+        }
         const auto scalar = forgedOwner.scalarReads().front();
         auto initialization = scalar.initialization;
         auto load = scalar.read;
@@ -285,7 +362,7 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
             OwnedGlobalRoots owner(*module, contract);
             check(host.proved() && owner.proved(),
                   "restoring source edges restores the scalar proof");
-            if (host.proved() && owner.proved()) { evidence(*module, host, owner, expected); }
+            if (host.proved() && owner.proved()) { evidence(*module, host, owner, expected, tag); }
         };
         const auto operand = [&](mlir::Operation * operation, unsigned index, mlir::Value value) {
             const auto old = operation->getOperand(index);
@@ -344,72 +421,90 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
             }
         }
         std::printf("scalar reads %s %s: %u rows, %u live edits, all %u host budgets checked\n",
-                    prepared ? "prepared" : "source", constantOnly ? "constant" : "published", rows,
-                    mutations, completion);
+                    prepared ? "prepared" : "source",
+                    origin == 3    ? "Boolean true"
+                    : booleanOnly  ? "Boolean false"
+                    : constantOnly ? "constant"
+                                   : "published",
+                    rows, mutations, completion);
     }
 
-    const auto scoped = replaced(constant, constantStore,
-                                 "    %condition = ctjs.truthy %actual\n"
-                                 "    scf.if %condition {\n"
-                                 "      %thenNumber = ctjs.constant #ctjs.number<0> {test_scope}\n"
-                                 "      scf.yield\n"
-                                 "    } else {\n"
-                                 "      %elseNumber = ctjs.constant #ctjs.number<0> {test_scope}\n"
-                                 "      scf.yield\n"
-                                 "    }\n" +
-                                     constantStore);
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(scoped, &context);
-    check(static_cast<bool>(module), "constant-only inaccessible-arm fixture parses");
-    if (!module) { return; }
-    mlir::Builder attributes(&context);
-    module->walk([&](mlir::Operation * operation) {
-        operation->setAttr("ctnative.scalar_global", attributes.getStringAttr("number"));
-        operation->setAttr("ctnative.host_proved", attributes.getBoolAttr(true));
-        operation->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
-    });
-    const auto contract = requested(*module);
-    const auto valid = [&]() {
-        HostContractAnalysis host(*module, contract);
-        OwnedGlobalRoots owner(*module, contract);
-        check(host.proved() && host.scalarReads().size() == 1 && !owner.proved() &&
-                  owner.reason() ==
-                      "owned global method table requires unconditional straight-line operations" &&
-                  scalarReadsEmpty(*module, owner),
-              "valid constant host scope does not erase the separate straight-line owner guard");
-        if (host.scalarReads().size() == 1) {
-            check(host.scalarReads().front().dependencies.empty(),
-                  "constant host scope proof has no published-call dependency");
+    for (const bool booleanOnly : {false, true}) {
+        const auto scoped =
+            replaced(booleanOnly ? boolean : constant, constantStore,
+                     "    %condition = ctjs.truthy %actual\n"
+                     "    scf.if %condition {\n"
+                     "      %thenNumber = ctjs.constant #ctjs.number<0> {test_scope}\n"
+                     "      scf.yield\n"
+                     "    } else {\n"
+                     "      %elseNumber = ctjs.constant #ctjs.number<0> {test_scope}\n"
+                     "      scf.yield\n"
+                     "    }\n" +
+                         constantStore);
+        auto program = scoped;
+        if (booleanOnly) {
+            for (const char * name : {"thenNumber", "elseNumber"}) {
+                const auto definition = std::string("%") + name + " = ctjs.constant ";
+                program = replaced(program, definition + "#ctjs.number<0>",
+                                   definition + "#ctjs.boolean<false>");
+            }
         }
-    };
-    valid();
-    ctjs::StoreGlobalOp initialization;
-    std::vector<mlir::Value> inaccessible;
-    module->walk([&](mlir::Operation * operation) {
-        if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation);
-            store && store.getName() == "savedSum") {
-            initialization = store;
-        }
-        if (operation->hasAttr("test_scope")) { inaccessible.push_back(operation->getResult(0)); }
-    });
-    check(initialization && inaccessible.size() == 2,
-          "both inaccessible Number arms and the exact initializer survive source parsing");
-    if (!initialization || inaccessible.size() != 2) { return; }
-    const auto original = initialization.getValue();
-    for (mlir::Value value : inaccessible) {
-        initialization->setOperand(0, value);
-        HostContractAnalysis stale(*module, contract);
-        HostContractAnalysis fresh(*module, requested(*module));
-        OwnedGlobalRoots owner(*module, requested(*module));
-        check(!stale.proved() && stale.reason().contains("fingerprint") &&
-                  scalarReadsEmpty(*module, stale) && !fresh.proved() && !fresh.exhausted() &&
-                  scalarReadsEmpty(*module, fresh) && !owner.proved() &&
-                  scalarReadsEmpty(*module, owner),
-              "an inaccessible Number arm cannot initialize an outer constant scalar load");
-        initialization->setOperand(0, original);
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        check(static_cast<bool>(module), "constant-only inaccessible-arm fixture parses");
+        if (!module) { return; }
+        mlir::Builder attributes(&context);
+        module->walk([&](mlir::Operation * operation) {
+            operation->setAttr("ctnative.scalar_global", attributes.getStringAttr("number"));
+            operation->setAttr("ctnative.host_proved", attributes.getBoolAttr(true));
+            operation->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
+        });
+        const auto contract = requested(*module);
+        const auto valid = [&]() {
+            HostContractAnalysis host(*module, contract);
+            OwnedGlobalRoots owner(*module, contract);
+            check(
+                host.proved() && host.scalarReads().size() == 1 && !owner.proved() &&
+                    owner.reason() == "owned global method table requires unconditional "
+                                      "straight-line operations" &&
+                    scalarReadsEmpty(*module, owner),
+                "valid constant host scope does not erase the separate straight-line owner guard");
+            if (host.scalarReads().size() == 1) {
+                check(host.scalarReads().front().dependencies.empty(),
+                      "constant host scope proof has no published-call dependency");
+            }
+        };
         valid();
+        ctjs::StoreGlobalOp initialization;
+        std::vector<mlir::Value> inaccessible;
+        module->walk([&](mlir::Operation * operation) {
+            if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation);
+                store && store.getName() == "savedSum") {
+                initialization = store;
+            }
+            if (operation->hasAttr("test_scope")) {
+                inaccessible.push_back(operation->getResult(0));
+            }
+        });
+        check(initialization && inaccessible.size() == 2,
+              "both inaccessible scalar arms and the exact initializer survive source parsing");
+        if (!initialization || inaccessible.size() != 2) { return; }
+        const auto original = initialization.getValue();
+        for (mlir::Value value : inaccessible) {
+            initialization->setOperand(0, value);
+            HostContractAnalysis stale(*module, contract);
+            HostContractAnalysis fresh(*module, requested(*module));
+            OwnedGlobalRoots owner(*module, requested(*module));
+            check(!stale.proved() && stale.reason().contains("fingerprint") &&
+                      scalarReadsEmpty(*module, stale) && !fresh.proved() && !fresh.exhausted() &&
+                      scalarReadsEmpty(*module, fresh) && !owner.proved() &&
+                      scalarReadsEmpty(*module, owner),
+                  "an inaccessible scalar arm cannot initialize an outer constant scalar load");
+            initialization->setOperand(0, original);
+            valid();
+        }
+        std::printf("scalar reads %s: two inaccessible constant scalar arms checked\n",
+                    prepared ? "prepared" : "source");
     }
-    std::printf("scalar reads %s: two inaccessible constant Number arms checked\n",
-                prepared ? "prepared" : "source");
 }
 
 void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & shared) {

@@ -29,17 +29,17 @@ bool admission::boolean(mlir::Value v, llvm::StringRef where) {
     return true;
 }
 
-// Global observations still use the numeric printing convention. Internal
-// optional scalars are exact, but that does not add optional-global output.
+// Each global observation has one proved scalar tag. Internal optional or
+// mixed scalars are exact, but that does not establish a single output type.
 bool admission::printable(mlir::Value v, llvm::StringRef where) {
     if (mayBeUndefined(typeOf(v))) {
         return refuse((where + " may be null or undefined; native global observations require "
-                               "a definite number")
+                               "a definite Number or Boolean")
                           .str());
     }
-    if (!llvm::isa<NumType>(typeOf(v))) {
+    if (!llvm::isa<NumType, BoolType>(typeOf(v))) {
         return refuse((where + " is " + printed(typeOf(v)) +
-                       "; native global observations require a definite number")
+                       "; native global observations require a definite Number or Boolean")
                           .str());
     }
     return true;

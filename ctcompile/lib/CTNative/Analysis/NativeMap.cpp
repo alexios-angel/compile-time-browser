@@ -517,13 +517,15 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals) 
         } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
                    load && load.getName() != "Map" && !copies.builtins.contains(op)) {
             // A complete live source-owner proof identifies this load as the
-            // ordinary exported root or an independently proved saved Number.
+            // ordinary exported root or an independently proved Number or Boolean.
             // Both require the complete live family and source effects; names,
             // observations and native annotations never authorize a read.
             if (globals && globals->proved()) {
                 if (globals->lookup(load)) { return; }
                 const auto * scalar = globals->scalarRead(load);
-                if (scalar && scalar->alternatives.tag() == mlir::TypeID::get<ctjs::NumberAttr>()) {
+                if (scalar &&
+                    (scalar->alternatives.tag() == mlir::TypeID::get<ctjs::NumberAttr>() ||
+                     scalar->alternatives.tag() == mlir::TypeID::get<ctjs::BooleanAttr>())) {
                     return;
                 }
             }

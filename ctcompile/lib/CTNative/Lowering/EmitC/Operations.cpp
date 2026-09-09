@@ -498,23 +498,41 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     }
     if (auto ret = llvm::dyn_cast<ReturnOp>(o)) {
         if (isEntry) {
-            // main: print the globals, return 0. The convention the gate
-            // reads: `name=%.17g`, one per line, sorted by name.
+            // Print each global with its independently proved source-store
+            // tag, one line per name. Both helpers check the generated tag.
             const auto & printedGlobals = explicitObservations ? observations : globals;
             llvm::SmallVector<llvm::StringRef> names(printedGlobals.keys().begin(),
                                                      printedGlobals.keys().end());
             llvm::sort(names);
             for (llvm::StringRef name : names) {
+                const auto storedType = globalTypes.lookup(name);
+                if (!llvm::isa_and_nonnull<NumType, BoolType>(storedType)) {
+                    llvm::report_fatal_error(
+                        "native global observation lacks one proved scalar type");
+                }
+                const bool isBoolean = llvm::isa<BoolType>(storedType);
+                const auto textType =
+                    ec::PointerType::get(ec::OpaqueType::get(context, "const char"));
                 mlir::Value loaded = convertScalar(b, where, lvalueOfGlobal(b, where, name),
                                                    carrierType(context, carrier::nullable));
                 mlir::Value current =
-                    callWithConstValueOperands(b, where, mlir::TypeRange{f64},
-                                               b.getStringAttr("ctnative::global_number"),
-                                               mlir::ValueRange{loaded})
+                    callWithConstValueOperands(
+                        b, where, mlir::TypeRange{isBoolean ? mlir::Type(i1) : mlir::Type(f64)},
+                        b.getStringAttr(isBoolean ? "ctnative::global_boolean"
+                                                  : "ctnative::global_number"),
+                        mlir::ValueRange{loaded})
                         .getResult(0);
+                if (isBoolean) {
+                    const auto literal = [&](llvm::StringRef spelling) -> mlir::Value {
+                        return ec::LiteralOp::create(b, where, textType, b.getStringAttr(spelling));
+                    };
+                    current = ec::ConditionalOp::create(b, where, textType, current,
+                                                        literal("\"true\""), literal("\"false\""));
+                }
                 mlir::Value format = ec::LiteralOp::create(
-                    b, where, ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
-                    b.getStringAttr(("\"" + name + "=%.17g\\n\"").str()));
+                    b, where, textType,
+                    b.getStringAttr(
+                        ("\"" + name + (isBoolean ? "=%s\\n\"" : "=%.17g\\n\"")).str()));
                 callWithConstValueOperands(b, where, mlir::TypeRange{}, b.getStringAttr("printf"),
                                            mlir::ValueRange{format, current});
             }

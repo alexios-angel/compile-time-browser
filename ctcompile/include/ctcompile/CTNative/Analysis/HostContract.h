@@ -105,10 +105,10 @@ struct HostCallableEdge {
     std::vector<HostPrimitiveArgument> arguments;
 };
 
-// A proved Number origin in an ordinary source global. Each read has exactly
+// A proved Number or Boolean origin in an ordinary source global. Each read has exactly
 // one earlier entry store; dependencies are the completed published results
 // encountered in its value expression, in traversal order (possibly repeated).
-// The list is empty for constant-only Number expressions; their source scope,
+// The list is empty for constant-only scalar expressions; their source scope,
 // initialization and complete environment proof remain mandatory.
 // These are live source edges, not constant values or a native type promise.
 struct HostScalarGlobalRead {

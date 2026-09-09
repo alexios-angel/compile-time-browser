@@ -59,14 +59,16 @@
 // BINARY: ctjs.func {{.*}}@badd$1
 // BINARY-SAME: ctnative.not_native = "binary operand is !ctnative.str<utf8>, not a number"
 
-// --- numeric(), where = "store to global `X`" -------------------------------
+// --- a formerly refused Boolean global ------------------------------------
 //
-// The only `where` that is COMPUTED rather than a literal, so it is the one a
-// rewrite is most likely to drop. A global is a `static double`; storing a
-// boolean into one has no representation.
+// Preserve the original source as Boolean observations become native. The
+// equality result keeps its Boolean tag through storage and exact output.
 //
-// STORE: ctjs.func {{.*}}@_script_$0
-// STORE-SAME: ctnative.not_native = "store to global `r` requires a numeric global"
+// STORE-NOT: ctnative.not_native
+// STORE: emitc.func @main()
+// STORE: call_opaque "ctnative::global_boolean"
+// STORE: emitc.func @eqbool_1
+// STORE-NOT: ctnative.not_native
 
 // --- the carrier sweep: a value no arm objected to, with no carrier ---------
 //
