@@ -2754,3 +2754,80 @@ semantics differences remain open. Evidence:
 `/tmp/ctcompile-map-zero-full{,-detail}.log`,
 `/tmp/ctcompile-map-zero-full-hashes.json` and
 `/tmp/ctcompile-string-bigint-full-audit.json`.
+
+
+## Mixed primitive BigInt comparison retention, 2026-09-09
+
+Continued the explicit next boundary in **d7ebbb73**, its HANDOFF and the
+preceding String/BigInt checkpoint. Loose equality and all four relational
+kinds now accept independently proved original primitive categories, including
+mixed BigInt operands. Saved array and own-field reads preserve their original
+categories after replacement, deletion and forwarding. A single Add result may
+have Number, String or BigInt origins on independent paths. Object and opaque
+origins still refuse, including a path that merely observed primitive actuals.
+The analysis proves no comparison value, key, branch liveness or native carrier.
+
+The unchanged VM's `loose_equals` uses digit equality, String parsing or static
+numeric conversion for these primitives. Its BigInt/Boolean path also enters
+`to_primitive`'s depth guard; every relational kind enters that guard. Primitive
+inputs return before property lookup or a user callback. The guard can produce
+an independent Error, which cannot retain this whole-frame query's unpublished
+fresh locals. Calls, handlers, explicit throws and publication remain refused.
+No normal-completion, allocation-success or no-throw/effect contract follows.
+
+The raw matrix checks both operand positions, six original primitive categories,
+computed producers, three independently visited result categories, saved values,
+retained children, stale/fresh solvers, forged completion markers and all
+incomplete retention budgets. Equality passes **92 rows, 50 live states and
+5206 budget cutoffs**; each relational kind passes **100 rows, 52 states and
+5498 cutoffs**. Every wide snapshot checks the exact additional **64** work units
+for 32 independent results and their copied origins. Existing ordinary primitive
+comparison matrices pass **84 rows, 34 states and 3778 cutoffs** per kind.
+
+Eight new source families record **32 literal sites, 64 instances, 14 confined
+and 50 retained**. Five new child sites are proved confined; opaque, object and
+separately retained-child controls preserve their conservative claims. Exactly
+ten historical child claims advance from Stored to confined: the original
+`objectFrameLooseEqualityBigInt`, the Equality/Relational/Unary/Binary/Static/
+Shift/DivMod/Pow Mixed families and `objectFrameStringBigIntMixed`. Their complete
+recorded lifetime observations remain identical. Removing the new fragment
+restores all **76,401** prior fixture bytes, including historical comments.
+Every other historical checker row remains unchanged. New source-body hashes,
+32 independent allocation/observation coordinates and unique matching claims
+pass strict replay; **96 independent evidence/source corruptions** reject.
+
+The initial focused run passed **7/8 escape CTests in 10.44 seconds**, with arrays
+passing in **0.53**. Its sole failure was the historical loose-equality BigInt
+child's old Stored expectation. The independent recording audit reconciled all
+ten promotions, without changing production, raw test or source bytes. The
+strengthened focused gate now passes **8/8 in 9.35 seconds**, including arrays in
+**0.52** and the fixture in **0.43**. Fixture precision advances **81/122 ->
+96/129**, with **657 claims, 665 observed sites, nine unclaimed sites and zero
+violations, partial or pending claims**. Bootstrap/p5/Phaser remain **0/64,
+0/16 and 0/20** with zero violations; p5 retains its established single partial.
+Stable clang-format 22 passes all **745** files; bundled 23 retains the same nine
+baseline differences. Full-suite validation is pending at this checkpoint.
+
+A separate exact-fragment probe makes **16 calls** and observes **68 Boolean
+globals** in both Node and the interpreter. **64 agree**. Both
+`"9007199254740993" < 9007199254740993n` and the reversed `>` return false in
+Node but true in the VM; `false == 0n` and `1n == true` return true in Node but
+false in the VM. The original String-to-Number rounding and Boolean equality
+differences remain unchanged. Sixteen independent comparison/deletion source
+mutations alter the observed controls. These observations supply no native
+comparison semantics; retention remains sound because every structural arm is
+checked and primitive comparison results carry no input object identity.
+
+The next separate retention boundary is a known BigInt operand's unary Plus
+TypeError. Existing raw Plus refusal rows remain. The source probe
+`/tmp/ctcompile-after-bigint-comparison-boundary.js` checks a known BigInt/Number
+branch, a separately retained child and opaque actuals: three functions, six
+calls, Node Number `plusEarlyTrace=63`. Its VM/escape measurements are pending;
+no further admission or completion/effect proof is claimed.
+
+Evidence: `/tmp/ctcompile-map-one-escape{,-corrected}.log`,
+`/tmp/ctcompile-bigint-comparison-{fixture.rec,fixture.claims,measurement.json}`,
+`/tmp/ctcompile-bigint-comparison-checker-audit/audit.json`,
+`/tmp/ctcompile-bigint-comparison-{preservation,node,vm-audit,frozen}.json` and
+`/tmp/ctcompile-bigint-comparison-semantics.js`, SHA256
+`427127f50e7d55a1359ce30d8fec25877235df11894e4886ca7c0044620b719f`.

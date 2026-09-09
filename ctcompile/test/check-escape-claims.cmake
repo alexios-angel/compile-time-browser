@@ -257,7 +257,8 @@ if(STRICT)
   if(NOT _pow_error_hash STREQUAL "31462dc9b17e9c47e4ad4255559bbffda5aea3dc9100e7044c25a7fbb93bbea1")
     message(FATAL_ERROR "the BigInt Pow Cap source changed; remeasure its bytecode coordinate before updating this case")
   endif()
-  # Every String/BigInt producer and refusal body is pinned independently.
+  # Every String/BigInt producer, mixed comparison and promoted historical body
+  # is pinned independently; retention never authorizes a comparison value.
   foreach(_source_pair IN ITEMS
       "objectFrameStringBigIntSaved aec68c23e5f9bf8bfa9e5ab52c5ede7b1b8c9822da89811035d45d1ac3a6369e"
       "objectFrameStringBigIntPaths 2dc79c09d7cbc6a9d8e5d065665b77ff0eb33085c3c4fd9955a5e54ddb8168ff"
@@ -267,6 +268,23 @@ if(STRICT)
       "objectFrameStringBigIntObject ad31a100dc70a5e182d7fe01bdf6fd37874e991a03d6fa8d03e47e7dcbcbe7cf"
       "objectFrameStringBigIntMixed 93be77d12ea361ed413761a2c919cb9d5e1d9e0dd569cb5ba5a5650558a7f88b"
       "objectFrameStringBigIntRetained de5ad600d8d125470e50e0ae2c8ea40c0d88f5ccdd6ce90f1de9f7c9e6e6af32"
+      "objectFrameBigIntMixedSaved 551ddbb520f3943021ea0f9d62fa00da544d9197541b2c7af5d93c36f84706f2"
+      "objectFrameBigIntMixedPrimitives 426ff5237d803c81f50895ad55ed76bf8e3957978287a63cdd3ebfbd96ff47df"
+      "objectFrameBigIntMixedPaths 07be46f1898b3bd6770b745f89986f527c85048de407fc2d6877e70fd031669f"
+      "objectFrameBigIntMixedNumbers c7e7c59c2a1f4521246d45c2f6ba6d1443de77f694d34bd785ba894634778087"
+      "objectFrameBigIntMixedOpaque 006c8c7c8446a11d6ee37cd656110cc133ff8303434ca70f1a8e5bfd7d3581b9"
+      "objectFrameBigIntMixedObject 60e510407c187de4856933b7d5888d569ace5184c727eae852686442cd298282"
+      "objectFrameBigIntMixedRetained bce40177f3c45573538dcf5f570ca89c820cf733f36eb63c3884b9234f9da000"
+      "objectFrameBigIntMixedStrings d0b6f0b99362df38d9c93e787520153c9daee6c204037b16f7c04130c42b8b3b"
+      "objectFrameLooseEqualityBigInt d39859d4356e8e61f4d67b9ad30e5ea6df547430738747bff84b97d7ab4fc5c5"
+      "objectFrameBigIntEqualityMixed 8cdd5b79d1a3b8c0502152f839fc2ba1f6bad98736de66a36be67f516e5b5667"
+      "objectFrameBigIntRelationalMixed b8efef815d87e1deec7728aed6d0efb24c4d19fb12e74653625e1aa4315872b6"
+      "objectFrameBigIntUnaryMixed 7869f7391dc47cf015cc661fe66ab7762e91bbdc18455aa04dfdb681c68de820"
+      "objectFrameBigIntBinaryMixed 60842a13c6a7a7364b1d3af8651ff50a2624e69863826daa3dbb3be5b27ba9a3"
+      "objectFrameBigIntStaticMixed a9dae7f7353425dee72b437a3ae7e6f44c7a8559480381679a2ee2466c8d1983"
+      "objectFrameBigIntShiftMixed 6061e3812db39af626f1ff685133c92c3d7f00f5cc2fd0a95beac18c217fb67e"
+      "objectFrameBigIntDivModMixed 80682cde55e777b9e6b233311457b8abdad92ec3fed87b6f77b50752b6268232"
+      "objectFrameBigIntPowMixed 826b4e604c15a2e1437856e0b2e7c9183916efba6556cd5a65cb105f9774a1c1"
 )
     string(REPLACE " " ";" _source_fields "${_source_pair}")
     list(GET _source_fields 0 _source_name)
@@ -274,7 +292,7 @@ if(STRICT)
     string(REGEX MATCH "function ${_source_name}\\([^\n]*\\) \\{[^\n]*\n(    [^\n]*\n)*\\}" _source_body "${_fixture_source}")
     string(SHA256 _observed_source_hash "${_source_body}")
     if(NOT _observed_source_hash STREQUAL _source_hash)
-      message(FATAL_ERROR "${_source_name}: String BigInt source changed; preserve or remeasure its evidence")
+      message(FATAL_ERROR "${_source_name}: primitive BigInt source changed; preserve or remeasure its evidence")
     endif()
   endforeach()
   foreach(_line IN LISTS _recording_lines)
@@ -436,6 +454,26 @@ if(STRICT)
         message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
       endif()
       list(APPEND _object_add_concat_rows "${_row} ${CMAKE_MATCH_1}")
+    elseif(_function_name MATCHES "^objectFrameBigIntMixed(Saved|Primitives|Paths|Numbers|Opaque|Object|Retained|Strings)$" AND _line MATCHES "^alloc ")
+      if(NOT _line MATCHES "^alloc ([0-9]+) kind obj$")
+        message(FATAL_ERROR "${_function_name}: unexpected mixed BigInt comparison source allocation: ${_line}")
+      endif()
+      list(APPEND _object_mixed_bigint_literal_pcs "${_function_name} ${CMAKE_MATCH_1}")
+    elseif(_function_name MATCHES "^objectFrameBigIntMixed(Saved|Primitives|Paths|Numbers|Opaque|Object|Retained|Strings)$" AND _line MATCHES "^site ")
+      if(NOT _line MATCHES "^site ([0-9]+) kind obj made ([0-9]+) confined ([0-9]+) escaped ([0-9]+) unresolved ([0-9]+) unchecked ([0-9]+) routes ([^ ]+)$")
+        message(FATAL_ERROR "${_function_name}: unexpected mixed BigInt comparison observation: ${_line}")
+      endif()
+      set(_pc "${CMAKE_MATCH_1}")
+      set(_row "${_function_name} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3} ${CMAKE_MATCH_4} ${CMAKE_MATCH_5} ${CMAKE_MATCH_6} ${CMAKE_MATCH_7}")
+      string(REGEX MATCHALL "escape ${_program_hash} ${_function_index} ${_pc} obj [^\n]+" _mixed_bigint_claims "${_claim_text}")
+      list(LENGTH _mixed_bigint_claims _mixed_bigint_claim_count)
+      if(NOT _mixed_bigint_claim_count EQUAL 1)
+        message(FATAL_ERROR "${_function_name}: missing or duplicate mixed BigInt comparison claim at pc ${_pc}")
+      endif()
+      if(NOT _claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_pc} obj ([^\n]+)")
+        message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
+      endif()
+      list(APPEND _object_mixed_bigint_rows "${_row} ${CMAKE_MATCH_1} pc${_pc}")
     elseif(_function_name MATCHES "^objectFrameStringBigInt(Saved|Paths|Template|OpaqueAdd|OpaqueTemplate|Object|Mixed|Retained)$" AND _line MATCHES "^alloc ")
       if(NOT _line MATCHES "^alloc ([0-9]+) kind obj$")
         message(FATAL_ERROR "${_function_name}: unexpected String BigInt source allocation: ${_line}")
@@ -842,7 +880,7 @@ if(STRICT)
       "objectFrameLooseEqualityOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameLooseEqualityOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameLooseEqualityOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
-      "objectFrameLooseEqualityBigInt 1 1 0 0 0 - escapes:stored"
+      "objectFrameLooseEqualityBigInt 1 1 0 0 0 - confined"
       "objectFrameLooseEqualityBigInt 1 0 1 0 0 temporaries:1 escapes:stored"
       "objectFrameLooseEqualityBigInt 1 0 1 0 0 temporaries:1 escapes:stored"
       "objectFrameLooseEqualityBigInt 1 0 1 0 0 temporaries:1 escapes:returned"
@@ -975,7 +1013,7 @@ if(STRICT)
       "objectFrameBigIntEqualityOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntEqualityOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntEqualityOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
-      "objectFrameBigIntEqualityMixed 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntEqualityMixed 2 2 0 0 0 - confined"
       "objectFrameBigIntEqualityMixed 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntEqualityMixed 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntEqualityMixed 2 0 2 0 0 temporaries:2 escapes:returned"
@@ -1003,7 +1041,7 @@ if(STRICT)
       "objectFrameBigIntRelationalOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntRelationalOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntRelationalOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
-      "objectFrameBigIntRelationalMixed 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntRelationalMixed 2 2 0 0 0 - confined"
       "objectFrameBigIntRelationalMixed 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntRelationalMixed 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntRelationalMixed 2 0 2 0 0 temporaries:2 escapes:returned"
@@ -1037,7 +1075,7 @@ if(STRICT)
       "objectFrameBigIntUnaryOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntUnaryOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntUnaryOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
-      "objectFrameBigIntUnaryMixed 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntUnaryMixed 2 2 0 0 0 - confined"
       "objectFrameBigIntUnaryMixed 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntUnaryMixed 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntUnaryMixed 2 0 2 0 0 temporaries:2 escapes:returned"
@@ -1067,7 +1105,7 @@ if(STRICT)
       "objectFrameBigIntBinaryOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntBinaryOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntBinaryOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
-      "objectFrameBigIntBinaryMixed 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntBinaryMixed 2 2 0 0 0 - confined"
       "objectFrameBigIntBinaryMixed 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntBinaryMixed 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntBinaryMixed 2 0 2 0 0 temporaries:2 escapes:returned"
@@ -1095,7 +1133,7 @@ if(STRICT)
       "objectFrameBigIntStaticOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntStaticOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntStaticOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
-      "objectFrameBigIntStaticMixed 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntStaticMixed 2 2 0 0 0 - confined"
       "objectFrameBigIntStaticMixed 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntStaticMixed 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntStaticMixed 2 0 2 0 0 temporaries:2 escapes:returned"
@@ -1135,7 +1173,7 @@ if(STRICT)
       "objectFrameBigIntShiftOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntShiftOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntShiftOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
-      "objectFrameBigIntShiftMixed 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntShiftMixed 2 2 0 0 0 - confined"
       "objectFrameBigIntShiftMixed 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntShiftMixed 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntShiftMixed 2 0 2 0 0 temporaries:2 escapes:returned"
@@ -1187,7 +1225,7 @@ if(STRICT)
       "objectFrameBigIntDivModOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntDivModOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntDivModOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
-      "objectFrameBigIntDivModMixed 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntDivModMixed 2 2 0 0 0 - confined"
       "objectFrameBigIntDivModMixed 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntDivModMixed 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntDivModMixed 2 0 2 0 0 temporaries:2 escapes:returned"
@@ -1232,6 +1270,85 @@ if(STRICT)
   endif()
   message(STATUS "imported BigInt Pow Errors: two negative and two VM-cap objects retained through unwinding at exact source coordinates, no source allocation claims")
 
+  set(_expected_object_mixed_bigint_literal_pcs
+      "objectFrameBigIntMixedSaved 10"
+      "objectFrameBigIntMixedSaved 14"
+      "objectFrameBigIntMixedSaved 18"
+      "objectFrameBigIntMixedSaved 77"
+      "objectFrameBigIntMixedPrimitives 9"
+      "objectFrameBigIntMixedPrimitives 13"
+      "objectFrameBigIntMixedPrimitives 17"
+      "objectFrameBigIntMixedPrimitives 54"
+      "objectFrameBigIntMixedPaths 7"
+      "objectFrameBigIntMixedPaths 11"
+      "objectFrameBigIntMixedPaths 15"
+      "objectFrameBigIntMixedPaths 46"
+      "objectFrameBigIntMixedNumbers 8"
+      "objectFrameBigIntMixedNumbers 12"
+      "objectFrameBigIntMixedNumbers 16"
+      "objectFrameBigIntMixedNumbers 52"
+      "objectFrameBigIntMixedOpaque 5"
+      "objectFrameBigIntMixedOpaque 9"
+      "objectFrameBigIntMixedOpaque 13"
+      "objectFrameBigIntMixedOpaque 31"
+      "objectFrameBigIntMixedObject 6"
+      "objectFrameBigIntMixedObject 10"
+      "objectFrameBigIntMixedObject 14"
+      "objectFrameBigIntMixedObject 38"
+      "objectFrameBigIntMixedRetained 6"
+      "objectFrameBigIntMixedRetained 10"
+      "objectFrameBigIntMixedRetained 14"
+      "objectFrameBigIntMixedRetained 37"
+      "objectFrameBigIntMixedStrings 8"
+      "objectFrameBigIntMixedStrings 12"
+      "objectFrameBigIntMixedStrings 16"
+      "objectFrameBigIntMixedStrings 48"
+)
+  list(SORT _expected_object_mixed_bigint_literal_pcs)
+  list(SORT _object_mixed_bigint_literal_pcs)
+  if(NOT _object_mixed_bigint_literal_pcs STREQUAL _expected_object_mixed_bigint_literal_pcs)
+    message(FATAL_ERROR "mixed BigInt comparison source allocation coordinates changed: ${_object_mixed_bigint_literal_pcs}")
+  endif()
+  set(_expected_object_mixed_bigint_rows
+      "objectFrameBigIntMixedSaved 2 2 0 0 0 - confined pc10"
+      "objectFrameBigIntMixedSaved 2 0 2 0 0 temporaries:2 escapes:stored pc14"
+      "objectFrameBigIntMixedSaved 2 0 2 0 0 temporaries:2 escapes:stored pc18"
+      "objectFrameBigIntMixedSaved 2 0 2 0 0 temporaries:2 escapes:returned pc77"
+      "objectFrameBigIntMixedPrimitives 2 2 0 0 0 - confined pc9"
+      "objectFrameBigIntMixedPrimitives 2 0 2 0 0 temporaries:2 escapes:stored pc13"
+      "objectFrameBigIntMixedPrimitives 2 0 2 0 0 temporaries:2 escapes:stored pc17"
+      "objectFrameBigIntMixedPrimitives 2 0 2 0 0 temporaries:2 escapes:returned pc54"
+      "objectFrameBigIntMixedPaths 2 2 0 0 0 - confined pc7"
+      "objectFrameBigIntMixedPaths 2 0 2 0 0 temporaries:2 escapes:stored pc11"
+      "objectFrameBigIntMixedPaths 2 0 2 0 0 temporaries:2 escapes:stored pc15"
+      "objectFrameBigIntMixedPaths 2 0 2 0 0 temporaries:2 escapes:returned pc46"
+      "objectFrameBigIntMixedNumbers 2 2 0 0 0 - confined pc8"
+      "objectFrameBigIntMixedNumbers 2 0 2 0 0 temporaries:2 escapes:stored pc12"
+      "objectFrameBigIntMixedNumbers 2 0 2 0 0 temporaries:2 escapes:stored pc16"
+      "objectFrameBigIntMixedNumbers 2 0 2 0 0 temporaries:2 escapes:returned pc52"
+      "objectFrameBigIntMixedOpaque 2 2 0 0 0 - escapes:stored pc5"
+      "objectFrameBigIntMixedOpaque 2 0 2 0 0 temporaries:2 escapes:stored pc9"
+      "objectFrameBigIntMixedOpaque 2 0 2 0 0 temporaries:2 escapes:stored pc13"
+      "objectFrameBigIntMixedOpaque 2 0 2 0 0 temporaries:2 escapes:returned pc31"
+      "objectFrameBigIntMixedObject 2 2 0 0 0 - escapes:stored pc6"
+      "objectFrameBigIntMixedObject 2 0 2 0 0 temporaries:2 escapes:converted pc10"
+      "objectFrameBigIntMixedObject 2 0 2 0 0 temporaries:2 escapes:converted pc14"
+      "objectFrameBigIntMixedObject 2 0 2 0 0 temporaries:2 escapes:returned pc38"
+      "objectFrameBigIntMixedRetained 2 0 2 0 0 temporaries:2 escapes:stored pc6"
+      "objectFrameBigIntMixedRetained 2 0 2 0 0 temporaries:2 escapes:stored pc10"
+      "objectFrameBigIntMixedRetained 2 0 2 0 0 temporaries:2 escapes:stored pc14"
+      "objectFrameBigIntMixedRetained 2 0 2 0 0 temporaries:2 escapes:returned pc37"
+      "objectFrameBigIntMixedStrings 2 2 0 0 0 - confined pc8"
+      "objectFrameBigIntMixedStrings 2 0 2 0 0 temporaries:2 escapes:stored pc12"
+      "objectFrameBigIntMixedStrings 2 0 2 0 0 temporaries:2 escapes:stored pc16"
+      "objectFrameBigIntMixedStrings 2 0 2 0 0 temporaries:2 escapes:returned pc48"
+)
+  list(SORT _expected_object_mixed_bigint_rows)
+  list(SORT _object_mixed_bigint_rows)
+  if(NOT _object_mixed_bigint_rows STREQUAL _expected_object_mixed_bigint_rows)
+    message(FATAL_ERROR "mixed BigInt comparison evidence mismatch:\nexpected: ${_expected_object_mixed_bigint_rows}\nobserved: ${_object_mixed_bigint_rows}")
+  endif()
+  message(STATUS "imported mixed BigInt comparisons: thirty-two literal sites, sixty-four instances, fifty retained; live claims agree")
   set(_expected_object_string_bigint_literal_pcs
       "objectFrameStringBigIntSaved 10"
       "objectFrameStringBigIntSaved 14"
@@ -1296,7 +1413,7 @@ if(STRICT)
       "objectFrameStringBigIntObject 2 0 2 0 0 temporaries:2 escapes:stored pc9"
       "objectFrameStringBigIntObject 2 0 2 0 0 temporaries:2 escapes:stored pc13"
       "objectFrameStringBigIntObject 2 0 2 0 0 temporaries:2 escapes:returned pc36"
-      "objectFrameStringBigIntMixed 2 2 0 0 0 - escapes:stored pc7"
+      "objectFrameStringBigIntMixed 2 2 0 0 0 - confined pc7"
       "objectFrameStringBigIntMixed 2 0 2 0 0 temporaries:2 escapes:stored pc11"
       "objectFrameStringBigIntMixed 2 0 2 0 0 temporaries:2 escapes:stored pc15"
       "objectFrameStringBigIntMixed 2 0 2 0 0 temporaries:2 escapes:returned pc43"
@@ -1325,7 +1442,7 @@ if(STRICT)
       "objectFrameBigIntPowOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntPowOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntPowOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
-      "objectFrameBigIntPowMixed 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntPowMixed 2 2 0 0 0 - confined"
       "objectFrameBigIntPowMixed 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntPowMixed 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameBigIntPowMixed 2 0 2 0 0 temporaries:2 escapes:returned"

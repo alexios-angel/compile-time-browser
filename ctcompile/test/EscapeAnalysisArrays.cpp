@@ -3756,7 +3756,7 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
         for (const std::string input : {"%big", "%x", "%a", "%p"}) {
             run({.contents = {.what = "neither comparison side borrows the other primitive proof",
                               .body = values + compareInput(input) + done,
-                              .failure = isConcat && input == "%big"
+                              .failure = (isComparison || isConcat) && input == "%big"
                                              ? ArrayContentsFailure::None
                                              : ArrayContentsFailure::UnsupportedOperation,
                               .arrays = "a:[x]",
@@ -3769,7 +3769,8 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
                                       "  cf.cond_br %flag, ^join(%number : !ctjs.value), ^join(" +
                                       input + " : !ctjs.value)\n^join(%operand: !ctjs.value):\n" +
                                       compareInput("%operand") + "  ctjs.return %produced\n",
-                              .failure = input == "%zero" || (isConcat && input == "%big")
+                              .failure = input == "%zero" ||
+                                                 ((isComparison || isConcat) && input == "%big")
                                              ? ArrayContentsFailure::None
                                              : ArrayContentsFailure::UnsupportedOperation,
                               .arrays = "a:[x] | a:[x]",
@@ -3785,7 +3786,8 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
                                       "  ctjs.set_property %a[%zero], " +
                                       replacement + "\n" + compareInput("%operand") +
                                       "  ctjs.return %produced\n",
-                              .failure = saved == "%zero" || (isConcat && saved == "%big")
+                              .failure = saved == "%zero" ||
+                                                 ((isComparison || isConcat) && saved == "%big")
                                              ? ArrayContentsFailure::None
                                              : ArrayContentsFailure::UnsupportedOperation,
                               .arrays = saved == "%zero" ? "a:[ctjs.constant]" : "a:[zero]",
@@ -3803,7 +3805,7 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
                              "  ctjs.set_property %x[%key], " +
                              replacement + "\n  ctjs.delete_named \"operand\" from %x\n" +
                              compareInput("%operand") + "  ctjs.return %produced\n",
-                     .failure = savedBigInt && !isConcat
+                     .failure = savedBigInt && !isComparison && !isConcat
                                     ? ArrayContentsFailure::UnsupportedOperation
                                     : ArrayContentsFailure::None,
                      .arrays = "a:[x]",
@@ -3916,7 +3918,7 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
         for (unsigned position = 0; position < 2; ++position) {
             for (mlir::Value bad : invalid) {
                 comparison->setOperand(position, bad);
-                inspect(isConcat && bad == big.getResult()
+                inspect((isComparison || isConcat) && bad == big.getResult()
                             ? ArrayContentsFailure::None
                             : ArrayContentsFailure::UnsupportedOperation);
                 comparison->setOperand(position, original[position]);
@@ -3925,9 +3927,9 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
             auto constant = original[position].template getDefiningOp<ctjs::ConstantOp>();
             const mlir::Attribute oldValue = constant.getValue();
             constant.setValueAttr(big.getValue());
-            inspect(isConcat ? (position == 1 ? ArrayContentsFailure::UnknownIndex
-                                              : ArrayContentsFailure::None)
-                             : ArrayContentsFailure::UnsupportedOperation);
+            inspect(isComparison || isConcat ? (position == 1 ? ArrayContentsFailure::UnknownIndex
+                                                              : ArrayContentsFailure::None)
+                                             : ArrayContentsFailure::UnsupportedOperation);
             constant.setValueAttr(oldValue);
             inspect(ArrayContentsFailure::None);
         }
@@ -4146,8 +4148,6 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
                                           values + produce + "  %next = ctjs.compare " +
                                           comparison + " " + operands +
                                           " {storage_test_id = \"next\"}\n  ctjs.return %next\n",
-                                      .failure = mixed ? ArrayContentsFailure::UnsupportedOperation
-                                                       : ArrayContentsFailure::None,
                                       .arrays = "a:[x]",
                                       .exit = "next -> {}"}});
                 }
@@ -5239,18 +5239,77 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
         ++rowCount;
     };
     for (const auto & expected : rows) { run(expected); }
-    const std::vector<std::string> rejectedOrigins = {
+    const std::vector<std::string> primitiveOrigins = {
         "  %operand = ctjs.constant #ctjs.undefined\n",
         "  %operand = ctjs.constant #ctjs.null\n",
         "  %operand = ctjs.constant #ctjs.boolean<true>\n",
         "  %operand = ctjs.constant #ctjs.number<0>\n",
         "  %operand = ctjs.constant #ctjs.string<\"9007199254740993\">\n",
         "  %operand = ctjs.compare strict_eq %lhs, %rhs\n",
+        "  %operand = ctjs.constant #ctjs.string<\"\">\n",
+        "  %operand = ctjs.constant #ctjs.string<\"1.5\">\n",
+        "  %operand = ctjs.constant #ctjs.string<\"invalid\">\n",
+        "  %operand = ctjs.constant #ctjs.string<\"0x10\">\n",
+        "  %operand = ctjs.convert to_boolean %p\n",
+        "  %operand = ctjs.unary not %p\n",
+        "  %operand = ctjs.unary typeof %p\n",
+        "  %operand = ctjs.unary void %p\n",
+        "  %operand = ctjs.unary plus %zero\n",
+        "  %operand = ctjs.binary div %zero, %zero\n",
+        "  %operand = ctjs.binary add %lhs, %rhs\n",
+        "  %operand = ctjs.binary_static shl %lhs, %rhs\n",
+        "  %text = ctjs.constant #ctjs.string<\"\">\n"
+        "  %operand = ctjs.binary add %text, %lhs\n",
+        "  %operand = ctjs.binary concat %zero, %lhs\n",
     };
     for (const bool left : {false, true}) {
         const auto compareInput = [&](const std::string & input) {
             return left ? compare(input, "%rhs") : compare("%lhs", input);
         };
+        // A single computed producer can yield Number, String or BigInt on
+        // separate paths; all are primitive, without granting a result value.
+        const std::string threeCategories =
+            values + "  %text = ctjs.constant #ctjs.string<\"1.5\">\n"
+                     "  %flag = ctjs.truthy %p\n"
+                     "  cf.cond_br %flag, ^numbers, ^other\n^numbers:\n"
+                     "  cf.br ^join(%zero, %zero : !ctjs.value, !ctjs.value)\n^other:\n"
+                     "  cf.cond_br %flag, ^strings, ^bigints\n^strings:\n"
+                     "  cf.br ^join(%text, %lhs : !ctjs.value, !ctjs.value)\n^bigints:\n"
+                     "  cf.br ^join(%lhs, %rhs : !ctjs.value, !ctjs.value)\n"
+                     "^join(%left: !ctjs.value, %right: !ctjs.value):\n"
+                     "  %operand = ctjs.binary add %left, %right\n";
+        run({.contents = {.what = "mixed comparison accepts independently proved path categories",
+                          .body = threeCategories + compareInput("%operand") + done,
+                          .arrays = "a:[x] | a:[x] | a:[x]",
+                          .exit = "produced -> {}; produced -> {}; produced -> {}"}});
+        run({.contents = {.what = "mixed comparison cannot hide later Number-only arithmetic",
+                          .body = threeCategories + compareInput("%operand") +
+                                  "  %bad = ctjs.binary sub %operand, %zero\n" + done,
+                          .failure = ArrayContentsFailure::UnsupportedOperation}});
+        for (const std::string saved : {"%lhs", "%zero", "%text", "%x"}) {
+            const bool primitive = saved != "%x";
+            run({.contents = {
+                     .what = "both saved comparison operands survive independent slot mutations",
+                     .body = values +
+                             "  %text = ctjs.constant #ctjs.string<\"1.5\">\n"
+                             "  %key = ctjs.constant #ctjs.string<\"operand\">\n"
+                             "  ctjs.set_property %x[%key], " +
+                             saved +
+                             "\n  %operand = ctjs.get_property %x[%key]\n"
+                             "  ctjs.set_property %a[%zero], %rhs\n"
+                             "  %savedBig = ctjs.get_property %a[%zero]\n"
+                             "  ctjs.set_property %a[%zero], %zero\n"
+                             "  ctjs.set_property %x[%key], %zero\n"
+                             "  ctjs.delete_named \"operand\" from %x\n" +
+                             (left ? compare("%operand", "%savedBig")
+                                   : compare("%savedBig", "%operand")) +
+                             done,
+                     .failure = primitive ? ArrayContentsFailure::None
+                                          : ArrayContentsFailure::UnsupportedOperation,
+                     .arrays = "a:[zero]",
+                     .reads = "a[0]=rhs",
+                     .exit = "produced -> {}"}});
+        }
         if (producerKind != ctjs::CompareKind::Eq) {
             for (const std::string producer : {
                      "  %operand = ctjs.binary add %lhs, %rhs\n",
@@ -5283,14 +5342,15 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
                               .arrays = "a:[x]",
                               .exit = "produced -> {}"}});
         }
-        for (const std::string & input : rejectedOrigins) {
-            run({.contents = {.what =
-                                  "a BigInt operand cannot authorize a mixed primitive category",
-                              .body = values + input + compareInput("%operand") + done,
-                              .failure = ArrayContentsFailure::UnsupportedOperation}});
+        for (const std::string & input : primitiveOrigins) {
+            run({.contents = {
+                     .what = "each mixed BigInt operand independently proves a primitive category",
+                     .body = values + input + compareInput("%operand") + done,
+                     .arrays = "a:[x]",
+                     .exit = "produced -> {}"}});
         }
         for (const std::string input : {"%lhs", "%zero", "%x", "%a", "%p"}) {
-            const bool big = input == "%lhs";
+            const bool primitive = input == "%lhs" || input == "%zero";
             run({.contents = {
                      .what = "every incoming BigInt comparison operand must independently qualify",
                      .body = values +
@@ -5298,8 +5358,8 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
                              "  cf.cond_br %flag, ^join(%rhs : !ctjs.value), ^join(" +
                              input + " : !ctjs.value)\n^join(%operand: !ctjs.value):\n" +
                              compareInput("%operand") + done,
-                     .failure = big ? ArrayContentsFailure::None
-                                    : ArrayContentsFailure::UnsupportedOperation,
+                     .failure = primitive ? ArrayContentsFailure::None
+                                          : ArrayContentsFailure::UnsupportedOperation,
                      .arrays = "a:[x] | a:[x]",
                      .exit = "produced -> {}; produced -> {}"}});
             run({.contents = {.what = "BigInt comparison keeps saved array origins after overwrite",
@@ -5307,12 +5367,12 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
                                       "\n  %operand = ctjs.get_property %a[%zero]\n"
                                       "  ctjs.set_property %a[%zero], %rhs\n" +
                                       compareInput("%operand") + done,
-                              .failure = big ? ArrayContentsFailure::None
+                              .failure = primitive ? ArrayContentsFailure::None
                                          : input == "%p"
                                              ? ArrayContentsFailure::UnknownValue
                                              : ArrayContentsFailure::UnsupportedOperation,
                               .arrays = "a:[rhs]",
-                              .reads = "a[0]=lhs",
+                              .reads = input == "%zero" ? "a[0]=zero" : "a[0]=lhs",
                               .exit = "produced -> {}"}});
         }
         for (const std::string input : {"%lhs", "%zero", "%x"}) {
@@ -5327,8 +5387,8 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
                              "  ctjs.set_property %x[%key], %rhs\n"
                              "  ctjs.delete_named \"operand\" from %x\n" +
                              compareInput("%operand") + done,
-                     .failure = input == "%lhs" ? ArrayContentsFailure::None
-                                                : ArrayContentsFailure::UnsupportedOperation,
+                     .failure = input != "%x" ? ArrayContentsFailure::None
+                                              : ArrayContentsFailure::UnsupportedOperation,
                      .arrays = "a:[x]",
                      .exit = "produced -> {}"}});
         }
@@ -5394,9 +5454,29 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
         function->setAttr("ctnative.array_contents_complete", builder.getUnitAttr());
         function->setAttr("ctnative.array_retention_complete", builder.getUnitAttr());
         child->setAttr("ctnative.confined", builder.getUnitAttr());
+        mlir::DataFlowSolver stale;
+        stale.load<mlir::dataflow::DeadCodeAnalysis>();
+        stale.load<mlir::dataflow::SparseConstantPropagation>();
+        stale.load<EscapeAnalysis>();
+        if (failed(stale.initializeAndRun(*module))) {
+            fail(row{.what = "mixed BigInt comparison stale solver",
+                     .body = mutation.contents.body,
+                     .expected = ""},
+                 "the baseline solver did not converge");
+        }
         const auto inspect = [&](ArrayContentsFailure failure) {
             mutation.contents.failure = failure;
             check(*module, mutation);
+            const auto verdicts = computeVerdicts(stale, function);
+            const bool complete = failure == ArrayContentsFailure::None;
+            if (verdicts.arrayRetentionComplete != complete ||
+                verdicts.confinedStoredSites !=
+                    (complete && mutation.discharged[0] != '\0' ? 1U : 0U)) {
+                fail(row{.what = "live comparison categories defeat cached and forged evidence",
+                         .body = mutation.contents.body,
+                         .expected = mutation.discharged},
+                     "a stale solver authorized an unproved original operand");
+            }
             ++liveStates;
         };
         inspect(ArrayContentsFailure::None);
@@ -5406,16 +5486,25 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
                                            function.getBody().front().getArgument(3)};
             for (mlir::Value bad : invalid) {
                 comparison->setOperand(position, bad);
-                inspect(ArrayContentsFailure::UnsupportedOperation);
+                inspect(bad == zero.getResult() ? ArrayContentsFailure::None
+                                                : ArrayContentsFailure::UnsupportedOperation);
                 comparison->setOperand(position, original);
                 inspect(ArrayContentsFailure::None);
             }
             auto constant = original.getDefiningOp<ctjs::ConstantOp>();
             const mlir::Attribute oldValue = constant.getValue();
-            constant.setValueAttr(zero.getValue());
-            inspect(ArrayContentsFailure::UnsupportedOperation);
-            constant.setValueAttr(oldValue);
-            inspect(ArrayContentsFailure::None);
+            for (const mlir::Attribute replacement :
+                 {mlir::Attribute(ctjs::UndefinedAttr::get(&context)),
+                  mlir::Attribute(ctjs::NullAttr::get(&context)),
+                  mlir::Attribute(ctjs::BooleanAttr::get(&context, true)),
+                  mlir::Attribute(zero.getValue()),
+                  mlir::Attribute(ctjs::StringAttr::get(&context, "1.5")),
+                  mlir::Attribute(ctjs::BigIntAttr::get(&context, "1"))}) {
+                constant.setValueAttr(replacement);
+                inspect(ArrayContentsFailure::None);
+                constant.setValueAttr(oldValue);
+                inspect(ArrayContentsFailure::None);
+            }
         }
         for (const auto kind :
              {ctjs::CompareKind::StrictEq, ctjs::CompareKind::Eq, ctjs::CompareKind::Lt,
@@ -5447,7 +5536,7 @@ void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind produc
         fail(row{.what = mutation.contents.what, .body = mutation.contents.body, .expected = ""},
              "the live BigInt comparison fixture did not parse");
     }
-    std::printf("BigInt comparison %s: %u rows, %u live states, one wide snapshot, "
+    std::printf("BigInt comparison %s: %u rows, %u stale/fresh live states, one wide snapshot, "
                 "%zu retention budget cutoffs\n",
                 spelling.c_str(), rowCount, liveStates, budgets);
 }

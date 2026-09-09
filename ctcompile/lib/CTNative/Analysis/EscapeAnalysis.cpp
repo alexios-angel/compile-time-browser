@@ -1033,13 +1033,11 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // it cannot coerce, call, throw or retain either operand
                 // (Operators.td, value::strict_equals). The independent Boolean
                 // result is known even when an operand is an opaque entry.
-                // Eq needs a separate proof for BOTH original origins. Its
-                // five primitive non-BigInt categories stay in guard-free
-                // loose_equals tag/string/static-number paths, without user
-                // conversion, a catchable JS throw or an input alias. Relational
-                // kinds instead need the guarded retention argument below.
-                // String parsing may allocate C++ temporaries; allocation
-                // success is not proved. No value/key/liveness is inferred.
+                // Every coercing kind needs BOTH original primitive origins.
+                // Mixed BigInt comparisons have separate VM value-semantics
+                // gaps, but no primitive conversion calls an object hook or
+                // retains an input identity. Every structural arm is checked;
+                // this query never infers a value, key or liveness fact.
                 switch (compare.getKind()) {
                 case ctjs::CompareKind::StrictEq: break;
                 case ctjs::CompareKind::Eq:
@@ -1052,26 +1050,20 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     if (!lhs || !rhs) {
                         return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                     }
-                    // BOTH independently proved original BigInt categories
-                    // reach exact digit comparison. Saved/forwarded reads keep
-                    // the original constant or admitted unary result category;
-                    // mixed and other computed inputs still refuse.
-                    const bool bigIntPair = bigIntOrigin(lhs, state.bigIntOrigins) &&
-                                            bigIntOrigin(rhs, state.bigIntOrigins);
-                    if (compare.getKind() == ctjs::CompareKind::Eq && bigIntPair) { break; }
-                    if (!bigIntPair && (!primitiveNonBigIntOrigin(lhs, state.bigIntOrigins) ||
-                                        !primitiveNonBigIntOrigin(rhs, state.bigIntOrigins))) {
+                    if ((!primitiveNonBigIntOrigin(lhs, state.bigIntOrigins) &&
+                         !bigIntOrigin(lhs, state.bigIntOrigins)) ||
+                        (!primitiveNonBigIntOrigin(rhs, state.bigIntOrigins) &&
+                         !bigIntOrigin(rhs, state.bigIntOrigins))) {
                         return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                     }
-                    // Relational kinds enter to_primitive's depth guard even
-                    // for primitives, including BigInts. Its primitive fast path
-                    // preserves BigInts before exact digit comparison; normal
-                    // String/static-number paths likewise retain no input
-                    // identity. The guard's unrelated Error
-                    // cannot expose this whole-frame query's unpublished fresh
-                    // locals. Calls, handlers and publication still refuse.
-                    // This proves retention, not normal completion or no-throw
-                    // effects. Mixed BigInt and object conversion stay refused.
+                    // loose_equals uses digits, String parsing and static
+                    // numeric conversions. Its BigInt/Boolean arm additionally
+                    // enters to_primitive's guard; all relational kinds do so.
+                    // Primitive inputs return before any lookup or user call.
+                    // The guard's independent Error cannot expose this whole
+                    // frame's unpublished fresh locals. Calls, handlers and
+                    // publication still refuse. Retention supplies no normal
+                    // completion, allocation-success or no-throw contract.
                     break;
                 }
                 default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);

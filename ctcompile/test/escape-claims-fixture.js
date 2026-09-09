@@ -1094,6 +1094,113 @@ function objectFrameStringBigIntRetained(choice) {
 H.push(objectFrameStringBigIntRetained(false));
 H.push(objectFrameStringBigIntRetained(true));
 
+// --- MIXED PRIMITIVE BIGINT COMPARISON RETENTION ---------------------------
+// Saved primitive originals survive replacement and deletion of both slots.
+// Boolean results are observed separately; retention never chooses an arm.
+function objectFrameBigIntMixedSaved(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    source.operand = choice ? "9007199254740993" : "1.5";
+    target.operand = choice ? 9007199254740993n : 1n;
+    var lhs = source.operand, rhs = target.operand;
+    source.operand = child; delete target.operand;
+    var equal = lhs == rhs, less = lhs < rhs, lessEqual = lhs <= rhs;
+    var greater = rhs > lhs, greaterEqual = rhs >= lhs;
+    delete source.operand; delete source.held; delete target.held;
+    return { source: source, target: target, equal: equal, less: less,
+             lessEqual: lessEqual, greater: greater, greaterEqual: greaterEqual };
+}
+H.push(objectFrameBigIntMixedSaved(false));
+H.push(objectFrameBigIntMixedSaved(true));
+
+// Nullish and Boolean originals are primitive, including VM value differences.
+function objectFrameBigIntMixedPrimitives(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var operand = choice ? 1n : 0n;
+    var equal = operand == true, reverse = false == operand;
+    var less = operand < true, absent = operand < void 0, nullish = null <= operand;
+    delete source.held; delete target.held;
+    return { source: source, target: target, equal: equal, reverse: reverse,
+             less: less, absent: absent, nullish: nullish };
+}
+H.push(objectFrameBigIntMixedPrimitives(false));
+H.push(objectFrameBigIntMixedPrimitives(true));
+
+// One incoming SSA slot can contain independently proved String or Number.
+function objectFrameBigIntMixedPaths(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var operand = choice ? "" + 1n : +2, big = 1n + 1n;
+    var equal = big == operand, less = operand < big;
+    delete source.held; delete target.held;
+    return { source: source, target: target, equal: equal, less: less };
+}
+H.push(objectFrameBigIntMixedPaths(false));
+H.push(objectFrameBigIntMixedPaths(true));
+
+// Exact mixed numeric ordering includes fractions, infinities and NaN.
+function objectFrameBigIntMixedNumbers(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var operand = choice ? 9007199254740993n : 1n;
+    var equal = operand == 9007199254740992, fraction = operand < 1.5;
+    var infinity = operand < 1 / 0, unordered = 0 / 0 >= operand;
+    delete source.held; delete target.held;
+    return { source: source, target: target, equal: equal, fraction: fraction,
+             infinity: infinity, unordered: unordered };
+}
+H.push(objectFrameBigIntMixedNumbers(false));
+H.push(objectFrameBigIntMixedNumbers(true));
+
+// Observed primitive actuals cannot prove an opaque future argument's category.
+function objectFrameBigIntMixedOpaque(operand) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var equal = operand == 1n, less = 1n < operand;
+    delete source.held; delete target.held;
+    return { source: source, target: target, equal: equal, less: less };
+}
+H.push(objectFrameBigIntMixedOpaque(1n));
+H.push(objectFrameBigIntMixedOpaque("2"));
+
+// Object conversion stays refused even when these actual objects have no hook.
+function objectFrameBigIntMixedObject(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var operand = choice ? source : target;
+    var equal = operand == 1n, less = 1n < operand;
+    delete source.held; delete target.held;
+    return { source: source, target: target, equal: equal, less: less };
+}
+H.push(objectFrameBigIntMixedObject(false));
+H.push(objectFrameBigIntMixedObject(true));
+
+// A live child on either structural arm cannot disappear behind a comparison.
+function objectFrameBigIntMixedRetained(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source }, saved = target.held;
+    var operand = choice ? "1" : "2", equal = operand == 1n;
+    delete source.held; delete target.held;
+    return { source: source, target: target, saved: saved, equal: equal };
+}
+H.push(objectFrameBigIntMixedRetained(false));
+H.push(objectFrameBigIntMixedRetained(true));
+
+// Invalid, empty and prefixed Strings add no object identity or value proof.
+function objectFrameBigIntMixedStrings(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var operand = choice ? "invalid" : "0x10";
+    var equal = operand == 16n, less = 16n < operand;
+    var empty = "" == 0n, blank = 0n >= "  ";
+    delete source.held; delete target.held;
+    return { source: source, target: target, equal: equal, less: less,
+             empty: empty, blank: blank };
+}
+H.push(objectFrameBigIntMixedStrings(false));
+H.push(objectFrameBigIntMixedStrings(true));
+
 // --- COMPUTED BIGINT BINARY ORIGINS ----------------------------------------
 // Both operands keep their original category through saved reads and mutation.
 function objectFrameBigIntBinarySaved(choice) {
