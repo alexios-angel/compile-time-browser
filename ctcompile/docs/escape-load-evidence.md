@@ -2403,3 +2403,30 @@ Replay evidence is `/tmp/ctcompile-escape-divmod-final-replay/audit.json`.
 These checks validate the saved evidence; a new full devbox result is still
 pending. The earlier signed-shift fixture failure and its exact-coordinate
 checker correction remain recorded above.
+
+**Initial full gate, 2026-09-09.** A fresh focused run first passes **14/14
+CTests in 149.81 seconds**, including all eight escape checks. The full run on
+**128e0029** then completes a warning-free **247-step** build and passes
+**511/517 CTests in 1704.85 seconds**, including **371/372 compiler tests**.
+Lit passes **163/165 in 980.26 seconds** (CTest **980.47**): two historical
+Boolean-result cases still expect refusal after Boolean global output became
+supported. The other failures are the established browser tests `selectors`,
+`frames`, `element_attrs`, `vm_async` and `early_errors`. The two lit expectations
+are corrected in test-only commits **7dc796b7** and **48885ae1**; their complete
+lit rerun is pending at this checkpoint.
+
+All **eight escape CTests pass in that full run**, including arrays in **0.43
+seconds** and the source fixture in **0.31**. Div and Mod each retain **130
+rows, 47 stale/fresh states and 4802 cutoffs**. The exact source family remains
+**28 sites, 54 instances and 38 retained**, plus **two independent Errors**.
+All four oracles report zero violations; precision remains **72/109** for the
+fixture and **0/64, 0/16, 0/20** for Bootstrap, p5 and Phaser. The existing p5
+partial claim remains separate. All **27** initial code/test hashes match the
+frozen inputs, **128e0029** and devbox sources. The corrected **28-input**
+manifest includes the same five escape files, still byte-identical to
+**1138dbfd**. No escape code or fixture changed during the lit corrections.
+
+Evidence: `/tmp/ctcompile-boolean-gate-full{,-detail}.log`,
+`/tmp/ctcompile-boolean-gate-initial-evidence.json` and the independent
+`/tmp/ctcompile-escape-bigint-divmod-full-audit.json`. The initial failed full
+run is retained separately from the pending corrected lit result.
