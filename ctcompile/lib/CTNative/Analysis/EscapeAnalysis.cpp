@@ -816,6 +816,11 @@ bool nonBigIntOrigin(mlir::Value origin) {
            llvm::isa_and_nonnull<ctjs::CreateObjectOp, ctjs::CreateArrayOp>(origin.getDefiningOp());
 }
 
+bool bigIntConstantOrigin(mlir::Value origin) {
+    auto constant = origin.getDefiningOp<ctjs::ConstantOp>();
+    return constant && llvm::isa<ctjs::BigIntAttr>(constant.getValue());
+}
+
 } // namespace
 
 ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t workLimit) {
@@ -1003,8 +1008,8 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 // it cannot coerce, call, throw or retain either operand
                 // (Operators.td, value::strict_equals). The independent Boolean
                 // result is known even when an operand is an opaque entry.
-                // Eq needs a separate proof for BOTH original origins. Only
-                // Eq's five primitive non-BigInt categories stay in guard-free
+                // Eq needs a separate proof for BOTH original origins. Its
+                // five primitive non-BigInt categories stay in guard-free
                 // loose_equals tag/string/static-number paths, without user
                 // conversion, a catchable JS throw or an input alias. Relational
                 // kinds instead need the guarded retention argument below.
@@ -1019,8 +1024,18 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                 case ctjs::CompareKind::Ge: {
                     const mlir::Value lhs = origin(compare.getLhs());
                     const mlir::Value rhs = origin(compare.getRhs());
-                    if (!lhs || !rhs || !primitiveNonBigIntOrigin(lhs) ||
-                        !primitiveNonBigIntOrigin(rhs)) {
+                    if (!lhs || !rhs) {
+                        return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
+                    }
+                    // BigInt equality has its own guard-free digits comparison,
+                    // only after BOTH original operands independently prove
+                    // BigInt constants. Saved/forwarded reads retain that origin;
+                    // mixed categories and computed BigInt values still refuse.
+                    if (compare.getKind() == ctjs::CompareKind::Eq && bigIntConstantOrigin(lhs) &&
+                        bigIntConstantOrigin(rhs)) {
+                        break;
+                    }
+                    if (!primitiveNonBigIntOrigin(lhs) || !primitiveNonBigIntOrigin(rhs)) {
                         return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                     }
                     // Relational kinds enter to_primitive's depth guard even

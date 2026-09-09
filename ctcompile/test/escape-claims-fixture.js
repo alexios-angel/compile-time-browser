@@ -776,6 +776,67 @@ function objectFrameAddConcatRetained(choice) {
 H.push(objectFrameAddConcatRetained(false));
 H.push(objectFrameAddConcatRetained(true));
 
+// Equality compares two independently saved BigInt values without conversion.
+// Replacing and deleting their fields cannot alter either saved operand.
+function objectFrameBigIntEqualitySaved(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    source.operand = choice ? 9007199254740993n : 9007199254740992n;
+    target.operand = 9007199254740993n;
+    var lhs = source.operand, rhs = target.operand;
+    source.operand = child;
+    target.operand = child;
+    var equal = lhs == rhs, different = rhs != lhs;
+    var selected = equal ? source : target;
+    delete source.operand;
+    delete target.operand;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target, selected: selected,
+             equal: equal, different: different };
+}
+H.push(objectFrameBigIntEqualitySaved(false));
+H.push(objectFrameBigIntEqualitySaved(true));
+
+// Observing a BigInt actual cannot prove an opaque future parameter's origin.
+function objectFrameBigIntEqualityOpaque(input) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var equal = input == 1n, different = 1n != input;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target, equal: equal, different: different };
+}
+H.push(objectFrameBigIntEqualityOpaque(1n));
+H.push(objectFrameBigIntEqualityOpaque(2n));
+
+// Mixed Number/BigInt equality stays outside the exact same-category proof.
+function objectFrameBigIntEqualityMixed(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var input = choice ? 1n : 2n;
+    var equal = input == 1, different = 1 != input;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target, equal: equal, different: different };
+}
+H.push(objectFrameBigIntEqualityMixed(false));
+H.push(objectFrameBigIntEqualityMixed(true));
+
+// An independently returned child remains reachable after every field delete.
+function objectFrameBigIntEqualityRetained(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source }, saved = target.held;
+    var input = choice ? 1n : 2n;
+    var equal = input == 1n, different = 1n != input;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target, saved: saved,
+             equal: equal, different: different };
+}
+H.push(objectFrameBigIntEqualityRetained(false));
+H.push(objectFrameBigIntEqualityRetained(true));
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());

@@ -206,6 +206,7 @@ if(STRICT)
   set(_object_relational_rows "")
   set(_object_arithmetic_binary_rows "")
   set(_object_add_concat_rows "")
+  set(_object_bigint_equality_rows "")
   foreach(_line IN LISTS _recording_lines)
     if(_line MATCHES "^program ([0-9a-f]+) ")
       set(_program_hash "${CMAKE_MATCH_1}")
@@ -365,6 +366,16 @@ if(STRICT)
         message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
       endif()
       list(APPEND _object_add_concat_rows "${_row} ${CMAKE_MATCH_1}")
+    elseif(_function_name MATCHES "^objectFrameBigIntEquality(Saved|Opaque|Mixed|Retained)$" AND _line MATCHES "^site ")
+      if(NOT _line MATCHES "^site ([0-9]+) kind obj made ([0-9]+) confined ([0-9]+) escaped ([0-9]+) unresolved ([0-9]+) unchecked ([0-9]+) routes ([^ ]+)$")
+        message(FATAL_ERROR "${_function_name}: unexpected BigInt equality observation: ${_line}")
+      endif()
+      set(_pc "${CMAKE_MATCH_1}")
+      set(_row "${_function_name} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3} ${CMAKE_MATCH_4} ${CMAKE_MATCH_5} ${CMAKE_MATCH_6} ${CMAKE_MATCH_7}")
+      if(NOT _claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_pc} obj ([^\n]+)")
+        message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
+      endif()
+      list(APPEND _object_bigint_equality_rows "${_row} ${CMAKE_MATCH_1}")
     endif()
   endforeach()
   set(_expected_publication_rows
@@ -741,6 +752,33 @@ if(STRICT)
     message(FATAL_ERROR "imported Add/Concat evidence mismatch:\nexpected: ${_expected_object_add_concat_rows}\nobserved: ${_object_add_concat_rows}")
   endif()
   message(STATUS "imported Add/Concat: twenty-eight sites, fifty-six instances, forty-four retained; live claims agree")
+
+  # Exact saved BigInt pairs compare without user conversion. Concrete opaque
+  # actuals and mixed Number/BigInt inputs retain Stored; a separately returned
+  # child remains reachable even after both owning fields have been deleted.
+  set(_expected_object_bigint_equality_rows
+      "objectFrameBigIntEqualitySaved 2 2 0 0 0 - confined"
+      "objectFrameBigIntEqualitySaved 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntEqualitySaved 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntEqualitySaved 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntEqualityOpaque 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntEqualityOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntEqualityOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntEqualityOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntEqualityMixed 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntEqualityMixed 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntEqualityMixed 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntEqualityMixed 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntEqualityRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntEqualityRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntEqualityRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntEqualityRetained 2 0 2 0 0 temporaries:2 escapes:returned")
+  list(SORT _object_bigint_equality_rows)
+  list(SORT _expected_object_bigint_equality_rows)
+  if(NOT _object_bigint_equality_rows STREQUAL _expected_object_bigint_equality_rows)
+    message(FATAL_ERROR "imported BigInt equality evidence mismatch:\nexpected: ${_expected_object_bigint_equality_rows}\nobserved: ${_object_bigint_equality_rows}")
+  endif()
+  message(STATUS "imported BigInt equality: sixteen sites, thirty-two instances, twenty-six retained; live claims agree")
 endif()
 if(NOT _pyrc EQUAL 0)
   message(FATAL_ERROR "${NAME}: the checker exited ${_pyrc}")

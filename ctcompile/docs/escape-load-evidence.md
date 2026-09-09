@@ -1630,3 +1630,80 @@ separate evidence, and the escape precision claim is unchanged.
 Remaining producer boundaries include primitive conversions and BigInt
 categories; loops, callee summaries and native lifetime/effect consumers also
 retain their existing conservative behavior.
+
+## Exact BigInt-pair equality recovery, 2026-09-09
+
+This continues the interrupted **00:26:15/00:27:41 synchronization journal**
+and its inherited compiler/test diff after the **00:35:04 loop failure**.
+The preceding `267545cd` work left BigInt producer categories refused. This
+slice adds only `CompareKind::Eq` with **two independently proved original
+BigInt constants**. The live VM's `loose_equals` compares both BigInt digit
+values before entering any conversion path. Saved array/own-field reads and
+acyclic edge operands keep their original values through later overwrites
+and deletion. The result is an independent Boolean origin; its truth value,
+literal key, structural liveness and native effect contract are not inferred.
+Opaque, mixed-category and computed BigInt inputs and every BigInt relational
+comparison remain refused. Calls, handlers, publication and unknown effects
+still invalidate the complete frame proof. No runtime source changed.
+
+Before the interrupted production edit, the parent's serialized VM reference
+and Node agreed at **1023 on the first ten semantic checks**. They distinguish
+equal/different BigInts, unequal values beyond Number precision, saved operand
+values after overwrite/deletion, branch-selected constants and mixed Number
+reference controls. The complete probe gives **Node 4095 versus VM 1023**:
+the two remaining checks expose object-to-BigInt loose equality skipping an
+object's `valueOf` and thrown value in the current VM. Those inputs remain
+outside the proof. This is an unresolved runtime differential, not a passing
+native/VM comparison. Evidence:
+`/tmp/ctcompile-escape-bigint-equality-semantics.js` and
+`/tmp/ctcompile-map-absence-build1.log`.
+
+The additive unit table passes **52 rows, 30 live mutation states and 2,280
+retention budget cutoffs**, plus a 32-result snapshot requiring exactly **64
+extra work units**. It checks
+each incoming/saved operand independently, both structural overwrite arms,
+returned saved children, result forwarding/rooting, nonliteral keys and late
+effects. Each operand, original constant and comparison kind is mutated under
+forged completion/confinement reports. Every incomplete contents/retention
+budget publishes no proof and preserves original escape verdicts. The
+unchanged five primitive comparison kinds each repeat **84 rows, 34 live states
+and 3,527 retention cutoffs**; all seven dynamic binary kinds repeat
+**84/49/4,127**.
+
+Four added source functions measure **16 sites, 32 instances and 26
+retained**: independently saved equal/different BigInt operands, opaque
+actuals, mixed Number inputs and a separately returned child. The source
+oracle joins exact program/function/pc coordinates; only the first family's
+child gains a new confinement claim. All historical JavaScript bytes and
+existing oracle-family expectations remain unchanged. Expanded-fixture
+precision is **53/81**, with **zero violations, partial or pending claims**.
+This adds one proved-confined and three observed-confined sites to the preceding
+**52/78**; it measures added source coverage, with no historical/corpus precision
+improvement claimed. Bootstrap/p5/Phaser remain **0/64, 0/16, 0/20**, including
+p5's existing single partial observation. All four escape oracles report
+**zero soundness violations**, and every historical family count passes.
+
+Local Node checks **87 combined fixture calls** and **34 new discriminating
+observation mutations**, including exact saved bytes, equality/inequality,
+source/target identity and independent retained children. Removing the added
+source block reproduces the entire committed fixture byte-for-byte (SHA256
+`ae2fa6b5af14db567f69146899a72fb40d628d28e6c9afa19385d544c3aa484f`).
+Evidence: `/tmp/ctcompile-escape-bigint-equality-node.{py,js,json}`.
+
+After correcting unrelated new Map-query test const wrappers, the focused
+**13-step rebuild passes with zero warnings** and **all eight escape CTests
+pass**. The array executable takes **0.23 seconds**, including the new BigInt
+rows, and the fixture oracle takes **0.19 seconds**. The surrounding focused
+run finishes **19/20 in 96.87 seconds**; its sole failure is the separate
+`ctcompile_host_contract_seeded_maps` test. That repair and the full generated
+gate remain pending at this checkpoint; the escape gate itself passes.
+The formatter using **22.1.8 passes all 745 files**; changed-path whitespace
+checks pass. All five code/test paths remain byte-identical to the pre-gate
+frozen hashes. These measurements come from
+`/tmp/ctcompile-absence-recovery-{build2.log,focused.log,format22.log}` and
+`/tmp/ctcompile-escape-bigint-recovery-frozen.json`. Code/tests remain frozen;
+the parent owns the remaining gates and commits.
+
+Remaining boundaries include mixed/computed BigInt conversions and arithmetic,
+other primitive conversions, loops, callee summaries and native lifetime/effect
+consumers. This proof introduces no native BigInt carrier or Script dependency.
