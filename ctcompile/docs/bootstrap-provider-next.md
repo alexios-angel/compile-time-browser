@@ -1,6 +1,62 @@
 # Next Bootstrap native boundary
 
-## Current continuation: exact saved zero after Map.clear, 2026-09-09
+## Current continuation: exact saved one after clear/set, 2026-09-09
+
+**5217c13c/a8c77455/f3bbd184** finish the saved-zero boundary: historical
+**49663558** admits **5/5** in both modes with all eight calls preserved.
+Fourteen focused programs, twenty-three typed references, nine refusal/repair
+families and a 128-call saved-object lifetime pass. `HANDOFF.md` records gates;
+the complete repository run is pending. Exact-zero proof does not erase the
+actual Map operations or substitute a literal in emitted code.
+
+The next unchanged source is:
+
+```js
+var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        set(key) { const item = {value: 1}; state.set(key, item); state.clear(); state.set(1, item); const zero = state.size; return state.get(zero) === void 0 ? 1 : 0; }
+    };
+});
+host.slot.size(); var trace = host.slot.set(7);
+```
+
+SHA-256: `544f425bc1c5766d6176bbc358947a58ebdd423f4d6a517546c93fa22f67627e`.
+Five functions and eight raw/prepared calls remain. Both modes refuse **0/5**
+with `property call lacks a current source getter proof`. Node/interpreter
+agree on Number `trace=0` because size is one and key one is present.
+
+The exact repair replaces only `const zero = state.size;` with
+`state.size; const zero = 1;`. SHA-256:
+`d4120093ea2a496cffeacaf09611ce80a23ffbf547700e74ef23d56618c72192`.
+It preserves the evaluated read, eight calls and Number observation, proves
+complete ownership, and admits **5/5** in both modes.
+
+Eight fresh source probes all agree on typed Node/interpreter observations.
+Only that literal-one repair admits. The original, saved-one followed by growth,
+and both-one branches remain unowned. Existing identical-arm coalescing reduces
+the branch witness from nine raw calls to eight prepared calls; all other
+sources preserve their call counts. Startup-only emptiness and clear/set/delete
+of the last key each remain unowned even with a literal-zero replacement. Those
+are separate whole-invocation/absence obligations, not additional working repairs.
+
+Extend live exact cardinality after clear plus proved writes without confusing
+it with a positive lower bound. Unknown invocation contents, possibly equal
+keys, partial branch intersections, writes/deletions, and source position must
+remain independent. A saved size describes its read-time state after later
+mutations; selected values need compatible evidence on every structural arm.
+Native presence must derive the same evidence independently for the actual
+runtime Map, never its schema family. Preserve fingerprints and work limits.
+The source still has an ordinary object payload and current field proof; no
+browser or Script dependency belongs in this increment.
+
+Evidence: `/tmp/ctcompile-after-zero-size-boundary-{results,sources}.json` and
+`/tmp/ctcompile-after-zero-size-boundary-corrected.log`. Full native Bootstrap
+and direct browser API integration remain unfinished.
+
+## Previous continuation: exact saved zero after Map.clear, 2026-09-09
 
 **d83f6b83/c4fa24e3/a680b093** complete owning String field proof, carrier
 admission/emission and execution. Historical **88d51f7d** now admits **5/5** in

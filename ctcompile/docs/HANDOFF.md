@@ -6,6 +6,88 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Exact saved zero and String/BigInt retention, 2026-09-09
+
+Continued the explicit **49663558** saved-size boundary from the previous
+handoff, `bootstrap-provider-next.md` and the **19:24:19 UTC** journal,
+starting clean at **c8cd482a**. Previous String-field/Pow work was complete;
+codex-wip recovery and source-split repairs are ancestors. The two unmerged
+compiler lens branches remain superseded by **6520fcf2**. Three agents handled
+execution, independent proof tests and String/BigInt retention. No browser or
+runtime source changed.
+
+**5217c13c** proves exact zero at a captured Map size read only after every
+reaching path clears the Map with no intervening possible write. Zero lower
+bounds and empty intersected entry lists supply no such fact. Saved numbers
+retain their evidence after mutations; selected values need independently zero
+yields on both arms. **a8c77455** independently derives native presence facts
+for the exact cleared runtime instance, invalidates mutable emptiness on any
+possibly aliasing write, and preserves immutable saved zeros. SameValueZero
+checks use actual literal bits, including both zero encodings. No trusted
+annotation or new runtime carrier was added.
+
+The unchanged **49663558** source advances **0/5 -> 5/5 native** in both modes,
+with all eight calls and Number `trace=1` preserved. All thirteen earlier
+sources preserve their bytes: nine now admit and four wrong-time/one-arm
+controls remain unowned. **f3bbd184** passes **14 focused native programs**,
+**23 typed Node/interpreter probes**, nine refusal/repair families, thirteen
+source mutations and one future-call observer. Both GCC/Clang and both printing
+modes pass the no-Script-symbol gate. The saved-zero/object lifetime passes
+**128 future calls**, both flags, owner/table release, independent entry
+reexecution and final Map/leaf release under ASan/UBSan/leak checks. Budgets
+**4523/6224** each check **31 cutoffs**. All **665 historical helper rows across
+57 helpers** preserve their source bytes. Integrated inventory is **327
+programs/39 lifetime families**, pending the full gate.
+
+The warning-free focused build passes **five of six proof CTests in 180.99
+seconds**; only new type expectations failed. Homogeneous local Number Map
+reads intentionally expose an optional result. All fourteen original bodies
+remain with that expectation; fourteen additional mixed-store variants request
+the independent presence proof and check the actual inferred type. The corrected
+four-step build passes **9/9 CTests in 9.11 seconds**, including type inference
+and all eight escape checks. Owner tests cover **21 rows per source/prepared
+form**, exhaustive budgets and live reorderings. Type tests cover **28 rows/eight
+live edits**. All ten new lowering sources pass within the existing Map-presence
+lit test, **1/1 in 0.55 seconds**. The exact JavaScript `-0` source remains an
+owning-source refusal at unary Neg; its literal-zero repair and independent
+raw negative-zero-bit proofs remain. Stable clang-format **22.1.8 passes all
+745 files**; bundled 23 retains the same nine preexisting differences.
+
+**e42f2d24** proves String/BigInt Add/Concat retention from each original
+operand's independent primitive category. String-producing Add origins get a
+charged per-path fact; ambiguous Add results cannot authorize later BigInt
+operations. This supplies no native BigInt carrier or completion/effect
+contract. Add and Concat each cover **97 rows/37 live states**, with **3850/4104
+budget cutoffs**. The new source family measures **32 literal sites/64
+instances/50 retained**; **96 checker corruptions** reject. Fixture precision
+improves **77/115 -> 81/122**, with zero oracle violations. All sixteen typed
+Node/VM checks agree. The first escape run passed **7/8 in 9.09 seconds**; its
+29 failed assertions overlooked that mutating a shared constant also changes
+an array index. Only those expectations changed; production/source bytes stayed
+fixed. The corrected full escape subset passes within the 9/9 gate above.
+
+The full repository gate is pending on **15 frozen, committed code/test
+inputs**. Its first attempt stopped at SSH before syncing or building; devbox
+access is being restored. No new full-suite or vendor coverage result is claimed.
+
+**Next: exact one from a saved size after clear/set.** Eight fresh typed
+Node/interpreter probes agree. Historical **544f425b** remains **0/5** in both
+modes; its **d4120093** repair retains the evaluated size read and all eight
+calls, substitutes literal one, and admits **5/5**, both with Number `trace=0`.
+A positive lower bound does not establish equality with one. Preserve complete
+possible-key cardinality, actual read position, aliases, both structural arms
+and independent native presence. Startup-only emptiness and deleting the last
+key remain separate refusals; their literal-zero variants also refuse. The
+identical-arm size-one probe has nine raw/eight prepared calls due to existing
+branch coalescing. Full native Bootstrap and direct browser APIs remain open.
+The next separate escape boundary is mixed primitive BigInt comparisons.
+
+Evidence: `/tmp/ctcompile-map-zero-{probe-results,execution-probe,source-hashes}.json`,
+`/tmp/ctcompile-map-zero-{proof,corrected,lowering,execution}.log`,
+`/tmp/ctcompile-after-zero-size-boundary-{results,sources}.json`,
+`/tmp/ctcompile-string-bigint-frozen.json` and
+`/tmp/ctcompile-string-bigint-checker-audit/audit.json`.
+
 ## Owning String object fields and BigInt Pow, 2026-09-09
 
 Continued the explicit **88d51f7d** String-field boundary in the previous
