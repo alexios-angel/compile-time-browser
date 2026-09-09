@@ -7,7 +7,12 @@ absence, with both original seven-call sources now **5/5 native**, trace=1.
 The 21-program focused execution gate passes Node/interpreter, explicit/deduced
 GCC/Clang, five refusal/repair controls and three sanitizer lifetime families.
 All twenty focused CTests pass across the initial 19/20 run and a corrected
-escape expectation rerun. The full repository gate is pending.
+escape expectation rerun. The warning-free full 240-step build completes with
+**511/517 CTests**, including the same five browser failures and one old Map
+classification (lit **164/165**). **`7011c79e`** retains the historical nine-call
+clear source and checks its exact unsupported nullable Number Map-key carrier;
+its nine-call repair admits. All twelve focused carrier families and HostContract
+CTest pass. The complete corrected lit rerun is pending.
 
 The next exact boundary is **entry arithmetic over published method results**:
 
@@ -27,8 +32,7 @@ Logical source SHA-256 (including its final newline):
 `379ccc667b2d463c5fbdc531c53a90ec01c7ba7d8ab578ef1493c3e62f4e281e`.
 This unchanged source has **five functions, eight raw/prepared calls, two binary
 operations and trace=3**, but stays unowned **0/5** in both modes, diagnosed as
-`unsupported provider behavior through ctjs.binary`. The actual diagnostic
-backticks the operation name. Replacing only its final declaration with
+``unsupported provider behavior through `ctjs.binary` ``. Replacing only its final declaration with
 `host.slot.set('x'); host.slot.set('x'); var trace = host.slot.set('y');`
 retains **all eight calls**, reaches **5/5** and returns trace=1. The older
 one-call repair also stays admitted, with six total calls.

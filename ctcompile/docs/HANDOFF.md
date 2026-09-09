@@ -60,8 +60,30 @@ and are journaled for the runtime owner.
 
 Stable formatter **22.1.8 passes all 745 files**; changed C++ also passes bundled
 23, whose complete check retains the same nine unrelated differences. Twelve
-code/test hashes are frozen and match committed HEAD. The full generated build
-and complete CTest gate are running; no full-gate result is claimed yet.
+first-full code/test hashes match the frozen inputs and devbox sources. The full
+**240-step build has zero warnings**. Initial CTest finishes **511/517 in 1420.17
+seconds**: **371/372 compiler, 140/145 browser**. Lit passes **164/165 in 738.29
+seconds** (CTest 738.36); all 215 positive Map programs and 30 lifetime paths ran
+before the old `seeded_cleared` assertion demanded an unowned source. Clear now
+completes that owner, while native admission stays **0/5** at an unsupported
+nullable Number Map-key carrier. The same browser selectors, frames,
+element_attrs, vm_async and early_errors failures remain. Exception recovery
+passes in **1.20 seconds**.
+
+**`7011c79e`** corrects that classification without changing JavaScript or
+compiler production. The original nine-call source keeps exact carrier
+diagnostics and prepared producer/consumer, receiver, callee and capture edges.
+Its repair substitutes `has(0)` for `clear()`, retaining all nine calls. After a
+no-work rebuild, all **twelve carrier families** pass in both modes with exact
+repairs, fresh/stale forgeries and reruns; HostContract CTest passes **1/1 in
+0.16 seconds**. The complete corrected lit rerun is running. The final frozen
+inventory differs only in this test driver. Actual emitted saved-field and
+saved-Undefined lifetime C++ preserves real allocation, field writes, Map
+set/get/clear and reseeding, with no Script/context/value or AOT runtime symbols.
+
+The fresh full corpus gate remains Bootstrap **19/574**, p5 **39/4754**, Phaser
+**45/7725** in both modes, zero pruned; exact Data remains **0/7 browser/CommonJS,
+0/8 AMD**. These local proofs do not yet improve full-bundle admission.
 
 **Next boundary: entry arithmetic over independently proved published results.**
 All **twelve continuation sources** agree on Node/interpreter observations and
@@ -82,6 +104,8 @@ Full native Bootstrap and direct browser API integration remain unfinished.
 
 Evidence: `/tmp/ctcompile-map-clear-{build,focused,fixture2,execution,full}.log`,
 `/tmp/ctcompile-map-clear-{frozen,next,first}.json`, and
+`/tmp/ctcompile-map-clear-{evidence,corrected-frozen}.json`,
+`/tmp/ctcompile-map-clear-{carrier-focused,carrier-ctest,corrected-lit}.log` and
 `/tmp/ctcompile-map-clear-next.py`. The temporary continuation runner was corrected
 to account for the saved-result source's three additional numeric globals; no
 source or observation was changed.

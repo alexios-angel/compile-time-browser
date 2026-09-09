@@ -18,8 +18,17 @@ refusal/repair families and three ASan/UBSan/leak lifetime families pass. Future
 128-call loops retain callables across owner/table release and reentry, free
 every Map, and keep one observed leaf only until its final independent release.
 Native budgets complete at 4121/4866 with 31/30 cutoffs. Twenty focused CTests
-pass across the first 19/20 run and corrected escape-fixture rerun; the full gate
-is pending. See [HANDOFF.md](HANDOFF.md) for measurements and source evidence.
+pass across the first 19/20 run and corrected escape-fixture rerun.
+
+The full warning-free 240-step build completes at **511/517 CTests in 1420.17
+seconds**, with the same five browser failures and one old Map classification.
+Lit passes **164/165**; all 215 positive programs and 30 lifetime paths ran before
+the unchanged nine-call `seeded_cleared` source was incorrectly required to stay
+unowned. **`7011c79e`** checks its now-complete owner and exact unsupported nullable
+Number Map-key carrier instead, preserving all source calls and operands. Its
+clear-to-has repair also retains nine calls. All twelve carrier families and
+HostContract CTest pass after the correction; complete lit rerun is pending.
+See [HANDOFF.md](HANDOFF.md) for measurements and source evidence.
 
 Next is entry numeric addition over proved method results. The exact eight-call
 three-result expression remains unowned 0/5; an eight-call repair keeps all
