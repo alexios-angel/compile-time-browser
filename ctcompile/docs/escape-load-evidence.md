@@ -2389,3 +2389,17 @@ The original source, production and frozen test hashes remain unchanged.
 Evidence: `/tmp/ctcompile-boolean-resumed-escape.log` and
 `/tmp/ctcompile-escape-bigint-divmod-focused-audit.json`. The final full gate
 remains pending; Pow and all native BigInt/effect boundaries remain unchanged.
+
+**Committed recovery audit, 2026-09-09.** The implementation, source matrix and
+completed checker landed together in **1138dbfd**. After the **12:13:13 UTC**
+interruption, all five code/test hashes were independently checked against
+that commit, current HEAD and the frozen manifest; every hash matches. The
+focused log also matches its recorded SHA256. A fresh local replay of the
+committed source-row assertions passes the original recording and rejects all
+**34** mutations; the exact additive JavaScript block passes **14 observations
+and 29 mutations** under Node. Removing that block reproduces every preexisting
+fixture byte.
+Replay evidence is `/tmp/ctcompile-escape-divmod-final-replay/audit.json`.
+These checks validate the saved evidence; a new full devbox result is still
+pending. The earlier signed-shift fixture failure and its exact-coordinate
+checker correction remain recorded above.
