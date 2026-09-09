@@ -1227,6 +1227,104 @@ function objectFrameBigIntShiftRetained(choice) {
 H.push(objectFrameBigIntShiftRetained(false));
 H.push(objectFrameBigIntShiftRetained(true));
 
+// --- INDEPENDENT BIGINT DIVISION AND REMAINDER CATEGORIES -------------------
+// Saved operands keep their original category after own fields are overwritten.
+function objectFrameBigIntDivModSaved(choice) {
+    var child = { id: 1 };
+    var source = { held: child, left: choice ? -9n : 9007199254740993n, right: 2n };
+    var target = { ...source }, left = target.left, right = source.right;
+    target.left = 1; source.right = 0;
+    delete source.left; delete target.left;
+    delete source.right; delete target.right;
+    var quotient = left / right, remainder = left % right;
+    var negative = left / -right, signed = left % -right;
+    var recovered = quotient * right + remainder, equal = recovered == left;
+    delete source.held; delete target.held;
+    return { source: source, target: target, quotient: quotient, remainder: remainder,
+             negative: negative, signed: signed, recovered: recovered, equal: equal };
+}
+H.push(objectFrameBigIntDivModSaved(false));
+H.push(objectFrameBigIntDivModSaved(true));
+
+// Shared producers separately record their Number and BigInt paths.
+function objectFrameBigIntDivModPaths(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var operand = choice ? 9n : 9;
+    var quotient = operand / operand, remainder = operand % operand;
+    delete source.held; delete target.held;
+    return { source: source, target: target, quotient: quotient, remainder: remainder };
+}
+H.push(objectFrameBigIntDivModPaths(false));
+H.push(objectFrameBigIntDivModPaths(true));
+
+// Observed BigInt actuals cannot prove an opaque future operand's category.
+function objectFrameBigIntDivModOpaque(operand) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var quotient = operand / 2n, remainder = operand % 2n;
+    delete source.held; delete target.held;
+    return { source: source, target: target, quotient: quotient, remainder: remainder };
+}
+H.push(objectFrameBigIntDivModOpaque(9n));
+H.push(objectFrameBigIntDivModOpaque(-9n));
+
+// The BigInt result still cannot authorize a mixed-category comparison.
+function objectFrameBigIntDivModMixed(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var operand = choice ? -9n : 9n, quotient = operand / 2n, remainder = operand % 2n;
+    var equal = quotient == 4, smaller = remainder < 0;
+    delete source.held; delete target.held;
+    return { source: source, target: target, quotient: quotient, remainder: remainder,
+             equal: equal, smaller: smaller };
+}
+H.push(objectFrameBigIntDivModMixed(false));
+H.push(objectFrameBigIntDivModMixed(true));
+
+// A zero divisor throws an independent Error before the result literal.
+// Each caller keeps that Error while the callee's unpublished locals die.
+function objectFrameBigIntDivModDivEarly(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var divisor = choice ? 0n : 2n, quotient = 9n / divisor;
+    delete source.held; delete target.held;
+    return { source: source, target: target, quotient: quotient };
+}
+H.push(objectFrameBigIntDivModDivEarly(false));
+function objectFrameBigIntDivModDivCatch() {
+    try { H.push(objectFrameBigIntDivModDivEarly(true)); }
+    catch (error) { H.push(error); }
+}
+objectFrameBigIntDivModDivCatch();
+
+function objectFrameBigIntDivModModEarly(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var divisor = choice ? 0n : 2n, remainder = 9n % divisor;
+    delete source.held; delete target.held;
+    return { source: source, target: target, remainder: remainder };
+}
+H.push(objectFrameBigIntDivModModEarly(false));
+function objectFrameBigIntDivModModCatch() {
+    try { H.push(objectFrameBigIntDivModModEarly(true)); }
+    catch (error) { H.push(error); }
+}
+objectFrameBigIntDivModModCatch();
+
+// A separately retained object edge stays live across both numeric results.
+function objectFrameBigIntDivModRetained(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source }, saved = target.held;
+    var operand = choice ? -9n : 9n;
+    var quotient = operand / 2n, remainder = operand % 2n;
+    delete source.held; delete target.held;
+    return { source: source, target: target, saved: saved,
+             quotient: quotient, remainder: remainder };
+}
+H.push(objectFrameBigIntDivModRetained(false));
+H.push(objectFrameBigIntDivModRetained(true));
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());

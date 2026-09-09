@@ -214,6 +214,9 @@ if(STRICT)
   set(_object_bigint_shift_rows "")
   set(_object_bigint_shift_error_rows "")
   set(_object_bigint_shift_literal_pcs "")
+  set(_object_bigint_divmod_rows "")
+  set(_object_bigint_divmod_error_rows "")
+  set(_object_bigint_divmod_literal_pcs "")
   # This source-backed RangeError is allocated by the VM at the signed shift,
   # not by a source object literal. Pin the exact body and measured bytecode pc
   # independently from every literal site's mandatory compiler claim below.
@@ -223,6 +226,20 @@ if(STRICT)
   if(NOT _shift_error_hash STREQUAL "2a35f86f51344a271fec92b345a6b0b5e748f2295cb454d501cf26e2b79df51c")
     message(FATAL_ERROR "the signed-shift exception source changed; remeasure its bytecode coordinate before updating this case")
   endif()
+  # Div and Mod have distinct error-producing source operations. Their fixed
+  # zero-divisor errors must be recorded independently of the literal sites.
+  foreach(_kind Div Mod)
+    string(REGEX MATCH "function objectFrameBigIntDivMod${_kind}Early\\(choice\\) \\{[^\n]*\n(    [^\n]*\n)*\\}" _divmod_error_source "${_fixture_source}")
+    string(SHA256 _divmod_error_hash "${_divmod_error_source}")
+    if(_kind STREQUAL "Div")
+      set(_expected_divmod_error_hash "c742ba470b572744485a85ac7a3cc67f67797cc245ff63d69e31f9d2d5d4678f")
+    else()
+      set(_expected_divmod_error_hash "5d4ec3ed2578c19fa1dfd80d5cd9ee5168625675a3c26b03b6acc46d69c1bcd6")
+    endif()
+    if(NOT _divmod_error_hash STREQUAL _expected_divmod_error_hash)
+      message(FATAL_ERROR "the BigInt ${_kind} exception source changed; remeasure its bytecode coordinate before updating this case")
+    endif()
+  endforeach()
   foreach(_line IN LISTS _recording_lines)
     if(_line MATCHES "^program ([0-9a-f]+) ")
       set(_program_hash "${CMAKE_MATCH_1}")
@@ -456,6 +473,31 @@ if(STRICT)
           message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
         endif()
         list(APPEND _object_bigint_shift_rows "${_row} ${CMAKE_MATCH_1}")
+      endif()
+    elseif(_function_name MATCHES "^objectFrameBigIntDivMod(Div|Mod)Early$" AND _line MATCHES "^alloc ")
+      if(NOT _line MATCHES "^alloc ([0-9]+) kind obj$")
+        message(FATAL_ERROR "${_function_name}: unexpected BigInt Div/Mod literal allocation: ${_line}")
+      endif()
+      list(APPEND _object_bigint_divmod_literal_pcs "${_function_name} ${CMAKE_MATCH_1}")
+    elseif(_function_name MATCHES "^objectFrameBigIntDivMod(Saved|Paths|Opaque|Mixed|DivEarly|ModEarly|Retained)$" AND _line MATCHES "^site ")
+      if(NOT _line MATCHES "^site ([0-9]+) kind obj made ([0-9]+) confined ([0-9]+) escaped ([0-9]+) unresolved ([0-9]+) unchecked ([0-9]+) routes ([^ ]+)$")
+        message(FATAL_ERROR "${_function_name}: unexpected BigInt Div/Mod observation: ${_line}")
+      endif()
+      set(_pc "${CMAKE_MATCH_1}")
+      set(_row "${_function_name} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3} ${CMAKE_MATCH_4} ${CMAKE_MATCH_5} ${CMAKE_MATCH_6} ${CMAKE_MATCH_7}")
+      if(_function_name MATCHES "^objectFrameBigIntDivMod(Div|Mod)Early$" AND _pc STREQUAL "25")
+        if(NOT _line STREQUAL "site 25 kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes thrown:1")
+          message(FATAL_ERROR "${_function_name}: the independent Error was not retained through unwinding: ${_line}")
+        endif()
+        if(_claim_text MATCHES "escape ${_program_hash} ${_function_index} 25 [^\n]+")
+          message(FATAL_ERROR "${_function_name}: the implicit BigInt Div/Mod Error acquired a source allocation claim")
+        endif()
+        list(APPEND _object_bigint_divmod_error_rows "${_row} pc25 unclaimed")
+      else()
+        if(NOT _claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_pc} obj ([^\n]+)")
+          message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
+        endif()
+        list(APPEND _object_bigint_divmod_rows "${_row} ${CMAKE_MATCH_1}")
       endif()
     endif()
   endforeach()
@@ -1024,6 +1066,62 @@ if(STRICT)
     message(FATAL_ERROR "imported signed BigInt shift evidence mismatch:\nexpected: ${_expected_object_bigint_shift_rows}\nobserved: ${_object_bigint_shift_rows}")
   endif()
   message(STATUS "imported signed BigInt shifts: twenty-four sites, forty-seven instances, thirty-five retained; live claims agree")
+
+  set(_expected_object_bigint_divmod_literal_pcs "")
+  set(_expected_object_bigint_divmod_error_rows "")
+  foreach(_kind Div Mod)
+    foreach(_pc 5 9 13 33)
+      list(APPEND _expected_object_bigint_divmod_literal_pcs "objectFrameBigIntDivMod${_kind}Early ${_pc}")
+    endforeach()
+    list(APPEND _expected_object_bigint_divmod_error_rows "objectFrameBigIntDivMod${_kind}Early 1 0 1 0 0 thrown:1 pc25 unclaimed")
+  endforeach()
+  list(SORT _object_bigint_divmod_literal_pcs)
+  list(SORT _expected_object_bigint_divmod_literal_pcs)
+  if(NOT _object_bigint_divmod_literal_pcs STREQUAL _expected_object_bigint_divmod_literal_pcs)
+    message(FATAL_ERROR "the BigInt Div/Mod literal coordinates changed or included an implicit Error: ${_object_bigint_divmod_literal_pcs}")
+  endif()
+  list(SORT _object_bigint_divmod_error_rows)
+  list(SORT _expected_object_bigint_divmod_error_rows)
+  if(NOT _object_bigint_divmod_error_rows STREQUAL _expected_object_bigint_divmod_error_rows)
+    message(FATAL_ERROR "missing or duplicate independent BigInt Div/Mod exception evidence: ${_object_bigint_divmod_error_rows}")
+  endif()
+  message(STATUS "imported BigInt Div/Mod Errors: exact source pc25 in each function, two independent objects retained through unwinding, no source allocation claims")
+
+  set(_expected_object_bigint_divmod_rows
+      "objectFrameBigIntDivModSaved 2 2 0 0 0 - confined"
+      "objectFrameBigIntDivModSaved 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntDivModSaved 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntDivModSaved 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntDivModPaths 2 2 0 0 0 - confined"
+      "objectFrameBigIntDivModPaths 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntDivModPaths 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntDivModPaths 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntDivModOpaque 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntDivModOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntDivModOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntDivModOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntDivModMixed 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntDivModMixed 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntDivModMixed 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntDivModMixed 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntDivModDivEarly 2 2 0 0 0 - confined"
+      "objectFrameBigIntDivModDivEarly 2 1 1 0 0 temporaries:1 escapes:stored"
+      "objectFrameBigIntDivModDivEarly 2 1 1 0 0 temporaries:1 escapes:stored"
+      "objectFrameBigIntDivModDivEarly 1 0 1 0 0 temporaries:1 escapes:returned"
+      "objectFrameBigIntDivModModEarly 2 2 0 0 0 - confined"
+      "objectFrameBigIntDivModModEarly 2 1 1 0 0 temporaries:1 escapes:stored"
+      "objectFrameBigIntDivModModEarly 2 1 1 0 0 temporaries:1 escapes:stored"
+      "objectFrameBigIntDivModModEarly 1 0 1 0 0 temporaries:1 escapes:returned"
+      "objectFrameBigIntDivModRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntDivModRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntDivModRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntDivModRetained 2 0 2 0 0 temporaries:2 escapes:returned")
+  list(SORT _object_bigint_divmod_rows)
+  list(SORT _expected_object_bigint_divmod_rows)
+  if(NOT _object_bigint_divmod_rows STREQUAL _expected_object_bigint_divmod_rows)
+    message(FATAL_ERROR "imported BigInt Div/Mod evidence mismatch:\nexpected: ${_expected_object_bigint_divmod_rows}\nobserved: ${_object_bigint_divmod_rows}")
+  endif()
+  message(STATUS "imported BigInt Div/Mod: twenty-eight sites, fifty-four instances, thirty-eight retained; live claims agree")
 endif()
 if(NOT _pyrc EQUAL 0)
   message(FATAL_ERROR "${NAME}: the checker exited ${_pyrc}")

@@ -4100,7 +4100,8 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
                     const bool supported =
                         operands == "%produced, %big" &&
                         (form == "binary"
-                             ? operation == "add" || operation == "sub" || operation == "mul"
+                             ? operation == "add" || operation == "sub" || operation == "mul" ||
+                                   operation == "div" || operation == "mod"
                              : operation == "add" || operation == "bitand" ||
                                    operation == "bitor" || operation == "bitxor" ||
                                    operation == "shl" || operation == "shr");
@@ -4281,7 +4282,8 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
     };
     for (const auto & [kind, isStatic] :
          {binary_kind{ctjs::BinaryKind::Add, false}, binary_kind{ctjs::BinaryKind::Sub, false},
-          binary_kind{ctjs::BinaryKind::Mul, false}, binary_kind{ctjs::BinaryKind::Add, true},
+          binary_kind{ctjs::BinaryKind::Mul, false}, binary_kind{ctjs::BinaryKind::Div, false},
+          binary_kind{ctjs::BinaryKind::Mod, false}, binary_kind{ctjs::BinaryKind::Add, true},
           binary_kind{ctjs::BinaryKind::BitAnd, true}, binary_kind{ctjs::BinaryKind::BitOr, true},
           binary_kind{ctjs::BinaryKind::BitXor, true}, binary_kind{ctjs::BinaryKind::Shl, true},
           binary_kind{ctjs::BinaryKind::Shr, true}}) {
@@ -4381,7 +4383,7 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                                           operate("%input") + done,
                                   .failure = ArrayContentsFailure::UnsupportedOperation}});
             }
-            for (const std::string operation : {"add", "sub", "mul"}) {
+            for (const std::string operation : {"add", "sub", "mul", "div", "mod"}) {
                 run({.contents = {
                          .what = "computed binary operands retain their original BigInt category",
                          .body = values + "  %input = ctjs.binary " + operation + " %lhs, %rhs\n" +
@@ -4437,7 +4439,8 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
             for (const std::string & operation : operations) {
                 const bool supported =
                     consumerForm == "binary"
-                        ? operation == "add" || operation == "sub" || operation == "mul"
+                        ? operation == "add" || operation == "sub" || operation == "mul" ||
+                              operation == "div" || operation == "mod"
                         : operation == "add" || operation == "bitand" || operation == "bitor" ||
                               operation == "bitxor" || operation == "shl" || operation == "shr";
                 for (const std::string operands :
@@ -4470,11 +4473,50 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
         for (const std::string operation : {"div", "mod", "pow"}) {
             const std::string operand = operation == "pow" ? "-1" : "0";
             run({.contents = {
-                     .what = "exceptional BigInt arithmetic needs its own completion proof",
+                     .what = "BigInt exceptional exits establish retention but not completion",
                      .body = values + produce + "  %exceptional = ctjs.constant #ctjs.bigint<\"" +
                              operand + "\">\n  %next = ctjs.binary " + operation +
                              " %produced, %exceptional\n" + done,
-                     .failure = ArrayContentsFailure::UnsupportedOperation}});
+                     .failure = operation == "pow" ? ArrayContentsFailure::UnsupportedOperation
+                                                   : ArrayContentsFailure::None,
+                     .arrays = "a:[x]",
+                     .exit = "produced -> {}"}});
+        }
+        if (!isStatic && (kind == ctjs::BinaryKind::Div || kind == ctjs::BinaryKind::Mod)) {
+            for (const std::string divisor : {"0", "-2", "9007199254740993"}) {
+                const std::string divided = values + "  %divisor = ctjs.constant #ctjs.bigint<\"" +
+                                            divisor + "\">\n" + binary("%lhs", "%divisor");
+                run({.contents = {
+                         .what =
+                             "zero signed and wide divisors supply only result category evidence",
+                         .body = divided + done,
+                         .arrays = "a:[x]",
+                         .exit = "produced -> {}"}});
+                for (const std::string effect :
+                     {"  ctjs.store_global \"held\", %a\n", "  %called = ctjs.call %p(%a)\n",
+                      "  \"test.effect\"(%produced) : (!ctjs.value) -> ()\n"}) {
+                    run({.contents = {
+                             .what = "even zero divisors cannot hide later unsupported effects",
+                             .body = divided + effect + done,
+                             .failure = ArrayContentsFailure::UnsupportedOperation}});
+                }
+            }
+            for (const std::string digits : {"-9", "0"}) {
+                run({.contents = {.what =
+                                      "signed and zero dividends keep independent BigInt origins",
+                                  .body = values + "  %input = ctjs.constant #ctjs.bigint<\"" +
+                                          digits + "\">\n" + binary("%input", "%rhs") + done,
+                                  .arrays = "a:[x]",
+                                  .exit = "produced -> {}"}});
+            }
+            for (const std::string exponent : {"0", "-1", "9007199254740993"}) {
+                run({.contents = {.what = "BigInt exponentiation retains its independent refusal",
+                                  .body = values + produce +
+                                          "  %exponent = ctjs.constant #ctjs.bigint<\"" + exponent +
+                                          "\">\n  %next = ctjs.binary pow %produced, %exponent\n" +
+                                          done,
+                                  .failure = ArrayContentsFailure::UnsupportedOperation}});
+            }
         }
         if (isStatic && (kind == ctjs::BinaryKind::Shl || kind == ctjs::BinaryKind::Shr)) {
             for (const std::string count : {"0", "-2", "9007199254740993", "-9007199254740993"}) {
@@ -4658,12 +4700,24 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
             };
             for (const auto other : otherKinds) {
                 setKind(other);
-                inspect(isStatic &&
-                                (other == ctjs::BinaryKind::Shl || other == ctjs::BinaryKind::Shr)
+                inspect((isStatic &&
+                         (other == ctjs::BinaryKind::Shl || other == ctjs::BinaryKind::Shr)) ||
+                                (!isStatic &&
+                                 (other == ctjs::BinaryKind::Div || other == ctjs::BinaryKind::Mod))
                             ? ArrayContentsFailure::None
                             : ArrayContentsFailure::UnsupportedOperation);
                 setKind(kind);
                 inspect(ArrayContentsFailure::None);
+            }
+            if (!isStatic && (kind == ctjs::BinaryKind::Div || kind == ctjs::BinaryKind::Mod)) {
+                auto divisor = producer->getOperand(1).getDefiningOp<ctjs::ConstantOp>();
+                const auto original = divisor.getValue();
+                for (const std::string digits : {"0", "-2", "9007199254740993"}) {
+                    divisor.setValueAttr(ctjs::BigIntAttr::get(&context, digits));
+                    inspect(ArrayContentsFailure::None);
+                    divisor.setValueAttr(original);
+                    inspect(ArrayContentsFailure::None);
+                }
             }
             if (isStatic && (kind == ctjs::BinaryKind::Shl || kind == ctjs::BinaryKind::Shr)) {
                 auto count = producer->getOperand(1).getDefiningOp<ctjs::ConstantOp>();

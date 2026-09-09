@@ -514,14 +514,16 @@ struct ArrayContentsEvidence {
 /// constant/key inference. Add enters to_primitive's guard and shares the same
 /// retention-only argument; primitive Concat uses static to_string. String
 /// results allocate in the VM; allocation success remains unproved. Dynamic
-/// Add/Sub/Mul additionally accept two independently proved original BigInts,
-/// preserving their independent result category in the same charged per-path
-/// set as Neg/BitNot. Saved reads and chained results retain that category;
-/// neither operand supplies authority for the other. Add's depth guard has the
-/// same retention-only early-exit argument. Static unsigned shifts, dynamic
-/// Div/Mod/Pow/Concat/bitwise/shifts, mixed and object/opaque inputs remain outside this bounded
-/// BigInt proof. No allocation-success, normal-completion or native effect
-/// guarantee follows.
+/// Add/Sub/Mul/Div/Mod additionally accept two independently proved original
+/// BigInts, preserving their independent normal-result category in the same
+/// charged per-path set as Neg/BitNot. Saved reads and chained results retain
+/// that category; neither operand supplies authority for the other. Add's depth
+/// guard and Div/Mod's zero-divisor RangeError have the same retention-only
+/// early-exit argument: the independent Error has no local object edge, while
+/// the whole-frame proof excludes calls, handlers and publication. Static
+/// unsigned shifts, dynamic Pow/Concat/bitwise/shifts and mixed/object/opaque
+/// inputs remain outside this bounded BigInt proof. No allocation-success,
+/// normal-completion or native effect guarantee follows.
 /// Joins keep exact separate states rather than unioning overwrite targets. Truthy
 /// accepts an external value only as a noncapturing predicate, never an element.
 /// Exact entry !ctjs.value identities may travel through unused register arguments

@@ -2287,3 +2287,105 @@ code/test hashes match. Independent log and hash audit:
 corrected focused gate above remain part of the record. The next bounded
 origin review is BigInt Div/Mod/Pow and their independent error exits; it
 remains unimplemented and makes no native admission or effect guarantee.
+
+## Computed BigInt division and remainder, 2026-09-09
+
+Continues the explicit Div/Mod/Pow review boundary after **d7e4f154** and
+**99498fc1**, found in the preceding section and the **10:13:16 UTC** sync
+journal. The current bounded increment covers dynamic `Div` and `Mod` with two
+independently proved original BigInt operands. Source division and remainder
+import as `binary`, not `binary_static`; that static operation's seven-kind
+whitelist is unchanged. Normal results enter the existing separately charged
+per-path BigInt category set. Neither operand can supply the other's proof;
+saved reads keep their original category after a slot changes or disappears.
+No concrete value, key, chosen branch or native carrier follows.
+
+`binary_op` reaches `bigint_binary` before Number conversion. The Div/Mod arms
+pass exact digits to `bigint_div`/`bigint_rem`; successful results own fresh
+digits and carry neither operand object identity. A zero divisor instead calls
+`throw_error` with a fixed primitive message. The same `make_error` path audited
+for signed shifts stores primitive message/stack strings and an existing Error
+prototype; it never calls user conversion or an Error constructor, reads cause
+options, or captures local frame values. The complete frame proof separately
+rejects calls, handlers and publication, so an Error leaving this frame cannot
+retain its unpublished fresh objects. This proves retention only, never
+allocation success, normal completion or a native no-throw/effect contract.
+
+Pow remains refused. Its negative-exponent and large-exponent handling needs a
+separate source-backed review, including the unconditional VM exponent cap for
+small bases; this increment neither executes a huge allocation nor relaxes
+that boundary. Mixed/opaque operands, unsigned or dynamic BigInt shifts,
+unsupported static forms and BigInt Concat retain their separate refusals.
+The original primitive non-BigInt operator rules remain intact.
+
+Before production changed, the unchanged source
+`/tmp/ctcompile-escape-bigint-divmod-semantics.js` (SHA256
+`68898c346e2779e35f276373210627b72c9e74d7afc250a824c0c5d84ecd3d33`)
+passed all **sixteen checks, trace=65535**, in Node and the current devbox
+interpreter. Root's measurement is
+`/tmp/ctcompile-boolean-divmod-preprobe.log`. Checks distinguish wide/signed
+quotients and remainders, zero dividends/divisors, mixed-input TypeErrors,
+saved own-field and array operands, Number/BigInt paths, chained results and
+two independent caller-retained RangeErrors. The reference prints the Number
+trace and explicitly reports six unsupported BigInt/object globals as skipped;
+the trace contains the corresponding assertions, not a claim to print those
+values through the native observation ABI.
+
+The existing raw matrix now covers both Div/Mod producers. It retains every
+old row, with only the independently newly proved exact-pair consumers changing
+expectation. Both-sided provenance, saved origins, path categories,
+Number-only consumers, invalid operator kinds, stale/fresh solver queries under
+forged markers and complete budget cutoffs remain. Added divisor/value edits
+preserve categories independently of values; zero divisors still cannot hide
+later publication, calls or unknown effects. Pow with zero, negative and huge
+exponents remains an explicit refusal. Each wide path snapshot still requires
+128 extra work units for 32 operations, categories and both snapshot entries.
+The interrupted recovery's devbox run passed all **eight escape CTests in
+8.89 seconds**, recorded in `/tmp/ctcompile-boolean-recovery-escape.log`.
+Div/Mod each check **130 rows, 47 stale/fresh live states and 4802 retention
+budget cutoffs**; arrays pass in **0.43 seconds**. All four escape oracles report
+zero violations. Fixture precision is **72/109**, with **540 compiler claims,
+546 observed sites and seven unclaimed sites**; corpus precision remains
+**0/64, 0/16 and 0/20**. That run predates the new source-row assertions below;
+the fresh resumed gate now verifies them too.
+
+Seven additive source functions exercise saved operands, Number/BigInt paths,
+opaque and mixed refusals, separate early Div/Mod errors and a retained child.
+Local Node passes all **fourteen observations and 29 discriminating mutations**,
+including exact signed arithmetic, original slot categories, separate object
+identities and independently retained errors. Removing this additive block
+reproduces every historical JavaScript byte exactly. Both clang-format 22.1.8
+and bundled 23 pass the changed C++; whitespace and JavaScript syntax checks
+pass.
+
+This work was resumed after the **10:44:16 UTC** interrupted-loop journal.
+All four frozen code/source hashes still match the predecessor's
+`/tmp/ctcompile-escape-bigint-divmod-initial-frozen.json`; no production or
+JavaScript changed during recovery. Its existing `.rec`, `.claims` and `.mlir`
+artifacts at `/tmp/ctcompile-boolean-divmod.*` pin **28 source sites,
+54 instances and 38 retained**, plus **two separate implicit Errors**.
+Both `DivEarly` and `ModEarly` record the Error at **pc25**, with one object
+retained via `thrown:1`. Their literal allocations remain **pc5/9/13/33**;
+the result literal runs only on the successful invocation.
+
+The completed source-row checker pins each original early-error function's
+SHA256 independently, requires exactly one error record in each function and
+forbids a compiler allocation claim for that implicit object. Every actual
+literal still requires its exact compiler claim. Source-backed negative
+controls keep opaque and mixed inputs at Stored and the saved child retained.
+Local replay passes the real recording and rejects **34 independent mutations**
+of source, error/claim rows and literal coordinates; evidence is
+`/tmp/ctcompile-escape-divmod-checker-audit/audit.json`. The five code/test hashes
+are frozen in `/tmp/ctcompile-escape-bigint-divmod-final-code.json`.
+
+The resumed no-work resync passes **all eight escape CTests in 8.83 seconds**
+with the completed checker. Arrays pass in **0.43 seconds**, the source fixture
+in **0.31**. Both Div/Mod matrices retain **130 rows, 47 stale/fresh states and
+4802 cutoffs**; the fresh fixture prints the exact **28/54/38** source family
+and both independent Errors. All four oracles again report zero violations;
+fixture precision remains **72/109**, and the three corpus precisions remain
+**0/64, 0/16 and 0/20** with p5's existing single partial claim unchanged.
+The original source, production and frozen test hashes remain unchanged.
+Evidence: `/tmp/ctcompile-boolean-resumed-escape.log` and
+`/tmp/ctcompile-escape-bigint-divmod-focused-audit.json`. The final full gate
+remains pending; Pow and all native BigInt/effect boundaries remain unchanged.

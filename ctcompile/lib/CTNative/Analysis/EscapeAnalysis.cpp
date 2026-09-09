@@ -1138,14 +1138,19 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     bigIntOrigin(rhs, state.bigIntOrigins) &&
                     (binary.getKind() == ctjs::BinaryKind::Add ||
                      binary.getKind() == ctjs::BinaryKind::Sub ||
-                     binary.getKind() == ctjs::BinaryKind::Mul)) {
+                     binary.getKind() == ctjs::BinaryKind::Mul ||
+                     binary.getKind() == ctjs::BinaryKind::Div ||
+                     binary.getKind() == ctjs::BinaryKind::Mod)) {
                     // bigint_binary combines digits into a fresh independent
-                    // BigInt. Add first enters to_primitive's depth guard; the
-                    // whole-frame exclusion of calls, handlers and publication
-                    // keeps that early exit from exposing fresh local objects.
-                    // Neither allocation success nor no-throw/native effects
-                    // follow. Div/Mod/Pow and mixed inputs remain independent
-                    // boundaries, even when one observed execution succeeds.
+                    // BigInt. Add first enters to_primitive's depth guard;
+                    // Div/Mod instead raise an independent RangeError for zero
+                    // divisors. No user conversion or local object edge enters
+                    // those errors. The whole-frame exclusion of calls,
+                    // handlers and publication keeps either early exit from
+                    // exposing unpublished fresh objects. The normal result's
+                    // category proves neither allocation success nor normal
+                    // completion or no-throw/native effects. Pow and mixed
+                    // inputs remain separate boundaries even on observed success.
                     if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                     state.bigIntOrigins.insert(binary.getResult());
                     state.origins[binary.getResult()] = binary.getResult();
