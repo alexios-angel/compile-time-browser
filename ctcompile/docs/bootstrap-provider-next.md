@@ -1,6 +1,115 @@
 # Next Bootstrap native boundary
 
-## Current continuation: owning String globals, 2026-09-09
+## Current continuation: owning String leaf fields, 2026-09-09
+
+`0e041bba`, `4b0a1199`, `b4505df6` and `417cd0ac` complete the interrupted
+String scalar proof, owning global storage/output and execution tests. The
+unchanged **3a99e34c** source and **f0a03c19** literal-copy candidate now admit
+**5/5 native** in both modes. The focused gate executes **52 native programs**,
+checks **71 typed Node/interpreter observations**, **24 emitted-tag controls**
+and nineteen refusal/repair pairs, including empty, escaped UTF-8/NUL and long
+String values. Saved String values survive global overwrite, 128 future Map
+calls and final owner destruction. Three method-table String sources separately
+pass **3/3 native** with actual String tags/bytes and saved owning callables.
+Both GCC/Clang and explicit/deduced output pass the no-Script-symbol gate.
+These are focused measurements; `HANDOFF.md` records the full session gate.
+
+The exact next historical source is:
+
+```js
+var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        set(key) { const item = {value: 'instance'}; state.set(key, item); return state.size; }
+    };
+});
+host.slot.set('x'); host.slot.set('x'); host.slot.set('y');
+var trace = host.slot.size();
+```
+
+SHA-256, including its final newline:
+`88d51f7dc833c6e17e1c8bf2e54096a504cc53417541f0ccdda4e66569b5f9e6`.
+The source keeps **five functions/seven raw and prepared calls**. Node and the
+interpreter agree on **Number `trace=2`**. Both optimization modes still refuse
+**0/5 native** with owner reason
+`property call lacks a current source getter proof`. Owning String globals do
+not yet admit owning String fields on the objects stored in the Map.
+
+The exact Number repair changes only `{value: 'instance'}` to `{value: 1}`.
+Its SHA-256 is
+`80b192281418b92f773f12308bfa3b93ce5160880da6aa3ced1ae29bf1329c3c`.
+It preserves all calls and the Number observation, has complete ownership, and
+admits **5/5 native** in both modes. Both historical sources remain unchanged in
+`native_owned_global_maps/sources.py`.
+
+A fresh thirteen-source probe after the String commits records **all thirteen
+typed Node/interpreter comparisons agreeing** and the same outcomes in both
+optimization modes. Every source retains five functions and every raw/prepared
+call:
+
+| controls | calls each | native | complete owner |
+|---|---:|---:|---|
+| historical String leaf / Number repair | 7 | 0/5 / 5/5 | no / yes |
+| initialized Number field read | 5 | 5/5 | yes |
+| String field read, empty, escaped bytes, alias overwrite | 5 | 0/5, four cases | no |
+| saved long String field before alias overwrite and Map deletion | 7 | 0/5 | no |
+| String/Number write, dynamic field write, prototype effect | 5 | 0/5, three cases | no |
+| exact zero after clear / literal-zero repair | 8 | 0/5 / 5/5 | no / yes |
+
+All ten refused sources stop at the same owner reason above. The byte field
+reference is exactly
+`trace="quoted%20%22field%22%0A%09%25%5C%3D%3B%E9%9B%AA%00tail"`;
+the empty field produces `trace=""`. The saved field retains all 64 repetitions
+of `saved field contents-` after the object field changes and its Map entry is
+deleted. These are String-field reference/refusal measurements; String-field
+native execution and lifetime have not yet been established. The mixed-write,
+dynamic and prototype controls currently stop at ownership, so they do not
+exercise an independent storage admission decision.
+
+The next implementation has three independent obligations:
+
+1. `HostContract/CapturedMapBody.cpp` currently excludes String from the allowed
+   leaf-field value mask even though its primitive facts already represent
+   String literals. Extend the live source field proof while preserving exact
+   allocation/alias identity, reads at their original point, all future method
+   paths, ordinary fixed keys, effect invalidation, fingerprints and work limits.
+   A later field overwrite must not change the facts for an earlier saved read.
+2. `Lowering/Admission/IdentityFields.cpp` admits scalar carriers only. String
+   store and read admission must follow actual inferred types independently of
+   host ownership. Preserve the separate live initialization query in
+   `Analysis/NativeObject/Fields.cpp`: a field schema is not evidence that this
+   exact receiver was initialized before this read. Keep absent/optional, mixed,
+   stale, exhausted, dynamic and prototype controls independently exercised.
+3. `Lowering/ObjectValues/Fields.cpp` currently emits every member, getter and
+   setter with `nullable_scalar`. Derive a complete field store census, then use
+   the existing owning `nullable_string` consistently in declarations, accesses
+   and conversions for String fields. The emitter merges equal property names
+   across accepted functions; every emitted member must have one compatible
+   carrier across its complete store census. A narrower final read cannot erase
+   an earlier String/Number storage conflict. Preserve initial Undefined and
+   exact String tag checks; saved reads must own their bytes after mutation and
+   owner destruction. Reuse the existing exact output and no-Script gates.
+
+Exact zero after `Map.clear()` remains a separate boundary. Unchanged source
+**49663558** reads `const zero = state.size;`, inserts key `1`, then asks whether
+`state.get(zero)` is Undefined. Its full SHA-256 is
+`496635583adf728c73d3a48a71a98d7e4733a2bd9a5d14d17d21b1660359b316`.
+The repair retains the evaluated read as `state.size; const zero = 0;`, hash
+`33aa4c4a24bba6adeec8cc2711e406190f25942f3829ee0c35efae2c9dba36a0`.
+Both retain five functions/eight calls and Number `trace=1`; the original is
+**0/5**, the repair **5/5**, in both modes. `PrimitiveMapKeyEvidence` records a
+lower bound, whose zero also means no useful bound. Exact emptiness needs its
+own live fact tied to the size read; a zero lower bound cannot establish it.
+
+These isolated results establish no new full-Bootstrap or direct browser API
+coverage. Evidence: `/tmp/ctcompile-after-string-boundary-results.json` and
+`/tmp/ctcompile-after-string-boundary-sources.json`; the temporary probe driver
+is `/tmp/ctcompile-after-string-boundary.py`. Historical measurements below are
+preserved with their original source bytes and the boundaries at that time.
+
+## Previous continuation: owning String globals before 0e041bba, 2026-09-09
 
 `df304fdf` and `ab61f9ac` complete the interrupted Boolean proof/execution
 continuation. The unchanged **681c8895** source and **d3a90c01** literal-copy
