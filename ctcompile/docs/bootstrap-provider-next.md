@@ -1,6 +1,114 @@
 # Next Bootstrap native boundary
 
-## Current continuation: Boolean globals and typed observations, 2026-09-09
+## Current continuation: owning String globals, 2026-09-09
+
+`df304fdf` and `ab61f9ac` complete the interrupted Boolean proof/execution
+continuation. The unchanged **681c8895** source and **d3a90c01** literal-copy
+candidate now admit **5/5 native** in both modes. The recovered focused gate
+passes **14 CTests in 149.81 seconds**, **34 native programs**, **49 typed source
+observations**, **14 emitted-tag mutations**, saved Map lifetimes and all fifteen
+refusal controls. Source bytes remain unchanged. `HANDOFF.md` records the full
+session gate and the separate BigInt Div/Mod escape increment.
+
+The exact next source is:
+
+```js
+var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        set(key) { const item = {}; state.set(key, item); const saved = state.get(key); return state.size; }
+    };
+});
+host.slot.size(); const first = host.slot.set('x'); const second = host.slot.set('y'); host.slot.set('z'); var trace = first * 10 + second;
+const fixed = 'owned scalar'; const copy = fixed;
+```
+
+SHA-256, including its final newline:
+`3a99e34c6ceb6f9a13e85666c3480b7e7c74d52c783ad1420d726d103a655d8a`.
+It keeps **five functions/eight raw and prepared calls**, complete ownership,
+and the Node/interpreter observations:
+
+```text
+copy="owned%20scalar"
+first=1
+fixed="owned%20scalar"
+second=2
+trace=12
+```
+
+Both optimization modes still refuse **0/5** at
+`standard Map identity is unproved with other host/global value reads`.
+The byte-preserved candidate changes only `const copy = fixed;` to
+`const copy = 'owned scalar';`. Its SHA-256 is
+`f0a03c19d5620834869e559ef0aaafede25f6b017c24bae67021d9a460d76d84`.
+It retains every call and observation, but is **not a complete repair**:
+both modes remain **0/5** at
+``store to global `fixed` requires a Number or Boolean global``.
+The load proof and owning global storage/output are distinct obligations.
+
+A fresh fifteen-source probe after the Boolean commit records **all fifteen
+Node/interpreter comparisons agreeing**, including scalar kind counts, and
+identical native outcomes in both modes. Every source has five functions and
+eight raw/prepared calls. The unchanged Boolean control is **5/5**; all fourteen
+String controls remain **0/5**:
+
+| controls | complete owner | first boundary |
+|---|---|---|
+| original, empty/byte/long copies, alias chain, duplicate write | yes, six cases | Map identity lacks an exact scalar-read edge |
+| original/empty/byte literal candidates, direct String trace | yes, four cases | String global storage/observation |
+| read before initialization | no | definite source initialization |
+| future method writes the String global | no | current source getter proof |
+| String/Boolean and String/Undefined selected values | no, two cases | unconditional straight-line entry ownership |
+
+The byte controls include quote, newline, tab, percent, backslash, equals,
+semicolon, UTF-8 and an embedded NUL followed by `tail`; the interpreter prints
+`%00tail` without truncation. Empty String prints `""`. These are measured
+reference/refusal probes, **not native String execution or lifetime results**.
+The last two selected-value controls stop before storage admission and therefore
+do not test its full type census; independent raw type/admission controls remain
+necessary.
+
+Extend the existing exact scalar edge in `HostContract/Values.cpp`,
+`Analysis/OwnedGlobalMethods.cpp` and `Analysis/NativeMap.cpp` for String origins.
+Keep one earlier store, original SSA value and scope, every write/effect,
+complete future method family, fingerprints and shared work limits.
+`TypeInference` already subscribes to the actual stored-value lattice after
+removing only independently disproved initial Undefined. Pending, mixed,
+optional and boxed types must remain actual lattice outcomes; a host category
+or requested observation cannot supply a native String type.
+
+The existing `EmitC/ScalarConversions.cpp::censusScalars` records actual joined
+store types in `globalTypes`. Global admission in `Admission/Operations.cpp`
+and `Admission/Values.cpp::printable` must agree with that whole store census.
+Then select one consistent per-binding owning carrier in
+`EmitC/Expressions.cpp::lvalueOfGlobal`, global stores/observations in
+`EmitC/Operations.cpp`, and global declarations in `EmitC/Module.cpp`.
+`StringValues/RuntimeHelpers.h` already has owning `nullable_string` storage
+with distinct Undefined, Null and String tags; reuse it. Its `string_text`
+helper coerces absent values to text and **cannot replace an exact String tag
+check at the observation boundary**. Missing stores and wrong tags must fail;
+empty String remains a present value.
+
+Follow `NativeReference.cpp` and `native-values-fixture.emitc.mlir` for quoted,
+per-byte percent output with uppercase hex; preserve embedded NUL and UTF-8/WTF-8
+bytes. String literals already use `std::string(literal, byte_count)`. Add
+independent String source/prepared query and actual-type propagation tests,
+fresh/stale and exhausted proof controls, wrong-tag/missing-store observations,
+and saved long-String ownership across mutation/reentry/final destruction.
+Use the existing GCC/Clang explicit/deduced and no-Script-symbol gates.
+
+All twenty-four historical source/candidate hashes remain in the checked
+fixture. Exact zero after clear, String leaf fields, full native Bootstrap and
+direct browser API integration remain separate unfinished boundaries; these
+isolated probes establish no new full-bundle coverage.
+Evidence: `/tmp/ctcompile-next-string-boundary-results.json`,
+`/tmp/ctcompile-next-string-boundary-sources.json` and
+`/tmp/ctcompile-next-string-boundary.log`; the temporary probe driver is
+`/tmp/ctcompile-next-string-boundary.py`.
+
+## Previous continuation: Boolean globals before df304fdf, 2026-09-09
 
 `06c4a649` and `4d2906d1` complete the exact constant-only Number continuation.
 The unchanged **3c1dfd95** source now reaches **5/5 native** in both modes with
