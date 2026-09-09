@@ -4,6 +4,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nullable-literal.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NULLABLE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/missing.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MISSING --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compatible-literal.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=COMPATIBLE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compatible-readers.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ABSENT --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nullable.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=UNPROVED-GLOBAL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/compatible-functions.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=UNPROVED-GLOBAL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed-stores.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CENSUS
@@ -27,6 +28,11 @@
 // COMPATIBLE-DAG: nullable_string field_76616c7565;
 // COMPATIBLE-DAG: emitc.func @text_1({{.*}}) -> !emitc.opaque<"std::string">
 // COMPATIBLE-DAG: emitc.func @empty_2(
+// ABSENT: nullable_string field_76616c7565;
+// ABSENT-LABEL: emitc.func @nullField_2(
+// ABSENT: call_opaque "ctnative::object_absent_field"
+// ABSENT-LABEL: emitc.func @undefinedField_3(
+// ABSENT: call_opaque "ctnative::object_absent_field"
 // CENSUS: ctnative.not_native = "owning field `value` has incompatible types across its complete store census"
 // FUNCTIONS: ctjs.func private @numeric$1
 // FUNCTIONS-SAME: ctnative.not_native = "owning field `value` has incompatible types across its complete store census"
@@ -181,3 +187,27 @@ function empty() {
 }
 text();
 empty();
+
+//--- compatible-readers.js
+// Separate absent-only reads narrow the shared owning String member's tag.
+function text() {
+    const map = new Map();
+    const item = {value: "owned"};
+    map.set("x", item);
+    return item.value;
+}
+function nullField() {
+    const map = new Map();
+    const item = {value: null};
+    map.set("x", item);
+    return item.value;
+}
+function undefinedField() {
+    const map = new Map();
+    const item = {value: void 0};
+    map.set("x", item);
+    return item.value;
+}
+text();
+nullField();
+undefinedField();
