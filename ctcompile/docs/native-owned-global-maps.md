@@ -1,5 +1,37 @@
 # Native captured Maps across global publication
 
+## Owning String globals, 2026-09-09
+
+**0e041bba/4b0a1199** extend the exact initialized scalar edge to String and
+emit owning per-binding storage with byte-preserving, exact-tag observations.
+Actual stored SSA lattices and the complete store census remain authoritative.
+The original **3a99e34c/f0a03c19** sources now reach **5/5 native** in both modes
+with all eight calls and five observations. **b4505df6** gates three String
+method results, including empty and UTF-8/NUL bytes, through owning callables.
+
+**417cd0ac** passes **52 native programs**, **71 typed source probes**, **24
+wrong-tag/missing-store mutations**, **19 refusal/exact-repair families**, fresh/
+stale forgeries and reruns. The new long-String lifetime runs **128 future calls**
+after owner/table release and preserves snapshots across original-global
+mutation, independent entry execution and final Map/leaf destruction under
+GCC/Clang explicit/deduced output and sanitizers. Budgets **9271/9316** check
+**31/32 cutoffs**; all **596 historical helper rows** and **24 source hashes**
+remain unchanged.
+
+All six focused proof checks pass across the initial five passes and corrected
+owner query (**113.20 seconds**); source/prepared queries each have **93 rows**,
+and type inference has **122 rows/80 live edits**. The two corrected expectations
+preserve existing Null/Undefined key proofs with no fabricated String edge.
+Six lowering lit tests pass in **0.29 seconds**. The full gate is pending at
+`/tmp/ctcompile-string-complete-full.log`, with **302 programs/37 lifetime
+families** configured. No full-suite or new corpus result is claimed yet.
+
+Next is the measured **88d51f7d** String-field source, still **0/5** against its
+**5/5** Number-field repair. All thirteen continuation probes agree on typed
+Node/interpreter results. The captured method proof, independent field admission
+and owning per-field emission must advance together. Full Bootstrap and direct
+platform integration remain unfinished; see `bootstrap-provider-next.md`.
+
 ## Definite Boolean globals, 2026-09-09
 
 **df304fdf** extends exact scalar-read evidence to Boolean origins and adds

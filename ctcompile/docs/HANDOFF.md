@@ -6,6 +6,77 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Owning String globals and recovered execution, 2026-09-09
+
+Resumed **21 uncommitted String files at 0ea9aaed**, identified in the
+**14:51:39 UTC** synchronization journal and predecessor diffs after the
+**14:53:51** explicit abandonment. Older codex-wip recovery and source-split
+repairs were already landed. Three agents audited proof tests, recovered
+execution tests and measured the next boundary; root finished the Map harness
+after two agents hit rate limits. No browser/runtime source changed.
+
+**0e041bba** extends exact scalar-global evidence to String origins while
+retaining one earlier store, original SSA scope/order, the complete environment
+and future callable family, fingerprints and bounded work. Type inference
+continues subscribing to the actual stored SSA lattice; categories supply no
+type or value. **4b0a1199** selects owning per-binding storage from the complete
+store-type census and checks the exact String tag before printing quoted,
+percent-encoded bytes. Empty String remains distinct from Null or Undefined.
+
+The unchanged **3a99e34c** String-copy source and **f0a03c19** literal-copy
+candidate advance **0/5 -> 5/5 native** in both modes, preserving eight calls
+and all five typed observations. **b4505df6** executes the historical String
+method result at **3/3**, plus empty and escaped UTF-8/NUL examples. Saved
+`std::function<std::string()>` callables and copied bytes survive owner/global
+release. Explicit/deduced GCC/Clang binaries link no Script/VM symbols.
+
+**417cd0ac** completes the interrupted Map execution gate. All **52 focused
+native programs**, **71 typed Node/interpreter probes**, **24 emitted wrong-tag
+or missing-store controls**, fresh/stale forgeries, prepared reruns and **19
+refusal/exact-repair families** pass. The refusals separate **12 ownership** and
+**seven complete-owner** boundaries. Every one of **596 historical helper rows
+across 55 helpers** and all **24** original source/candidate hashes is preserved.
+Budgets **9271/9316** check **31/32 cutoffs**. The new long-String lifetime keeps
+snapshots across **128 future calls**, both flags, owner/table release, mutation
+of the original globals, independent entry reexecution and final Map/leaf
+release under ASan/UBSan/leak checks.
+
+The warning-free **12-step** tools/proof build initially passed **5/6 CTests
+in 146.70 seconds**. Two new assertions wrongly refused existing nullable
+String-key routes; their unchanged Null/Undefined sources now require complete
+ownership with **zero invented String scalar edges**. The warning-free two-step
+rebuild passes the corrected owner test in **113.20 seconds**. All six focused
+proof checks therefore have passing results. Source/prepared queries each have
+**93 rows**, including exhaustive owning/empty String host budgets **7781/7852**.
+Type inference covers **122 rows/80 live edits**, including actual pending,
+String, mixed, optional and boxed states.
+
+The corrected six lowering lit cases pass in **0.29 seconds**. Their first run
+had a new optional-String diagnostic expectation wrong: storage rejects that
+carrier before the output check. The first execution run stopped in its new
+Node Null mutation observer; encoding Null separately repaired the test without
+changing source or production. Both initial failures remain in the evidence.
+Stable clang-format **22.1.8 passes all 745 files**; bundled 23 retains the same
+nine preexisting differences. **23** final code/test inputs are frozen.
+
+**Full gate pending:** the committed-input devbox build/CTest run is active in
+`/tmp/ctcompile-string-complete-full.log`. The integrated inventory is **302
+native Map programs/37 lifetime families**; these are not yet full-suite results.
+
+**Next: owning String fields on proved ordinary objects.** A fresh **13-source**
+probe agrees on typed Node/interpreter observations in every case. The exact
+**88d51f7d** seven-call String-field source remains **0/5** at the live captured
+method proof; its Number-field repair is **5/5**. String field reads, saved
+long bytes and alias writes also remain refused. Extend the existing captured
+Map field proof, independent field admission and per-field owning emission
+together, preserving actual store joins and definite initialization. Exact zero
+after clear, full native Bootstrap and direct browser APIs remain unfinished.
+See `bootstrap-provider-next.md` for the exact source and measured boundary.
+
+Evidence: `/tmp/ctcompile-string-complete-{proof,query-rerun,lowering-rerun,methods,execution-rerun}.log`,
+`/tmp/ctcompile-string-complete-{source-hashes,source-audit}.json`, and
+`/tmp/ctcompile-after-string-boundary-{results,sources}.json`.
+
 ## Definite Boolean globals and recovered execution gate, 2026-09-09
 
 Resumed four uncommitted Boolean execution files at **1138dbfd**, identified
