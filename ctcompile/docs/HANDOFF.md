@@ -6,6 +6,83 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Constant-only Number globals and signed BigInt shifts, 2026-09-09
+
+Resumed the exact **3c1dfd95** constant-only Number continuation from
+**68bcc183**, `bootstrap-provider-next.md` and the **08:45:54 UTC** sync journal.
+The tree/index started clean; codex-wip recovery and source-split build repairs
+were already landed. Three agents handled proof tests, execution/lifetime
+checks and a separate escape-analysis increment. No browser/runtime source
+changed, and no push occurred.
+
+**06c4a649** allows the existing scalar-read proof to have no published-call
+dependencies for constant-only Number expressions. Original SSA scope, one
+earlier store, the complete environment and the complete owning method family
+remain mandatory. Nonempty dependencies still belong to that family. Number
+categories supply neither values nor native types; type inference continues
+subscribing to the actual stored value, including pending/optional/boxed states.
+
+The unchanged eight-call **3c1dfd95** source advances **0/5 -> 5/5 native** in
+both modes, preserving `copy=7, first=1, fixed=7, second=2, trace=12`.
+All **24** original source/candidate probes agree on Node/interpreter output:
+**five original and nine candidate programs admit**, while ten retain their
+independent ownership, Map-identity or global-carrier refusals. The warning-free
+**32-step** tools build and **15-step** proof build pass all **six focused
+CTests in 131.63 seconds**. Source/prepared scalar queries each cover **28 rows**,
+**11 published/13 constant live edits**, two inaccessible Number arms and every
+**7802/7781/7873/7852** host budget cutoff. Type inference checks **40 rows,
+16 edits** and pending -> i32 -> f64 -> optional -> boxed propagation.
+
+**4d2906d1** gates **17 native programs**, **27 typed observations**, three
+unowned/seven complete-owner refusals with exact edits, fresh/stale forgeries,
+prepared/emitted scalar dataflow and reruns. Explicit/deduced GCC/Clang builds
+preserve signed zero, Number NaN and actual scalar loads/arithmetic with no VM
+symbols. The new sanitizer lifetime exercises **128 future calls**, both flags,
+owner/table release, independent entry execution, final Map destruction and
+separately retained leaf release. Constant aliases and Number snapshots survive
+leaf mutation. Budgets **9271/9441** check **31/32 cutoffs**, with no rollback
+interval. All **173 historical refusal classifications**, **514 helper rows**
+and **24 prior source hashes** are unchanged; only the intended historical
+`scalar_constant_only` admission changes.
+
+**d7e4f154** adds independently proved static BigInt **Shl/Shr**
+origins. Signed shifts can raise an independent RangeError; the proof establishes
+local retention only, never normal completion, no-throw effects or native BigInt
+admission. The live Node/interpreter preprobe agrees on all **16 checks**.
+The first warning-free **ten-step** build passes seven of eight escape CTests;
+the fixture incorrectly expected a source-literal claim for the interpreter's
+implicit RangeError. The correction preserves all source and production bytes,
+pins the exact shift/source coordinates and requires that one independently
+retained error separately, while every source allocation still needs its claim.
+The corrected no-work resync passes **all eight escape CTests in 8.81 seconds**.
+Each shift checks **119 rows, 47 live states and 4592 budget cutoffs**. The
+source family records **24 sites, 47 instances and 35 retained**, plus the
+separate implicit Error. Fixture precision is **68/103** and all four escape
+oracles report zero violations; corpus precision remains **0/64, 0/16, 0/20**.
+
+Stable clang-format **22.1.8 passes all 745 files**; bundled 23 retains the same
+nine unrelated differences and changed C++ passes both. Independent production,
+source-preservation and generated-artifact audits pass. The focused native gate
+is complete; the integrated **266-program/35-lifetime** inventory is counted
+from the actual driver, with the full compiler/lit/corpus gate still pending.
+
+**Next: definite Boolean globals and typed observations.** The exact
+**681c8895** Boolean copy source retains five functions/eight calls and complete
+ownership but remains **0/5** at the Number-only Map identity boundary. Its
+**d3a90c01** literal-copy candidate removes that boundary but remains **0/5** at
+`store to global fixed requires a numeric global`. Boolean read evidence alone
+cannot close this: admission and final observations must use independently
+proved Boolean types and preserve exact runtime tag checks. String globals need
+owning storage/output too. Exact zero after clear, String leaf fields, full
+Bootstrap initialization and direct browser API integration remain unfinished.
+See `bootstrap-provider-next.md` for the exact source, hashes and proof sites.
+
+Evidence: `/tmp/ctcompile-constant-{baseline,first}.json`,
+`/tmp/ctcompile-constant-{proof,smoke,execution,escape,escape-corrected}.log`,
+`/tmp/ctcompile-constant-refusal-census.json`,
+`/tmp/ctcompile-constant-{original,lifetime}.cpp`, and
+`/tmp/ctcompile-constant-inventory.json`.
+
 ## Definite scalar-global initialization and static BigInt origins, 2026-09-09
 
 Resumed the exact **8003b4bc** alias continuation in **53692779**,

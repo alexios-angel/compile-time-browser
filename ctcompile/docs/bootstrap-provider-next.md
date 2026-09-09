@@ -1,6 +1,79 @@
 # Next Bootstrap native boundary
 
-## Current continuation: constant-only Number globals, 2026-09-09
+## Current continuation: Boolean globals and typed observations, 2026-09-09
+
+`06c4a649` and `4d2906d1` complete the exact constant-only Number continuation.
+The unchanged **3c1dfd95** source now reaches **5/5 native** in both modes with
+eight calls and all five observations preserved. Six proof CTests and seventeen
+focused native programs pass; the latter include a 128-future-call sanitizer
+lifetime, signed zero/NaN, stale/fresh forgeries and actual scalar dataflow.
+The complete compiler/lit/corpus gate is still pending. See `HANDOFF.md` for
+measured proof, execution and escape-analysis details.
+
+The next original source is:
+
+```js
+var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        set(key) { const item = {}; state.set(key, item); const saved = state.get(key); return state.size; }
+    };
+});
+host.slot.size(); const first = host.slot.set('x'); const second = host.slot.set('y'); host.slot.set('z'); var trace = first * 10 + second;
+const fixed = false; const copy = fixed;
+```
+
+SHA-256, including the final newline:
+`681c88958033cc6856eb955d592166118c74d44cc9c5cb4de4bb90aacde2e63d`.
+It preserves **five functions/eight calls** and Node/interpreter observations
+`copy=false, first=1, fixed=false, second=2, trace=12` (three Numbers, two
+Booleans). Both optimization modes have complete ownership but remain **0/5**
+at `standard Map identity is unproved with other host/global value reads`.
+
+The exact candidate replaces only `const copy = fixed;` with
+`const copy = false;`, preserving calls and observations. Its SHA-256 is
+`d3a90c0165fe16ae6f3333d4d084c86e67c70b4ace304d888c4d43440cb46116`.
+This is **not a complete repair**: both modes still refuse **0/5** at
+`store to global fixed requires a numeric global`. It independently exposes the
+second boundary after removing the unproved copy.
+
+Use the existing live scalar-edge seam in `HostContract/Values.cpp`,
+`Analysis/OwnedGlobalMethods.cpp` and `Analysis/NativeMap.cpp` for definite
+Boolean origins. Preserve complete environment/ownership, SSA scope/order,
+all writes, fresh fingerprints, shared work limits and actual stored-value
+subscriptions. `TypeInference` already handles the actual Boolean lattice;
+no host category or requested observation may manufacture a type.
+
+The distinct admission/output work is in `Lowering/Admission/Operations.cpp`
+(global loads/stores), `Lowering/Admission/Values.cpp::printable`, and
+`Lowering/EmitC/Operations.cpp` (entry observations). `Emitter.h` currently
+records global names only, and every observation calls `global_number`.
+The existing `NullableHelpers.h` finite scalar representation already carries
+a Boolean tag; do not introduce another value model. Select Boolean output
+from the complete actual global-store type census, preserve the Number tag
+check, and add an equally exact Boolean check and `true`/`false` output.
+Missing writes, a wrong tag, optional or boxed values must not masquerade as
+valid Boolean observations.
+
+Extend the original Boolean source and literal-copy candidate in
+`native_owned_global_maps/sources.py` and its execution driver, the two existing
+scalar query/type functions, and `global-undefined.mlir` controls. Exercise both
+false and true, mixed/optional actual types, all writes/effects, stale/exhausted
+proofs, source/prepared cloning and wrong-tag/missing-store observation
+mutations. Preserve source and call order; do not repair a refusal by changing
+the runtime oracle or coercing a Boolean to Number.
+
+The analogous String source **3a99e34c** and candidate **f0a03c19** have the same
+two measured barriers, plus owning String storage/escaped output. Undefined,
+multiple writes, dynamic globals and future method effects keep their separate
+refusals. Exact zero after Map.clear, String leaf fields, full native Bootstrap
+and direct browser APIs remain unfinished. All 24 prior source/candidate hashes
+are preserved in the checked fixture; `/tmp/ctcompile-constant-first.json`
+records current observations and classifications.
+
+## Previous continuation: constant-only Number globals, 2026-09-09
 
 `396b7e46` and `bbedee5b` complete the exact alias/direct-observation boundary:
 both original sources now reach **5/5 native** in both modes, preserving eight/

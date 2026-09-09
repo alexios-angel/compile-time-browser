@@ -1,5 +1,31 @@
 # Native captured Maps across global publication
 
+## Constant-only Number globals, 2026-09-09
+
+`06c4a649` extends the existing exact scalar-load evidence to constant-only
+Number expressions with no published-call dependencies. Single-store
+initialization, original SSA scope/order, complete environment/owner proof and
+actual stored-value type subscriptions remain mandatory. The unchanged
+**3c1dfd95** source now admits **5/5** in both modes with eight calls and all
+five observations preserved. Six focused proof CTests pass in **131.63 seconds**.
+
+`4d2906d1` passes **17 native programs**, **27 typed observations**, ten
+refusal/edit families and a new **128-future-call** sanitizer lifetime. Real
+scalar copies/arithmetic and Map/leaf effects remain. Aliases survive owner
+release, leaf mutation, independent reentry and final Map/leaf destruction.
+Budgets **9271/9441** check **31/32 cutoffs**. All **173** historical refusal
+classifications, **514** helper rows and **24** original source hashes remain.
+The counted integrated inventory is **266 programs/35 lifetime families**;
+the full compiler/lit/corpus gate is pending.
+
+The next **681c8895** Boolean copy still refuses Map identity. Its exact
+**d3a90c01** literal-copy candidate removes that refusal but reaches the separate
+numeric-only global admission/output boundary. Both remain **0/5** with complete
+ownership and unchanged five scalar observations. Extend independently proved
+Boolean edges and typed observation output together; retain exact tag checks,
+optional/boxed refusals and actual SSA lattice authority. String globals need
+owning storage too. See `bootstrap-provider-next.md` and `HANDOFF.md`.
+
 ## Definitely initialized scalar aliases, 2026-09-09
 
 `396b7e46` removes only implicit absence for an exact scalar load proved by the
