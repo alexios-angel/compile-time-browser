@@ -40,6 +40,9 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     // Presence alone never supplies payload evidence. A possibly aliasing delete
     // removes definite membership, but cannot change a surviving payload. Its
     // alternatives stay valid whenever present; an exact set replaces them.
+    // Definite absence is independent of possible absence: only an exact
+    // deletion establishes it. A possibly aliasing write invalidates absence,
+    // whereas another deletion cannot make an absent key present.
     // This local contents fact is independent of the family's return worklist
     // and publishes alternatives only after the entire body/use proof completes.
     struct entry_fact {
@@ -47,6 +50,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         PrimitiveAlternatives payload;
         bool present = true;
         mlir::Value object;
+        bool absent = false;
     };
     llvm::SmallVector<entry_fact> entries;
     llvm::DenseSet<mlir::Operation *> observations;
@@ -59,6 +63,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     };
     const auto mutate = [&](mlir::Value key, bool erase, PrimitiveAlternatives payload = {},
                             mlir::Value object = {}) {
+        bool hasExactAbsence = false;
         for (auto it = entries.begin(); it != entries.end();) {
             if (!step()) { return false; }
             const auto relation =
@@ -67,6 +72,10 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 ++it;
             } else if (erase) {
                 it->present = false;
+                if (relation == PrimitiveMapKeyRelation::Same) {
+                    it->absent = true;
+                    hasExactAbsence = true;
+                }
                 ++it;
             } else if (relation == PrimitiveMapKeyRelation::Same) {
                 it = entries.erase(it);
@@ -76,6 +85,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 // finite set remains unknown, including after further writes.
                 it->payload = it->payload.joined(payload);
                 if (it->object != object) { it->object = {}; }
+                it->absent = false;
                 ++it;
             }
         }
@@ -91,7 +101,15 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 }
             }
         }
-        if (!erase) { entries.push_back({key, payload, true, object}); }
+        if (erase) {
+            // The invocation's initial contents are unknown, but this exact
+            // key is now absent even if no earlier local set mentioned it.
+            // Keep earlier payload evidence whenever present: a branch join
+            // may still reach that payload from its nondeleting arm.
+            if (!hasExactAbsence) { entries.push_back({key, {}, false, {}, true}); }
+        } else {
+            entries.push_back({key, payload, true, object});
+        }
         return true;
     };
     const auto learn = [&](mlir::Value condition, bool branch) {
@@ -111,6 +129,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
             if (!step()) { return false; }
             if (comparePrimitiveMapKeys(entry.key, key) == PrimitiveMapKeyRelation::Same) {
                 entry.present = true;
+                entry.absent = false;
                 return true;
             }
         }
@@ -285,6 +304,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                         }
                         left.payload = left.payload.joined(right.payload);
                         left.present &= right.present;
+                        left.absent &= right.absent;
                         if (left.object != right.object) { left.object = {}; }
                         joined.push_back(left);
                         break;
@@ -429,7 +449,13 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                             if (!step()) { return false; }
                             if (comparePrimitiveMapKeys(entry.key, invoke.getArgs()[0]) ==
                                 PrimitiveMapKeyRelation::Same) {
-                                if (entry.present && entry.payload.known) {
+                                if (entry.absent) {
+                                    primitives.insert(invoke.getResult());
+                                    alternatives.try_emplace(
+                                        invoke.getResult(),
+                                        PrimitiveAlternatives::forTag(
+                                            mlir::TypeID::get<ctjs::UndefinedAttr>()));
+                                } else if (entry.present && entry.payload.known) {
                                     primitives.insert(invoke.getResult());
                                     alternatives.try_emplace(invoke.getResult(), entry.payload);
                                 } else if (entry.present && entry.object) {
@@ -479,12 +505,23 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     for (mlir::Value alias : maps) {
         for (mlir::OpOperand & use : alias.getUses()) {
             if (!step()) { return false; }
+            if (!dominance.dominates(alias, use.getOwner())) { return false; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
                 (reads.contains(use.getOwner()) && use.getOperandNumber() == 0) ||
                 (calls.contains(use.getOwner()) && use.getOperandNumber() == 1)) {
                 continue;
             }
             return false;
+        }
+    }
+    // Scalar read-time facts, including an absent get's Undefined result,
+    // cannot cross their source scope through malformed live SSA edits. The
+    // same requirement protects primitive key evidence and branch conditions.
+    for (const auto * values : {&primitives, &flags}) {
+        for (mlir::Value value : *values) {
+            for (mlir::OpOperand & use : value.getUses()) {
+                if (!step() || !dominance.dominates(value, use.getOwner())) { return false; }
+            }
         }
     }
     // A method-local object is a leaf owner, with the captured Map as its only
@@ -515,6 +552,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         if (keyOf(read.getKey()) == "size") { continue; }
         for (mlir::OpOperand & use : read.getResult().getUses()) {
             if (!step()) { return false; }
+            if (!dominance.dominates(read.getResult(), use.getOwner())) { return false; }
             if (llvm::isa<ctjs::RootOp>(use.getOwner()) ||
                 (calls.contains(use.getOwner()) && use.getOperandNumber() == 0)) {
                 continue;
