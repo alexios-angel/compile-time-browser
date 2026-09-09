@@ -9,8 +9,13 @@ requested scalar observations and no Script/VM/AOT symbols. All five host/owner
 CTests pass. `1bd5b5ac` also passes fourteen focused native programs, eight
 refusal/repair families and the new 128-call sanitizer lifetime; the final
 173-case census preserves all 169 historical refusal classifications. The full
-gate is running on eighteen frozen code/test files. No full-Bootstrap gain is
-claimed; see [HANDOFF.md](HANDOFF.md).
+warning-free 242-step build finishes **512/517 CTests in 1652.00 seconds**:
+all **372 compiler tests** pass, with only five established browser failures.
+Lit passes **165/165 in 935.40 seconds**, including **245 published programs
+and 33 lifetime families**. Eighteen final code/test hashes match HEAD, frozen
+inputs and the devbox. Fresh Bootstrap coverage stays **19/574** in both modes;
+exact Data remains **0/7 browser/CommonJS, 0/8 AMD**. See
+[HANDOFF.md](HANDOFF.md) for final measurements.
 
 The next exact source passes the complete host, owner and Map identity proofs:
 

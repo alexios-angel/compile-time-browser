@@ -2032,10 +2032,30 @@ Stable clang-format 22.1.8 passes all **745 C++ files**; changed C++ also passes
 bundled 23. Whitespace and JavaScript syntax checks pass. The five code/test
 hashes still match their frozen inputs; the doc-only measurement update has
 its own refreshed hash in `/tmp/ctcompile-escape-bigint-binary-frozen.json`.
-The complete compiler/lit gate and final devbox hash comparison remain pending;
-this records the focused escape gate only. No browser/runtime source changed.
-Evidence: `/tmp/ctcompile-scalars-escape-build.log`,
-`/tmp/ctcompile-scalars-escape.log`, `/tmp/ctcompile-scalars-format22.log`,
+No browser/runtime source changed. Focused evidence:
+`/tmp/ctcompile-scalars-escape-build.log`, `/tmp/ctcompile-scalars-escape.log`,
+`/tmp/ctcompile-scalars-format22.log`,
 `/tmp/ctcompile-escape-bigint-binary-node.js` and the frozen hash file.
+
+The complete **242-step** devbox build finishes with **zero warnings**. CTest
+passes **512/517 in 1652.00 seconds** (exit 8): all **372 compiler tests** and
+**140/145 browser tests** pass; only the five established browser failures
+remain (`selectors`, `frames`, `element_attrs`, `vm_async`, `early_errors`).
+Lit passes **165/165 in 935.40 seconds** (CTest 935.46), including **245
+published Map programs and 33 sanitizer lifetime families**. The full run
+repeats each BigInt binary **97/29/3098** check and the **20/40/32** source
+family. All four escape oracles again report **zero violations**, fixture
+precision remains **61/93**, and corpus precision stays **0/64, 0/16, 0/20**
+with p5's existing one partial.
+
+Native corpus coverage remains **Bootstrap 19/574, p5 39/4754 and Phaser
+45/7725** in both modes, zero pruned; exact Data remains **0/7 browser and
+CommonJS, 0/8 AMD**. The five escape code/test hashes are unchanged and are
+included among **18 final code/test hashes** independently verified against
+local files, committed HEAD, frozen inputs and final devbox source hashes.
+Full evidence: `/tmp/ctcompile-scalars-final-evidence.json`,
+`/tmp/ctcompile-scalars-full.log`, `/tmp/ctcompile-scalars-full-detail.log` and
+`/tmp/ctcompile-scalars-full-hashes.log`.
+
 Remaining boundaries include static and exceptional BigInt arithmetic, mixed
 conversions, loops, callee summaries and native lifetime/effect consumers.

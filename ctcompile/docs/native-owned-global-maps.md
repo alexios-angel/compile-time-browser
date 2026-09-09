@@ -19,8 +19,15 @@ refusal families with exact repairs, live dataflow/forgery controls and the new
 128-call sanitizer lifetime. Number snapshots outlive all Map/leaf mutations
 and owner release. Budgets 9920/9249 check 30/32 cutoffs. The 173-case refusal
 census preserves all 169 historical classifications and hashes. The full
-245-program/33-lifetime suite is running on eighteen frozen code/test files;
-[HANDOFF.md](HANDOFF.md) records focused measurements and pending full results.
+245-program/33-lifetime gate passes. The warning-free 242-step full build
+finishes **512/517 CTests in 1652.00 seconds**, including all **372 compiler
+checks** and **165/165 lit cases in 935.40 seconds** (CTest 935.46). Only the
+five established browser failures remain. All eighteen code/test hashes match
+local files, HEAD, the frozen input and final devbox sources. Generated C++
+retains actual scalar/Map effects and ownership with no Script/VM/AOT symbols.
+Fresh corpus coverage stays Bootstrap **19/574**, p5 **39/4754**, Phaser
+**45/7725** in both modes; exact Data remains **0/7, 0/7, 0/8**.
+[HANDOFF.md](HANDOFF.md) records the complete measurements.
 
 A saved alias `const alias = first` now passes Map identity but fails final
 global observation because inference still adds Undefined at every global

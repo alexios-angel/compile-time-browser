@@ -38,7 +38,7 @@ queries each check **16 rows, 11 live edits and every 7802/7873 host cutoff**,
 plus existing owner cutoff families. Stable formatter **22.1.8 passes all 745
 files**; bundled 23 retains the same nine unrelated differences, with changed
 C++ passing both versions. Fourteen committed core code/test hashes match
-their frozen inputs and HEAD. Full compiler/lit validation remains pending.
+their frozen inputs and HEAD; final validation is recorded below.
 
 **b953ab00** proves independently original BigInt Add/Sub/Mul result origins.
 Their separate per-path category cannot flow into a non-BigInt assumption.
@@ -61,8 +61,7 @@ future calls**, both Boolean arms, owner/table release, reentry, final Map
 release and an independently retained leaf. Number snapshots survive every
 mutation and owner release. Budgets complete at **9920/9249**, checking
 **30/32 cutoffs**, with no speculative rollback interval. The integrated full
-gate now contains **245 programs and 33 lifetime families**; that complete run
-is still pending.
+gate passes all **245 programs and 33 lifetime families**.
 
 All **18** new Node/interpreter probes agree: **ten native, four unowned and
 four complete-owner refusals**. The final **173-case** refusal census has no
@@ -74,9 +73,26 @@ expectation errors: the result-fed key uses the existing nullable scalar
 parameter carrier, and duplicate writes plus arithmetic fail host proof.
 Only expectations changed; the corrected full focused gate passes.
 
-All **18 final code/test hashes** match the frozen snapshot and committed HEAD.
-The full `remote-build.sh` gate is running on those files; final CTest/lit
-results and devbox hashes remain pending in `/tmp/ctcompile-scalars-full.log`.
+The complete **242-step build has zero warnings**. Full CTest finishes
+**512/517 in 1652.00 seconds** (exit 8): all **372 compiler tests pass** and
+**140/145 browser tests pass**. Only the five established browser failures
+remain: `selectors`, `frames`, `element_attrs`, `vm_async`, `early_errors`.
+Lit passes **165/165 in 935.40 seconds** (CTest 935.46). Final owner and seeded
+host queries pass in **87.82/37.75 seconds**; ExceptionRecovery passes in
+**1.19 seconds**. All eight escape tests pass again, retaining the fixture and
+corpus measurements above.
+
+Remeasured native coverage remains **Bootstrap 19/574, p5 39/4754, Phaser
+45/7725** in both modes, with zero pruned functions. Exact Data stays **0/7
+browser/CommonJS and 0/8 AMD**. The isolated saved-global improvement does not
+establish complete Bootstrap initialization.
+
+All **18 final code/test hashes** match local files, committed HEAD, the frozen
+snapshot and final devbox sources. Inspected generated sum/lifetime C++ retains
+actual scalar stores/loads, arithmetic, Map mutation, saved callables and leaf
+ownership. Saved Numbers survive mutation, reentry, owner destruction and the
+independent leaf's final release. No Script/VM/AOT symbols occur; weak lifetime
+observers are test instrumentation.
 
 **Next: definite initialization in native global-load type inference.**
 The exact eight-call alias source **8003b4bc**, trace=12, now passes Map
@@ -90,12 +106,17 @@ repair preserves every call and both alias operations and reaches 5/5. The
 seven-call direct `trace = first` source reaches the same separate boundary.
 Exact zero-size after clear, String leaf fields, full Bootstrap and direct
 browser API integration remain unfinished; no full-Bootstrap coverage gain is
-claimed. Previous full corpus measurements remain below, pending the new gate.
+claimed. The previous checkpoints below retain their historical measurements.
 
 Evidence: `/tmp/ctcompile-scalars-{first,final-census}.json`,
 `/tmp/ctcompile-scalars-{query2,escape,smoke}.log`,
 `/tmp/ctcompile-scalars-{proof,core}-frozen.json`, and
-`/tmp/ctcompile-scalars-{sum,snapshot}.cpp`.
+`/tmp/ctcompile-scalars-{sum,snapshot}.cpp`,
+`/tmp/ctcompile-scalars-{execution,full,full-detail,full-hashes}.log`,
+`/tmp/ctcompile-scalars-final-{frozen,evidence}.json`,
+`/tmp/ctcompile-scalars-final-{sum,lifetime}.cpp`, and the historical source/
+refusal audit JSON files. All work is committed locally; the shared tree and
+index are clean.
 
 ## Published Number arithmetic and BigInt unary origins, 2026-09-09
 
