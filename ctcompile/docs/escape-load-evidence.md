@@ -2446,3 +2446,60 @@ family remain unchanged. Evidence is
 remains BigInt Pow's negative and oversized exponent errors, including the VM's
 unconditional cap for small bases; native BigInt, completion and effect admission
 remain separate unimplemented boundaries.
+
+
+## Owning String gate and BigInt Pow review, 2026-09-09
+
+The recovered String-global proof and owning output landed in **0e041bba**
+and **4b0a1199**, with execution gates in **b4505df6/417cd0ac**. All five escape
+code/test files remain byte-identical to **1138dbfd**. The contents proof derives
+original SSA identities on every structural path, independently of native
+String types or global observations; calls, global operations, handlers and
+unknown effects retain their existing refusals.
+
+The initial full gate at **5bb3a633** builds **246 steps without warnings** and
+passes **511/517 CTests in 1817.89 seconds**, including **371/372 compiler
+checks**. Lit passes **164/165 in 1096.42 seconds** (CTest **1096.48**). Its sole
+failure is a historical String refusal expecting the old load diagnostic;
+the unchanged program now refuses its unproved result store. The test-only
+correction **9582188d** passes its focused case in **0.08 seconds**. The other
+five failures remain `selectors`, `frames`, `element_attrs`, `vm_async` and
+`early_errors`. The complete corrected lit rerun is **pending**. All **23**
+initial hashes agree across frozen inputs, devbox, local files and the committed
+source; the corrected manifest adds the diagnostic test as a separate 24th input.
+
+All **eight escape CTests pass** in the initial full run. Arrays take **0.43
+seconds**, the source fixture **0.32**. Div and Mod each retain **130 rows,
+47 stale/fresh states and 4802 cutoffs**. Their source family remains **28
+literal sites, 54 instances and 38 retained**, plus **two independent implicit
+Errors at pc25**, each without a source allocation claim. All four escape
+oracles report **zero violations**: fixture precision **72/109**, Bootstrap
+**0/64**, p5 **0/16**, Phaser **0/20**. The fixture retains **540 claims,
+546 observed sites and seven unclaimed sites**; p5's single partial claim is
+unchanged. The four type oracles also report zero violations.
+
+A separate safe source probe reviews the next Pow boundary. Node and the devbox
+interpreter both pass **sixteen common checks, trace=65535**, covering exact
+results, saved categories, mixed-input errors and two independently retained
+negative-exponent Errors. Four small-base cases above the VM's unsigned-32-bit
+exponent cap differ: Node reports **capTrace=15, capErrors=0**; the VM reports
+**capTrace=0, capErrors=15**. Only bases **0, 1 and -1** use these large
+exponents, so no large result allocation is attempted. The reference prints
+three actual Number globals and explicitly skips seven BigInt/object globals.
+The cap checks establish four RangeError outcomes; they do not measure those
+Errors' identities or retention.
+
+Pow remains outside the retention proof. The next bounded increment must prove
+both original BigInt operands, charge its normal result in the existing per-path
+category set, and preserve complete publication/call/handler/effect refusals.
+Its independent negative and oversized exponent exits need source-backed
+retention witnesses. Native BigInt carriers, allocation success, completion and
+no-throw contracts remain separate boundaries; the cap divergence stays visible.
+
+Evidence: `/tmp/ctcompile-string-complete-full{,-detail}.log`,
+`/tmp/ctcompile-string-complete-full-hashes.json`,
+`/tmp/ctcompile-string-audit-full-escape.json`,
+`/tmp/ctcompile-string-audit-nextpow-review.json` and
+`/tmp/ctcompile-string-nextpow-results.json`. The probe is
+`/tmp/ctcompile-string-audit-nextpow-semantics.js`, SHA256
+`b6f5dbfe7d30e34c37efaab48183f033fa049b40eb639a9a27fe6115858b4c76`.
