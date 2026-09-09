@@ -232,11 +232,22 @@
 # The exact eight-call trace-3 source and its eight-call trace-1 repair retain
 # every call. Size-returning operands distinguish evaluation order; arithmetic
 # result-fed keys retain the complete future-input family and NaN key identity.
-# Saved global results gain complete host ownership but retain the independent
-# Map-identity refusal. Both original arithmetic/global dependency graphs and
-# all calls survive; exact inline repairs keep arithmetic and call order.
+# The exact eight-call saved-result and size-snapshot sources now admit without
+# changing their global stores/loads, arithmetic dependencies or any call. The
+# live per-load Number proof preserves saved values across later Map mutations;
+# alias arithmetic and result-fed keys retain complete future-call categories.
+# Both prepared and emitted scalar graphs retain receiver/callee/capture,
+# StoreGlobal/LoadGlobal order and each actual arithmetic operand. Additional
+# Number observation requests print all saved globals without supplying proof.
+# Duplicate writes, read-before-write and later mixed actuals/results refuse;
+# constant-only globals lack published-result evidence, and alias-only global
+# observations retain their separate nullable inference refusal. Every control
+# preserves its exact measured source and has an independently admitted repair.
 # String/object/Boolean/nullish operands and future mixed results remain refused
 # under fresh/stale forged facts and reruns. Both explicit/deduced forms retain
 # real arithmetic and link no VM. Saved numeric fields and callables run 128
 # future values and both branch flags after owner/table release; Number results
 # survive Map destruction and a separately retained leaf's final owner release.
+# A new saved-global branch family also keeps first/second/third snapshots across
+# future mutation, owner destruction and independent reentry; all saved globals
+# match the interpreter, in both C++ forms and under GCC, Clang and sanitizers.

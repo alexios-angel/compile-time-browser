@@ -33,7 +33,9 @@ from .sources import (
     leaf_clear_cases, leaf_clear_sources, leaf_clear_refusals,
     LEAF_CLEAR_UNOWNED, LEAF_CLEAR_PROMOTED,
     numeric_entry_cases, numeric_entry_sources, numeric_entry_refusals, NUMERIC_ENTRY_PROMOTED,
-    NUMERIC_ENTRY_CARRIERS,
+    NUMERIC_ENTRY_CARRIERS, NUMERIC_ENTRY_SAVED_GLOBALS,
+    scalar_global_cases, scalar_global_sources, scalar_global_refusals, scalar_global_output,
+    SCALAR_GLOBAL_CARRIERS,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
@@ -356,7 +358,7 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
             failed = methods.refused(args, rejected, mode_name, config, options=options, admitted=0)
             check_call_preservation(rejected.read_text(), failed.read_text(), mode_name)
             postdelete = (name in LEAF_ABSENCE_UNOWNED or name in LEAF_CLEAR_UNOWNED
-                          or name in numeric_entry_refusals())
+                          or name in numeric_entry_refusals() or name in scalar_global_refusals())
             if postdelete and "ctnative.host_owner_proved = false" not in failed.read_text():
                 raise RuntimeError(f"{name}: possible absence manufactured a complete host owner")
             repaired = owned.lower(args, restored, mode_name + "-restored", restored_config, options=options)
@@ -516,9 +518,10 @@ def check_comparison_identity_observations(args, node, reference):
 
 
 def check_leaf_absence_census(args, ir, name):
-    case = {**leaf_absence_cases(), **leaf_clear_cases(), **numeric_entry_cases()}.get(name)
+    case = {**leaf_absence_cases(), **leaf_clear_cases(), **numeric_entry_cases(), **scalar_global_cases()}.get(name)
     if case is None:
         return
+    check_scalar_global_source(ir, name)
     raw = args.work / f"{name}.raw.mlir"
     if (len(source_calls(raw.read_text())), len(source_calls(ir.read_text()))) != (
             case["raw_calls"], case["prepared_calls"]):
@@ -529,9 +532,7 @@ def check_leaf_absence_census(args, ir, name):
 
 
 def numeric_reference_output(name, value):
-    saved = {"local_add_saved_results": "first=1\nsecond=1\nthird=1\n",
-             "local_numeric_saved_snapshot": "first=1\nsecond=2\n"}.get(name, "")
-    return saved + f"trace={'nan' if value == 'NaN' else value}\n"
+    return scalar_global_output(name, value)
 
 
 def numeric_node_observer(value):
@@ -582,9 +583,176 @@ def check_numeric_global_preparation(text, original, name):
             raise RuntimeError(f"{name}: saved-global refusal changed live {operation}")
 
 
-def check_numeric_global_carriers(args, positives, node, reference):
-    cases = numeric_entry_cases()
-    for name in sorted(NUMERIC_ENTRY_CARRIERS):
+def scalar_global_graph(text, name):
+    """Compare current scalar dataflow before and after callable preparation."""
+    entry = text.split("\n  }", 1)[0]
+    values, properties, captures = {}, {}, {}
+    events, calls, binaries = [], 0, 0
+    for line in entry.splitlines():
+        if match := re.search(r'(%[-\w.$]+) = ctjs\.load_global "([^\"]+)"', line):
+            values[match[1]] = "global:" + match[2]
+            if match[2] != "host":
+                events.append(("load", match[2]))
+        elif match := re.search(r'ctjs\.store_global "([^\"]+)", (%[-\w.$]+)', line):
+            if match[1] != "host":
+                events.append(("store", match[1], values.get(match[2], "unknown")))
+        elif match := re.search(r'(%[-\w.$]+) = ctjs\.constant #ctjs\.string<"([^\"]*)">', line):
+            values[match[1]] = ("string", match[2])
+        elif match := re.search(r"(%[-\w.$]+) = ctjs\.constant #ctjs\.number<(\d+)>", line):
+            values[match[1]] = struct.unpack("d", struct.pack("Q", int(match[2])))[0]
+        elif match := re.search(r"(%[-\w.$]+) = ctjs\.constant #ctjs\.(?:boolean|bool)<(true|false)>", line):
+            values[match[1]] = ("boolean", match[2])
+        elif match := re.search(r"(%[-\w.$]+) = ctjs\.get_property (%[-\w.$]+)\[(%[-\w.$]+)\]", line):
+            properties[match[1]] = (match[2], values.get(match[3]))
+        elif match := re.search(r"(%[-\w.$]+) = ctjs\.load_upvalue (%[-\w.$]+)\[0\]", line):
+            captures[match[1]] = match[2]
+        elif match := re.search(r"(%[-\w.$]+) = ctjs\.binary (\w+) (%[-\w.$]+), (%[-\w.$]+)", line):
+            events.append(("binary", match[2], values.get(match[3], "unknown"),
+                           values.get(match[4], "unknown")))
+            values[match[1]] = "binary:" + str(binaries)
+            binaries += 1
+        else:
+            direct = re.search(r"(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\).*ctnative\.stored_call", line)
+            ordinary = re.search(r"(%[-\w.$]+) = ctjs\.call (%[-\w.$]+)\(([^\n)]+)\)", line)
+            if direct:
+                result, target, arguments = direct.groups()
+                actuals = arguments.split(", ")
+                receiver, callee = actuals[0], actuals[2]
+                if captures.get(actuals[3]) != callee:
+                    raise RuntimeError(f"{name}: changed current published callable capture")
+                arguments = actuals[4:]
+            elif ordinary:
+                result, callee, arguments = ordinary.groups()
+                actuals = arguments.split(", ")
+                receiver, arguments = actuals[0], actuals[1:]
+                target = None
+            else:
+                continue
+            method = properties.get(callee)
+            if not method or method[1] not in {("string", "size"), ("string", "set")}:
+                continue
+            table = properties.get(receiver)
+            if (method[0] != receiver or not table or table[1] != ("string", "slot")
+                    or values.get(table[0]) != "global:host"):
+                raise RuntimeError(f"{name}: changed current published receiver/callee")
+            method = method[1][1]
+            if target and target != ("fn$3" if method == "size" else "fn$4"):
+                raise RuntimeError(f"{name}: changed current published callee target")
+            events.append(("call", method, tuple(values.get(argument, "unknown") for argument in arguments)))
+            values[result] = "call:" + str(calls)
+            calls += 1
+    return events
+
+
+def check_scalar_global_preparation(text, original, name):
+    before, after = scalar_global_graph(original, name), scalar_global_graph(text, name)
+    if before != after or not before:
+        raise RuntimeError(f"{name}: preparation changed live scalar stores/loads/calls/arithmetic\n{before}\n{after}")
+    for operation in ("scf.if", "scf.yield", "ctjs.create_object", "ctjs.construct"):
+        if text.count(operation) != original.count(operation):
+            raise RuntimeError(f"{name}: preparation changed live {operation}")
+    if name == "scalar_constant_only":
+        check_numeric_global_preparation(text, original, "local_numeric_saved_snapshot")
+
+
+def check_scalar_global_source(ir, name):
+    if name not in NUMERIC_ENTRY_SAVED_GLOBALS and name not in scalar_global_cases():
+        return
+    graph = scalar_global_graph(ir.read_text(), name)
+    calls = [event for event in graph if event[0] == "call"]
+    stores = [event for event in graph if event[0] == "store"]
+    loads = [event for event in graph if event[0] == "load"]
+    if not calls or calls[0] != ("call", "size", ()):
+        raise RuntimeError(f"{name}: lost the first evaluated size observation")
+    cases = {**numeric_entry_cases(), **scalar_global_cases()}
+    source = cases[name]["source"]
+    if len(calls) != len(re.findall(r"host\.slot\.(?:size|set)\(", source)):
+        raise RuntimeError(f"{name}: lost an evaluated published call")
+    if name in NUMERIC_ENTRY_SAVED_GLOBALS:
+        snapshot = name == "local_numeric_saved_snapshot"
+        names = ("first", "second") if snapshot else ("first", "second", "third")
+        if [event for event in stores if event[1] != "trace"] != [
+                ("store", binding, "call:" + str(index)) for index, binding in enumerate(names, 1)]:
+            raise RuntimeError(f"{name}: lost the exact original call-result stores")
+        if loads != [("load", binding) for binding in names]:
+            raise RuntimeError(f"{name}: lost the exact original scalar loads")
+        expected = ([("binary", "mul", "global:first", 10.0),
+                     ("binary", "add", "binary:0", "global:second")]
+                    if snapshot else [("binary", "add", "global:first", "global:second"),
+                                      ("binary", "add", "binary:0", "global:third")])
+        if [event for event in graph if event[0] == "binary"] != expected:
+            raise RuntimeError(f"{name}: lost the original two arithmetic dependencies")
+    written = set()
+    early = []
+    for event in graph:
+        if event[0] == "store":
+            written.add(event[1])
+        elif event[0] == "load" and event[1] not in written:
+            early.append(event[1])
+    if early != (["first"] if name == "scalar_read_before_write" else []):
+        raise RuntimeError(f"{name}: changed source store/load order: {early}")
+    first_writes = sum(event[:2] == ("store", "first") for event in stores)
+    if name.startswith("scalar_duplicate_") and first_writes != 2:
+        raise RuntimeError(f"{name}: erased a second live scalar write")
+
+
+def check_scalar_global_emission(args, ir, name):
+    if name not in NUMERIC_ENTRY_SAVED_GLOBALS and name not in scalar_global_sources():
+        return
+    expected = scalar_global_graph(ir.read_text(), name)
+    for mode in ("explicit", "deduced"):
+        cpp = (args.work / f"{name}.{mode}.cpp").read_text()
+        entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
+        if not entry:
+            raise RuntimeError(f"{name}/{mode}: lost the scalar entry")
+        observed = set(re.findall(r"ctnative::global_number\((\w+)\)", entry[1]))
+        methods_by_value = dict(re.findall(
+            r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1]))
+        values, actual, calls, binaries = {}, [], 0, 0
+        for line in entry[1].splitlines():
+            assignment = re.search(r"\b(\w+)\s*=\s*(.*);$", line)
+            result, expression = assignment.groups() if assignment else (None, "")
+            if call := re.search(r"ctnative::invoke_callable\((\w+)([^;\n]*)\);", line):
+                arguments = [arg.strip() for arg in call[2].split(",")[1:]]
+                actual.append(("call", methods_by_value.get(call[1]),
+                               tuple(values.get(arg, "unknown") for arg in arguments)))
+                if result:
+                    values[result] = "call:" + str(calls)
+                calls += 1
+            elif not result:
+                continue
+            elif result.startswith("g_"):
+                if result != "g_host":
+                    actual.append(("store", result[2:], values.get(expression, "unknown")))
+            elif expression.startswith("g_"):
+                values[result] = "global:" + expression[2:]
+                if expression != "g_host" and result not in observed:
+                    actual.append(("load", expression[2:]))
+            elif match := re.fullmatch(r"ctnative::(?:to_number|to_nullable)\((\w+)\)", expression):
+                values[result] = values.get(match[1], "unknown")
+            elif match := re.fullmatch(r'ctnative::js_string\("([^\"]*)"\)|std::string\("([^\"]*)", \d+\)', expression):
+                values[result] = ("string", match[1] if match[1] is not None else match[2])
+            elif expression in {"true", "false"}:
+                values[result] = ("boolean", expression)
+            elif re.fullmatch(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", expression):
+                values[result] = float(expression)
+            elif match := re.fullmatch(r"(\w+) ([+*/-]) (\w+)", expression):
+                operation = {"+": "add", "-": "sub", "*": "mul", "/": "div"}[match[2]]
+                actual.append(("binary", operation, values.get(match[1], "unknown"),
+                               values.get(match[3], "unknown")))
+                values[result] = "binary:" + str(binaries)
+                binaries += 1
+            elif expression in values:
+                values[result] = values[expression]
+        if actual != expected:
+            raise RuntimeError(f"{name}/{mode}: emitted scalar dataflow changed\n{expected}\n{actual}")
+
+
+def check_scalar_global_carriers(args, positives, node, reference):
+    cases = scalar_global_cases()
+    reasons = {"scalar_alias": "store to global `alias` may be null or undefined",
+               "scalar_single_write_repair": "store to global `trace` may be null or undefined"}
+    for name in sorted(SCALAR_GLOBAL_CARRIERS):
         case = cases[name]
         source, value = case["source"], case["expected_trace"]
         js, ir, count = boundary.prepare(args, name, source)
@@ -594,20 +762,20 @@ def check_numeric_global_carriers(args, positives, node, reference):
             raise RuntimeError(f"{name}: saved-global source census or observation changed")
         repaired_source = source.replace(case["removed_text"], case["replacement_text"])
         if source.count(case["removed_text"]) != 1 or repaired_source != positives[case["repair"]][0]:
-            raise RuntimeError(f"{name}: saved-global repair no longer restores its exact inline source")
+            raise RuntimeError(f"{name}: scalar repair no longer restores its exact source")
         _, repaired, repaired_count = boundary.prepare(args, name + "-restored", repaired_source)
-        if repaired_count != count or len(source_calls(repaired.read_text())) != 8:
-            raise RuntimeError(f"{name}: inline repair lost an evaluated method call")
+        if repaired_count != count or len(source_calls(repaired.read_text())) != case["prepared_calls"]:
+            raise RuntimeError(f"{name}: scalar repair lost an evaluated method call")
         config = contract(args, ir, name)
         repaired_config = contract(args, repaired, name + "-restored")
         for mode, options in (("default", ""), ("disabled", "optimize=false")):
             def reject(input_ir, label, current_config):
                 failed = owned.lower(args, input_ir, label, current_config, options=options, cleanup=False)
                 text = methods.census(failed, count, label, admitted=0)
-                reason = "standard Map identity is unproved with other host/global value reads"
+                reason = reasons.get(name, "standard Map identity is unproved with other host/global value reads")
                 if "ctnative.host_owner_proved = true" not in text or reason not in text:
-                    raise RuntimeError(f"{label}: lost independent saved-global Map identity refusal")
-                check_numeric_global_preparation(text, input_ir.read_text(), name)
+                    raise RuntimeError(f"{label}: lost independent scalar ownership/carrier boundary")
+                check_scalar_global_preparation(text, input_ir.read_text(), name)
                 return failed
 
             label = name + "-" + mode
@@ -615,7 +783,7 @@ def check_numeric_global_carriers(args, positives, node, reference):
             output = owned.lower(args, repaired, label + "-restored", repaired_config, options=options)
             checked = methods.census(output, count, label + "-restored", admitted=count)
             if "ctnative.host_owner_proved = true" not in checked:
-                raise RuntimeError(f"{label}: inline arithmetic repair lost complete ownership")
+                raise RuntimeError(f"{label}: scalar repair lost complete ownership")
             for payload in ("bool", "string", "nullable_string"):
                 forged_name = label + "-forged-" + payload
                 forged = args.work / f"{forged_name}.mlir"
@@ -631,7 +799,7 @@ def check_numeric_global_carriers(args, positives, node, reference):
 
 
 def check_numeric_entry_observations(args, node, reference):
-    cases = numeric_entry_cases()
+    cases = {**numeric_entry_cases(), **scalar_global_cases()}
     for name in NUMERIC_ENTRY_LIFETIMES:
         source = cases[name]["source"]
         observed, value = numeric_entry_observer_source(source, name)
@@ -639,12 +807,12 @@ def check_numeric_entry_observations(args, node, reference):
         js.write_text(observed)
         expected = f"trace={value}\n"
         if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != expected
-                or host.run([str(reference), str(js)]).stdout != expected):
+                or host.run([str(reference), str(js)]).stdout != scalar_global_output(name, value)):
             raise RuntimeError(f"{name}: saved numeric field or future branch mismatch")
         mutations = [("return saved.value;", "return 1;"),
                      ("value: value", "value: 1"),
                      ("state.clear();", "state.has(key);")]
-        if name == "local_numeric_branch_lifetime":
+        if name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime"}:
             mutations.append(("state.delete(key);", "state.has(key);"))
         for index, (old, replacement) in enumerate(mutations):
             if old not in source:
@@ -940,6 +1108,7 @@ def main():
         **{name: row for name, row in leaf_readback_sources().items()
            if name not in LEAF_READBACK_UNOWNED},
         **numeric_entry_sources(),
+        **scalar_global_sources(),
         # Keep the original refusal source byte-for-byte. Its method-local
         # empty payload now has the same independently proved leaf owner.
         "object_payload": (refusal_sources()["object_payload"], "host", 1),
@@ -1183,7 +1352,7 @@ def main():
         js, ir, count = boundary.prepare(args, name, source)
         functions = (LEAF_OBJECT_FUNCTIONS[name] if name in LEAF_OBJECT_FUNCTIONS
                      else 5 if name in LEAF_READBACK_CALLS or name in leaf_absence_sources()
-                     or name in leaf_clear_sources() or name in numeric_entry_sources()
+                     or name in leaf_clear_sources() or name in numeric_entry_sources() or name in scalar_global_sources()
                      else RESULT_SIGNATURES[name][2] if name in RESULT_SIGNATURES
                      else 6 if name == "shared_three" else 5 if name.startswith("shared") else 4)
         if count != functions:
@@ -1237,11 +1406,13 @@ def main():
                     **shortcircuit_sources(), **nullable_result_sources(), **nullable_key_sources(),
                     **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources(),
                     **leaf_object_sources(), **leaf_readback_sources(), **leaf_absence_sources(),
-                    **primitive_absence_sources(), **leaf_clear_sources(), **numeric_entry_sources()}:
+                    **primitive_absence_sources(), **leaf_clear_sources(), **numeric_entry_sources(),
+                    **scalar_global_sources()}:
             disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")
             if disabled.read_text() != output.read_text():
                 raise RuntimeError(f"{name}: saved scalar proof depends on optimization policy")
         standalone(args, output, name, value, compilers, nm)
+        check_scalar_global_emission(args, ir, name)
         saved[name] = ir, config, output
 
     check_primitive_absence_forgeries(args, saved, node, reference)
@@ -1259,6 +1430,9 @@ def main():
          "local_clear_both_branches_false"))
     check_leaf_object_forgeries(args, saved,
         ("local_identity_repeated_keys", "local_numeric_nested_key", "local_numeric_branch_lifetime"))
+    check_leaf_object_forgeries(args, saved,
+        ("local_add_saved_results", "local_numeric_saved_snapshot", "scalar_result_key",
+         "scalar_saved_branch_lifetime"))
 
     # Valid-looking scalar markers cannot normalize real null keys or narrow
     # the second use of a nullable formal. Fresh proof must emit the same C++.
@@ -1554,7 +1728,8 @@ def main():
         {name: row for name, row in leaf_absence_refusals().items() if name not in LEAF_CLEAR_PROMOTED})
     check_leaf_object_refusals(args, positives, node, reference, leaf_clear_refusals())
     check_leaf_object_refusals(args, positives, node, reference, numeric_entry_refusals())
-    check_numeric_global_carriers(args, positives, node, reference)
+    check_leaf_object_refusals(args, positives, node, reference, scalar_global_refusals())
+    check_scalar_global_carriers(args, positives, node, reference)
     check_leaf_readback_carriers(args, positives, node, reference, leaf_field_result_refusals())
     # A result contract does not narrow Map storage or supply an implemented
     # callable signature. Preserve the prepared producer/consumer operands.
@@ -1727,7 +1902,7 @@ def main():
             raise RuntimeError(f"{name}: prepared leaf owner reused the original source authority")
     for name in ((leaf_readback_sources().keys() - LEAF_READBACK_UNOWNED)
                  | leaf_absence_sources().keys() | leaf_clear_sources().keys()
-                 | numeric_entry_sources().keys()):
+                 | numeric_entry_sources().keys() | scalar_global_sources().keys()):
         _, config, output = saved[name]
         rerun = owned.lower(args, output, name + "-rerun", config, cleanup=False)
         text = methods.census(rerun, 5, name + "-rerun", admitted=5)
@@ -1751,7 +1926,8 @@ def main():
     for name in ("local_absence_clear_saved_identity", "local_clear_both_branches_false"):
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
-    for name in ("local_identity_repeated_keys", "local_numeric_nested_key"):
+    for name in ("local_identity_repeated_keys", "local_numeric_nested_key",
+                 "local_add_saved_results", "scalar_result_key"):
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
@@ -1839,9 +2015,11 @@ def main():
           "both Maps after reentry and preserve an observed leaf until its final owner releases; "
           f"{len(numeric_entry_sources())} numeric entry programs retain evaluated arithmetic and call order; "
           f"{len(numeric_entry_refusals())} non-Number/future-input refusals retain their exact repairs; "
-          f"{len(NUMERIC_ENTRY_CARRIERS)} saved-global sources keep complete host owners and separate "
-          "Map identity refusals with their original arithmetic/global dependencies; "
-          "two numeric lifetime families retain 128 future results across both branches, reentry, "
+          f"{len(NUMERIC_ENTRY_SAVED_GLOBALS)} historical saved-global sources and "
+          f"{len(scalar_global_sources())} new scalar programs retain live global stores, loads and arithmetic; "
+          f"{len(scalar_global_refusals())} source-order/write/future-family refusals and "
+          f"{len(SCALAR_GLOBAL_CARRIERS)} scalar Map/observation carrier refusals retain exact repairs; "
+          f"{len(NUMERIC_ENTRY_LIFETIMES)} numeric lifetime families retain 128 future results across both branches, reentry, "
           "final Map release and independent leaf release; "
           f"{len(leaf_field_result_refusals())} complete-schema field results "
           "retain complete host ownership and separate native carrier refusals; "

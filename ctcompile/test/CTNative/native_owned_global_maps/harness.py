@@ -20,7 +20,8 @@ from .sources import (
     leaf_object_sources, LEAF_OBJECT_FIELDS, leaf_readback_sources, LEAF_COMPARISON_CASES,
     leaf_absence_sources, leaf_absence_cases, primitive_absence_sources,
     leaf_clear_sources, leaf_clear_cases,
-    numeric_entry_sources, numeric_entry_cases,
+    numeric_entry_sources, numeric_entry_cases, scalar_global_cases, scalar_global_sources, scalar_global_output,
+    scalar_global_values, NUMERIC_ENTRY_SAVED_GLOBALS,
 )
 
 
@@ -224,6 +225,13 @@ def contract(args, ir, name, binding="host"):
     config = owned.contract(args, ir, name, binding)
     value = json.loads(config.read_text())
     value["initial_intrinsics"] = ["Map"]
+    candidates = NUMERIC_ENTRY_SAVED_GLOBALS | scalar_global_cases().keys()
+    case = next((candidate for candidate in sorted(candidates, key=len, reverse=True)
+                 if name == candidate or name.startswith(candidate + "-")), None)
+    if case:
+        # Requested output is only an observer; live owner/type checks still
+        # derive every saved scalar independently from the current program.
+        value["observations"] = sorted(["trace", *scalar_global_values(case)])
     config.write_text(json.dumps(value, indent=2) + "\n")
     return config
 
@@ -1319,7 +1327,7 @@ def standalone(args, output, name, value, compilers, nm):
             check_leaf_readback_calls(cpp, name, mode)
         if name in leaf_absence_sources() or name in leaf_clear_sources():
             check_leaf_absence_calls(cpp, name, mode)
-        if name in numeric_entry_sources():
+        if name in numeric_entry_sources() or name in scalar_global_sources():
             check_numeric_entry_calls(cpp, name, mode)
         if name in RESULT_SIGNATURES:
             result, params, _ = RESULT_SIGNATURES[name]
@@ -1404,7 +1412,7 @@ def standalone(args, output, name, value, compilers, nm):
                 raise RuntimeError(f"{name}/{mode}: linked a VM symbol")
             traces = 2 if name in {*LEAF_COMPARISON_CASES, *LEAF_ABSENCE_LIFETIMES,
                                   *LEAF_CLEAR_LIFETIMES, *NUMERIC_ENTRY_LIFETIMES} else 1
-            if host.run([str(binary)]).stdout != f"trace={value}\n" * traces:
+            if host.run([str(binary)]).stdout != scalar_global_output(name, value) * traces:
                 raise RuntimeError(f"{name}/{mode}: standalone result mismatch")
         if name in {"ordinary", "mutate_map", "growing", "result_seeded_growing"}:
             lifetime(args, cpp, name, mode, value, compilers[1])
@@ -1862,21 +1870,26 @@ int main() {
         "CTN_FLAG", ", call % 2 != 0" if branch else "")
 
 
-NUMERIC_ENTRY_LIFETIMES = ("local_numeric_saved_lifetime", "local_numeric_branch_lifetime")
+NUMERIC_ENTRY_LIFETIMES = ("local_numeric_saved_lifetime", "local_numeric_branch_lifetime",
+                           "scalar_saved_branch_lifetime")
 
 
 def check_numeric_entry_calls(cpp, name, mode):
-    source = numeric_entry_sources()[name][0]
+    source = {**numeric_entry_sources(), **scalar_global_sources()}[name][0]
     entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
     if not entry:
         raise RuntimeError(f"{name}/{mode}: missing numeric entry")
-    params = ("std::string, js_num, bool" if "set(key, value, flag)" in source else
+    params = ("ctnative::nullable_scalar" if name == "scalar_result_key" else
+              "std::string, js_num, bool" if "set(key, value, flag)" in source else
               "std::string, js_num" if "set(key, value)" in source else
               "js_num" if name in {"local_add_result_key", "local_numeric_nested_key",
-                                    "local_numeric_nan_key", "local_clear_zero_literal_repair"}
+                                    "local_numeric_nan_key", "local_clear_zero_literal_repair", "scalar_result_key"}
               else "std::string")
     if f"std::function<js_num({params})>" not in cpp:
         raise RuntimeError(f"{name}/{mode}: arithmetic changed the independently typed callable ABI")
+    if name == "scalar_result_key" and (
+            "std::shared_ptr<ctnative::map_storage<double, ctnative::object_value>>" not in cpp):
+        raise RuntimeError(f"{name}/{mode}: scalar argument carrier changed the independently Number Map key")
     allocations = source.count("const item = {};") + source.count("{value:")
     if cpp.count("std::make_shared<ctnative::identity_object>()") != allocations:
         raise RuntimeError(f"{name}/{mode}: arithmetic erased a real leaf allocation")
@@ -1907,7 +1920,7 @@ def check_numeric_entry_calls(cpp, name, mode):
 
 
 def numeric_entry_observer_source(source, name):
-    branch = name == "local_numeric_branch_lifetime"
+    branch = name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime"}
     observed = source + """
 (function() {
     const seen = [], results = [], sizes = [];
@@ -1937,7 +1950,7 @@ def numeric_entry_observer_source(source, name):
 
 
 def numeric_entry_lifetime_cpp(cpp, name):
-    branch = name == "local_numeric_branch_lifetime"
+    branch = name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime"}
     changed = instrument_leaf_objects(cpp)
     changed = changed.replace(
         "static std::vector<std::weak_ptr<const void>> ctn_test_objects;",
@@ -2017,6 +2030,33 @@ int main() {
     return 0;
 }
 '''
+    if name == "scalar_saved_branch_lifetime":
+        changed = changed.replace("    auto owner = g_host;", """
+    const auto first_snapshot = ctnative::global_number(g_first);
+    const auto second_snapshot = ctnative::global_number(g_second);
+    const auto third_snapshot = ctnative::global_number(g_third);
+    static_assert(std::is_same_v<decltype(first_snapshot), const js_num>);
+    if (first_snapshot != 2 || second_snapshot != 3 || third_snapshot != 4 ||
+        ctnative::global_number(g_trace) != first_snapshot + second_snapshot * third_snapshot) {
+        return 194;
+    }
+    auto owner = g_host;""")
+        changed = changed.replace("    ctn_test_retained.reset();", """
+    if (first_snapshot != 2 || second_snapshot != 3 || third_snapshot != 4 ||
+        ctnative::global_number(g_first) != first_snapshot ||
+        ctnative::global_number(g_second) != second_snapshot ||
+        ctnative::global_number(g_third) != third_snapshot ||
+        ctnative::global_number(g_trace) != first_snapshot + second_snapshot * third_snapshot) {
+        return 195;
+    }
+    {
+        auto leaf = std::const_pointer_cast<ctnative::identity_object>(
+            std::static_pointer_cast<const ctnative::identity_object>(ctn_test_retained));
+        leaf->field_76616c7565.value = 99;
+        if (saved.back() != 15.75 || first_snapshot != 2 || second_snapshot != 3 ||
+            third_snapshot != 4 || ctnative::global_number(g_first) != 2) { return 196; }
+    }
+    ctn_test_retained.reset();""")
     return changed.replace("CTN_PARAMS", "std::string, js_num, bool" if branch else "std::string, js_num").replace(
         "CTN_FLAG", ", call % 2 != 0" if branch else "")
 
@@ -2031,6 +2071,6 @@ def numeric_entry_lifetime(args, cpp, name, mode, compiler):
     result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
         env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
                  UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
-    if result.returncode or result.stdout != "trace=14\n" * 2:
+    if result.returncode or result.stdout != scalar_global_output(name, 14) * 2:
         raise RuntimeError(f"{name}/{mode}: saved numeric lifetime failure (exit {result.returncode})\n"
                            f"{result.stdout}{result.stderr}")

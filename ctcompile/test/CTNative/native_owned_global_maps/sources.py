@@ -2175,7 +2175,8 @@ NUMERIC_ENTRY_UNOWNED = {
     'leaf_object_string_field', 'local_numeric_future_bool', 'local_numeric_later_bool',
     'local_numeric_bool', 'local_numeric_null', 'local_numeric_undefined',
 }
-NUMERIC_ENTRY_CARRIERS = {'local_add_saved_results', 'local_numeric_saved_snapshot'}
+NUMERIC_ENTRY_SAVED_GLOBALS = {'local_add_saved_results', 'local_numeric_saved_snapshot'}
+NUMERIC_ENTRY_CARRIERS = set()
 NUMERIC_ENTRY_EXISTING_POSITIVES = {'local_identity_saved', 'leaf_object_number_field'}
 NUMERIC_ENTRY_PROMOTED = {'local_identity_repeated_keys'}
 
@@ -2201,3 +2202,141 @@ def numeric_entry_refusals():
     return {name: (row['source'], row['expected_trace'], row['removed_text'],
                    row['replacement_text'], row['repair'], row['prepared_calls'])
             for name, row in cases.items() if name in NUMERIC_ENTRY_UNOWNED}
+
+
+SCALAR_GLOBAL_UNOWNED = {
+    "scalar_read_before_write", "scalar_later_bool", "scalar_future_bool", "scalar_duplicate_number",
+}
+SCALAR_GLOBAL_CARRIERS = {
+    "scalar_alias", "scalar_single_write_repair", "scalar_duplicate_write",
+    "scalar_constant_only",
+}
+
+
+def scalar_global_cases():
+    historical = numeric_entry_cases()
+    rows = {}
+
+    def add(name, source, value, saved, boundary, repair=None):
+        calls = 2 + len(re.findall(r"\b(?:state|host\.slot)\.(?:set|get|size|has|delete|clear)\(", source))
+        rows[name] = dict(source=source, expected_trace=value, saved=saved, raw_calls=calls,
+                          prepared_calls=calls, expected_raw_calls=calls, boundary=boundary)
+        if repair:
+            old, replacement, target = repair
+            assert source.count(old) == 1 and source.replace(old, replacement) == rows[target]["source"]
+            rows[name].update(repair=target, removed_text=old, replacement_text=replacement)
+
+    snapshot = historical["local_numeric_saved_snapshot"]["source"]
+    add("scalar_alias", snapshot.replace("var trace = first * 10 + second;",
+        "const alias = first; var trace = alias * 10 + second;"), 12,
+        {"first": 1, "second": 2, "alias": 1},
+        "the alias saves an independently completed published Number result")
+    add("scalar_arithmetic_result", snapshot.replace("var trace = first * 10 + second;",
+        "const total = first * 10 + second; var trace = total + 1;"), 13,
+        {"first": 1, "second": 2, "total": 12},
+        "the stored arithmetic result retains both completed call dependencies")
+    add("scalar_builtin_spelling", snapshot.replace("first", "Reflect").replace("second", "prototype"),
+        12, {"Reflect": 1, "prototype": 2},
+        "independent live Number origins supply authority even for builtin-like spellings")
+    prefix = snapshot.rsplit("host.slot.size();", 1)[0] + "host.slot.size(); "
+    add("scalar_result_key", prefix +
+        "const first = host.slot.set(1); const second = host.slot.set(2); "
+        "const key = first + second; var trace = host.slot.set(key);\n", 3,
+        {"first": 1, "second": 2, "key": 3},
+        "saved arithmetic becomes a later same-method actual after the complete future-input census")
+    single = prefix + "var first = host.slot.set('x'); host.slot.set('y'); var trace = first;\n"
+    add("scalar_single_write_repair", single, 1, {"first": 1},
+        "the later mutating call remains evaluated without rewriting the saved global")
+    add("scalar_duplicate_write", single.replace("host.slot.set('y');", "first = host.slot.set('y');"),
+        2, {"first": 2}, "a later second write invalidates the single-store proof", repair=(
+        "first = host.slot.set('y');", "host.slot.set('y');", "scalar_single_write_repair"))
+    ordered = "var first = host.slot.set('x'); var trace = first + host.slot.set('y');"
+    prior = "var trace = first + host.slot.set('y'); var first = host.slot.set('x');"
+    add("scalar_prior_store_repair", prefix + ordered + "\n", 3, {"first": 1},
+        "the producing call and store precede the saved Number read")
+    add("scalar_read_before_write", prefix + prior + "\n", "NaN", {"first": 2},
+        "a later declaration and result store cannot authorize an earlier Undefined read", repair=(
+        prior, ordered, "scalar_prior_store_repair"))
+    field = historical["local_numeric_branch_lifetime"]["source"]
+    expression = ("var trace = host.slot.set('x', 2, false) + "
+                  "host.slot.set('y', 3, false) * host.slot.set('z', 4, false);")
+    saved = ("const first = host.slot.set('x', 2, false); const second = host.slot.set('y', 3, false); "
+             "const third = host.slot.set('z', 4, false); var trace = first + second * third;")
+    assert field.count(expression) == 1
+    field = field.replace(expression, saved)
+    values = {"first": 2, "second": 3, "third": 4}
+    add("scalar_saved_branch_lifetime", field, 14, values,
+        "saved global Number fields survive both future branch arms and owner release")
+    add("scalar_later_number_repair", field + "host.slot.set('later', 5, false);\n", 14, values,
+        "a later Number actual preserves every earlier saved result category")
+    add("scalar_later_bool", field + "host.slot.set('later', false, false);\n", 14, values,
+        "later mixed actuals invalidate provisional Number result dependencies", repair=(
+        "host.slot.set('later', false, false);", "host.slot.set('later', 5, false);",
+        "scalar_later_number_repair"))
+    add("scalar_future_number_repair", field.replace("return saved.value;",
+        "return value ? saved.value : 0;"), 14, values,
+        "both unseen Number truth arms return independently proved Numbers")
+    add("scalar_future_bool", field.replace("return saved.value;",
+        "return value ? saved.value : false;"), 14, values,
+        "truthy startup inputs cannot hide a future Boolean public result", repair=(
+        "return value ? saved.value : false;", "return value ? saved.value : 0;",
+        "scalar_future_number_repair"))
+    literal = snapshot + "const fixed = 7; const copy = 7;\n"
+    add("scalar_constant_literal_repair", literal, 12,
+        {"first": 1, "second": 2, "fixed": 7, "copy": 7},
+        "literal stores stay evaluated without a global read lacking a published result dependency")
+    add("scalar_constant_only", literal.replace("const copy = 7;", "const copy = fixed;"), 12,
+        {"first": 1, "second": 2, "fixed": 7, "copy": 7},
+        "a constant-only Number global has no completed published-result dependency", repair=(
+        "const copy = fixed;", "const copy = 7;", "scalar_constant_literal_repair"))
+    # Keep the measured alias-only sources unchanged: their live Map proof
+    # succeeds, while ordinary Number-global observation still joins Undefined.
+    alias = rows["scalar_alias"]["source"]
+    add("scalar_alias_number_repair", alias.replace("const alias = first;", "const alias = first + 0;"),
+        12, rows["scalar_alias"]["saved"],
+        "retain the scalar alias store/read and use definite Number arithmetic at its initializer")
+    rows["scalar_alias"].update(repair="scalar_alias_number_repair",
+        removed_text="const alias = first;", replacement_text="const alias = first + 0;")
+    add("scalar_single_number_repair", single.replace("var trace = first;", "var trace = first + 0;"),
+        1, {"first": 1}, "retain the saved global read and both calls with a definite Number observation")
+    rows["scalar_single_write_repair"].update(repair="scalar_single_number_repair",
+        removed_text="var trace = first;", replacement_text="var trace = first + 0;")
+    rows["scalar_duplicate_write"].update(repair="scalar_single_number_repair",
+        removed_text="first = host.slot.set('y'); var trace = first;",
+        replacement_text="host.slot.set('y'); var trace = first + 0;")
+    duplicate = rows["scalar_duplicate_write"]["source"].replace("var trace = first;",
+                                                                         "var trace = first + 0;")
+    add("scalar_duplicate_number", duplicate, 2, {"first": 2},
+        "definite Number output isolates the global all-writes census from the alias observation carrier",
+        repair=("first = host.slot.set('y');", "host.slot.set('y');", "scalar_single_number_repair"))
+    for name, row in rows.items():
+        if "repair" in row:
+            assert row["source"].count(row["removed_text"]) == 1, name
+            assert row["source"].replace(row["removed_text"], row["replacement_text"]) == rows[row["repair"]]["source"], name
+    return rows
+
+
+def scalar_global_sources():
+    return {name: (row["source"], "host", row["expected_trace"])
+            for name, row in scalar_global_cases().items()
+            if name not in SCALAR_GLOBAL_UNOWNED | SCALAR_GLOBAL_CARRIERS}
+
+
+def scalar_global_refusals():
+    return {name: (row["source"], row["expected_trace"], row["removed_text"],
+                   row["replacement_text"], row["repair"], row["prepared_calls"])
+            for name, row in scalar_global_cases().items() if name in SCALAR_GLOBAL_UNOWNED}
+
+
+def scalar_global_values(name):
+    saved = {"local_add_saved_results": {"first": 1, "second": 1, "third": 1},
+             "local_numeric_saved_snapshot": {"first": 1, "second": 2}}.get(name)
+    if saved is None:
+        saved = scalar_global_cases().get(name, {}).get("saved", {})
+    return saved
+
+
+def scalar_global_output(name, value):
+    saved = scalar_global_values(name)
+    globals_ = {**saved, "trace": "nan" if value == "NaN" else value}
+    return "".join(f"{binding}={result}\n" for binding, result in sorted(globals_.items()))
