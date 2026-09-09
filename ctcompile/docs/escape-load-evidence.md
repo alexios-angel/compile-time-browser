@@ -2268,3 +2268,22 @@ native BigInt admission was added, and the child ran no build. Evidence:
 `/tmp/ctcompile-constant-escape-fixture-debug.mlir`,
 `/tmp/ctcompile-escape-bigint-shift-node.js` and
 `/tmp/ctcompile-escape-shift-checker-audit/audit.json`.
+
+The subsequent full gate completes on the committed **d7e4f154** code: a
+**241-step, zero-warning** build and **512/517 CTests in 1698.62 seconds**,
+including all **372 compiler tests**. Only the five established browser
+failures remain (`selectors`, `frames`, `element_attrs`, `vm_async`,
+`early_errors`). Lit passes **165/165 in 979.39 seconds** (**979.46** under
+CTest), including the published Map driver with **266 programs and 35 lifetime
+families**. All eight escape tests pass; arrays takes **0.39 seconds** and
+repeats both shift **119/47/4592** checks. The source family stays **24/47/35**
+plus its separately retained Error; fixture precision stays **68/103**, all
+four oracles have **zero violations**, and corpus precision and p5's partial
+observation remain unchanged. Fourteen local, HEAD, frozen and final devbox
+code/test hashes match. Independent log and hash audit:
+`/tmp/ctcompile-escape-shift-final-audit.json`; full evidence is
+`/tmp/ctcompile-constant-{full,full-detail,full-hashes}.log` and
+`/tmp/ctcompile-constant-final-evidence.json`. The earlier failed fixture and
+corrected focused gate above remain part of the record. The next bounded
+origin review is BigInt Div/Mod/Pow and their independent error exits; it
+remains unimplemented and makes no native admission or effect guarantee.

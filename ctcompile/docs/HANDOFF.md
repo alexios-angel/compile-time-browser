@@ -62,9 +62,22 @@ oracles report zero violations; corpus precision remains **0/64, 0/16, 0/20**.
 
 Stable clang-format **22.1.8 passes all 745 files**; bundled 23 retains the same
 nine unrelated differences and changed C++ passes both. Independent production,
-source-preservation and generated-artifact audits pass. The focused native gate
-is complete; the integrated **266-program/35-lifetime** inventory is counted
-from the actual driver, with the full compiler/lit/corpus gate still pending.
+source-preservation and generated-artifact audits pass. The warning-free
+**241-step** full build finishes **512/517 CTests in 1698.62 seconds**, including
+all **372 compiler checks**. Lit passes **165/165 in 979.39 seconds** (CTest
+979.46), including the integrated **266 programs and 35 lifetime families**.
+Type inference passes in **0.06 seconds**, shared ownership
+in **97.49**, seeded host Maps in **36.60**, escape arrays in **0.39**, and
+exception recovery in **1.18**. The only failures are the established browser
+tests `selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`.
+All **fourteen** final code/test hashes match local files, committed HEAD, the
+frozen inputs and devbox sources; the full gate repeats all four zero-violation
+escape oracles and the signed-shift source/budget controls.
+
+Remeasured native coverage remains Bootstrap **19/574**, p5 **39/4754**, Phaser
+**45/7725** in both modes, with **zero pruned**. Exact Bootstrap Data remains
+**0/7 CommonJS, 0/7 browser, 0/8 AMD**. The isolated constant-global improvement
+does not establish full Bootstrap initialization.
 
 **Next: definite Boolean globals and typed observations.** The exact
 **681c8895** Boolean copy source retains five functions/eight calls and complete
@@ -80,8 +93,10 @@ See `bootstrap-provider-next.md` for the exact source, hashes and proof sites.
 Evidence: `/tmp/ctcompile-constant-{baseline,first}.json`,
 `/tmp/ctcompile-constant-{proof,smoke,execution,escape,escape-corrected}.log`,
 `/tmp/ctcompile-constant-refusal-census.json`,
-`/tmp/ctcompile-constant-{original,lifetime}.cpp`, and
-`/tmp/ctcompile-constant-inventory.json`.
+`/tmp/ctcompile-constant-{original,lifetime}.cpp`,
+`/tmp/ctcompile-constant-inventory.json`,
+`/tmp/ctcompile-constant-full{,-detail,-hashes}.log`, and
+`/tmp/ctcompile-constant-final-evidence.json`.
 
 ## Definite scalar-global initialization and static BigInt origins, 2026-09-09
 

@@ -7,8 +7,13 @@ The unchanged **3c1dfd95** source now reaches **5/5 native** in both modes with
 eight calls and all five observations preserved. Six proof CTests and seventeen
 focused native programs pass; the latter include a 128-future-call sanitizer
 lifetime, signed zero/NaN, stale/fresh forgeries and actual scalar dataflow.
-The complete compiler/lit/corpus gate is still pending. See `HANDOFF.md` for
-measured proof, execution and escape-analysis details.
+The final warning-free **241-step** build finishes **512/517 CTests in
+1698.62 seconds**, including all **372 compiler tests**. Lit passes **165/165
+in 979.39 seconds**, including **266 native programs/35 lifetime families**.
+Only the five established browser failures remain. All fourteen code/test
+hashes match HEAD and the devbox. Fresh Bootstrap coverage is **19/574** in both
+modes; exact Data remains **0/7 CommonJS/browser, 0/8 AMD**. See `HANDOFF.md` for
+complete proof, execution and escape-analysis measurements.
 
 The next original source is:
 

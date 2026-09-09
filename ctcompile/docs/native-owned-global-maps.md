@@ -15,8 +15,13 @@ scalar copies/arithmetic and Map/leaf effects remain. Aliases survive owner
 release, leaf mutation, independent reentry and final Map/leaf destruction.
 Budgets **9271/9441** check **31/32 cutoffs**. All **173** historical refusal
 classifications, **514** helper rows and **24** original source hashes remain.
-The counted integrated inventory is **266 programs/35 lifetime families**;
-the full compiler/lit/corpus gate is pending.
+The integrated **266-program/35-lifetime** gate passes in the final full run.
+The warning-free **241-step** build finishes **512/517 CTests in 1698.62 seconds**,
+including all **372 compiler checks** and **165/165 lit cases in 979.39 seconds**.
+Only the five established browser failures remain. Fourteen code/test hashes
+match local files, HEAD, the frozen inputs and devbox sources. Native coverage
+remains Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725** in both modes,
+with zero pruned; exact Bootstrap Data remains **0/7, 0/7, 0/8**.
 
 The next **681c8895** Boolean copy still refuses Map identity. Its exact
 **d3a90c01** literal-copy candidate removes that refusal but reaches the separate
