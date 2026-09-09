@@ -18,7 +18,7 @@ from .sources import (
     nullable_payload_sources, NULLABLE_PAYLOAD_READBACKS, nullable_host_result_sources,
     nullable_nested_result_sources,
     leaf_object_sources, LEAF_OBJECT_FIELDS, leaf_readback_sources, LEAF_COMPARISON_CASES,
-    leaf_absence_sources, leaf_absence_cases,
+    leaf_absence_sources, leaf_absence_cases, primitive_absence_sources,
 )
 
 
@@ -74,6 +74,7 @@ def check_result_calls(cpp, name, mode):
         "result_string": ["get", "set", "size"],
         "result_formal": ["get", "set", "size"],
         "result_seeded_map_get": ["get", "set", "get"],
+        "result_seeded_empty_deleted": ["get", "set", "size"],
         "result_seeded_repeated": ["get", "set", "get", "set", "get"],
         "result_seeded_overwrite": ["get", "set", "get"],
         "result_seeded_growing": ["get", "set", "get"],
@@ -128,7 +129,8 @@ def check_result_calls(cpp, name, mode):
               **size_result_sources(), **payload_result_sources(), **mixed_result_sources(),
               **saved_read_sources(), **saved_join_sources(), **guarded_saved_sources(),
               **shortcircuit_sources(), **nullable_result_sources(), **nullable_key_sources(),
-              **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources()}
+              **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources(),
+              **primitive_absence_sources()}
     if name in seeded and not re.search(r"ctnative::map_get(?:_\w+)?(?:<[^>]+>)?\(", cpp):
         raise RuntimeError(f"{name}/{mode}: replaced the live seeded Map lookup with a summary")
     if name in size_result_sources() and "ctnative::map_delete(" not in cpp:
@@ -142,7 +144,8 @@ def check_result_calls(cpp, name, mode):
         raise RuntimeError(f"{name}/{mode}: dropped the saved string's source deletion")
     mixed = {**mixed_result_sources(), **saved_read_sources(), **saved_join_sources(),
              **guarded_saved_sources(), **shortcircuit_sources(), **nullable_result_sources(),
-             **nullable_key_sources(), **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources()}
+             **nullable_key_sources(), **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources(),
+             **primitive_absence_sources()}
     if name in mixed:
         source = mixed[name][0]
         for method in ("set", "get", "has", "delete"):
@@ -1333,6 +1336,9 @@ def standalone(args, output, name, value, compilers, nm):
             payload = "std::string" if "string" in name else "bool"
             if f"std::shared_ptr<ctnative::map_storage<{payload}, {payload}>>" not in cpp:
                 raise RuntimeError(f"{name}/{mode}: missing homogeneous owning Map carrier\n{cpp}")
+        if name in primitive_absence_sources() and (
+                "std::shared_ptr<ctnative::map_storage<ctnative::nullable_string, std::string>>" not in cpp):
+            raise RuntimeError(f"{name}/{mode}: lost the independent nullable-key/String-payload carrier")
         if name in MIXED_RESULT_TYPES:
             _, alternative = MIXED_RESULT_TYPES[name]
             variant = f"std::variant<bool, {alternative}>"
@@ -1344,6 +1350,9 @@ def standalone(args, output, name, value, compilers, nm):
                 raise RuntimeError(f"{name}/{mode}: missing exact finite key/payload carrier\n{cpp}")
         source = args.work / f"{name}.{mode}.cpp"
         source.write_text(cpp)
+        if name in primitive_absence_sources():
+            source = args.work / f"{name}.{mode}.observed.cpp"
+            source.write_text(primitive_absence_cpp(cpp))
         if name in leaf_object_sources() and (not name.endswith("_repair")
                                                or name == "leaf_object_identity_repair"):
             source = args.work / f"{name}.{mode}.identity.cpp"
@@ -1674,3 +1683,40 @@ def check_leaf_absence_calls(cpp, name, mode):
     calls = re.findall(r"ctnative::invoke_callable\((\w+)([^;\n]*)\);", entry[1])
     if [methods_by_value.get(callee) for callee, _ in calls] != ["size", "set"]:
         raise RuntimeError(f"{name}/{mode}: absence changed published method call order")
+
+
+def primitive_absence_observer_source(source):
+    return source + """
+(function() {
+    const get = host.slot.get, set = host.slot.set, size = host.slot.size;
+    let observed = trace === 2 ? 1 : 0;
+    if (get() === void 0) { observed += 2; }
+    if (size() === 1) { observed += 4; }
+    if (set('') === 2) { observed += 8; }
+    if (set(void 0) === 2) { observed += 16; }
+    if (set('future-key') === 3) { observed += 32; }
+    if (get() === void 0) { observed += 64; }
+    if (size() === 2) { observed += 128; }
+    trace = observed;
+})();
+"""
+
+
+def primitive_absence_cpp(cpp):
+    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
+    if count != 1:
+        raise RuntimeError("primitive absence observer needs exactly one entry")
+    return changed + r'''
+int main() {
+    if (ctnative_test_entry() != 0) { return 160; }
+    const auto get = g_host->slot->m_get;
+    const auto set = g_host->slot->m_set;
+    const auto size = g_host->slot->m_size;
+    using text = ctnative::nullable_string;
+    if (get().tag != text::kind::undefined || size() != 1 ||
+        set(text{std::string{}}) != 2 || set(text{}) != 2 ||
+        set(text{std::string{"future-key"}}) != 3 ||
+        get().tag != text::kind::undefined || size() != 2) { return 161; }
+    return 0;
+}
+'''

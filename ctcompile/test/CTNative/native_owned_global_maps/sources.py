@@ -1802,3 +1802,15 @@ def leaf_absence_refusals():
         rows[name] = (row["source"], row["expected_trace"], old, replacement,
                       repair, row["prepared_calls"])
     return rows
+
+
+def primitive_absence_sources():
+    # Keep the historical refusal's ten calls and empty/undefined key
+    # observations. Definite absence supplies its missing host result fact;
+    # the existing nullable String carrier independently admits native output.
+    source, value = payload_result_refusals()["result_seeded_empty_deleted"]
+    return {"result_seeded_empty_deleted": (source, "host", value)}
+
+
+RESULT_SIGNATURES["result_seeded_empty_deleted"] = (
+    "ctnative::nullable_string", "ctnative::nullable_string", 6)
