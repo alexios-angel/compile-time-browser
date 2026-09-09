@@ -45,7 +45,7 @@ from .harness import (
 
 
 PRIMITIVE_ABSENCE_CARRIERS = {
-    "seeded_deleted", "seeded_deleted_earlier", "result_seeded_false_deleted",
+    "seeded_cleared", "seeded_deleted", "seeded_deleted_earlier", "result_seeded_false_deleted",
     "result_seeded_mixed_false_deleted", "result_seeded_mixed_string_deleted",
     "saved_read_write_deleted", "saved_read_write_missing_source", "saved_join_deleted_true",
     "guarded_saved_mutated_arm", "shortcircuit_mutated_arm", "nullable_host_result_deleted",
@@ -73,6 +73,11 @@ def primitive_absence_carrier_cases():
     for name, calls in (("seeded_deleted", 9), ("seeded_deleted_earlier", 10)):
         add(name, seeded_result_refusals()[name], "undefined", "state.delete(0); ", "", 1,
             calls, 5, "!ctnative.map<!ctnative.opt<!ctnative.num<i32>>, !ctnative.num<i32>>")
+    add("seeded_cleared", seeded_result_refusals()["seeded_cleared"], "undefined",
+        "state.clear();", "state.has(0);", 1, 9, 5,
+        "!ctnative.map<!ctnative.opt<!ctnative.num<i32>>, !ctnative.num<i32>>")
+    # The repair changes only the mutation; the evaluated method call remains.
+    cases["seeded_cleared"]["repair_calls"] = 9
     source, value = payload_result_refusals()["result_seeded_false_deleted"]
     add("result_seeded_false_deleted", source, value, "state.delete(false); ", "", 1, 10,
         carrier="!ctnative.map<!ctnative.opt<!ctnative.bool>, !ctnative.bool>")
@@ -122,7 +127,7 @@ def check_primitive_absence_preparation(text, original, case, name):
     for arguments in actuals:
         if receivers.get(arguments[2]) != arguments[0] or captures.get(arguments[3]) != arguments[2]:
             raise RuntimeError(f"{name}: changed a current receiver/callee/capture operand")
-    for action in ("set", "get", "has", "delete"):
+    for action in ("set", "get", "has", "delete", "clear"):
         source_count = len(re.findall(rf"\bstate\.{action}\(", case["source"]))
         prepared_count = len(re.findall(rf'ctjs\.call [^\n]*ctnative\.map_action = "{action}"', text))
         if source_count != prepared_count:
@@ -156,6 +161,11 @@ process.stdout.write('trace=undefined\n');
                 or host.run([node, "-e", boundary.NODE, str(repaired_js)]).stdout != repaired_expected
                 or host.run([str(reference), str(repaired_js)]).stdout != repaired_expected):
             raise RuntimeError(f"{name}: exact repair lost its independent observation")
+        if "repair_calls" in case:
+            repaired_raw = args.work / f"{name}-restored.raw.mlir"
+            if (len(source_calls(repaired_raw.read_text())) != case["repair_calls"]
+                    or len(source_calls(repaired_ir.read_text())) != case["repair_calls"]):
+                raise RuntimeError(f"{name}: exact repair dropped an evaluated source call")
         config = contract(args, ir, name)
         repaired_config = contract(args, repaired_ir, name + "-restored")
         for mode, options in (("default", ""), ("disabled", "optimize=false")):
