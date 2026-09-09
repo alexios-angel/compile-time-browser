@@ -52,7 +52,8 @@ resolved-call assertion remains on the fresh complete-owner path.
 Budgets **9249/9307** each check **32 cutoffs**, with no rollback interval.
 All **173 historical refusal classifications** and **506 helper rows across
 53 helpers** remain unchanged. All nineteen executions and corrected remaining
-controls pass across runs; the integrated full lit gate is still pending.
+controls pass across runs; the integrated **250-program/34-lifetime** gate
+also passes in the final full run.
 
 **74db2857** adds static BigInt Add/BitAnd/BitOr/BitXor retention categories,
 requiring independently original BigInt operands and charged per-path state.
@@ -70,9 +71,22 @@ sources measure **24 sites, 48 instances, 38 retained**; fixture precision is
 
 Stable clang-format **22.1.8 passes all 745 files**; bundled 23 retains the
 same nine unrelated differences and changed C++ passes both. Independent
-production, source-preservation and generated-artifact audits pass. The full
-compiler/browser CTest gate and fresh native corpus measurements remain pending;
-no complete Bootstrap gain is claimed from these isolated sources.
+production, source-preservation and generated-artifact audits pass. After an
+initial SSH timeout before any build, server start and allow-ip restore access.
+The warning-free **243-step** full build completes **512/517 CTests in
+1649.36 seconds**, including all **372 compiler tests**. Lit passes **165/165
+in 928.06 seconds** (CTest 928.26). Type inference passes in **0.09 seconds**,
+shared Map ownership in **89.21**, host contract in **0.18**, seeded host Maps
+in **37.01**, and escape arrays in **0.45**. Only the five established browser
+failures remain: `selectors`, `frames`, `element_attrs`, `vm_async`,
+`early_errors`. All twelve final code/test hashes match local files, committed
+HEAD, the frozen input and the final devbox sources. The full run rechecks the
+static BigInt matrix and all four zero-violation escape oracles.
+
+Fresh corpus coverage stays Bootstrap **19/574**, p5 **39/4754**, Phaser
+**45/7725** in both modes, with **zero pruned**. Exact Bootstrap Data stays
+**0/7 CommonJS, 0/7 browser, 0/8 AMD**. No complete Bootstrap gain follows from
+these isolated alias sources.
 
 **Next: constant-only Number global edges.** The exact eight-call **3c1dfd95**
 source in `bootstrap-provider-next.md` still proves ownership but refuses native
@@ -82,7 +96,10 @@ observations. HostContract and OwnedGlobalMethods both require nonempty call
 dependencies today. Extend only Number origin/initialization evidence after
 complete live scope/order/write/environment and ownership proofs; empty call
 dependencies must not create a native type. Keep pending/boxed/optional lattice
-values, dynamic globals, multiple writes and effects conservative.
+values, dynamic globals, multiple writes and effects conservative. The next
+boundary doc names the proof/test sites and direct empty-dependency controls
+for stale/exhausted evidence, invalid SSA scope, unknown calls and non-Number
+initializers.
 All **24** next source/candidate-edit observations agree after applying the
 reference's documented String encoding and Number NaN formatting conventions.
 Only two candidate edits admit; the other ten remain refusals. Exact zero after
@@ -92,9 +109,11 @@ remain unfinished.
 Evidence: `/tmp/ctcompile-alias-{baseline,first-census}.json`,
 `/tmp/ctcompile-alias-{proof,focused,corrected-arrays,execution,controls}.log`,
 `/tmp/ctcompile-alias-refusal-census.json`,
-`/tmp/ctcompile-alias-{original,lifetime}.cpp`, and
-`/tmp/ctcompile-alias-next-corrected.json`. Full-gate results will be appended
-before this session releases its claims.
+`/tmp/ctcompile-alias-{original,lifetime}.cpp`,
+`/tmp/ctcompile-alias-next-corrected.json`,
+`/tmp/ctcompile-alias-full{,-detail,-hashes}.log`, and
+`/tmp/ctcompile-alias-final-evidence.json`. The source/lifetime inventory is
+`/tmp/ctcompile-alias-inventory.json`.
 
 ## Saved Number globals and BigInt binary origins, 2026-09-09
 

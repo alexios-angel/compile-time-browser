@@ -7,8 +7,13 @@ both original sources now reach **5/5 native** in both modes, preserving eight/
 seven calls and trace=12/1. Nineteen focused programs, their refusal/repair and
 stale/fresh controls, and both saved-scalar sanitizer families pass. Actual
 stored SSA types remain independent of host categories. All 173 historical
-refusal classifications and 506 helper rows are unchanged. The integrated full
-compiler/browser gate remains pending; see `HANDOFF.md` for measurements.
+refusal classifications and 506 helper rows are unchanged. The warning-free
+243-step full gate finishes **512/517 CTests in 1649.36 seconds**: all **372
+compiler tests** pass, with only the five established browser failures. Lit
+passes **165/165 in 928.06 seconds**, including **250 published programs and
+34 lifetime families**. All twelve code/test hashes match HEAD and the devbox.
+Fresh Bootstrap coverage stays **19/574** in both modes; exact Data remains
+**0/7 CommonJS/browser, 0/8 AMD**. See `HANDOFF.md` for complete measurements.
 
 The next exact source still has complete host ownership but refuses native
 output at the standard Map identity guard:
@@ -45,6 +50,16 @@ current fingerprints and shared work limits. NativeMap must still independently
 check harmless loads; TypeInference must still subscribe to actual stored SSA
 lattices and retain pending/optional/boxed values. A Number category or a requested
 observation must never manufacture a value or native type.
+
+Extend `OwnedGlobalSharedMap.cpp::checkSavedScalarReads` and
+`TypeInference.cpp::checkSavedScalarGlobalTypes` alongside the existing native
+execution fixture. Add direct empty-dependency controls for stale/forged and
+exhausted proofs, a Number value in another function or inaccessible SCF arm,
+an unrelated unknown call invalidating the complete environment, and
+BigInt/Object initializers that cannot acquire Number authority. Preserve the
+nonempty dependency checks and atomic publication after the shared budget
+completes. The current twelve source probes do not directly exercise these
+four proof hazards. No new carrier or parallel global proof is needed.
 
 All **12 original probes** and **12 candidate edits** retain five functions,
 eight calls and Node/interpreter agreement, including explicit scalar type

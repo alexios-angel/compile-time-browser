@@ -2135,7 +2135,16 @@ pass **83/15/2348**. BigInt Eq remains **52/30/2448**, and each relational
 family remains **60/32/2740**. The seven static Number forms retain all
 **31 rows and 18 live states**, with **1316** cutoffs for Add/And/Or/Xor and
 **1283** for shifts. All original non-BigInt primitive operator rows pass.
-The full CTest gate remains pending.
+The final warning-free **243-step** full build completes **512/517 CTests in
+1649.36 seconds**, including all **372 compiler checks**. The arrays test
+passes in **0.45 seconds** and remeasures all the row/state/cutoff counts above;
+all eight escape CTests pass in this single run. Fixture precision remains
+**64/98**, all four oracles have zero violations, and corpus precision stays
+**0/64, 0/16, 0/20**. The only failures are the five established browser tests:
+`selectors`, `frames`, `element_attrs`, `vm_async`, `early_errors`. All twelve
+final session code/test hashes match local files, HEAD and the devbox. The full
+summary and detailed output are `/tmp/ctcompile-alias-final-evidence.json` and
+`/tmp/ctcompile-alias-full-detail.log`.
 
 Stable clang-format **22.1.8** passes all **745 C++ files**; the three changed
 C++ files also pass bundled **23**. JavaScript syntax and whitespace checks

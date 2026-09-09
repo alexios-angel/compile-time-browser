@@ -18,7 +18,14 @@ final Map/leaf release and mutation. Budgets 9249/9307 each check 32 cutoffs.
 All 173 old refusal classifications and 506 historical helper rows are unchanged.
 All six host/owner/type CTests pass across the initial run and corrected type
 expectation. The independent type query covers twenty rows, eight live edits
-and forced pending/i32/f64/boxed propagation. The integrated full gate is pending.
+and forced pending/i32/f64/boxed propagation. The integrated **250-program,
+34-lifetime** gate passes, with **165/165 lit cases in 928.06 seconds** (CTest
+928.26). The warning-free **243-step** full build completes **512/517 CTests in
+1649.36 seconds**, including all **372 compiler checks** and only the five
+established browser failures. All twelve code/test hashes match committed HEAD,
+frozen inputs and the devbox. Fresh corpus coverage stays Bootstrap **19/574**,
+p5 **39/4754**, Phaser **45/7725** in both modes, with zero pruned; exact Data
+remains **0/7 CommonJS/browser, 0/8 AMD**.
 
 The exact next **3c1dfd95** constant-only Number load still lacks the required
 published-result dependency; **41a33e40** replaces only its copy with literal 7
