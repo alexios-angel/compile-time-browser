@@ -837,6 +837,87 @@ function objectFrameBigIntEqualityRetained(choice) {
 H.push(objectFrameBigIntEqualityRetained(false));
 H.push(objectFrameBigIntEqualityRetained(true));
 
+// Exact saved BigInt relations retain both operands across different mutations.
+// Comparisons preserve their own Booleans; every structural branch stays live.
+function objectFrameBigIntRelationalSaved(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    source.operand = choice ? 9007199254740993n : 9007199254740992n;
+    target.operand = 9007199254740993n;
+    var lhs = source.operand, rhs = target.operand;
+    source.operand = child;
+    delete target.operand;
+    var less = lhs < rhs, lessEqual = lhs <= rhs;
+    var greater = rhs > lhs, greaterEqual = rhs >= lhs;
+    var selected = less ? source : target;
+    delete source.operand;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target, selected: selected,
+             less: less, lessEqual: lessEqual, greater: greater, greaterEqual: greaterEqual };
+}
+H.push(objectFrameBigIntRelationalSaved(false));
+H.push(objectFrameBigIntRelationalSaved(true));
+
+// The same successful runtime BigInts do not prove an opaque future operand.
+function objectFrameBigIntRelationalOpaque(input) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var less = input < 2n, lessEqual = input <= 2n;
+    var greater = 2n > input, greaterEqual = 2n >= input;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target,
+             less: less, lessEqual: lessEqual, greater: greater, greaterEqual: greaterEqual };
+}
+H.push(objectFrameBigIntRelationalOpaque(1n));
+H.push(objectFrameBigIntRelationalOpaque(2n));
+
+// Mixed categories require separate conversion evidence on both sides.
+function objectFrameBigIntRelationalMixed(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var input = choice ? 2n : 1n;
+    var less = input < 2, lessEqual = input <= 2;
+    var greater = 2 > input, greaterEqual = 2 >= input;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target,
+             less: less, lessEqual: lessEqual, greater: greater, greaterEqual: greaterEqual };
+}
+H.push(objectFrameBigIntRelationalMixed(false));
+H.push(objectFrameBigIntRelationalMixed(true));
+
+// Computed BigInts do not borrow constant provenance from their operands.
+function objectFrameBigIntRelationalComputed(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var input = (choice ? 1n : 0n) + 1n;
+    var less = input < 2n, lessEqual = input <= 2n;
+    var greater = 2n > input, greaterEqual = 2n >= input;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target,
+             less: less, lessEqual: lessEqual, greater: greater, greaterEqual: greaterEqual };
+}
+H.push(objectFrameBigIntRelationalComputed(false));
+H.push(objectFrameBigIntRelationalComputed(true));
+
+// The Boolean result never removes a separately retained child's identity.
+function objectFrameBigIntRelationalRetained(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source }, saved = target.held;
+    var input = choice ? 2n : 1n;
+    var less = input < 2n, lessEqual = input <= 2n;
+    var greater = 2n > input, greaterEqual = 2n >= input;
+    delete source.held;
+    delete target.held;
+    return { source: source, target: target, saved: saved,
+             less: less, lessEqual: lessEqual, greater: greater, greaterEqual: greaterEqual };
+}
+H.push(objectFrameBigIntRelationalRetained(false));
+H.push(objectFrameBigIntRelationalRetained(true));
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());

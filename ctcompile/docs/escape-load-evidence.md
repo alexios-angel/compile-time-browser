@@ -1769,3 +1769,93 @@ Evidence:
 Remaining boundaries include mixed/computed BigInt conversions and arithmetic,
 other primitive conversions, loops, callee summaries and native lifetime/effect
 consumers. This proof introduces no native BigInt carrier or Script dependency.
+
+## Exact BigInt-pair relational origins, 2026-09-09
+
+This continues the original BigInt producer boundary in **`ca219c28`** and
+its completed **02:13:49 synchronization journal**. `Lt`, `Le`, `Gt` and `Ge`
+now accept two independently proved original BigInt constants, reusing the
+existing saved-value and acyclic edge provenance. Neither operand can borrow
+the other's proof or a later slot value. Mixed, opaque and computed BigInt
+operands remain refused; the result contributes only an independent Boolean
+origin. This introduces no native BigInt carrier, native admission or runtime
+source change.
+
+The current VM's `compare_relational` calls `to_primitive` on each operand,
+then compares exact BigInt digits. `to_primitive` returns actual BigInt inputs
+before looking up user methods, but still enters its recursion-depth guard.
+The same retention argument as primitive relational comparisons therefore
+applies: an unrelated guard error cannot retain this complete frame query's
+unpublished fresh locals. Calls, handlers, publication and unknown effects
+still invalidate the proof. Normal completion, no-throw behavior, allocation
+success, truth values, literal keys and structural liveness are not proved.
+
+Before production changes, the parent's serialized devbox VM and Node agree
+at **65535 on all sixteen semantic checks**. These distinguish all four
+operators, equality and strict ordering, exact values beyond Number precision,
+zero, saved values after overwrite/deletion and branch-selected constants.
+A separate excluded-input probe gives **Node 15 versus VM 8**: mixed String
+comparisons beyond Number precision and an object's `valueOf` returning a
+BigInt disagree; its throwing-object check agrees. Those inputs remain refused.
+The previous object-to-BigInt equality discrepancy remains separately recorded
+above. Evidence: `/tmp/ctcompile-escape-bigint-relational-semantics.js`,
+`-refused-semantics.js` and `/tmp/ctcompile-map-clear-semantic.log`.
+
+The shared table retains the historical Eq rows and runs all four relational
+kinds independently. Each new kind adds computed-input refusals and saved
+BigInt reads across Number overwrite/deletion. Live operand, original constant,
+comparison-kind and structural overwrite mutations run under forged proof
+reports; every incomplete contents/retention budget must publish no proof and
+preserve the original escape verdicts. Each kind has a separate 32-result
+snapshot requiring exactly 64 extra work units. The first devbox gate passes
+**60 rows, 32 live states and 2684 retention budget cutoffs per relational
+kind**. The historical Eq table keeps **52 rows and 30 live states**, with
+**2448 cutoffs** now that its four relational-kind mutations complete. The
+five primitive comparison kinds retain **84/34/3527**, and the seven dynamic
+binary kinds retain **84/49/4127**. The array executable passes in **0.26
+seconds**.
+
+Five additive source functions exercise saved operands, opaque actuals, mixed
+Number inputs, computed BigInts and independently retained children. The
+checker joins every observation at its exact program/function/pc coordinate
+and preserves all historical source bytes and observation counts. The first
+fixture run reports **55/85 precision**, zero violations, partial or pending
+claims, then fails one historical verdict expectation. The original
+`objectFrameRelationalBigInt` compares branch-selected original `1n`/`2n`
+constants against `2n` through all four kinds; its deleted child now proves
+confined. Only that expected verdict changes from Stored to confined. The corrected
+fixture rerun passes **1/1 in 0.21 seconds** (test **0.20 seconds**) and checks
+the new **20 sites, 40 instances and 32 retained** exactly. All historical
+family counts pass, including the earlier BigInt Eq family's **16/32/26**.
+The precision increase from **53/81 to 55/85** includes one newly confined
+historical child plus one proved-confined and four observed-confined sites
+in the added source family. Corpus
+precision stays **0/64, 0/16, 0/20**, including p5's existing one partial
+observation; all four oracles report zero soundness violations.
+
+Local Node checks **97 combined fixture calls and 51 new discriminating
+observation mutations**. They distinguish all four Boolean results, selected
+source/target identity, saved operand values and independent retained children.
+Removing the additive source block reproduces the committed historical fixture
+byte-for-byte (SHA256
+`efe782b4b6414436af7d0587d60c8d742cb504f495a939ec1c93fd9565718899`); the
+only historical expectation change is the justified child verdict above. Evidence:
+`/tmp/ctcompile-escape-bigint-relational-node.{py,js,json}`. Changed C++ files
+pass both Homebrew clang-format **22.1.8** and bundled **23**, and changed-path
+whitespace checks pass. The five code/test hashes are frozen in
+`/tmp/ctcompile-escape-bigint-relational-frozen.json`. The first **22-step
+build has zero warnings**; the surrounding focused gate finishes **19/20 in
+125.60 seconds**, with the fixture expectation above as its only failure.
+Evidence: `/tmp/ctcompile-map-clear-{build,focused}.log`. The correction requires
+no C++ rebuild: the second generated configure reports no work to do. The
+corrected fixture rerun therefore gives passing results for all twenty focused
+tests across the initial run and the rerun, including all eight escape tests;
+this is not a second complete twenty-test run. The complete formatter using
+22.1.8 passes all **745 files**. All five code/test hashes independently match
+the parent's corrected frozen input. Evidence:
+`/tmp/ctcompile-map-clear-{build2,fixture2,fixture2-detail,format22}.log` and
+`-frozen.json`. The full generated CTest gate remains pending.
+
+Remaining producer boundaries include mixed/computed BigInt conversions and
+arithmetic, other primitive conversions, loops, callee summaries and native
+lifetime/effect consumers.

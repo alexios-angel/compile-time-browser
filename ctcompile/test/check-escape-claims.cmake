@@ -207,6 +207,7 @@ if(STRICT)
   set(_object_arithmetic_binary_rows "")
   set(_object_add_concat_rows "")
   set(_object_bigint_equality_rows "")
+  set(_object_bigint_relational_rows "")
   foreach(_line IN LISTS _recording_lines)
     if(_line MATCHES "^program ([0-9a-f]+) ")
       set(_program_hash "${CMAKE_MATCH_1}")
@@ -376,6 +377,16 @@ if(STRICT)
         message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
       endif()
       list(APPEND _object_bigint_equality_rows "${_row} ${CMAKE_MATCH_1}")
+    elseif(_function_name MATCHES "^objectFrameBigIntRelational(Saved|Opaque|Mixed|Computed|Retained)$" AND _line MATCHES "^site ")
+      if(NOT _line MATCHES "^site ([0-9]+) kind obj made ([0-9]+) confined ([0-9]+) escaped ([0-9]+) unresolved ([0-9]+) unchecked ([0-9]+) routes ([^ ]+)$")
+        message(FATAL_ERROR "${_function_name}: unexpected BigInt relational observation: ${_line}")
+      endif()
+      set(_pc "${CMAKE_MATCH_1}")
+      set(_row "${_function_name} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3} ${CMAKE_MATCH_4} ${CMAKE_MATCH_5} ${CMAKE_MATCH_6} ${CMAKE_MATCH_7}")
+      if(NOT _claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_pc} obj ([^\n]+)")
+        message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
+      endif()
+      list(APPEND _object_bigint_relational_rows "${_row} ${CMAKE_MATCH_1}")
     endif()
   endforeach()
   set(_expected_publication_rows
@@ -654,8 +665,8 @@ if(STRICT)
 
   # Saved primitive values survive later BigInt field replacement/deletion;
   # invalid numeric Strings and Undefined give unordered comparisons. Opaque
-  # and BigInt inputs keep Stored refusals. Returning the old child retains it
-  # even after both container fields are deleted.
+  # inputs keep Stored refusals; the exact BigInt pair now releases its child.
+  # Returning the old child retains it after both container fields are deleted.
   set(_expected_object_relational_rows
       "objectFrameRelationalSaved 2 2 0 0 0 - confined"
       "objectFrameRelationalSaved 2 0 2 0 0 temporaries:2 escapes:stored"
@@ -669,7 +680,7 @@ if(STRICT)
       "objectFrameRelationalOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameRelationalOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameRelationalOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
-      "objectFrameRelationalBigInt 2 2 0 0 0 - escapes:stored"
+      "objectFrameRelationalBigInt 2 2 0 0 0 - confined"
       "objectFrameRelationalBigInt 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameRelationalBigInt 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameRelationalBigInt 2 0 2 0 0 temporaries:2 escapes:returned"
@@ -779,6 +790,37 @@ if(STRICT)
     message(FATAL_ERROR "imported BigInt equality evidence mismatch:\nexpected: ${_expected_object_bigint_equality_rows}\nobserved: ${_object_bigint_equality_rows}")
   endif()
   message(STATUS "imported BigInt equality: sixteen sites, thirty-two instances, twenty-six retained; live claims agree")
+
+  # Four exact relational kinds share original BigInt-pair provenance only.
+  # Opaque, mixed and computed inputs keep Stored; independently saved children
+  # remain retained. Historical source bytes and observation counts are unchanged.
+  set(_expected_object_bigint_relational_rows
+      "objectFrameBigIntRelationalSaved 2 2 0 0 0 - confined"
+      "objectFrameBigIntRelationalSaved 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntRelationalSaved 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntRelationalSaved 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntRelationalOpaque 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntRelationalOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntRelationalOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntRelationalOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntRelationalMixed 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntRelationalMixed 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntRelationalMixed 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntRelationalMixed 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntRelationalComputed 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntRelationalComputed 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntRelationalComputed 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntRelationalComputed 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntRelationalRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntRelationalRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntRelationalRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntRelationalRetained 2 0 2 0 0 temporaries:2 escapes:returned")
+  list(SORT _object_bigint_relational_rows)
+  list(SORT _expected_object_bigint_relational_rows)
+  if(NOT _object_bigint_relational_rows STREQUAL _expected_object_bigint_relational_rows)
+    message(FATAL_ERROR "imported BigInt relational evidence mismatch:\nexpected: ${_expected_object_bigint_relational_rows}\nobserved: ${_object_bigint_relational_rows}")
+  endif()
+  message(STATUS "imported BigInt relational: twenty sites, forty instances, thirty-two retained; live claims agree")
 endif()
 if(NOT _pyrc EQUAL 0)
   message(FATAL_ERROR "${NAME}: the checker exited ${_pyrc}")

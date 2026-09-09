@@ -1027,24 +1027,24 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     if (!lhs || !rhs) {
                         return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                     }
-                    // BigInt equality has its own guard-free digits comparison,
-                    // only after BOTH original operands independently prove
-                    // BigInt constants. Saved/forwarded reads retain that origin;
-                    // mixed categories and computed BigInt values still refuse.
-                    if (compare.getKind() == ctjs::CompareKind::Eq && bigIntConstantOrigin(lhs) &&
-                        bigIntConstantOrigin(rhs)) {
-                        break;
-                    }
-                    if (!primitiveNonBigIntOrigin(lhs) || !primitiveNonBigIntOrigin(rhs)) {
+                    // Only BOTH independently proved original BigInt constants
+                    // reach the exact digit comparison. Saved/forwarded reads
+                    // retain that origin; mixed and computed inputs still refuse.
+                    const bool bigIntPair = bigIntConstantOrigin(lhs) && bigIntConstantOrigin(rhs);
+                    if (compare.getKind() == ctjs::CompareKind::Eq && bigIntPair) { break; }
+                    if (!bigIntPair &&
+                        (!primitiveNonBigIntOrigin(lhs) || !primitiveNonBigIntOrigin(rhs))) {
                         return refuse(ArrayContentsFailure::UnsupportedOperation, &op);
                     }
                     // Relational kinds enter to_primitive's depth guard even
-                    // for primitives. Their normal String/static-number paths
-                    // retain no input identity; the guard's unrelated Error
+                    // for primitives, including BigInts. Its primitive fast path
+                    // preserves BigInts before exact digit comparison; normal
+                    // String/static-number paths likewise retain no input
+                    // identity. The guard's unrelated Error
                     // cannot expose this whole-frame query's unpublished fresh
                     // locals. Calls, handlers and publication still refuse.
                     // This proves retention, not normal completion or no-throw
-                    // effects. BigInt and object conversion remain outside it.
+                    // effects. Mixed BigInt and object conversion stay refused.
                     break;
                 }
                 default: return refuse(ArrayContentsFailure::UnsupportedOperation, &op);

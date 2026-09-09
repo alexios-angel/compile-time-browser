@@ -437,7 +437,7 @@ struct ArrayContentsEvidence {
 /// strict equality, ToBoolean, logical negation, typeof, void, supported static
 /// binary operations on independently non-BigInt origins, arithmetic unary
 /// operations, dynamic Sub/Mul/Div/Mod/Pow/Add/Concat, loose equality and relational
-/// comparisons on independently primitive non-BigInt origins, equality of two
+/// comparisons on independently primitive non-BigInt origins or two
 /// independently proved BigInt constants, truthy and return. Object reads
 /// require an earlier own write; keys longer than 256 bytes and
 /// __proto__ refuse. Named/computed object deletions erase only the current own
@@ -479,18 +479,20 @@ struct ArrayContentsEvidence {
 /// origins prove primitive non-BigInt inputs. Its VM primitive paths never
 /// invoke user conversion or the reentry-depth guard. Saved reads retain their
 /// original identity across overwrites; no operand value, key or branch choice
-/// is inferred. An independent Eq-only alternative admits two exact original
+/// is inferred. An independent alternative admits two exact original
 /// BigInt constants: the VM compares their digits without conversions or input
 /// aliases. Both operand origins must qualify; mixed/opaque/computed BigInt
 /// inputs still refuse. This adds only an independent Boolean origin, never
 /// equality, key, liveness, allocation-success or native effect evidence.
-/// Relational kinds require the same independent non-BigInt original operands;
-/// their normal String/static-number paths yield only an independent Boolean.
+/// Relational kinds accept those same independently proved original categories;
+/// their normal String/static-number or exact BigInt digit comparisons yield
+/// only an independent Boolean. Both BigInt origins must separately qualify;
+/// mixed and computed BigInt operands stay outside this proof.
 /// Their to_primitive depth guard can throw an unrelated RangeError even for
 /// primitives. As with Neg/Plus, the whole-frame query's exclusion of calls,
 /// handlers and publication prevents retention of its unpublished fresh locals;
-/// this is not normal-completion or no-throw/effect evidence. Opaque/object and
-/// BigInt relational inputs remain refused. Other conversion kinds refuse.
+/// this is not normal-completion or no-throw/effect evidence. Opaque/object
+/// relational inputs remain refused. Other conversion kinds refuse.
 /// Dynamic Sub/Mul/Div/Mod/Pow likewise require BOTH original primitive
 /// non-BigInt operands. Normal results are independent Numbers even for NaN,
 /// infinity or signed zero, with no constant/index/key inference. Each operand's

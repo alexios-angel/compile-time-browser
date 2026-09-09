@@ -3949,7 +3949,8 @@ void checkPrimitiveBinaryProducer(mlir::MLIRContext & context, Kind producerKind
                 liveStates, budgets);
 }
 
-void checkBigIntEquality(mlir::MLIRContext & context) {
+void checkBigIntComparison(mlir::MLIRContext & context, ctjs::CompareKind producerKind) {
+    const std::string spelling = ctjs::stringifyCompareKind(producerKind).str();
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
         "  %lhs = ctjs.constant #ctjs.bigint<\"9007199254740993\"> "
@@ -3958,8 +3959,8 @@ void checkBigIntEquality(mlir::MLIRContext & context) {
         "{storage_test_id = \"rhs\"}\n"
         "  %x = ctjs.create_object {storage_test_id = \"x\"}\n"
         "  %a = ctjs.create_array [%x] {storage_test_id = \"a\"}\n";
-    const auto compare = [](const std::string & lhs, const std::string & rhs) {
-        return "  %produced = ctjs.compare eq " + lhs + ", " + rhs +
+    const auto compare = [&](const std::string & lhs, const std::string & rhs) {
+        return "  %produced = ctjs.compare " + spelling + " " + lhs + ", " + rhs +
                " {storage_test_id = \"produced\"}\n";
     };
     const std::string produce = compare("%lhs", "%rhs");
@@ -3972,15 +3973,15 @@ void checkBigIntEquality(mlir::MLIRContext & context) {
         const char * discharged = "x";
     };
     const std::vector<bigint_row> rows = {
-        {.contents = {.what = "BigInt equality cannot prune either structural overwrite arm",
+        {.contents = {.what = "BigInt comparison cannot prune either structural overwrite arm",
                       .body = values + produce + branch + overwrite + "^no:\n" + overwrite,
                       .arrays = "a:[zero] | a:[zero]",
                       .exit = "a -> {a}; a -> {a}"}},
-        {.contents = {.what = "BigInt equality returns an independent Boolean",
+        {.contents = {.what = "BigInt comparison returns an independent Boolean",
                       .body = values + produce + done,
                       .arrays = "a:[x]",
                       .exit = "produced -> {}"}},
-        {.contents = {.what = "a stored BigInt equality result retains no child identity",
+        {.contents = {.what = "a stored BigInt comparison result retains no child identity",
                       .body = values + produce +
                               "  ctjs.set_property %a[%zero], %produced\n  ctjs.return %a\n",
                       .arrays = "a:[produced]",
@@ -3992,7 +3993,7 @@ void checkBigIntEquality(mlir::MLIRContext & context) {
                       .reads = "a[0]=x",
                       .exit = "x -> {x}"},
          .discharged = ""},
-        {.contents = {.what = "a BigInt equality result forwards and roots independently",
+        {.contents = {.what = "a BigInt comparison result forwards and roots independently",
                       .body = "  %frame = ctjs.frame_enter 8\n" + values + produce +
                               "  cf.br ^next(%produced : !ctjs.value)\n"
                               "^next(%result: !ctjs.value):\n"
@@ -4012,7 +4013,7 @@ void checkBigIntEquality(mlir::MLIRContext & context) {
                       .body = values + compare("%lhs", "%lhs") + branch + done +
                               "^no:\n  ctjs.store_global \"held\", %x\n" + done,
                       .failure = ArrayContentsFailure::UnsupportedOperation}},
-        {.contents = {.what = "BigInt equality cannot authorize an opaque return",
+        {.contents = {.what = "BigInt comparison cannot authorize an opaque return",
                       .body = values + produce + "  ctjs.return %p\n",
                       .failure = ArrayContentsFailure::UnknownValue}},
     };
@@ -4036,7 +4037,7 @@ void checkBigIntEquality(mlir::MLIRContext & context) {
         } else {
             fail(
                 row{.what = expected.contents.what, .body = expected.contents.body, .expected = ""},
-                "the BigInt equality fixture did not parse");
+                "the BigInt comparison fixture did not parse");
         }
         ++rowCount;
     };
@@ -4053,6 +4054,38 @@ void checkBigIntEquality(mlir::MLIRContext & context) {
         const auto compareInput = [&](const std::string & input) {
             return left ? compare(input, "%rhs") : compare("%lhs", input);
         };
+        if (producerKind != ctjs::CompareKind::Eq) {
+            for (const std::string producer : {
+                     "  %operand = ctjs.binary add %lhs, %rhs\n",
+                     "  %operand = ctjs.unary neg %lhs\n",
+                 }) {
+                run({.contents = {.what =
+                                      "computed BigInts never borrow original constant provenance",
+                                  .body = values + producer + compareInput("%operand") + done,
+                                  .failure = ArrayContentsFailure::UnsupportedOperation}});
+            }
+            run({.contents = {.what =
+                                  "a saved BigInt array value survives a later Number overwrite",
+                              .body = values +
+                                      "  ctjs.set_property %a[%zero], %lhs\n"
+                                      "  %operand = ctjs.get_property %a[%zero]\n"
+                                      "  ctjs.set_property %a[%zero], %zero\n" +
+                                      compareInput("%operand") + done,
+                              .arrays = "a:[zero]",
+                              .reads = "a[0]=lhs",
+                              .exit = "produced -> {}"}});
+            run({.contents = {.what =
+                                  "a saved BigInt own field survives a changed tag and deletion",
+                              .body = values +
+                                      "  %key = ctjs.constant #ctjs.string<\"operand\">\n"
+                                      "  ctjs.set_property %x[%key], %lhs\n"
+                                      "  %operand = ctjs.get_property %x[%key]\n"
+                                      "  ctjs.set_property %x[%key], %zero\n"
+                                      "  ctjs.delete_named \"operand\" from %x\n" +
+                                      compareInput("%operand") + done,
+                              .arrays = "a:[x]",
+                              .exit = "produced -> {}"}});
+        }
         for (const std::string & input : rejectedOrigins) {
             run({.contents = {.what =
                                   "a BigInt operand cannot authorize a mixed primitive category",
@@ -4062,7 +4095,7 @@ void checkBigIntEquality(mlir::MLIRContext & context) {
         for (const std::string input : {"%lhs", "%zero", "%x", "%a", "%p"}) {
             const bool big = input == "%lhs";
             run({.contents = {
-                     .what = "every incoming BigInt equality operand must independently qualify",
+                     .what = "every incoming BigInt comparison operand must independently qualify",
                      .body = values +
                              "  %flag = ctjs.truthy %p\n"
                              "  cf.cond_br %flag, ^join(%rhs : !ctjs.value), ^join(" +
@@ -4072,7 +4105,7 @@ void checkBigIntEquality(mlir::MLIRContext & context) {
                                     : ArrayContentsFailure::UnsupportedOperation,
                      .arrays = "a:[x] | a:[x]",
                      .exit = "produced -> {}; produced -> {}"}});
-            run({.contents = {.what = "BigInt equality keeps saved array origins after overwrite",
+            run({.contents = {.what = "BigInt comparison keeps saved array origins after overwrite",
                               .body = values + "  ctjs.set_property %a[%zero], " + input +
                                       "\n  %operand = ctjs.get_property %a[%zero]\n"
                                       "  ctjs.set_property %a[%zero], %rhs\n" +
@@ -4087,7 +4120,8 @@ void checkBigIntEquality(mlir::MLIRContext & context) {
         }
         for (const std::string input : {"%lhs", "%zero", "%x"}) {
             run({.contents = {
-                     .what = "BigInt equality keeps saved own fields after overwrite and deletion",
+                     .what =
+                         "BigInt comparison keeps saved own fields after overwrite and deletion",
                      .body = values +
                              "  %key = ctjs.constant #ctjs.string<\"operand\">\n"
                              "  ctjs.set_property %x[%key], " +
@@ -4123,7 +4157,7 @@ void checkBigIntEquality(mlir::MLIRContext & context) {
     bigint_row wide = rows.front();
     std::string extras;
     for (unsigned i = 0; i < 32; ++i) {
-        extras += "  %extra_" + std::to_string(i) + " = ctjs.compare eq %lhs, %rhs\n";
+        extras += "  %extra_" + std::to_string(i) + " = ctjs.compare " + spelling + " %lhs, %rhs\n";
     }
     wide.contents.body.insert(wide.contents.body.find("  %flag ="), extras);
     auto narrowModule = parse(rows.front());
@@ -4132,20 +4166,20 @@ void checkBigIntEquality(mlir::MLIRContext & context) {
         const auto narrow = computeArrayContents(*narrowModule->getOps<ctjs::FuncOp>().begin());
         const auto expanded = computeArrayContents(*wideModule->getOps<ctjs::FuncOp>().begin());
         if (!narrow.complete || !expanded.complete || expanded.work != narrow.work + 64) {
-            fail(row{.what = "BigInt equality charges each independent result and snapshot",
+            fail(row{.what = "BigInt comparison charges each independent result and snapshot",
                      .body = wide.contents.body,
                      .expected = ""},
                  "32 extra results did not cost one producer and one snapshot each");
         }
         check(*wideModule, wide);
     } else {
-        fail(row{.what = "wide BigInt equality snapshot",
+        fail(row{.what = "wide BigInt comparison snapshot",
                  .body = wide.contents.body,
                  .expected = ""},
-             "the wide BigInt equality fixture did not parse");
+             "the wide BigInt comparison fixture did not parse");
     }
     bigint_row mutation = rows.front();
-    mutation.contents.what = "live BigInt equality origins defeat forged completion";
+    mutation.contents.what = "live BigInt comparison origins defeat forged completion";
     unsigned liveStates = 0;
     if (auto module = parse(mutation)) {
         ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
@@ -4190,12 +4224,17 @@ void checkBigIntEquality(mlir::MLIRContext & context) {
              {ctjs::CompareKind::StrictEq, ctjs::CompareKind::Eq, ctjs::CompareKind::Lt,
               ctjs::CompareKind::Le, ctjs::CompareKind::Gt, ctjs::CompareKind::Ge}) {
             comparison.setKindAttr(ctjs::CompareKindAttr::get(&context, kind));
-            inspect(kind == ctjs::CompareKind::StrictEq || kind == ctjs::CompareKind::Eq
-                        ? ArrayContentsFailure::None
-                        : ArrayContentsFailure::UnsupportedOperation);
+            inspect(ArrayContentsFailure::None);
         }
-        comparison.setKindAttr(ctjs::CompareKindAttr::get(&context, ctjs::CompareKind::Eq));
+        comparison.setKindAttr(ctjs::CompareKindAttr::get(&context, producerKind));
         inspect(ArrayContentsFailure::None);
+        if (producerKind != ctjs::CompareKind::Eq) {
+            comparison.setKindAttr(
+                ctjs::CompareKindAttr::get(&context, static_cast<ctjs::CompareKind>(255)));
+            inspect(ArrayContentsFailure::UnsupportedOperation);
+            comparison.setKindAttr(ctjs::CompareKindAttr::get(&context, producerKind));
+            inspect(ArrayContentsFailure::None);
+        }
         auto store = llvm::cast<ctjs::SetPropertyOp>(&function.getBody().back().front());
         const mlir::Value replacement = store.getValue();
         store->setOperand(2, child.getResult());
@@ -4209,11 +4248,11 @@ void checkBigIntEquality(mlir::MLIRContext & context) {
         inspect(ArrayContentsFailure::None);
     } else {
         fail(row{.what = mutation.contents.what, .body = mutation.contents.body, .expected = ""},
-             "the live BigInt equality fixture did not parse");
+             "the live BigInt comparison fixture did not parse");
     }
-    std::printf("BigInt equality: %u rows, %u live states, one wide snapshot, "
+    std::printf("BigInt comparison %s: %u rows, %u live states, one wide snapshot, "
                 "%zu retention budget cutoffs\n",
-                rowCount, liveStates, budgets);
+                spelling.c_str(), rowCount, liveStates, budgets);
 }
 
 void checkArrayFrames(mlir::MLIRContext & context) {
@@ -5142,9 +5181,9 @@ int main() {
     checkTotalUnaryProducers(context);
     checkStaticBinaryProducers(context);
     checkArithmeticUnaryProducers(context);
-    checkBigIntEquality(context);
     for (const auto kind : {ctjs::CompareKind::Eq, ctjs::CompareKind::Lt, ctjs::CompareKind::Le,
                             ctjs::CompareKind::Gt, ctjs::CompareKind::Ge}) {
+        checkBigIntComparison(context, kind);
         checkPrimitiveBinaryProducer<ctjs::CompareOp>(context, kind);
     }
     for (const auto kind : {ctjs::BinaryKind::Sub, ctjs::BinaryKind::Mul, ctjs::BinaryKind::Div,
