@@ -40,8 +40,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     // Presence alone never supplies payload evidence. A possibly aliasing delete
     // removes definite membership, but cannot change a surviving payload. Its
     // alternatives stay valid whenever present; an exact set replaces them.
-    // Definite absence is independent of possible absence: only an exact
-    // deletion establishes it. A possibly aliasing write invalidates absence,
+    // Definite absence is independent of possible absence: an exact deletion
+    // or clear establishes it. A possibly aliasing write invalidates absence,
     // whereas another deletion cannot make an absent key present.
     // This local contents fact is independent of the family's return worklist
     // and publishes alternatives only after the entire body/use proof completes.
@@ -53,6 +53,12 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
         bool absent = false;
     };
     llvm::SmallVector<entry_fact> entries;
+    // Before clear, arbitrary keys may belong to a previous invocation. After
+    // clear, only subsequent sets can introduce keys. Keep that complete
+    // possibility set separately from the intersected per-key facts: a write
+    // on either branch must prevent claiming absence after their join.
+    bool completeKeys = false;
+    llvm::SmallVector<mlir::Value> possibleKeys;
     llvm::DenseSet<mlir::Operation *> observations;
     llvm::DenseMap<mlir::Value, unsigned> sizeBounds;
     const auto primitiveTag = [&](mlir::Value key) -> std::optional<mlir::TypeID> {
@@ -60,6 +66,28 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
     };
     const auto keyEvidence = [&](mlir::Value key) {
         return PrimitiveMapKeyEvidence{primitiveTag(key), sizeBounds.lookup(key)};
+    };
+    const auto absent = [&](mlir::Value key, llvm::ArrayRef<entry_fact> facts, bool complete,
+                            llvm::ArrayRef<mlir::Value> possible,
+                            bool currentPath = true) -> std::optional<bool> {
+        for (const auto & entry : facts) {
+            if (!step()) { return std::nullopt; }
+            if (comparePrimitiveMapKeys(entry.key, key) == PrimitiveMapKeyRelation::Same) {
+                return entry.absent;
+            }
+        }
+        if (!complete) { return false; }
+        for (mlir::Value written : possible) {
+            if (!step()) { return std::nullopt; }
+            // Cross-arm queries cannot use the other arm's filtered scalar
+            // alternatives. Exact source constants/SSA equality are path-free.
+            const auto relation =
+                currentPath
+                    ? comparePrimitiveMapKeys(written, key, keyEvidence(written), keyEvidence(key))
+                    : comparePrimitiveMapKeys(written, key);
+            if (relation != PrimitiveMapKeyRelation::Distinct) { return false; }
+        }
+        return true;
     };
     const auto mutate = [&](mlir::Value key, bool erase, PrimitiveAlternatives payload = {},
                             mlir::Value object = {}) {
@@ -109,6 +137,10 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
             if (!hasExactAbsence) { entries.push_back({key, {}, false, {}, true}); }
         } else {
             entries.push_back({key, payload, true, object});
+            if (completeKeys) {
+                if (!step()) { return false; }
+                possibleKeys.push_back(key);
+            }
         }
         return true;
     };
@@ -259,13 +291,21 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                     (void)field;
                     if (!step()) { return false; }
                 }
+                for (mlir::Value key : possibleKeys) {
+                    (void)key;
+                    if (!step()) { return false; }
+                }
                 const auto incoming = entries;
+                const bool incomingCompleteKeys = completeKeys;
+                const auto incomingKeys = possibleKeys;
                 const auto incomingFields = fields;
                 const auto incomingObservations = observations;
                 const auto incomingAlternatives = alternatives;
                 if (!learn(branch.getCondition(), true)) { return false; }
                 if (!self(self, branch.getThenRegion().front(), depth + 1)) { return false; }
                 auto thenEntries = std::move(entries);
+                const bool thenCompleteKeys = completeKeys;
+                auto thenKeys = std::move(possibleKeys);
                 auto thenFields = std::move(fields);
                 auto thenObservations = std::move(observations);
                 auto thenAlternatives = std::move(alternatives);
@@ -285,7 +325,13 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                     (void)field;
                     if (!step()) { return false; }
                 }
+                for (mlir::Value key : incomingKeys) {
+                    (void)key;
+                    if (!step()) { return false; }
+                }
                 entries = incoming;
+                completeKeys = incomingCompleteKeys;
+                possibleKeys = incomingKeys;
                 fields = incomingFields;
                 observations = incomingObservations;
                 alternatives = incomingAlternatives;
@@ -296,6 +342,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 llvm::SmallVector<entry_fact> joined;
                 for (auto left : thenEntries) {
                     if (!step()) { return false; }
+                    bool matched = false;
                     for (const auto & right : entries) {
                         if (!step()) { return false; }
                         if (comparePrimitiveMapKeys(left.key, right.key) !=
@@ -307,10 +354,51 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                         left.absent &= right.absent;
                         if (left.object != right.object) { left.object = {}; }
                         joined.push_back(left);
+                        matched = true;
                         break;
+                    }
+                    if (!matched) {
+                        const auto missing =
+                            absent(left.key, entries, completeKeys, possibleKeys, false);
+                        if (!missing) { return false; }
+                        if (*missing) {
+                            left.present = false;
+                            joined.push_back(left);
+                        }
+                    }
+                }
+                // A key first mentioned on the other arm may still be absent
+                // on both paths when this arm cleared the entire Map.
+                for (auto right : entries) {
+                    if (!step()) { return false; }
+                    bool matched = false;
+                    for (const auto & left : thenEntries) {
+                        if (!step()) { return false; }
+                        if (comparePrimitiveMapKeys(left.key, right.key) ==
+                            PrimitiveMapKeyRelation::Same) {
+                            matched = true;
+                            break;
+                        }
+                    }
+                    if (matched) { continue; }
+                    const auto missing =
+                        absent(right.key, thenEntries, thenCompleteKeys, thenKeys, false);
+                    if (!missing) { return false; }
+                    if (*missing) {
+                        right.present = false;
+                        joined.push_back(right);
                     }
                 }
                 entries = std::move(joined);
+                completeKeys &= thenCompleteKeys;
+                if (completeKeys) {
+                    for (mlir::Value key : thenKeys) {
+                        if (!step()) { return false; }
+                        possibleKeys.push_back(key);
+                    }
+                } else {
+                    possibleKeys.clear();
+                }
                 llvm::SmallVector<field_fact> joinedFields;
                 for (auto left : thenFields) {
                     if (!step()) { return false; }
@@ -379,7 +467,7 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 }
                 if (!maps.contains(read.getObject()) ||
                     (key != "size" && key != "set" && key != "get" && key != "has" &&
-                     key != "delete")) {
+                     key != "delete" && key != "clear")) {
                     return false;
                 }
                 result.reads.push_back(read);
@@ -417,9 +505,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                     return false;
                 }
                 const auto key = keyOf(read.getKey());
-                if (key == "size" || invoke.getArgs().size() != (key == "set" ? 2u : 1u)) {
-                    return false;
-                }
+                const unsigned arity = key == "set" ? 2u : (key == "clear" ? 0u : 1u);
+                if (key == "size" || invoke.getArgs().size() != arity) { return false; }
                 for (auto [index, argument] : llvm::enumerate(invoke.getArgs())) {
                     if (!step()) { return false; }
                     if (primitives.contains(argument)) { continue; }
@@ -435,6 +522,29 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                                 objects.lookup(invoke.getArgs()[1]))) {
                         return false;
                     }
+                } else if (key == "clear") {
+                    // Saved SSA reads retain their old payload or object; only
+                    // the mutable Map state and live has observations change.
+                    for (auto & entry : entries) {
+                        if (!step()) { return false; }
+                        entry.present = false;
+                        entry.absent = true;
+                    }
+                    for (auto * observed : observations) {
+                        (void)observed;
+                        if (!step()) { return false; }
+                    }
+                    for (mlir::Value written : possibleKeys) {
+                        (void)written;
+                        if (!step()) { return false; }
+                    }
+                    observations.clear();
+                    possibleKeys.clear();
+                    completeKeys = true;
+                    primitives.insert(invoke.getResult());
+                    alternatives.try_emplace(
+                        invoke.getResult(),
+                        PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::UndefinedAttr>()));
                 } else {
                     if (key == "has" || key == "delete") {
                         primitives.insert(invoke.getResult());
@@ -445,17 +555,21 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                         if (key == "has") { observations.insert(invoke); }
                     } else if (key == "get") {
                         if (primitiveContents) { primitives.insert(invoke.getResult()); }
+                        const auto missing =
+                            absent(invoke.getArgs()[0], entries, completeKeys, possibleKeys);
+                        if (!missing) { return false; }
+                        if (*missing) {
+                            primitives.insert(invoke.getResult());
+                            alternatives.try_emplace(invoke.getResult(),
+                                                     PrimitiveAlternatives::forTag(
+                                                         mlir::TypeID::get<ctjs::UndefinedAttr>()));
+                            continue;
+                        }
                         for (const auto & entry : entries) {
                             if (!step()) { return false; }
                             if (comparePrimitiveMapKeys(entry.key, invoke.getArgs()[0]) ==
                                 PrimitiveMapKeyRelation::Same) {
-                                if (entry.absent) {
-                                    primitives.insert(invoke.getResult());
-                                    alternatives.try_emplace(
-                                        invoke.getResult(),
-                                        PrimitiveAlternatives::forTag(
-                                            mlir::TypeID::get<ctjs::UndefinedAttr>()));
-                                } else if (entry.present && entry.payload.known) {
+                                if (entry.present && entry.payload.known) {
                                     primitives.insert(invoke.getResult());
                                     alternatives.try_emplace(invoke.getResult(), entry.payload);
                                 } else if (entry.present && entry.object) {
