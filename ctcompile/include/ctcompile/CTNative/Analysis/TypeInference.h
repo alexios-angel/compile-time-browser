@@ -140,7 +140,10 @@ public:
     ///     and the load is `boxed`;
     ///   * any dynamic write to the globals table in the program (a property
     ///     store through `globalThis`/`window`): every load is `boxed`;
-    ///   * otherwise: the join over the stores' operand types.
+    ///   * otherwise: the join over the stores' operand types and implicit
+    ///     Undefined. A fresh complete owner proof of this exact scalar load's
+    ///     single earlier store removes only the implicit absence. The actual
+    ///     store operand still supplies its type, including pending or boxed.
     /// The index is built once, in initialize(), from the module being solved.
     mlir::LogicalResult initialize(mlir::Operation * top) override;
 

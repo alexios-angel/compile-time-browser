@@ -18,6 +18,7 @@
 // against the ODS-first rule - there is no TableGen way to assert that
 // `-0 | 0` is an int32 and `-0` alone is not.
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
+#include "OwnedGlobalMethodsFixtures.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
@@ -83,7 +84,8 @@ std::string prologue() {
     return std::string{kPrologue};
 }
 
-void check(mlir::ModuleOp module, const char * what, const char * expected) {
+void check(mlir::ModuleOp module, const char * what, const char * expected,
+           const ctcompile::ctnative::OwnedGlobalRoots * owner = nullptr) {
     // DeadCodeAnalysis IS NOT OPTIONAL. The sparse framework gets its
     // predecessor information from it; without it a block argument never
     // receives what was branched into it and every answer is uninitialized.
@@ -98,7 +100,7 @@ void check(mlir::ModuleOp module, const char * what, const char * expected) {
     // values and zero registers beating `boxed` on the fixture, while the
     // single-block unit rows all passed.
     solver.load<mlir::dataflow::SparseConstantPropagation>();
-    solver.load<TypeInference>();
+    solver.load<TypeInference>(owner);
     if (failed(solver.initializeAndRun(module))) {
         std::printf("FAIL %s: the solver did not converge\n", what);
         ++failures;
@@ -1439,6 +1441,285 @@ ctjs.func @scoped(%receiver: !ctjs.value, %new_target: !ctjs.value,
     std::printf("comparison identity: %u live/fresh mutation states\n", states);
 }
 
+// Exercise the dependency, rather than relying on a particular worklist order:
+// the literal arrives only after the alias first waits, then the actual saved
+// SSA lattice widens twice. Both widenings are sound overapproximations of the
+// same immutable program. No host category supplies a native type here.
+class ScheduledScalarInference final : public TypeInference {
+public:
+    ScheduledScalarInference(mlir::DataFlowSolver & solver,
+                             const ctcompile::ctnative::OwnedGlobalRoots * owner,
+                             mlir::Operation * literal, mlir::Value saved,
+                             mlir::Operation * observed)
+        : TypeInference(solver, owner), solver_(solver), literal_(literal), saved_(saved),
+          observed_(observed) {}
+
+    mlir::LogicalResult visitOperation(mlir::Operation * op,
+                                       llvm::ArrayRef<const TypeLattice *> operands,
+                                       llvm::ArrayRef<TypeLattice *> results) override {
+        if (op == literal_ && stage_ == 0) { return mlir::success(); }
+        if (failed(TypeInference::visitOperation(op, operands, results))) {
+            return mlir::failure();
+        }
+        if (op != observed_) { return mlir::success(); }
+        using namespace ctcompile::ctnative;
+        const auto type = results.front()->getValue().getType();
+        if (stage_ == 0 && !type) {
+            ++stage_;
+            solver_.enqueue({solver_.getProgramPointAfter(literal_), this});
+        } else if (stage_ == 1 && type == NumType::get(op->getContext(), NumKind::I32)) {
+            ++stage_;
+            widen(NumType::get(op->getContext(), NumKind::F64));
+        } else if (stage_ == 2 && type == NumType::get(op->getContext(), NumKind::F64)) {
+            ++stage_;
+            widen(BoxedType::get(op->getContext()));
+        } else if (stage_ == 3 && type && llvm::isa<BoxedType>(type)) {
+            ++stage_;
+        }
+        return mlir::success();
+    }
+
+    [[nodiscard]] unsigned stages() const { return stage_; }
+
+private:
+    void widen(mlir::Type type) {
+        auto * producer = solver_.getOrCreateState<TypeLattice>(saved_);
+        propagateIfChanged(producer, producer->join(ctcompile::ctnative::TypeValue{type}));
+    }
+
+    mlir::DataFlowSolver & solver_;
+    mlir::Operation * literal_;
+    mlir::Value saved_;
+    mlir::Operation * observed_;
+    unsigned stage_ = 0;
+};
+
+void checkSavedScalarGlobalTypes(mlir::MLIRContext & context) {
+    namespace fixtures = ctcompile::test::owned_global_methods;
+    namespace ctjs = ctcompile::ctjs;
+    using ctcompile::ctnative::HostContractAnalysis;
+    using ctcompile::ctnative::OwnedGlobalRoots;
+    using fixtures::replaced;
+    const auto require = [](bool condition, const char * message) {
+        if (condition) { return; }
+        std::printf("FAIL scalar global inference: %s\n", message);
+        ++failures;
+    };
+    const auto requested = [](mlir::ModuleOp module) {
+        auto contract = fixtures::contractFor(module);
+        contract.initialIntrinsics = {"Map"};
+        contract.observations = {"saved", "alias", "trace"};
+        return contract;
+    };
+    const std::string store = "    ctjs.store_global \"saved\", %answer\n";
+    const std::string read = "    %saved = ctjs.load_global \"saved\"\n";
+    const std::string alias = "    ctjs.store_global \"alias\", %saved\n"
+                              "    %aliasResult = ctjs.load_global \"alias\" {check}\n";
+    auto source =
+        replaced(fixtures::capturedFixture, "    ctjs.store_global \"trace\", %answer\n",
+                 store + read + alias + "    ctjs.store_global \"trace\", %aliasResult\n");
+    source = replaced(source, "    ctjs.return %size\n",
+                      std::string("    %literal = ctjs.constant ") + kFive +
+                          " {test_scalar_producer}\n    ctjs.return %literal\n");
+    unsigned rows = 0;
+    unsigned states = 0;
+    for (const bool prepared : {false, true}) {
+        auto program = source;
+        if (prepared) {
+            program = replaced(program, "    %cell = ctjs.create_cell %u\n", "");
+            program = replaced(program, "    ctjs.cell_set %cell, %state\n", "");
+            program = replaced(program, "captures %cell", "captures %state");
+            program = replaced(program, "    %state = ctjs.load_upvalue %callee[0]\n", "");
+            program = replaced(
+                program, "@get$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value)",
+                "@get$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, "
+                "%state: !ctjs.value)");
+            program = replaced(program, "upvalue_count = 1 : i32", "upvalue_count = 0 : i32");
+            program = replaced(program, "%answer = ctjs.call %getter(%owned)",
+                               "%environment = ctjs.load_upvalue %getter[0]\n"
+                               "    %answer = ctjs.call_direct @get$3(%owned, %u, %getter, "
+                               "%environment)");
+        }
+        const char * exact = prepared ? "!ctnative.num<i32>" : "!ctnative.boxed";
+        const char * optional = prepared ? "!ctnative.opt<!ctnative.num<i32>>" : "!ctnative.boxed";
+        const auto variant = [&](const std::string & text, bool proved, unsigned reads,
+                                 const char * expected, const char * message) {
+            ++rows;
+            auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
+            require(static_cast<bool>(module), "source/prepared fixture parses");
+            if (!module) { return; }
+            const auto contract = requested(*module);
+            HostContractAnalysis host(*module, contract);
+            OwnedGlobalRoots owner(*module, contract);
+            require(host.proved() == proved && owner.proved() == proved && !host.exhausted() &&
+                        !owner.exhausted(),
+                    message);
+            require(host.scalarReads().size() == reads && owner.scalarReads().size() == reads,
+                    "only complete live proofs supply the expected scalar edges");
+            check(*module, message, expected, &owner);
+            require(ctcompile::ctnative::hostContractFingerprint(*module) == contract.moduleSha256,
+                    "solving leaves every source operation unchanged");
+        };
+        variant(program, true, 2, exact,
+                "saved aliases join actual SSA types, even when a host category says Number");
+        variant(replaced(program, kFive, kOneAndAHalf), true, 2,
+                prepared ? "!ctnative.num<f64>" : "!ctnative.boxed",
+                "a fractional producer cannot be narrowed to an integer by its category");
+        variant(replaced(program, kFive, kNegativeZero), true, 2,
+                prepared ? "!ctnative.num<f64>" : "!ctnative.boxed",
+                "negative zero keeps the real producer's f64 lattice");
+        auto repeated =
+            replaced(program, read, read + "    %savedAgain = ctjs.load_global \"saved\"\n");
+        repeated = replaced(repeated, "ctjs.store_global \"alias\", %saved",
+                            "ctjs.store_global \"alias\", %savedAgain");
+        variant(repeated, true, 3, exact, "each repeated load subscribes to the same sole store");
+        variant(replaced(program, store, store + store), true, 0, optional,
+                "two equal stores cannot borrow a previous single-store initialization proof");
+        variant(replaced(program, store + read, read + store), false, 0, optional,
+                "a load preceding its store retains implicit Undefined");
+        variant(replaced(program, read, "    %saved = ctjs.load_global \"unknown\"\n"), false, 0,
+                "!ctnative.boxed", "an undeclared global cannot borrow another binding's edge");
+        for (const char * name : {"globalThis", "window"}) {
+            variant(
+                replaced(program, store,
+                         std::string("    %dynamic = ctjs.load_global \"") + name + "\"\n" + store),
+                false, 0, "!ctnative.boxed",
+                "dynamic globals remain boxed despite the unchanged saved scalar program");
+        }
+        auto literal = replaced(program, store,
+                                std::string("    %entryLiteral = ctjs.constant ") + kFive + "\n" +
+                                    "    ctjs.store_global \"saved\", %entryLiteral\n");
+        variant(literal, true, 0, "!ctnative.opt<!ctnative.num<i32>>",
+                "a constant-only observation has no published-result initialization authority");
+
+        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
+        require(static_cast<bool>(module), "live-proof fixture parses");
+        if (!module) { continue; }
+        auto contract = requested(*module);
+        OwnedGlobalRoots complete(*module, contract);
+        require(complete.proved() && complete.scalarReads().size() == 2,
+                "the immutable fixture has complete independent initialization evidence");
+        if (!complete.proved() || complete.scalarReads().size() != 2) { continue; }
+        check(*module, "omitting the owner retains the ordinary global absence seed", optional);
+        const unsigned completion = complete.steps();
+        require(completion > 0, "owner proof has a nonzero complete-work bound");
+        for (const unsigned budget : {0u, completion / 2, completion - 1}) {
+            OwnedGlobalRoots limited(*module, contract, budget);
+            require(!limited.proved() && limited.exhausted() && limited.scalarReads().empty(),
+                    "an incomplete ownership proof supplies no partial initialization edges");
+            check(*module, "exhausted ownership retains implicit global absence", optional,
+                  &limited);
+        }
+        OwnedGlobalRoots exactBudget(*module, contract, completion);
+        require(exactBudget.proved() && exactBudget.steps() == completion,
+                "the exact completion budget supplies the complete proof");
+        check(*module, "the exact owner budget enables only the actual stored-value lattice", exact,
+              &exactBudget);
+
+        if (prepared) {
+            mlir::Operation * delayed = nullptr;
+            mlir::Operation * observed = nullptr;
+            module->walk([&](mlir::Operation * op) {
+                if (op->hasAttr("test_scalar_producer")) { delayed = op; }
+                if (op->hasAttr("check")) { observed = op; }
+            });
+            require(delayed && observed, "the scheduled producer and alias observation exist");
+            if (delayed && observed) {
+                mlir::DataFlowSolver solver;
+                solver.load<mlir::dataflow::DeadCodeAnalysis>();
+                solver.load<mlir::dataflow::SparseConstantPropagation>();
+                auto * inference = solver.load<ScheduledScalarInference>(
+                    &complete, delayed, complete.scalarReads().front().value, observed);
+                require(succeeded(solver.initializeAndRun(*module)),
+                        "the scheduled scalar producer converges");
+                require(inference->stages() == 4,
+                        "alias waits, receives i32, widens to f64, then becomes boxed");
+            }
+        }
+
+        // Rebuild the borrowed owner after every edit. An old fingerprint must
+        // refuse before exposing any edges; a new one must prove the live IR.
+        mlir::Builder attributes(&context);
+        module->walk([&](mlir::Operation * op) {
+            op->setAttr("ctnative.scalar_global", attributes.getStringAttr("number"));
+            op->setAttr("ctnative.inferred_result", attributes.getStringAttr("number"));
+            op->setAttr("ctnative.host_proved", attributes.getBoolAttr(true));
+            op->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
+        });
+        contract = requested(*module);
+        OwnedGlobalRoots reported(*module, contract);
+        require(reported.proved(), "report attributes leave valid live initialization provable");
+        check(*module, "reports do not change independently inferred scalar types", exact,
+              &reported);
+        auto initialization = complete.scalarReads().front().initialization;
+        auto savedRead = complete.scalarReads().front().read;
+        const auto checkChanged = [&](const char * expected, bool proves = false) {
+            OwnedGlobalRoots stale(*module, contract);
+            require(!stale.proved() && stale.reason().contains("fingerprint") &&
+                        stale.scalarReads().empty(),
+                    "a stale fingerprint withholds all scalar initialization edges");
+            check(*module, "a stale contract cannot drop implicit absence", optional, &stale);
+            const auto freshContract = requested(*module);
+            OwnedGlobalRoots fresh(*module, freshContract);
+            require(fresh.proved() == proves && !fresh.exhausted() && fresh.scalarReads().empty(),
+                    "fresh proof checks the actual edited source instead of Number reports");
+            check(*module, "the edited live source controls the scalar load", expected, &fresh);
+            mlir::OwningOpRef<mlir::ModuleOp> clone{llvm::cast<mlir::ModuleOp>(module->clone())};
+            OwnedGlobalRoots cloned(*clone, requested(*clone));
+            require(cloned.proved() == proves && cloned.scalarReads().empty(),
+                    "a fresh clone independently rechecks edited edges");
+            check(*clone, "fresh cloned source preserves the edited scalar type", expected,
+                  &cloned);
+            ++states;
+        };
+        const auto restored = [&]() {
+            OwnedGlobalRoots owner(*module, contract);
+            require(owner.proved(),
+                    "restored source independently regains initialization evidence");
+            check(*module, "restored initialization joins its unchanged real SSA type", exact,
+                  &owner);
+        };
+        initialization->moveAfter(savedRead);
+        checkChanged(optional);
+        initialization->moveBefore(savedRead);
+        restored();
+        mlir::OpBuilder duplicateBuilder(initialization);
+        duplicateBuilder.setInsertionPointAfter(initialization);
+        auto * duplicate = duplicateBuilder.clone(*initialization);
+        checkChanged(optional, true);
+        duplicate->erase();
+        restored();
+        savedRead->setAttr("name", attributes.getStringAttr("trace"));
+        // This creates an uninitialized cycle in the ordinary global lattice;
+        // query the finite proof alone rather than interpreting that cycle as
+        // a fresh Number fact or asking the solver to guess an initializer.
+        OwnedGlobalRoots wrongName(*module, requested(*module));
+        require(!wrongName.proved() && wrongName.scalarReads().empty(),
+                "a changed global name cannot consume the old edge");
+        ++states;
+        savedRead->setAttr("name", attributes.getStringAttr("saved"));
+        restored();
+        auto getter = module->lookupSymbol<ctjs::FuncOp>("get$3");
+        auto returned = llvm::cast<ctjs::ReturnOp>(getter.getBody().front().getTerminator());
+        const auto originalReturn = returned.getValue();
+        returned->setOperand(0, getter.getBody().front().getArgument(0));
+        // Both the fresh and stale owner refuse, but the actual producer now
+        // becomes boxed too. The stale proof's ordinary join must also widen.
+        OwnedGlobalRoots changedReturn(*module, requested(*module));
+        require(!changedReturn.proved() && changedReturn.scalarReads().empty(),
+                "an unknown return cannot inherit the former Number category");
+        check(*module, "a changed producer is boxed despite retained Number reports",
+              "!ctnative.boxed", &changedReturn);
+        ++states;
+        returned->setOperand(0, originalReturn);
+        restored();
+    }
+    require(rows == 20 && states == 8, "all source/prepared rows and live source edits ran");
+    std::printf("scalar global inference: %u source/prepared rows, %u live edits, "
+                "pending/i32/f64/boxed subscription checked\n",
+                rows, states);
+}
+
 } // namespace
 
 int main() {
@@ -1765,6 +2046,7 @@ int main() {
     checkComparisonIdentityRows(context);
     checkComparisonIdentityMutations(context);
     checkStaleFieldEffects(context);
+    checkSavedScalarGlobalTypes(context);
 
     // The call result is not a thrown payload, and catch state is not a
     // post-call assignment. Query the actual continuation argument, keeping

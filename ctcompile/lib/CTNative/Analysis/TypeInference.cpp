@@ -721,14 +721,21 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         const auto stores = globalStores_.find(load.getName());
         if (!globalsAreDynamic_ && stores != globalStores_.end() && !stores->second.empty()) {
             globalKnown = true;
-            // A GLOBAL IS UNDEFINED UNTIL ITS FIRST STORE RUNS, and nothing here
-            // proves a load comes after one - `function f() { return g; }` can
-            // be called before `var g = 5` executes. So the join starts from
-            // the absent case: a numeric global is `opt<num>`, number OR
-            // undefined, and the lowering represents that as a double whose
-            // undefined is NaN - right in every arithmetic and relational
-            // context, refused where the difference is observable.
+            // A global can be read before its first store. Only the complete
+            // live owner proof can remove that implicit absence for an exact
+            // scalar load. Check its edge against this module's store index;
+            // the host category supplies no native type or value.
             global = absentType(c);
+            const auto * scalar =
+                ownedRoots_ && ownedRoots_->proved() ? ownedRoots_->scalarRead(load) : nullptr;
+            if (scalar && scalar->read == load && stores->second.size() == 1) {
+                auto initialization = scalar->initialization;
+                if (initialization && initialization.getName() == load.getName() &&
+                    initialization.getValue() == scalar->value &&
+                    stores->second.front() == scalar->value) {
+                    global = {};
+                }
+            }
             for (mlir::Value stored : stores->second) {
                 const TypeLattice * lattice =
                     getLatticeElementFor(getProgramPointAfter(op), stored);
@@ -738,6 +745,10 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                 if (lattice->getValue().isUninitialized()) { continue; }
                 global = meet(global, lattice->getValue().getType());
             }
+            // A proved initialized load may precede its producer in solver
+            // order. Keep it pending until that subscription produces a type;
+            // boxed here would permanently absorb the eventual native type.
+            if (global == nullptr) { return mlir::success(); }
         }
     }
 
