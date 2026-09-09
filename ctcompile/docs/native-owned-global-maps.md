@@ -18,10 +18,17 @@ Historical fixtures remain intact; exact-delete expectations now assert precise
 Undefined/Number results. Both affected CTests pass in **91.56 seconds** after
 repairing the initial guarded-payload regression. Native budget completions are
 **4160/4866**, with **32/30 cutoffs**. All twelve final code/test hashes match HEAD
-and the frozen input; full repository results remain pending.
+and the frozen input. The initial full build passes 250 steps warning-free;
+CTest is **511/517 in 1339.11 seconds**, with 371/372 compiler tests passing.
+The same five browser failures remain. Lit is **164/165**: after 193 positive
+programs/lifetime paths, the old `seeded_deleted` check wrongly expects an
+unowned source. Its owner now completes while the nullable Number Map-key
+carrier still refuses. A 155-case census found eleven refined carrier refusals
+and one existing six-function source newly admitted. Source-preserving test
+classification corrections and the full lit rerun are pending.
 
-The integrated driver contains **193 programs and 27 lifetime families**;
-its complete run is pending. Next is captured `Map.clear()` admission, followed
+The integrated driver contains **193 programs and 27 lifetime families** at
+this first full run; a complete driver pass has not yet been measured. Next is captured `Map.clear()` admission, followed
 by arbitrary-key absence after clear. Exact Data/full Bootstrap and direct
 browser API integration remain unfinished. See [HANDOFF.md](HANDOFF.md).
 

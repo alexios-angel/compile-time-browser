@@ -1695,14 +1695,56 @@ After correcting unrelated new Map-query test const wrappers, the focused
 pass**. The array executable takes **0.23 seconds**, including the new BigInt
 rows, and the fixture oracle takes **0.19 seconds**. The surrounding focused
 run finishes **19/20 in 96.87 seconds**; its sole failure is the separate
-`ctcompile_host_contract_seeded_maps` test. That repair and the full generated
-gate remain pending at this checkpoint; the escape gate itself passes.
+`ctcompile_host_contract_seeded_maps` test. The corrected affected-test rerun
+passes **2/2 in 91.56 seconds** after retaining when-present Map payload evidence
+across exact deletions and updating precise Undefined/fallback assertions with
+the original source literals intact. All 20 focused tests therefore have passing
+results across those two runs.
 The formatter using **22.1.8 passes all 745 files**; changed-path whitespace
 checks pass. All five code/test paths remain byte-identical to the pre-gate
 frozen hashes. These measurements come from
 `/tmp/ctcompile-absence-recovery-{build2.log,focused.log,format22.log}` and
-`/tmp/ctcompile-escape-bigint-recovery-frozen.json`. Code/tests remain frozen;
-the parent owns the remaining gates and commits.
+`/tmp/ctcompile-escape-bigint-recovery-frozen.json`.
+
+The BigInt increment is committed as **`ca219c28`**. The first full generated
+devbox build completes **250 steps with zero warnings**. CTest finishes
+**511/517 in 1339.11 seconds**: **371/372 compiler** and **140/145 browser**
+tests pass. Lit passes **164/165 in 672.49 seconds** (CTest **672.69 seconds**).
+Its sole failing case is the published Map driver: the historical `seeded_deleted`
+control still expects absent ownership, while exact deletion now proves an
+Undefined result and complete ownership. Native admission remains **0/5** at
+the separate optional numeric Map-key carrier boundary. The five browser
+failures remain `selectors`, `frames`, `element_attrs`, `vm_async` and
+`early_errors`. This first full run is **not a complete compiler pass**.
+
+All eight escape CTests pass again in that full run. BigInt repeats **52 rows,
+30 live states, 2,280 retention cutoffs** and the **64-work** snapshot; the
+five primitive comparison and seven dynamic binary families retain **84/34/3,527**
+and **84/49/4,127** respectively. The four escape oracles again report **zero
+soundness violations**. Fixture precision stays **53/81**, zero partial/pending,
+with exact **16 sites/32 instances/26 retained** in the BigInt family and every
+historical source-family count unchanged. Bootstrap/p5/Phaser remain **0/64,
+0/16, 0/20**, including p5's existing one partial observation. Native corpus
+counts remain **19/574, 39/4754, 45/7725** in both modes; exact Data remains
+**0/7 browser/CommonJS and 0/8 AMD**. These are separate from escape coverage.
+
+All **five escape code/test hashes** independently match the original frozen
+input, committed HEAD and full-gate devbox source. The parent's complete
+snapshot comparison also reports all **twelve code/test paths** matching its
+frozen devbox input. Both actual generated absence/lifetime C++ artifacts have
+no Script/VM context/value or AOT symbols; the method retains its allocation,
+numeric field write, Map set/delete/get and live strict comparison. In the saved
+case the later reseed remains after the actual read, preserving the saved value.
+
+An independent survey of historical driver refusals identifies eleven controls
+that now have complete ownership but still refuse unsupported native carriers,
+plus one former refusal that now admits **6/6**. Test classifications are being
+corrected without changing their JavaScript or compiler production. The complete
+corrected lit rerun remains **pending**; no all-compiler-pass result is claimed
+here. Evidence:
+`/tmp/ctcompile-absence-recovery-{full.log,full-detail.log,evidence.json,remote-hashes.log}`,
+`-final-absence.cpp` and `-final-lifetime.cpp`. Code/tests for the BigInt slice
+remain frozen; the parent owns remaining validation and commits.
 
 Remaining boundaries include mixed/computed BigInt conversions and arithmetic,
 other primitive conversions, loops, callee summaries and native lifetime/effect

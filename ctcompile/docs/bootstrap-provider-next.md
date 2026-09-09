@@ -7,8 +7,11 @@
 families. The original seven-call fresh Undefined source reaches **5/5 native**,
 trace=1; historical seven/nine-call post-delete identity sources reach **5/5**,
 trace=0. The source hashes below are unchanged. Both affected CTests pass after
-preserving when-present payloads through deletion. Full repository results and
-the integrated 193-program/27-lifetime run are pending.
+preserving when-present payloads through deletion. The full warning-free
+250-step build completes at **511/517 CTests**: the same five browser failures
+and one old Map refusal classification. Lit passes **164/165**; corrections for
+eleven refined type refusals and one newly admitted existing program are pending,
+with every original source preserved.
 
 The next isolated boundary is **captured `Map.clear()`**. A saved-object identity
 read across clear separates method admission from result typing; a fresh read
@@ -20,10 +23,38 @@ behavior. Validate every future invocation, live spelling/receiver/arity and
 source effects before admitting clear. Whole-Map absence must account for later
 writes, possible key aliases, saved values and surviving branch joins.
 
-A source-preserving 29-case runner is queued for current Node/VM/native
-measurement: `/tmp/ctcompile-map-absence-next.py`. Entry numeric addition,
-String/object carriers, exact Data/full Bootstrap and direct browser APIs remain
-separate boundaries. No full-bundle coverage gain is claimed.
+All **29 measured continuation sources** agree across Node/the interpreter and
+both admission modes: five controls reach 5/5, while 24 remain unowned 0/5 with
+prepared calls intact. The 22 clear sources include saved identity/fields,
+repeated clearing, unseen keys, aliases, later writes and surviving branches.
+The original saved-identity case is **five functions, seven calls, trace=1**:
+
+```js
+var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        set(key) { const item = {value: 1}; state.set(key, item); const saved = state.get(key); state.clear(); return saved === item ? 1 : 0; }
+    };
+});
+host.slot.size(); var trace = host.slot.set('x');
+```
+
+Logical source SHA-256, including its final newline:
+`5aefbb04e557a199248b20305a10953764ee1c14b977eff5b7ce2c4a55fdb024`.
+Replacing only `state.clear();` with `state.delete(key);` preserves seven calls
+and trace=1 and reaches **5/5 native**. The fresh Undefined read variant also
+has seven calls/trace=1 but needs the separate whole-Map absence proof; its hash
+is `a041e8248d43dac780775c97916939a7e9d88034ce153a24d4576ebbc2f25a16`.
+
+The original entry-addition control remains unowned, **eight calls/trace=3**;
+the String-field control remains unowned, **seven calls/trace=2**. Their exact
+one-call/numeric-field repairs stay admitted. Full native corpus coverage stays
+Bootstrap **19/574**, p5 **39/4754**, Phaser **45/7725** in both modes, zero pruned;
+exact Data remains **0/7 browser/CommonJS, 0/8 AMD**. Direct browser API integration
+also remains unfinished. Evidence: `/tmp/ctcompile-absence-recovery-next.json`
+and `/tmp/ctcompile-map-absence-next.py`.
 
 ## Previous continuation: object-valued Map absence, 2026-09-08
 
