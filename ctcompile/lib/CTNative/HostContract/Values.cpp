@@ -738,10 +738,11 @@ std::optional<HostScalarGlobalRead> analyzer::scalarGlobalRead(ctjs::LoadGlobalO
     HostScalarGlobalRead result{store, read, store.getValue(), {}, {}};
     result.alternatives =
         entryCategories(result.value, capturedResults, store, 0, &result.dependencies);
-    if (result.alternatives.tag() != mlir::TypeID::get<ctjs::NumberAttr>() ||
-        result.dependencies.empty()) {
-        return std::nullopt;
-    }
+    if (result.alternatives.tag() != mlir::TypeID::get<ctjs::NumberAttr>()) { return std::nullopt; }
+    // Literal-backed Number expressions have no published-call dependency.
+    // Their original operands, sole stores and source scope/order still pass
+    // the same bounded category walk, and publication still requires the
+    // complete environment proof. An empty list supplies no value or type.
     // The worklist only supplies categories. Require the actual completed
     // calls in the final environment census too, with entry order and scope.
     for (mlir::Value dependency : result.dependencies) {

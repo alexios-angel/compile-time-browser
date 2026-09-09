@@ -81,8 +81,8 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
                       hostScalar->dependencies == scalar->dependencies,
                   "owner scalar edges retain the complete host proof without inventing evidence");
             const auto & dependencies = expected[position++];
-            check(!dependencies.empty() && scalar->dependencies.size() == dependencies.size(),
-                  "constant-only globals cannot acquire published-result evidence");
+            check(scalar->dependencies.size() == dependencies.size(),
+                  "constant origins neither require nor fabricate published-result dependencies");
             if (scalar->dependencies.size() != dependencies.size()) { return; }
             for (unsigned index = 0; index < dependencies.size(); ++index) {
                 const auto & call = calls[dependencies[index]];
@@ -157,8 +157,10 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
                      "ctjs.binary add %savedSum, %savedLater");
     variant(later, true, {{0, 1}, {2}},
             "independent saved globals preserve their separate source producing calls");
-    variant(replaced(source, store, "    ctjs.store_global \"savedSum\", %actual\n"), true, {},
-            "an observed Number literal has no published-result scalar-read authority");
+    const std::string constantStore = "    ctjs.store_global \"savedSum\", %actual\n";
+    const auto constant = replaced(source, store, constantStore);
+    variant(constant, true, {{}},
+            "a Number literal has exact initialization evidence without a published result");
     variant(replaced(source, store, "    ctjs.store_global \"savedSum\", %u\n"), false, {},
             "Undefined cannot borrow the observation's previously proved Number category");
     for (const std::string & marker : {store, read, std::string("    %combined =")}) {
@@ -175,106 +177,239 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
                      "    %unrelated = ctjs.load_global \"unwritten\"\n"
                      "    %combined ="),
             false, {}, "an unproved extra global withholds every completed scalar edge");
-    check(rows == 16, "all independently saved scalar source controls ran");
-
-    auto module = mlir::parseSourceString<mlir::ModuleOp>(source, &context);
-    check(static_cast<bool>(module), "saved scalar live-mutation fixture parses");
-    if (!module) { return; }
-    auto contract = requested(*module);
-    HostContractAnalysis complete(*module, contract);
-    check(complete.proved() && complete.steps() < 18000,
-          "complete saved scalar host evidence is bounded");
-    if (!complete.proved() || complete.steps() >= 18000) { return; }
-    const unsigned completion = complete.steps();
-    for (unsigned budget = 0; budget < completion; ++budget) {
-        HostContractAnalysis limited(*module, contract, budget);
-        check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
-                  scalarReadsEmpty(*module, limited),
-              "every incomplete host budget withholds every saved scalar edge");
+    variant(replaced(repeated, store, constantStore), true, {{}, {}},
+            "each constant-only load has its own empty-dependency initialization edge");
+    variant(replaced(alias, store, constantStore), true, {{}, {}},
+            "an ordered constant-only alias preserves the actual scalar origins");
+    variant(replaced(source, sum, "ctjs.binary add %actual, %actual"), true, {{}},
+            "constant-only Number arithmetic keeps empty published-call dependencies");
+    variant(replaced(constant, read,
+                     read + "    %constantSum = ctjs.binary add %savedSum, %actual\n"
+                            "    ctjs.store_global \"constantAlias\", %constantSum\n"
+                            "    %constantAlias = ctjs.load_global \"constantAlias\"\n"),
+            true, {{}, {}}, "constant aliases can contribute to another proved Number expression");
+    variant(replaced(constant, constantStore + read, read + constantStore), false, {},
+            "a constant-only read before initialization cannot borrow its future literal");
+    for (const std::string & marker : {constantStore, read, std::string("    %combined =")}) {
+        variant(replaced(constant, marker, constantStore + marker), false, {},
+                "constant Number authority still requires one write across the whole program");
     }
-    HostContractAnalysis exact(*module, contract, completion);
-    OwnedGlobalRoots original(*module, contract);
-    check(exact.proved() && exact.steps() == completion && original.proved(),
-          "the exact host completion budget publishes the complete scalar proof");
-    if (!exact.proved() || !original.proved()) { return; }
-    evidence(*module, exact, original, {{0, 1}});
+    variant(replaced(constant, read, "    %savedSum = ctjs.load_global \"unwritten\"\n"), false, {},
+            "a constant cannot initialize a different binding by spelling alone");
+    variant(
+        replaced(constant, constantStore, "    %unrelated = ctjs.call %this(%u)\n" + constantStore),
+        false, {}, "an unrelated unknown call invalidates the complete constant environment");
+    for (const char * initializer : {"ctjs.constant #ctjs.bigint<\"7\">", "ctjs.create_object"}) {
+        variant(replaced(constant, constantStore,
+                         std::string("    %nonNumber = ") + initializer +
+                             "\n    ctjs.store_global \"savedSum\", %nonNumber\n"),
+                false, {}, "BigInt and Object initializers cannot acquire Number load authority");
+    }
+    check(rows == 28, "all independently saved and constant-only scalar source controls ran");
+
+    for (const bool constantOnly : {false, true}) {
+        const Dependencies expected = constantOnly ? Dependencies{{}} : Dependencies{{0, 1}};
+        auto module =
+            mlir::parseSourceString<mlir::ModuleOp>(constantOnly ? constant : source, &context);
+        check(static_cast<bool>(module), "saved scalar live-mutation fixture parses");
+        if (!module) { return; }
+        auto contract = requested(*module);
+        HostContractAnalysis complete(*module, contract);
+        check(complete.proved() && complete.steps() < 18000,
+              "complete saved scalar host evidence is bounded");
+        if (!complete.proved() || complete.steps() >= 18000) { return; }
+        const unsigned completion = complete.steps();
+        for (unsigned budget = 0; budget < completion; ++budget) {
+            HostContractAnalysis limited(*module, contract, budget);
+            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                      scalarReadsEmpty(*module, limited),
+                  "every incomplete host budget withholds every saved scalar edge");
+        }
+        HostContractAnalysis exact(*module, contract, completion);
+        OwnedGlobalRoots original(*module, contract);
+        check(exact.proved() && exact.steps() == completion && original.proved(),
+              "the exact host completion budget publishes the complete scalar proof");
+        if (!exact.proved() || !original.proved()) { return; }
+        evidence(*module, exact, original, expected);
+        const unsigned ownerCompletion = original.steps();
+        for (const unsigned budget : {0u, ownerCompletion / 2, ownerCompletion - 1}) {
+            OwnedGlobalRoots limited(*module, contract, budget);
+            check(!limited.proved() && limited.exhausted() && limited.steps() <= budget &&
+                      scalarReadsEmpty(*module, limited) && empty(*module, limited),
+                  "incomplete ownership never exposes constant or published-result scalar edges");
+        }
+        OwnedGlobalRoots exactOwner(*module, contract, ownerCompletion);
+        check(exactOwner.proved() && exactOwner.steps() == ownerCompletion,
+              "exact owner work atomically publishes the same initialized scalar edges");
+        mlir::Builder attributes(&context);
+        module->walk([&](mlir::Operation * operation) {
+            operation->setAttr("ctnative.host_proved", attributes.getBoolAttr(true));
+            operation->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
+            operation->setAttr("ctnative.scalar_global", attributes.getStringAttr("number"));
+            operation->setAttr("ctnative.map_read_type", attributes.getStringAttr("number"));
+            operation->setAttr("ctnative.inferred_result", attributes.getStringAttr("number"));
+        });
+        contract = requested(*module);
+        HostContractAnalysis forgedHost(*module, contract);
+        OwnedGlobalRoots forgedOwner(*module, contract);
+        check(forgedHost.proved() && forgedOwner.proved(),
+              "forged reports do not alter independently proved scalar source edges");
+        if (!forgedHost.proved() || !forgedOwner.proved()) { return; }
+        evidence(*module, forgedHost, forgedOwner, expected);
+        const auto scalar = forgedOwner.scalarReads().front();
+        auto initialization = scalar.initialization;
+        auto load = scalar.read;
+        auto entry = module->lookupSymbol<ctjs::FuncOp>("script$0");
+        const auto calls = forgedOwner.roots().front().methodTable->calls;
+        unsigned mutations = 0;
+        const auto refusal = [&]() {
+            HostContractAnalysis staleHost(*module, contract);
+            OwnedGlobalRoots staleOwner(*module, contract);
+            check(!staleHost.proved() && !staleOwner.proved() &&
+                      staleHost.reason().contains("fingerprint") &&
+                      staleOwner.reason().contains("fingerprint") &&
+                      scalarReadsEmpty(*module, staleHost) && scalarReadsEmpty(*module, staleOwner),
+                  "stale fingerprints expose no previously saved scalar evidence");
+            const auto freshContract = requested(*module);
+            HostContractAnalysis freshHost(*module, freshContract);
+            OwnedGlobalRoots freshOwner(*module, freshContract);
+            check(
+                !freshHost.proved() && !freshOwner.proved() && !freshHost.exhausted() &&
+                    !freshOwner.exhausted() && scalarReadsEmpty(*module, freshHost) &&
+                    scalarReadsEmpty(*module, freshOwner) && empty(*module, freshOwner),
+                "fresh fingerprints and Number reports cannot repair changed scalar source edges");
+            ++mutations;
+        };
+        const auto restored = [&]() {
+            HostContractAnalysis host(*module, contract);
+            OwnedGlobalRoots owner(*module, contract);
+            check(host.proved() && owner.proved(),
+                  "restoring source edges restores the scalar proof");
+            if (host.proved() && owner.proved()) { evidence(*module, host, owner, expected); }
+        };
+        const auto operand = [&](mlir::Operation * operation, unsigned index, mlir::Value value) {
+            const auto old = operation->getOperand(index);
+            operation->setOperand(index, value);
+            refusal();
+            operation->setOperand(index, old);
+            restored();
+        };
+        operand(initialization, 0, load.getResult());
+        operand(initialization, 0, calls[2].call->getResult(0));
+        operand(initialization, 0, entry.getBody().front().getArgument(0));
+        operand(calls[0].call, prepared ? 4u : 2u, load.getResult());
+        operand(calls[2].call, prepared ? 0u : 1u, entry.getBody().front().getArgument(0));
+        auto lastRead = calls[3].read;
+        operand(calls[2].call, prepared ? 2u : 0u, lastRead.getResult());
+        initialization->moveAfter(load);
+        refusal();
+        initialization->moveBefore(load);
+        restored();
+        auto * previous = load->getPrevNode();
+        load->moveBefore(calls[0].call);
+        refusal();
+        load->moveAfter(previous);
+        restored();
+        load->setAttr("name", attributes.getStringAttr("trace"));
+        refusal();
+        load->setAttr("name", attributes.getStringAttr("savedSum"));
+        restored();
+        auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
+        auto getter = module->lookupSymbol<ctjs::FuncOp>("get$3");
+        operand(setter.getBody().front().getTerminator(), 0,
+                setter.getBody().front().getArgument(0));
+        operand(getter.getBody().front().getTerminator(), 0,
+                getter.getBody().front().getArgument(0));
+        if (constantOnly) {
+            // Only query the source proof after malformed SSA edits. The type
+            // solver and verifier are entitled to assume lexical SSA validity.
+            auto value = initialization.getValue().getDefiningOp<ctjs::ConstantOp>();
+            check(static_cast<bool>(value),
+                  "the constant scope fixture retains its original literal");
+            if (value) {
+                mlir::OpBuilder builder(getter.getBody().front().getTerminator());
+                auto * foreign = builder.clone(*value);
+                initialization->setOperand(0, foreign->getResult(0));
+                refusal();
+                initialization->setOperand(0, value.getResult());
+                foreign->erase();
+                restored();
+                builder.setInsertionPointAfter(initialization);
+                auto * later = builder.clone(*value);
+                initialization->setOperand(0, later->getResult(0));
+                refusal();
+                initialization->setOperand(0, value.getResult());
+                later->erase();
+                restored();
+            }
+        }
+        std::printf("scalar reads %s %s: %u rows, %u live edits, all %u host budgets checked\n",
+                    prepared ? "prepared" : "source", constantOnly ? "constant" : "published", rows,
+                    mutations, completion);
+    }
+
+    const auto scoped = replaced(constant, constantStore,
+                                 "    %condition = ctjs.truthy %actual\n"
+                                 "    scf.if %condition {\n"
+                                 "      %thenNumber = ctjs.constant #ctjs.number<0> {test_scope}\n"
+                                 "      scf.yield\n"
+                                 "    } else {\n"
+                                 "      %elseNumber = ctjs.constant #ctjs.number<0> {test_scope}\n"
+                                 "      scf.yield\n"
+                                 "    }\n" +
+                                     constantStore);
+    auto module = mlir::parseSourceString<mlir::ModuleOp>(scoped, &context);
+    check(static_cast<bool>(module), "constant-only inaccessible-arm fixture parses");
+    if (!module) { return; }
     mlir::Builder attributes(&context);
     module->walk([&](mlir::Operation * operation) {
+        operation->setAttr("ctnative.scalar_global", attributes.getStringAttr("number"));
         operation->setAttr("ctnative.host_proved", attributes.getBoolAttr(true));
         operation->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
-        operation->setAttr("ctnative.scalar_global", attributes.getStringAttr("number"));
-        operation->setAttr("ctnative.map_read_type", attributes.getStringAttr("number"));
-        operation->setAttr("ctnative.inferred_result", attributes.getStringAttr("number"));
     });
-    contract = requested(*module);
-    HostContractAnalysis forgedHost(*module, contract);
-    OwnedGlobalRoots forgedOwner(*module, contract);
-    check(forgedHost.proved() && forgedOwner.proved(),
-          "forged reports do not alter independently proved scalar source edges");
-    if (!forgedHost.proved() || !forgedOwner.proved()) { return; }
-    evidence(*module, forgedHost, forgedOwner, {{0, 1}});
-    const auto scalar = forgedOwner.scalarReads().front();
-    auto initialization = scalar.initialization;
-    auto load = scalar.read;
-    auto entry = module->lookupSymbol<ctjs::FuncOp>("script$0");
-    const auto calls = forgedOwner.roots().front().methodTable->calls;
-    unsigned mutations = 0;
-    const auto refusal = [&]() {
-        HostContractAnalysis staleHost(*module, contract);
-        OwnedGlobalRoots staleOwner(*module, contract);
-        check(!staleHost.proved() && !staleOwner.proved() &&
-                  staleHost.reason().contains("fingerprint") &&
-                  staleOwner.reason().contains("fingerprint") &&
-                  scalarReadsEmpty(*module, staleHost) && scalarReadsEmpty(*module, staleOwner),
-              "stale fingerprints expose no previously saved scalar evidence");
-        const auto freshContract = requested(*module);
-        HostContractAnalysis freshHost(*module, freshContract);
-        OwnedGlobalRoots freshOwner(*module, freshContract);
-        check(!freshHost.proved() && !freshOwner.proved() && !freshHost.exhausted() &&
-                  !freshOwner.exhausted() && scalarReadsEmpty(*module, freshHost) &&
-                  scalarReadsEmpty(*module, freshOwner) && empty(*module, freshOwner),
-              "fresh fingerprints and Number reports cannot repair changed scalar source edges");
-        ++mutations;
-    };
-    const auto restored = [&]() {
+    const auto contract = requested(*module);
+    const auto valid = [&]() {
         HostContractAnalysis host(*module, contract);
         OwnedGlobalRoots owner(*module, contract);
-        check(host.proved() && owner.proved(), "restoring source edges restores the scalar proof");
-        if (host.proved() && owner.proved()) { evidence(*module, host, owner, {{0, 1}}); }
+        check(host.proved() && host.scalarReads().size() == 1 && !owner.proved() &&
+                  owner.reason() ==
+                      "owned global method table requires unconditional straight-line operations" &&
+                  scalarReadsEmpty(*module, owner),
+              "valid constant host scope does not erase the separate straight-line owner guard");
+        if (host.scalarReads().size() == 1) {
+            check(host.scalarReads().front().dependencies.empty(),
+                  "constant host scope proof has no published-call dependency");
+        }
     };
-    const auto operand = [&](mlir::Operation * operation, unsigned index, mlir::Value value) {
-        const auto old = operation->getOperand(index);
-        operation->setOperand(index, value);
-        refusal();
-        operation->setOperand(index, old);
-        restored();
-    };
-    operand(initialization, 0, load.getResult());
-    operand(initialization, 0, calls[2].call->getResult(0));
-    operand(initialization, 0, entry.getBody().front().getArgument(0));
-    operand(calls[0].call, prepared ? 4u : 2u, load.getResult());
-    operand(calls[2].call, prepared ? 0u : 1u, entry.getBody().front().getArgument(0));
-    auto lastRead = calls[3].read;
-    operand(calls[2].call, prepared ? 2u : 0u, lastRead.getResult());
-    initialization->moveAfter(load);
-    refusal();
-    initialization->moveBefore(load);
-    restored();
-    auto * previous = load->getPrevNode();
-    load->moveBefore(calls[0].call);
-    refusal();
-    load->moveAfter(previous);
-    restored();
-    load->setAttr("name", attributes.getStringAttr("trace"));
-    refusal();
-    load->setAttr("name", attributes.getStringAttr("savedSum"));
-    restored();
-    auto setter = module->lookupSymbol<ctjs::FuncOp>("put$4");
-    auto getter = module->lookupSymbol<ctjs::FuncOp>("get$3");
-    operand(setter.getBody().front().getTerminator(), 0, setter.getBody().front().getArgument(0));
-    operand(getter.getBody().front().getTerminator(), 0, getter.getBody().front().getArgument(0));
-    std::printf("scalar reads %s: %u rows, %u live edits, all %u host budgets checked\n",
-                prepared ? "prepared" : "source", rows, mutations, completion);
+    valid();
+    ctjs::StoreGlobalOp initialization;
+    std::vector<mlir::Value> inaccessible;
+    module->walk([&](mlir::Operation * operation) {
+        if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(operation);
+            store && store.getName() == "savedSum") {
+            initialization = store;
+        }
+        if (operation->hasAttr("test_scope")) { inaccessible.push_back(operation->getResult(0)); }
+    });
+    check(initialization && inaccessible.size() == 2,
+          "both inaccessible Number arms and the exact initializer survive source parsing");
+    if (!initialization || inaccessible.size() != 2) { return; }
+    const auto original = initialization.getValue();
+    for (mlir::Value value : inaccessible) {
+        initialization->setOperand(0, value);
+        HostContractAnalysis stale(*module, contract);
+        HostContractAnalysis fresh(*module, requested(*module));
+        OwnedGlobalRoots owner(*module, requested(*module));
+        check(!stale.proved() && stale.reason().contains("fingerprint") &&
+                  scalarReadsEmpty(*module, stale) && !fresh.proved() && !fresh.exhausted() &&
+                  scalarReadsEmpty(*module, fresh) && !owner.proved() &&
+                  scalarReadsEmpty(*module, owner),
+              "an inaccessible Number arm cannot initialize an outer constant scalar load");
+        initialization->setOperand(0, original);
+        valid();
+    }
+    std::printf("scalar reads %s: two inaccessible constant Number arms checked\n",
+                prepared ? "prepared" : "source");
 }
 
 void checkEntryNumericOwner(mlir::MLIRContext & context, const std::string & shared) {

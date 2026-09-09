@@ -342,11 +342,12 @@ void OwnedGlobalRoots::analyzeMethodTable(mlir::ModuleOp module, const HostContr
         auto store = edge.initialization;
         if (read->getParentOp() != entry || store->getParentOp() != entry ||
             read.getName() != store.getName() || store.getValue() != edge.value ||
-            edge.alternatives.tag() != mlir::TypeID::get<ctjs::NumberAttr>() ||
-            edge.dependencies.empty()) {
+            edge.alternatives.tag() != mlir::TypeID::get<ctjs::NumberAttr>()) {
             reject("saved scalar read disagrees with the complete host proof");
             return;
         }
+        // Constant-only Number origins need no method result. Any results
+        // they do use must belong to this complete live owning family.
         for (mlir::Value dependency : edge.dependencies) {
             if (!spend()) { return; }
             if (!methodCalls.contains(dependency.getDefiningOp())) {

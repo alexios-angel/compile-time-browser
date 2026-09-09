@@ -1443,7 +1443,7 @@ ctjs.func @scoped(%receiver: !ctjs.value, %new_target: !ctjs.value,
 
 // Exercise the dependency, rather than relying on a particular worklist order:
 // the literal arrives only after the alias first waits, then the actual saved
-// SSA lattice widens twice. Both widenings are sound overapproximations of the
+// SSA lattice widens three times. These are sound overapproximations of the
 // same immutable program. No host category supplies a native type here.
 class ScheduledScalarInference final : public TypeInference {
 public:
@@ -1472,8 +1472,13 @@ public:
             widen(NumType::get(op->getContext(), NumKind::F64));
         } else if (stage_ == 2 && type == NumType::get(op->getContext(), NumKind::F64)) {
             ++stage_;
+            widen(OptType::get(op->getContext(), type));
+        } else if (stage_ == 3 &&
+                   type == OptType::get(op->getContext(),
+                                        NumType::get(op->getContext(), NumKind::F64))) {
+            ++stage_;
             widen(BoxedType::get(op->getContext()));
-        } else if (stage_ == 3 && type && llvm::isa<BoxedType>(type)) {
+        } else if (stage_ == 4 && type && llvm::isa<BoxedType>(type)) {
             ++stage_;
         }
         return mlir::success();
@@ -1589,134 +1594,182 @@ void checkSavedScalarGlobalTypes(mlir::MLIRContext & context) {
         auto literal = replaced(program, store,
                                 std::string("    %entryLiteral = ctjs.constant ") + kFive + "\n" +
                                     "    ctjs.store_global \"saved\", %entryLiteral\n");
-        variant(literal, true, 0, "!ctnative.opt<!ctnative.num<i32>>",
-                "a constant-only observation has no published-result initialization authority");
-
-        auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
-        require(static_cast<bool>(module), "live-proof fixture parses");
-        if (!module) { continue; }
-        auto contract = requested(*module);
-        OwnedGlobalRoots complete(*module, contract);
-        require(complete.proved() && complete.scalarReads().size() == 2,
-                "the immutable fixture has complete independent initialization evidence");
-        if (!complete.proved() || complete.scalarReads().size() != 2) { continue; }
-        check(*module, "omitting the owner retains the ordinary global absence seed", optional);
-        const unsigned completion = complete.steps();
-        require(completion > 0, "owner proof has a nonzero complete-work bound");
-        for (const unsigned budget : {0u, completion / 2, completion - 1}) {
-            OwnedGlobalRoots limited(*module, contract, budget);
-            require(!limited.proved() && limited.exhausted() && limited.scalarReads().empty(),
-                    "an incomplete ownership proof supplies no partial initialization edges");
-            check(*module, "exhausted ownership retains implicit global absence", optional,
-                  &limited);
+        variant(literal, true, 2, "!ctnative.num<i32>",
+                "constant-only aliases join the literal's actual initialized type");
+        variant(replaced(literal, kFive, kOneAndAHalf), true, 2, "!ctnative.num<f64>",
+                "constant-only fractional aliases preserve their original f64 producer");
+        variant(replaced(literal, kFive, kNegativeZero), true, 2, "!ctnative.num<f64>",
+                "constant-only negative zero cannot become an i32 through its category");
+        const std::string literalStore = "    ctjs.store_global \"saved\", %entryLiteral\n";
+        variant(replaced(literal, literalStore,
+                         "    %sum = ctjs.binary add %entryLiteral, %entryLiteral\n"
+                         "    ctjs.store_global \"saved\", %sum\n"),
+                true, 2, "!ctnative.num<f64>",
+                "constant Number arithmetic keeps the ordinary double arithmetic type");
+        variant(replaced(literal, "    ctjs.store_global \"alias\", %saved\n",
+                         "    %sum = ctjs.binary add %saved, %entryLiteral\n"
+                         "    ctjs.store_global \"alias\", %sum\n"),
+                true, 2, "!ctnative.num<f64>",
+                "arithmetic after a constant alias retains the actual arithmetic lattice");
+        variant(replaced(literal, read, read + "    %savedAgain = ctjs.load_global \"saved\"\n"),
+                true, 3, "!ctnative.num<i32>",
+                "repeated constant reads each subscribe to the one original literal");
+        variant(replaced(literal, literalStore, literalStore + literalStore), true, 0,
+                "!ctnative.opt<!ctnative.num<i32>>",
+                "equal constant stores retain absence without a sole initialization edge");
+        variant(replaced(literal, literalStore + read, read + literalStore), false, 0,
+                "!ctnative.opt<!ctnative.num<i32>>",
+                "a constant read before its initialization retains implicit Undefined");
+        variant(replaced(literal, literalStore,
+                         "    %unrelated = ctjs.call %this(%u)\n" + literalStore),
+                false, 0, "!ctnative.opt<!ctnative.num<i32>>",
+                "an unrelated unknown call blocks constant initialization authority");
+        for (const char * name : {"globalThis", "window"}) {
+            variant(replaced(literal, literalStore,
+                             std::string("    %dynamic = ctjs.load_global \"") + name + "\"\n" +
+                                 literalStore),
+                    false, 0, "!ctnative.boxed",
+                    "dynamic global access keeps constant-only observations boxed");
         }
-        OwnedGlobalRoots exactBudget(*module, contract, completion);
-        require(exactBudget.proved() && exactBudget.steps() == completion,
-                "the exact completion budget supplies the complete proof");
-        check(*module, "the exact owner budget enables only the actual stored-value lattice", exact,
-              &exactBudget);
 
-        if (prepared) {
-            mlir::Operation * delayed = nullptr;
-            mlir::Operation * observed = nullptr;
-            module->walk([&](mlir::Operation * op) {
-                if (op->hasAttr("test_scalar_producer")) { delayed = op; }
-                if (op->hasAttr("check")) { observed = op; }
-            });
-            require(delayed && observed, "the scheduled producer and alias observation exist");
-            if (delayed && observed) {
-                mlir::DataFlowSolver solver;
-                solver.load<mlir::dataflow::DeadCodeAnalysis>();
-                solver.load<mlir::dataflow::SparseConstantPropagation>();
-                auto * inference = solver.load<ScheduledScalarInference>(
-                    &complete, delayed, complete.scalarReads().front().value, observed);
-                require(succeeded(solver.initializeAndRun(*module)),
-                        "the scheduled scalar producer converges");
-                require(inference->stages() == 4,
-                        "alias waits, receives i32, widens to f64, then becomes boxed");
+        for (const bool constantOnly : {false, true}) {
+            const char * actualType = constantOnly ? "!ctnative.num<i32>" : exact;
+            const char * absentType = constantOnly ? "!ctnative.opt<!ctnative.num<i32>>" : optional;
+            auto module =
+                mlir::parseSourceString<mlir::ModuleOp>(constantOnly ? literal : program, &context);
+            require(static_cast<bool>(module), "live-proof fixture parses");
+            if (!module) { continue; }
+            auto contract = requested(*module);
+            OwnedGlobalRoots complete(*module, contract);
+            require(complete.proved() && complete.scalarReads().size() == 2,
+                    "the immutable fixture has complete independent initialization evidence");
+            if (!complete.proved() || complete.scalarReads().size() != 2) { continue; }
+            check(*module, "omitting the owner retains the ordinary global absence seed",
+                  absentType);
+            const unsigned completion = complete.steps();
+            require(completion > 0, "owner proof has a nonzero complete-work bound");
+            for (const unsigned budget : {0u, completion / 2, completion - 1}) {
+                OwnedGlobalRoots limited(*module, contract, budget);
+                require(!limited.proved() && limited.exhausted() && limited.scalarReads().empty(),
+                        "an incomplete ownership proof supplies no partial initialization edges");
+                check(*module, "exhausted ownership retains implicit global absence", absentType,
+                      &limited);
             }
-        }
+            OwnedGlobalRoots exactBudget(*module, contract, completion);
+            require(exactBudget.proved() && exactBudget.steps() == completion,
+                    "the exact completion budget supplies the complete proof");
+            check(*module, "the exact owner budget enables only the actual stored-value lattice",
+                  actualType, &exactBudget);
 
-        // Rebuild the borrowed owner after every edit. An old fingerprint must
-        // refuse before exposing any edges; a new one must prove the live IR.
-        mlir::Builder attributes(&context);
-        module->walk([&](mlir::Operation * op) {
-            op->setAttr("ctnative.scalar_global", attributes.getStringAttr("number"));
-            op->setAttr("ctnative.inferred_result", attributes.getStringAttr("number"));
-            op->setAttr("ctnative.host_proved", attributes.getBoolAttr(true));
-            op->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
-        });
-        contract = requested(*module);
-        OwnedGlobalRoots reported(*module, contract);
-        require(reported.proved(), "report attributes leave valid live initialization provable");
-        check(*module, "reports do not change independently inferred scalar types", exact,
-              &reported);
-        auto initialization = complete.scalarReads().front().initialization;
-        auto savedRead = complete.scalarReads().front().read;
-        const auto checkChanged = [&](const char * expected, bool proves = false) {
-            OwnedGlobalRoots stale(*module, contract);
-            require(!stale.proved() && stale.reason().contains("fingerprint") &&
-                        stale.scalarReads().empty(),
-                    "a stale fingerprint withholds all scalar initialization edges");
-            check(*module, "a stale contract cannot drop implicit absence", optional, &stale);
-            const auto freshContract = requested(*module);
-            OwnedGlobalRoots fresh(*module, freshContract);
-            require(fresh.proved() == proves && !fresh.exhausted() && fresh.scalarReads().empty(),
-                    "fresh proof checks the actual edited source instead of Number reports");
-            check(*module, "the edited live source controls the scalar load", expected, &fresh);
-            mlir::OwningOpRef<mlir::ModuleOp> clone{llvm::cast<mlir::ModuleOp>(module->clone())};
-            OwnedGlobalRoots cloned(*clone, requested(*clone));
-            require(cloned.proved() == proves && cloned.scalarReads().empty(),
-                    "a fresh clone independently rechecks edited edges");
-            check(*clone, "fresh cloned source preserves the edited scalar type", expected,
-                  &cloned);
+            if (prepared || constantOnly) {
+                mlir::Operation * delayed = nullptr;
+                mlir::Operation * observed = nullptr;
+                module->walk([&](mlir::Operation * op) {
+                    if (!constantOnly && op->hasAttr("test_scalar_producer")) { delayed = op; }
+                    if (op->hasAttr("check")) { observed = op; }
+                });
+                if (constantOnly) {
+                    delayed = complete.scalarReads().front().value.getDefiningOp();
+                }
+                require(delayed && observed, "the scheduled producer and alias observation exist");
+                if (delayed && observed) {
+                    mlir::DataFlowSolver solver;
+                    solver.load<mlir::dataflow::DeadCodeAnalysis>();
+                    solver.load<mlir::dataflow::SparseConstantPropagation>();
+                    auto * inference = solver.load<ScheduledScalarInference>(
+                        &complete, delayed, complete.scalarReads().front().value, observed);
+                    require(succeeded(solver.initializeAndRun(*module)),
+                            "the scheduled scalar producer converges");
+                    require(inference->stages() == 5, "alias waits, receives i32, widens to f64 "
+                                                      "and optional, then becomes boxed");
+                }
+            }
+
+            // Rebuild the borrowed owner after every edit. An old fingerprint must
+            // refuse before exposing any edges; a new one must prove the live IR.
+            mlir::Builder attributes(&context);
+            module->walk([&](mlir::Operation * op) {
+                op->setAttr("ctnative.scalar_global", attributes.getStringAttr("number"));
+                op->setAttr("ctnative.inferred_result", attributes.getStringAttr("number"));
+                op->setAttr("ctnative.host_proved", attributes.getBoolAttr(true));
+                op->setAttr("ctnative.host_owner_proved", attributes.getBoolAttr(true));
+            });
+            contract = requested(*module);
+            OwnedGlobalRoots reported(*module, contract);
+            require(reported.proved(),
+                    "report attributes leave valid live initialization provable");
+            check(*module, "reports do not change independently inferred scalar types", actualType,
+                  &reported);
+            auto initialization = complete.scalarReads().front().initialization;
+            auto savedRead = complete.scalarReads().front().read;
+            const auto checkChanged = [&](const char * expected, bool proves = false) {
+                OwnedGlobalRoots stale(*module, contract);
+                require(!stale.proved() && stale.reason().contains("fingerprint") &&
+                            stale.scalarReads().empty(),
+                        "a stale fingerprint withholds all scalar initialization edges");
+                check(*module, "a stale contract cannot drop implicit absence", absentType, &stale);
+                const auto freshContract = requested(*module);
+                OwnedGlobalRoots fresh(*module, freshContract);
+                require(fresh.proved() == proves && !fresh.exhausted() &&
+                            fresh.scalarReads().empty(),
+                        "fresh proof checks the actual edited source instead of Number reports");
+                check(*module, "the edited live source controls the scalar load", expected, &fresh);
+                mlir::OwningOpRef<mlir::ModuleOp> clone{
+                    llvm::cast<mlir::ModuleOp>(module->clone())};
+                OwnedGlobalRoots cloned(*clone, requested(*clone));
+                require(cloned.proved() == proves && cloned.scalarReads().empty(),
+                        "a fresh clone independently rechecks edited edges");
+                check(*clone, "fresh cloned source preserves the edited scalar type", expected,
+                      &cloned);
+                ++states;
+            };
+            const auto restored = [&]() {
+                OwnedGlobalRoots owner(*module, contract);
+                require(owner.proved(),
+                        "restored source independently regains initialization evidence");
+                check(*module, "restored initialization joins its unchanged real SSA type",
+                      actualType, &owner);
+            };
+            initialization->moveAfter(savedRead);
+            checkChanged(absentType);
+            initialization->moveBefore(savedRead);
+            restored();
+            mlir::OpBuilder duplicateBuilder(initialization);
+            duplicateBuilder.setInsertionPointAfter(initialization);
+            auto * duplicate = duplicateBuilder.clone(*initialization);
+            checkChanged(absentType, true);
+            duplicate->erase();
+            restored();
+            savedRead->setAttr("name", attributes.getStringAttr("trace"));
+            // This creates an uninitialized cycle in the ordinary global lattice;
+            // query the finite proof alone rather than interpreting that cycle as
+            // a fresh Number fact or asking the solver to guess an initializer.
+            OwnedGlobalRoots wrongName(*module, requested(*module));
+            require(!wrongName.proved() && wrongName.scalarReads().empty(),
+                    "a changed global name cannot consume the old edge");
             ++states;
-        };
-        const auto restored = [&]() {
-            OwnedGlobalRoots owner(*module, contract);
-            require(owner.proved(),
-                    "restored source independently regains initialization evidence");
-            check(*module, "restored initialization joins its unchanged real SSA type", exact,
-                  &owner);
-        };
-        initialization->moveAfter(savedRead);
-        checkChanged(optional);
-        initialization->moveBefore(savedRead);
-        restored();
-        mlir::OpBuilder duplicateBuilder(initialization);
-        duplicateBuilder.setInsertionPointAfter(initialization);
-        auto * duplicate = duplicateBuilder.clone(*initialization);
-        checkChanged(optional, true);
-        duplicate->erase();
-        restored();
-        savedRead->setAttr("name", attributes.getStringAttr("trace"));
-        // This creates an uninitialized cycle in the ordinary global lattice;
-        // query the finite proof alone rather than interpreting that cycle as
-        // a fresh Number fact or asking the solver to guess an initializer.
-        OwnedGlobalRoots wrongName(*module, requested(*module));
-        require(!wrongName.proved() && wrongName.scalarReads().empty(),
-                "a changed global name cannot consume the old edge");
-        ++states;
-        savedRead->setAttr("name", attributes.getStringAttr("saved"));
-        restored();
-        auto getter = module->lookupSymbol<ctjs::FuncOp>("get$3");
-        auto returned = llvm::cast<ctjs::ReturnOp>(getter.getBody().front().getTerminator());
-        const auto originalReturn = returned.getValue();
-        returned->setOperand(0, getter.getBody().front().getArgument(0));
-        // Both the fresh and stale owner refuse, but the actual producer now
-        // becomes boxed too. The stale proof's ordinary join must also widen.
-        OwnedGlobalRoots changedReturn(*module, requested(*module));
-        require(!changedReturn.proved() && changedReturn.scalarReads().empty(),
-                "an unknown return cannot inherit the former Number category");
-        check(*module, "a changed producer is boxed despite retained Number reports",
-              "!ctnative.boxed", &changedReturn);
-        ++states;
-        returned->setOperand(0, originalReturn);
-        restored();
+            savedRead->setAttr("name", attributes.getStringAttr("saved"));
+            restored();
+            auto getter = module->lookupSymbol<ctjs::FuncOp>("get$3");
+            auto returned = llvm::cast<ctjs::ReturnOp>(getter.getBody().front().getTerminator());
+            const auto originalReturn = returned.getValue();
+            returned->setOperand(0, getter.getBody().front().getArgument(0));
+            // The changed method invalidates complete ownership. Its saved
+            // result becomes boxed; an independent constant keeps its actual
+            // literal type plus the ordinary global absence seed.
+            OwnedGlobalRoots changedReturn(*module, requested(*module));
+            require(!changedReturn.proved() && changedReturn.scalarReads().empty(),
+                    "an unknown return cannot inherit the former Number category");
+            check(*module, "a changed method cannot preserve initialization through Number reports",
+                  constantOnly ? absentType : "!ctnative.boxed", &changedReturn);
+            ++states;
+            returned->setOperand(0, originalReturn);
+            restored();
+        }
     }
-    require(rows == 20 && states == 8, "all source/prepared rows and live source edits ran");
+    require(rows == 40 && states == 16, "all source/prepared rows and live source edits ran");
     std::printf("scalar global inference: %u source/prepared rows, %u live edits, "
-                "pending/i32/f64/boxed subscription checked\n",
+                "pending/i32/f64/optional/boxed subscription checked\n",
                 rows, states);
 }
 
