@@ -22,6 +22,7 @@ from .sources import (
     leaf_clear_sources, leaf_clear_cases,
     numeric_entry_sources, numeric_entry_cases, scalar_global_cases, scalar_global_sources, scalar_global_output,
     scalar_global_values, NUMERIC_ENTRY_SAVED_GLOBALS,
+    constant_global_cases, constant_global_sources, normalized_scalar_output,
 )
 
 
@@ -225,7 +226,7 @@ def contract(args, ir, name, binding="host"):
     config = owned.contract(args, ir, name, binding)
     value = json.loads(config.read_text())
     value["initial_intrinsics"] = ["Map"]
-    candidates = NUMERIC_ENTRY_SAVED_GLOBALS | scalar_global_cases().keys()
+    candidates = NUMERIC_ENTRY_SAVED_GLOBALS | scalar_global_cases().keys() | constant_global_cases().keys()
     case = next((candidate for candidate in sorted(candidates, key=len, reverse=True)
                  if name == candidate or name.startswith(candidate + "-")), None)
     if case:
@@ -1327,7 +1328,7 @@ def standalone(args, output, name, value, compilers, nm):
             check_leaf_readback_calls(cpp, name, mode)
         if name in leaf_absence_sources() or name in leaf_clear_sources():
             check_leaf_absence_calls(cpp, name, mode)
-        if name in numeric_entry_sources() or name in scalar_global_sources():
+        if name in numeric_entry_sources() or name in scalar_global_sources() or name in constant_global_sources():
             check_numeric_entry_calls(cpp, name, mode)
         if name in RESULT_SIGNATURES:
             result, params, _ = RESULT_SIGNATURES[name]
@@ -1412,7 +1413,7 @@ def standalone(args, output, name, value, compilers, nm):
                 raise RuntimeError(f"{name}/{mode}: linked a VM symbol")
             traces = 2 if name in {*LEAF_COMPARISON_CASES, *LEAF_ABSENCE_LIFETIMES,
                                   *LEAF_CLEAR_LIFETIMES, *NUMERIC_ENTRY_LIFETIMES} else 1
-            if host.run([str(binary)]).stdout != scalar_global_output(name, value) * traces:
+            if normalized_scalar_output(host.run([str(binary)]).stdout) != scalar_global_output(name, value) * traces:
                 raise RuntimeError(f"{name}/{mode}: standalone result mismatch")
         if name in {"ordinary", "mutate_map", "growing", "result_seeded_growing"}:
             lifetime(args, cpp, name, mode, value, compilers[1])
@@ -1871,11 +1872,11 @@ int main() {
 
 
 NUMERIC_ENTRY_LIFETIMES = ("local_numeric_saved_lifetime", "local_numeric_branch_lifetime",
-                           "scalar_saved_branch_lifetime", "scalar_alias_branch_lifetime")
+                           "scalar_saved_branch_lifetime", "scalar_alias_branch_lifetime", "constant_branch_lifetime")
 
 
 def check_numeric_entry_calls(cpp, name, mode):
-    source = {**numeric_entry_sources(), **scalar_global_sources()}[name][0]
+    source = {**numeric_entry_sources(), **scalar_global_sources(), **constant_global_sources()}[name][0]
     entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
     if not entry:
         raise RuntimeError(f"{name}/{mode}: missing numeric entry")
@@ -1920,7 +1921,7 @@ def check_numeric_entry_calls(cpp, name, mode):
 
 def numeric_entry_observer_source(source, name):
     branch = name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime",
-                      "scalar_alias_branch_lifetime"}
+                      "scalar_alias_branch_lifetime", "constant_branch_lifetime"}
     observed = source + """
 (function() {
     const seen = [], results = [], sizes = [];
@@ -1951,7 +1952,7 @@ def numeric_entry_observer_source(source, name):
 
 def numeric_entry_lifetime_cpp(cpp, name):
     branch = name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime",
-                      "scalar_alias_branch_lifetime"}
+                      "scalar_alias_branch_lifetime", "constant_branch_lifetime"}
     changed = instrument_leaf_objects(cpp)
     changed = changed.replace(
         "static std::vector<std::weak_ptr<const void>> ctn_test_objects;",
@@ -2031,7 +2032,7 @@ int main() {
     return 0;
 }
 '''
-    if name in {"scalar_saved_branch_lifetime", "scalar_alias_branch_lifetime"}:
+    if name in {"scalar_saved_branch_lifetime", "scalar_alias_branch_lifetime", "constant_branch_lifetime"}:
         changed = changed.replace("    auto owner = g_host;", """
     const auto first_snapshot = ctnative::global_number(g_first);
     const auto second_snapshot = ctnative::global_number(g_second);
@@ -2058,7 +2059,7 @@ int main() {
             third_snapshot != 4 || ctnative::global_number(g_first) != 2) { return 196; }
     }
     ctn_test_retained.reset();""")
-    if name == "scalar_alias_branch_lifetime":
+    if name in {"scalar_alias_branch_lifetime", "constant_branch_lifetime"}:
         changed = changed.replace("    auto owner = g_host;", """
     const auto left_snapshot = ctnative::global_number(g_left);
     const auto middle_snapshot = ctnative::global_number(g_middle);
@@ -2084,6 +2085,32 @@ int main() {
         return 198;
     }
     ctn_test_retained.reset();""")
+    if name == "constant_branch_lifetime":
+        changed = changed.replace("    auto owner = g_host;", """
+    const auto fixed_snapshot = ctnative::global_number(g_fixed);
+    const auto offset_snapshot = ctnative::global_number(g_offset);
+    const auto copy_snapshot = ctnative::global_number(g_copy);
+    static_assert(std::is_same_v<decltype(copy_snapshot), const js_num>);
+    if (fixed_snapshot != 7 || offset_snapshot != fixed_snapshot || copy_snapshot != offset_snapshot) {
+        return 200;
+    }
+    auto owner = g_host;""")
+        checks = """
+    if (fixed_snapshot != 7 || offset_snapshot != 7 || copy_snapshot != 7 ||
+        ctnative::global_number(g_fixed) != fixed_snapshot ||
+        ctnative::global_number(g_offset) != offset_snapshot ||
+        ctnative::global_number(g_copy) != copy_snapshot ||
+        ctnative::global_number(g_trace) != left_snapshot + middle_snapshot * right_snapshot +
+                                           copy_snapshot - fixed_snapshot) {
+        return 201;
+    }
+"""
+        # Check once after 128 calls and owner destruction, before reentry can
+        # overwrite globals, then again after both Maps and the retained leaf die.
+        changed = changed.replace("    ctn_test_keep_leaf = false;", checks + "    ctn_test_keep_leaf = false;")
+        released = "    if (!ctn_test_objects[retained_index].expired()) { return 193; }"
+        assert changed.count(released) == 1
+        changed = changed.replace(released, released + checks)
     return changed.replace("CTN_PARAMS", "std::string, js_num, bool" if branch else "std::string, js_num").replace(
         "CTN_FLAG", ", call % 2 != 0" if branch else "")
 

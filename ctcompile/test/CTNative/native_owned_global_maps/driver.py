@@ -4,6 +4,7 @@
 # verbatim. The docstring above is the one argparse prints, so it stays here.
 
 import argparse
+import json
 from pathlib import Path
 import re
 import shutil
@@ -36,6 +37,8 @@ from .sources import (
     NUMERIC_ENTRY_CARRIERS, NUMERIC_ENTRY_SAVED_GLOBALS,
     scalar_global_cases, scalar_global_sources, scalar_global_refusals, scalar_global_output,
     SCALAR_GLOBAL_CARRIERS, SCALAR_GLOBAL_INITIALIZED,
+    constant_global_cases, constant_global_sources, normalized_scalar_output,
+    CONSTANT_GLOBAL_UNOWNED, CONSTANT_GLOBAL_CARRIERS, CONSTANT_GLOBAL_EXISTING,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
@@ -323,7 +326,7 @@ def check_leaf_object_forgeries(args, saved, names=None):
                 failed = methods.refused(args, forged, forged_name + "-stale", config,
                     options=options, reason="fingerprint mismatch", admitted=0)
                 check_call_preservation(forged.read_text(), failed.read_text(), forged_name + "-stale")
-                if name in scalar_global_cases():
+                if name in scalar_global_cases() or name in constant_global_cases():
                     check_scalar_global_preparation(failed.read_text(), forged.read_text(), name)
                 fresh = contract(args, forged, forged_name)
                 checked = owned.lower(args, forged, forged_name, fresh, options=options)
@@ -343,7 +346,7 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
     for name, (source, value, old, replacement, repaired_name, calls) in controls.items():
         def preserved(before, after, label):
             check_call_preservation(before, after, label)
-            if name in scalar_global_cases():
+            if name in scalar_global_cases() or name in constant_global_cases():
                 check_scalar_global_preparation(after, before, name)
 
         js, rejected, count = boundary.prepare(args, name, source)
@@ -525,7 +528,7 @@ def check_comparison_identity_observations(args, node, reference):
 
 
 def check_leaf_absence_census(args, ir, name):
-    case = {**leaf_absence_cases(), **leaf_clear_cases(), **numeric_entry_cases(), **scalar_global_cases()}.get(name)
+    case = {**leaf_absence_cases(), **leaf_clear_cases(), **numeric_entry_cases(), **scalar_global_cases(), **constant_global_cases()}.get(name)
     if case is None:
         return
     check_scalar_global_source(ir, name)
@@ -543,12 +546,14 @@ def numeric_reference_output(name, value):
 
 
 def numeric_node_observer(value):
-    if value != "NaN":
+    if value not in {"NaN", "-Infinity"}:
         return boundary.NODE
     predicate = "typeof trace !== 'number' || !Number.isFinite(trace)"
     if boundary.NODE.count(predicate) != 1:
         raise RuntimeError("exact NaN observer lost the shared finite-number control")
-    return boundary.NODE.replace(predicate, "typeof trace !== 'number' || !Number.isNaN(trace)")
+    condition = ("typeof trace !== 'number' || !Number.isNaN(trace)" if value == "NaN"
+                 else "typeof trace !== 'number' || trace !== -Infinity")
+    return boundary.NODE.replace(predicate, condition)
 
 
 def check_numeric_global_preparation(text, original, name):
@@ -655,13 +660,13 @@ def check_scalar_global_preparation(text, original, name):
     before, after = scalar_global_graph(original, name), scalar_global_graph(text, name)
     if before != after or not before:
         raise RuntimeError(f"{name}: preparation changed live scalar stores/loads/calls/arithmetic\n{before}\n{after}")
-    for operation in ("scf.if", "scf.yield", "ctjs.create_object", "ctjs.construct"):
+    for operation in ("scf.if", "scf.yield", "ctjs.create_object", "ctjs.construct", "ctjs.store_property"):
         if text.count(operation) != original.count(operation):
             raise RuntimeError(f"{name}: preparation changed live {operation}")
 
 
 def check_scalar_global_source(ir, name):
-    if name not in NUMERIC_ENTRY_SAVED_GLOBALS and name not in scalar_global_cases():
+    if name not in NUMERIC_ENTRY_SAVED_GLOBALS and name not in scalar_global_cases() and name not in constant_global_cases():
         return
     graph = scalar_global_graph(ir.read_text(), name)
     calls = [event for event in graph if event[0] == "call"]
@@ -669,7 +674,7 @@ def check_scalar_global_source(ir, name):
     loads = [event for event in graph if event[0] == "load"]
     if not calls or calls[0] != ("call", "size", ()):
         raise RuntimeError(f"{name}: lost the first evaluated size observation")
-    cases = {**numeric_entry_cases(), **scalar_global_cases()}
+    cases = {**numeric_entry_cases(), **scalar_global_cases(), **constant_global_cases()}
     source = cases[name]["source"]
     if len(calls) != len(re.findall(r"host\.slot\.(?:size|set)\(", source)):
         raise RuntimeError(f"{name}: lost an evaluated published call")
@@ -694,7 +699,10 @@ def check_scalar_global_source(ir, name):
             written.add(event[1])
         elif event[0] == "load" and event[1] not in written:
             early.append(event[1])
-    if early != (["first"] if name == "scalar_read_before_write" else []):
+    expected_early = {"scalar_read_before_write": ["first"],
+                      "constant_read_before_write": ["fixed"],
+                      "constant_dynamic_global": ["globalThis"]}.get(name, [])
+    if early != expected_early:
         raise RuntimeError(f"{name}: changed source store/load order: {early}")
     first_writes = sum(event[:2] == ("store", "first") for event in stores)
     if name.startswith("scalar_duplicate_") and first_writes != 2:
@@ -706,7 +714,20 @@ def check_scalar_global_source(ir, name):
         "scalar_alias_arithmetic": [("alias", "total")],
         "scalar_alias_branch_lifetime": [("left", "first"), ("middle", "second"),
                                           ("right", "third")],
+        "scalar_constant_only": [("copy", "fixed")],
+        "constant_alias_chain": [("offset", "fixed"), ("copy", "offset")],
+        "constant_alias_arithmetic": [("copy", "offset")],
+        "constant_branch_lifetime": [("left", "first"), ("middle", "second"),
+                                     ("right", "third"), ("offset", "fixed"), ("copy", "offset")],
     }.get(name, [])
+    if name == "constant_duplicate_write" and sum(event[:2] == ("store", "fixed") for event in stores) != 2:
+        raise RuntimeError(f"{name}: erased the second constant-only global write")
+    constant = constant_global_cases().get(name)
+    if constant and name != "constant_branch_lifetime":
+        source = constant["source"]
+        aliases += [(destination, origin) for destination, origin in re.findall(
+            r"(?:const|var) (\w+) = (\w+);", source.rsplit("});\n", 1)[1])
+            if origin in constant["saved"]]
     for destination, origin in aliases:
         expected = ("store", destination, "global:" + origin)
         writes = [event for event in stores if event[1] == destination]
@@ -715,7 +736,7 @@ def check_scalar_global_source(ir, name):
 
 
 def check_scalar_global_emission(args, ir, name):
-    if name not in NUMERIC_ENTRY_SAVED_GLOBALS and name not in scalar_global_sources():
+    if name not in NUMERIC_ENTRY_SAVED_GLOBALS and name not in scalar_global_sources() and name not in constant_global_sources():
         return
     expected = scalar_global_graph(ir.read_text(), name)
     for mode in ("explicit", "deduced"):
@@ -792,8 +813,6 @@ def check_scalar_global_carriers(args, positives, node, reference):
                 if "ctnative.host_owner_proved = true" not in text or reason not in text:
                     raise RuntimeError(f"{label}: lost independent scalar ownership/carrier boundary")
                 check_scalar_global_preparation(text, input_ir.read_text(), name)
-                if name == "scalar_constant_only":
-                    check_numeric_global_preparation(text, input_ir.read_text(), "local_numeric_saved_snapshot")
                 return failed
 
             label = name + "-" + mode
@@ -818,8 +837,136 @@ def check_scalar_global_carriers(args, positives, node, reference):
                 check_scalar_global_preparation(rerun.read_text(), failed.read_text(), name)
 
 
+
+CONSTANT_GLOBAL_NODE = r"""const fs = require('node:fs');
+const vm = require('node:vm');
+const context = vm.createContext({});
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+for (const name of JSON.parse(process.argv[2])) {
+    const value = vm.runInContext(name, context);
+    let text;
+    if (typeof value === 'number') {
+        text = Number.isNaN(value) ? 'nan' : Object.is(value, -0) ? '-0' :
+            value === -Infinity ? '-inf' : String(value);
+    } else if (typeof value === 'string') {
+        text = '"' + encodeURIComponent(value) + '"';
+    } else if (typeof value === 'boolean' || value === undefined) {
+        text = String(value);
+    } else {
+        throw new Error(name + ': unexpected scalar tag');
+    }
+    process.stdout.write(name + '=' + text + '\n');
+}
+"""
+
+
+def check_constant_global_observations(args, node, reference):
+    for name, row in constant_global_cases().items():
+        js = args.work / f"{name}-observed.js"
+        js.write_text(row["source"])
+        names = json.dumps(sorted(["trace", *row["saved"]]))
+        expected = scalar_global_output(name, row["expected_trace"])
+        node_output = host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), names]).stdout
+        result = host.run([str(reference), str(js)])
+        if node_output != expected or normalized_scalar_output(result.stdout) != expected:
+            raise RuntimeError(f"{name}: exact typed scalar observations changed\n{expected}\n"
+                               f"{node_output}\n{result.stdout}")
+        counts = [0, 0, 0, 0, 0]
+        for value in [row["expected_trace"], *row["saved"].values()]:
+            index = 1 if isinstance(value, bool) else 2 if value == "owned scalar" else (
+                4 if value == "undefined" else 0)
+            counts[index] += 1
+        types = re.search(r"\((\d+) number, (\d+) boolean, (\d+) string, (\d+) null, (\d+) undefined\)",
+                          result.stderr)
+        if not types or list(map(int, types.groups())) != counts:
+            raise RuntimeError(f"{name}: reference lost its independently observed scalar tags")
+    # A trace-only observer would miss substitutions in the historical copy.
+    # Every mutation must instead change the complete value-and-tag observation.
+    for name, old, replacement in (
+        ("constant_exact_historical", "const copy = fixed;", "const copy = 0;"),
+        ("constant_feeds_trace", "const copy = fixed;", "const copy = first;"),
+        ("constant_negative_zero", "0 / (0 - 1)", "0"),
+        ("constant_nan", "0 / 0", "0"),
+        ("constant_nan", "0 / 0", "void 0"),
+        ("constant_nan", "0 / 0", "'NaN'"),
+        ("constant_boolean", "const fixed = false;", "const fixed = 0;"),
+        ("constant_string", "'owned scalar'", "7"),
+        ("constant_undefined", "void 0", "0 / 0"),
+        ("constant_alias_chain", "const copy = offset;", "const copy = first;"),
+        ("constant_alias_arithmetic", "const copy = offset;", "const copy = fixed;"),
+        ("constant_branch_lifetime", "const copy = offset;", "const copy = first;"),
+    ):
+        row = constant_global_cases()[name]
+        assert row["source"].count(old) == 1, name
+        js = args.work / f"{name}-constant-blind.js"
+        js.write_text(row["source"].replace(old, replacement))
+        names = json.dumps(sorted(["trace", *row["saved"]]))
+        if host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), names]).stdout == scalar_global_output(
+                name, row["expected_trace"]):
+            raise RuntimeError(f"{name}: typed observation cannot distinguish {replacement}")
+
+
+def check_constant_global_refusals(args, positives, node, reference):
+    cases = constant_global_cases()
+    for name in sorted(CONSTANT_GLOBAL_UNOWNED | CONSTANT_GLOBAL_CARRIERS):
+        row = cases[name]
+        source = row["source"]
+        repair = row.get("candidate")
+        if repair in constant_global_sources():
+            old, replacement = row["removed_text"], row["replacement_text"]
+        else:
+            # Literal substitution alone does not repair a non-Number global.
+            # Restore both declarations to the exact independently gated source.
+            old = source.rsplit("\n", 2)[-2]
+            replacement = "const fixed = 7; const copy = fixed;"
+            repair = "scalar_constant_only"
+        if source.count(old) != 1 or source.replace(old, replacement) != positives[repair][0]:
+            raise RuntimeError(f"{name}: lost its exact independently gated repair")
+        _, ir, count = boundary.prepare(args, name, source)
+        check_leaf_absence_census(args, ir, name)
+        _, restored, repair_count = boundary.prepare(args, repair + "-restored-for-" + name,
+                                                      positives[repair][0])
+        if count != 5 or repair_count != count or len(source_calls(restored.read_text())) != row["prepared_calls"]:
+            raise RuntimeError(f"{name}: constant-global repair changed the five-function/eight-call source")
+        config = contract(args, ir, name)
+        restored_config = contract(args, restored, repair + "-restored-for-" + name)
+        for mode, options in (("default", ""), ("disabled", "optimize=false")):
+            def reject(input_ir, label, current_config):
+                failed = owned.lower(args, input_ir, label, current_config, options=options, cleanup=False)
+                text = methods.census(failed, count, label, admitted=0)
+                owner = name not in CONSTANT_GLOBAL_UNOWNED
+                if f"ctnative.host_owner_proved = {str(owner).lower()}" not in text:
+                    raise RuntimeError(f"{label}: constant-global refusal changed its independent owner boundary")
+                reason = ("requires a numeric global" if name.endswith("_candidate") and "undefined" not in name
+                          else "may be null or undefined" if name.endswith("_candidate")
+                          else "standard Map identity is unproved with other host/global value reads")
+                if owner and reason not in text:
+                    raise RuntimeError(f"{label}: lost its independent Map identity/global carrier boundary")
+                check_scalar_global_preparation(text, input_ir.read_text(), name)
+                if not owner:
+                    check_call_preservation(input_ir.read_text(), text, label)
+                return failed
+
+            label = name + "-" + mode
+            reject(ir, label, config)
+            output = owned.lower(args, restored, label + "-restored", restored_config, options=options)
+            if "ctnative.host_owner_proved = true" not in methods.census(output, count, label, admitted=count):
+                raise RuntimeError(f"{label}: exact constant-global repair lost ownership")
+            forged = args.work / f"{label}-forged.mlir"
+            forged.write_text(forge_leaf_evidence(ir.read_text(), "string"))
+            stale = methods.refused(args, forged, label + "-stale", config,
+                options=options, reason="fingerprint mismatch", admitted=0)
+            check_call_preservation(forged.read_text(), stale.read_text(), label + "-stale")
+            check_scalar_global_preparation(stale.read_text(), forged.read_text(), name)
+            fresh = contract(args, forged, label + "-forged")
+            failed = reject(forged, label + "-fresh", fresh)
+            rerun = methods.refused(args, failed, label + "-rerun", fresh,
+                options=options, reason="fingerprint mismatch", admitted=0)
+            check_call_preservation(failed.read_text(), rerun.read_text(), label + "-rerun")
+            check_scalar_global_preparation(rerun.read_text(), failed.read_text(), name)
+
 def check_numeric_entry_observations(args, node, reference):
-    cases = {**numeric_entry_cases(), **scalar_global_cases()}
+    cases = {**numeric_entry_cases(), **scalar_global_cases(), **constant_global_cases()}
     for name in NUMERIC_ENTRY_LIFETIMES:
         source = cases[name]["source"]
         observed, value = numeric_entry_observer_source(source, name)
@@ -833,7 +980,7 @@ def check_numeric_entry_observations(args, node, reference):
                      ("value: value", "value: 1"),
                      ("state.clear();", "state.has(key);")]
         if name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime",
-                    "scalar_alias_branch_lifetime"}:
+                    "scalar_alias_branch_lifetime", "constant_branch_lifetime"}:
             mutations.append(("state.delete(key);", "state.has(key);"))
         for index, (old, replacement) in enumerate(mutations):
             if old not in source:
@@ -1135,6 +1282,7 @@ def main():
            if name not in LEAF_READBACK_UNOWNED},
         **numeric_entry_sources(),
         **scalar_global_sources(),
+        **constant_global_sources(),
         # Keep the original refusal source byte-for-byte. Its method-local
         # empty payload now has the same independently proved leaf owner.
         "object_payload": (refusal_sources()["object_payload"], "host", 1),
@@ -1379,6 +1527,7 @@ def main():
         functions = (LEAF_OBJECT_FUNCTIONS[name] if name in LEAF_OBJECT_FUNCTIONS
                      else 5 if name in LEAF_READBACK_CALLS or name in leaf_absence_sources()
                      or name in leaf_clear_sources() or name in numeric_entry_sources() or name in scalar_global_sources()
+                     or name in constant_global_sources()
                      else RESULT_SIGNATURES[name][2] if name in RESULT_SIGNATURES
                      else 6 if name == "shared_three" else 5 if name.startswith("shared") else 4)
         if count != functions:
@@ -1417,8 +1566,9 @@ def main():
         if name.startswith("legacy_"):
             ir = methods.legacy_marker(args, ir, name)
         expected = f"trace={value}\n"
-        if (host.run([node, "-e", boundary.NODE, str(js)]).stdout != expected
-                or host.run([str(reference), str(js)]).stdout != numeric_reference_output(name, value)):
+        if (host.run([node, "-e", numeric_node_observer(value), str(js)]).stdout != expected
+                or normalized_scalar_output(host.run([str(reference), str(js)]).stdout)
+                != numeric_reference_output(name, value)):
             raise RuntimeError(f"{name}: Node/interpreter source observation mismatch")
         config = contract(args, ir, name, binding)
         original, manifest = ir.read_text(), config.read_text()
@@ -1433,7 +1583,7 @@ def main():
                     **nullable_payload_sources(), **nullable_host_result_sources(), **nullable_nested_result_sources(),
                     **leaf_object_sources(), **leaf_readback_sources(), **leaf_absence_sources(),
                     **primitive_absence_sources(), **leaf_clear_sources(), **numeric_entry_sources(),
-                    **scalar_global_sources()}:
+                    **scalar_global_sources(), **constant_global_sources()}:
             disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")
             if disabled.read_text() != output.read_text():
                 raise RuntimeError(f"{name}: saved scalar proof depends on optimization policy")
@@ -1461,6 +1611,7 @@ def main():
          "scalar_saved_branch_lifetime"))
     check_leaf_object_forgeries(args, saved,
         (*sorted(SCALAR_GLOBAL_INITIALIZED), "scalar_alias_chain", "scalar_alias_branch_lifetime"))
+    check_leaf_object_forgeries(args, saved, ("scalar_constant_only", "constant_alias_arithmetic"))
 
     # Valid-looking scalar markers cannot normalize real null keys or narrow
     # the second use of a nullable formal. Fresh proof must emit the same C++.
@@ -1758,6 +1909,8 @@ def main():
     check_leaf_object_refusals(args, positives, node, reference, numeric_entry_refusals())
     check_leaf_object_refusals(args, positives, node, reference, scalar_global_refusals())
     check_scalar_global_carriers(args, positives, node, reference)
+    check_constant_global_observations(args, node, reference)
+    check_constant_global_refusals(args, positives, node, reference)
     check_leaf_readback_carriers(args, positives, node, reference, leaf_field_result_refusals())
     # A result contract does not narrow Map storage or supply an implemented
     # callable signature. Preserve the prepared producer/consumer operands.
@@ -1930,7 +2083,8 @@ def main():
             raise RuntimeError(f"{name}: prepared leaf owner reused the original source authority")
     for name in ((leaf_readback_sources().keys() - LEAF_READBACK_UNOWNED)
                  | leaf_absence_sources().keys() | leaf_clear_sources().keys()
-                 | numeric_entry_sources().keys() | scalar_global_sources().keys()):
+                 | numeric_entry_sources().keys() | scalar_global_sources().keys()
+                 | constant_global_sources().keys()):
         _, config, output = saved[name]
         rerun = owned.lower(args, output, name + "-rerun", config, cleanup=False)
         text = methods.census(rerun, 5, name + "-rerun", admitted=5)
@@ -1956,7 +2110,7 @@ def main():
         rollback += check_budgets(args, ir, config, name, functions=5)
     for name in ("local_identity_repeated_keys", "local_numeric_nested_key",
                  "local_add_saved_results", "scalar_result_key", "scalar_alias",
-                 "scalar_alias_chain"):
+                 "scalar_alias_chain", "scalar_constant_only", "constant_alias_arithmetic"):
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
@@ -2049,6 +2203,9 @@ def main():
           f"{len(scalar_global_refusals())} source-order/write/future-family refusals and "
           f"{len(SCALAR_GLOBAL_CARRIERS)} scalar Map identity refusals retain exact repairs; "
           f"{len(SCALAR_GLOBAL_INITIALIZED)} original alias/direct observations retain definite stored-value types; "
+          f"{len(constant_global_cases())} constant-global probes/candidate edits preserve exact scalar observations; "
+          f"{len(CONSTANT_GLOBAL_UNOWNED)} unowned/{len(CONSTANT_GLOBAL_CARRIERS)} carrier refusals, "
+          "constant-only alias/arithmetic edges and a mixed saved-Map lifetime pass; "
           f"{len(NUMERIC_ENTRY_LIFETIMES)} numeric lifetime families retain 128 future results across both branches, reentry, "
           "final Map release and independent leaf release; "
           f"{len(leaf_field_result_refusals())} complete-schema field results "

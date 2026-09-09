@@ -2208,7 +2208,7 @@ SCALAR_GLOBAL_UNOWNED = {
     "scalar_read_before_write", "scalar_later_bool", "scalar_future_bool", "scalar_duplicate_number",
 }
 SCALAR_GLOBAL_CARRIERS = {
-    "scalar_duplicate_write", "scalar_constant_only",
+    "scalar_duplicate_write",
 }
 SCALAR_GLOBAL_INITIALIZED = {"scalar_alias", "scalar_single_write_repair"}
 
@@ -2355,11 +2355,150 @@ def scalar_global_values(name):
     saved = {"local_add_saved_results": {"first": 1, "second": 1, "third": 1},
              "local_numeric_saved_snapshot": {"first": 1, "second": 2}}.get(name)
     if saved is None:
-        saved = scalar_global_cases().get(name, {}).get("saved", {})
+        row = scalar_global_cases().get(name)
+        if row is None:
+            row = constant_global_cases().get(name, {})
+        saved = row.get("saved", {})
     return saved
 
 
 def scalar_global_output(name, value):
     saved = scalar_global_values(name)
-    globals_ = {**saved, "trace": "nan" if value == "NaN" else value}
-    return "".join(f"{binding}={result}\n" for binding, result in sorted(globals_.items()))
+    globals_ = {**saved, "trace": value}
+
+    def printed(result):
+        if isinstance(result, bool):
+            return str(result).lower()
+        if result == "NaN":
+            return "nan"
+        if result == "-Infinity":
+            return "-inf"
+        if result == "owned scalar":
+            return '\"owned%20scalar\"'
+        return str(result)
+
+    return "".join(f"{binding}={printed(result)}\n" for binding, result in sorted(globals_.items()))
+
+
+# The twelve original probes and twelve candidate edits were measured before
+# constant-only Number admission. Keep their exact bytes and candidate status:
+# replacing an alias with a literal never repairs a nonnumeric global carrier.
+CONSTANT_GLOBAL_HISTORY = {
+    'constant_exact_historical': ('3c1dfd95d22834d6ce64c352ab515f628fddd4e03168acf709642d62243c1491',
+        '41a33e4066ff78c262289225670eb38736d06e7cbd2c3f55be2176668b084f71'),
+    'constant_feeds_trace': ('032a7cf898ad6677b54369d302038c28ec94083906264e97955f5e66c7b413d1',
+        '11bc2b77e812824764f7dc793f1f7c19f2a6bf6d2d1e63a596f6b209f21dcec4'),
+    'constant_negative_zero': ('fd18ed89f0d6ab85b761908e77708383fbcb51bc79bd942a7ad897217a798f64',
+        'aa78e8ee9040963d8781a3d8f06352d7f568f326bcee4a76e45264f1737db605'),
+    'constant_nan': ('16e8e9f5790f88eef330cfa7992101f54b3a7ad32cfdf0fb2fb24c58566627e1',
+        '2c2258e09a32408cee5773586f0e676579aa04a6b3c8bfb9817269e5b7d93edb'),
+    'constant_boolean': ('681c88958033cc6856eb955d592166118c74d44cc9c5cb4de4bb90aacde2e63d',
+        'd3a90c0165fe16ae6f3333d4d084c86e67c70b4ace304d888c4d43440cb46116'),
+    'constant_string': ('3a99e34c6ceb6f9a13e85666c3480b7e7c74d52c783ad1420d726d103a655d8a',
+        'f0a03c19d5620834869e559ef0aaafede25f6b017c24bae67021d9a460d76d84'),
+    'constant_undefined': ('004faccaffe587297d5df60e77bb78c19a7b21dffe674cd38e8ad2244e050d6a',
+        'def9220fcc5c8516122b8e1792454d97a505912b94713e6d709b25fb70bc94c6'),
+    'constant_builtin_spelling': ('804006fadbd519e84980ccdfac5372d268a70bb2f96e76bd3727ad48458b6439',
+        'c733a5cda331467b78b20b06c9d9748143905c39ef1b73f1c714a0c8a08ac222'),
+    'constant_duplicate_write': ('41bd3d6a3f2635099f23de52e6d65c1299be65962b70e8684c19aaccc525da2f',
+        '1e93521a3cfda469ebc5b0635a1f5f703db851afbe4ee6cd2244bf3acdaf0fd7'),
+    'constant_read_before_write': ('37cfd8d9934dd7ba9ebde1fd4eabeb095746bb10299da0551efe7671f3dd698c',
+        '69179658e296b40c839a5381005a3e96a3e15a7bbf85216926d2803456780409'),
+    'constant_dynamic_global': ('37af242bbce92d2ed2e2bee75608b1c703bc93c1660f5e9a0070760f43b60214',
+        '1e93521a3cfda469ebc5b0635a1f5f703db851afbe4ee6cd2244bf3acdaf0fd7'),
+    'constant_future_method_write': ('c456bc57bd87cd1a850afae05dc4bc46d35e234dc6e68d4094800eeaee482375',
+        '48bb0903c76f096f67e070d79a50af0f29ecb03063aff0a337681fcfae583e6d'),
+}
+CONSTANT_GLOBAL_UNOWNED = {
+    "constant_read_before_write", "constant_dynamic_global", "constant_future_method_write",
+}
+CONSTANT_GLOBAL_CARRIERS = {
+    "constant_boolean", "constant_string", "constant_undefined", "constant_duplicate_write",
+    "constant_boolean_candidate", "constant_string_candidate", "constant_undefined_candidate",
+}
+CONSTANT_GLOBAL_EXISTING = {
+    "constant_exact_historical": "scalar_constant_only",
+    "constant_exact_historical_candidate": "scalar_constant_literal_repair",
+}
+
+
+def constant_global_cases():
+    historical = scalar_global_cases()
+    source = historical["scalar_constant_only"]["source"]
+    snapshot = numeric_entry_cases()["local_numeric_saved_snapshot"]["source"]
+    values = {"first": 1, "second": 2, "fixed": 7, "copy": 7}
+    rows = {}
+
+    def add(name, text, trace, saved, old=None, replacement=None, candidate_saved=None):
+        calls = 2 + len(re.findall(r"\b(?:state|host\.slot)\.(?:set|get|size|has|delete|clear)\(", text))
+        rows[name] = dict(source=text, expected_trace=trace, saved=saved, raw_calls=calls,
+                          prepared_calls=calls, expected_raw_calls=calls)
+        if old is None:
+            return
+        assert text.count(old) == 1, name
+        candidate = name + "_candidate"
+        rows[name].update(candidate=candidate, removed_text=old, replacement_text=replacement)
+        rows[candidate] = dict(source=text.replace(old, replacement), expected_trace=trace,
+            saved=saved if candidate_saved is None else candidate_saved,
+            raw_calls=calls, prepared_calls=calls, expected_raw_calls=calls)
+
+    add("constant_exact_historical", source, 12, values,
+        "const copy = fixed;", "const copy = 7;")
+    prefix = snapshot.replace("var trace = first * 10 + second;\n", "")
+    add("constant_feeds_trace", prefix + "const fixed = 7; const copy = fixed; var trace = copy + first;\n",
+        8, values, "const copy = fixed;", "const copy = 7;")
+    add("constant_negative_zero", prefix +
+        "const fixed = 0 / (0 - 1); const copy = fixed; var trace = 1 / copy;\n",
+        "-Infinity", {**values, "fixed": "-0", "copy": "-0"},
+        "const copy = fixed;", "const copy = 0 / (0 - 1);")
+    add("constant_nan", prefix + "const fixed = 0 / 0; const copy = fixed; var trace = copy;\n",
+        "NaN", {**values, "fixed": "NaN", "copy": "NaN"},
+        "const copy = fixed;", "const copy = 0 / 0;")
+    for tag, literal, value in (("boolean", "false", False),
+                                ("string", "'owned scalar'", "owned scalar"),
+                                ("undefined", "void 0", "undefined")):
+        add("constant_" + tag, source.replace("const fixed = 7;", "const fixed = " + literal + ";"),
+            12, {**values, "fixed": value, "copy": value},
+            "const copy = fixed;", "const copy = " + literal + ";")
+    add("constant_builtin_spelling", source.replace("fixed", "Reflect").replace("copy", "prototype"),
+        12, {"first": 1, "second": 2, "Reflect": 7, "prototype": 7},
+        "const prototype = Reflect;", "const prototype = 7;")
+    add("constant_duplicate_write", snapshot + "var fixed = 7; const copy = fixed; fixed = 9;\n",
+        12, {**values, "fixed": 9}, "fixed = 9;", "const later = 9;", {**values, "later": 9})
+    add("constant_read_before_write", snapshot + "var copy = fixed; var fixed = 7;\n",
+        12, {**values, "copy": "undefined"}, "var copy = fixed; var fixed = 7;",
+        "var fixed = 7; var copy = fixed;", values)
+    add("constant_dynamic_global", snapshot + "var fixed = 7; const copy = fixed; globalThis.fixed = 9;\n",
+        12, {**values, "fixed": 9}, "globalThis.fixed = 9;", "const later = 9;", {**values, "later": 9})
+    future = "var fixed = 7;\n" + snapshot.replace("set(key) {", "set(key) { fixed = 9;")
+    add("constant_future_method_write", future + "const copy = fixed;\n",
+        12, {**values, "fixed": 9, "copy": 9}, "fixed = 9;", "const future = 9;", values)
+    add("constant_alias_chain", source.replace("const copy = fixed;",
+        "const offset = fixed; const copy = offset;"), 12, {**values, "offset": 7})
+    add("constant_alias_arithmetic", prefix +
+        "const fixed = 2 * 3 + 1; const offset = fixed / 2; const copy = offset; "
+        "var trace = copy + first;\n", 4.5, {**values, "offset": 3.5, "copy": 3.5})
+    branch = historical["scalar_alias_branch_lifetime"]
+    add("constant_branch_lifetime", branch["source"].replace(
+        "var trace = left + middle * right;", "const fixed = 7; const offset = fixed; "
+        "const copy = offset; var trace = left + middle * right + copy - fixed;"),
+        14, {**branch["saved"], "fixed": 7, "offset": 7, "copy": 7})
+    for name, (original, candidate) in CONSTANT_GLOBAL_HISTORY.items():
+        assert rows[name]["raw_calls"] == 8, name
+        for key, digest in ((name, original), (name + "_candidate", candidate)):
+            assert hashlib.sha256(rows[key]["source"].encode()).hexdigest() == digest, key
+    for name, existing in CONSTANT_GLOBAL_EXISTING.items():
+        assert rows[name]["source"] == historical[existing]["source"], name
+    return rows
+
+
+def constant_global_sources():
+    return {name: (row["source"], "host", row["expected_trace"])
+            for name, row in constant_global_cases().items()
+            if name not in CONSTANT_GLOBAL_UNOWNED | CONSTANT_GLOBAL_CARRIERS | CONSTANT_GLOBAL_EXISTING.keys()}
+
+
+def normalized_scalar_output(output):
+    # Both reference and native printf may spell Number NaN as -nan. Do not
+    # normalize any other value or turn a string, Undefined or infinity into NaN.
+    return re.sub(r"(?m)^(\w+)=\-nan$", r"\1=nan", output)
