@@ -14,8 +14,16 @@ through later alias mutation and object destruction. Unsupported mixed fields
 refuse before C++ emission. No Script or VM dependency was added.
 
 Twelve focused programs, eighteen typed Node/interpreter observations, both
-compilers/printing modes and a 128-call sanitizer lifetime pass. See `HANDOFF.md`
-for full gate status and the measured next exact-zero-after-clear boundary.
+compilers/printing modes and a 128-call sanitizer lifetime pass. Shared String
+members also preserve exact Null/Undefined tags in independently narrowed
+readers. Two historical sources now pass ownership but retain native refusals
+for String/Number equality and a mixed Object/String Map value; all source bytes
+remain unchanged.
+
+The warning-free 241-step full build passes all 372 compiler CTests, including
+166 lit cases and the integrated 314-program/38-lifetime Map test. Overall,
+512/517 CTests pass; the five established browser failures remain. See
+`HANDOFF.md` for measured evidence and the next exact-zero-after-clear boundary.
 
 ## Original scalar-field implementation, 2026-09-05
 

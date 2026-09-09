@@ -35,8 +35,17 @@ symbols. The saved long String lifetime spans **128 future calls**, both flags,
 field mutation, Map deletion, owner/table release, reentry and final Map/leaf
 release under ASan/UBSan/leak checks. Budgets **3512/4408** check **31/30 cutoffs**.
 All **636 historical helper rows across 55 helpers** preserve their source bytes.
-The integrated inventory is **314 programs/38 lifetime families**, pending the
-full lit run.
+The integrated test passes **314 programs/38 lifetime families**, retaining
+every prior program and lifetime family.
+
+**40081968** preserves the remaining native refusals after a complete
+**205-source/410-mode** historical audit. Exactly two sources become owned:
+**2467a8cc** still refuses **0/5** at String-versus-Number equality and
+**016b5aaf** still refuses **0/6** at a mixed Object/String Map value. Their
+source bytes, call graphs, exact repairs and fresh/stale proof controls remain.
+**49906726** separately checks actual absent-field narrowing from a shared
+String member; String, Null and Undefined tags execute correctly under both
+printing modes and compilers.
 
 All six type/host/owner CTests have passing focused results: four checks in
 **126.18 seconds** (including two escape checks), then four host/owner checks
@@ -59,8 +68,19 @@ and four independent Errors; **38 checker mutations** reject. Fixture precision
 improves **72/109 -> 77/115**, with zero oracle violations. The existing VM cap
 for small bases remains an explicit Node/VM difference.
 
-**Full remote build and CTest gate: pending.** Focused results above are measured;
-no full-suite or full-Bootstrap gain is claimed at this checkpoint.
+The warning-free **241-step** full build passes **512/517 CTests in 1885.14
+seconds**, including **all 372 compiler CTests**. The **166/166 lit cases** pass
+in **1142.24 seconds** (CTest **1142.32**). The only failures are the five
+established browser tests: `selectors`, `frames`, `element_attrs`, `vm_async`
+and `early_errors`. All **21** changed code/test hashes agree across frozen
+inputs, local files, committed **40081968** and devbox sources. There was one
+complete full-suite run; no compiler correction or rerun was needed.
+
+Fresh coverage remains **19/574 Bootstrap, 39/4754 p5 and 45/7725 Phaser**, both
+modes, zero pruned. Exact Bootstrap Data remains **0/7, 0/7 and 0/8**. All four
+escape corpus oracles report zero violations; fixture precision is **77/115**.
+Successful String/BigInt Add/Concat retention remains the next independent
+escape increment; native BigInt and completion/effect contracts remain open.
 
 **Next: exact zero from a saved `Map.size` after `clear()`.** Thirteen fresh
 sources agree on typed Node/interpreter results. The historical **49663558**
@@ -73,7 +93,9 @@ cannot prove it. Full Bootstrap and direct browser API integration remain open.
 Evidence: `/tmp/ctcompile-string-fields-{focused,execution-gate,execution,precommit-gate}.log`,
 `/tmp/ctcompile-string-fields-{boundary-results,execution-probe}.json`,
 `/tmp/ctcompile-after-string-fields-boundary-{results,sources}.json` and
-`/tmp/ctcompile-bigint-pow-measurement.json`.
+`/tmp/ctcompile-bigint-pow-measurement.json`. Full evidence is
+`/tmp/ctcompile-string-fields-gate-final-evidence.json` and
+`/tmp/ctcompile-string-fields-full{,-detail}.log`.
 
 ## Owning String globals and recovered execution, 2026-09-09
 

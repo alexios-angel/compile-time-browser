@@ -2600,3 +2600,30 @@ The five code/test hashes remain frozen; the exact source observations and
 38-corruption checker audit above are unchanged. The complete suite remains
 pending. Evidence: `/tmp/ctcompile-string-fields-precommit-gate.log` and
 `/tmp/ctcompile-string-fields-arrays-detail.log`.
+
+**Completed full gate, 2026-09-09.** The pending full run above is complete:
+a warning-free **241-step** build passes **512/517 CTests in 1885.14 seconds**,
+including **all 372 compiler CTests** and **166/166 lit cases in 1142.24 seconds**
+(CTest **1142.32**). Independent audit verifies every CTest result and all 166
+unique lit PASS rows. The five failures remain the established browser tests
+`selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`.
+
+All **eight escape CTests pass**, with arrays in **0.55 seconds** and the
+strengthened fixture in **0.38**. Pow retains **139 rows/51 live states/5299
+cutoffs**; Div/Mod each retain **132/47/4965**. All four escape and all four type
+corpus oracles report **zero violations**. Fixture precision remains **77/115**,
+with **577 claims, 585 observed sites and nine unclaimed sites**. The complete
+source checker again confirms **28 literal sites/60 instances/38 retained** and
+**four independent implicit Errors** at their pinned negative/cap coordinates.
+Bootstrap, p5 and Phaser escape precision remains **0/64, 0/16 and 0/20**;
+p5's existing single partial claim remains separate.
+
+All **21** final code/test hashes agree across frozen inputs, devbox sources,
+local files and HEAD. The five escape inputs still match **927128a0**; the
+historical source preservation and 38-corruption checker audit remain unchanged.
+This is one completed full run. Evidence:
+`/tmp/ctcompile-string-fields-full{,-detail}.log`,
+`/tmp/ctcompile-string-fields-full-hashes.json` and the independent
+`/tmp/ctcompile-bigint-pow-final-audit.json`. The Pow cap divergence and separate
+native BigInt, String/BigInt conversion and effect/completion boundaries above
+remain unchanged.
