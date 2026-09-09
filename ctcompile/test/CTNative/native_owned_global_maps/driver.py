@@ -1685,6 +1685,6 @@ def main():
           "concrete diagnostics and prepared producer/consumer/capture operands; "
           "the unchanged ten-call empty-String deletion source and exact repair preserve nullable "
           "key signatures and future Undefined/empty/distinct-key observations; "
-          f"{len(seeded_result_refusals()) - 2} seeded proof and "
+          f"{len(seeded_result_refusals().keys() - PRIMITIVE_ABSENCE_CARRIERS)} seeded proof and "
           f"{len(seeded_carrier_refusals())} seeded carrier refusals; "
           f"{len(rollback)} speculative rollback cutoffs")
