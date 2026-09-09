@@ -50,10 +50,25 @@ and **34** mutation controls were independently audited. The fresh fixture
 reports **72/109** precision and all four escape oracles report zero violations.
 This proves retention only, not native BigInt admission or completion/effects.
 
-The final full devbox build/CTest gate is running; its measurements are pending.
-Stable clang-format **22.1.8 passes all 745 files**; bundled 23 reports the same
-nine preexisting differences. The earlier full-gate corpus counts below are
-historical until the current gate finishes.
+The initial full gate builds **247 steps without warnings** and completes
+**511/517 CTests in 1704.85 seconds**. Its lit test passes **163/165 in
+980.26 seconds** (CTest 980.47): two historical tests still expected Boolean
+results to refuse. **7dc796b7** promotes the unchanged method-table Boolean
+source to **3/3** execution and adds a false result; **48885ae1** promotes the
+unchanged five-call Map Boolean source to **4/4**. Their focused explicit/deduced
+GCC/Clang executions pass. The method test passes in **20.95 seconds**; a
+**197-case** census preserves all **173** historical refusal classifications.
+The initial Map run completed all **283 programs/36 lifetime families** before
+its stale refusal check. The corrected inventory is **284 programs/36 families**.
+No production code changed during these test repairs. A complete **165-case lit
+rerun is pending**, with **28** final code/test inputs frozen and committed.
+
+All other **371 compiler CTests** pass. The five established browser failures
+are `selectors`, `frames`, `element_attrs`, `vm_async` and `early_errors`.
+Fresh native coverage remains Bootstrap **19/574**, p5 **39/4754**, Phaser
+**45/7725** in both modes, with zero pruned. Exact Bootstrap Data remains
+**0/7 CommonJS, 0/7 browser, 0/8 AMD**. Stable clang-format **22.1.8 passes all
+745 files**; bundled 23 retains the same nine preexisting differences.
 
 **Next: owning String globals and exact typed observations.** The unchanged
 **3a99e34c** String copy remains **0/5** at the scalar-read/Map-identity boundary;

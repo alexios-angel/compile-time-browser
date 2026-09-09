@@ -20,8 +20,16 @@ and **two global-storage** cases. Optional/mixed Boolean entry conditionals
 fail the complete ownership proof, before storage admission. Exact diagnostics
 and repairs are checked; **557** historical helper rows, **24** historical
 hashes and all **49** current source strings remain unchanged by the repair.
-Fresh **14/14 focused CTests pass in 149.81 seconds**. The full gate is running;
-final integrated program/lifetime and corpus measurements remain pending.
+Fresh **14/14 focused CTests pass in 149.81 seconds**. The initial warning-free
+247-step full gate passes **511/517 CTests in 1704.85 seconds**, with five known
+browser failures and lit **163/165**. Two historical Boolean-result refusals
+were stale; **7dc796b7/48885ae1** preserve their exact sources and gate native
+method/Map results at **3/3 and 4/4** with Boolean output. Focused executions
+and all **197** refusal-census cases pass, preserving the **173** historical
+classifications. The initial Map test executed **283 programs/36 lifetimes**
+before the stale guard. The corrected **284-program/36-lifetime** full lit rerun
+is pending. Corpus coverage remains **19/574, 39/4754, 45/7725** in both modes,
+zero pruned; exact Bootstrap Data stays **0/7, 0/7, 0/8**.
 
 Next are owning String globals: unchanged **3a99e34c/f0a03c19** copy/literal
 sources remain **0/5**, respectively at live scalar-read/Map identity and
