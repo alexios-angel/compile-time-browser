@@ -9,6 +9,7 @@ import re
 import shutil
 import struct
 import subprocess
+from urllib.parse import unquote_to_bytes
 
 
 spec = importlib.util.spec_from_file_location(
@@ -33,6 +34,11 @@ POSITIVES = {
     "ordinary_window": (SOURCE.replace("host", "window"), "window", "trace=42\n"),
     "typed-boolean": (SOURCE.replace("return 42;", "return true;"), "host", "trace=true\n"),
     "typed-boolean-false": (SOURCE.replace("return 42;", "return false;"), "host", "trace=false\n"),
+    "typed-string": (SOURCE.replace("return 42;", "return 'answer';"), "host", 'trace="answer"\n'),
+    "typed-string-empty": (SOURCE.replace("return 42;", "return '';"), "host", 'trace=""\n'),
+    "typed-string-bytes": (
+        SOURCE.replace("return 42;", "return 'quote \"\\n\\t%\\\\=;雪\\0tail';"), "host",
+        'trace="quote%20%22%0A%09%25%5C%3D%3B%E9%9B%AA%00tail"\n'),
 }
 
 BOOLEAN_NODE = r'''
@@ -42,6 +48,20 @@ vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
 const trace = vm.runInContext('trace', context);
 if (typeof trace !== 'boolean') throw new Error('non-boolean trace');
 process.stdout.write('trace=' + String(trace) + '\n');
+'''
+
+STRING_NODE = r'''
+const fs = require('fs'), vm = require('vm');
+const context = vm.createContext({});
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+const trace = vm.runInContext('trace', context);
+if (typeof trace !== 'string') throw new Error('non-string trace');
+const quoted = Array.from(Buffer.from(trace, 'utf8'), byte => {
+    const character = String.fromCharCode(byte);
+    return /^[A-Za-z0-9_.~-]$/.test(character) ? character
+        : '%' + byte.toString(16).toUpperCase().padStart(2, '0');
+}).join('');
+process.stdout.write('trace="' + quoted + '"\n');
 '''
 
 
@@ -173,6 +193,11 @@ def standalone(args, output, name, expected, compilers, nm, *, result_type="js_n
         if result_type == "bool" and ("ctnative::global_boolean(" not in cpp
                                       or "ctnative::invoke_callable(" not in cpp):
             raise RuntimeError(f"{name}/{mode}: missing live Boolean call/observation\n{cpp}")
+        if result_type == "std::string" and (
+                "ctnative::global_string(" not in cpp or "ctnative::print_string(" not in cpp
+                or "ctnative::invoke_callable(" not in cpp
+                or not re.search(r"ctnative::nullable_string\s+g_trace\s*;", cpp)):
+            raise RuntimeError(f"{name}/{mode}: missing owning String call/observation\n{cpp}")
         source = args.work / f"{name}.{mode}.cpp"
         source.write_text(cpp)
         for index, compiler in enumerate(compilers):
@@ -184,6 +209,40 @@ def standalone(args, output, name, expected, compilers, nm, *, result_type="js_n
                 raise RuntimeError(f"{name}/{mode}: standalone result mismatch")
         if name == "ordinary":
             lifetime(args, cpp, name, mode, expected, compilers[1])
+        if name == "typed-string-bytes" and mode == "explicit":
+            string_observation(args, cpp, name, expected, compilers[1])
+
+
+def string_observation(args, cpp, name, expected, compiler):
+    """Read the actual String tag and bytes after the owning callable returns."""
+    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
+    if count != 1:
+        raise RuntimeError("String observer needs exactly one generated entry")
+    raw = unquote_to_bytes(expected.removeprefix('trace="').removesuffix('"\n'))
+    literal = '"' + ''.join(f"\\{byte:03o}" for byte in raw) + '"'
+    changed += r'''
+int main() {
+    if (ctnative_test_entry() != 0) { return 90; }
+    const std::string expected_bytes(STRING_BYTES, STRING_SIZE);
+    if (g_trace.tag != ctnative::nullable_string::kind::string ||
+        g_trace.value != expected_bytes) { return 91; }
+    auto callable = g_host->slot->m_get;
+    std::string saved = callable();
+    g_trace = ctnative::to_nullable_string(std::string("overwritten"));
+    g_host.reset();
+    if (saved != expected_bytes || callable() != expected_bytes) { return 92; }
+    std::string other = callable();
+    other.assign("changed caller result");
+    if (saved != expected_bytes || callable() != expected_bytes) { return 93; }
+    return 0;
+}
+'''.replace("STRING_BYTES", literal).replace("STRING_SIZE", str(len(raw)))
+    source = args.work / f"{name}.owning-observer.cpp"
+    source.write_text(changed)
+    binary = (args.work / f"{name}.owning-observer").resolve()
+    host.run([compiler, *owned.FLAGS, str(source), "-o", str(binary)])
+    if host.run([str(binary)]).stdout != expected:
+        raise RuntimeError(f"{name}: exact String tag/bytes or owning callable observation failed")
 
 
 def refusal_sources():
@@ -256,7 +315,9 @@ def main():
         if name.startswith("legacy_"):
             ir = legacy_marker(args, ir, name)
         boolean_result = name in ("typed-boolean", "typed-boolean-false")
-        node_driver = BOOLEAN_NODE if boolean_result else boundary.NODE
+        string_result = name.startswith("typed-string")
+        node_driver = (STRING_NODE if string_result else
+                       BOOLEAN_NODE if boolean_result else boundary.NODE)
         if host.run([node, "-e", node_driver, str(js)]).stdout != expected:
             raise RuntimeError(f"{name}: Node source oracle mismatch")
         interpreted = host.run([str(reference), str(js)])
@@ -266,6 +327,10 @@ def main():
                 r"1 globals printed \(0 number, 1 boolean, 0 string, 0 null, 0 undefined\)",
                 interpreted.stderr):
             raise RuntimeError(f"{name}: interpreter did not observe one definite Boolean")
+        if string_result and not re.search(
+                r"1 globals printed \(0 number, 0 boolean, 1 string, 0 null, 0 undefined\)",
+                interpreted.stderr):
+            raise RuntimeError(f"{name}: interpreter did not observe one definite String")
         config = owned.contract(args, ir, name, binding)
         prepared_text, manifest_text = ir.read_text(), config.read_text()
         output = owned.lower(args, ir, name, config)
@@ -275,11 +340,12 @@ def main():
         if ir.read_text() != prepared_text or config.read_text() != manifest_text:
             raise RuntimeError(f"{name}: native preparation rewrote the supplied IR or manifest")
         standalone(args, output, name, expected, compilers, nm,
-                   result_type="bool" if boolean_result else "js_num")
-        if boolean_result:
+                   result_type="std::string" if string_result else
+                               "bool" if boolean_result else "js_num")
+        if boolean_result or string_result:
             disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")
             if disabled.read_text() != text:
-                raise RuntimeError(f"{name}: Boolean admission changed with optimization policy")
+                raise RuntimeError(f"{name}: typed admission changed with optimization policy")
         saved[name] = ir, config, output
 
     ir, config, output = saved["ordinary"]
@@ -314,9 +380,9 @@ def main():
         raise RuntimeError("preparation budget control did not exercise rollback and completion")
 
     # An owner and callable identity cannot authorize an unsupported field
-    # result at the definite Number/Boolean observation boundary. Refusal must
+    # result at the definite Number/Boolean/String observation boundary. Refusal must
     # close over the entire prepared component, including the retained getter.
-    for name, literal in (("string", "'answer'"), ("null", "null"), ("undefined", "void 0")):
+    for name, literal in (("null", "null"), ("undefined", "void 0")):
         _, typed, count = boundary.prepare(args, f"typed-{name}",
                                           SOURCE.replace("return 42;", f"return {literal};"))
         fresh = owned.contract(args, typed, f"typed-{name}")
