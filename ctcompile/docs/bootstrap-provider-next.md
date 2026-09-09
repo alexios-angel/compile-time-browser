@@ -1,6 +1,69 @@
 # Next Bootstrap native boundary
 
-## Current continuation: definite scalar-global initialization, 2026-09-09
+## Current continuation: constant-only Number globals, 2026-09-09
+
+`396b7e46` and `bbedee5b` complete the exact alias/direct-observation boundary:
+both original sources now reach **5/5 native** in both modes, preserving eight/
+seven calls and trace=12/1. Nineteen focused programs, their refusal/repair and
+stale/fresh controls, and both saved-scalar sanitizer families pass. Actual
+stored SSA types remain independent of host categories. All 173 historical
+refusal classifications and 506 helper rows are unchanged. The integrated full
+compiler/browser gate remains pending; see `HANDOFF.md` for measurements.
+
+The next exact source still has complete host ownership but refuses native
+output at the standard Map identity guard:
+
+```js
+var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        set(key) { const item = {}; state.set(key, item); const saved = state.get(key); return state.size; }
+    };
+});
+host.slot.size(); const first = host.slot.set('x'); const second = host.slot.set('y'); host.slot.set('z'); var trace = first * 10 + second;
+const fixed = 7; const copy = fixed;
+```
+
+SHA-256, including the final newline:
+`3c1dfd95d22834d6ce64c352ab515f628fddd4e03168acf709642d62243c1491`.
+It preserves **five functions/eight calls** and Node/interpreter observations
+`copy=7, first=1, fixed=7, second=2, trace=12`. Both native modes remain **0/5**,
+with `standard Map identity is unproved with other host/global value reads`.
+The exact repair replaces only `const copy = fixed;` with `const copy = 7;`.
+It reaches **5/5** in both modes with the same calls and observations; SHA-256
+`41a33e4066ff78c262289225670eb38736d06e7cbd2c3f55be2176668b084f71`.
+
+`HostContract/Values.cpp::scalarGlobalRead` and
+`Analysis/OwnedGlobalMethods.cpp` each reject empty published-call dependency
+lists. The existing entry category walk already proves literal/arithmetic
+Numbers and single-store aliases, but exposes no scalar edge for this copy.
+Extend that existing bounded edge proof for constant-only Numbers, preserving
+live entry scope/order, all writes, the complete environment/method family,
+current fingerprints and shared work limits. NativeMap must still independently
+check harmless loads; TypeInference must still subscribe to actual stored SSA
+lattices and retain pending/optional/boxed values. A Number category or a requested
+observation must never manufacture a value or native type.
+
+All **12 original probes** and **12 candidate edits** retain five functions,
+eight calls and Node/interpreter agreement, including explicit scalar type
+counts. String observations use the reference's percent-quoted encoding;
+Number NaN can print `-nan`. Original cases are nine complete-owner and three
+unowned refusals. Only the historical and builtin-spelling literal substitutions
+admit; the other ten candidate edits remain 0/5 and are not complete repairs.
+In particular, the trace-fed copy still loads a constant-only global after its
+first edit. Duplicate writes, reads before initialization, dynamic globals and
+future method writes retain their separate controls. Bool/String/Undefined
+origins, exact zero after clear, String leaf fields, full Bootstrap and direct
+browser APIs remain separate unfinished work.
+
+Evidence: `/tmp/ctcompile-constant-global-next.json` and
+`/tmp/ctcompile-alias-next-corrected.json`; all 24 source hashes independently
+match the original probes. No source/runtime semantics were changed to obtain
+these observations.
+
+## Previous continuation: definite scalar-global initialization, 2026-09-09
 
 `801794d8` closes the saved Number Map-identity boundary. The unchanged
 **d74ae2ee** and **867378b1** eight-call sources now reach **5/5 native** in

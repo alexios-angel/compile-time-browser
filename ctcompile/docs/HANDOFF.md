@@ -6,6 +6,96 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Definite scalar-global initialization and static BigInt origins, 2026-09-09
+
+Resumed the exact **8003b4bc** alias continuation in **53692779**,
+`bootstrap-provider-next.md` and the **06:48:45 UTC** synchronization journal.
+The tree/index started clean; codex-wip recovery and browser source-split
+repairs were already landed. Three agents handled query tests, execution
+review and escape analysis. Root recovered the execution agent's partial
+sources after two rate limits and owns every devbox gate and commit.
+No browser/runtime source changed and no push occurred.
+
+**396b7e46** uses the fresh complete owner proof only to remove implicit
+Undefined from an exact scalar global load. The single indexed store, live
+initialization, binding and original SSA value must agree. The load subscribes
+to that actual value's lattice: pending stays pending, later i32/f64/boxed
+widening propagates, and a host Number category cannot invent a native type.
+Dynamic globals, missing/duplicate stores and incomplete/stale proofs retain
+their conservative behavior. Final admission and global storage are unchanged.
+
+The unchanged eight-call **8003b4bc** alias and seven-call **06efa534** direct
+observation advance **0/5 -> 5/5 native** in both modes, preserving trace=12/1.
+Three new alias-chain/arithmetic/saved-branch programs also reach 5/5. All
+**21** source probes agree on Node/interpreter observations: **15 native,
+four unowned, two complete-owner Map-identity refusals**. The result-fed key
+now independently has a definite `js_num` formal instead of nullable scalar;
+its actual double-key/object Map schema is unchanged.
+
+The warning-free **57-step** build passes five host/owner tests in the initial
+**5/6 CTest run, 129.63 seconds**. Its only failure was a new duplicate-store
+owner expectation: ownership can remain complete while scalar edges are empty.
+Corrected tests pass after the warning-free **12-step** rebuild. Type inference
+passes in **0.05 seconds**, covering **20 rows, eight live edits**, exact and
+incomplete budgets, source/prepared forms and forced pending/i32/f64/boxed
+subscription stages. All six relevant compiler tests pass across these runs.
+
+**bbedee5b** gates **19 focused native programs**, four unowned/two complete-owner
+refusal families, exact edits, prepared/emitted scalar graphs and fresh/stale
+forgeries. Both explicit/deduced GCC/Clang forms link no VM. A new alias lifetime
+family exercises **128 future calls**, both branch flags, owner/table release,
+pre-reentry observations, independent entry execution and final Map/leaf release.
+Aliases survive retained-leaf mutation. Together with the previous saved-scalar
+family both sanitizer lifetimes pass. Corrected stale controls preserve raw
+calls without demanding a fresh proof's direct-call rewrite; the stronger
+resolved-call assertion remains on the fresh complete-owner path.
+Budgets **9249/9307** each check **32 cutoffs**, with no rollback interval.
+All **173 historical refusal classifications** and **506 helper rows across
+53 helpers** remain unchanged. All nineteen executions and corrected remaining
+controls pass across runs; the integrated full lit gate is still pending.
+
+**74db2857** adds static BigInt Add/BitAnd/BitOr/BitXor retention categories,
+requiring independently original BigInt operands and charged per-path state.
+Shifts, mixed/opaque operands and unsupported dynamic operations still refuse.
+This is retention evidence, not native BigInt admission or an effect guarantee.
+The Node/interpreter preprobe agrees at **65535**. The first escape run passes
+seven tests; a new generic enum-mutation setter crashes the arrays test.
+Restoring typed setters preserves the malformed-enum control. Its warning-free
+**two-step** rebuild passes arrays in **0.36 seconds** (total 0.37), so all
+eight escape tests pass across runs. Each static kind checks **105 rows,
+39 live states and 3706 cutoffs**, plus a **128-work** snapshot. The six new
+sources measure **24 sites, 48 instances, 38 retained**; fixture precision is
+**64/98**, all four oracles report zero violations, and corpus precision stays
+**0/64, 0/16, 0/20**.
+
+Stable clang-format **22.1.8 passes all 745 files**; bundled 23 retains the
+same nine unrelated differences and changed C++ passes both. Independent
+production, source-preservation and generated-artifact audits pass. The full
+compiler/browser CTest gate and fresh native corpus measurements remain pending;
+no complete Bootstrap gain is claimed from these isolated sources.
+
+**Next: constant-only Number global edges.** The exact eight-call **3c1dfd95**
+source in `bootstrap-provider-next.md` still proves ownership but refuses native
+Map identity because `fixed = 7; copy = fixed` has no published-call dependency.
+Its exact **41a33e40** literal-copy repair reaches 5/5 and preserves all five
+observations. HostContract and OwnedGlobalMethods both require nonempty call
+dependencies today. Extend only Number origin/initialization evidence after
+complete live scope/order/write/environment and ownership proofs; empty call
+dependencies must not create a native type. Keep pending/boxed/optional lattice
+values, dynamic globals, multiple writes and effects conservative.
+All **24** next source/candidate-edit observations agree after applying the
+reference's documented String encoding and Number NaN formatting conventions.
+Only two candidate edits admit; the other ten remain refusals. Exact zero after
+clear, String leaf fields, full Bootstrap and direct browser API integration
+remain unfinished.
+
+Evidence: `/tmp/ctcompile-alias-{baseline,first-census}.json`,
+`/tmp/ctcompile-alias-{proof,focused,corrected-arrays,execution,controls}.log`,
+`/tmp/ctcompile-alias-refusal-census.json`,
+`/tmp/ctcompile-alias-{original,lifetime}.cpp`, and
+`/tmp/ctcompile-alias-next-corrected.json`. Full-gate results will be appended
+before this session releases its claims.
+
 ## Saved Number globals and BigInt binary origins, 2026-09-09
 
 Resumed the exact **d74ae2ee/867378b1** saved-global continuation in

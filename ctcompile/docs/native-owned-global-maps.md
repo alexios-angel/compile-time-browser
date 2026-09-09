@@ -1,5 +1,30 @@
 # Native captured Maps across global publication
 
+## Definitely initialized scalar aliases, 2026-09-09
+
+`396b7e46` removes only implicit absence for an exact scalar load proved by the
+complete current owner. The live single store, binding and original value must
+agree with the global index. Actual SSA lattices still supply every type:
+pending, widening and boxed results are not replaced by host Number categories.
+Dynamic globals, duplicate writes and incomplete/stale proofs retain refusal.
+The original eight-call alias **8003b4bc** and seven-call direct observation
+**06efa534** advance 0/5 to **5/5** in both modes, preserving trace=12/1.
+
+`bbedee5b` passes nineteen focused native programs, four unowned/two complete-owner
+refusal families, prepared/emitted dataflow, forgeries/reruns and two saved-scalar
+sanitizer lifetimes, including the new alias family. Saved aliases survive 128
+future calls, both flags, owner/table destruction, checks before reentry and
+final Map/leaf release and mutation. Budgets 9249/9307 each check 32 cutoffs.
+All 173 old refusal classifications and 506 historical helper rows are unchanged.
+All six host/owner/type CTests pass across the initial run and corrected type
+expectation. The independent type query covers twenty rows, eight live edits
+and forced pending/i32/f64/boxed propagation. The integrated full gate is pending.
+
+The exact next **3c1dfd95** constant-only Number load still lacks the required
+published-result dependency; **41a33e40** replaces only its copy with literal 7
+and reaches 5/5 with identical observations. Full Bootstrap and direct browser
+API integration remain unfinished. See `HANDOFF.md` for measured gates.
+
 ## Saved Number global reads, 2026-09-09
 
 `801794d8` supplies per-load initialization/value/result-dependency edges only
