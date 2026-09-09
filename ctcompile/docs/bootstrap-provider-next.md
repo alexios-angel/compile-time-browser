@@ -9,9 +9,14 @@ trace=1; historical seven/nine-call post-delete identity sources reach **5/5**,
 trace=0. The source hashes below are unchanged. Both affected CTests pass after
 preserving when-present payloads through deletion. The full warning-free
 250-step build completes at **511/517 CTests**: the same five browser failures
-and one old Map refusal classification. Lit passes **164/165**; corrections for
-eleven refined type refusals and one newly admitted existing program are pending,
-with every original source preserved.
+and one old Map refusal classification. Initial lit passes **164/165**.
+`4eb2390d` preserves all historical sources while asserting eleven refined type
+refusals and gating the original ten-call empty-String deletion program at
+**6/6 native**, including future Undefined/empty/distinct-key observations under
+explicit/deduced GCC/Clang. The complete corrected lit rerun passes **165/165 in
+709.94 seconds**; the published Map gate passes **194 programs and 27 lifetime
+families**. All **372 compiler tests have passing results across the first full
+run and corrected rerun**. No second full 517-test run is claimed.
 
 The next isolated boundary is **captured `Map.clear()`**. A saved-object identity
 read across clear separates method admission from result typing; a fresh read

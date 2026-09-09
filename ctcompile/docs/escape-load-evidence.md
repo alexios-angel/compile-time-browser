@@ -1660,8 +1660,8 @@ native/VM comparison. Evidence:
 
 The additive unit table passes **52 rows, 30 live mutation states and 2,280
 retention budget cutoffs**, plus a 32-result snapshot requiring exactly **64
-extra work units**. It checks
-each incoming/saved operand independently, both structural overwrite arms,
+extra work units**. It checks each incoming/saved operand independently,
+both structural overwrite arms,
 returned saved children, result forwarding/rooting, nonliteral keys and late
 effects. Each operand, original constant and comparison kind is mutated under
 forged completion/confinement reports. Every incomplete contents/retention
@@ -1686,7 +1686,7 @@ p5's existing single partial observation. All four escape oracles report
 Local Node checks **87 combined fixture calls** and **34 new discriminating
 observation mutations**, including exact saved bytes, equality/inequality,
 source/target identity and independent retained children. Removing the added
-source block reproduces the entire committed fixture byte-for-byte (SHA256
+source block reproduces the pre-increment committed fixture byte-for-byte (SHA256
 `ae2fa6b5af14db567f69146899a72fb40d628d28e6c9afa19385d544c3aa484f`).
 Evidence: `/tmp/ctcompile-escape-bigint-equality-node.{py,js,json}`.
 
@@ -1738,13 +1738,33 @@ case the later reseed remains after the actual read, preserving the saved value.
 
 An independent survey of historical driver refusals identifies eleven controls
 that now have complete ownership but still refuse unsupported native carriers,
-plus one former refusal that now admits **6/6**. Test classifications are being
-corrected without changing their JavaScript or compiler production. The complete
-corrected lit rerun remains **pending**; no all-compiler-pass result is claimed
-here. Evidence:
+plus one former refusal that now admits **6/6**. **`4eb2390d`** corrects only
+the test classifications, preserving their JavaScript and compiler production.
+The focused correction passes all eleven carrier families in both optimization
+modes, with exact repairs, live producer/consumer/capture operands, fresh/stale
+forgeries and prepared reruns. The unchanged ten-call empty-String deletion
+program passes explicit/deduced GCC/Clang execution and future Undefined,
+empty-String and distinct-key observations. Its additional positive increases
+the integrated driver from 193 to **194 programs**, with **27 lifetime families**.
+
+The complete corrected `ctcompile_lit` rerun passes **165/165 in 709.94 seconds**
+(CTest **710.00 seconds**, total command **710.01 seconds**, exit **0**), including
+the complete published Map driver. All **372 compiler tests now have passing
+results across the initial full run and corrected lit rerun**. This is not a
+second complete 517-test run; the five established browser failures remain.
+The BigInt implementation and all five escape code/test hashes are unchanged
+through the test-only correction. Escape precision and the separate refused
+object-to-BigInt runtime differential above remain as measured.
+The final corrected **twelve code/test hashes** independently match local files,
+committed HEAD, the corrected frozen input and the devbox after the successful
+rerun, including all three updated Python test files.
+
+Evidence:
 `/tmp/ctcompile-absence-recovery-{full.log,full-detail.log,evidence.json,remote-hashes.log}`,
-`-final-absence.cpp` and `-final-lifetime.cpp`. Code/tests for the BigInt slice
-remain frozen; the parent owns remaining validation and commits.
+`-final-absence.cpp` and `-final-lifetime.cpp`,
+`/tmp/ctcompile-absence-carrier-focused.log`, and
+`/tmp/ctcompile-absence-corrected-lit{.log,-detail.log,-exit.txt}`,
+`/tmp/ctcompile-absence-corrected-{frozen.json,remote-hashes.log}`.
 
 Remaining boundaries include mixed/computed BigInt conversions and arithmetic,
 other primitive conversions, loops, callee summaries and native lifetime/effect

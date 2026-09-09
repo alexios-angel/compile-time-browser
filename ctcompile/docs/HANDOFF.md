@@ -66,31 +66,44 @@ checks agree at 1023. The discrepancy is journaled for the runtime owner.
 
 Stable formatter **22.1.8 passes all 745 files**; changed C++ files also pass
 bundled 23, whose complete check retains the same nine unrelated differences.
-All **twelve code/test hashes** match committed HEAD and the frozen gate input.
 The full **250-step build has zero warnings**. Initial CTest finishes
 **511/517 in 1339.11 seconds**: **371/372 compiler, 140/145 browser**. Lit is
 **164/165 in 672.49 seconds** (CTest 672.69); the sole compiler failure is the
 published Map test's historical `seeded_deleted` unowned expectation, after its
 193 positive programs/lifetime paths executed. That unchanged source now has a
 complete owner but stays **0/5 native** at an unsupported nullable Number Map
-key. The independent **155-case, zero-error** refusal census finds eleven such
-complete-owner type refusals and one original empty-String deletion program
-now **6/6 native** by admission; its C++ execution/classification update is pending.
-The same five browser failures remain: selectors, frames, element_attrs,
-vm_async and early_errors. Compiler production remains fixed; corrected tests
-and a full lit rerun are pending. Twelve first-full source hashes match the
-frozen input and devbox. Actual emitted C++ preserves allocation, field write,
-Map set/delete/get, the saved owning read and live comparison without Script,
-context/value or AOT runtime symbols.
+key. The same five browser failures remain: selectors, frames, element_attrs,
+vm_async and early_errors. Exception recovery passes in **1.19 seconds**.
+
+**`4eb2390d`** corrects the historical classification after an independent
+**155-case, zero-error** refusal census in both modes. Eleven original sources
+now assert complete owners, exact unsupported-carrier diagnostics and preserved
+prepared result/formal, receiver, callee and capture operands. Their exact
+repairs and stale/fresh forged reports pass. The unchanged ten-call empty-String
+deletion source reaches **6/6 native**, trace=2, using the existing nullable
+String key and owning String payload types. Its focused explicit/deduced
+GCC/Clang execution and no-VM checks pass. Independent future calls distinguish
+Undefined, empty and distinct String keys (observation 255); three blind controls
+differ. All **328 historical source/refusal rows plus 33 metadata rows** preserve
+bytes. Compiler production is unchanged by this test correction.
+
+The complete corrected lit rerun passes **165/165 in 709.94 seconds** (CTest
+710.00 seconds, total 710.01). All **372 compiler tests have passing results
+across the first full run and corrected rerun**; this is not a second 517-test run.
+The published Map gate passes **194 programs and 27 lifetime families**. All twelve
+corrected code/test hashes match local sources, committed HEAD and final devbox
+sources; the first-full inventory is retained separately. Actual emitted C++
+preserves allocation, field write, Map set/delete/get, the saved owning read and
+live comparison without Script, context/value or AOT runtime symbols.
 
 **Next boundary: captured `Map.clear()` admission, then whole-Map absence.**
 The existing host method whitelist/arity rejects even a saved-object identity
 read across clear, while NativeMap and EmitC already have standard clear
 support. Fresh get-after-clear additionally needs proof for arbitrary keys,
-subsequent possibly aliasing writes and branch joins. All **29 continuation sources** agree across Node and the interpreter and
-both admission modes: **five are 5/5 native; 24 stay unowned 0/5**, preserving
-prepared calls. Both original clear sources have seven calls/trace=1 and stay
-0/5; the exact clear-to-delete repair is 5/5. All twenty additional clear
+subsequent possibly aliasing writes and branch joins. All **29 continuation
+sources** agree across Node and the interpreter and both admission modes:
+**five are 5/5 native; 24 stay unowned 0/5**, preserving prepared calls. Both
+original clear sources have seven calls/trace=1 and stay 0/5; the exact clear-to-delete repair is 5/5. All twenty additional clear
 variants also refuse, including saved fields, fluent aliases, repeated clear,
 unseen keys and surviving branches. Entry numeric addition (eight calls,
 trace=3) and String fields (seven calls, trace=2) still refuse. Fresh full corpus
@@ -99,8 +112,9 @@ both modes with zero pruned; exact Data **0/7 browser/CommonJS, 0/8 AMD**.
 Full native Bootstrap and direct browser API integration remain unfinished.
 
 Evidence: `/tmp/ctcompile-absence-recovery-{build,build2,build3,focused,focused3,execution,full}.log`,
-`-frozen.json`, `-final-format22.log`, `-final-format23.log`, and
-`/tmp/ctcompile-map-absence-recovery-audit/`.
+`/tmp/ctcompile-absence-carrier-focused.log`, `/tmp/ctcompile-absence-corrected-lit.log`,
+`/tmp/ctcompile-absence-corrected-{frozen,evidence}.json`, the separate first-full
+inventory, and `/tmp/ctcompile-map-absence-recovery-audit/`.
 
 ## Strict fresh object comparisons and primitive Add/Concat, 2026-09-08
 
