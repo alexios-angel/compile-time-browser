@@ -1,5 +1,35 @@
 # Native captured Maps across global publication
 
+## Entry arithmetic over published Number results, 2026-09-09
+
+`0468fed4` admits Add/Sub/Mul/Div/Mod/Pow only from independently exact Number
+categories. It keeps invocation worklist facts private until the complete
+family recheck succeeds, including all future input categories. Expressions
+can feed later calls; saved globals checked in source order retain their category.
+No category is an evaluated constant or branch predicate. Actual SSA scopes and
+both SCF yields prove independently. Existing native Number and Map lowering
+emits the runtime operations unchanged.
+
+`83c32f0c` gates eighteen programs, both optimization modes, explicit/deduced
+GCC/Clang and no-VM symbols. The original eight-call sum is now **5/5**, trace=3;
+its eight-call arithmetic-free repair remains **5/5**, trace=1. Size-returning
+operands distinguish evaluation order, NaN keys retain SameValueZero identity,
+and two sanitizer lifetime families exercise 128 future calls, both Boolean
+flags, owner/table release, reentry and final Map/leaf release. Nine ordinary
+refusal/repair families and two saved-global owner-complete refusals pass,
+including stale/fresh reports, reruns and exact live operand preservation.
+Budgets **9752/12792** each check 31 cutoffs, with no speculative rollback interval.
+All 414 historical helper rows and twelve continuation source hashes are intact;
+169 historical refusal cases have zero census errors.
+
+Saved global result sources remain **0/5 native** after their host proof succeeds:
+NativeMap's global-read guard recognizes owned root loads but has no independent
+scalar-read proof. Their exact inline repairs preserve arithmetic and calls and
+are **5/5**. This is the next boundary; see
+[bootstrap-provider-next.md](bootstrap-provider-next.md) for exact sources and
+[HANDOFF.md](HANDOFF.md) for measured gates. The full monorepo gate is pending
+at this checkpoint. Full native Bootstrap and browser API integration are open.
+
 ## Standard clear and arbitrary-key absence, 2026-09-08
 
 `1c352a82` proves zero-argument captured clear and its Undefined result;

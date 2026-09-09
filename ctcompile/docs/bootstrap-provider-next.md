@@ -1,6 +1,64 @@
 # Next Bootstrap native boundary
 
-## Current continuation: entry numeric results, 2026-09-08
+## Current continuation: saved scalar globals, 2026-09-09
+
+`0468fed4` proves entry Number arithmetic and `83c32f0c` gates it. The original
+379ccc eight-call sum now reaches **5/5 native**, trace=3, in both modes.
+All eighteen focused programs pass Node/interpreter, explicit/deduced GCC/Clang,
+no-VM checks and two sanitizer lifetime families. Nine unowned and two
+owner-complete refusal families retain exact repairs and live operands. All
+169 historical refusal cases were audited without another classification change.
+The full monorepo gate remains pending; see [HANDOFF.md](HANDOFF.md).
+
+The next exact boundary is the unchanged saved-results source:
+
+```js
+var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        set(key) { const item = {}; state.set(key, item); const saved = state.get(key); return saved === item ? 1 : 0; }
+    };
+});
+host.slot.size(); const first = host.slot.set('x'); const second = host.slot.set('x'); const third = host.slot.set('y'); var trace = first + second + third;
+```
+
+Logical source SHA-256, including its final newline:
+`d74ae2ee15979027a09d9ab8a786f3d2f2640617acf9979ef00ce32a226f2065`.
+It has **five functions, eight calls, three result stores/loads and two
+additions**, trace=3. Both modes now prove complete host ownership, but native
+admission remains **0/5** with
+`standard Map identity is unproved with other host/global value reads`.
+Replacing only the final saved declarations with the original inline expression
+keeps all calls and arithmetic and restores the admitted 379ccc source.
+
+`Analysis/NativeMap.cpp` currently exempts only global loads identified by
+`OwnedGlobalRoots::lookup()` as the owned ordinary root. The complete host
+proof knows the saved scalar categories, but that evidence is not exposed to
+this consumer. Extend this existing seam with a bounded live proof of the
+actual scalar definitions and uses. Check source ordering, all writes,
+current callable/result origins, unknown effects and stale/fresh reports;
+never infer a harmless global from its spelling or observed startup value.
+Type inference and final native ownership remain independent obligations.
+
+The separate eight-call saved size-snapshot source, SHA-256
+`867378b10e4c6d18a1902135efc101813e3daadad13b33091c8af25fb89f9a42`,
+returns trace=12 and hits the same boundary. Its exact inline repair retains
+every call, multiplication and addition and reaches 5/5. Both saved-global
+refusals preserve prepared receiver/callee/capture, store/load and binary edges
+under fresh/stale forgeries and reruns. All 31 measured cases agree on Node/VM
+and both admission modes: **20 native, nine unowned, two owner-complete**.
+
+Host-only SCF category proofs also require a valid condition and independently
+scoped yield operands; entry SCF still has the existing native owner refusal.
+Exact zero-size after clear and String leaf-field support remain separate
+boundaries. Full native Bootstrap and direct browser APIs remain unfinished.
+Evidence: `/tmp/ctcompile-numeric-census.json`, `-saved.mlir`, `-execution.log`
+and `-refusal-census.log`. All twelve previous continuation source hashes and
+414 historical helper rows remain unchanged.
+
+## Previous continuation: entry numeric results, 2026-09-08
 
 `1c352a82` and `c2b49f99` complete captured standard clear and arbitrary-key
 absence, with both original seven-call sources now **5/5 native**, trace=1.

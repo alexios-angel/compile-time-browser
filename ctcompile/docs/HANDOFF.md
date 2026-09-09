@@ -6,6 +6,88 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Published Number arithmetic and BigInt unary origins, 2026-09-09
+
+Resumed interrupted iteration 21 from **62282da1**, the **03:29:26 UTC**
+journal's exact arithmetic witness and the abandoned **03:34/03:35** test
+claims. The tree/index started clean. The older codex-wip recovery and browser
+source-split build repairs were already landed; no other branch was changed.
+Three agents handled query tests, execution/lifetimes and escape analysis; root
+recovered the escape agent's unfinished audit after its rate limit.
+
+Committed **0468fed4** proves entry arithmetic over published Number results,
+**83c32f0c** gates execution/lifetimes, and **6f62fbaf** records computed BigInt
+unary escape categories. No browser/runtime source changed; no push.
+
+The unchanged **379ccc** eight-call witness advances **0/5 -> 5/5 native**,
+trace=3, in both modes. Its eight-call arithmetic-free repair remains 5/5,
+trace=1. Add/Sub/Mul/Div/Mod/Pow require independently exact Number operands;
+result expressions can feed later same-method arguments only through the
+bounded invocation worklist and complete future-call census. Saved scalar
+aliases keep their source order. Categories never become concrete values or
+select branches. Source SSA scope, including both yield operands, is checked
+independently of selected-arm effect order. Standard Number/Map lowering is
+reused, with no new runtime dependency.
+
+All **31** continuation sources agree on Node/interpreter observations and both
+admission modes: **20 native 5/5, nine unowned 0/5, two owner-complete 0/5**.
+All **12 earlier continuation hashes** and **414 historical helper rows** stay
+unchanged. The **18-program** focused execution gate passes explicit/deduced
+GCC/Clang and no-VM checks, **nine refusal/exact-repair controls**, **two saved
+global carrier refusals**, reruns/forgeries and **two sanitizer lifetime
+families**. Saved callables exercise 128 future calls, both Boolean arms,
+owner/table release, reentry and final Map/leaf release. Numeric snapshots
+survive owner destruction. Budgets complete at **9752/12792**, each checking
+31 cutoffs, with no speculative rollback interval. A **169-case historical
+refusal census** has zero errors and identical classifications in both modes.
+
+The warning-free **21-step** combined build passes **19/20 CTests in 143.14
+seconds**; its sole failure was three misspelled opcodes in new escape tests.
+The corrected **two-step** rebuild passes all **eight escape CTests in 9.00
+seconds**. All twenty focused tests pass across these runs. Host/owner tests
+check **41 rows per source/prepared form**, stale/fresh edits and exhaustive
+budgets. **5bd3e76f** adds four condition-scope controls and a host-only guard;
+the warning-free seven-step rebuild passes both affected CTests **2/2 in
+118.77 seconds**. Each form now checks **20 scope controls**. Entry SCF still
+retains the existing owner refusal.
+
+BigInt Neg/BitNot results retain a separate original category through saved
+reads and path copies. Every non-BigInt consumer excludes that category; mixed,
+opaque and binary BigInt operations remain refused. Each unary passes **83
+rows, 15 live states and 2257 retention cutoffs**, with a **128-work** snapshot
+control. Five new sources measure **20 sites, 40 instances and 32 retained**;
+one unchanged historical child newly proves confined. Fixture precision is
+**58/89**, including added coverage; all four escape oracles report zero
+violations and corpus precision stays **0/64, 0/16, 0/20**. The exact unary
+premeasurement agrees at trace=65535. This proves retention, not native BigInt
+admission, allocation success or a no-throw/effect contract.
+
+Stable formatter **22.1.8 passes all 745 files**; changed C++ also passes
+bundled 23, whose complete check retains the same nine unrelated differences.
+The complete monorepo build/CTest gate is pending. Full-bundle coverage has not
+yet been remeasured this session; the previous gate was Bootstrap 19/574,
+p5 39/4754, Phaser 45/7725, exact Data 0/7 browser/CommonJS and 0/8 AMD.
+
+**Next: native Map identity across independently proved saved scalar globals.**
+The exact eight-call saved-results source **d74ae2ee** now has a complete host
+owner, but remains 0/5 at `standard Map identity is unproved with other
+host/global value reads`. Its actual three result stores, three scalar loads,
+two additions and every call survive preparation. The exact inline repair
+restores the admitted 379ccc source without dropping calls or arithmetic.
+The eight-call size-snapshot source **867378b1**, trace=12, has the same
+boundary and an arithmetic-preserving inline repair. Extend the live
+HostContract/OwnedGlobalRoots -> NativeMap seam with independently proved
+scalar reads; a spelling, observation or report must not authorize a global.
+Exact zero-size after clear and String leaf fields remain separate refusals.
+Full native Bootstrap and direct browser API integration remain unfinished.
+
+Evidence: `/tmp/ctcompile-numeric-{baseline,first,census}.json`,
+`/tmp/ctcompile-numeric-{focused-build,focused-focused,escape2,execution}.log`,
+`/tmp/ctcompile-numeric-refusal-census.log`,
+`/tmp/ctcompile-numeric-{frozen,execution-frozen}.json`, and
+`/tmp/ctcompile-numeric-saved.mlir`. See `bootstrap-provider-next.md` for the
+exact next source.
+
 ## Captured Map.clear and exact BigInt relations, 2026-09-08
 
 Resumed the precise `Map.clear()` continuation in **`b1e8ba6b`**, the previous
