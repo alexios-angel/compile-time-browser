@@ -155,8 +155,8 @@
 # The exact historical eight-call saved identity source reads its actual leaf
 # after replacement/deletion. The eight-call distinct source and the local
 # six-call fresh comparison retain actual separate allocations through a complete
-# strict-comparison use census. The nine-call fresh deleted read remains
-# unproved. Source bytes are preserved.
+# strict-comparison use census. The nine-call fresh deleted read now proves
+# Undefined and compares unequal to the saved object. Source bytes are preserved.
 # Fresh/stale
 # forged object identity/field/presence annotations and transactional budget
 # cutoffs cannot manufacture ownership or erase source allocation/field uses.
@@ -193,5 +193,23 @@
 # distinct within and across calls and preserve their fields until release.
 # Fresh/stale forged identity, field, payload and host reports, prepared reruns
 # and measured budget cutoffs cannot manufacture source authority. Both exact
-# post-delete sources remain unowned with all seven/nine original calls intact;
-# possible absence is not a definite Undefined result.
+# post-delete sources retain all seven/nine original calls and compare a proved
+# Undefined result unequal to the original object. Possible absence alone cannot
+# justify that result.
+# Exact-key deletion of an object-valued captured Map proves a fresh Undefined
+# read, repeated deletion preserves it, and a saved Undefined stays independent
+# of later reseeding. Known disjoint writes preserve absence; same-key reseeding
+# restores the live object. Unseeded/Number payload controls and exact historical
+# saved-before-delete repairs preserve their original sources and observations.
+# All 31 continuation source hashes and their separate raw/prepared call counts
+# remain fixed. Four identical-arm sources simplify eight raw calls to seven
+# prepared calls. Two additional nine-call witnesses retain nonidentical safe
+# branches through LiftToSCF; both arms independently prove absence. One-arm
+# deletion and conditional reseeding refuse for both Boolean startup arguments;
+# potentially aliasing String formals and unsupported clear also remain unowned.
+# Each refusal preserves calls/branches/allocations under stale/fresh forged
+# reports and restores an independently admitted exact source repair.
+# Saved native callables return the earlier Undefined observation after reseed
+# and exercise both future branch flags over 128 calls after owner/table release.
+# Weak witnesses distinguish current mapped leaves from deleted leaves and prove
+# final Map/object release through independent entry reexecution under sanitizers.

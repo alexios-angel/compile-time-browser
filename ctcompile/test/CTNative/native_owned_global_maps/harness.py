@@ -18,6 +18,7 @@ from .sources import (
     nullable_payload_sources, NULLABLE_PAYLOAD_READBACKS, nullable_host_result_sources,
     nullable_nested_result_sources,
     leaf_object_sources, LEAF_OBJECT_FIELDS, leaf_readback_sources, LEAF_COMPARISON_CASES,
+    leaf_absence_sources, leaf_absence_cases,
 )
 
 
@@ -1311,6 +1312,8 @@ def standalone(args, output, name, value, compilers, nm):
             check_leaf_object_calls(cpp, name, mode)
         if name in leaf_readback_sources():
             check_leaf_readback_calls(cpp, name, mode)
+        if name in leaf_absence_sources():
+            check_leaf_absence_calls(cpp, name, mode)
         if name in RESULT_SIGNATURES:
             result, params, _ = RESULT_SIGNATURES[name]
             getter_params = "js_num" if name in {
@@ -1348,6 +1351,9 @@ def standalone(args, output, name, value, compilers, nm):
         if name in LEAF_COMPARISON_CASES:
             source = args.work / f"{name}.{mode}.identity.cpp"
             source.write_text(comparison_identity_cpp(cpp, name))
+        if name in LEAF_ABSENCE_LIFETIMES:
+            source = args.work / f"{name}.{mode}.identity.cpp"
+            source.write_text(leaf_absence_lifetime_cpp(cpp, name))
         if name in {**nullable_result_sources(), **nullable_key_sources(), **nullable_payload_sources(),
                     **nullable_host_result_sources(), **nullable_nested_result_sources()}:
             key = "std::string" if name == "nullable_homogeneous_key" else "std::variant<bool, std::string>"
@@ -1377,7 +1383,7 @@ def standalone(args, output, name, value, compilers, nm):
             host.run([compiler, *owned.FLAGS, str(source), "-o", str(binary)])
             if owned.VM.search(host.run([nm, "-C", str(binary)]).stdout):
                 raise RuntimeError(f"{name}/{mode}: linked a VM symbol")
-            traces = 2 if name in LEAF_COMPARISON_CASES else 1
+            traces = 2 if name in {*LEAF_COMPARISON_CASES, *LEAF_ABSENCE_LIFETIMES} else 1
             if host.run([str(binary)]).stdout != f"trace={value}\n" * traces:
                 raise RuntimeError(f"{name}/{mode}: standalone result mismatch")
         if name in {"ordinary", "mutate_map", "growing", "result_seeded_growing"}:
@@ -1401,6 +1407,8 @@ def standalone(args, output, name, value, compilers, nm):
             leaf_readback_lifetime(args, cpp, name, mode, compilers[1])
         if name in LEAF_COMPARISON_CASES:
             comparison_identity_lifetime(args, cpp, name, mode, compilers[1])
+        if name in LEAF_ABSENCE_LIFETIMES:
+            leaf_absence_lifetime(args, cpp, name, mode, compilers[1])
 
 
 def check_call_preservation(original, output, name):
@@ -1523,3 +1531,146 @@ def check_budgets(args, ir, config, name, functions=4):
     print(f"{name}: first complete budget {high}; {len(checked)} cutoffs checked; "
           f"{len(rollback)} discard a speculative rewrite after original owner proof")
     return rollback
+
+
+LEAF_ABSENCE_LIFETIMES = ("local_absence_saved_undefined", "local_absence_distinct_branches_false")
+
+
+def leaf_absence_observer_source(source, name):
+    reseeded = name == "local_absence_saved_undefined"
+    observed = source + """
+(function() {
+    const seen = [], results = [];
+    const original = Map.prototype.set;
+    Map.prototype.set = function(key, value) {
+        seen.push(value); return original.call(this, key, value);
+    };
+    const setter = host.slot.set, size = host.slot.size;
+    host = {};
+    results.push(setter('future-key', false));
+    results.push(setter('future-key', true));
+    results.push(setter('other-key', false));
+    results.push(setter('other-key', true));
+    Map.prototype.set = original;
+    trace = 0;
+"""
+    writes = 2 if reseeded else 1
+    checks = [f"seen.length === {4 * writes}", "results.every(value => value === 1)",
+              f"size() === {3 if reseeded else 0}", "seen.every(value => value.value === 1)"]
+    for left in range(4):
+        if reseeded:
+            checks.append(f"seen[{2 * left}] === seen[{2 * left + 1}]")
+        for right in range(left + 1, 4):
+            checks.append(f"seen[{writes * left}] !== seen[{writes * right}]")
+    for check in checks:
+        observed += f"    if ({check}) {{ trace += 1; }}\n"
+    return observed + "})();\n", len(checks)
+
+
+def leaf_absence_lifetime_cpp(cpp, name):
+    reseeded = name == "local_absence_saved_undefined"
+    changed = instrument_leaf_objects(cpp)
+    changed += r'''
+int main() {
+    constexpr bool reseeded = CTN_RESEEDED;
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1 ||
+        ctn_test_objects.size() != 1 || ctn_test_objects[0].expired() == reseeded) { return 140; }
+    auto owner = g_host;
+    auto table = owner->slot;
+    auto setter = table->m_set;
+    auto size = table->m_size;
+    static_assert(std::is_same_v<decltype(size), std::function<js_num()>>);
+    static_assert(std::is_same_v<decltype(setter), std::function<js_num(CTN_PARAMS)>>);
+    std::weak_ptr owner_lifetime = owner;
+    std::weak_ptr table_lifetime = table;
+    g_host.reset(); owner.reset(); table.reset();
+    if (!owner_lifetime.expired() || !table_lifetime.expired() || ctn_test_maps[0].expired()) {
+        return 141;
+    }
+    const std::string original(160, 'k');
+    for (int call = 0; call < 128; ++call) {
+        auto caller = original;
+        const auto before = ctn_test_objects.size();
+        if (setter(caller CTN_FLAG) != 1 || size() != (reseeded ? 2 : 0) ||
+            ctn_test_objects.size() != before + 1) { return 142; }
+        caller.assign(original.size(), 'q');
+        for (std::size_t index = 1; index < before; ++index) {
+            if (!ctn_test_objects[index].expired()) { return 143; }
+        }
+        if (ctn_test_objects.back().expired() == reseeded) { return 144; }
+        if (reseeded) {
+            const auto leaf = std::static_pointer_cast<const ctnative::identity_object>(
+                ctn_test_objects.back().lock());
+            if (!leaf || leaf->field_76616c7565.tag != ctnative::nullable_scalar::kind::number ||
+                leaf->field_76616c7565.value != 1) { return 145; }
+        }
+    }
+    if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 2 ||
+        ctn_test_maps[0].lock() == ctn_test_maps[1].lock() ||
+        size() != (reseeded ? 2 : 0) || g_host->slot->m_size() != (reseeded ? 1 : 0)) { return 146; }
+    setter = {};
+    if (ctn_test_maps[0].expired()) { return 147; }
+    size = {};
+    if (!ctn_test_maps[0].expired() || ctn_test_maps[1].expired()) { return 148; }
+    for (std::size_t index = 0; index + 1 < ctn_test_objects.size(); ++index) {
+        if (!ctn_test_objects[index].expired()) { return 149; }
+    }
+    g_host.reset();
+    if (!ctn_test_maps[1].expired()) { return 150; }
+    for (const auto & object : ctn_test_objects) {
+        if (!object.expired()) { return 151; }
+    }
+    return 0;
+}
+'''
+    return changed.replace("CTN_RESEEDED", "true" if reseeded else "false").replace(
+        "CTN_PARAMS", "std::string" if reseeded else "std::string, bool").replace(
+        "CTN_FLAG", "" if reseeded else ", call % 2 != 0")
+
+
+def leaf_absence_lifetime(args, cpp, name, mode, compiler):
+    source = args.work / f"{name}.{mode}.lifetime.cpp"
+    source.write_text(leaf_absence_lifetime_cpp(cpp, name))
+    binary = (args.work / f"{name}.{mode}.sanitized").resolve()
+    host.run([compiler, *owned.FLAGS, "-O1", "-g", "-fno-omit-frame-pointer",
+              "-fsanitize=address,undefined", "-fsanitize-address-use-after-scope",
+              str(source), "-o", str(binary)])
+    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,
+        env=dict(os.environ, ASAN_OPTIONS="detect_stack_use_after_return=1:detect_leaks=1",
+                 UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"))
+    if result.returncode or result.stdout != "trace=1\n" * 2:
+        raise RuntimeError(f"{name}/{mode}: absence lifetime failure (exit {result.returncode})\n"
+                           f"{result.stdout}{result.stderr}")
+
+
+def check_leaf_absence_calls(cpp, name, mode):
+    source = leaf_absence_sources()[name][0]
+    params = ("std::string, bool" if "set(key, flag)" in source else
+              "std::string, std::string" if "set(key, other)" in source else "std::string")
+    if f"std::function<js_num({params})>" not in cpp:
+        raise RuntimeError(f"{name}/{mode}: absence changed the numeric published ABI")
+    allocations = source.count("{value:") + source.count("const item = {};")
+    if (cpp.count("std::make_shared<ctnative::identity_object>()") != allocations
+            or (allocations and "std::shared_ptr<ctnative::map_storage<std::string, ctnative::object_value>>"
+                not in cpp)):
+        raise RuntimeError(f"{name}/{mode}: absence erased an object allocation or owning Map")
+    if len(re.findall(r"ctnative::object_set_field_[0-9a-f]+\(", cpp)) != source.count("value:"):
+        raise RuntimeError(f"{name}/{mode}: absence erased an original numeric field write")
+    case = leaf_absence_cases().get(name)
+    for method in ("set", "get", "has", "delete"):
+        original = len(re.findall(rf"\bstate\.{method}\(", source))
+        if case and case["raw_calls"] != case["prepared_calls"]:
+            collapsed = "has" if name.endswith("_repair") else "delete"
+            if method == collapsed:
+                original -= 1
+        lowered = len(re.findall(rf"\bctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(", cpp))
+        if lowered != original:
+            raise RuntimeError(f"{name}/{mode}: changed {original} prepared Map.{method} calls to {lowered}")
+    entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
+    if not entry:
+        raise RuntimeError(f"{name}/{mode}: missing native absence entry")
+    methods_by_value = dict(re.findall(
+        r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1]))
+    calls = re.findall(r"ctnative::invoke_callable\((\w+)([^;\n]*)\);", entry[1])
+    if [methods_by_value.get(callee) for callee, _ in calls] != ["size", "set"]:
+        raise RuntimeError(f"{name}/{mode}: absence changed published method call order")

@@ -5,7 +5,9 @@ definitions are verbatim, only the two sibling-file paths changed, because this
 module lives one directory below them.
 """
 
+import hashlib
 import importlib.util
+import re
 from pathlib import Path
 
 
@@ -1536,4 +1538,267 @@ def leaf_readback_refusals():
     rows["local_identity_repeated_keys"] = (positive["local_identity_repeated_keys"][0], 3,
         "host.slot.set('x') + host.slot.set('x') + host.slot.set('y')", "host.slot.set('x')",
         "local_identity_saved", 8)
+    return rows
+
+
+# Exact thirty-one-source continuation measured in 60b744e1. Hashes include
+# the final newline; historical sources and repairs are never rewritten.
+LEAF_ABSENCE_SIX_HASHES = {
+    'local_identity_distinct_fresh': 'be194b3ff4db536532aea5c24b8cffe7827bb16f1fb5869bacb45f1198159b46',
+    'historical_object_distinct_identity': '16df1ce7541f6bd86916457f0b6e30944789cd24b27f753a6046f648d3fbb70f',
+    'local_identity_saved': '8f7a762b9b19eadfc3a9cb08f1d9469dc1e7a84da8b25b2dfc735ee05ce9bee9',
+    'historical_object_saved_identity': 'ea27f3b5417898cd676c2aa353afa2e4a794fc078a46748e7bf9b1e45f2ab86f',
+    'local_identity_after_delete': 'ac773f554cc849271c8167f9d7f93faf703ae1c2941042782b4a878cd1ff9603',
+    'historical_object_deleted_identity': 'f7dd606a2ca43f70e1a2ea26c4c51518682e27c7cbcb2d80155aa8e679994980',
+}
+
+
+LEAF_ABSENCE_HISTORY = {
+    'local_identity_distinct_fresh': (6, 6,
+        'be194b3ff4db536532aea5c24b8cffe7827bb16f1fb5869bacb45f1198159b46'),
+    'historical_object_distinct_identity': (8, 8,
+        '16df1ce7541f6bd86916457f0b6e30944789cd24b27f753a6046f648d3fbb70f'),
+    'local_identity_saved': (6, 6,
+        '8f7a762b9b19eadfc3a9cb08f1d9469dc1e7a84da8b25b2dfc735ee05ce9bee9'),
+    'historical_object_saved_identity': (8, 8,
+        'ea27f3b5417898cd676c2aa353afa2e4a794fc078a46748e7bf9b1e45f2ab86f'),
+    'local_identity_after_delete': (7, 7,
+        'ac773f554cc849271c8167f9d7f93faf703ae1c2941042782b4a878cd1ff9603'),
+    'historical_object_deleted_identity': (9, 9,
+        'f7dd606a2ca43f70e1a2ea26c4c51518682e27c7cbcb2d80155aa8e679994980'),
+    'local_absence_delete_undefined': (7, 7,
+        'f3350b8928408e7ca35dfd7a66da79a26d0c917e3d15ff70b4fb4c8901ea4fb5'),
+    'local_absence_delete_unseeded': (6, 6,
+        '7cb035992513acaeb8d54c21ccee5c6e6fb9becbfd655a32ef2c6ccd93b6f158'),
+    'local_absence_delete_number_payload': (7, 7,
+        '8509513b19a62bf74917ab03ccaba9a9663206d4d03d56a663ad3429cf46e292'),
+    'local_absence_delete_repeated': (8, 8,
+        'da3263b29e5d4bb2956bce24c48d6d68ff1f07d19ff923a24f559ff394787f2d'),
+    'local_absence_saved_undefined': (8, 8,
+        '4ee213ce73918df8e3747933748c0f6d64a557fcbb422caa79cf794949a4462d'),
+    'local_absence_reseed_present': (8, 8,
+        'f2e5c0858a191a1305b65cb699d120987dbb957db98a6316c9360b04866f334a'),
+    'local_absence_clear_undefined': (7, 7,
+        'a041e8248d43dac780775c97916939a7e9d88034ce153a24d4576ebbc2f25a16'),
+    'local_absence_clear_saved_identity': (7, 7,
+        '5aefbb04e557a199248b20305a10953764ee1c14b977eff5b7ce2c4a55fdb024'),
+    'local_absence_clear_delete_repair': (7, 7,
+        '1e016aa351caea2f3b2ddbb8bfd1207e8f8666d6f27e0f1b00ed80e846c97374'),
+    'local_absence_maybe_delete_same': (7, 7,
+        'cdfbcbcc16e4516d3fd9a08edde81ffc63d1b267778eb342649e27136119b84b'),
+    'local_absence_maybe_delete_same_repair': (7, 7,
+        '38fc7f528f5b5f37c90fdc752c333fde481f6862dc032f651509adae40243a24'),
+    'local_absence_maybe_overwrite_same': (8, 8,
+        '4945c4bd5f341e1302164385b7fadaa3173c322eded2454a06abc1333f4d3736'),
+    'local_absence_maybe_delete_distinct': (7, 7,
+        'dbf8e092c3d04f51f49e1668f7adf7b800c926abeec9b93598852c9bc446ea30'),
+    'local_absence_maybe_delete_distinct_repair': (7, 7,
+        'e1dbc8789991996de401443f8fc3beb6dd73b43060e0640d78039b1f17c15e12'),
+    'local_absence_maybe_overwrite_distinct': (8, 8,
+        '324a473538c0ddd03fee467e6cfefaaf52feddded6f691e16fef5eaa803b9a4a'),
+    'local_absence_disjoint_overwrite': (8, 8,
+        '2cab6817f281dc926c9073503f6387cca62737319166a120c2617db3f1b72097'),
+    'local_absence_same_overwrite': (8, 8,
+        '69247a061ae63469937258ebb8d363e39026eb529fc02d2342aed0bf8d0d859b'),
+    'local_absence_both_branches_false': (8, 7,
+        '74f9761c679b886a698a0d76cd2dfa7e45e463376fce2b40acee7c1f1343a677'),
+    'local_absence_one_branch_false': (8, 8,
+        'f50b6577ab3fa54fcdac040cbb994f64b824d20920ccdbab3580fb173ba6a4c2'),
+    'local_absence_branch_reseed_false': (9, 9,
+        'f11bdced6d7d21bc1305ad1d394107f29ba02f767b5d99e518c4958568f0724f'),
+    'local_absence_both_branches_false_repair': (8, 7,
+        'e212680a19ef874e6d552b01d590066c309054376a9fd8b47046a0c077d3d3d0'),
+    'local_absence_both_branches_true': (8, 7,
+        '6d2c08e0a121a4f1d09373816fb7e76afc94d87760dd1535acebe4546f62b778'),
+    'local_absence_one_branch_true': (8, 8,
+        '1b05e80b52332395d22ba181e15c7e4e63063333ea4e89fc21c7f926dd2e36ef'),
+    'local_absence_branch_reseed_true': (9, 9,
+        '1edf2e628415e9f37edc95125aaed2d199eb23bb5ceb333958f5c45cde1b8501'),
+    'local_absence_both_branches_true_repair': (8, 7,
+        '49eecbd44a9538437455213372db826a0405c76baaf719a029606a48bc5312cf'),
+}
+
+
+def leaf_absence_cases():
+    positives, refusals = leaf_readback_sources(), leaf_readback_refusals()
+    rows = {}
+    for name, digest in LEAF_ABSENCE_SIX_HASHES.items():
+        row = positives.get(name) or refusals[name]
+        source = row[0]
+        assert hashlib.sha256(source.encode()).hexdigest() == digest, name
+        value = row[2] if name in positives else row[1]
+        calls = LEAF_READBACK_CALLS[name] if name in positives else row[5]
+        rows[name] = dict(source=source, expected_trace=value, functions=5, syntactic_source_calls=calls,
+                          historical_expected_prepared_calls=calls,
+                          boundary='historical exact six-case continuation')
+    base = positives['local_identity_saved_delete'][0]
+    body = ('const item = {value: 1}; state.set(key, item); const saved = state.get(key); '
+            'state.delete(key); return saved === item ? 1 : 0;')
+    assert base.count(body) == 1
+
+    def add(name, changed, expected, boundary, *, params='key', actuals="'x'"):
+        source = base.replace(body, changed).replace('set(key)', 'set(' + params + ')')
+        # The signature replacement must not change a Map.set or Map.get.
+        source = source.replace("host.slot.set('x')", 'host.slot.set(' + actuals + ')')
+        rows['local_absence_' + name] = dict(
+            source=source, expected_trace=expected, functions=5,
+            syntactic_source_calls=4 + len(re.findall(r'\bstate\.(?:set|get|has|delete|clear)\(', changed)),
+            boundary=boundary)
+
+    prefix = 'const item = {value: 1}; state.set(key, item); '
+    absent = 'return state.get(key) === void 0 ? 1 : 0;'
+    present = 'return state.get(key) === item ? 1 : 0;'
+    add('delete_undefined', prefix + 'state.delete(key); ' + absent, 1,
+        'exact-key delete proves absence; fresh read must remain in source')
+    add('delete_unseeded', 'state.delete(key); ' + absent, 1,
+        'exact delete proves absence without assuming entry-start contents')
+    add('delete_number_payload', 'state.set(key, 1); state.delete(key); ' + absent, 1,
+        'primitive payload isolates absence from object identity representation')
+    add('delete_repeated', prefix + 'state.delete(key); state.delete(key); ' + absent, 1,
+        'a second exact delete preserves known absence')
+    add('saved_undefined', prefix + 'state.delete(key); const saved = state.get(key); '
+        'state.set(key, item); return saved === void 0 ? 1 : 0;', 1,
+        'saved absent result must not retarget after a later write')
+    add('reseed_present', prefix + 'state.delete(key); state.set(key, item); ' + present, 1,
+        'exact reseed restores the live object; it must invalidate absence')
+    add('clear_undefined', prefix + 'state.clear(); ' + absent, 1,
+        'clear is a separate currently unsupported captured-host method')
+    add('clear_saved_identity', prefix + 'const saved = state.get(key); '
+        'state.clear(); return saved === item ? 1 : 0;', 1,
+        'saved identity isolates unsupported clear from fresh absent read')
+    add('clear_delete_repair', prefix + 'const saved = state.get(key); '
+        'state.delete(key); return saved === item ? 1 : 0;', 1,
+        'one exact clear-to-delete edit restores historical saved identity')
+    assert rows['local_absence_clear_delete_repair']['source'] == base
+
+    for alias, other, missing in (('same', "'x'", 1), ('distinct', "'other'", 0)):
+        actuals = "'x', " + other
+        add('maybe_delete_' + alias, prefix + 'state.delete(other); ' + absent, missing,
+            'two String formals may alias; startup equality is not a future-call proof',
+            params='key, other', actuals=actuals)
+        add('maybe_delete_' + alias + '_repair', prefix + 'state.has(other); ' + present, 1,
+            'same call count; has preserves a definitely present independently seeded leaf',
+            params='key, other', actuals=actuals)
+        add('maybe_overwrite_' + alias, prefix + 'state.delete(key); '
+            'state.set(other, {value: 2}); ' + absent, 1 - missing,
+            'a possibly equal later write destroys definite absence',
+            params='key, other', actuals=actuals)
+    add('disjoint_overwrite', prefix + "state.delete('gone'); state.set('other', item); "
+        "return state.get('gone') === void 0 ? 1 : 0;", 1,
+        'known distinct literal write preserves exact-key absence')
+    add('same_overwrite', prefix + "state.delete('gone'); state.set('gone', item); "
+        "return state.get('gone') === item ? 1 : 0;", 1,
+        'same-key overwrite replaces absence with an independently known live object')
+
+    for flag in (False, True):
+        word = str(flag).lower()
+        add('both_branches_' + word, prefix +
+            'if (flag) { state.delete(key); } else { state.delete(key); } ' + absent, 1,
+            'both live arms prove exact absence; branch join must intersect knowledge',
+            params='key, flag', actuals="'x', " + word)
+        add('one_branch_' + word, prefix +
+            'if (flag) { state.delete(key); } else { state.has(key); } ' + absent, int(flag),
+            'one deleting arm is maybe absent; do not infer Undefined from present=false',
+            params='key, flag', actuals="'x', " + word)
+        add('branch_reseed_' + word, prefix +
+            'state.delete(key); if (flag) { state.set(key, item); } else { state.delete(key); } '
+            + absent, int(not flag),
+            'one same-key reseed invalidates joined absence',
+            params='key, flag', actuals="'x', " + word)
+        add('both_branches_' + word + '_repair', prefix +
+            'if (flag) { state.has(key); } else { state.has(key); } ' + present, 1,
+            'same source calls/branches; both nondestructive arms preserve the seeded leaf',
+            params='key, flag', actuals="'x', " + word)
+
+    repairs = {
+        'local_absence_clear_saved_identity': ('local_absence_clear_delete_repair',
+            'state.clear();', 'state.delete(key);'),
+        'local_absence_delete_undefined': ('local_identity_saved_delete',
+            'state.delete(key); return state.get(key) === void 0 ? 1 : 0;',
+            'const saved = state.get(key); state.delete(key); return saved === item ? 1 : 0;'),
+    }
+    for flag in ('false', 'true'):
+        repairs['local_absence_both_branches_' + flag] = (
+            'local_absence_both_branches_' + flag + '_repair',
+            'if (flag) { state.delete(key); } else { state.delete(key); } ' + absent,
+            'if (flag) { state.has(key); } else { state.has(key); } ' + present)
+    for name, (repair, old, replacement) in repairs.items():
+        repaired = rows[repair]['source'] if repair in rows else positives[repair][0]
+        assert rows[name]['source'].count(old) == 1, name
+        assert rows[name]['source'].replace(old, replacement) == repaired, name
+        rows[name].update(exact_repair=repair, removed_text=old, replacement_text=replacement)
+    for flag in (False, True):
+        word = str(flag).lower()
+        add('distinct_branches_' + word, prefix +
+            'if (flag) { state.delete(key); } else { state.delete(key); state.has(key); } ' + absent,
+            1, 'nonidentical safe arms must survive LiftToSCF and intersect exact absence',
+            params='key, flag', actuals="'x', " + word)
+    for name, row in rows.items():
+        if name in LEAF_ABSENCE_HISTORY:
+            raw, prepared, digest = LEAF_ABSENCE_HISTORY[name]
+            assert hashlib.sha256(row['source'].encode()).hexdigest() == digest, name
+            assert row['syntactic_source_calls'] == raw, name
+        else:
+            raw = prepared = row['syntactic_source_calls']
+        row.update(raw_calls=raw, prepared_calls=prepared)
+    return rows
+
+
+
+LEAF_ABSENCE_UNOWNED = {
+    "local_absence_clear_undefined", "local_absence_clear_saved_identity",
+    "local_absence_maybe_delete_same", "local_absence_maybe_delete_distinct",
+    "local_absence_maybe_overwrite_same", "local_absence_maybe_overwrite_distinct",
+    "local_absence_one_branch_false", "local_absence_one_branch_true",
+    "local_absence_branch_reseed_false", "local_absence_branch_reseed_true",
+}
+LEAF_ABSENCE_PROMOTED_REFUSALS = {
+    "leaf_object_deleted_identity", "historical_object_deleted_identity",
+    "local_identity_after_delete", "leaf_readback_deleted_before_read",
+}
+
+
+def leaf_absence_sources():
+    existing = leaf_readback_sources()
+    result = {name: (row["source"], "host", row["expected_trace"])
+              for name, row in leaf_absence_cases().items()
+              if name not in LEAF_ABSENCE_UNOWNED and name not in existing}
+    # Preserve both original refusal aliases as independently compiled sources.
+    for name, row in {**leaf_object_refusals(), **leaf_readback_refusals()}.items():
+        if name in LEAF_ABSENCE_PROMOTED_REFUSALS:
+            result[name] = row[0], "host", row[1]
+    return result
+
+
+def leaf_absence_refusals():
+    cases = leaf_absence_cases()
+    rows = {}
+    edits = {
+        "local_absence_clear_undefined": ("state.clear();", "state.delete(key);",
+                                         "local_absence_delete_undefined"),
+        "local_absence_clear_saved_identity": ("state.clear();", "state.delete(key);",
+                                              "local_absence_clear_delete_repair"),
+    }
+    for alias in ("same", "distinct"):
+        repair = "local_absence_maybe_delete_" + alias + "_repair"
+        edits["local_absence_maybe_delete_" + alias] = (
+            "state.delete(other); return state.get(key) === void 0 ? 1 : 0;",
+            "state.has(other); return state.get(key) === item ? 1 : 0;", repair)
+        edits["local_absence_maybe_overwrite_" + alias] = (
+            "state.delete(key); state.set(other, {value: 2}); return state.get(key) === void 0 ? 1 : 0;",
+            "state.has(other); return state.get(key) === item ? 1 : 0;", repair)
+    for flag in ("false", "true"):
+        repair = "local_absence_both_branches_" + flag
+        edits["local_absence_one_branch_" + flag] = (
+            "else { state.has(key); }", "else { state.delete(key); }", repair)
+        edits["local_absence_branch_reseed_" + flag] = (
+            "state.delete(key); if (flag) { state.set(key, item); }",
+            "if (flag) { state.delete(key); }", repair)
+    assert set(edits) == LEAF_ABSENCE_UNOWNED
+    for name, (old, replacement, repair) in edits.items():
+        row = cases[name]
+        assert row["source"].count(old) == 1, name
+        assert row["source"].replace(old, replacement) == cases[repair]["source"], name
+        rows[name] = (row["source"], row["expected_trace"], old, replacement,
+                      repair, row["prepared_calls"])
     return rows
