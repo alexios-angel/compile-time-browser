@@ -2521,3 +2521,82 @@ retention/native admission remains future work. Evidence:
 `/tmp/ctcompile-string-corrected-final-hashes.json` and
 `/tmp/ctcompile-string-audit-full-escape.json`; its separate `-initial.json`
 snapshot preserves the initial full-gate audit.
+
+
+## Computed BigInt exponentiation, 2026-09-09
+
+Continued the separate Pow boundary recorded after the **164fe8c2** String
+checkpoint and the **1138dbfd** Div/Mod increment. Dynamic Pow now accepts two
+independently proved original BigInt operands and charges its normal result in
+the existing per-path BigInt category set. Saved reads, chained results and
+forwarded SSA values retain their original category after stores and deletion.
+Both structural paths remain live; a computed result supplies no concrete value,
+array index, property key, normal-completion fact or native carrier.
+
+The VM implementation is unchanged. `bigint_pow` in
+`ctbrowser/lib/Script/bigint.cpp` checks negative and above-`0xFFFFFFFF` exponents
+before computing digits. `bigint_binary` in `Script/vm/coerce.cpp` calls
+`give_or_throw`; `make_error` allocates a new Error holding message/stack strings
+and a preexisting prototype, without either operand or a local object edge.
+The complete frame still refuses publication, calls, explicit throws, handlers
+and unknown effects. Consequently an independent early Error cannot retain
+unpublished fresh locals. Allocation success, no-throw contracts, normal
+completion and native BigInt admission remain unproved. Static Pow, unsigned
+shifts, mixed/object/opaque inputs and BigInt String conversion remain refused.
+
+The raw matrix includes dynamic Pow as a producer and a consumer of independently
+proved unary/binary BigInts. It checks each operand separately, mixed primitives,
+saved contents after overwrite/deletion, separate Number/BigInt path categories,
+frame/edge transport, retained children, stale solvers and forged completion
+markers. Zero, negative, cap-boundary and wide exponents cannot hide later
+publication, calls or unknown effects. Wide snapshots charge both origin and
+category entries; every incomplete retention budget keeps its refusal.
+
+Seven new source families measure **28 literal sites, 60 instances, 38 retained
+and 22 confined**. The negative and cap helpers each run normally once and throw
+twice. Negative Errors appear at **pc26**, independently of literal coordinates
+**5/9/13/34**; cap Errors appear at **pc25**, independently of **5/9/13/33**.
+All **four implicit Errors** are retained through thrown roots and have no source
+allocation claim. Each result literal runs only once, after normal arithmetic;
+the two error paths leave both unpublished containers confined. Source assertions
+check distinct Error identities, Error tags and saved message/stack categories.
+
+The cap source uses base **1**, so it never attempts a huge result. Node produces
+two normal results and zero cap Errors; the VM produces two distinct RangeErrors.
+This is the existing divergence, preserved explicitly. Both implementations pass
+the negative Error identity and normal-result controls. The historical
+`objectFrameArithmeticBinaryBigInt` source is byte-identical and now proves its
+child confined: Pow was its final missing category. **357/358** historical
+checker rows are unchanged; that exact child is the sole promoted row. Removing
+the new fragment restores every byte of the prior fixture.
+
+The warning-free tools build and first focused devbox run pass **4/4 CTests in
+126.18 seconds**, including arrays in **0.45 seconds** and the source fixture
+in **0.57**. Independent replay of the recorded data reports **zero violations,
+partial or pending claims**, with fixture precision **77/115**, **577 claims**,
+**585 observed sites** and **nine unclaimed sites**. The added exact-coordinate
+checker passes that recording and rejects **38 independent corruptions** of
+Errors, claims, literals and source operations. Stable clang-format **22.1.8**
+passes all **745 files**; bundled 23 retains the same nine baseline differences.
+The checker-enhanced fixture rerun and complete suite are pending at this
+checkpoint; no fresh full gate is claimed here.
+
+Evidence: `/tmp/ctcompile-string-fields-focused.log`,
+`/tmp/ctcompile-bigint-pow-fixture.{rec,claims}`,
+`/tmp/ctcompile-bigint-pow-{frozen,measurement}.json` and
+`/tmp/ctcompile-escape-pow-checker-audit/audit.json`.
+The next separate escape boundary includes successful String/BigInt Add/Concat:
+the existing `objectFrameAddConcatBigInt` source still keeps its Stored claim.
+Native BigInt and effect/completion contracts remain independent work.
+
+**Enhanced escape gate, 2026-09-09.** The pending fixture rerun above is now
+complete. A warning-free six-step rebuild passes **all eight escape CTests in
+8.95 seconds**, including arrays in **0.45**, the strengthened fixture in
+**0.34**, and all four corpus-oracle checks. Detailed output records Pow's
+**139 rows, 51 stale/fresh live states and 5299 retention budget cutoffs**, plus
+one wide snapshot. Div and Mod now each cover **132 rows, 47 live states and
+4965 cutoffs**, including their new independently proved Pow operands.
+The five code/test hashes remain frozen; the exact source observations and
+38-corruption checker audit above are unchanged. The complete suite remains
+pending. Evidence: `/tmp/ctcompile-string-fields-precommit-gate.log` and
+`/tmp/ctcompile-string-fields-arrays-detail.log`.

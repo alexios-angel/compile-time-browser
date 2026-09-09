@@ -217,6 +217,11 @@ if(STRICT)
   set(_object_bigint_divmod_rows "")
   set(_object_bigint_divmod_error_rows "")
   set(_object_bigint_divmod_literal_pcs "")
+  set(_object_bigint_pow_rows "")
+  set(_object_bigint_pow_error_rows "")
+  set(_object_bigint_pow_literal_pcs "")
+  set(_pow_error_pc_Negative "26")
+  set(_pow_error_pc_Cap "25")
   # This source-backed RangeError is allocated by the VM at the signed shift,
   # not by a source object literal. Pin the exact body and measured bytecode pc
   # independently from every literal site's mandatory compiler claim below.
@@ -240,6 +245,18 @@ if(STRICT)
       message(FATAL_ERROR "the BigInt ${_kind} exception source changed; remeasure its bytecode coordinate before updating this case")
     endif()
   endforeach()
+  # Pow errors come from exact negative and VM-capped exponent operations.
+  # Pin source bodies and measured coordinates separately from source literals.
+  string(REGEX MATCH "function objectFrameBigIntPowNegativeEarly\\(choice\\) \\{[^\n]*\n(    [^\n]*\n)*\\}" _pow_error_source "${_fixture_source}")
+  string(SHA256 _pow_error_hash "${_pow_error_source}")
+  if(NOT _pow_error_hash STREQUAL "a5ac019be0eb44465c848414e51d732c6b291a99cbd2db37151f5558127d4073")
+    message(FATAL_ERROR "the BigInt Pow Negative source changed; remeasure its bytecode coordinate before updating this case")
+  endif()
+  string(REGEX MATCH "function objectFrameBigIntPowCapEarly\\(choice\\) \\{[^\n]*\n(    [^\n]*\n)*\\}" _pow_error_source "${_fixture_source}")
+  string(SHA256 _pow_error_hash "${_pow_error_source}")
+  if(NOT _pow_error_hash STREQUAL "31462dc9b17e9c47e4ad4255559bbffda5aea3dc9100e7044c25a7fbb93bbea1")
+    message(FATAL_ERROR "the BigInt Pow Cap source changed; remeasure its bytecode coordinate before updating this case")
+  endif()
   foreach(_line IN LISTS _recording_lines)
     if(_line MATCHES "^program ([0-9a-f]+) ")
       set(_program_hash "${CMAKE_MATCH_1}")
@@ -498,6 +515,35 @@ if(STRICT)
           message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
         endif()
         list(APPEND _object_bigint_divmod_rows "${_row} ${CMAKE_MATCH_1}")
+      endif()
+    elseif(_function_name MATCHES "^objectFrameBigIntPow(Negative|Cap)Early$" AND _line MATCHES "^alloc ")
+      if(NOT _line MATCHES "^alloc ([0-9]+) kind obj$")
+        message(FATAL_ERROR "${_function_name}: unexpected BigInt Pow literal allocation: ${_line}")
+      endif()
+      list(APPEND _object_bigint_pow_literal_pcs "${_function_name} ${CMAKE_MATCH_1}")
+    elseif(_function_name MATCHES "^objectFrameBigIntPow(Saved|Paths|Opaque|Mixed|NegativeEarly|CapEarly|Retained)$" AND _line MATCHES "^site ")
+      if(NOT _line MATCHES "^site ([0-9]+) kind obj made ([0-9]+) confined ([0-9]+) escaped ([0-9]+) unresolved ([0-9]+) unchecked ([0-9]+) routes ([^ ]+)$")
+        message(FATAL_ERROR "${_function_name}: unexpected BigInt Pow observation: ${_line}")
+      endif()
+      set(_pc "${CMAKE_MATCH_1}")
+      set(_row "${_function_name} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3} ${CMAKE_MATCH_4} ${CMAKE_MATCH_5} ${CMAKE_MATCH_6} ${CMAKE_MATCH_7}")
+      set(_pow_error_pc "")
+      if(_function_name MATCHES "^objectFrameBigIntPow(Negative|Cap)Early$")
+        set(_pow_error_pc "${_pow_error_pc_${CMAKE_MATCH_1}}")
+      endif()
+      if(_pc STREQUAL _pow_error_pc)
+        if(NOT _line STREQUAL "site ${_pow_error_pc} kind obj made 2 confined 0 escaped 2 unresolved 0 unchecked 0 routes thrown:2")
+          message(FATAL_ERROR "${_function_name}: the independent Errors were not retained through unwinding: ${_line}")
+        endif()
+        if(_claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_pow_error_pc} [^\n]+")
+          message(FATAL_ERROR "${_function_name}: the implicit BigInt Pow Error acquired a source allocation claim")
+        endif()
+        list(APPEND _object_bigint_pow_error_rows "${_row} pc${_pow_error_pc} unclaimed")
+      else()
+        if(NOT _claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_pc} obj ([^\n]+)")
+          message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
+        endif()
+        list(APPEND _object_bigint_pow_rows "${_row} ${CMAKE_MATCH_1}")
       endif()
     endif()
   endforeach()
@@ -808,7 +854,8 @@ if(STRICT)
   message(STATUS "imported relational comparisons: twenty sites, forty instances, thirty-two retained; live claims agree")
 
   # Dynamic numeric arithmetic needs both original primitive non-BigInt inputs.
-  # Opaque/BigInt controls keep Stored; the saved child retains its own identity.
+  # The exact BigInt control now has separate retention categories for every
+  # producer. Opaque inputs keep Stored; the saved child retains its own identity.
   set(_expected_object_arithmetic_binary_rows
       "objectFrameArithmeticBinarySaved 2 2 0 0 0 - confined"
       "objectFrameArithmeticBinarySaved 2 0 2 0 0 temporaries:2 escapes:stored"
@@ -822,7 +869,7 @@ if(STRICT)
       "objectFrameArithmeticBinaryOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameArithmeticBinaryOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameArithmeticBinaryOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
-      "objectFrameArithmeticBinaryBigInt 2 2 0 0 0 - escapes:stored"
+      "objectFrameArithmeticBinaryBigInt 2 2 0 0 0 - confined"
       "objectFrameArithmeticBinaryBigInt 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameArithmeticBinaryBigInt 2 0 2 0 0 temporaries:2 escapes:stored"
       "objectFrameArithmeticBinaryBigInt 2 0 2 0 0 temporaries:2 escapes:returned"
@@ -1122,6 +1169,64 @@ if(STRICT)
     message(FATAL_ERROR "imported BigInt Div/Mod evidence mismatch:\nexpected: ${_expected_object_bigint_divmod_rows}\nobserved: ${_object_bigint_divmod_rows}")
   endif()
   message(STATUS "imported BigInt Div/Mod: twenty-eight sites, fifty-four instances, thirty-eight retained; live claims agree")
+
+  set(_expected_object_bigint_pow_literal_pcs "")
+  set(_expected_object_bigint_pow_error_rows "")
+  foreach(_pc 5 9 13 34)
+    list(APPEND _expected_object_bigint_pow_literal_pcs "objectFrameBigIntPowNegativeEarly ${_pc}")
+  endforeach()
+  list(APPEND _expected_object_bigint_pow_error_rows "objectFrameBigIntPowNegativeEarly 2 0 2 0 0 thrown:2 pc26 unclaimed")
+  foreach(_pc 5 9 13 33)
+    list(APPEND _expected_object_bigint_pow_literal_pcs "objectFrameBigIntPowCapEarly ${_pc}")
+  endforeach()
+  list(APPEND _expected_object_bigint_pow_error_rows "objectFrameBigIntPowCapEarly 2 0 2 0 0 thrown:2 pc25 unclaimed")
+  list(SORT _object_bigint_pow_literal_pcs)
+  list(SORT _expected_object_bigint_pow_literal_pcs)
+  if(NOT _object_bigint_pow_literal_pcs STREQUAL _expected_object_bigint_pow_literal_pcs)
+    message(FATAL_ERROR "the BigInt Pow literal coordinates changed or included an implicit Error: ${_object_bigint_pow_literal_pcs}")
+  endif()
+  list(SORT _object_bigint_pow_error_rows)
+  list(SORT _expected_object_bigint_pow_error_rows)
+  if(NOT _object_bigint_pow_error_rows STREQUAL _expected_object_bigint_pow_error_rows)
+    message(FATAL_ERROR "missing or duplicate independent BigInt Pow exception evidence: ${_object_bigint_pow_error_rows}")
+  endif()
+  message(STATUS "imported BigInt Pow Errors: two negative and two VM-cap objects retained through unwinding at exact source coordinates, no source allocation claims")
+
+  set(_expected_object_bigint_pow_rows
+      "objectFrameBigIntPowSaved 2 2 0 0 0 - confined"
+      "objectFrameBigIntPowSaved 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntPowSaved 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntPowSaved 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntPowPaths 2 2 0 0 0 - confined"
+      "objectFrameBigIntPowPaths 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntPowPaths 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntPowPaths 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntPowOpaque 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntPowOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntPowOpaque 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntPowOpaque 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntPowMixed 2 2 0 0 0 - escapes:stored"
+      "objectFrameBigIntPowMixed 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntPowMixed 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntPowMixed 2 0 2 0 0 temporaries:2 escapes:returned"
+      "objectFrameBigIntPowNegativeEarly 3 3 0 0 0 - confined"
+      "objectFrameBigIntPowNegativeEarly 3 2 1 0 0 temporaries:1 escapes:stored"
+      "objectFrameBigIntPowNegativeEarly 3 2 1 0 0 temporaries:1 escapes:stored"
+      "objectFrameBigIntPowNegativeEarly 1 0 1 0 0 temporaries:1 escapes:returned"
+      "objectFrameBigIntPowCapEarly 3 3 0 0 0 - confined"
+      "objectFrameBigIntPowCapEarly 3 2 1 0 0 temporaries:1 escapes:stored"
+      "objectFrameBigIntPowCapEarly 3 2 1 0 0 temporaries:1 escapes:stored"
+      "objectFrameBigIntPowCapEarly 1 0 1 0 0 temporaries:1 escapes:returned"
+      "objectFrameBigIntPowRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntPowRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntPowRetained 2 0 2 0 0 temporaries:2 escapes:stored"
+      "objectFrameBigIntPowRetained 2 0 2 0 0 temporaries:2 escapes:returned")
+  list(SORT _object_bigint_pow_rows)
+  list(SORT _expected_object_bigint_pow_rows)
+  if(NOT _object_bigint_pow_rows STREQUAL _expected_object_bigint_pow_rows)
+    message(FATAL_ERROR "imported BigInt Pow evidence mismatch:\nexpected: ${_expected_object_bigint_pow_rows}\nobserved: ${_object_bigint_pow_rows}")
+  endif()
+  message(STATUS "imported BigInt Pow: twenty-eight literal sites, sixty instances, thirty-eight retained; live claims agree")
 endif()
 if(NOT _pyrc EQUAL 0)
   message(FATAL_ERROR "${NAME}: the checker exited ${_pyrc}")

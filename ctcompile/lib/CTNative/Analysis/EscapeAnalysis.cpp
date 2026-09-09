@@ -1140,17 +1140,21 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                      binary.getKind() == ctjs::BinaryKind::Sub ||
                      binary.getKind() == ctjs::BinaryKind::Mul ||
                      binary.getKind() == ctjs::BinaryKind::Div ||
-                     binary.getKind() == ctjs::BinaryKind::Mod)) {
+                     binary.getKind() == ctjs::BinaryKind::Mod ||
+                     binary.getKind() == ctjs::BinaryKind::Pow)) {
                     // bigint_binary combines digits into a fresh independent
                     // BigInt. Add first enters to_primitive's depth guard;
-                    // Div/Mod instead raise an independent RangeError for zero
-                    // divisors. No user conversion or local object edge enters
-                    // those errors. The whole-frame exclusion of calls,
+                    // Div/Mod raise an independent RangeError for zero divisors,
+                    // and Pow for negative or VM-capped oversized exponents.
+                    // bigint_pow checks those bounds before computing digits,
+                    // including the VM's unconditional cap for small bases.
+                    // No user conversion or local object edge enters those
+                    // errors. The whole-frame exclusion of calls,
                     // handlers and publication keeps either early exit from
                     // exposing unpublished fresh objects. The normal result's
                     // category proves neither allocation success nor normal
-                    // completion or no-throw/native effects. Pow and mixed
-                    // inputs remain separate boundaries even on observed success.
+                    // completion or no-throw/native effects. Mixed inputs remain
+                    // a separate boundary even on observed success.
                     if (!spend()) { return refuse(ArrayContentsFailure::WorkLimit, &op); }
                     state.bigIntOrigins.insert(binary.getResult());
                     state.origins[binary.getResult()] = binary.getResult();

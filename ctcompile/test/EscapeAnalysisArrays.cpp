@@ -4101,7 +4101,7 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
                         operands == "%produced, %big" &&
                         (form == "binary"
                              ? operation == "add" || operation == "sub" || operation == "mul" ||
-                                   operation == "div" || operation == "mod"
+                                   operation == "div" || operation == "mod" || operation == "pow"
                              : operation == "add" || operation == "bitand" ||
                                    operation == "bitor" || operation == "bitxor" ||
                                    operation == "shl" || operation == "shr");
@@ -4283,10 +4283,10 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
     for (const auto & [kind, isStatic] :
          {binary_kind{ctjs::BinaryKind::Add, false}, binary_kind{ctjs::BinaryKind::Sub, false},
           binary_kind{ctjs::BinaryKind::Mul, false}, binary_kind{ctjs::BinaryKind::Div, false},
-          binary_kind{ctjs::BinaryKind::Mod, false}, binary_kind{ctjs::BinaryKind::Add, true},
-          binary_kind{ctjs::BinaryKind::BitAnd, true}, binary_kind{ctjs::BinaryKind::BitOr, true},
-          binary_kind{ctjs::BinaryKind::BitXor, true}, binary_kind{ctjs::BinaryKind::Shl, true},
-          binary_kind{ctjs::BinaryKind::Shr, true}}) {
+          binary_kind{ctjs::BinaryKind::Mod, false}, binary_kind{ctjs::BinaryKind::Pow, false},
+          binary_kind{ctjs::BinaryKind::Add, true}, binary_kind{ctjs::BinaryKind::BitAnd, true},
+          binary_kind{ctjs::BinaryKind::BitOr, true}, binary_kind{ctjs::BinaryKind::BitXor, true},
+          binary_kind{ctjs::BinaryKind::Shl, true}, binary_kind{ctjs::BinaryKind::Shr, true}}) {
         const std::string form = isStatic ? "binary_static" : "binary";
         const std::string spelling = ctjs::stringifyBinaryKind(kind).str();
         const auto binary = [&](const std::string & lhs, const std::string & rhs) {
@@ -4383,7 +4383,7 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                                           operate("%input") + done,
                                   .failure = ArrayContentsFailure::UnsupportedOperation}});
             }
-            for (const std::string operation : {"add", "sub", "mul", "div", "mod"}) {
+            for (const std::string operation : {"add", "sub", "mul", "div", "mod", "pow"}) {
                 run({.contents = {
                          .what = "computed binary operands retain their original BigInt category",
                          .body = values + "  %input = ctjs.binary " + operation + " %lhs, %rhs\n" +
@@ -4440,7 +4440,7 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                 const bool supported =
                     consumerForm == "binary"
                         ? operation == "add" || operation == "sub" || operation == "mul" ||
-                              operation == "div" || operation == "mod"
+                              operation == "div" || operation == "mod" || operation == "pow"
                         : operation == "add" || operation == "bitand" || operation == "bitor" ||
                               operation == "bitxor" || operation == "shl" || operation == "shr";
                 for (const std::string operands :
@@ -4477,8 +4477,6 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                      .body = values + produce + "  %exceptional = ctjs.constant #ctjs.bigint<\"" +
                              operand + "\">\n  %next = ctjs.binary " + operation +
                              " %produced, %exceptional\n" + done,
-                     .failure = operation == "pow" ? ArrayContentsFailure::UnsupportedOperation
-                                                   : ArrayContentsFailure::None,
                      .arrays = "a:[x]",
                      .exit = "produced -> {}"}});
         }
@@ -4510,12 +4508,41 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                                   .exit = "produced -> {}"}});
             }
             for (const std::string exponent : {"0", "-1", "9007199254740993"}) {
-                run({.contents = {.what = "BigInt exponentiation retains its independent refusal",
+                run({.contents = {.what = "computed exponents retain independent result categories",
                                   .body = values + produce +
                                           "  %exponent = ctjs.constant #ctjs.bigint<\"" + exponent +
                                           "\">\n  %next = ctjs.binary pow %produced, %exponent\n" +
                                           done,
-                                  .failure = ArrayContentsFailure::UnsupportedOperation}});
+                                  .arrays = "a:[x]",
+                                  .exit = "produced -> {}"}});
+            }
+        }
+        if (!isStatic && kind == ctjs::BinaryKind::Pow) {
+            for (const std::string exponent :
+                 {"0", "-1", "4294967295", "4294967296", "9007199254740993"}) {
+                const std::string powered = values + "  %exponent = ctjs.constant #ctjs.bigint<\"" +
+                                            exponent + "\">\n" + binary("%lhs", "%exponent");
+                run({.contents = {
+                         .what = "negative capped and wide exponents prove only result categories",
+                         .body = powered + done,
+                         .arrays = "a:[x]",
+                         .exit = "produced -> {}"}});
+                for (const std::string effect :
+                     {"  ctjs.store_global \"held\", %a\n", "  %called = ctjs.call %p(%a)\n",
+                      "  \"test.effect\"(%produced) : (!ctjs.value) -> ()\n"}) {
+                    run({.contents = {
+                             .what = "throwing exponents cannot hide later publication or effects",
+                             .body = powered + effect + done,
+                             .failure = ArrayContentsFailure::UnsupportedOperation}});
+                }
+            }
+            for (const std::string digits : {"-3", "-1", "0", "1"}) {
+                run({.contents = {.what =
+                                      "small or signed bases confer no value or completion fact",
+                                  .body = values + "  %input = ctjs.constant #ctjs.bigint<\"" +
+                                          digits + "\">\n" + binary("%input", "%rhs") + done,
+                                  .arrays = "a:[x]",
+                                  .exit = "produced -> {}"}});
             }
         }
         if (isStatic && (kind == ctjs::BinaryKind::Shl || kind == ctjs::BinaryKind::Shr)) {
@@ -4703,7 +4730,8 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                 inspect((isStatic &&
                          (other == ctjs::BinaryKind::Shl || other == ctjs::BinaryKind::Shr)) ||
                                 (!isStatic &&
-                                 (other == ctjs::BinaryKind::Div || other == ctjs::BinaryKind::Mod))
+                                 (other == ctjs::BinaryKind::Div ||
+                                  other == ctjs::BinaryKind::Mod || other == ctjs::BinaryKind::Pow))
                             ? ArrayContentsFailure::None
                             : ArrayContentsFailure::UnsupportedOperation);
                 setKind(kind);
@@ -4716,6 +4744,17 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                     divisor.setValueAttr(ctjs::BigIntAttr::get(&context, digits));
                     inspect(ArrayContentsFailure::None);
                     divisor.setValueAttr(original);
+                    inspect(ArrayContentsFailure::None);
+                }
+            }
+            if (!isStatic && kind == ctjs::BinaryKind::Pow) {
+                auto exponent = producer->getOperand(1).getDefiningOp<ctjs::ConstantOp>();
+                const auto original = exponent.getValue();
+                for (const std::string digits :
+                     {"0", "-1", "4294967295", "4294967296", "9007199254740993"}) {
+                    exponent.setValueAttr(ctjs::BigIntAttr::get(&context, digits));
+                    inspect(ArrayContentsFailure::None);
+                    exponent.setValueAttr(original);
                     inspect(ArrayContentsFailure::None);
                 }
             }
