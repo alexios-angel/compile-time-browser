@@ -333,6 +333,75 @@ void checkIdentityFieldRows(mlir::MLIRContext & context) {
     };
     for (const row & r : rows) { check(context, r); }
 
+    const std::string stringPrelude = kIdentityFieldPrelude + R"mlir(
+  %text = ctjs.constant #ctjs.string<"owning field">
+  %empty = ctjs.constant #ctjs.string<"">
+  %null = ctjs.constant #ctjs.null
+)mlir";
+    const auto stringStore = identityFieldStore("%first", "%text");
+    const std::vector<row> stringRows = {
+        {"an initialized String field takes its type from the actual source store",
+         stringPrelude + stringStore + read, "!ctnative.str<utf8>", false, 1},
+        {"an initialized empty String field is still definitely present",
+         stringPrelude + identityFieldStore("%first", "%empty") + read, "!ctnative.str<utf8>",
+         false, 1},
+        {"a later String store cannot initialize an earlier field read",
+         stringPrelude + read + stringStore, "!ctnative.opt<!ctnative.str<utf8>>", false, 0},
+        {"a String schema on another allocation cannot initialize the queried receiver",
+         stringPrelude + identityFieldStore("%second", "%text") + read,
+         "!ctnative.opt<!ctnative.str<utf8>>", false, 0},
+        {"a different initialized String key cannot prove this key's presence",
+         stringPrelude + identityFieldStore("%first", "%text", "%different") +
+             identityFieldStore("%second", "%text") + read,
+         "!ctnative.opt<!ctnative.str<utf8>>", false, 0},
+        {"a String field keeps explicit Null from another allocation in its schema",
+         stringPrelude + stringStore + identityFieldStore("%second", "%null") + read,
+         "!ctnative.opt<!ctnative.str<utf8>>", false, 1},
+        {"a String field keeps explicit Undefined from another allocation in its schema",
+         stringPrelude + stringStore + identityFieldStore("%second", "%nil") + read,
+         "!ctnative.opt<!ctnative.str<utf8>>", false, 1},
+        {"a String read retains a later explicit Null store in the complete type join",
+         stringPrelude + stringStore + read + identityFieldStore("%first", "%null"),
+         "!ctnative.opt<!ctnative.str<utf8>>", false, 1},
+        {"a String read retains a later explicit Undefined store in the complete type join",
+         stringPrelude + stringStore + read + identityFieldStore("%first", "%nil"),
+         "!ctnative.opt<!ctnative.str<utf8>>", false, 1},
+        {"a last String store does not erase an earlier Number from the schema census",
+         stringPrelude + store + stringStore + read,
+         "!ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>>", false, 1},
+        {"a saved String read does not erase a later Number from the storage schema",
+         stringPrelude + stringStore + read + store,
+         "!ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>>", false, 1},
+        {"a String field keeps a same-schema Boolean from another allocation",
+         stringPrelude + stringStore + identityFieldStore("%second", "%yes") + read,
+         "!ctnative.variant<!ctnative.bool, !ctnative.str<utf8>>", false, 1},
+        {"a definitely initialized String field still joins an unknown incoming write",
+         stringPrelude + stringStore + identityFieldStore("%second", "%p") + read,
+         "!ctnative.boxed", false, 1},
+        {"a one-arm String store leaves the uninitialized path visible",
+         stringPrelude + "  %bit = ctjs.truthy %p\n  scf.if %bit {\n" + stringStore + "  }\n" +
+             read,
+         "!ctnative.opt<!ctnative.str<utf8>>", false, 0},
+        {"both String arms initialize one receiver without inventing a literal value",
+         stringPrelude + "  %bit = ctjs.truthy %p\n  scf.if %bit {\n" + stringStore +
+             "  } else {\n" + identityFieldStore("%first", "%empty") + "  }\n" + read,
+         "!ctnative.str<utf8>", false, 1},
+        {"both String and Null arms initialize the field but retain its optional type",
+         stringPrelude + "  %bit = ctjs.truthy %p\n  scf.if %bit {\n" + stringStore +
+             "  } else {\n" + identityFieldStore("%first", "%null") + "  }\n" + read,
+         "!ctnative.opt<!ctnative.str<utf8>>", false, 1},
+        {"different String receivers on the two arms do not establish presence",
+         stringPrelude + "  %bit = ctjs.truthy %p\n  scf.if %bit {\n" + stringStore +
+             "  } else {\n" + identityFieldStore("%second", "%text") + "  }\n" + read,
+         "!ctnative.opt<!ctnative.str<utf8>>", false, 0},
+        {"a dynamic write cannot preserve earlier String field initialization",
+         stringPrelude + stringStore + identityFieldStore("%second", "%empty", "%p") + read,
+         "!ctnative.opt<!ctnative.str<utf8>>", false, 0},
+    };
+    for (const row & r : stringRows) { check(context, r); }
+    std::printf("owning String fields: %zu independent type and presence rows\n",
+                stringRows.size());
+
     const std::string crossCall = R"mlir(
 module {
   ctjs.func private @make(%receiver: !ctjs.value, %target: !ctjs.value,
@@ -416,6 +485,28 @@ module {
                  "!ctnative.opt<!ctnative.bottom>", true);
     number->setAttr("value", original);
     liveAndFresh("identity field rebuilds its value join after restoring the source",
+                 "!ctnative.num<i32>", true);
+    for (const char * text : {"owned String", ""}) {
+        number->setAttr("value", ctcompile::ctjs::StringAttr::get(&context, text));
+        observed->setAttr("ctnative.object_schema", mlir::StringAttr::get(&context, "number"));
+        liveAndFresh("a live String store supersedes a forged Number field report",
+                     "!ctnative.str<utf8>", true);
+        stored->setOperand(0, objects[1].getResult());
+        liveAndFresh("a live String receiver change invalidates stale presence",
+                     "!ctnative.opt<!ctnative.str<utf8>>", false);
+        stored->setOperand(0, objects[0].getResult());
+        stored->moveAfter(observed);
+        liveAndFresh("a live String read before its store keeps implicit absence",
+                     "!ctnative.opt<!ctnative.str<utf8>>", false);
+        stored->moveBefore(observed);
+        liveAndFresh("restoring a String store restores its exact source initialization",
+                     "!ctnative.str<utf8>", true);
+    }
+    number->setAttr("value", ctcompile::ctjs::NullAttr::get(&context));
+    liveAndFresh("changing String to Null retains the actual absent type",
+                 "!ctnative.opt<!ctnative.bottom>", true);
+    number->setAttr("value", original);
+    liveAndFresh("restoring Number after String does not reuse its previous carrier",
                  "!ctnative.num<i32>", true);
 }
 

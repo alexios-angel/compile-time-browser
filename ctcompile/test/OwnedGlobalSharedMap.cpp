@@ -2114,6 +2114,50 @@ void checkLeafReadbackOwner(mlir::MLIRContext & context, const std::string & sou
             false, "a graph introduced through a saved alias invalidates the whole owner");
     check(rows == 13, "all readback owner and independent unsafe-use controls ran");
 
+    const auto stringLoaded =
+        replaced(loaded, "#ctjs.number<4607182418800017408>", "#ctjs.string<\"saved field\">");
+    const auto stringSavedAfter = replaced(
+        replaced(savedAfter, "#ctjs.number<4607182418800017408>", "#ctjs.string<\"saved field\">"),
+        "#ctjs.number<4611686018427387904>", "#ctjs.string<\"changed field\">");
+    variant(stringLoaded, true, "an initialized owning String field has its own source read proof");
+    variant(replaced(stringLoaded, "#ctjs.string<\"saved field\">", "#ctjs.string<\"\">"), true,
+            "an empty String field is present rather than absent or Null");
+    variant(stringSavedAfter, true,
+            "a String field read through a saved object survives Map overwrite and deletion");
+    variant(replaced(stringSavedAfter, "ctjs.set_property %value[%fieldKey], %two",
+                     "ctjs.set_property %saved[%fieldKey], %two"),
+            true, "String field aliases retain the exact current source allocation");
+    const std::string loadedRead = "    %loaded = ctjs.get_property %saved[%fieldKey]\n";
+    const std::string laterNumber =
+        "    %laterNumber = ctjs.constant #ctjs.number<4611686018427387904>\n"
+        "    ctjs.set_property %saved[%fieldKey], %laterNumber\n";
+    const auto savedStringBeforeNumber =
+        replaced(stringLoaded, loadedRead, loadedRead + laterNumber);
+    variant(savedStringBeforeNumber, true,
+            "a later Number overwrite does not retag the earlier String source read");
+    variant(replaced(stringLoaded, loadedRead, laterNumber + loadedRead), true,
+            "a mixed store census can prove ownership independently of native field admission");
+    for (const char * absent : {"#ctjs.null", "#ctjs.undefined"}) {
+        variant(replaced(stringLoaded, loadedRead,
+                         "    %absent = ctjs.constant " + std::string(absent) +
+                             "\n    ctjs.set_property %saved[%fieldKey], %absent\n" + loadedRead),
+                true, "an explicit absent field value keeps definite own-field initialization");
+    }
+    variant(replaced(stringLoaded, "    ctjs.set_property %value[%fieldKey], %one\n", ""), false,
+            "a String schema cannot initialize an unwritten current receiver");
+    variant(replaced(stringLoaded, "%saved[%fieldKey]", "%saved[%getKey]"), false,
+            "an initialized String field cannot prove a different property read");
+    variant(replaced(stringLoaded, "    ctjs.set_property %value[%fieldKey], %one\n",
+                     "    %other = ctjs.create_object\n"
+                     "    ctjs.set_property %other[%fieldKey], %one\n"),
+            false, "a String write to another allocation cannot establish this read's presence");
+    variant(
+        replaced(stringLoaded, loadedRead, "    %unknown = ctjs.call %this(%this)\n" + loadedRead),
+        false, "unknown effects invalidate the complete String source field proof");
+    variant(replaced(stringLoaded, "#ctjs.string<\"value\">", "#ctjs.string<\"__proto__\">"), false,
+            "a prototype mutation cannot be admitted as an ordinary String field");
+    check(rows == 26, "all String readback, mixed-storage and independent presence controls ran");
+
     // Live queries also see IR changed after parsing. A then-only allocation
     // or read cannot be borrowed by a later statement or the sibling arm.
     for (const bool alias : {false, true}) {
@@ -2177,7 +2221,11 @@ void checkLeafReadbackOwner(mlir::MLIRContext & context, const std::string & sou
               "restoring the actual in-scope operand restores the independent object proof");
     }
 
-    for (const auto & [text, label] : {std::pair{same, "identity"}, {savedAfter, "saved field"}}) {
+    for (const auto & [text, label] :
+         {std::pair{same, "identity"},
+          {savedAfter, "saved field"},
+          {stringSavedAfter, "saved String field"},
+          {savedStringBeforeNumber, "String before Number overwrite"}}) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(text, &context);
         check(static_cast<bool>(module), "leaf readback owner budget fixture parses");
         if (!module) { continue; }
@@ -2271,7 +2319,10 @@ void checkLeafOwner(mlir::MLIRContext & context, const std::string & source, boo
                  "    %fieldValue = ctjs.constant #ctjs.number<4607182418800017408>\n"
                  "    ctjs.set_property %value[%fieldKey], %fieldValue\n" +
                      write);
-    for (const auto & [program, hasField] : {std::pair{source, false}, {numeric, true}}) {
+    const auto string =
+        replaced(numeric, "#ctjs.number<4607182418800017408>", "#ctjs.string<\"owned\">");
+    for (const auto & [program, hasField] :
+         {std::pair{source, false}, {numeric, true}, {string, true}}) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
         check(static_cast<bool>(module), "source/prepared leaf owner fixture parses");
         if (!module) { continue; }
@@ -2403,8 +2454,6 @@ void checkLeafOwner(mlir::MLIRContext & context, const std::string & source, boo
     refuse(replaced(numeric, "ctjs.set_property %value[%fieldKey], %fieldValue",
                     "ctjs.set_property %value[%fieldKey], %state"),
            "a leaf field retaining its owning Map is not an acyclic owner");
-    refuse(replaced(numeric, "#ctjs.number<4607182418800017408>", "#ctjs.string<\"owned\">"),
-           "owning String fields still need a separate native object carrier");
     refuse(replaced(numeric, "#ctjs.string<\"value\">", "#ctjs.string<\"__proto__\">"),
            "a prototype field cannot be published as an ordinary leaf owner");
     refuse(

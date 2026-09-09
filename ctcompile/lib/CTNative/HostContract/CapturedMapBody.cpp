@@ -209,7 +209,8 @@ bool analyzer::capturedMapBody(ctjs::FuncOp function, bool prepared, bool primit
                 const auto payload = alternatives.lookup(write.getValue());
                 constexpr unsigned scalar =
                     PrimitiveAlternatives::Number | PrimitiveAlternatives::Boolean |
-                    PrimitiveAlternatives::Null | PrimitiveAlternatives::Undefined;
+                    PrimitiveAlternatives::String | PrimitiveAlternatives::Null |
+                    PrimitiveAlternatives::Undefined;
                 const unsigned mask = payload.truthy | payload.falsy;
                 if (!objects.contains(write.getObject()) || !ordinaryKey(keyOf(write.getKey())) ||
                     !primitives.contains(write.getValue()) || !payload.known || !mask ||

@@ -1544,8 +1544,8 @@ void checkLeafReadbacks(mlir::MLIRContext & context, const std::string & source,
                      "    ctjs.set_property %saved[%fieldKey], %value\n"
                      "    %loaded ="),
             false, "a retaining object field through an alias is still a graph edge");
-    variant(replaced(loaded, "#ctjs.number<4607182418800017408>", "#ctjs.string<\"owned\">"), false,
-            "readback does not provide an owning String field representation");
+    variant(replaced(loaded, "#ctjs.number<4607182418800017408>", "#ctjs.string<\"owned\">"), true,
+            "String readback proves its source origin independently of native field storage");
     variant(replaced(loaded, "    %loaded =",
                      "    %u = ctjs.constant #ctjs.undefined\n"
                      "    ctjs.define_accessor \"value\" on %saved get %callee set %u\n"
@@ -1862,7 +1862,8 @@ void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & sh
         for (const char * value : {"%this", "%entryKey", "%state", "%value"}) {
             variant(replaced(numeric, "ctjs.set_property %value[%fieldKey], %fieldValue",
                              std::string("ctjs.set_property %value[%fieldKey], ") + value),
-                    false, "unknown, String and retaining object fields cannot borrow leaf proof");
+                    llvm::StringRef(value) == "%entryKey",
+                    "only the independently proved future String formal supplies a field value");
         }
         variant(replaced(numeric, "#ctjs.string<\"value\">", "#ctjs.string<\"__proto__\">"), false,
                 "a prototype setter key is not an ordinary own field");
@@ -2021,11 +2022,14 @@ void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & sh
                     check(HostContractAnalysis(*module, requested(*module)).proved(),
                           "a new fingerprint rederives a changed safe primitive field");
                     literal->setAttr("value", ctjs::StringAttr::get(&context, "unsupported"));
-                    HostContractAnalysis unsupported(*module, requested(*module));
-                    check(
-                        !unsupported.proved() && !unsupported.exhausted() &&
-                            withheld(*module, unsupported),
-                        "a formerly numeric field cannot retain its schema after String mutation");
+                    HostContractAnalysis staleString(*module, contract);
+                    check(!staleString.proved() && staleString.reason().contains("fingerprint") &&
+                              withheld(*module, staleString),
+                          "a changed String literal still invalidates the old fingerprint");
+                    HostContractAnalysis string(*module, requested(*module));
+                    check(string.proved() && !string.exhausted(),
+                          "String field ownership rederives its source without a Number schema");
+                    if (string.proved()) { edges(*module, string); }
                     literal->setAttr("value", saved);
                     check(HostContractAnalysis(*module, contract).proved(),
                           "restoring the field literal restores the original independent proof");
