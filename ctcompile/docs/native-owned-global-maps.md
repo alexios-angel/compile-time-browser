@@ -22,9 +22,17 @@ All six focused proof checks pass across the initial five passes and corrected
 owner query (**113.20 seconds**); source/prepared queries each have **93 rows**,
 and type inference has **122 rows/80 live edits**. The two corrected expectations
 preserve existing Null/Undefined key proofs with no fabricated String edge.
-Six lowering lit tests pass in **0.29 seconds**. The full gate is pending at
-`/tmp/ctcompile-string-complete-full.log`, with **302 programs/37 lifetime
-families** configured. No full-suite or new corpus result is claimed yet.
+Six lowering lit tests pass in **0.29 seconds**. The warning-free **246-step**
+full build passes **511/517 CTests in 1817.89 seconds**, including all **302
+Map programs/37 lifetime families**. The only compiler failure is lit **164/165
+in 1096.42 seconds** (CTest **1096.48**): an obsolete String-load diagnostic.
+**9582188d** preserves its source and pins the remaining unproved call-result
+store; the focused rerun passes **1/1 in 0.08 seconds**. The complete corrected
+lit rerun is pending in `/tmp/ctcompile-string-corrected-lit.log`. All other
+**371 compiler checks** pass; the five established browser failures remain.
+Initial **23** inputs match committed/frozen/devbox sources; the corrected
+manifest has **24**. Fresh corpus coverage stays **19/574, 39/4754, 45/7725**,
+both modes, zero pruned; exact Bootstrap Data remains **0/7, 0/7, 0/8**.
 
 Next is the measured **88d51f7d** String-field source, still **0/5** against its
 **5/5** Number-field repair. All thirteen continuation probes agree on typed

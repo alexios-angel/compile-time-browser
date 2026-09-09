@@ -57,11 +57,26 @@ carrier before the output check. The first execution run stopped in its new
 Node Null mutation observer; encoding Null separately repaired the test without
 changing source or production. Both initial failures remain in the evidence.
 Stable clang-format **22.1.8 passes all 745 files**; bundled 23 retains the same
-nine preexisting differences. **23** final code/test inputs are frozen.
+nine preexisting differences. The initial full run freezes **23** code/test
+inputs; the corrected lit rerun adds only one diagnostic test, **24** in all.
 
-**Full gate pending:** the committed-input devbox build/CTest run is active in
-`/tmp/ctcompile-string-complete-full.log`. The integrated inventory is **302
-native Map programs/37 lifetime families**; these are not yet full-suite results.
+The warning-free **246-step** full build passes **511/517 CTests in 1817.89
+seconds**. The five established browser failures are `selectors`, `frames`,
+`element_attrs`, `vm_async` and `early_errors`; the only compiler failure is
+lit **164/165 in 1096.42 seconds** (CTest **1096.48**). Its integrated Map test
+passes all **302 native programs/37 lifetime families**. **9582188d** preserves
+every historical divergence source and updates the obsolete String-global load
+refusal to the still-unproved call-result store. A no-work rebuild and focused
+lit rerun pass **1/1 in 0.08 seconds**. The **complete corrected lit rerun is
+pending** in `/tmp/ctcompile-string-corrected-lit.log`.
+
+All other **371 compiler CTests** pass. Fresh coverage remains **19/574,
+39/4754 and 45/7725**, both modes, zero pruned; exact Bootstrap Data remains
+**0/7, 0/7 and 0/8**. The four escape corpus oracles have zero violations;
+fixture precision remains **72/109**. The independent BigInt Pow probe agrees
+on all **16 common checks** and measures the existing oversized-exponent gap:
+Node's four small-base cases succeed, while the VM raises four RangeErrors. Pow retention-origin analysis remains the next separate escape
+increment; no native BigInt or normal-completion guarantee was added.
 
 **Next: owning String fields on proved ordinary objects.** A fresh **13-source**
 probe agrees on typed Node/interpreter observations in every case. The exact
@@ -75,7 +90,9 @@ See `bootstrap-provider-next.md` for the exact source and measured boundary.
 
 Evidence: `/tmp/ctcompile-string-complete-{proof,query-rerun,lowering-rerun,methods,execution-rerun}.log`,
 `/tmp/ctcompile-string-complete-{source-hashes,source-audit}.json`, and
-`/tmp/ctcompile-after-string-boundary-{results,sources}.json`.
+`/tmp/ctcompile-after-string-boundary-{results,sources}.json`. Full evidence is
+`/tmp/ctcompile-string-gate-final-evidence.json`; the independent Pow probe is
+`/tmp/ctcompile-string-nextpow-results.json`.
 
 ## Definite Boolean globals and recovered execution gate, 2026-09-09
 
