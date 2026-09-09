@@ -40,6 +40,7 @@ from .sources import (
     SCALAR_GLOBAL_CARRIERS, SCALAR_GLOBAL_INITIALIZED,
     constant_global_cases, constant_global_sources, normalized_scalar_output,
     CONSTANT_GLOBAL_UNOWNED, CONSTANT_GLOBAL_CARRIERS, CONSTANT_GLOBAL_EXISTING,
+    StringValue,
 )
 from .harness import (
     source_calls, contract, resolve_getter, lifetime, standalone, check_call_preservation,
@@ -597,6 +598,29 @@ def check_numeric_global_preparation(text, original, name):
             raise RuntimeError(f"{name}: saved-global refusal changed live {operation}")
 
 
+def scalar_string_literal(text, mlir=False):
+    """Compare literal bytes despite MLIR hex and C++ octal spellings."""
+    if text.startswith('R"('):
+        return text[3:-2]
+    out = bytearray()
+    content = text[1:-1]
+    while content:
+        if content[0] != "\\":
+            out.extend(content[0].encode("utf-8", "surrogatepass"))
+            content = content[1:]
+            continue
+        pattern = r"\\([0-9A-Fa-f]{2})" if mlir else r"\\([0-7]{1,3})"
+        match = re.match(pattern, content)
+        if match:
+            out.append(int(match[1], 16 if mlir else 8))
+            content = content[match.end():]
+        else:
+            out.extend({"n": b"\n", "t": b"\t", "r": b"\r"}.get(
+                content[1], content[1].encode()))
+            content = content[2:]
+    return out.decode("utf-8", "surrogatepass")
+
+
 def scalar_global_graph(text, name):
     """Compare current scalar dataflow before and after callable preparation."""
     entry = text.split("\n  }", 1)[0]
@@ -610,8 +634,8 @@ def scalar_global_graph(text, name):
         elif match := re.search(r'ctjs\.store_global "([^\"]+)", (%[-\w.$]+)', line):
             if match[1] != "host":
                 events.append(("store", match[1], values.get(match[2], "unknown")))
-        elif match := re.search(r'(%[-\w.$]+) = ctjs\.constant #ctjs\.string<"([^\"]*)">', line):
-            values[match[1]] = ("string", match[2])
+        elif match := re.search(r'(%[-\w.$]+) = ctjs\.constant #ctjs\.string<("(?:[^"\\]|\\.)*")>', line):
+            values[match[1]] = ("string", scalar_string_literal(match[2], mlir=True))
         elif match := re.search(r"(%[-\w.$]+) = ctjs\.constant #ctjs\.number<(\d+)>", line):
             values[match[1]] = struct.unpack("d", struct.pack("Q", int(match[2])))[0]
         elif match := re.search(r"(%[-\w.$]+) = ctjs\.constant #ctjs\.(?:boolean|bool)<(true|false)>", line):
@@ -705,7 +729,8 @@ def check_scalar_global_source(ir, name):
                       "constant_read_before_write": ["fixed"],
                       "constant_dynamic_global": ["globalThis"],
                       "constant_boolean_read_before_write": ["fixed"],
-                      "constant_boolean_dynamic_global": ["globalThis"]}.get(name, [])
+                      "constant_boolean_dynamic_global": ["globalThis"],
+                      "constant_string_read_before_write": ["fixed"]}.get(name, [])
     if early != expected_early:
         raise RuntimeError(f"{name}: changed source store/load order: {early}")
     first_writes = sum(event[:2] == ("store", "first") for event in stores)
@@ -725,7 +750,8 @@ def check_scalar_global_source(ir, name):
                                      ("right", "third"), ("offset", "fixed"), ("copy", "offset")],
     }.get(name, [])
     if name in {"constant_duplicate_write", "constant_boolean_duplicate_write",
-                "constant_boolean_mixed_write"} and sum(
+                "constant_boolean_mixed_write", "constant_string_duplicate_write",
+                "constant_string_mixed_write"} and sum(
             event[:2] == ("store", "fixed") for event in stores) != 2:
         raise RuntimeError(f"{name}: erased the second constant-only global write")
     constant = constant_global_cases().get(name)
@@ -750,7 +776,7 @@ def check_scalar_global_emission(args, ir, name):
         entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
         if not entry:
             raise RuntimeError(f"{name}/{mode}: lost the scalar entry")
-        observed = set(re.findall(r"ctnative::global_(?:number|boolean)\((\w+)\)", entry[1]))
+        observed = set(re.findall(r"ctnative::global_(?:number|boolean|string)\((\w+)\)", entry[1]))
         methods_by_value = dict(re.findall(
             r"(\w+)\s*=\s*ctnative::method_get<&[^>\n]+::m_(\w+)>\(", entry[1]))
         values, actual, calls, binaries = {}, [], 0, 0
@@ -773,10 +799,13 @@ def check_scalar_global_emission(args, ir, name):
                 values[result] = "global:" + expression[2:]
                 if expression != "g_host" and result not in observed:
                     actual.append(("load", expression[2:]))
-            elif match := re.fullmatch(r"ctnative::(?:to_number|to_nullable|scalar_truthy)\((\w+)\)", expression):
+            elif match := re.fullmatch(r"ctnative::(?:to_number|to_nullable|to_nullable_string|string_text|scalar_truthy)\((\w+)\)", expression):
                 values[result] = values.get(match[1], "unknown")
-            elif match := re.fullmatch(r'ctnative::js_string\("([^\"]*)"\)|std::string\("([^\"]*)", \d+\)', expression):
-                values[result] = ("string", match[1] if match[1] is not None else match[2])
+            elif match := re.fullmatch(r'(?:ctnative::js_string|std::string)\((R"\(.*\)"|"(?:[^"\\]|\\.)*")(?:, (\d+))?\)', expression):
+                literal = scalar_string_literal(match[1])
+                if match[2] and len(literal.encode("utf-8", "surrogatepass")) != int(match[2]):
+                    raise RuntimeError(f"{name}/{mode}: emitted String lost its exact byte length")
+                values[result] = ("string", literal)
             elif expression in {"true", "false"}:
                 values[result] = ("boolean", expression)
             elif re.fullmatch(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", expression):
@@ -795,7 +824,11 @@ def check_scalar_global_emission(args, ir, name):
         if case:
             requested = {**case["saved"], "trace": case["expected_trace"]}
             for binding, value in requested.items():
-                tag = "boolean" if isinstance(value, bool) else "number"
+                tag = ("string" if isinstance(value, StringValue) or value == "owned scalar"
+                       else "boolean" if isinstance(value, bool) else "number")
+                carrier = "nullable_string" if tag == "string" else "nullable_scalar"
+                if not re.search(rf"\bctnative::{carrier}\s+g_{binding}\s*;", cpp):
+                    raise RuntimeError(f"{name}/{mode}: {binding} lost its independently typed owning storage")
                 loaded = re.findall(rf"\b(\w+)\s*=\s*g_{binding};", entry[1])
                 checked = [temporary for temporary in loaded if re.search(
                     rf"ctnative::global_{tag}\({temporary}\)", entry[1])]
@@ -865,8 +898,9 @@ for (const name of JSON.parse(process.argv[2])) {
         text = Number.isNaN(value) ? 'nan' : Object.is(value, -0) ? '-0' :
             value === -Infinity ? '-inf' : String(value);
     } else if (typeof value === 'string') {
-        text = '"' + encodeURIComponent(value) + '"';
-    } else if (typeof value === 'boolean' || value === undefined) {
+        text = '"' + encodeURIComponent(value).replace(/[!'()*]/g,
+            c => '%' + c.charCodeAt(0).toString(16).toUpperCase()) + '"';
+    } else if (typeof value === 'boolean' || value === undefined || value === null) {
         text = String(value);
     } else {
         throw new Error(name + ': unexpected scalar tag');
@@ -889,7 +923,7 @@ def check_constant_global_observations(args, node, reference):
                                f"{node_output}\n{result.stdout}")
         counts = [0, 0, 0, 0, 0]
         for value in [row["expected_trace"], *row["saved"].values()]:
-            index = 1 if isinstance(value, bool) else 2 if value == "owned scalar" else (
+            index = 1 if isinstance(value, bool) else 2 if isinstance(value, StringValue) or value == "owned scalar" else (
                 4 if value == "undefined" else 0)
             counts[index] += 1
         types = re.search(r"\((\d+) number, (\d+) boolean, (\d+) string, (\d+) null, (\d+) undefined\)",
@@ -914,6 +948,11 @@ def check_constant_global_observations(args, node, reference):
         ("constant_boolean_saved_result", "const copy = first;", "const copy = fixed;"),
         ("constant_boolean_branch_lifetime", "const copy_flag = fixed_flag;", "const copy_flag = enabled;"),
         ("constant_string", "'owned scalar'", "7"),
+        ("constant_string_empty", "const copy = fixed;", "const copy = void 0;"),
+        ("constant_string_empty", "const copy = fixed;", "const copy = null;"),
+        ("constant_string_bytes", "const copy = fixed;", "const copy = 'tail';"),
+        ("constant_string_long", "const copy = fixed;", "const copy = '';"),
+        ("constant_string_alias_chain", "const copy = offset;", "const copy = false;"),
         ("constant_undefined", "void 0", "0 / 0"),
         ("constant_alias_chain", "const copy = offset;", "const copy = first;"),
         ("constant_alias_arithmetic", "const copy = offset;", "const copy = fixed;"),
@@ -933,7 +972,7 @@ def check_boolean_observation_mutations(args, compilers, nm):
     # Mutate only an emitted store after all source proofs and successful native
     # executions. A missing store or a numerically equal value of another tag
     # must fail the final observation instead of printing a plausible Boolean.
-    for name, binding, replacement in (
+    check_scalar_observation_mutations(args, compilers, nm, (
         ("constant_boolean", "copy", "ctnative::nullable_scalar(0.0)"),
         ("constant_boolean_true", "copy", "ctnative::nullable_scalar(1.0)"),
         ("constant_boolean", "copy", "ctnative::nullable_scalar::null()"),
@@ -941,7 +980,21 @@ def check_boolean_observation_mutations(args, compilers, nm):
         ("constant_boolean_true", "copy", None),
         ("constant_boolean", "first", "ctnative::nullable_scalar(true)"),
         ("constant_boolean", "first", None),
-    ):
+    ))
+
+
+def check_string_observation_mutations(args, compilers, nm):
+    check_scalar_observation_mutations(args, compilers, nm, (
+        ("constant_string", "copy", "ctnative::to_nullable_string(ctnative::nullable_scalar::null())"),
+        ("constant_string", "copy", "ctnative::nullable_string{}"),
+        ("constant_string", "copy", None),
+        ("constant_string_empty", "copy", None),
+        ("constant_string_trace_empty", "trace", None),
+    ))
+
+
+def check_scalar_observation_mutations(args, compilers, nm, mutations):
+    for name, binding, replacement in mutations:
         kind = "missing" if replacement is None else (
             "null" if "::null" in replacement else "wrong-tag")
         row = constant_global_cases()[name]
@@ -1007,24 +1060,28 @@ def check_constant_global_refusals(args, positives, node, reference):
                 if owner:
                     attribute = "ctnative.not_native"
                     reason = {
-                        "constant_string_candidate":
-                            "store to global `fixed` requires a Number or Boolean global",
                         "constant_undefined_candidate":
                             "store to global `fixed` may be null or undefined; "
-                            "native global observations require a definite Number or Boolean",
+                            "native global observations require a definite Number, Boolean or String",
                     }.get(name, "standard Map identity is unproved with other host/global value reads")
                 else:
                     attribute = "ctnative.host_owner_reason"
                     reason = {
                         "constant_read_before_write": "global read lacks definite source initialization",
                         "constant_boolean_read_before_write": "global read lacks definite source initialization",
+                        "constant_string_read_before_write": "global read lacks definite source initialization",
                         "constant_dynamic_global": "unproved host binding `globalThis`",
                         "constant_boolean_dynamic_global": "unproved host binding `globalThis`",
                         "constant_future_method_write": "property call lacks a current source getter proof",
                         "constant_boolean_future_method_write": "property call lacks a current source getter proof",
+                        "constant_string_future_method_write": "property call lacks a current source getter proof",
                         "constant_boolean_optional":
                             "owned global method table requires unconditional straight-line operations",
                         "constant_boolean_mixed":
+                            "owned global method table requires unconditional straight-line operations",
+                        "constant_string_optional":
+                            "owned global method table requires unconditional straight-line operations",
+                        "constant_string_mixed":
                             "owned global method table requires unconditional straight-line operations",
                     }[name]
                 if f'{attribute} = "{reason}"' not in text:
@@ -1067,7 +1124,8 @@ def check_numeric_entry_observations(args, node, reference):
                      ("value: value", "value: 1"),
                      ("state.clear();", "state.has(key);")]
         if name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime",
-                    "scalar_alias_branch_lifetime", "constant_branch_lifetime", "constant_boolean_branch_lifetime"}:
+                    "scalar_alias_branch_lifetime", "constant_branch_lifetime", "constant_boolean_branch_lifetime",
+                    "constant_string_branch_lifetime"}:
             mutations.append(("state.delete(key);", "state.has(key);"))
         for index, (old, replacement) in enumerate(mutations):
             if old not in source:
@@ -1718,6 +1776,10 @@ def main():
         ("constant_boolean", "constant_boolean_true", "constant_boolean_alias_chain",
          "constant_boolean_saved_result", "constant_boolean_branch_lifetime"))
     check_boolean_observation_mutations(args, compilers, nm)
+    check_leaf_object_forgeries(args, saved,
+        ("constant_string", "constant_string_bytes", "constant_string_alias_chain",
+         "constant_string_trace_empty", "constant_string_branch_lifetime"))
+    check_string_observation_mutations(args, compilers, nm)
 
     # Valid-looking scalar markers cannot normalize real null keys or narrow
     # the second use of a nullable formal. Fresh proof must emit the same C++.
@@ -2215,7 +2277,8 @@ def main():
     for name in ("local_identity_repeated_keys", "local_numeric_nested_key",
                  "local_add_saved_results", "scalar_result_key", "scalar_alias",
                  "scalar_alias_chain", "scalar_constant_only", "constant_alias_arithmetic",
-                 "constant_boolean", "constant_boolean_alias_chain"):
+                 "constant_boolean", "constant_boolean_alias_chain",
+                 "constant_string", "constant_string_alias_chain"):
         ir, config, _ = saved[name]
         rollback += check_budgets(args, ir, config, name, functions=5)
     print(f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "

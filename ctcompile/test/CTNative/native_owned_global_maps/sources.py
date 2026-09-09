@@ -7,8 +7,10 @@ module lives one directory below them.
 
 import hashlib
 import importlib.util
+import json
 import re
 from pathlib import Path
+from urllib.parse import quote
 
 
 # The directory of the driver scripts, which is this package's parent.
@@ -2362,19 +2364,27 @@ def scalar_global_values(name):
     return saved
 
 
+class StringValue(str):
+    """An actual String, distinct from the numeric/absence fixture sentinels."""
+
+
+STRING_GLOBAL_BYTES = StringValue("quote'\" newline\n tab\t percent% slash\\ equals=semi; café 雪 😀\x00tail !()*")
+STRING_GLOBAL_LONG = StringValue("owned-string-payload-" * 48 + "\x00tail")
+
+
 def scalar_global_output(name, value):
     saved = scalar_global_values(name)
     globals_ = {**saved, "trace": value}
 
     def printed(result):
+        if isinstance(result, StringValue) or result == "owned scalar":
+            return '"' + quote(str(result), safe="-._~") + '"'
         if isinstance(result, bool):
             return str(result).lower()
         if result == "NaN":
             return "nan"
         if result == "-Infinity":
             return "-inf"
-        if result == "owned scalar":
-            return '\"owned%20scalar\"'
         return str(result)
 
     return "".join(f"{binding}={printed(result)}\n" for binding, result in sorted(globals_.items()))
@@ -2413,11 +2423,13 @@ CONSTANT_GLOBAL_UNOWNED = {
     "constant_read_before_write", "constant_dynamic_global", "constant_future_method_write",
     "constant_boolean_read_before_write", "constant_boolean_dynamic_global",
     "constant_boolean_future_method_write", "constant_boolean_optional", "constant_boolean_mixed",
+    "constant_string_read_before_write", "constant_string_future_method_write",
+    "constant_string_optional", "constant_string_mixed",
 }
 CONSTANT_GLOBAL_CARRIERS = {
-    "constant_string", "constant_undefined", "constant_duplicate_write",
-    "constant_string_candidate", "constant_undefined_candidate",
+    "constant_undefined", "constant_duplicate_write", "constant_undefined_candidate",
     "constant_boolean_duplicate_write", "constant_boolean_mixed_write",
+    "constant_string_duplicate_write", "constant_string_mixed_write",
 }
 CONSTANT_GLOBAL_EXISTING = {
     "constant_exact_historical": "scalar_constant_only",
@@ -2530,6 +2542,43 @@ def constant_global_cases():
         "const fixed_flag = false; const enabled = true; "
         "const copy_flag = fixed_flag; const active = enabled;\n", 14,
         {**lifetime["saved"], "fixed_flag": False, "enabled": True, "copy_flag": False, "active": True})
+    string = rows["constant_string"]["source"]
+    strings = {**values, "fixed": StringValue("owned scalar"), "copy": StringValue("owned scalar")}
+    for kind, value in (("empty", StringValue("")), ("bytes", STRING_GLOBAL_BYTES),
+                        ("long", STRING_GLOBAL_LONG)):
+        literal = json.dumps(value, ensure_ascii=False)
+        add("constant_string_" + kind, string.replace("'owned scalar'", literal), 12,
+            {**strings, "fixed": value, "copy": value}, "const copy = fixed;", "const copy = " + literal + ";")
+    add("constant_string_alias_chain", string.replace("const copy = fixed;",
+        "const offset = fixed; const copy = offset;"), 12,
+        {**strings, "offset": StringValue("owned scalar")})
+    for kind, value in (("empty", StringValue("")), ("bytes", STRING_GLOBAL_BYTES)):
+        add("constant_string_trace_" + kind, prefix + "const fixed = " +
+            json.dumps(value, ensure_ascii=False) + "; const copy = fixed; var trace = copy;\n",
+            value, {**strings, "fixed": value, "copy": value})
+    add("constant_string_duplicate_write", snapshot +
+        "var fixed = 'owned scalar'; const copy = fixed; fixed = 'later';\n", 12,
+        {**strings, "fixed": StringValue("later")}, "fixed = 'later';", "const later = 'later';",
+        {**strings, "later": StringValue("later")})
+    add("constant_string_mixed_write", snapshot +
+        "var fixed = 'owned scalar'; const copy = fixed; fixed = false;\n", 12,
+        {**strings, "fixed": False}, "fixed = false;", "const later = false;", {**strings, "later": False})
+    add("constant_string_read_before_write", snapshot + "var copy = fixed; var fixed = 'owned scalar';\n",
+        12, {**strings, "copy": "undefined"}, "var copy = fixed; var fixed = 'owned scalar';",
+        "var fixed = 'owned scalar'; var copy = fixed;", strings)
+    future = "var fixed = 'owned scalar';\n" + snapshot.replace("set(key) {", "set(key) { fixed = 'later';")
+    add("constant_string_future_method_write", future + "const copy = fixed;\n", 12,
+        {**strings, "fixed": StringValue("later"), "copy": StringValue("later")},
+        "fixed = 'later';", "const future = 'later';", strings)
+    for kind, other in (("optional", "void 0"), ("mixed", "false")):
+        initializer = "const fixed = first ? 'owned scalar' : " + other + ";"
+        add("constant_string_" + kind, string.replace("const fixed = 'owned scalar';", initializer),
+            12, strings, initializer, "const fixed = 'owned scalar';")
+    add("constant_string_branch_lifetime", lifetime["source"] +
+        "const owned_text = " + json.dumps(STRING_GLOBAL_LONG) +
+        "; const text_alias = owned_text; const saved_text = text_alias; const empty_text = '';\n",
+        14, {**lifetime["saved"], "owned_text": STRING_GLOBAL_LONG, "text_alias": STRING_GLOBAL_LONG,
+             "saved_text": STRING_GLOBAL_LONG, "empty_text": StringValue("")})
     for name, (original, candidate) in CONSTANT_GLOBAL_HISTORY.items():
         assert rows[name]["raw_calls"] == 8, name
         for key, digest in ((name, original), (name + "_candidate", candidate)):

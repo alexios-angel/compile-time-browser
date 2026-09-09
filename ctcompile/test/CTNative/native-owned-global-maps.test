@@ -262,8 +262,8 @@
 # binary operand through preparation and both emitted C++ forms. NaN observers
 # check its Number tag and allow only the reference's irrelevant sign spelling;
 # signed-zero aliases retain their sign and a negative-infinity reciprocal.
-# String/Undefined originals and literal substitutions remain refused
-# at their separate Map-identity or numeric-global boundaries; duplicate writes,
+# Undefined originals and literal substitutions remain refused
+# at their separate Map-identity or scalar-global boundaries; duplicate writes,
 # reads before initialization, dynamic globals and future method writes retain
 # independent ownership refusals and exact admitted repairs. Fresh/stale forged
 # reports, reruns and measured budget cutoffs grant no authority.
@@ -281,7 +281,7 @@
 # Numbers. These post-emission mutations must reach the exact termination check.
 # Duplicate/mixed writes retain their Map-identity refusal, while reads before
 # initialization, dynamic/future effects and optional/mixed entry branches retain
-# their exact independent owner refusals and admitted repairs. String/Undefined
+# their exact independent owner refusals and admitted repairs. Undefined
 # literal-copy candidates retain their separate global-storage diagnostics.
 # Fresh/stale forgeries, prepared reruns and bounded proofs cannot manufacture a
 # Boolean fact or erase evaluated calls. Every earlier source hash stays fixed.
@@ -293,3 +293,13 @@
 # callable and true output. Node and the interpreter check its Boolean tag;
 # explicit/deduced GCC/Clang output retains the live set/has and observation check.
 # Its adjacent missing-key result keeps its independent nullable refusal.
+# The exact 3a99e34c String copy and f0a03c19 literal-copy candidate now
+# preserve eight calls and all five typed observations in both modes. Owning
+# per-binding String storage preserves empty, escaped UTF-8 and embedded NUL
+# bytes; absence never becomes an empty String. Whole-store type evidence,
+# actual scalar loads and source-order copy chains remain independently checked.
+# Missing/Null/Undefined emitted stores fail the exact String observation tag.
+# Duplicate and mixed writes, early reads and future effects retain independent
+# refusals and exact repairs. A long String snapshot family survives 128 future
+# Map calls, owner/table release, mutation of original globals, independent
+# reentry and final Map/leaf destruction under both compilers and sanitizers.

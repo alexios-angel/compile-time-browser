@@ -23,6 +23,7 @@ from .sources import (
     numeric_entry_sources, numeric_entry_cases, scalar_global_cases, scalar_global_sources, scalar_global_output,
     scalar_global_values, NUMERIC_ENTRY_SAVED_GLOBALS,
     constant_global_cases, constant_global_sources, normalized_scalar_output,
+    STRING_GLOBAL_LONG,
 )
 
 
@@ -1885,7 +1886,8 @@ int main() {
 
 NUMERIC_ENTRY_LIFETIMES = ("local_numeric_saved_lifetime", "local_numeric_branch_lifetime",
                            "scalar_saved_branch_lifetime", "scalar_alias_branch_lifetime",
-                           "constant_branch_lifetime", "constant_boolean_branch_lifetime")
+                           "constant_branch_lifetime", "constant_boolean_branch_lifetime",
+                           "constant_string_branch_lifetime")
 
 
 def check_numeric_entry_calls(cpp, name, mode):
@@ -1923,7 +1925,8 @@ def check_numeric_entry_calls(cpp, name, mode):
     # Native arithmetic must still consume evaluated operands. Every original
     # source binary has a corresponding entry expression, not a trace constant.
     source_entry = source.rsplit("});\n", 1)[1]
-    expected_ops = re.findall(r"\*\*|[+*/%-]", source_entry)
+    expressions = re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', "", source_entry)
+    expected_ops = re.findall(r"\*\*|[+*/%-]", expressions)
     cpp_ops = re.findall(r"= [^;\n]+? ([+*/-]) [^;\n]+;", entry[1])
     for symbol in ("+", "-", "*", "/"):
         if cpp_ops.count(symbol) < expected_ops.count(symbol):
@@ -1935,7 +1938,7 @@ def check_numeric_entry_calls(cpp, name, mode):
 
 def numeric_entry_observer_source(source, name):
     branch = name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime",
-                      "scalar_alias_branch_lifetime", "constant_branch_lifetime", "constant_boolean_branch_lifetime"}
+                      "scalar_alias_branch_lifetime", "constant_branch_lifetime", "constant_boolean_branch_lifetime", "constant_string_branch_lifetime"}
     observed = source + """
 (function() {
     const seen = [], results = [], sizes = [];
@@ -1966,7 +1969,7 @@ def numeric_entry_observer_source(source, name):
 
 def numeric_entry_lifetime_cpp(cpp, name):
     branch = name in {"local_numeric_branch_lifetime", "scalar_saved_branch_lifetime",
-                      "scalar_alias_branch_lifetime", "constant_branch_lifetime", "constant_boolean_branch_lifetime"}
+                      "scalar_alias_branch_lifetime", "constant_branch_lifetime", "constant_boolean_branch_lifetime", "constant_string_branch_lifetime"}
     changed = instrument_leaf_objects(cpp)
     changed = changed.replace(
         "static std::vector<std::weak_ptr<const void>> ctn_test_objects;",
@@ -2047,7 +2050,7 @@ int main() {
 }
 '''
     if name in {"scalar_saved_branch_lifetime", "scalar_alias_branch_lifetime", "constant_branch_lifetime",
-                "constant_boolean_branch_lifetime"}:
+                "constant_boolean_branch_lifetime", "constant_string_branch_lifetime"}:
         changed = changed.replace("    auto owner = g_host;", """
     const auto first_snapshot = ctnative::global_number(g_first);
     const auto second_snapshot = ctnative::global_number(g_second);
@@ -2074,7 +2077,7 @@ int main() {
             third_snapshot != 4 || ctnative::global_number(g_first) != 2) { return 196; }
     }
     ctn_test_retained.reset();""")
-    if name in {"scalar_alias_branch_lifetime", "constant_branch_lifetime", "constant_boolean_branch_lifetime"}:
+    if name in {"scalar_alias_branch_lifetime", "constant_branch_lifetime", "constant_boolean_branch_lifetime", "constant_string_branch_lifetime"}:
         changed = changed.replace("    auto owner = g_host;", """
     const auto left_snapshot = ctnative::global_number(g_left);
     const auto middle_snapshot = ctnative::global_number(g_middle);
@@ -2100,7 +2103,7 @@ int main() {
         return 198;
     }
     ctn_test_retained.reset();""")
-    if name in {"constant_branch_lifetime", "constant_boolean_branch_lifetime"}:
+    if name in {"constant_branch_lifetime", "constant_boolean_branch_lifetime", "constant_string_branch_lifetime"}:
         changed = changed.replace("    auto owner = g_host;", """
     const auto fixed_snapshot = ctnative::global_number(g_fixed);
     const auto offset_snapshot = ctnative::global_number(g_offset);
@@ -2147,6 +2150,39 @@ int main() {
     }
 """
         changed = changed.replace("    ctn_test_keep_leaf = false;", checks + "    ctn_test_keep_leaf = false;")
+        released = "    if (!ctn_test_objects[retained_index].expired()) { return 193; }"
+        assert changed.count(released) == 1
+        changed = changed.replace(released, released + checks)
+    if name == "constant_string_branch_lifetime":
+        raw = str(STRING_GLOBAL_LONG).encode("utf-8")
+        literal = 'std::string("' + "".join(f"\\{byte:03o}" for byte in raw) + f'", {len(raw)})'
+        changed = changed.replace("    auto owner = g_host;", """
+    const std::string expected_text = CTN_EXPECTED_TEXT;
+    const auto owned_snapshot = ctnative::global_string(g_owned_text);
+    const auto alias_snapshot = ctnative::global_string(g_text_alias);
+    const auto saved_snapshot = ctnative::global_string(g_saved_text);
+    const auto empty_snapshot = ctnative::global_string(g_empty_text);
+    static_assert(std::is_same_v<decltype(saved_snapshot), const std::string>);
+    if (owned_snapshot != expected_text || alias_snapshot != expected_text ||
+        saved_snapshot != expected_text || !empty_snapshot.empty()) { return 204; }
+    auto owner = g_host;""".replace("CTN_EXPECTED_TEXT", literal))
+        checks = """
+    if (owned_snapshot != expected_text || alias_snapshot != expected_text ||
+        saved_snapshot != expected_text || !empty_snapshot.empty() ||
+        ctnative::global_string(g_owned_text) != expected_text ||
+        ctnative::global_string(g_text_alias) != expected_text ||
+        ctnative::global_string(g_saved_text) != expected_text ||
+        !ctnative::global_string(g_empty_text).empty()) { return 205; }
+"""
+        changed = changed.replace("    ctn_test_keep_leaf = false;", checks + """
+    g_owned_text.value.assign(2048, 'm');
+    g_text_alias = {};
+    g_saved_text = {};
+    g_empty_text = {};
+    std::vector<std::string> text_churn(128, std::string(2048, 'c'));
+    if (owned_snapshot != expected_text || alias_snapshot != expected_text ||
+        saved_snapshot != expected_text || !empty_snapshot.empty()) { return 206; }
+    ctn_test_keep_leaf = false;""")
         released = "    if (!ctn_test_objects[retained_index].expired()) { return 193; }"
         assert changed.count(released) == 1
         changed = changed.replace(released, released + checks)
