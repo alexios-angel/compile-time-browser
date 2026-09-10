@@ -332,14 +332,42 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         return px_text(len.resolve(0.0f, at.font_size));
     };
 
-    const auto value_of = [at, declared,
+    const auto value_of = [this, at, id, atoms, declared,
                            computed_length](std::string_view property) -> std::string {
         // 0. A CUSTOM PROPERTY IS NOT A KEYWORD. Its value is an arbitrary token
         //    sequence whose case is significant and whose computed value is the
         //    substituted text, so it is handed back as written rather than folded
         //    the way `display: BLOCK` is.
         if (property.starts_with("--")) {
-            return std::string{trim(declared(property), html_whitespace)};
+            std::string text{trim(declared(property), html_whitespace)};
+            // ...WITH ITS SUBSTITUTIONS PERFORMED. The cascade keeps a custom
+            //    property as written so a later `var()` can read it lazily, but
+            //    its COMPUTED value has every `var()` and `attr()` replaced
+            //    (CSS Variables 1 §2.2, CSS Values 5 §attr), and that is what a
+            //    page reading `--x: attr(data-foo px) 11px` back is owed:
+            //    `10px 11px`. The same lookups the cascade used, asked of this
+            //    element - its own custom properties, inherited ones included,
+            //    and its attributes.
+            if (style::css::may_have_var(text)) {
+                const style::css::custom_lookup custom =
+                    [&](atom name) -> std::optional<std::string_view> {
+                    const std::string_view held = declared(atoms->text(name));
+                    if (held.empty() || held == style::guaranteed_invalid) { return std::nullopt; }
+                    return held;
+                };
+                const style::css::attribute_lookup attributes =
+                    [&](std::string_view name) -> std::optional<std::string> {
+                    const auto txn = doc_->read();
+                    const atom key = atoms->intern(name);
+                    if (!txn.has_attribute(id, key)) { return std::nullopt; }
+                    return std::string{txn.attribute_value(id, key)};
+                };
+                if (std::optional<std::string> done =
+                        style::css::substitute_var(text, custom, *atoms, attributes)) {
+                    text = std::move(*done);
+                }
+            }
+            return text;
         }
         // 1. USED SIZES, from the fragment - and WHICH BOX depends on box-sizing.
         //
@@ -606,6 +634,17 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         //     containing block in the question at all. `text-indent: 10%`
         //     computes to `10%`.
         const style::css::property_syntax * known = style::css::find_property(property);
+        // 3a. A `<position>`, whose keywords compute to percentages: `10% center`
+        //     is `10% 50%` and `right 20px` is `calc(100% - 20px)`, CSS Values 5
+        //     §position. `background-position` is not modelled as one - its
+        //     grammar has a three-value form and a comma list - but a value that
+        //     IS a position reads the same way, and anything else keeps its text.
+        if ((known != nullptr && known->kind == style::css::value_kind::position) ||
+            property == "background-position") {
+            std::string resolved = style::css::computed_position(text, declared("writing-mode"),
+                                                                 declared("direction"));
+            if (!resolved.empty()) { return resolved; }
+        }
         if (known != nullptr && (known->kind == style::css::value_kind::length ||
                                  known->kind == style::css::value_kind::length_percentage)) {
             return computed_length(text);
@@ -618,6 +657,24 @@ std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_en
         if (is_color_property(property)) {
             if (const std::optional<color> c = paint::parse_color(text)) { return color_text(*c); }
             return std::string{text};
+        }
+        // 4b. AN <alpha-value> IS A NUMBER once computed: `opacity: 90%` is `0.9`
+        //     (CSS Color 4 §4.2), and so is a `calc(90%)` the cascade folded.
+        //     `calc-numbers` asks for it by name.
+        //     ...AND CLAMPED TO [0, 1], which is the property's range: a
+        //     `calc(log(0))` the cascade folded to a very negative number is
+        //     `0` here, and `opacity: 2` is `1`. exp-log-serialize asks for the
+        //     first.
+        if (property == "opacity") {
+            const std::string_view given = trim(text, html_whitespace);
+            const bool percent = given.ends_with('%');
+            float number = 0;
+            const char * end = given.data() + given.size() - (percent ? 1 : 0);
+            if (std::from_chars(given.data(), end, number).ec == std::errc{} &&
+                (percent || end == given.data() + given.size())) {
+                if (percent) { number /= 100.0f; }
+                return number_text(std::min(1.0f, std::max(0.0f, number)));
+            }
         }
         // 5. Everything else is a keyword or a list, and its computed value IS
         //    its specified text.

@@ -92,6 +92,7 @@ namespace ctbrowser::shell::detail {
 // bodies are in serialize.cpp, which explains each one, and entries.cpp is
 // what calls them.
 [[nodiscard]] float border_width_px(std::string_view text, float font_size);
+[[nodiscard]] std::string number_text(float value);
 [[nodiscard]] std::string px_text(float value);
 [[nodiscard]] std::string used_px_text(float value);
 [[nodiscard]] std::string color_text(color c);

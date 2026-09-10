@@ -70,6 +70,10 @@ ctbrowser_test(unit/style_calc)
 # The CSS tokenizer, against the cases the submodule it replaced got wrong.
 ctbrowser_test(unit/css_syntax)
 ctbrowser_test(unit/css_values)
+# The `css/css-values` behaviours fixed against a measured WPT run, one case
+# per behaviour: computed `<position>`, the evaluator at the edges of its
+# number line, and the cascade's range clamping.
+ctbrowser_test(unit/css_values_wpt)
 # The CSSOM object model - document.styleSheets and the objects under it. Its
 # own files rather than more of css_values: that one asks what a VALUE is worth,
 # these ask what the object model SERIALISES to, and every case in them is a

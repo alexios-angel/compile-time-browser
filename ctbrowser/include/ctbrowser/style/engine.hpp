@@ -19,6 +19,7 @@
 #include <ctbrowser/style/css/calc.hpp>
 #include <ctbrowser/style/css/media.hpp>
 #include <ctbrowser/style/css/parser.hpp>
+#include <ctbrowser/style/css/properties.hpp>
 #include <ctbrowser/style/css/substitute.hpp>
 #include <ctbrowser/style/selector.hpp>
 
@@ -633,7 +634,8 @@ public:
             "font-size",       "font-style",     "font-variant",    "font-weight",
             "letter-spacing",  "line-height",    "list-style",      "list-style-position",
             "list-style-type", "text-align",     "text-decoration", "text-indent",
-            "text-transform",  "visibility",     "white-space",     "word-spacing"};
+            "text-transform",  "visibility",     "white-space",     "word-spacing",
+            "writing-mode"};
         for (const std::string_view name : names) {
             if (name == property) { return true; }
         }
@@ -650,6 +652,11 @@ public:
         // inherited or not, so `display: inherit` has to be able to read a property
         // that never travels on its own. The inherited half alone cannot answer that.
         const inherited_ptr & from = parent ? parent->inherited : no_inherited_;
+        // Where this element sits among its siblings, for `sibling-index()` and
+        // `sibling-count()`: facts the traversal already gathered for
+        // `:nth-child`, handed to every math function this element folds.
+        sibling_index_ = self.sibling_index;
+        sibling_count_ = self.sibling_count;
         // Gather only the rules whose RIGHTMOST compound could possibly match.
         matches_.clear();
         collect(index_.by_id, self.id, txn, ancestors, depth);
@@ -813,6 +820,15 @@ public:
             }
             return std::nullopt;
         };
+        // ...AND THE ELEMENT'S ATTRIBUTES, for `attr()`. Absent and empty are
+        // different answers here too: `attr(data-x)` on an element without the
+        // attribute takes its fallback, and one with `data-x=""` is `""`.
+        const css::attribute_lookup attributes =
+            [&txn, node, this](std::string_view name) -> std::optional<std::string> {
+            const atom key = atoms_->intern(name);
+            if (!txn.has_attribute(node, key)) { return std::nullopt; }
+            return std::string{txn.attribute_value(node, key)};
+        };
 
         // PASS ONE AND A HALF: FONT SIZE, ALONE, BEFORE ANYTHING ELSE READS IT.
         //
@@ -854,7 +870,7 @@ public:
                 std::string value{d.value};
                 if (css::may_have_var(value)) {
                     const std::optional<std::string> done =
-                        css::substitute_var(value, lookup, *atoms_);
+                        css::substitute_var(value, lookup, *atoms_, attributes);
                     if (!done) { return; }
                     value = *done;
                 }
@@ -922,7 +938,8 @@ public:
             };
             const bool had_var = css::may_have_var(value);
             if (had_var) {
-                const std::optional<std::string> done = css::substitute_var(value, lookup, *atoms_);
+                const std::optional<std::string> done =
+                    css::substitute_var(value, lookup, *atoms_, attributes);
                 // INVALID AT COMPUTED-VALUE TIME means `unset`, which for an inherited
                 // property lets the inherited value through and otherwise means absent.
                 // NOT "drop it and let an earlier declaration win" - that is the classic
@@ -975,6 +992,15 @@ public:
                     return;
                 }
                 value = std::move(done.text);
+                // ...AND CLAMPED TO THE PROPERTY'S RANGE, CSS Values 4 §10.10:
+                // `tab-size: calc(2 * -4)` computes to 0 where a literal `-8`
+                // never got past the grammar. `calc-numbers` asks for exactly
+                // that, and the table already knows which properties have a
+                // floor at zero.
+                if (const css::property_syntax * known = css::find_property(property);
+                    known != nullptr && known->nonnegative) {
+                    value = css::non_negative(value);
+                }
             }
             // FONT SIZE IS ALREADY RESOLVED - the pre-pass above did it, because
             // every `em` in every other declaration needed the answer first. Emit
@@ -1072,6 +1098,8 @@ public:
         ctx.root_font_size = root_font_size_;
         ctx.viewport_width = environment_.viewport_width;
         ctx.viewport_height = environment_.viewport_height;
+        ctx.sibling_index = sibling_index_;
+        ctx.sibling_count = sibling_count_;
         return ctx;
     }
 
@@ -1586,6 +1614,11 @@ private:
     // resolved first, so by the time anything else asks, it is right. It replaces
     // a hardcoded 16 in layout/values.hpp.
     float root_font_size_ = 16.0f;
+    // The element being resolved, among its siblings: set by resolve() from the
+    // facts the traversal gathered, read by font_context() for the tree-counting
+    // functions. Zero outside a resolve, which leaves them unresolved.
+    std::uint32_t sibling_index_ = 0;
+    std::uint32_t sibling_count_ = 0;
     std::vector<compiled_selector> selectors_;
     std::vector<declaration> declarations_;
     rule_index index_;

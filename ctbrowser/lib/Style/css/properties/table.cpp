@@ -215,6 +215,13 @@ constexpr property_syntax table[] = {
     {"column-gap", k::length_percentage, "normal", "normal", false, true},
     {"order", k::integer, "", "0", false, false},
     {"z-index", k::integer, "auto", "auto", false, false},
+    // Three more `<integer>` and keyword properties, named because
+    // `calc-rounds-to-integer` sets `10.1` and `1e1` on each and expects the
+    // declaration refused - which an unknown property, stored verbatim, cannot
+    // do. `1e1` is a <number-token> and not an <integer>, CSS Syntax 3 §4.3.12.
+    {"orphans", k::integer, "", "2", true, true},
+    {"widows", k::integer, "", "2", true, true},
+    {"column-span", k::keyword_only, "none all", "none", false, false},
 
     // --- tables and lists ------------------------------------------------
     {"table-layout", k::keyword_only, "auto fixed", "auto", false, false},
