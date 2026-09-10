@@ -1,27 +1,10 @@
 # ctbrowser.app - the window and the event loop; the only place that knows SDL exists.
 #
-# Sources are relative to this directory; headers are named in full under
-# ${CTBROWSER_INCLUDE_DIR}. Adding a file to this subsystem now touches this
-# file and nothing else - which is why the 897-line src/CMakeLists.txt was
-# split on 2026-08-09. Dependencies are found in cmake/dependencies.cmake.
-
-# --- ctbrowser.app -------------------------------------------------------
-# The window and the event loop, and the only module that knows SDL exists.
 # ALWAYS built. SDL3 is a compile definition, not a gate: without it the module
 # still provides run_app() over the headless backend, which is what makes "SDL3
 # is optional" true of the BUILD and not just of the engine.
 add_library(ctbrowser-app)
-target_sources(ctbrowser-app
-  PRIVATE
-    # app.cpp was 1,034 lines; it is two now, with the `host` interface both
-    # need and the includes it had in app/internal.hpp.
-    app/hosts.cpp
-    app/run.cpp
-  PUBLIC
-    FILE_SET HEADERS
-      BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
-      FILES
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/app/app.hpp")
+ctbrowser_subsystem_sources(ctbrowser-app app)
 target_compile_features(ctbrowser-app PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-app)
 target_link_libraries(ctbrowser-app PUBLIC ctbrowser-core ctbrowser-paint ctbrowser-raster

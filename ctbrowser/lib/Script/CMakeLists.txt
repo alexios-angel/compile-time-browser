@@ -6,74 +6,13 @@
 # cmake/dependencies.cmake. Each subdirectory's internal.hpp is private to it
 # and deliberately in NO file set.
 add_library(ctbrowser-script)
+# The .cpp list is globbed like every other subsystem's; the header list is
+# NOT, because include/ctbrowser/script/ holds dispatch.hpp, which vm.hpp
+# includes but which has never been installed. Globbing would ship it, so the
+# list stays what it was until someone decides that on purpose.
+file(GLOB_RECURSE script-sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 target_sources(ctbrowser-script
-  PRIVATE
-    aot_bridge/frames.cpp
-    aot_bridge/operators.cpp
-    aot_bridge/properties.cpp
-    aot_bridge/calls.cpp
-    dispatch.cpp
-    aot_contract.cpp
-    program_image/write.cpp
-    program_image/read.cpp
-    compile.cpp
-    # The static semantics: the source text a conforming implementation must
-    # REFUSE. It runs before the compiler and shares nothing with it but the
-    # AST, which is why it is a directory rather than a pass inside one.
-    compile/early_errors/entry.cpp
-    compile/early_errors/scopes.cpp
-    compile/early_errors/statements.cpp
-    compile/early_errors/functions.cpp
-    compile/early_errors/expressions.cpp
-    compile/early_errors/patterns.cpp
-    compile/ast.cpp
-    compile/limits.cpp
-    compile/entry.cpp
-    compile/helpers.cpp
-    compile/destructuring.cpp
-    compile/statements/dispatch.cpp
-    compile/statements/loops.cpp
-    compile/statements/try_finally.cpp
-    compile/statements/functions.cpp
-    compile/expressions.cpp
-    compile/classes.cpp
-    compile/frames.cpp
-    compile/capture.cpp
-    compile/strings.cpp
-    source_lines.cpp
-    type_record.cpp
-    builtins.cpp
-    builtins/values.cpp
-    builtins/collections/array.cpp
-    builtins/collections/array_iteration.cpp
-    builtins/collections/keyed.cpp
-    builtins/collections/typed_arrays.cpp
-    builtins/text/string.cpp
-    builtins/text/globals.cpp
-    builtins/text/regexp.cpp
-    builtins/text/symbol.cpp
-    builtins/objects/operations.cpp
-    builtins/objects/object.cpp
-    builtins/objects/errors.cpp
-    builtins/objects/proxy.cpp
-    builtins/objects/function.cpp
-    builtins/async.cpp
-    bigint.cpp
-    number_format.cpp
-    vm/coerce.cpp
-    vm/objects/context.cpp
-    vm/objects/gc.cpp
-    vm/objects/lookup.cpp
-    vm/objects/store.cpp
-    vm/objects/chain.cpp
-    vm/objects/descriptors.cpp
-    vm/call/invoke.cpp
-    vm/call/construct.cpp
-    vm/call/modules.cpp
-    vm/call/run.cpp
-    vm/call/coroutines.cpp
-    # The dispatch loop stays ONE function - docs/history/computed-goto.md.
-    vm/run_loop.cpp
+  PRIVATE ${script-sources}
   PUBLIC
     FILE_SET HEADERS
       BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"

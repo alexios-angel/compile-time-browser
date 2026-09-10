@@ -1,47 +1,11 @@
 # ctbrowser.raster - display list -> pixels, in tiles across the pool.
 #
-# Sources are relative to this directory; headers are named in full under
-# ${CTBROWSER_INCLUDE_DIR}. Adding a file to this subsystem now touches this
-# file and nothing else - which is why the 897-line src/CMakeLists.txt was
-# split on 2026-08-09. Dependencies are found in cmake/dependencies.cmake.
-
-# --- ctbrowser.raster ----------------------------------------------------
 # Turns display lists into pixels. Knows nothing about the DOM, style or
 # layout - only about paint's recorded commands, which is what lets a second
-# backend (SDL3 GPU, stage 6) drop in beside the software one.
+# backend (SDL3 GPU, stage 6) drop in beside the software one. gl/ is the GL
+# device: an ANGLE branch and a stub branch of one #if, both always compiled.
 add_library(ctbrowser-raster)
-target_sources(ctbrowser-raster
-  PRIVATE
-    # the primitives: a surface, its tiles, and the command painter
-    draw.cpp
-    # the GL device. gl.cpp was 1,162 lines - an ANGLE branch and a stub branch
-    # of one #if - and is four files now, the pimpl both branches define in
-    # gl/internal.hpp with the includes it had.
-    gl/context.cpp
-    gl/objects.cpp
-    gl/draw.cpp
-    gl/stub.cpp
-    svg.cpp
-    # the backends and the machinery that drives a frame through one
-    backend/software.cpp
-    # real fonts
-    text/ttf.cpp
-  PUBLIC
-    FILE_SET HEADERS
-      BASE_DIRS "${CTBROWSER_INCLUDE_DIR}"
-      FILES
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/raster.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/gl.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/surface.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/draw.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/text/ttf.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/svg.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/text/font8x8.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/tile.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend/backend.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend/software.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend/renderer.hpp"
-        "${CTBROWSER_INCLUDE_DIR}/ctbrowser/raster/backend/compositor.hpp")
+ctbrowser_subsystem_sources(ctbrowser-raster raster)
 target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-raster)
 target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)
