@@ -100,11 +100,37 @@ void test_an_anchor_reports_the_parts_of_its_url() {
        "http://site.example/b#h");
 }
 
+// --- the translate attribute --------------------------------------------------
+
+void test_translate_inherits_through_elements_and_stops_at_a_fragment() {
+    // the-translate-attribute-0xx.html and translate-enumerated-ascii-case-
+    // insensitive.html: `yes`/"" enable, `no` disables, ASCII-insensitively,
+    // and anything else inherits from the parent element.
+    is("(function () { var h = document.getElementById('host');"
+       " h.innerHTML = '<div translate=no><span translate=YeS></span>"
+       "<span translate=x></span><span translate></span></div>';"
+       " var s = h.querySelectorAll('span');"
+       " return [h.translate, s[0].translate, s[1].translate, s[2].translate].join(); })()",
+       "true,true,false,true");
+    // translate-inherit-no-parent-element.html: a fragment or shadow root is
+    // not an element, so a child of one is translate-enabled whatever the
+    // host says.
+    is("(function () { var host = document.createElement('my-element');"
+       " host.setAttribute('translate', 'no'); var d = document.createElement('div');"
+       " host.attachShadow({mode: 'open'}).appendChild(d); return d.translate; })()",
+       "true");
+    // The setter writes the keyword, and reads back through the same walk.
+    is("(function () { var d = document.createElement('div'); d.translate = false;"
+       " return d.getAttribute('translate') + ',' + d.translate; })()",
+       "no,false");
+}
+
 } // namespace
 
 int main() {
     test_legacy_null_to_empty_string_rows_write_nothing_for_null();
     test_nonce_is_a_slot_in_front_of_the_attribute();
     test_an_anchor_reports_the_parts_of_its_url();
+    test_translate_inherits_through_elements_and_stops_at_a_fragment();
     REPORT("html_dom_wpt");
 }

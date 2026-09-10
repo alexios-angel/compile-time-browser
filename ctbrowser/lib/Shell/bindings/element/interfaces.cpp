@@ -530,6 +530,47 @@ void dom_bindings::install_dom_interfaces(context & cx) {
         proto->define_accessor(
             "outerText", value::undefined(),
             value::object(cx.allocate<script::native_object>("outerText", set_outer_text)));
+
+        // --- translate, HTML 3.2.6.3 ---------------------------------------
+        //
+        // A boolean over an INHERITED enumerated attribute: `yes` and "" are
+        // translate-enabled, `no` is no-translate, and anything else - the
+        // absent attribute included - is the "inherit" state, which is the
+        // PARENT ELEMENT's mode. The walk stops at the first node that is not
+        // an element, so a child of a DocumentFragment or of a ShadowRoot is
+        // translate-enabled whatever the host says, which
+        // translate-inherit-no-parent-element.html spells out. Only an HTML
+        // element's attribute counts; a foreign element is in the inherit
+        // state and passes the question up.
+        proto->define_accessor(
+            "translate",
+            value::object(cx.allocate<script::native_object>(
+                "translate",
+                [this](context & c, std::span<value>) {
+                    const auto txn = doc_->read();
+                    const atom name = atoms_->intern("translate");
+                    for (node_id at = receiver(c);
+                         at && txn.kind(at).value_or(node_kind::text) == node_kind::element;
+                         at = txn.parent(at)) {
+                        if (txn.element_ns(at) != node_ns::html || !txn.has_attribute(at, name)) {
+                            continue;
+                        }
+                        const std::string mode = ascii_lower_copy(txn.attribute_value(at, name));
+                        if (mode.empty() || mode == "yes") { return value::boolean(true); }
+                        if (mode == "no") { return value::boolean(false); }
+                    }
+                    return value::boolean(true);
+                })),
+            value::object(cx.allocate<script::native_object>(
+                "translate", [this](context & c, std::span<value> a) {
+                    if (const node_id id = receiver(c)) {
+                        (void)doc_->set_attribute(id, atoms_->intern("translate"),
+                                                  !a.empty() && context::truthy(a[0]) ? "yes"
+                                                                                      : "no");
+                        mutated();
+                    }
+                    return value::undefined();
+                })));
     }
 
     // --- HTMLHyperlinkElementUtils, HTML 4.6.4, on <a> and <area> ------------
