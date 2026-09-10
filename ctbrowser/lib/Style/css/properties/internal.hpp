@@ -21,10 +21,12 @@
 #include <algorithm>
 #include <array>
 #include <boost/container/small_vector.hpp>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace ctbrowser::style::css::detail {
@@ -83,6 +85,7 @@ struct scan {
 [[nodiscard]] bool whole_value_is_math(const token_stream & ts, const scan & found);
 [[nodiscard]] bool math_type_fits(const property_syntax & p, const math_answer & answer);
 [[nodiscard]] bool match_position(const token_stream & ts, const scan & found, std::string & out);
+[[nodiscard]] std::string normalize_value_tokens(const token_stream & ts, std::string_view text);
 [[nodiscard]] bool match_typed(const token_stream & ts, const css_token & t,
                                const property_syntax & p, std::string & out);
 
