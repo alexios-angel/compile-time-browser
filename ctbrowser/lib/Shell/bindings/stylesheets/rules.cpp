@@ -128,6 +128,18 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
     std::string out = "@" + rule.at_name;
     if (rule.type == media_rule) {
         out += " " + serialize_media_query_list(rule.media_queries);
+    } else if (rule.type == keyframes_rule && !rule.prelude.empty()) {
+        // A `<keyframes-name>` is a `<custom-ident>` or a `<string>`, and a
+        // CSS-wide keyword or `none` is neither identifier - so a name a
+        // script set to one serialises as the string `@keyframes "none"`,
+        // which is the only spelling that reads back as that name.
+        static constexpr std::string_view not_idents[] = {
+            "initial", "inherit", "unset", "revert", "revert-layer", "default", "none"};
+        bool reserved = false;
+        for (const std::string_view word : not_idents) {
+            if (ascii_iequals(rule.prelude, word)) { reserved = true; }
+        }
+        out += " " + (reserved ? quoted_string(rule.prelude) : rule.prelude);
     } else if (!rule.prelude.empty()) {
         out += " " + rule.prelude;
     }
@@ -166,6 +178,7 @@ std::string dom_bindings::rule_css_text(const css_rule_record & rule) const {
 // cannot be spelled - or typed, or counted - two different ways.
 void dom_bindings::parse_sheet_rules(std::size_t sheet, std::string_view css) {
     if (sheet >= css_sheets_.size()) { return; }
+    for (const std::size_t old : css_sheets_[sheet]->rules) { detach_rule(css_rule_store_, old); }
     css_sheets_[sheet]->rules.clear();
     for (const std::string_view span : split_top_level_rules(css)) {
         std::string error;
@@ -238,6 +251,14 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
         const std::string_view name =
             trimmed.substr(1, (name_end == std::string_view::npos ? trimmed.size() : name_end) - 1);
         made.at_name = ascii_lower_copy(name);
+        // `@charset` IS NOT A RULE - CSS Syntax 3 §4 consumes it before the
+        // rule list is parsed - so a sheet beginning with one has no rule
+        // zero, and `insertRule("@charset ...")` is a SyntaxError.
+        if (made.at_name == "charset") {
+            css_rule_store_.pop_back();
+            error = "SyntaxError";
+            return no_index;
+        }
         made.verbatim = std::string{trimmed};
         {
             // The prelude is what stands between the at-keyword and the block

@@ -148,5 +148,13 @@ bool store_declaration(std::vector<dom_bindings::css_declaration> & block,
                        const std::string & css_name, std::string_view text, bool allow_important,
                        bool force_important);
 [[nodiscard]] std::string asked_name(context & cx, std::span<value> args);
+// CSSOM 6.1.1 "remove a CSS rule": the record forgets its sheet and its
+// parent, recursively, so a rule object a page still holds answers null for
+// both - and keeps answering everything else.
+void detach_rule(std::vector<std::unique_ptr<dom_bindings::css_rule_record>> & store,
+                 std::size_t rule);
+// A CSSKeyframesRule is ITSELF indexed - `keyframes[0]` is `cssRules[0]` -
+// so the rule object mirrors the list cached under `rules_key` on it.
+void mirror_rule_list(script::object_object & rule_obj);
 
 } // namespace ctbrowser::shell::detail

@@ -398,6 +398,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                 }
             }
         }
+        detach_rule(css_rule_store_, going);
         sheet->rules.erase(sheet->rules.begin() + static_cast<std::ptrdiff_t>(asked));
         style_sheets_changed();
         return value::undefined();
@@ -645,6 +646,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             throw_dom_exception(c, "IndexSizeError", "there is no rule at that index");
             return value::undefined();
         }
+        detach_rule(css_rule_store_, rule->children[static_cast<std::size_t>(asked)]);
         rule->children.erase(rule->children.begin() + static_cast<std::ptrdiff_t>(asked));
         style_sheets_changed();
         return value::undefined();
@@ -677,6 +679,26 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             return value::undefined();
         });
     (void)interface("CSSSupportsRule", "CSSConditionRule", nullptr);
+    // --- CSSContainerRule, css-conditional-5. The prelude is `<container-name>?
+    // <container-query>`: a name is an identifier and a query begins with `(`
+    // (or `not`/`and`/`or` of one), so the first component decides which.
+    script::object_object * container_proto =
+        interface("CSSContainerRule", "CSSConditionRule", nullptr);
+    const auto container_part = [this](context & c, bool want_name) {
+        const css_rule_record * rule = receiver_rule(c);
+        if (rule == nullptr) { return c.string(""); }
+        std::size_t at = 0;
+        const std::string_view first = next_component(rule->prelude, at);
+        const bool named = !first.empty() && first.front() != '(' && !ascii_iequals(first, "not") &&
+                           !ascii_iequals(first, "and") && !ascii_iequals(first, "or");
+        if (want_name) { return c.string(named ? std::string{first} : std::string{}); }
+        const std::string_view whole = rule->prelude;
+        return c.string(collapse_whitespace(named ? whole.substr(at) : whole));
+    };
+    getter(container_proto, "containerName",
+           [container_part](context & c, std::span<value>) { return container_part(c, true); });
+    getter(container_proto, "containerQuery",
+           [container_part](context & c, std::span<value>) { return container_part(c, false); });
     declaration_accessor(interface("CSSFontFaceRule", "CSSRule", nullptr));
 
     // --- CSSImportRule, CSSOM 6.4.7
@@ -780,18 +802,23 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             style_sheets_changed();
             return value::undefined();
         });
-    getter(keyframes_proto, "cssRules", [this](context & c, std::span<value>) {
+    // The list is made with the rule object (make_rule_object), because the
+    // rule is itself indexed - `keyframes[0]` - and MIRRORS it after each read
+    // and each write.
+    const auto keyframes_list = [this](context & c) {
         script::object_object * self = as_object(c.current_this());
         const css_rule_record * rule = receiver_rule(c);
         if (self == nullptr || rule == nullptr) { return value::undefined(); }
         if (const value * held = self->find(rules_key)) {
             refresh_rule_list(c, *held, rule->children);
-            return *held;
+        } else {
+            self->define(rules_key, make_rule_list(c, rule->children), script::attr_none);
         }
-        const value list = make_rule_list(c, rule->children);
-        self->define(rules_key, list, script::attr_none);
-        return list;
-    });
+        mirror_rule_list(*self);
+        return *self->find(rules_key);
+    };
+    getter(keyframes_proto, "cssRules",
+           [keyframes_list](context & c, std::span<value>) { return keyframes_list(c); });
     getter(keyframes_proto, "length", [this](context & c, std::span<value>) {
         const css_rule_record * rule = receiver_rule(c);
         return value::number(rule == nullptr ? 0 : static_cast<double>(rule->children.size()));
@@ -799,7 +826,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     // `appendRule` takes a whole keyframe and `deleteRule`/`findRule` take a
     // keyText - NOT an index, which is what makes this trio different from
     // every other insert/delete pair in the CSSOM.
-    method(keyframes_proto, "appendRule", [this](context & c, std::span<value> a) {
+    method(keyframes_proto, "appendRule", [this, keyframes_list](context & c, std::span<value> a) {
         css_rule_record * rule = receiver_rule(c);
         if (rule == nullptr) { return value::undefined(); }
         const std::size_t self = slot_index(as_object(c.current_this()), rule_key);
@@ -812,6 +839,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         const std::size_t frame = css_rule_store_[made]->children.front();
         css_rule_store_[frame]->parent = self;
         rule->children.push_back(frame);
+        (void)keyframes_list(c);
         style_sheets_changed();
         return value::undefined();
     });
@@ -834,14 +862,17 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         if (rule == nullptr || found == no_index) { return value::null(); }
         return make_rule_object(c, rule->children[found]);
     });
-    method(keyframes_proto, "deleteRule", [this, keyframe_at](context & c, std::span<value> a) {
-        css_rule_record * rule = receiver_rule(c);
-        const std::size_t found = keyframe_at(c, collapse_whitespace(arg_string(c, a, 0)));
-        if (rule == nullptr || found == no_index) { return value::undefined(); }
-        rule->children.erase(rule->children.begin() + static_cast<std::ptrdiff_t>(found));
-        style_sheets_changed();
-        return value::undefined();
-    });
+    method(keyframes_proto, "deleteRule",
+           [this, keyframe_at, keyframes_list](context & c, std::span<value> a) {
+               css_rule_record * rule = receiver_rule(c);
+               const std::size_t found = keyframe_at(c, collapse_whitespace(arg_string(c, a, 0)));
+               if (rule == nullptr || found == no_index) { return value::undefined(); }
+               detach_rule(css_rule_store_, rule->children[found]);
+               rule->children.erase(rule->children.begin() + static_cast<std::ptrdiff_t>(found));
+               (void)keyframes_list(c);
+               style_sheets_changed();
+               return value::undefined();
+           });
     script::object_object * keyframe_proto = interface("CSSKeyframeRule", "CSSRule", nullptr);
     declaration_accessor(keyframe_proto);
     accessor(

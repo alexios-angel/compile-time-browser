@@ -381,6 +381,28 @@ bool store_declaration(std::vector<dom_bindings::css_declaration> & block,
     return true;
 }
 
+void detach_rule(std::vector<std::unique_ptr<dom_bindings::css_rule_record>> & store,
+                 std::size_t rule) {
+    if (rule >= store.size()) { return; }
+    store[rule]->sheet = no_index;
+    store[rule]->parent = no_index;
+    for (const std::size_t child : store[rule]->children) { detach_rule(store, child); }
+}
+
+void mirror_rule_list(script::object_object & rule_obj) {
+    const value * list = rule_obj.find(rules_key);
+    script::object_object * held = list == nullptr ? nullptr : as_object(*list);
+    if (held == nullptr) { return; }
+    std::vector<value> items;
+    if (const value * length = held->find("length"); length != nullptr && length->is_number()) {
+        const double count = length->as_number();
+        for (std::size_t i = 0; i < (count > 0 ? static_cast<std::size_t>(count) : 0); ++i) {
+            if (const value * item = held->find(std::to_string(i))) { items.push_back(*item); }
+        }
+    }
+    set_indexed(rule_obj, items);
+}
+
 // A property name as the CSSOM's own methods take it: a custom property keeps
 // its case, everything else is lowercased. `setProperty`/`getPropertyValue` are
 // the only way to reach `--x`, which no identifier can name.

@@ -179,12 +179,21 @@ value dom_bindings::make_rule_object(context & cx, std::size_t rule) {
             interface = "CSSNamespaceRule.prototype";
         } else if (record.type == counter_style_rule) {
             interface = "CSSCounterStyleRule.prototype";
+        } else if (record.at_name == "container") {
+            interface = "CSSContainerRule.prototype";
         }
         if (const value * proto = internals->find(interface)) { obj->prototype = *proto; }
     }
     obj->define(rule_key, value::number(static_cast<double>(rule)), script::attr_none);
     obj->define(sheet_key, value::number(static_cast<double>(css_rule_store_[rule]->sheet)),
                 script::attr_none);
+    if (css_rule_store_[rule]->type == keyframes_rule) {
+        // Indexed from the start - `keyframes[0]` is read without `cssRules`
+        // ever having been - and the list is the cached one so the two agree.
+        obj->define(rules_key, make_rule_list(cx, css_rule_store_[rule]->children),
+                    script::attr_none);
+        mirror_rule_list(*obj);
+    }
     return object;
 }
 
