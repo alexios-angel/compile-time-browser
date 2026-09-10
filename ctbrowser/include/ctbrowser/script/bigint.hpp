@@ -12,12 +12,9 @@
 // declares `bigint` itself, because `bigint_object` stores one, so this header
 // adds nothing to a consumer's cost.
 //
-// `bigint` is `cpp_int` by default and `mpz_int` (GNU GMP) under
-// `-DCTBROWSER_WITH_GMP=ON`. value.hpp says why the default is what it is; the
-// functions below are written against the shared Boost interface and are
-// identical on both. NOTHING IN THIS HEADER MAY USE A BACKEND-SPECIFIC
-// operation - the two must stay interchangeable or the switch becomes a
-// semantic change rather than a performance one.
+// `bigint` is `cpp_int`; the functions below are written against the shared
+// Boost.Multiprecision interface, not cpp_int specifics, so the backend stays
+// swappable (value.hpp says why GMP was tried and cut).
 //
 // WHY BOOST HERE, having turned Boost.Multiprecision down for `Math` earlier:
 // the objections there were that it is 400x slower than hardware and that being

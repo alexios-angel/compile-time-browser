@@ -9,11 +9,7 @@
 #include <utility>
 #include <vector>
 
-#if defined(CTBROWSER_WITH_GMP)
-#include <boost/multiprecision/gmp.hpp>
-#else
 #include <boost/multiprecision/cpp_int.hpp>
-#endif
 
 #include <ctbrowser/core/core.hpp>
 
@@ -221,19 +217,7 @@ struct symbol_object final : heap_object {
 // cost is in docs/build.md. cpp_int is header-only, signed and unbounded,
 // which is exactly the BigInt semantic.
 //
-// THE BACKEND IS SWITCHABLE, and cpp_int is the default DELIBERATELY.
-// `-DCTBROWSER_WITH_GMP=ON` selects `mpz_int` instead. Opt-in rather than
-// "on when GMP is found" for two measured reasons (docs/script.md): at 64
-// bits, the width a JavaScript BigInt usually is, GMP measured 2.9x slower on
-// Linux and 5.5x on Windows, because every mpz_t is a heap allocation while
-// cpp_int keeps a small value INLINE; and GMP is LGPL, which a statically
-// linked Apache-2.0 binary must not pick up silently (see NOTICE).
-// unittests/js/bigint_basics.cpp passes identically on both backends.
-#if defined(CTBROWSER_WITH_GMP)
-using bigint = boost::multiprecision::mpz_int;
-#else
 using bigint = boost::multiprecision::cpp_int;
-#endif
 
 struct bigint_object final : heap_object {
     bigint digits;

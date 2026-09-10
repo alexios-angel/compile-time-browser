@@ -904,7 +904,7 @@ alternative considered was storing decimal TEXT and converting inside one
 `.cpp`: it keeps the header light and makes every operation parse and re-format
 its operands, which is the wrong shape for a numeric type.
 
-### The GMP backend, and why it is off (2026-08-09)
+### The GMP backend, and why it is off (2026-08-09; the option itself was removed 2026-09-10)
 
 `-DCTBROWSER_WITH_GMP=ON` swaps `cpp_int` for `mpz_int` — the same
 Boost.Multiprecision interface over GNU GMP. It works, on both platforms, and

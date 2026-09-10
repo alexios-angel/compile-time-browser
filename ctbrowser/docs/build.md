@@ -303,16 +303,8 @@ Three things did it:
    net.pcm to 3.7 MB. Put Boost/SDL/FreeType includes in a `.cpp`, never in a
    `.cppm` interface, unless the type is genuinely in the public API.
 
-**One archive:** `libctbrowser.a` merges all nine engine libraries (an `ar`
-merge of the same objects, not a rebuild), so a non-CMake build links ONE file.
-`CTBROWSER_SINGLE_LIB=OFF` skips it; CMake users keep using
-`ctbrowser::ctbrowser`, which also carries the include paths and BMIs an archive
-cannot.
-
-**The opt-out:** a modules project has no header-only mode, so the knob that
-buys back what an all-inline engine gave is `CTBROWSER_LTO=ON` — inlining
-across the library boundary at LINK time rather than by recompiling the engine
-in every TU. Off by default, because the default is meant to be fast to build.
+**Inlining across the library boundary** is `-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON`,
+CMake's own knob (the `CTBROWSER_LTO` alias for it was removed 2026-09-10).
 
 `tools/check/check-package.sh` is what catches the other half of this: an exported
 target that links `Freetype::Freetype` needs a matching `find_dependency` in the

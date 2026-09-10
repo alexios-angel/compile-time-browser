@@ -57,17 +57,9 @@ if [[ ${#files[@]} -eq 0 ]]; then
 fi
 
 if [[ ${1:-} == "--check" ]]; then
-    failed=0
-    for file in "${files[@]}"; do
-        # An ignored file formats to nothing; skip it rather than reporting the
-        # whole file as a diff.
-        formatted=$("$format" "$file") || continue
-        [[ -z $formatted ]] && continue
-        if ! diff -u --label "$file" --label "$file (formatted)" "$file" <(printf '%s\n' "$formatted"); then
-            failed=1
-        fi
-    done
-    if [[ $failed -ne 0 ]]; then
+    # One invocation; clang-format skips what .clang-format-ignore names and
+    # reports each unformatted line as an error.
+    if ! "$format" --dry-run -Werror "${files[@]}"; then
         echo >&2
         echo "format.sh: the files above are not formatted. Run tools/format.sh" >&2
         exit 1

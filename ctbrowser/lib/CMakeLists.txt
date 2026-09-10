@@ -39,26 +39,12 @@ if(CTBROWSER_USE_LLD AND CTBROWSER_HAVE_LINKER_CHECK)
   endif()
 endif()
 
-# --- WHOLE-PROGRAM INLINING, IF YOU WANT IT BACK ------------------------
-# Moving the engine's code out of the module interfaces is what made consumer
-# builds fast, and the thing it gives up is the compiler's freedom to inline
-# ACROSS the library boundary - which is what an all-inline (or header-only)
-# engine gave for free, at the cost of recompiling it in every translation unit.
-#
-# LTO buys that back at link time instead of at compile time, which is the same
-# trade made in the right place. Off by default because it makes linking slow
-# again, and the default here is meant to be fast to build.
-option(CTBROWSER_LTO "Inline across the engine boundary again, at link time" OFF)
-
 # Everything the engine builds - libraries, tests and examples - goes through this, so
 # there is one place that decides how the engine is compiled and linked.
 function(ctbrowser_target name)
   target_compile_options(${name} PRIVATE ${CTBROWSER_STRICT_WARNINGS})
   if(CTBROWSER_LINK_OPTIONS)
     target_link_options(${name} PRIVATE ${CTBROWSER_LINK_OPTIONS})
-  endif()
-  if(CTBROWSER_LTO)
-    set_property(TARGET ${name} PROPERTY INTERPROCEDURAL_OPTIMIZATION ON)
   endif()
 endfunction()
 
@@ -106,49 +92,6 @@ target_link_libraries(ctbrowser INTERFACE
   ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style ctbrowser-layout
   ctbrowser-paint ctbrowser-raster ctbrowser-shell ctbrowser-app)
 add_library(ctbrowser::ctbrowser ALIAS ctbrowser)
-
-# --- ONE ARCHIVE ---------------------------------------------------------
-# The engine is nine libraries because it is nine modules, and every one of
-# them ends up on every link line. `libctbrowser-all.a` is all of them merged,
-# so an application - or a build system that is not CMake - links ONE file.
-#
-# `-all` rather than `libctbrowser.a`, which is the umbrella TARGET's own
-# output: two rules producing one path is a build that refuses to generate.
-#
-# It is a merge, not a rebuild: the same objects, collected with the archiver.
-# CMake users need nothing new; `ctbrowser::ctbrowser` still works and still carries
-# the include paths and module BMIs, which an archive cannot.
-#
-# CTBROWSER_SINGLE_LIB=OFF skips it.
-option(CTBROWSER_SINGLE_LIB "Also produce one merged libctbrowser-all.a" ON)
-if(CTBROWSER_SINGLE_LIB)
-  set(ctbrowser-merged "${CMAKE_CURRENT_BINARY_DIR}/libctbrowser-all.a")
-  set(ctbrowser-parts ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style
-                      ctbrowser-layout ctbrowser-paint ctbrowser-raster ctbrowser-shell
-                      ctbrowser-app ctbrowser)
-  # A header-only subsystem is an INTERFACE library: it has no archive to merge
-  # because it contributes no objects, so asking for its TARGET_FILE is an
-  # error rather than an omission.
-  set(ctbrowser-part-files "")
-  foreach(part IN LISTS ctbrowser-parts)
-    get_target_property(part_type ${part} TYPE)
-    if(NOT part_type STREQUAL "INTERFACE_LIBRARY")
-      list(APPEND ctbrowser-part-files "$<TARGET_FILE:${part}>")
-    endif()
-  endforeach()
-  # The MRI script is how llvm-ar and GNU ar both merge archives; writing it at
-  # build time keeps the generator expressions resolvable.
-  set(ctbrowser-mri "${CMAKE_CURRENT_BINARY_DIR}/ctbrowser-merge.mri")
-  file(GENERATE OUTPUT "${ctbrowser-mri}" CONTENT
-       "create ${ctbrowser-merged}\n$<JOIN:$<LIST:TRANSFORM,${ctbrowser-part-files},PREPEND,addlib >,\n>\nsave\nend\n")
-  add_custom_command(
-    OUTPUT "${ctbrowser-merged}"
-    COMMAND "${CMAKE_AR}" -M < "${ctbrowser-mri}"
-    DEPENDS ${ctbrowser-parts} "${ctbrowser-mri}"
-    COMMENT "merging the engine into one libctbrowser-all.a"
-    VERBATIM)
-  add_custom_target(ctbrowser-single-lib ALL DEPENDS "${ctbrowser-merged}")
-endif()
 
 # --- installing the engine -------------------------------------------------------
 # Headers install to include/, archives to lib/. This was a great deal more

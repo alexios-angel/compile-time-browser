@@ -87,24 +87,10 @@ option(CTBROWSER_USE_MIMALLOC "Back operator new/delete with mimalloc" ON)
 # Windows SDK - a second toolchain this repository does not otherwise require.
 #
 # So a clone that has not fetched still configures, builds and passes: it gets
-# exactly the build the OFF default used to give, and unittests/unit/gl_basics skips
-# itself with a reason when no device comes up.
-#
-# ASKING for it explicitly is a REQUIREMENT and still fails loudly. Someone who
-# typed -DCTBROWSER_WITH_ANGLE=ON wants a GLES device, not a quiet downgrade to
-# the software path - and would otherwise find out from a golden.
-#
-# Recorded in its own cache entry because `option()` writes CTBROWSER_WITH_ANGLE
-# itself: on the second configure the variable is always defined, so "did the
-# user pass -D" cannot be asked again and has to be remembered.
-if(NOT DEFINED CTBROWSER_ANGLE_REQUESTED)
-  if(DEFINED CTBROWSER_WITH_ANGLE)
-    set(CTBROWSER_ANGLE_REQUESTED ON CACHE INTERNAL "ANGLE was asked for explicitly")
-  else()
-    set(CTBROWSER_ANGLE_REQUESTED OFF CACHE INTERNAL "ANGLE was asked for explicitly")
-  endif()
-endif()
-
+# the build the OFF default used to give, unittests/unit/gl_basics skips itself
+# with a reason when no device comes up, and the configure WARNS - loudly enough
+# for someone who typed -DCTBROWSER_WITH_ANGLE=ON to see the downgrade rather
+# than find out from a golden.
 option(CTBROWSER_WITH_ANGLE "Use ANGLE for the WebGL back end (tools/fetch-angle.sh fetches it)" ON)
 
 # Resolved HERE, above add_subdirectory, so lib/Raster and examples/ - which
@@ -115,12 +101,8 @@ else()
   set(CTBROWSER_ANGLE_DIR "${CTBROWSER_MONOREPO_ROOT}/third-party/angle/linux-x86_64")
 endif()
 if(CTBROWSER_WITH_ANGLE AND NOT EXISTS "${CTBROWSER_ANGLE_DIR}")
-  if(CTBROWSER_ANGLE_REQUESTED)
-    message(FATAL_ERROR
-      "CTBROWSER_WITH_ANGLE is ON but ${CTBROWSER_ANGLE_DIR} is missing - run tools/fetch-angle.sh")
-  endif()
-  message(STATUS "ctbrowser: no third-party/angle - WebGL has no device. "
-                 "tools/fetch-angle.sh downloads one.")
+  message(WARNING "ctbrowser: no ${CTBROWSER_ANGLE_DIR} - WebGL has no device. "
+                  "tools/fetch-angle.sh downloads one.")
   set(CTBROWSER_WITH_ANGLE OFF)
 endif()
 
@@ -155,32 +137,6 @@ option(CTBROWSER_SCRIPT_DEBUG_NAMES "Compile local names and per-instruction sou
 # measured at +0.53% on bench_script and +0.48% on phaser_invaders, which is why
 # it is not what is there. What OFF buys is ~15 KB of cold object code.
 option(CTBROWSER_SCRIPT_RECORD_TYPES "Compile the type-oracle hook into the interpreter" ON)
-
-# GMP behind Boost.Multiprecision, for the BigInt type. OFF BY DEFAULT AND
-# DELIBERATELY NOT "on when GMP is found", which is the obvious spelling and the
-# wrong one, for two reasons measured rather than assumed:
-#
-#   - GMP IS SLOWER FOR THIS WORKLOAD. It wins on numbers thousands of bits
-#     wide; a JavaScript BigInt is an id, a timestamp or a 64-bit hash. At 64
-#     bits GMP measured 2.9x slower than cpp_int on Linux and 5.5x on Windows,
-#     because cpp_int keeps a small value inline and every mpz_t is a heap
-#     allocation. Tuning GMP for a modern CPU does not close it - the cost is
-#     allocation, not instruction selection. Numbers in docs/script.md.
-#   - IT CHANGES THE LICENCE OF THE BINARY. GMP is LGPLv3+ or GPLv2+ and this
-#     engine ships statically linked, self-contained .exe files under Apache-2.0
-#     with LLVM exceptions. Static LGPL linking carries relinking obligations,
-#     and auto-detection would attach them to anyone who happened to have GMP
-#     installed, silently. See NOTICE and docs/script.md.
-#
-# It builds and passes on both backends - unittests/js/bigint_basics.cpp is the gate -
-# and the Windows cross-build works with GMP's assembly enabled
-# (tools/mingw/build-gmp-mingw.sh).
-option(CTBROWSER_WITH_GMP "Use GNU GMP as the Boost.Multiprecision BigInt backend (LGPL)" OFF)
-
-# The strict flags every test and example builds with, kept off the exported
-# interface: a consumer's warnings are their own business.
-set(CTBROWSER_WARNING_OPTIONS
-  -O2 -pedantic -Wall -Wextra -Werror -Wconversion -Wno-overlength-strings)
 
 # Two compile-time bricks are still submodules, for different reasons: ctjs is
 # the script compiler's runtime parser; ctcss is only the comparison oracle for
@@ -244,14 +200,6 @@ if(SDL3_FOUND)
     ctbrowser_pick_sdl_target(image_target image_static SDL3_image::SDL3_image)
     list(APPEND CTBROWSER_SAT_DEFS CTBROWSER_WITH_IMAGE)
     list(APPEND CTBROWSER_SAT_LIBS ${image_target})
-    set(CTBROWSER_SDL3_IMAGE_IS_STATIC ${image_static})
-  endif()
-  find_package(SDL3_mixer CONFIG QUIET)
-  if(SDL3_mixer_FOUND)
-    ctbrowser_pick_sdl_target(mixer_target mixer_static SDL3_mixer::SDL3_mixer)
-    list(APPEND CTBROWSER_SAT_DEFS CTBROWSER_WITH_MIXER)
-    list(APPEND CTBROWSER_SAT_LIBS ${mixer_target})
-    set(CTBROWSER_SDL3_MIXER_IS_STATIC ${mixer_static})
   endif()
   find_package(SDL3_ttf CONFIG QUIET)
   if(SDL3_ttf_FOUND)
@@ -306,41 +254,24 @@ if(CTBROWSER_BUILD_TESTS)
 endif()
 
 # --- SIBLING PROJECTS ----------------------------------------------------
-# The LLVM model: this project is the configure root and names the siblings to
-# build beside it. `ctcompile` is the compiler, and it depends on ctbrowser's
-# targets in this direction and never the other one.
-#
-# LAST, deliberately. A sibling consumes the engine's targets, so they have to
-# exist before it is added - which also means a sibling cannot influence how the
-# engine is configured, and that is exactly the guarantee Principle 8 wants.
+# The LLVM model: this project is the configure root and CTBROWSER_ENABLE_PROJECTS
+# names the siblings to build beside it (the default preset passes `ctcompile`).
+# LAST, deliberately: a sibling consumes the engine's targets and cannot
+# influence how the engine is configured.
 set(CTBROWSER_ENABLE_PROJECTS "" CACHE STRING
     "Sibling projects to build beside ctbrowser (e.g. ctcompile)")
 foreach(project IN LISTS CTBROWSER_ENABLE_PROJECTS)
-  set(project-dir "${CTBROWSER_MONOREPO_ROOT}/${project}")
-  if(NOT EXISTS "${project-dir}/CMakeLists.txt")
-    message(FATAL_ERROR
-      "CTBROWSER_ENABLE_PROJECTS names '${project}', but ${project-dir}/CMakeLists.txt does not exist")
-  endif()
   message(STATUS "ctbrowser: also building sibling project ${project}")
-  add_subdirectory("${project-dir}" "${CMAKE_BINARY_DIR}/${project}")
+  add_subdirectory("${CTBROWSER_MONOREPO_ROOT}/${project}" "${CMAKE_BINARY_DIR}/${project}")
 endforeach()
 
-# --- PRINCIPLE 8, ENFORCED -----------------------------------------------
-# LLVM and MLIR are compiler-only dependencies. A runtime-only build must not
-# need them installed, and the way that stops being true is gradual: someone
-# adds `find_package(MLIR)` here rather than in ctcompile, everything keeps
-# building on the box that has it, and the small machine silently stops being
-# able to build the engine at all.
-#
-# So it is checked rather than stated. The siblings are added above, in a
-# subdirectory scope of their own, and a find_package there does not define
-# these targets in THIS scope - which is what makes the distinction testable
-# from here at all.
+# LLVM and MLIR are ctcompile's dependencies, not the engine's (Principle 8): a
+# find_package in the sibling's own scope does not define these targets here,
+# so a hit means one crept into the engine's build.
 foreach(forbidden LLVMCore MLIRIR MLIRSupport)
   if(TARGET ${forbidden})
     message(FATAL_ERROR
-      "ctbrowser's own scope defines ${forbidden}: LLVM/MLIR are ctcompile's dependencies, "
-      "not the engine's (Principle 8). Move the find_package into ctcompile.")
+      "ctbrowser's own scope defines ${forbidden}: LLVM/MLIR belong to ctcompile, not the engine")
   endif()
 endforeach()
 

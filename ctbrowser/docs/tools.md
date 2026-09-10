@@ -70,6 +70,9 @@ with it.
   into the cross sysroot. Boost.URL is the one COMPILED Boost library the engine
   links (it cannot be header-only), so the Windows presets need this run once.
   See `docs/build.md` for what else was considered and turned down.
+- `tools/corpus/ratchet.py` — ONE driver for every corpus ratchet and API surface,
+  `ratchet.py <corpus> ratchet|api [--advance]`; the `<corpus>-ratchet.py` and
+  `<corpus>-api.py` names below are shims onto it.
 - `tools/corpus/phaser-ratchet.py` — the same loop for Phaser 4 that `p5-ratchet.py`
   runs for p5.js: build, measure, `--advance` to record. A SECOND CORPUS, and
   it earned its keep in a day — see `docs/script.md`. No `--bisect`: Phaser
@@ -101,14 +104,8 @@ with it.
 - `tools/mingw/build-mimalloc-mingw.sh` — mimalloc v3 for the Windows sysroot. The
   allocator is not optional in the default build, so the cross build needs this
   run once; `tools/remote-build.sh windows` runs it.
-- `tools/mingw/build-gmp-mingw.sh` — GNU GMP for the Windows sysroot, for the
-  OPTIONAL BigInt backend (`-DCTBROWSER_WITH_GMP=ON`). **Nothing needs it**:
-  BigInt runs on header-only `cpp_int` by default. It is off because GMP is
-  LGPL and this engine links statically (see `NOTICE`), and because it is
-  SLOWER here — 2.9x on Linux and 5.5x on Windows at 64 bits, the width a
-  JavaScript BigInt actually has, and tuning it for a modern CPU does not
-  change that. `docs/script.md` has the table. It does cross-compile, assembly
-  and all.
+- `tools/mingw/build-gmp-mingw.sh` — deleted 2026-09-10 with the GMP BigInt backend;
+  `docs/script.md` keeps the measurement that retired it.
 - `tools/mingw/build-image-libs-mingw.sh` — its sibling, for zlib, libpng and
   libjpeg-turbo. PNG and JPEG decode in the SDL-FREE engine, so the Windows
   presets need this run once too. Versions are pinned on purpose; see
