@@ -6,8 +6,11 @@
 source: both modes admit **5/5** with all eight calls and Number `trace=0`
 preserved. The complete possible-key upper bound and definite distinct-entry
 lower bound must coincide; native presence rederives the fact for the exact
-runtime Map. `HANDOFF.md` records the corrected proof and execution gates;
-the complete full-suite gate is pending at this checkpoint.
+runtime Map. **880ec3ce** executes 23 focused native programs and twelve
+refusal/repair families. The full gate passes all **372 compiler CTests** and
+**166/166 lit cases**, including **350 integrated native programs/40 lifetime
+families**. Only the five established browser failures remain; `HANDOFF.md`
+records the complete measured gate.
 
 The next measured source isolates deletion of a known literal key:
 

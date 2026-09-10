@@ -31,7 +31,7 @@ eight calls and Number `trace=0` preserved. Its **d4120093** literal-one repair
 also admits. **880ec3ce** adds the focused matrix of **35 sources**, with **23 native
 programs** and twelve refusal/repair families. All **42 typed Node/interpreter
 observations** agree; seventeen source mutations discriminate the results.
-Every original **702 helper row across 59 helpers** and all eight continuation
+All **702 historical source rows across 59 helpers** and all eight continuation
 sources retain their bytes. GCC/Clang explicit/deduced output retains evaluated
 size reads, real Map calls and ordinary owners without Script symbols. The
 saved-one/object lifetime executes **128 future calls**, both flags, owner/table
@@ -83,10 +83,26 @@ Of 68 typed Boolean Node/VM observations, 64 agree. Four existing differences
 remain documented: large String/BigInt relational rounding and Boolean/BigInt
 equality at `false == 0n` and `1n == true`.
 
-The complete full-suite run and final integrated execution counts are pending
-at this checkpoint. The last measured full corpus floors remain **19/574
-Bootstrap, 39/4754 p5 and 45/7725 Phaser**, with exact Bootstrap Data **0/7,
-0/7 and 0/8**; these are previous measurements, not a claim about a new run.
+The complete full devbox build finishes **246 steps without warnings** and
+passes **512/517 CTests in 2138.23 seconds**, including **all 372 compiler
+checks**. All **166/166 lit cases** pass in **1326.24 seconds** (CTest
+**1326.42**), including the integrated **350 native programs/40 lifetime
+families**. Only the five established browser tests fail: `selectors`, `frames`,
+`element_attrs`, `vm_async` and `early_errors`; their failure output is identical
+to the previous full run. All **15 frozen code/test hashes** match local files,
+committed code and the devbox. This is one complete full-suite run; no compiler
+correction or repeat full gate followed it.
+
+All five type and all four escape oracle checks report zero violations.
+Fixture precision is **96/129**; corpus precision remains **0/64, 0/16 and
+0/20**, with the existing p5 partial result unchanged. Fresh native coverage
+remains **19/574 Bootstrap, 39/4754 p5 and 45/7725 Phaser**, both optimization
+modes, with zero pruned. Exact Bootstrap Data remains **0/7, 0/7 and 0/8**.
+Independent source, execution and full-gate audits reconcile the evidence.
+Final full-run C++ for the historical source, both field repairs and the saved
+lifetime retains actual size/set/clear/present-lookup calls and ordinary owning
+callables without Script symbols. Each field repair has a real present-object
+lookup followed by the actual field read; lifetime observers are test-only.
 
 **Next: exact cardinality after deleting a proved key.** Ten fresh typed
 Node/interpreter probes agree. Literal-key delete-last source **d5a66fc6**
@@ -111,6 +127,11 @@ Evidence: `/tmp/ctcompile-map-one-{proofs-final,lowering,execution-complete}.log
 `/tmp/ctcompile-map-one-all-refusals-final.log`,
 `/tmp/ctcompile-after-one-size-boundary-final-{results,sources}.json`, and
 `/tmp/ctcompile-bigint-comparison-{frozen,vm-audit}.json`.
+Full evidence: `/tmp/ctcompile-map-one-full{,-detail}.log`,
+`/tmp/ctcompile-map-one-final-audit.json`,
+`/tmp/ctcompile-map-one-final-execution-independent-audit.json`,
+`/tmp/ctcompile-map-one-full-cpp-inspection.json`, and
+`/tmp/ctcompile-bigint-comparison-full-audit.json`.
 
 ## Exact saved zero and String/BigInt retention, 2026-09-09
 

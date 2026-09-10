@@ -2855,3 +2855,37 @@ contracts. The five comparison code/test hashes remain identical to
 **51018c86**. Full-suite validation remains pending. Evidence:
 `/tmp/ctcompile-after-bigint-comparison-boundary-{vm,oracle}.log`, the matching
 `.rec` and `.claims`, and `-audit.json`.
+
+
+**Mixed primitive BigInt comparisons: full-gate completion, 2026-09-10.**
+The committed inputs at **39f4eddc** complete the shared devbox build in
+**246 steps with zero warnings**. The single full CTest run passes **512/517
+in 2138.23 seconds**; status **8** records only the established `selectors`,
+`frames`, `element_attrs`, `vm_async` and `early_errors` browser failures.
+All **372 compiler CTests** pass, including **166/166 unique lit cases** in
+**1326.24 seconds** (CTest **1326.42**).
+
+All eight escape analysis/claims CTests pass, including arrays in **0.54** and
+the fixture in **0.49 seconds**. The full raw output confirms equality's
+**92 rows / 50 live states / 5206 budget cutoffs**, each relational kind's
+**100 / 52 / 5498**, and ordinary primitive comparisons' **84 / 34 / 3778**.
+The four escape oracles report zero violations: fixture **96/129**, Bootstrap
+**0/64**, p5 **0/16** and Phaser **0/20**. Fixture counts remain **657 claims,
+665 observed sites and nine unclaimed sites**, with no partial or pending
+claims; p5 retains its established single partial. The five type oracles also
+report zero violations.
+
+All **15 code/test hashes** agree across the final frozen manifests, devbox,
+local files and committed tree. The five escape inputs equal **51018c86**;
+all prior fixture bytes and the measured **96 checker-corruption rejections**
+remain preserved. The first **7/8** focused result and its ten justified old
+claim corrections remain recorded above. The separate typed probe's four
+known VM comparison differences remain unchanged; they supply no comparison
+value, effect, completion or native BigInt contract. The measured unary Plus
+TypeError case remains the next retention boundary, with zero confined claims
+in its twelve-site probe and all existing Plus refusal tests unchanged.
+
+Evidence: `/tmp/ctcompile-map-one-full{,-detail}.log`, `.status`,
+`/tmp/ctcompile-map-one-full-hashes.json`,
+`/tmp/ctcompile-bigint-comparison-full-audit.json` and
+`/tmp/ctcompile-bigint-comparison-full-evidence-frozen.json`.
