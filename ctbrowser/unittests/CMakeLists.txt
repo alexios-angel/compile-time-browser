@@ -399,3 +399,9 @@ ctbrowser_test(js/early_errors)
 # after the turn drains, and each one is exercised over an input that is still
 # pending when the combinator is called.
 ctbrowser_test(js/promise_combinators)
+# --- collection inside one synchronous script --------------------------------
+# Two million short-lived objects in one loop, and the heap bounded when the
+# script returns. The tick's threshold check now also runs at every C++ entry
+# into JavaScript; before it, seven WPT reflection files grew until a 4 GB cap
+# killed the process.
+ctbrowser_test(js/gc_pressure)
