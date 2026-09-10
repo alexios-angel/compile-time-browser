@@ -890,20 +890,27 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
         });
     declaration_accessor(interface("CSSCounterStyleRule", "CSSRule", nullptr));
 
-    // --- CSSStyleDeclaration
+    // --- CSSStyleDeclaration, and the three blocks that inherit it
     //
-    // ONE PROTOTYPE FOR THE WHOLE PAGE, carrying an accessor per property under
-    // both spellings. `el.style` is a PROXY over a store, which is the other way
-    // to answer an unbounded property set - it costs two natives per element and
-    // makes `el.style instanceof CSSStyleDeclaration` false, a proxy not being
-    // an object as far as the prototype walk is concerned. Here the set is
-    // bounded (the property table IS the set of IDL attributes a
-    // CSSStyleDeclaration has), so ~290 accessors on one shared prototype answer
-    // every rule in the document and `instanceof` works.
+    // ONE PROTOTYPE PER KIND OF BLOCK FOR THE WHOLE PAGE, carrying an accessor
+    // per property under both spellings. `el.style` is a PROXY over a store,
+    // which is the other way to answer an unbounded property set - it costs two
+    // natives per element and makes `el.style instanceof CSSStyleDeclaration`
+    // false, a proxy not being an object as far as the prototype walk is
+    // concerned. Here the set is bounded (the property table IS the set of IDL
+    // attributes a CSSStyleProperties has), so ~290 accessors on one shared
+    // prototype answer every rule in the document and `instanceof` works.
+    //
+    // CSSStyleDeclaration itself carries the generic API - cssText, item,
+    // getPropertyValue and the rest - and the property accessors sit on
+    // CSSStyleProperties beneath it, exactly as CSSOM draws the split; the
+    // descriptor blocks of `@font-face` and `@page` are its other two
+    // subclasses and carry their descriptors instead. objects.cpp picks.
     script::object_object * declaration_proto = interface("CSSStyleDeclaration", nullptr, nullptr);
     iterable(declaration_proto);
-    const auto property_accessor = [&](const std::string & idl, const std::string & css) {
-        declaration_proto->define_accessor(
+    const auto property_accessor = [&](script::object_object * on, const std::string & idl,
+                                       const std::string & css) {
+        on->define_accessor(
             idl,
             value::object(cx.allocate<script::native_object>(
                 "get " + idl,
@@ -920,8 +927,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                 [this, css](context & c, std::span<value> a) {
                     css_rule_record * rule = receiver_rule(c);
                     if (rule == nullptr) { return value::undefined(); }
-                    if (store_declaration(rule->declarations, css, arg_string(c, a, 0), false,
-                                          false)) {
+                    if (store_declaration(*rule, css, arg_string(c, a, 0), false, false)) {
                         refresh_declaration_object(c, c.current_this());
                         style_sheets_changed();
                     }
@@ -929,11 +935,36 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
                 })),
             script::attr_enumerable | script::attr_configurable);
     };
-    for (const style::css::property_syntax & property : known_properties()) {
-        const std::string css{property.name};
-        property_accessor(css, css);
+    const auto both_spellings = [&](script::object_object * on, std::string_view name) {
+        const std::string css{name};
+        property_accessor(on, css, css);
         const std::string idl = idl_name_of(css);
-        if (idl != css) { property_accessor(idl, css); }
+        if (idl != css) { property_accessor(on, idl, css); }
+    };
+    script::object_object * properties_proto =
+        interface("CSSStyleProperties", "CSSStyleDeclaration", nullptr);
+    for (const style::css::property_syntax & property : known_properties()) {
+        both_spellings(properties_proto, property.name);
+    }
+    // CSS Fonts 4 §11.1 and CSS Paged Media 3 §7.1: the descriptor sets, by
+    // name - the property table knows none of them, so a value is kept as the
+    // author wrote it, which is what a descriptor's grammar this engine does
+    // not model amounts to.
+    script::object_object * font_face_proto =
+        interface("CSSFontFaceDescriptors", "CSSStyleDeclaration", nullptr);
+    for (const std::string_view name :
+         {"ascent-override", "descent-override", "font-display", "font-family",
+          "font-feature-settings", "font-language-override", "font-named-instance", "font-stretch",
+          "font-style", "font-weight", "font-width", "font-variation-settings", "line-gap-override",
+          "size-adjust", "src", "unicode-range"}) {
+        both_spellings(font_face_proto, name);
+    }
+    script::object_object * page_descriptors_proto =
+        interface("CSSPageDescriptors", "CSSStyleDeclaration", nullptr);
+    for (const std::string_view name :
+         {"margin", "margin-top", "margin-right", "margin-bottom", "margin-left", "size",
+          "page-orientation", "marks", "bleed"}) {
+        both_spellings(page_descriptors_proto, name);
     }
     getter(declaration_proto, "length", [this](context & c, std::span<value>) {
         const css_rule_record * rule = receiver_rule(c);
@@ -958,16 +989,7 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
             // declaration-list parser a `style` attribute goes through - so a
             // `;` inside a string cannot end a declaration here either.
             rule->declarations.clear();
-            const style::css::stylesheet parsed =
-                style::css::parse_declaration_list(arg_string(c, a, 0), *atoms_);
-            for (const style::css::raw_declaration & d : parsed.declarations) {
-                const std::string name{atoms_->text(d.property)};
-                const style::css::value_check checked =
-                    check_declaration(name, parsed.text_of(d), false);
-                if (!checked.valid) { continue; }
-                rule->declarations.push_back(
-                    css_declaration{name, checked.serialized, d.important});
-            }
+            parse_declarations_into(*rule, arg_string(c, a, 0), *atoms_);
             refresh_declaration_object(c, c.current_this());
             style_sheets_changed();
             return value::undefined();
@@ -999,15 +1021,21 @@ void dom_bindings::install_stylesheet_prototypes(context & cx) {
     method(declaration_proto, "setProperty", [this](context & c, std::span<value> a) {
         css_rule_record * rule = receiver_rule(c);
         if (rule == nullptr) { return value::undefined(); }
+        // [LegacyNullToEmptyString] on both `value` and `priority`, and
+        // `priority` is optional: null is "", and an undefined priority is the
+        // default "" rather than the string "undefined" - which was refusing
+        // the whole call. An undefined VALUE is the string "undefined", which
+        // no grammar accepts, so it is a no-op by a different route.
+        const auto text = [&](std::size_t i) {
+            return i < a.size() && !a[i].is_null() ? c.to_string(a[i]) : std::string{};
+        };
+        const std::string priority = a.size() > 2 && a[2].is_undefined() ? std::string{} : text(2);
         // "If priority is not the empty string and is not an ASCII
         // case-insensitive match for 'important', return" - CSSOM 6.7.2.
-        const std::string priority = a.size() > 2 ? c.to_string(a[2]) : std::string{};
         if (!priority.empty() && !ascii_iequals(priority, "important")) {
             return value::undefined();
         }
-        if (store_declaration(rule->declarations, asked_name(c, a),
-                              a.size() > 1 ? c.to_string(a[1]) : std::string{}, false,
-                              !priority.empty())) {
+        if (store_declaration(*rule, asked_name(c, a), text(1), false, !priority.empty())) {
             refresh_declaration_object(c, c.current_this());
             style_sheets_changed();
         }

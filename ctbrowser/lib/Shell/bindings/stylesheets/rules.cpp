@@ -203,20 +203,10 @@ std::size_t dom_bindings::parse_one_rule(std::size_t sheet, std::string_view tex
     css_rule_record & made = *css_rule_store_[at];
     made.sheet = sheet;
 
-    // THE DECLARATIONS OF A BLOCK, through the two entry points that exist for
-    // exactly this - `parse_declaration_list`, which a `style` attribute uses,
-    // and `check_declaration`, which `el.style` writes through. A value the
-    // grammar refuses is one the cascade drops, so publishing it would advertise
-    // a declaration that does not apply.
+    // The declarations of a block - see parse_declarations_into, which a
+    // `cssText` write shares.
     const auto collect_into = [this](css_rule_record & into, std::string_view body) {
-        const style::css::stylesheet parsed = style::css::parse_declaration_list(body, *atoms_);
-        for (const style::css::raw_declaration & d : parsed.declarations) {
-            const std::string property{atoms_->text(d.property)};
-            const style::css::value_check checked =
-                check_declaration(property, parsed.text_of(d), false);
-            if (!checked.valid) { continue; }
-            into.declarations.push_back(css_declaration{property, checked.serialized, d.important});
-        }
+        parse_declarations_into(into, body, *atoms_);
     };
 
     // ONE KEYFRAME. `0%, to { opacity: 0 }` is a qualified rule whose prelude is

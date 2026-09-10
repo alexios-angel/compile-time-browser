@@ -202,9 +202,21 @@ value dom_bindings::declaration_object(context & cx, std::size_t rule) {
     script::object_object * obj = as_object(object);
     if (obj == nullptr) { return object; }
     if (script::object_object * internals = cssom_internals(cx)) {
-        if (const value * proto = internals->find("CSSStyleDeclaration.prototype")) {
-            obj->prototype = *proto;
+        // WHICH CSSStyleDeclaration. CSSOM splits the property accessors off
+        // onto CSSStyleProperties, and a descriptor block carries its
+        // descriptors instead: `@font-face`'s `src`, `@page`'s `size`. So a
+        // page rule's block has no `cssFloat` and a style rule's has no
+        // `unicodeRange`, which page-descriptors.html and
+        // cssstyledeclaration-cssfontrule.html assert from the two sides.
+        std::string_view interface = "CSSStyleProperties.prototype";
+        if (rule < css_rule_store_.size()) {
+            if (css_rule_store_[rule]->type == font_face_rule) {
+                interface = "CSSFontFaceDescriptors.prototype";
+            } else if (css_rule_store_[rule]->type == page_rule) {
+                interface = "CSSPageDescriptors.prototype";
+            }
         }
+        if (const value * proto = internals->find(interface)) { obj->prototype = *proto; }
     }
     obj->define(rule_key, value::number(static_cast<double>(rule)), script::attr_none);
     refresh_declaration_object(cx, object);
