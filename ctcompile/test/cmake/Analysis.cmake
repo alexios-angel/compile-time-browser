@@ -222,7 +222,17 @@ if(CTCOMPILE_ENABLE_MLIR)
   ctcompile_target(ctcompile-test-escape-analysis-storage)
   add_test(NAME ctcompile_escape_analysis_storage COMMAND ctcompile-test-escape-analysis-storage)
 
-  add_executable(ctcompile-test-escape-analysis-arrays EscapeAnalysisArrays.cpp)
+  add_executable(ctcompile-test-escape-analysis-arrays
+    EscapeAnalysisArrays/main.cpp
+    EscapeAnalysisArrays/Harness.cpp
+    EscapeAnalysisArrays/Contents.cpp
+    EscapeAnalysisArrays/Objects.cpp
+    EscapeAnalysisArrays/Selectors.cpp
+    EscapeAnalysisArrays/Primitives.cpp
+    EscapeAnalysisArrays/BigIntErrors.cpp
+    EscapeAnalysisArrays/BigIntProducers.cpp
+    EscapeAnalysisArrays/BigIntStrings.cpp
+    EscapeAnalysisArrays/ControlFlow.cpp)
   target_link_libraries(ctcompile-test-escape-analysis-arrays
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
             MLIRControlFlowDialect)
@@ -298,12 +308,22 @@ add_test(NAME ctcompile_frame_ends_citations
 # 25-escape-analysis.md §5: unlimited on the fixture and bootstrap, bounded on
 # the two big bundles, where every frame pop otherwise costs a full mark.
 if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
+  # Preserve the complete JavaScript source bytes and allocation identities.
+  set(_escape_fixture "${CMAKE_CURRENT_BINARY_DIR}/escape-claims-fixture.js")
+  set(_escape_fixture_source "")
+  foreach(_part contents primitives escapes)
+    set(_path "${CMAKE_CURRENT_SOURCE_DIR}/escape-claims/fixture/${_part}.js")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_path}")
+    file(READ "${_path}" _text)
+    string(APPEND _escape_fixture_source "${_text}")
+  endforeach()
+  file(GENERATE OUTPUT "${_escape_fixture}" CONTENT "${_escape_fixture_source}")
   foreach(_corpus fixture bootstrap p5 phaser)
     set(_prefix "")
     set(_budget "")
     set(_strict OFF)
     if(_corpus STREQUAL "fixture")
-      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/escape-claims-fixture.js")
+      set(_js "${_escape_fixture}")
       set(_strict ON)
     elseif(_corpus STREQUAL "bootstrap")
       set(_js "${CMAKE_CURRENT_SOURCE_DIR}/type-oracle-bootstrap.js")
@@ -328,7 +348,7 @@ if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
                      -DSTRICT=${_strict}
                      -DWORK=${CMAKE_CURRENT_BINARY_DIR}
                      -DNAME=${_corpus}
-                     -P ${CMAKE_CURRENT_SOURCE_DIR}/check-escape-claims.cmake)
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/escape-claims/check.cmake)
   endforeach()
 endif()
 
