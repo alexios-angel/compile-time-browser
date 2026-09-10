@@ -320,9 +320,32 @@
 # evaluated-read/literal repair. Aliases, String fields, repeated clear, later
 # growth, equal zero keys and both-clearing arms keep each real size read and
 # runtime Map call. Empty intersections of known-key lists, one-clearing arms,
-# reads before clear/after growth, unary -0 keys and a nonzero conditional alternative remain
+# reads before clear, unary -0 keys and a nonzero conditional alternative remain
 # refusals under fresh/stale reports, reruns and exact separately executed repairs.
 # Typed observations distinguish saved zero from a current size; both future flags
 # execute through saved native callables. Saved zero selects the original object
 # before clear/growth across 128 calls, owner/table release, independent reentry,
 # final Map reclamation and final separately retained leaf release under sanitizers.
+# Exact saved one after clear/set preserves the historical 544f425b source and
+# d4120093 evaluated-read/literal-one repair, all eight continuation source
+# hashes and their raw/prepared call counts. Complete literal-key censuses,
+# repeated equal keys, captured/fluent aliases and both structural arms retain
+# their live Map operations. Saved one/two remains a read-time fact through later
+# growth. The identical-arm source keeps nine raw/eight prepared calls under the
+# existing coalescing; nonidentical branches separately exercise both flags.
+# Unknown incoming contents, potentially equal formal keys, one writing arm,
+# unequal selected values and a possibly distinct extra write remain independent
+# refusals under current/fresh/stale reports, reruns and exact executed repairs.
+# Startup-only emptiness and deleting the last key keep their historical sources
+# and separate refusals; an additional real clear supplies each exact repair.
+# Typed Node/interpreter observations distinguish saved from current sizes and
+# count duplicate/distinct writes independently of successful object lookup.
+# An own-field read independently requires the saved key to select the object.
+# Its raw optional global result remains a complete-owner refusal; entry + 0
+# and a field comparison separately execute the unchanged field lookup with
+# definite Number observations, distinguishing a mistaken absence proof.
+# Saved native size/set callables select the original object with saved one
+# after growth, across 128 future calls/both flags, publication-owner release and
+# independent entry reexecution. Weak observers check Map/leaf reclamation and
+# final separately retained leaf release under ASan/UBSan/leak checks. GCC/Clang,
+# explicit/deduced output and measured work cutoffs preserve the no-Script gate.

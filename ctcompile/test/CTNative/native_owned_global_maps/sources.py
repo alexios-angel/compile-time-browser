@@ -2747,7 +2747,7 @@ def zero_size_cases():
     add('zero_size_negative_zero', base.replace('state.set(1, item);', 'state.set(-0, item);'), 0, 8, False,
         ('state.set(-0, item);', 'state.set(0, item);', 'zero_size_equal_key'))
     add('zero_size_read_after_write', base.replace('const zero = state.size; state.set(1, item);',
-        'state.set(1, item); const zero = state.size;'), 0, 8, False,
+        'state.set(1, item); const zero = state.size;'), 0, 8, True,
         ('state.set(1, item); const zero = state.size;', 'const zero = state.size; state.set(1, item);',
          'local_clear_zero_size_key'))
     add('zero_size_read_before_clear', base.replace('state.clear(); const zero = state.size;',
@@ -2790,3 +2790,127 @@ def zero_size_cases():
 def zero_size_sources():
     return {name: (row['source'], 'host', row['expected_trace'])
             for name, row in zero_size_cases().items() if row['admitted']}
+
+
+# Preserve the eight exact sources of the saved-one continuation probe.
+ONE_SIZE_HISTORY = {
+    'zero_size_read_after_write': (8, 8, '544f425bc1c5766d6176bbc358947a58ebdd423f4d6a517546c93fa22f67627e'),
+    'size_one_literal_repair': (8, 8, 'd4120093ea2a496cffeacaf09611ce80a23ffbf547700e74ef23d56618c72192'),
+    'size_one_saved_growth': (9, 9, 'e9260d3055dd5ca7f2343c498608d6c1a8dfb0cbc1e75af2ef9927f74a9c1a60'),
+    'size_one_both_branches': (9, 8, 'f0571cb51770699ea09977d36da75b0f988d1a945928a797de1741973a10dbc2'),
+    'startup_empty_before_write': (6, 6, 'cf4a883f47920d4748645d4fceefed9c2d6d1b2eaa827f1f4567cde2b70935c1'),
+    'startup_empty_literal_repair': (6, 6, '3db19ed0a9d5895fb0dbb3815c3c4a193cc8768995d4aeca8e0468b9ef8617f0'),
+    'size_deleted_last': (10, 10, '6aa0868a86f765f22c30b09cc9e8494d9847c8e5d4e8f1bbaf6f3df1bd96276e'),
+    'size_deleted_last_literal_repair': (10, 10, 'adeaad915f06d7f5a186f589413f1556e671e6a5306b6e0afdf3cd4b184aa456'),
+}
+
+
+def one_size_cases():
+    rows = {}
+    old = zero_size_cases()
+    base = old['zero_size_read_after_write']['source']
+
+    def add(name, source, value, calls, admitted=True, repair=None, prepared=None):
+        digest = hashlib.sha256(source.encode()).hexdigest()
+        prepared = calls if prepared is None else prepared
+        if name in ONE_SIZE_HISTORY:
+            assert (calls, prepared, digest) == ONE_SIZE_HISTORY[name], name
+        row = dict(source=source, expected_trace=value, raw_calls=calls, prepared_calls=prepared,
+                   sha256=digest, admitted=admitted)
+        if repair:
+            before, after, target = repair
+            assert source.count(before) == 1 and source.replace(before, after) == rows[target]['source'], name
+            row.update(removed_text=before, replacement_text=after, repair=target)
+        rows[name] = row
+
+    add('zero_size_read_after_write', base, 0, 8)
+    # A raw own-field read requires the exact-one key to select the object.
+    # A mistaken absence proof cannot pass through a nullable comparison.
+    field = base.replace('return state.get(zero) === void 0 ? 1 : 0;',
+                         'return state.get(zero).value;')
+    add('size_one_present_field_entry_repair', field.replace('var trace = host.slot.set(7);',
+        'var trace = host.slot.set(7) + 0;'), 1, 8)
+    add('size_one_present_field_checked_repair', field.replace('return state.get(zero).value;',
+        'return state.get(zero).value === 1 ? 1 : 0;'), 1, 8)
+    add('size_one_present_field', field, 1, 8, False,
+        ('var trace = host.slot.set(7);', 'var trace = host.slot.set(7) + 0;',
+         'size_one_present_field_entry_repair'))
+    rows['size_one_present_field']['owner'] = True
+    add('size_one_literal_repair', base.replace('const zero = state.size;',
+        'state.size; const zero = 1;'), 0, 8)
+    add('size_one_saved_growth', base.replace('const zero = state.size;',
+        'const zero = state.size; state.set(2, item);'), 0, 9)
+    branch = base.replace('set(key)', 'set(key, flag)').replace('host.slot.set(7)', 'host.slot.set(7, false)')
+    both = branch.replace('state.clear(); state.set(1, item);',
+        'state.clear(); if (flag) { state.set(1, item); } else { state.set(1, item); }')
+    add('size_one_both_branches', both, 0, 9, prepared=8)
+    add('size_one_captured_alias', base.replace('state.clear(); state.set(1, item); const zero = state.size;',
+        'const alias = state; alias.clear(); alias.set(1, item); const zero = alias.size;'), 0, 8)
+    add('size_one_fluent_alias', base.replace('state.set(1, item); const zero = state.size;',
+        'const alias = state.set(1, item); const zero = alias.size;'), 0, 8)
+    add('size_one_repeated_key', base.replace('state.clear(); state.set(1, item);',
+        'state.clear(); state.set(1, item); state.set(1, item);'), 0, 9)
+    add('size_one_saved_growth_gap', base.replace('const zero = state.size;',
+        'const zero = state.size; state.set(3, item);'), 0, 9)
+    two = base.replace('state.clear(); state.set(1, item);',
+        'state.clear(); state.set(1, item); state.set(2, item);')
+    add('size_one_complete_two', two, 0, 9)
+    add('size_one_saved_two_growth_gap', two.replace('const zero = state.size;',
+        'const zero = state.size; state.set(4, item);'), 0, 10)
+    add('size_one_possible_formal_key', rows['size_one_repeated_key']['source'].replace(
+        'state.clear(); state.set(1, item);', 'state.clear(); state.set(key, item);'), 1, 9, False,
+        ('state.clear(); state.set(key, item);', 'state.clear(); state.set(1, item);', 'size_one_repeated_key'))
+
+    for flag in ('false', 'true'):
+        distinct = both.replace('host.slot.set(7, false)', 'host.slot.set(7, ' + flag + ')').replace(
+            'else { state.set(1, item); }', 'else { state.set(1, item); state.has(key); }')
+        both_name = 'size_one_distinct_branches_' + flag
+        add(both_name, distinct, 0, 10)
+        add('size_one_one_writing_arm_' + flag, distinct.replace(
+            'else { state.set(1, item); state.has(key); }', 'else { state.has(key); }'),
+            int(flag == 'false'), 9, False,
+            ('else { state.has(key); }', 'else { state.set(1, item); state.has(key); }', both_name))
+        source = branch.replace('host.slot.set(7, false)', 'host.slot.set(7, ' + flag + ')')
+        joined = source.replace('const zero = state.size;', 'const zero = flag ? state.size : 1;')
+        joined_name = 'size_one_joined_equal_' + flag
+        add(joined_name, joined, 0, 8)
+        add('size_one_joined_unequal_' + flag, joined.replace('flag ? state.size : 1;',
+            'flag ? state.size : 2;'), int(flag == 'false'), 8, False,
+            ('flag ? state.size : 2;', 'flag ? state.size : 1;', joined_name))
+        duplicate = source.replace('const zero = state.size;',
+            'if (flag) { state.set(1, item); } else { state.has(key); } const zero = state.size;')
+        duplicate_name = 'size_one_optional_duplicate_' + flag
+        add(duplicate_name, duplicate, 0, 10)
+        add('size_one_optional_distinct_' + flag, duplicate.replace('if (flag) { state.set(1, item); }',
+            'if (flag) { state.set(2, item); }'), 0, 10, False,
+            ('if (flag) { state.set(2, item); }', 'if (flag) { state.set(1, item); }', duplicate_name))
+
+    # Neither startup-only emptiness nor deleting the final possible key gains
+    # new authority here. A separately evaluated clear supplies each repair.
+    fresh = old['local_clear_zero_size_key']['source'].replace('state.set(key, item); state.clear(); ', '')
+    deleted = old['local_clear_zero_size_key']['source'].replace('state.clear(); const zero',
+        'state.clear(); state.set(key, item); state.delete(key); const zero')
+    for name, source, calls in (
+        ('startup_empty_before_write', fresh, 6),
+        ('startup_empty_literal_repair', fresh.replace('const zero = state.size;',
+            'state.size; const zero = 0;'), 6),
+        ('size_deleted_last', deleted, 10),
+        ('size_deleted_last_literal_repair', deleted.replace('const zero = state.size;',
+            'state.size; const zero = 0;'), 10),
+    ):
+        read = 'state.size; const zero = 0;' if 'literal_repair' in name else 'const zero = state.size;'
+        repaired_name = 'size_one_cleared_' + name
+        add(repaired_name, source.replace(read, 'state.clear(); ' + read), 1, calls + 1)
+        add(name, source, 1, calls, False, (read, 'state.clear(); ' + read, repaired_name))
+
+    lifetime = rows['size_one_distinct_branches_false']['source'].replace(
+        'return state.get(zero) === void 0 ? 1 : 0;',
+        'state.set(3, item); const saved = state.get(zero); state.clear(); state.set(2, item); '
+        'return saved === item ? (flag ? 2 : 1) : 0;')
+    add('size_one_saved_lifetime', lifetime, 1, 13)
+    return rows
+
+
+def one_size_sources():
+    return {name: (row['source'], 'host', row['expected_trace'])
+            for name, row in one_size_cases().items() if row['admitted']}

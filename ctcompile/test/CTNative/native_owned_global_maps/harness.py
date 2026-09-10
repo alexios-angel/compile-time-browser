@@ -25,6 +25,7 @@ from .sources import (
     constant_global_cases, constant_global_sources, normalized_scalar_output,
     STRING_GLOBAL_LONG, StringValue, string_field_cases, string_field_sources,
     STRING_FIELD_BYTES, STRING_FIELD_LONG, zero_size_cases, zero_size_sources,
+    one_size_cases, one_size_sources,
 )
 
 
@@ -1342,6 +1343,8 @@ def standalone(args, output, name, value, compilers, nm):
             check_string_field_calls(cpp, name, mode)
         if name in zero_size_sources():
             check_zero_size_calls(cpp, name, mode)
+        if name in one_size_sources():
+            check_one_size_calls(cpp, name, mode)
         if name in leaf_readback_sources():
             check_leaf_readback_calls(cpp, name, mode)
         if name in leaf_absence_sources() or name in leaf_clear_sources():
@@ -1390,6 +1393,9 @@ def standalone(args, output, name, value, compilers, nm):
         if name == "zero_size_saved_lifetime":
             source = args.work / f"{name}.{mode}.identity.cpp"
             source.write_text(zero_size_lifetime_cpp(cpp))
+        if name == "size_one_saved_lifetime":
+            source = args.work / f"{name}.{mode}.identity.cpp"
+            source.write_text(one_size_lifetime_cpp(cpp))
         if name in primitive_absence_sources():
             source = args.work / f"{name}.{mode}.observed.cpp"
             source.write_text(primitive_absence_cpp(cpp))
@@ -1440,7 +1446,8 @@ def standalone(args, output, name, value, compilers, nm):
                 raise RuntimeError(f"{name}/{mode}: linked a VM symbol")
             traces = 2 if name in {*LEAF_COMPARISON_CASES, *LEAF_ABSENCE_LIFETIMES,
                                   *LEAF_CLEAR_LIFETIMES, *NUMERIC_ENTRY_LIFETIMES,
-                                  "field_string_lifetime", "zero_size_saved_lifetime"} else 1
+                                  "field_string_lifetime", "zero_size_saved_lifetime",
+                                  "size_one_saved_lifetime"} else 1
             if normalized_scalar_output(host.run([str(binary)]).stdout) != scalar_global_output(name, value) * traces:
                 raise RuntimeError(f"{name}/{mode}: standalone result mismatch")
         if name in {"ordinary", "mutate_map", "growing", "result_seeded_growing"}:
@@ -1474,18 +1481,22 @@ def standalone(args, output, name, value, compilers, nm):
             string_field_lifetime(args, cpp, name, mode, compilers[1])
         if name == "zero_size_saved_lifetime":
             zero_size_lifetime(args, cpp, name, mode, compilers[1])
+        if name == "size_one_saved_lifetime":
+            one_size_lifetime(args, cpp, name, mode, compilers[1])
 
 
 def check_call_preservation(original, output, name):
     if source_calls(original) != source_calls(output):
         raise RuntimeError(f"{name}: failed ownership changed live source call operands")
     if name.startswith(("saved_join", "guarded_saved", "shortcircuit", "nullable", "leaf_object",
-                        "leaf_readback", "local_", "historical_object", "field_", "zero_size_")):
+                        "leaf_readback", "local_", "historical_object", "field_", "zero_size_",
+                        "size_one_", "startup_empty_", "size_deleted_")):
         pattern = (r"^\s*(?:%[-\w.$]+(?::\d+)? = )?((?:ctjs\.(?:truthy|cond_br|br)|"
                    r"scf\.(?:if|yield))\b[^\n]*)")
         if re.findall(pattern, original, re.M) != re.findall(pattern, output, re.M):
             raise RuntimeError(f"{name}: failed ownership changed live branch/yield operands")
-    if name.startswith(("leaf_object", "leaf_readback", "local_", "historical_object", "field_", "zero_size_")):
+    if name.startswith(("leaf_object", "leaf_readback", "local_", "historical_object", "field_", "zero_size_",
+                        "size_one_", "startup_empty_", "size_deleted_")):
         pattern = r"^\s*((?:%[-\w.$]+ = )?ctjs\.(?:create_object|set_property|get_property|compare|unary|binary|load_global|store_global)\b[^\n{]*)"
         if ([match.strip() for match in re.findall(pattern, original, re.M)]
                 != [match.strip() for match in re.findall(pattern, output, re.M)]):
@@ -2439,13 +2450,31 @@ def string_field_lifetime(args, cpp, name, mode, compiler):
 
 
 def check_zero_size_calls(cpp, name, mode):
-    source = zero_size_cases()[name]['source']
+    check_exact_size_calls(cpp, name, mode, zero_size_cases()[name])
+
+
+def check_one_size_calls(cpp, name, mode):
+    check_exact_size_calls(cpp, name, mode, one_size_cases()[name])
+
+
+def check_exact_size_calls(cpp, name, mode, row):
+    source = row['source']
     params = 'js_num, bool' if 'set(key, flag)' in source else 'js_num'
-    if (f'std::function<js_num({params})>' not in cpp
+    result = 'ctnative::nullable_scalar' if name == 'size_one_present_field_entry_repair' else 'js_num'
+    if (f'std::function<{result}({params})>' not in cpp
             or cpp.count('std::make_shared<ctnative::identity_object>()') != 1):
-        raise RuntimeError(f'{name}/{mode}: lost the typed zero-size callable or live leaf allocation')
+        raise RuntimeError(f'{name}/{mode}: lost the typed size callable or live leaf allocation')
+    if name in ('size_one_present_field_entry_repair', 'size_one_present_field_checked_repair'):
+        present = re.search(r'\b(\w+)\s*=\s*ctnative::map_get_present_identity\([^;]+;', cpp)
+        if (not present or len(re.findall(r'\bctnative::map_get_present_identity\(', cpp)) != 1
+                or f'ctnative::object_get_field_76616c7565({present[1]})' not in cpp):
+            raise RuntimeError(f'{name}/{mode}: exact saved one lost its present object field read')
     for method in ('set', 'get', 'has', 'delete', 'clear'):
         original = len(re.findall(rf'\b(?:state|alias)\.{method}\(', source))
+        # Existing preparation coalesces the historical identical set arms.
+        # Its immutable nine-call source has eight prepared/runtime call sites.
+        if method == 'set':
+            original -= row['raw_calls'] - row['prepared_calls']
         emitted = len(re.findall(rf'\bctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(', cpp))
         if original != emitted:
             raise RuntimeError(f'{name}/{mode}: changed {original} live Map.{method} calls to {emitted}')
@@ -2556,4 +2585,28 @@ def zero_size_lifetime(args, cpp, name, mode, compiler):
              'UBSAN_OPTIONS': 'halt_on_error=1'})
     if result.returncode or result.stdout != 'trace=1\n' * 2 or result.stderr:
         raise RuntimeError(f'{name}/{mode}: saved zero/leaf lifetime failed\n'
+                           f'{result.returncode}: {result.stdout}{result.stderr}')
+
+
+def one_size_observer_source(source):
+    # Both witnesses select an owning saved leaf, branch on the future flag,
+    # and finish with one entry. The source's read-time key proof differs.
+    return zero_size_observer_source(source)
+
+
+def one_size_lifetime_cpp(cpp):
+    return zero_size_lifetime_cpp(cpp)
+
+
+def one_size_lifetime(args, cpp, name, mode, compiler):
+    source = args.work / f'{name}.{mode}.lifetime.cpp'
+    source.write_text(one_size_lifetime_cpp(cpp))
+    binary = source.with_suffix('.sanitized').resolve()
+    host.run([compiler, *owned.FLAGS, '-fsanitize=address,undefined', '-fno-omit-frame-pointer',
+              str(source), '-o', str(binary)])
+    result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=30,
+        env={**os.environ, 'ASAN_OPTIONS': 'detect_leaks=1:halt_on_error=1',
+             'UBSAN_OPTIONS': 'halt_on_error=1'})
+    if result.returncode or result.stdout != 'trace=1\n' * 2 or result.stderr:
+        raise RuntimeError(f'{name}/{mode}: saved one/leaf lifetime failed\n'
                            f'{result.returncode}: {result.stdout}{result.stderr}')
