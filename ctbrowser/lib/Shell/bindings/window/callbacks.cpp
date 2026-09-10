@@ -41,7 +41,7 @@ std::size_t dom_bindings::run_due_callbacks() {
         for (const pending_frame & waiting : due) {
             settle_frame(*cx_, waiting);
             note_callback_fault("frame load");
-            ++ran;
+            if (!waiting.resource) { ++ran; }
         }
     }
     // IMAGE LOADS with them, and for the same reason: p5's loadImage awaits a

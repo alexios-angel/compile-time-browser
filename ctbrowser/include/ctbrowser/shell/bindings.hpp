@@ -215,7 +215,7 @@ public:
     // tick, the way an `<iframe>`'s load is: `load`, or `error` when the bytes
     // were not found. Queued rather than fired because the page's own script
     // registers the listener after the element has already been processed.
-    void announce_load(node_id id, bool ok) { frame_loads_.push_back(pending_frame{id, ok}); }
+    void announce_load(node_id id, bool ok) { frame_loads_.push_back(pending_frame{id, ok, true}); }
 
     [[nodiscard]] std::size_t pending_timers() const noexcept { return timers_.size(); }
     // When the next callback is due, in milliseconds from now. Infinity when
@@ -1220,6 +1220,9 @@ private:
     struct pending_frame {
         node_id id;
         bool ok = false; // false when the src resolved to no bytes
+        // A sheet or script announcing its `load`, as opposed to an <iframe>:
+        // not a callback the page scheduled, so the drain does not count it.
+        bool resource = false;
     };
     std::vector<pending_frame> frame_loads_;
     // Which frames are loaded, and from what. The `src` is kept as WRITTEN
