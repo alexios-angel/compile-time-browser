@@ -108,6 +108,30 @@ inline constexpr std::string_view glsl_line_whitespace = " \t\r";
     return text.find_first_not_of(set) == std::string_view::npos;
 }
 
+// --- utf-8 ----------------------------------------------------------------
+
+// One code point, appended as UTF-8. A byte encoder and nothing more: the
+// caller has already turned surrogates, NUL and out-of-range values into
+// U+FFFD, because each spec says which of those to replace.
+constexpr void append_utf8(std::string & out, char32_t cp) {
+    const auto v = static_cast<std::uint32_t>(cp);
+    if (v < 0x80) {
+        out.push_back(static_cast<char>(v));
+    } else if (v < 0x800) {
+        out.push_back(static_cast<char>(0xC0u | (v >> 6)));
+        out.push_back(static_cast<char>(0x80u | (v & 0x3Fu)));
+    } else if (v < 0x10000) {
+        out.push_back(static_cast<char>(0xE0u | (v >> 12)));
+        out.push_back(static_cast<char>(0x80u | ((v >> 6) & 0x3Fu)));
+        out.push_back(static_cast<char>(0x80u | (v & 0x3Fu)));
+    } else {
+        out.push_back(static_cast<char>(0xF0u | (v >> 18)));
+        out.push_back(static_cast<char>(0x80u | ((v >> 12) & 0x3Fu)));
+        out.push_back(static_cast<char>(0x80u | ((v >> 6) & 0x3Fu)));
+        out.push_back(static_cast<char>(0x80u | (v & 0x3Fu)));
+    }
+}
+
 // --- base64 ---------------------------------------------------------------
 
 // Bytes, not text: the result is a "binary string" of 0-255, which is what
