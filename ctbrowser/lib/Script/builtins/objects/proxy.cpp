@@ -96,7 +96,7 @@ void install_proxy(context & cx) {
             c.throw_error("TypeError", "Property description must be an object");
             return value::boolean(false);
         }
-        const context::property_descriptor wanted = read_descriptor(c, a[2]);
+        const context::property_descriptor wanted = c.to_property_descriptor(a[2]);
         if (!valid_descriptor(c, wanted)) { return value::boolean(false); }
         return value::boolean(c.define_own_property(a[0], key, wanted));
     });

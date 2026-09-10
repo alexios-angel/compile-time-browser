@@ -637,7 +637,6 @@ public:
             raise("the microtask queue did not drain - a promise chain is not terminating");
         }
     }
-    [[nodiscard]] std::size_t pending_microtasks() const noexcept { return microtasks_.size(); }
 
     // THE STACK AS IT IS RIGHT NOW - for raise() and for a constructed
     // Error's `stack`. The function's INDEX as well as its name: most of a
@@ -1174,7 +1173,9 @@ public:
     // too, and those are called from inside own_property / define_own_property.
     // Only the fields the descriptor MENTIONS are written; a field of the
     // object is read with HasProperty then Get, so an inherited or accessor
-    // field counts. `from` must be an object - the callers check.
+    // field counts - test262 devotes ~250 files in built-ins/Object/
+    // defineProperties (15.2.3.7-5-b-*) to descriptors inheriting a field
+    // through a prototype getter. `from` must be an object - the callers check.
     [[nodiscard]] value from_property_descriptor(const property_descriptor & from);
     [[nodiscard]] property_descriptor to_property_descriptor(value from);
 
@@ -1296,10 +1297,8 @@ public:
     // expensive when it is on. A context picks up whatever
     // `set_active_type_recorder` last installed when it is CONSTRUCTED, which
     // is what lets a whole page be recorded - a `shell::browser` builds its own
-    // context and never hands it out - and this setter is for a caller holding
-    // one already.
-    void set_type_recorder(type_recorder * r) noexcept { recorder_ = r; }
-    [[nodiscard]] type_recorder * type_recorder_installed() const noexcept { return recorder_; }
+    // context and never hands it out.
+    //
     // ONE INTERPRETER STEP, called from the dispatch loop and defined in
     // type_record.cpp. Public only because the macro in run_loop.cpp is
     // clearer than a friend declaration; nothing else should call it. The

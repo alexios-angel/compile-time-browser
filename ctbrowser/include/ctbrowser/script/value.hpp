@@ -769,22 +769,6 @@ struct object_object final : heap_object {
         each_own_entry([&](const std::string & key, std::uint8_t) { visit(key); });
     }
 
-    // A SYMBOL KEY IS NOT A STRING KEY, and almost nothing that enumerates an
-    // object is supposed to see one: Object.keys, Object.values, for-in,
-    // getOwnPropertyNames and JSON.stringify are all string-only. This engine
-    // spells a symbol key "@@sym:N:description" and keeps it in the same table,
-    // so without a filter the internal spelling appeared in a page's own output.
-    //
-    // It is a SECOND method rather than a filter inside each_own_key because
-    // the two genuinely differ: `Object.assign` and object spread copy symbol
-    // keys as well, and Reflect.ownKeys reports them, so those keep the
-    // unfiltered walk.
-    template <typename Fn> void each_own_string_key(Fn && visit) const {
-        each_own_entry([&](const std::string & key, std::uint8_t) {
-            if (!key.starts_with(symbol_key_prefix)) { visit(key); }
-        });
-    }
-
     // THE SAME WALK, ENUMERABLE ONLY - what Object.keys/values/entries, for-in,
     // Object.assign, object spread and JSON.stringify are each specified to
     // see. getOwnPropertyNames and Reflect.ownKeys keep the unfiltered walks
