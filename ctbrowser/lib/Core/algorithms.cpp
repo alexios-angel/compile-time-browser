@@ -1,19 +1,13 @@
 #include <ctbrowser/core/algorithms.hpp>
 
-#include <boost/algorithm/string/case_conv.hpp>
-#include <boost/algorithm/string/predicate.hpp>
-#include <boost/beast/core/detail/base64.hpp>
 #include <simdutf.h>
 
-#include <locale>
+#include <algorithm>
 
 namespace ctbrowser {
 
 bool ascii_iequals(std::string_view a, std::string_view b) noexcept {
-    // THE LOCALE ARGUMENT IS THE POINT. Without it boost::iequals uses
-    // std::locale(), the global one, and the answer starts depending on the
-    // host - which a repository that byte-compares renders cannot have.
-    return boost::algorithm::iequals(a, b, std::locale::classic());
+    return std::ranges::equal(a, b, {}, ascii_lower, ascii_lower);
 }
 
 std::vector<std::string_view> split_top_level(std::string_view text, std::string_view separators) {
@@ -55,59 +49,34 @@ bool ascii_istarts_with(std::string_view text, std::string_view prefix) noexcept
     return text.size() >= prefix.size() && ascii_iequals(text.substr(0, prefix.size()), prefix);
 }
 
-// Boost's, with the classic locale for the same reason as above - and the same
-// trap avoided: the default overloads take std::locale(), the global one.
 void ascii_lower_in_place(std::string & text) noexcept {
-    boost::algorithm::to_lower(text, std::locale::classic());
+    std::ranges::transform(text, text.begin(), ascii_lower);
 }
 
 std::string ascii_lower_copy(std::string_view text) {
-    return boost::algorithm::to_lower_copy(std::string{text}, std::locale::classic());
+    std::string out{text};
+    ascii_lower_in_place(out);
+    return out;
 }
 
 void ascii_upper_in_place(std::string & text) noexcept {
-    boost::algorithm::to_upper(text, std::locale::classic());
+    std::ranges::transform(text, text.begin(), ascii_upper);
 }
 
-std::string ascii_upper_copy(std::string_view text) {
-    return boost::algorithm::to_upper_copy(std::string{text}, std::locale::classic());
+// The value of one base64 alphabet character, or -1 for anything else -
+// padding, whitespace and garbage alike, all of which the lenient path skips.
+[[nodiscard]] constexpr int base64_sextet(char c) noexcept {
+    if (c >= 'A' && c <= 'Z') { return c - 'A'; }
+    if (c >= 'a' && c <= 'z') { return c - 'a' + 26; }
+    if (c >= '0' && c <= '9') { return c - '0' + 52; }
+    if (c == '+') { return 62; }
+    if (c == '/') { return 63; }
+    return -1;
 }
 
-// BEAST'S TABLE, BEAST'S LOOP, ONE LINE CHANGED - and the numbers are why, over
-// a 4 MiB payload, min of five runs:
-//
-//   this, Beast's table + skip     3.3 ms   1288 MB/s
-//   boost::beast::detail::base64   4.2 ms    991 MB/s
-//   a six-bit accumulator loop     16.8 ms    250 MB/s   (5.1x slower)
-//   boost::archive::iterators      24.3 ms    173 MB/s   (7.4x slower)
-//
-// THE TABLE IS WHAT IS BORROWED. All four produce identical bytes on a flat
-// payload; the speed is `get_inverse()`'s 256-byte indexed lookup against the
-// `alphabet.find(ch)` a hand-written version does per character. Boost.Archive
-// is the only one of the four with a documented public API and it is the
-// slowest, as well as throwing on input a browser must accept.
-//
-// THE ONE CHANGE IS `break` -> skip. `base64::decode` stops dead at the first
-// character outside the alphabet, which is right for padding - `=` is only ever
-// at the end and encodes nothing - and wrong for the newline every MIME encoder
-// in the world inserts every 76 characters. On wrapped input stock Beast
-// returns 57 bytes of a 3 MB payload and reports success. Calling it and
-// repairing the result afterwards worked but cost a second filtering pass over
-// exactly the input that needed help; skipping instead of stopping is one pass
-// for both, and it is FASTER than the function it replaces because that
-// function reloads the table pointer and branches on `*in != '='` per character.
-//
-// HEADER-ONLY, which is what makes borrowing affordable: Beast needs no library
-// to link and no addition to tools/mingw/build-boost-mingw.sh, so the Windows
-// cross-build gets the table from the same include tree that already supplies
-// Boost.URL's headers. Beast's HTTP and WebSocket halves stay uncompiled.
-//
-// NOT `base64::decoded_size` for the buffer, which is a memory-safety trap
-// rather than a style preference: it is `n / 4 * 3`, which assumes the padding
-// is present. Unpadded "aGVsbG8" is seven characters and decodes to FIVE bytes
-// while that function answers three - so Beast's own decode writes two bytes
-// past a buffer sized by its own helper. Rounding the character count up to a
-// whole group first is the size that holds every input, padded or not.
+// The buffer is sized by rounding the character count UP to a whole group:
+// `n / 4 * 3` assumes the padding is present, and unpadded "aGVsbG8" is seven
+// characters that decode to FIVE bytes, not three.
 std::string base64_decode(std::string_view text) {
     // THE FAST PATH: simdutf, which decodes at ~48 GB/s against this loop's
     // ~1.1 GB/s - 42x, measured on a payload the size of the base64 PNGs Phaser
@@ -134,7 +103,6 @@ std::string base64_decode(std::string_view text) {
         }
     }
 
-    const signed char * const inverse = boost::beast::detail::base64::get_inverse();
     std::string out;
     out.resize((text.size() + 3) / 4 * 3);
     char * write = out.data();
@@ -142,8 +110,7 @@ std::string base64_decode(std::string_view text) {
     unsigned group[4] = {0, 0, 0, 0};
     std::size_t filled = 0;
     for (const char raw : text) {
-        const signed char six = inverse[static_cast<unsigned char>(raw)];
-        // THE ONE CHANGE from Beast, and the whole reason for the copy.
+        const int six = base64_sextet(raw);
         if (six < 0) { continue; }
         group[filled] = static_cast<unsigned>(six);
         if (++filled == 4) {

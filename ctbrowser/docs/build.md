@@ -200,15 +200,10 @@ turned down rather than overlooked:
   `std::strtod`, which respects `LC_NUMERIC`, in favour of `std::from_chars`,
   which does not.)
 
-  > **CORRECTED 2026-07-31.** This entry used to reject
-  > `boost::algorithm::iequals` alongside it, on the same locale grounds. That
-  > was too broad and it is now what `core/algorithms.hpp` is built on. Only the
-  > DEFAULT overload is locale-aware — it takes `std::locale()`, the global one.
-  > Passing `std::locale::classic()` gives ASCII-only folding that is
-  > deterministic by the standard's definition of the C locale, which is exactly
-  > what HTTP field names and HTML tag names want. Verified rather than
-  > reasoned: with the classic locale it folds A-Z, leaves bytes above 127
-  > alone, and never merges two different UTF-8 sequences.
+  > `boost::algorithm::iequals` was rejected with it, then adopted with
+  > `std::locale::classic()` passed explicitly, and has since gone again:
+  > `core/algorithms.hpp` folds A-Z through its own constexpr `ascii_lower` and
+  > `std::ranges`, which is the same answer with no locale in the call at all.
 * **Boost.Context / Coroutine / Fiber** — per-ABI assembly, and what actually
   broke the cross-build. Lifting the rule for portable C++ says nothing about
   these. `fetch` is already asynchronous by another route.
@@ -222,7 +217,8 @@ turned down rather than overlooked:
   `std::filesystem` and the repo's own harness already cover the first two;
   nothing here parses argv or spawns a process.
 * **Base64** — Boost has it only in `beast::detail`, a private namespace with no
-  stability promise.
+  stability promise. `core/algorithms.cpp` decodes through simdutf, with a
+  six-line lenient fallback for input simdutf refuses.
 
 ### Taken since (2026-08-08)
 

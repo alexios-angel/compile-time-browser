@@ -37,17 +37,11 @@
 // page can see - its children are parsed into a contents fragment rather than
 // into the element; see document::template_content.
 //
-// SVG is a case of its own and NOT an insertion mode. An <svg> element is built
-// normally, but its subtree is CAPTURED AS SOURCE rather than parsed - see
-// dom/tokenizer.hpp for the reasoning, which comes down to this tokenizer
-// lowercasing `viewBox` into a `viewbox` no SVG parser reads. The element is in
-// the tree; its shapes are not, and `foreign_sources()` hands the exact bytes
-// to whatever rasterises them.
-//
-// That also settles three things that used to leak, because there is no longer
-// anything inside an <svg> for them to find: an SVG <title> is not the window
-// title, an SVG <style> is not a page stylesheet, and an SVG <text> is not
-// document text.
+// SVG is a case of its own and NOT an insertion mode. An <svg> subtree is parsed
+// into namespaced elements with their case preserved, AND `foreign_sources()`
+// hands the exact bytes to whatever rasterises them - see dom/tokenizer.hpp.
+// Anything walking the tree for <title>, <style> or <script> must check
+// `element_ns`: SVG has all three.
 
 namespace ctbrowser::html {
 

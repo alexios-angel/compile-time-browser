@@ -9,12 +9,6 @@
 // `var()` substitution: CSS Custom Properties Level 1, §3 - and `attr()`, CSS
 // Values 5 §attr, which is the same operation over a different source.
 //
-// This is the single highest-leverage thing missing from the engine. Bootstrap 5.3's
-// component layer is built entirely on custom properties - `.btn` declares thirty
-// `--bs-btn-*` and then reads every one of them back through `var()` - so buttons,
-// cards, forms, navs, modals, tables, alerts and badges all render unstyled while
-// 1,370 `var()` calls sit in the cascade as literal text that no consumer can parse.
-//
 // IT IS A TOKEN-STREAM OPERATION, not a value one, and that is why it happens before
 // anything is interpreted: `var(--x)` may expand to a whole comma list, to a
 // fragment that only makes sense joined to its neighbours, or to nothing at all.
@@ -69,8 +63,7 @@ using attribute_lookup = std::function<std::optional<std::string>(std::string_vi
                                                         const attribute_lookup & attributes = {});
 
 // Whether a value contains a `var()` or an `attr()` at all - a cheap guard so
-// the substitution machinery only runs on the values that need it. Bootstrap:
-// 834 of 5,365.
+// the substitution machinery only runs on the values that need it.
 //
 // A plain `find` would be wrong for `content: "var(--x)"`, where the text is inside a
 // string; this is only ever used to SKIP work, so a false positive costs a tokenize

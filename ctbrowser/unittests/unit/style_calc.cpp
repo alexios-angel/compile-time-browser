@@ -12,6 +12,7 @@
 #include "style_fixture.hpp"
 
 #include <cmath>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -21,11 +22,17 @@ using namespace ctbrowser::style;
 
 namespace {
 
-// calc(), which is 134 expressions in Bootstrap and used to be 134 dropped
-// declarations - parse_length gave up on the leading `c` and the property was
-// silently nothing.
+// The LENGTH-ONLY view of evaluate_math: `nullopt` for a number, for an
+// unresolved comparison, and for anything invalid.
+[[nodiscard]] std::optional<ctbrowser::style::css::calc_result> evaluate_calc(
+    std::string_view expression, const ctbrowser::style::css::length_context & ctx) {
+    using ctbrowser::style::css::math_outcome;
+    const auto answer = ctbrowser::style::css::evaluate_math(expression, ctx);
+    if (answer.outcome != math_outcome::resolved || answer.value.is_number) { return std::nullopt; }
+    return answer.value;
+}
+
 void test_calc() {
-    using ctbrowser::style::css::evaluate_calc;
     using ctbrowser::style::css::length_context;
     using ctbrowser::style::css::math_context;
     // The fold as a LENGTH property sees it, which is what every assertion below
@@ -142,7 +149,6 @@ void test_calc() {
 // NOT a length, so `width: calc(2 * 3)` must stay invalid. What was missing was
 // somewhere to ask which of the two the property wanted, which is math_context.
 void test_math_answers_with_a_number() {
-    using ctbrowser::style::css::evaluate_calc;
     using ctbrowser::style::css::evaluate_math;
     using ctbrowser::style::css::fold_math;
     using ctbrowser::style::css::length_context;

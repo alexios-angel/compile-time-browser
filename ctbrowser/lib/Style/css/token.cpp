@@ -6,6 +6,8 @@
 #include <string_view>
 #include <system_error>
 
+#include <ctbrowser/core/algorithms.hpp>
+
 // CSS Syntax Level 3 §4.3, the consume-a-token algorithms.
 //
 // THE POOL IS BUILT IN TWO HALVES AND CONCATENATED ONCE. The first half is the
@@ -63,37 +65,21 @@ constexpr char32_t max_code_point = 0x10FFFF;
     return at < s.size() && s[at] == '\\' && at + 1 < s.size() && !is_newline(s[at + 1]);
 }
 
-void append_utf8(std::string & out, char32_t cp) {
+// §4.3.7's replacement, then the shared byte encoder.
+void append_code_point(std::string & out, char32_t cp) {
     if (cp == 0 || cp > max_code_point || (cp >= 0xD800 && cp <= 0xDFFF)) {
         cp = replacement_character;
     }
-    if (cp < 0x80) {
-        out += static_cast<char>(cp);
-    } else if (cp < 0x800) {
-        out += static_cast<char>(0xC0 | (cp >> 6));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    } else if (cp < 0x10000) {
-        out += static_cast<char>(0xE0 | (cp >> 12));
-        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    } else {
-        out += static_cast<char>(0xF0 | (cp >> 18));
-        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
-        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    }
+    append_utf8(out, cp);
 }
 
-// §3.3. Into a copy, because that is what makes every later offset trustworthy -
-// and it replaces the whole-input comment strip this used to have, which changed
-// the offsets of everything after every comment.
+// §3.3. Into a copy, because that is what makes every later offset trustworthy.
 [[nodiscard]] std::string preprocess(std::string_view css) {
     std::string out;
     out.reserve(css.size());
     std::size_t at = 0;
-    // A UTF-8 BOM is not a name code point but nothing removed it before, so it
-    // became the leading characters of the first selector and killed exactly one
-    // rule - silently, since an unmatchable selector is not an error.
+    // A UTF-8 BOM is not a name code point; left in, it becomes the leading
+    // characters of the first selector and silently kills that rule.
     if (css.size() >= 3 && static_cast<unsigned char>(css[0]) == 0xEF &&
         static_cast<unsigned char>(css[1]) == 0xBB && static_cast<unsigned char>(css[2]) == 0xBF) {
         at = 3;
@@ -106,7 +92,7 @@ void append_utf8(std::string & out, char32_t cp) {
         } else if (c == '\f') {
             out += '\n';
         } else if (c == '\0') {
-            append_utf8(out, replacement_character);
+            append_code_point(out, replacement_character);
         } else {
             out += c;
         }
@@ -312,7 +298,7 @@ private:
                 if (cp == 0) {
                     decoded_.append(verbatim_);
                 } else {
-                    append_utf8(decoded_, cp);
+                    append_code_point(decoded_, cp);
                 }
                 continue;
             }
@@ -375,7 +361,7 @@ private:
                 if (cp == 0) {
                     decoded_.append(verbatim_);
                 } else {
-                    append_utf8(decoded_, cp);
+                    append_code_point(decoded_, cp);
                 }
                 continue;
             }
@@ -525,7 +511,7 @@ private:
                 if (cp == 0) {
                     decoded_.append(verbatim_);
                 } else {
-                    append_utf8(decoded_, cp);
+                    append_code_point(decoded_, cp);
                 }
                 i = at_;
                 at_ = save;

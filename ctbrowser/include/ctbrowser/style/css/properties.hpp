@@ -4,22 +4,16 @@
 #include <string>
 #include <string_view>
 
-// WHICH PROPERTIES EXIST, WHAT EACH ACCEPTS, AND HOW A VALUE SERIALISES.
-//
-// This is the piece the CSSOM has never had. `el.style` is a string store: it
-// records whatever it is given and hands it back unchanged, so a value is never
-// validated and never re-serialised, and `getComputedStyle` publishes a handful
-// of names picked by what happened to be declared. Measured in
-// `docs/css-conformance.md`, that is the whole of `test_invalid_value`
-// (`expected "" but got "round()"`) and the canonical-serialisation half of
-// `test_valid_value` - and it is why `CSS.supports` cannot exist at all.
+// WHICH PROPERTIES EXIST, WHAT EACH ACCEPTS, AND HOW A VALUE SERIALISES - what
+// `el.style` validates and re-serialises against, what `getComputedStyle` lists,
+// and what `CSS.supports` answers from.
 //
 // THE TABLE IS DELIBERATELY CONSERVATIVE, and that is the design rather than an
 // apology. Three of the vendored corpora and every render golden write through
 // `el.style`, so a syntax that is WRONG about a value they use turns a render
 // into a blank box. So:
 //
-//   * a property NOT in the table is accepted verbatim, exactly as today;
+//   * a property NOT in the table is accepted verbatim;
 //   * a property in the table as `freeform` is known to exist - which is what
 //     `CSS.supports(name)` and `name in getComputedStyle(e)` ask - but its
 //     grammar is not modelled and its values are accepted verbatim;
@@ -32,8 +26,7 @@
 // IT LIVES IN style/ RATHER THAN IN THE SHELL because it is a fact about CSS
 // and there are three consumers: `el.style` (the CSSOM's specified values),
 // `getComputedStyle` (which needs the name list and the initial values), and
-// `CSS.supports`. Two of the three are in `lib/Shell/`, which is what made the
-// spelling conversion below get written twice before this existed.
+// `CSS.supports`. Two of the three are in `lib/Shell/`.
 
 namespace ctbrowser::style::css {
 
@@ -73,8 +66,7 @@ struct property_syntax {
     value_kind kind = value_kind::freeform;
     std::string_view keywords;
     // The CSS initial value, ALREADY SERIALISED. `getComputedStyle` answers it
-    // for a property nothing declared, which is most of what `undefined` meant
-    // before this table existed.
+    // for a property nothing declared.
     std::string_view initial;
     bool inherited = false;
     // A `<length>` or `<number>` this property may not take negative. `width:

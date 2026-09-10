@@ -1,11 +1,6 @@
 // calc() - the unit table: every unit the specification names, which of them
 // convert by a constant, one dimension in its family's canonical unit, and the
 // pixel bases every relative length goes through.
-//
-// One of five files carved out of a 1,810-line css/calc.cpp on 2026-09-08. The
-// public surface is include/ctbrowser/style/css/calc.hpp and did not change;
-// the helpers more than one of these files needs are declared in internal.hpp
-// beside this, with external linkage in ctbrowser::style::css::detail.
 
 #include "internal.hpp"
 
@@ -149,8 +144,6 @@ namespace detail {
     return out;
 }
 
-} // namespace detail
-
 std::string_view canonical_unit(numeric_type type) noexcept {
     switch (type) {
     case numeric_type::number: return {};
@@ -193,12 +186,7 @@ std::optional<float> unit_to_px(float value, std::string_view unit, const length
     return std::nullopt;
 }
 
-std::optional<float> dimension_text_to_px(std::string_view text, const length_context & ctx) {
-    const token_stream tokens = tokenize(text);
-    const css_token * tok = lone_value(tokens);
-    if (tok == nullptr || tok->type != token_type::dimension) { return std::nullopt; }
-    return unit_to_px(static_cast<float>(tok->number), tokens.unit_of(*tok), ctx);
-}
+} // namespace detail
 
 std::optional<float> length_text_to_px(std::string_view text, const length_context & ctx) {
     // Tokenized rather than scanned, so `1.5e1px` and an escaped unit behave the

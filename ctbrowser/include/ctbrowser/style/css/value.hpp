@@ -25,17 +25,13 @@
 // so "a var() inside an argument list" and "a var() that expands to a comma list"
 // need no special cases.
 //
-// A RULE IS A DECLARATION BLOCK, not a (selector x declaration) pair. That is the
-// fix for the old front end, which compiled a selector once per DECLARATION:
-// Bootstrap produced ~6,289 compiled selectors instead of ~2,965, and retained
-// ~650 dead ones for rules it then rejected, because the reject happened after the
-// push.
+// A RULE IS A DECLARATION BLOCK, not a (selector x declaration) pair, so a
+// selector is compiled once per selector and never once per declaration.
 //
 // EVERYTHING IS OFFSETS INTO ONE POOL. `stylesheet` owns the pool for its whole
 // life and is never reallocated after parsing, so every string_view into it is
 // stable - which is the licence for a resolved declaration's value to be a view
-// rather than a std::string. Bootstrap used to cost ~6,289 string constructions
-// in add_sheet alone.
+// rather than a std::string.
 
 namespace ctbrowser::style::css {
 

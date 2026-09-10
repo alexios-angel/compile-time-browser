@@ -71,13 +71,9 @@ struct token {
     // Where this token came from, as offsets into the tokenizer's input.
     // `source_end` is one past the last byte, so [begin, end) is the span.
     //
-    // These exist for FOREIGN CONTENT and are worth the two fields. An <svg>
-    // subtree has to reach a real SVG parser as the bytes the author wrote:
-    // this tokenizer lowercases tag and attribute names, and `viewBox`
-    // lowercased is a `viewbox` that no SVG parser reads. Re-serialising the
-    // DOM would need the spec's case-adjustment tables to undo damage that was
-    // never necessary; slicing the original input needs neither, and costs two
-    // integers on a struct that is already a string and a vector.
+    // These exist for FOREIGN CONTENT: an <svg> subtree reaches the rasteriser
+    // as the bytes the author wrote, sliced out of the input rather than
+    // re-serialised from the DOM.
     std::size_t source_begin = 0;
     std::size_t source_end = 0;
 };
@@ -126,9 +122,7 @@ private:
 
     [[nodiscard]] char peek(std::size_t ahead = 0) const;
     [[nodiscard]] bool looking_at(std::string_view what) const;
-    [[nodiscard]] static bool is_space(char c);
     [[nodiscard]] static bool is_alpha(char c);
-    [[nodiscard]] static char lower(char c);
 
     // --- data state -------------------------------------------------------
 

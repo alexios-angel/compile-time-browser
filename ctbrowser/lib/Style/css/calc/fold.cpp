@@ -1,11 +1,6 @@
 // calc() - finding the math functions in a value's text, and folding them: the
 // name scan that skips quoted runs, the function span, which properties take
 // which answer, and fold_math itself.
-//
-// One of five files carved out of a 1,810-line css/calc.cpp on 2026-09-08. The
-// public surface is include/ctbrowser/style/css/calc.hpp and did not change;
-// the helpers more than one of these files needs are declared in internal.hpp
-// beside this, with external linkage in ctbrowser::style::css::detail.
 
 #include "internal.hpp"
 
@@ -295,10 +290,8 @@ folded_value fold_math(std::string_view value, const length_context & ctx, math_
             // range when the computed value is made, and an infinite one lands
             // on whichever bound it overflowed. A NaN has no bound to land on and
             // computes to zero - `width: calc(NaN * 1px)` is `0px` in every
-            // browser, and `calc-infinity-nan-computed` asserts it 63 times over
-            // lengths, times, numbers and percentages. Before this the fold wrote
-            // `calc(NaN * 1px)` back as text, layout could not read it, and the
-            // width was `auto`.
+            // browser, and `calc-infinity-nan-computed` asserts it over lengths,
+            // times, numbers and percentages.
             //
             // THE BOUND IS 2^25, which is Chrome's LayoutUnit maximum and,
             // just as much to the point, small enough that a used value's

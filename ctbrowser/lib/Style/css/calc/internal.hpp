@@ -1,10 +1,7 @@
 #pragma once
 // Private to lib/Style/css/calc/. NOT installed and in no file set:
-// include/ctbrowser/style/css/calc.hpp declares the whole public surface -
-// evaluate_math, fold_math, simplify_math and the unit conversions - and this
-// exists only so the implementation can be more than one file: it was 1,810
-// lines in one until 2026-09-08. The includes are calc.cpp's, so every file
-// here sees exactly what that one saw.
+// include/ctbrowser/style/css/calc.hpp declares the whole public surface, and
+// this exists only so the implementation can be more than one file.
 
 #include <ctbrowser/style/css/calc.hpp>
 
@@ -150,5 +147,17 @@ struct function_span {
 [[nodiscard]] std::string_view body_of(std::string_view value, std::size_t at,
                                        std::string_view name, const function_span & span);
 [[nodiscard]] bool has_percentage(std::string_view text);
+
+// The canonical unit's spelling, or an empty view for a `<number>`. This is what
+// a computed value is serialised with. Defined in units.cpp.
+[[nodiscard]] std::string_view canonical_unit(numeric_type type) noexcept;
+
+// One dimension to pixels. `nullopt` for a unit this does not model, so a caller
+// can leave the value alone rather than guess at it - which is the difference
+// between an honest gap and a wrong number. An empty unit is a plain number and
+// answers with itself, because that is what a calc term needs. Defined in
+// units.cpp.
+[[nodiscard]] std::optional<float> unit_to_px(float value, std::string_view unit,
+                                              const length_context & ctx);
 
 } // namespace ctbrowser::style::css::detail

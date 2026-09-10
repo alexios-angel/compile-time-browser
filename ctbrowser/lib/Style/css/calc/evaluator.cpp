@@ -1,12 +1,7 @@
 // calc() - the term algebra, the non-linear functions of CSS Values 4
 // §10.4-§10.8, the recursive-descent evaluator over the token stream, and its
-// entry points: evaluate_math, evaluate_calc and the symbolic evaluation a
-// specified value uses.
-//
-// One of five files carved out of a 1,810-line css/calc.cpp on 2026-09-08. The
-// public surface is include/ctbrowser/style/css/calc.hpp and did not change;
-// the helpers more than one of these files needs are declared in internal.hpp
-// beside this, with external linkage in ctbrowser::style::css::detail.
+// entry points: evaluate_math and the symbolic evaluation a specified value
+// uses.
 
 #include "internal.hpp"
 
@@ -264,10 +259,7 @@ public:
         const std::optional<term> value = settle();
         if (!value) { return math_answer{outcome_, {}}; }
         calc_result out;
-        // A NUMBER IS AN ANSWER. `calc()` of a bare number used to be reported as
-        // no answer at all, which the cascade read as an invalid declaration and
-        // threw away - so `opacity: calc(2 / 4)` and `rgb(calc(0), calc(255),
-        // calc(0))` produced nothing. CSS Values 3 §8.1 says a math function may
+        // A NUMBER IS AN ANSWER. CSS Values 3 §8.1 says a math function may
         // resolve to a <number>; whether the PROPERTY accepts one is a separate
         // question, and math_context is where it is asked.
         out.type = value->type();
@@ -671,8 +663,7 @@ private:
     // §10.3, and it has its own function rather than a third case of the one
     // above because of `none`: EITHER BOUND MAY BE ABSENT, and an absent one is
     // not a missing argument but an unbounded side. `clamp(none, 33px, 30px)` is
-    // `min(33px, 30px)` and is 30px, which is what `clamp-length-serialize` asks
-    // for six times; before this it was a syntax error and the declaration went.
+    // `min(33px, 30px)` and is 30px, which is what `clamp-length-serialize` asks.
     //
     // An absent bound is spelled as the infinity it means, which keeps the NaN
     // rule and the low-beats-high rule below in one place each.
@@ -944,12 +935,6 @@ math_answer evaluate_math(std::string_view expression, const length_context & ct
     const token_stream tokens = tokenize(expression);
     evaluator run{tokens, ctx};
     return run.run();
-}
-
-std::optional<calc_result> evaluate_calc(std::string_view expression, const length_context & ctx) {
-    const math_answer answer = evaluate_math(expression, ctx);
-    if (answer.outcome != math_outcome::resolved || answer.value.is_number) { return std::nullopt; }
-    return answer.value;
 }
 
 } // namespace ctbrowser::style::css

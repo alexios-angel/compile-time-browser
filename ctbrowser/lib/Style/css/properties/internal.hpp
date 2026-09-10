@@ -9,8 +9,7 @@
 // Private to lib/Style/css/properties/. NOT installed and in no file set:
 // include/ctbrowser/style/css/properties.hpp declares the whole public
 // surface, and this exists only so the implementation can be more than one
-// file: it was 1,155 lines in one until 2026-09-08. The includes are
-// properties.cpp's, so every file here sees exactly what that one saw.
+// file.
 
 #include <ctbrowser/style/css/properties.hpp>
 

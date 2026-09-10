@@ -1,11 +1,6 @@
 // calc() - the SPECIFIED value: simplify_math, CSS Values 4 §10.12, and the
 // syntax check every declaration goes through before the property's own
 // grammar.
-//
-// One of five files carved out of a 1,810-line css/calc.cpp on 2026-09-08. The
-// public surface is include/ctbrowser/style/css/calc.hpp and did not change;
-// the helpers more than one of these files needs are declared in internal.hpp
-// beside this, with external linkage in ctbrowser::style::css::detail.
 
 #include "internal.hpp"
 

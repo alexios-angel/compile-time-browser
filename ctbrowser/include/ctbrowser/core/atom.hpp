@@ -9,12 +9,8 @@
 
 #include <ctbrowser/core/containers.hpp>
 
-// Interned strings.
-//
-// the previous engine compared tag, class and attribute names as std::string, by value, on every
-// selector match and every attribute lookup - so the hottest inner loop in the
-// style system was strcmp. An atom is a 32-bit id; equality is an integer
-// compare, and the id can key a hash map directly.
+// Interned strings. An atom is a 32-bit id; equality is an integer compare, and
+// the id can key a hash map directly.
 //
 // Interning is write-rare and read-hot, so the table takes a shared_mutex and
 // readers almost never block each other. Storage is a deque because atoms hand
