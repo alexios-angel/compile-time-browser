@@ -43,7 +43,23 @@ wrong", which is what they always were.
 exactly (8 / 148 / 15 / 0 / 21 / 29), which is the check that the instrument
 itself did not move underneath the comparison.
 
-## 2. Where the two suites stand — 2026-09-10, evening
+## 2. Where the two suites stand — 2026-09-10, late
+
+Engine at `62945aeb`, same instrument: `css/cssom` **86** PASS / 90 FAIL / 3
+TIMEOUT / 13 HARNESS_ERROR, subtests **1,360 PASS** / 301 FAIL;
+`css/css-values` **91** PASS / 164 FAIL / 4 TIMEOUT / 12 HARNESS_ERROR,
+subtests **4,243 PASS** / 2,998 FAIL. From the evening row: `css/cssom` +11
+files and +164 subtests (the CSSOM interface work of `25d8a284` — class
+strings, iterators, CSSKeyframesRule indexing, CSSContainerRule, the three
+declaration-block kinds, origin-clean sheets — plus the selector parser
+refusing undefined pseudos and canonical `selectorText`, `e161aa19`);
+`css/css-values` +11 files and +345 subtests (`<position>` computing to
+percentages, infinity/NaN clamping, `round()`/`clamp()`/signed zero, typed
+calc() arithmetic, `attr()` as a substitution — `2214ce24` — and CSSOM number
+serialisation, `d611d333`), against two one-subtest regressions from the
+calc() type algebra named in `docs/wpt.md`.
+
+## 2-evening. Where the two suites stood — 2026-09-10, evening
 
 Engine at `8ca744a1`, same instrument: `css/cssom` **75** PASS / 99 FAIL / 5
 TIMEOUT / 13 HARNESS_ERROR, subtests 1,196 PASS / 463 FAIL — unchanged from
