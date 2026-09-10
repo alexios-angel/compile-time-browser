@@ -2831,3 +2831,27 @@ Evidence: `/tmp/ctcompile-map-one-escape{,-corrected}.log`,
 `/tmp/ctcompile-bigint-comparison-{preservation,node,vm-audit,frozen}.json` and
 `/tmp/ctcompile-bigint-comparison-semantics.js`, SHA256
 `427127f50e7d55a1359ce30d8fec25877235df11894e4886ca7c0044620b719f`.
+
+
+**Measured next unary Plus boundary, 2026-09-10.** The pending probe above now
+agrees between Node and the interpreter: all six calls give Number
+`plusEarlyTrace=63`, with three normal results and three TypeErrors. Its source
+SHA256 is `9f6436a7abe84092242955d03af31f12730b4db4fccd72f1d1d8606fdd8ebb55`.
+The recorder measures **12 literal sites, 21 instances, 11 confined and ten
+retained**, plus **three independent Errors** rooted through `thrown:1` at
+pcs **24, 28 and 17**, respectively. Those Error coordinates have neither
+source allocations nor compiler claims.
+
+The known-primitive `primitivePlusEarly` child is confined on both calls;
+`primitivePlusRetained` keeps its child on the normal call and releases it on
+the throwing call. `primitivePlusOpaque` also observes two confined children,
+while its unknown future argument remains outside the proof. All three
+functions still claim their nine child/container sites Stored and their three
+result objects Returned: **zero confined claims**. The top-level driver alone
+is unimported because it contains more than one protected region; each tested
+function imports and records two entries. This identifies the next bounded
+retention increment, without changing Plus admission or completion/effect
+contracts. The five comparison code/test hashes remain identical to
+**51018c86**. Full-suite validation remains pending. Evidence:
+`/tmp/ctcompile-after-bigint-comparison-boundary-{vm,oracle}.log`, the matching
+`.rec` and `.claims`, and `-audit.json`.

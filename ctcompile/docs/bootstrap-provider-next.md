@@ -1,6 +1,73 @@
 # Next Bootstrap native boundary
 
-## Current continuation: exact saved one after clear/set, 2026-09-09
+## Current continuation: exact size after deleting a proved key, 2026-09-09
+
+**9781743a** finishes the exact saved-one proof in the historical **544f425b**
+source: both modes admit **5/5** with all eight calls and Number `trace=0`
+preserved. The complete possible-key upper bound and definite distinct-entry
+lower bound must coincide; native presence rederives the fact for the exact
+runtime Map. `HANDOFF.md` records the corrected proof and execution gates;
+the complete full-suite gate is pending at this checkpoint.
+
+The next measured source isolates deletion of a known literal key:
+
+```js
+var host = {};
+(function(factory) { host.slot = factory(); })(function() {
+    const state = new Map();
+    return {
+        size() { return state.size; },
+        set(key) { const item = {value: 1}; state.set(key, item); state.clear(); state.set(1, item); state.delete(1); const zero = state.size; state.set(1, item); return state.get(zero) === void 0 ? 1 : 0; }
+    };
+});
+host.slot.size(); var trace = host.slot.set(7);
+```
+
+SHA-256: `d5a66fc6f63b8aeb3976e570a16f9eab2e3aa6302c520b1f9c9b45a9953d3f5f`.
+Five functions and **ten raw/prepared calls** remain. Both modes refuse **0/5**
+with `property call lacks a current source getter proof`. Node and the
+interpreter agree on Number `trace=1`: deletion leaves size zero, and the
+subsequent write uses key one.
+
+The exact repair replaces only `const zero = state.size;` with
+`state.size; const zero = 0;`. SHA-256:
+`315c5f00fd4cee28236efb7779f91865f4549ba6d8398616f5dd366c8f2aa224`.
+It preserves every evaluated read/write/delete and all ten calls, proves
+complete ownership and admits **5/5** in both modes with the same observation.
+
+All ten fresh Node/interpreter probes agree on typed observations. Deleting
+one of two known keys (**aeaca3a0**) also refuses **0/5**; its literal-one repair
+(**b1c69bca**) admits **5/5**, with ten calls and Number `trace=1`. A saved size
+two read before deletion (**00e098c1**) already admits: a later mutation cannot
+change the saved value. Nonidentical both-deleting branch bodies remain unowned
+for either startup flag, preserving twelve calls on each source.
+
+The historical formal-key delete-last source **6aa0868a** and its literal-zero
+candidate **adeaad91** both remain unowned **0/5**. They have a separate unknown
+key/absence obligation; neither is a working repair for the other. The additional
+real-clear repair **79587f9c** admits **5/5** with eleven calls. All historical
+source bytes are preserved in the integrated execution tests.
+
+Continue the complete possible-key census through deletion. Remove only keys
+proved SameValueZero-equal to the deleted key; keep possibly aliasing keys
+conservatively, and independently update definite entries and lower bounds.
+Preserve current program position, aliases, every structural arm, resource
+limits and stale/fresh proof refusals. Native presence must rederive compatible
+facts for the actual runtime instance, never a shared schema or an imported
+report. Saved immutable sizes must survive later deletes and writes.
+
+A separate own-field observation boundary was measured while finishing the
+saved-one tests. Raw **f4c6f000** proves complete ownership but remains **0/5**
+because its global result is optional. The exact entry `+ 0` repair **1d39e071**
+and field-comparison repair **91e905f8** each admit **5/5**, with all eight calls
+and Number `trace=1`; generated code independently reads the present object's
+field. Preserve the raw refusal rather than treating it as a key-proof failure.
+
+Evidence: `/tmp/ctcompile-after-one-size-boundary-final-{results,sources}.json`
+and `/tmp/ctcompile-map-one-field-candidates-results.json`. Full native
+Bootstrap and direct browser API integration remain unfinished.
+
+## Previous continuation: exact saved one after clear/set, 2026-09-09
 
 **5217c13c/a8c77455/f3bbd184** finish the saved-zero boundary: historical
 **49663558** admits **5/5** in both modes with all eight calls preserved.

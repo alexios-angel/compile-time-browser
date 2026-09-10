@@ -6,6 +6,112 @@ The application driver remains incomplete; native compiler development uses
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
+## Exact finite saved Map sizes and BigInt comparisons, 2026-09-09
+
+Continued the explicit **544f425b** saved-one boundary from the previous
+handoff, `bootstrap-provider-next.md` and the **22:00:36 UTC** journal,
+starting clean at **d7ebbb73**. Saved-zero and String/BigInt work was already
+gated. The codex-wip recovery and source-split fixes are ancestors; both old
+lens branches remain superseded by **6520fcf2**. Three agents handled execution,
+independent proof tests and mixed primitive BigInt retention. No browser or
+runtime source changed.
+
+**9781743a** proves an exact saved Map cardinality when the complete possible-key
+upper bound equals the independently known distinct-entry lower bound. A clear
+starts a complete census, proved-equal writes deduplicate, and both structural
+arms must justify any joined fact. The census has a charged **64-candidate**
+limit and refuses at 65 without truncating evidence. Saved size facts describe
+the actual read position and survive subsequent mutations. Native presence
+independently rederives facts for the actual runtime instance; aliasing writes
+and unknown effects invalidate mutable facts. Exact numbers use IEEE bit
+encoding. No trusted report, runtime carrier or Script dependency was added.
+
+The unchanged historical **544f425b** now admits **5/5** in both modes, with all
+eight calls and Number `trace=0` preserved. Its **d4120093** literal-one repair
+also admits. **880ec3ce** adds the focused matrix of **35 sources**, with **23 native
+programs** and twelve refusal/repair families. All **42 typed Node/interpreter
+observations** agree; seventeen source mutations discriminate the results.
+Every original **702 helper row across 59 helpers** and all eight continuation
+sources retain their bytes. GCC/Clang explicit/deduced output retains evaluated
+size reads, real Map calls and ordinary owners without Script symbols. The
+saved-one/object lifetime executes **128 future calls**, both flags, owner/table
+release, independent reentry and final Map/leaf release under sanitizers.
+The twelve refusal/repair families pass fresh/stale forgeries and reruns;
+execution work budgets **4523/6683** each check **31 cutoffs**.
+
+A stronger own-field witness exposed a separate observation boundary. Raw
+**f4c6f000** has complete ownership but remains **0/5** because global `trace`
+is optional. Exact entry `+ 0` repair **1d39e071** and field-comparison repair
+**91e905f8** each admit **5/5**, keeping five functions/eight calls and Number
+`trace=1`. Their emitted code must retrieve the present object using the saved
+size and then read its field. The entry repair correctly keeps a nullable
+setter result and converts it at the global observation. The raw source remains
+an explicit refusal, preserving its method graph and published call operands.
+
+Corrected focused gates pass **6/6 proof CTests in 197.42 seconds** after an
+**11-step warning-free build**, and the Map-presence lit case passes **1/1 in
+0.70 seconds**. Owner tests cover thirty rows in each source/prepared form,
+three exhaustive budget families and live stale/fresh key/order controls.
+Cutoffs are **9594/9896/11641 source** and **9401/9712/11503 prepared**. Type
+inference covers **44 rows/10 live edits**. Seventeen new lowering sources join
+39 preserved ones and an external fixture, **57 translation RUNs** total.
+Stable clang-format **22.1.8 passes all 745 files**; bundled 23 retains the same
+nine preexisting differences.
+
+The initial proof run passed **4/6 in 175.50 seconds** and caught a real new
+bug: `NumberAttr::get` needs raw IEEE bits, not a numeric double converted to
+an integer. Own-field and independent presence tests exposed the incorrect
+one/two encodings; their expectations stayed unchanged. `llvm::bit_cast` fixes
+the encoding and supports the LLVM object targets' language settings. Earlier
+DenseMap initialization and `std::bit_cast` compile failures are preserved.
+Initial ternary execution evidence predates that correction and is not final
+validation. Later test-only failures identified the raw field's optional-global
+refusal, its nullable setter ABI and the owner-true refusal preparation path.
+SSH connection failures were recovered with serialized start/allow-ip calls.
+
+**51018c86** proves mixed primitive BigInt Eq/Lt/Le/Gt/Ge retention from each
+original operand's independently established category. It infers no comparison
+value, native BigInt carrier or effect/completion contract. Eq covers **92
+rows/50 live states/5206 budget cutoffs**; each relation covers **100/52/5498**.
+The new source family measures **32 literal sites/64 instances/50 retained**;
+**96 checker corruptions** reject. Corrected escape checks pass **8/8 in 9.35
+seconds**, improving fixture precision **81/122 -> 96/129**, with **657 claims,
+665 observed sites, nine unclaimed** and zero violations/partial/pending. The
+first **7/8 in 10.44 seconds** exposed exactly ten justified old child-retention
+expectation changes; historical source bytes and observations remain intact.
+Of 68 typed Boolean Node/VM observations, 64 agree. Four existing differences
+remain documented: large String/BigInt relational rounding and Boolean/BigInt
+equality at `false == 0n` and `1n == true`.
+
+The complete full-suite run and final integrated execution counts are pending
+at this checkpoint. The last measured full corpus floors remain **19/574
+Bootstrap, 39/4754 p5 and 45/7725 Phaser**, with exact Bootstrap Data **0/7,
+0/7 and 0/8**; these are previous measurements, not a claim about a new run.
+
+**Next: exact cardinality after deleting a proved key.** Ten fresh typed
+Node/interpreter probes agree. Literal-key delete-last source **d5a66fc6**
+remains unowned **0/5**; its **315c5f00** repair preserves the evaluated size
+read and all ten calls, uses literal zero and admits **5/5**, both with Number
+`trace=1`. Removing one of two keys also refuses, while its literal-one repair
+admits. Saved-two-before-delete already admits. Preserve possible alias keys,
+actual read position, both structural arms, immutable snapshots and independent
+native instance proof. Formal-key delete-last and its historical literal-zero
+candidate both still refuse; an additional real clear repairs them. Full native
+Bootstrap and direct browser API integration remain unfinished.
+
+The next independent escape boundary is unary Plus on a proved BigInt throwing
+an independent TypeError. A fresh probe has Node/VM Number `trace=63`, twelve
+literal sites/21 instances and three separate thrown Errors without source
+allocation claims. All twelve compiler claims remain conservative; unknown
+original operand categories cannot use the observed failure as a proof.
+
+Evidence: `/tmp/ctcompile-map-one-{proofs-final,lowering,execution-complete}.log`,
+`/tmp/ctcompile-map-one-refusals-final.log`,
+`/tmp/ctcompile-map-one-field-candidates-results.json`,
+`/tmp/ctcompile-map-one-all-refusals-final.log`,
+`/tmp/ctcompile-after-one-size-boundary-final-{results,sources}.json`, and
+`/tmp/ctcompile-bigint-comparison-{frozen,vm-audit}.json`.
+
 ## Exact saved zero and String/BigInt retention, 2026-09-09
 
 Continued the explicit **49663558** saved-size boundary from the previous
