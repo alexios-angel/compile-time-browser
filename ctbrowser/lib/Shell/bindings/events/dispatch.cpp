@@ -173,6 +173,23 @@ bool dom_bindings::dispatch_to(value event, path_step at) {
     const value target_object = object_of_step(cx, at);
     object->set("target", target_object);
     object->set("srcElement", target_object);
+    // `offsetX`/`offsetY` ARE RELATIVE TO THE TARGET'S BOX - CSSOM View - and
+    // both the constructed and the engine's mouse events arrived with a copy of
+    // the client coordinates instead. Set here, once per dispatch, because this
+    // is the one place both kinds pass through and the target is known.
+    // ponytail: the border box, not the padding edge; subtract the border
+    // widths when a page notices.
+    if (at.on == listen_on::node && at.node) {
+        if (const value * client_x = object->find("clientX")) {
+            const rect box = box_of(at.node);
+            const value * client_y = object->find("clientY");
+            object->set("offsetX", value::number(context::to_number(*client_x) - box.x));
+            object->set(
+                "offsetY",
+                value::number((client_y == nullptr ? 0.0 : context::to_number(*client_y)) - box.y));
+        }
+    }
+
     // SHADOW TREES: THE TARGET IS RETARGETED AND `window.event` IS HIDDEN.
     //
     // A listener outside a shadow tree sees the HOST as the target of an event
