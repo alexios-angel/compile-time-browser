@@ -139,7 +139,7 @@ void test_style_writes_reach_the_document() {
     </script></body></html>)");
     check(page.script_error().empty(), "the style script ran: " + page.script_error());
     const auto & log = log_of(page);
-    check(log[0] == "attr=display: none; ", "a style write serialises to the attribute: " + log[0]);
+    check(log[0] == "attr=display: none;", "a style write serialises to the attribute: " + log[0]);
     // The proxy's target holds the declarations, so a read needs no trap.
     check(log[1] == "read=none", "a style property reads back: " + log[1]);
     // The IDL name and the CSS name are different spellings of one property.

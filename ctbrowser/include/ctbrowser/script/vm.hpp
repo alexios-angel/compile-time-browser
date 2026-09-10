@@ -1302,8 +1302,8 @@ public:
     //
     // IN DEFINITION ORDER, data and accessors interleaved, because that is what
     // a page sees and what Object.keys has to match. An ARRAY source enumerates
-    // its indices as strings; anything else yields an empty array rather than
-    // throwing.
+    // its indices as strings and a PROXY enumerates its target; anything else
+    // yields an empty array rather than throwing.
     [[nodiscard]] value own_keys(value source);
 
     [[nodiscard]] value get_prototype(value target);
