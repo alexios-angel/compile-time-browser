@@ -4,7 +4,7 @@
 // verbatim from that file; `inline` in a named namespace only so that both
 // executables can include it.
 
-#include "../lib/CTNative/Analysis/OwnedGlobalRoots.h"
+#include "../../../lib/CTNative/Analysis/OwnedGlobalRoots.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/MLIRContext.h"

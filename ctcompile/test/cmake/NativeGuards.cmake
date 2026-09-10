@@ -173,9 +173,9 @@ endif()
 # emission consume both completions. Keep its original checks available for rollback.
 if(CTCOMPILE_ENABLE_MLIR)
   add_executable(ctcompile-test-exception-recovery
-    ExceptionRecovery/Main.cpp
-    ExceptionRecovery/Completion.cpp
-    ExceptionRecovery/Guards.cpp)
+    CTNative/ExceptionRecovery/Main.cpp
+    CTNative/ExceptionRecovery/Completion.cpp
+    CTNative/ExceptionRecovery/Guards.cpp)
   target_link_libraries(ctcompile-test-exception-recovery
     PRIVATE ctcompile::ctnative-lowering ctcompile::ctjs-lowering ctcompile::ctjs-import)
   ctcompile_target(ctcompile-test-exception-recovery)

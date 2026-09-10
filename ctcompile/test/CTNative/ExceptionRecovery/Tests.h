@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../lib/CTNative/Lowering/Exceptions/Recovery.h"
+#include "../../../lib/CTNative/Lowering/Exceptions/Recovery.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/Import/BytecodeImport.hpp"
 #include "ctcompile/CTJS/Transforms/Passes.h"

@@ -1,4 +1,4 @@
-#include "../lib/CTNative/Analysis/OwnedMethodTableSlots.h"
+#include "../../../lib/CTNative/Analysis/OwnedMethodTableSlots.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 
 #include "mlir/IR/Builders.h"

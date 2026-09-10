@@ -413,15 +413,15 @@ endif()
 
 # A slot census is usable only after its entire bounded proof completes.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-owned-method-table-slots OwnedMethodTableSlots.cpp)
+  add_executable(ctcompile-test-owned-method-table-slots Analysis/Ownership/OwnedMethodTableSlots.cpp)
   target_link_libraries(ctcompile-test-owned-method-table-slots PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-owned-method-table-slots)
   add_test(NAME ctcompile_owned_method_table_slots COMMAND ctcompile-test-owned-method-table-slots)
-  add_executable(ctcompile-test-owned-global-roots OwnedGlobalRoots.cpp)
+  add_executable(ctcompile-test-owned-global-roots Analysis/Ownership/OwnedGlobalRoots.cpp)
   target_link_libraries(ctcompile-test-owned-global-roots PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-owned-global-roots)
   add_test(NAME ctcompile_owned_global_roots COMMAND ctcompile-test-owned-global-roots)
-  add_executable(ctcompile-test-owned-global-methods OwnedGlobalMethods.cpp)
+  add_executable(ctcompile-test-owned-global-methods Analysis/Ownership/OwnedGlobalMethods.cpp)
   target_link_libraries(ctcompile-test-owned-global-methods PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-owned-global-methods)
   add_test(NAME ctcompile_owned_global_methods COMMAND ctcompile-test-owned-global-methods)
@@ -429,20 +429,20 @@ if(CTCOMPILE_ENABLE_MLIR)
   # has been its own executable since 2026-09-08, when OwnedGlobalMethods.cpp
   # reached 1,099 lines. Same fixtures (OwnedGlobalMethodsFixtures.h).
   add_executable(ctcompile-test-owned-global-shared-map
-    OwnedGlobalSharedMap/Main.cpp
-    OwnedGlobalSharedMap/SavedScalarReads.cpp
-    OwnedGlobalSharedMap/EntryNumericOwner.cpp
-    OwnedGlobalSharedMap/CapturedMapClearOwner.cpp
-    OwnedGlobalSharedMap/CapturedMapZeroSizeOwner.cpp
-    OwnedGlobalSharedMap/CapturedMapExactSizeOwner.cpp
-    OwnedGlobalSharedMap/CapturedMapDeleteSizeOwner.cpp
-    OwnedGlobalSharedMap/DefiniteMapAbsenceOwner.cpp
-    OwnedGlobalSharedMap/LeafReadbackOwner.cpp
-    OwnedGlobalSharedMap/LeafOwner.cpp
-    OwnedGlobalSharedMap/NestedOwner.cpp
-    OwnedGlobalSharedMap/ObjectKeyArguments.cpp
-    OwnedGlobalSharedMap/RetainedObjectKeyFamily.cpp
-    OwnedGlobalSharedMap/SharedMap.cpp)
+    Analysis/Ownership/OwnedGlobalSharedMap/Main.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/SavedScalarReads.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/EntryNumericOwner.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/CapturedMapClearOwner.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/CapturedMapZeroSizeOwner.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/CapturedMapExactSizeOwner.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/CapturedMapDeleteSizeOwner.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/DefiniteMapAbsenceOwner.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/LeafReadbackOwner.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/LeafOwner.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/NestedOwner.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/ObjectKeyArguments.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/RetainedObjectKeyFamily.cpp
+    Analysis/Ownership/OwnedGlobalSharedMap/SharedMap.cpp)
   target_link_libraries(ctcompile-test-owned-global-shared-map PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-owned-global-shared-map)
   add_test(NAME ctcompile_owned_global_shared_map COMMAND ctcompile-test-owned-global-shared-map)
@@ -450,7 +450,7 @@ endif()
 
 # Private provider transactions preserve JS Map equality and withhold partial state.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-provider-state ProviderState.cpp)
+  add_executable(ctcompile-test-provider-state CTNative/HostContract/ProviderState.cpp)
   target_link_libraries(ctcompile-test-provider-state PRIVATE CTNativeAnalysis MLIRParser)
   ctcompile_target(ctcompile-test-provider-state)
   add_test(NAME ctcompile_provider_state COMMAND ctcompile-test-provider-state)

@@ -1,4 +1,4 @@
-#include "../lib/CTNative/Analysis/OwnedGlobalRoots.h"
+#include "../../../lib/CTNative/Analysis/OwnedGlobalRoots.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
