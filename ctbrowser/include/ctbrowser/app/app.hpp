@@ -22,25 +22,11 @@
 
 // The application shell: a window, an event loop, and one function to call.
 //
-// NO SDL TYPE APPEARS IN THIS INTERFACE. That is the point of the file. SDL sits
-// behind `#if CTBROWSER_WITH_SDL3` in the global module fragment, so the module
-// BUILDS EITHER WAY - with a window when SDL3 was found, headless when it was
-// not. An application that wants to talk to SDL still can, through
-// `app_options::on_native_window`, but nothing forces it to and nothing about
-// the build requires it.
-//
-// The previous version of this file was a translator, not a shell: it exported
-// SDL_Window*, SDL_Event and SDL_Renderer*, and left SDL_Init, the poll loop,
-// the renderer object, frame pacing and quit handling to the caller. The
-// reference consumer wrote a dozen SDL calls by hand to open one page. the previous engine's
-// `run_app<page>(opts)` was better than that, and this is the previous engine's shape without
-// the compile-time machinery.
-
-// SDL IS NOT INCLUDED ABOVE, and that is the point. A module's global module
-// fragment is serialized into its BMI, so <SDL3/SDL.h> here cost every
-// translation unit that imported the application API 26 MB of AST to
-// deserialize - for a header whose types this module deliberately never
-// exposes. It is included by lib/App/app/internal.hpp, and by nothing else.
+// NO SDL TYPE APPEARS IN THIS INTERFACE, and <SDL3/SDL.h> is not included here:
+// it is included by lib/App/app/internal.hpp and by nothing else, behind
+// `#if CTBROWSER_WITH_SDL3`, so the library BUILDS EITHER WAY - with a window
+// when SDL3 was found, headless when it was not. An application that wants to
+// talk to SDL still can, through `app_options::on_native_window`.
 
 namespace ctbrowser {
 
@@ -90,7 +76,6 @@ struct app_options {
     // Chrome's 500 by default, which is what a person wants and what a
     // SCREENSHOT does not: a caret that is present in one run and absent in
     // the next is the difference between two otherwise identical images.
-    // browser_options has always had this; run_app had no way to pass it.
     double caret_blink_ms = 500;
 
     std::string screenshot_path; // "" = never
@@ -145,9 +130,7 @@ struct app_options {
     // EMPTY MEANS "wherever this build keeps them" - $CTBROWSER_FONT_PATH if it
     // is set, and `fonts` beside the executable otherwise, which is what
     // browser::use_real_fonts() resolves an empty directory to. Set this to
-    // override both; it used to default to `fonts` and duplicate that decision
-    // here, which is one place too many for it now that the source tree and a
-    // shipped application spell the directory differently.
+    // override both.
     std::filesystem::path font_path;
 
     // Whether fetch() may open a socket for a url the registry does not have.
@@ -186,14 +169,9 @@ struct app_options {
     // browser does and what `note_callback_fault` already implements one level
     // down.
     //
-    // WITH NO HOOK THE MESSAGE GOES TO stderr, and that default is the whole
-    // reason this exists. `run_app` looked at `script_error()` nowhere at all,
-    // so a page whose callbacks died looked FROZEN and said nothing: the
-    // Phaser invaders page rendered its create() output forever because
-    // `this.fire` was undefined and update() threw on every frame, and finding
-    // that took a throwaway driver written by hand to read the one string the
-    // application had never been shown. An engine that knows why a page stopped
-    // and does not say so is worse than one that does not know.
+    // WITH NO HOOK THE MESSAGE GOES TO stderr: a page whose callbacks throw
+    // looks frozen, and an engine that knows why a page stopped and does not
+    // say so is worse than one that does not know.
     //
     // Set it to an empty function to silence the default without replacing it.
     std::function<void(const std::string & message)> on_script_error;
@@ -228,8 +206,8 @@ struct app_options {
 //                             resource name resolves against
 //   CTBROWSER_MAX_FPS      -> max_fps, the redraw cap (0 = uncapped)
 //
-// Carried over from the previous engine because it is what lets an example BE a ctest without
-// the example containing any test scaffolding.
+// This is what lets an example BE a ctest without the example containing any
+// test scaffolding.
 inline void apply_environment(app_options & options) {
     if (const char * frames = std::getenv("CTBROWSER_TEST_FRAMES")) {
         options.max_frames = std::atoi(frames);
