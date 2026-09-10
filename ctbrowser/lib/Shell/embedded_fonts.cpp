@@ -123,13 +123,11 @@ std::size_t register_embedded_fonts([[maybe_unused]] asset_registry & into,
 #ifdef CTBROWSER_HAVE_EMBEDDED_FONTS
     std::size_t registered = 0;
     for (const auto & face : faces) {
-        std::vector<std::byte> bytes(face.bytes.size());
-        for (std::size_t i = 0; i < face.bytes.size(); ++i) {
-            bytes[i] = static_cast<std::byte>(face.bytes[i]);
-        }
+        const std::span<const std::byte> bytes = std::as_bytes(face.bytes);
         // Under the name the loader will ask for, so nothing downstream has to
         // know whether a face came from the binary or the disk.
-        into.add(std::string{directory} + "/" + std::string{face.file}, std::move(bytes));
+        into.add(std::string{directory} + "/" + std::string{face.file},
+                 std::vector<std::byte>{bytes.begin(), bytes.end()});
         ++registered;
     }
     return registered;
