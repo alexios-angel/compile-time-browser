@@ -481,8 +481,11 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         [this, id](context & c, std::span<value>) { return c.string(text_content(id)); },
         [this, id](context & c, std::span<value> a) {
             // Text, never markup: that is the whole point of the property, and
-            // the reason a page reaches for it instead of innerHTML.
-            set_text(id, arg_string(c, a, 0));
+            // the reason a page reaches for it instead of innerHTML. A nullish
+            // value is the empty string (DOM 4.4: `[LegacyNullToEmptyString]`
+            // on textContent's null), not the four letters.
+            const value given = arg(a, 0);
+            set_text(id, given.is_nullish() ? std::string{} : c.to_string(given));
             return value::undefined();
         });
 
