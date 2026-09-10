@@ -99,7 +99,9 @@ void test_freeform_values_respell_numbers_strings_and_urls() {
     browser page{browser_options{400, 200}};
     page.load_html(R"js(<html><body><div id=d></div><script>
         const d = document.getElementById('d');
-        const read = (p, v) => { d.style.cssText = p + ': ' + v; return d.style[p]; };
+        // Through the IDL attribute: `backgroundPosition` is not a property
+        // NAME cssText knows, so writing it there declared nothing.
+        const read = (p, v) => { d.style.cssText = ''; d.style[p] = v; return d.style[p]; };
         console.log('pos=' + read('backgroundPosition', '5% .5%') + '|' +
                     read('backgroundPosition', '5% -0px') + '|' +
                     read('backgroundPosition', '5% -.1em'));
