@@ -31,9 +31,11 @@
 // stack of open elements, implied end tags, the list of active formatting
 // elements and the adoption agency algorithm.
 //
-// WHAT IS NOT: MathML, templates, forms' special ownership rules, and the
+// WHAT IS NOT: MathML, forms' special ownership rules, and the
 // after-body/after-frameset tail modes. Those are named here rather than
-// silently missing.
+// silently missing. A <template> gets the one part of "in template" that a
+// page can see - its children are parsed into a contents fragment rather than
+// into the element; see document::template_content.
 //
 // SVG is a case of its own and NOT an insertion mode. An <svg> element is built
 // normally, but its subtree is CAPTURED AS SOURCE rather than parsed - see
