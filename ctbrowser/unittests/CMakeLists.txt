@@ -89,6 +89,10 @@ ctbrowser_test(unit/cssom_sheets)
 # three declaration blocks, removed rules, @charset, keyframes, @container,
 # `sheet` on the prototype and the origin-clean flag. One case per behaviour.
 ctbrowser_test(unit/cssom_wpt)
+# ...and how a selector and a declaration value are WRITTEN BACK: undefined
+# pseudos as syntax errors, pseudo-elements and namespace prefixes serialised
+# canonically, numbers/strings/urls respelled inside a freeform value.
+ctbrowser_test(unit/style_serialisation_wpt)
 # `querySelector` and the Selectors engine behind it. Its own file rather than
 # more of css_syntax: that one asks what the parser BUILDS, and this asks what a
 # script gets back when it matches with it - which used to be a second, weaker
