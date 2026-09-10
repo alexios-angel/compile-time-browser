@@ -75,7 +75,7 @@ bool lowering::replaceMap(mlir::Operation * o) {
             }
             return value;
         };
-        const auto convertAlternative = [&](mlir::Value value, mlir::Type type) {
+        const auto convertAlternative = [&](mlir::Value value, mlir::Type type, bool key = false) {
             auto spelling = nullableMapSpelling(type);
             if (!spelling.empty()) {
                 const bool mixed = spelling != kNullableStringType;
@@ -91,7 +91,7 @@ bool lowering::replaceMap(mlir::Operation * o) {
                 }
                 if (!mixed) { return value; }
             } else {
-                spelling = mixedMapSpelling(type);
+                spelling = key ? mixedMapKeySpelling(type) : mixedMapSpelling(type);
                 if (spelling.empty()) { return value; }
             }
             return callWithConstValueOperands(
@@ -101,7 +101,7 @@ bool lowering::replaceMap(mlir::Operation * o) {
         };
         if (map && args.size() >= 2) {
             args[1] = convertAlternative(extractProvedScalar(args[1], kNativeMapKeyType),
-                                         map.getKeyType());
+                                         map.getKeyType(), true);
         }
         if (action == "set") {
             auto call = llvm::cast<CallOp>(o);

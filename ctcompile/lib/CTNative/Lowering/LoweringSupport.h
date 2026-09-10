@@ -90,6 +90,7 @@ inline constexpr llvm::StringLiteral kObjectIdentityType =
 carrier carrierOf(mlir::Type type);
 mlir::Type vectorCarrierType(mlir::MLIRContext * context, bool strings = false);
 llvm::StringRef mixedMapSpelling(mlir::Type type);
+llvm::StringRef mixedMapKeySpelling(mlir::Type type);
 llvm::StringRef nullableMapSpelling(mlir::Type type);
 llvm::StringRef mapKeySpelling(mlir::Type type);
 std::string mapValueSpelling(mlir::Type type);

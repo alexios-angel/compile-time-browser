@@ -82,7 +82,7 @@ bool admission::op(mlir::Operation * o) {
             return refuse("native Map receiver has no supported key/value carrier");
         }
         const auto map = llvm::cast<MapType>(typeOf(call.getReceiver()));
-        const auto scalarAlternative = [&](mlir::Type schema, mlir::Value operand) {
+        const auto typedAlternative = [&](mlir::Type schema, mlir::Value operand) {
             const auto value = typeOf(operand);
             auto alternatives = llvm::cast<VariantType>(schema).getAlternatives();
             return llvm::any_of(alternatives, [&](mlir::Type alternative) {
@@ -114,8 +114,8 @@ bool admission::op(mlir::Operation * o) {
             return refuse("nullable native Map key needs a proved String, absent or Boolean "
                           "alternative with an owning carrier");
         }
-        if (!mixedMapSpelling(map.getKeyType()).empty() && !call.getArgs().empty() &&
-            !scalarAlternative(map.getKeyType(), call.getArgs()[0])) {
+        if (!mixedMapKeySpelling(map.getKeyType()).empty() && !call.getArgs().empty() &&
+            !typedAlternative(map.getKeyType(), call.getArgs()[0])) {
             const auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapKeyType);
             const auto tag = proof ? proof.getValue() : llvm::StringRef{};
             const auto c = carrierOf(typeOf(call.getArgs()[0]));
@@ -135,7 +135,7 @@ bool admission::op(mlir::Operation * o) {
             }
         }
         if (!mixedMapSpelling(map.getValueType()).empty()) {
-            if (action == "set" && !scalarAlternative(map.getValueType(), call.getArgs()[1])) {
+            if (action == "set" && !typedAlternative(map.getValueType(), call.getArgs()[1])) {
                 // A path-sensitive proof can establish one actual tag even
                 // when upstream SCF inference retains a wider scalar union.
                 const auto proof = o->getAttrOfType<mlir::StringAttr>(kNativeMapWriteType);
@@ -154,7 +154,7 @@ bool admission::op(mlir::Operation * o) {
                 }
             }
             if (action == "get" && (!o->hasAttr(kNativeMapReadType) ||
-                                    !scalarAlternative(map.getValueType(), call.getResult()))) {
+                                    !typedAlternative(map.getValueType(), call.getResult()))) {
                 return refuse(
                     "mixed native Map read needs independent present payload type evidence");
             }
@@ -172,7 +172,7 @@ bool admission::op(mlir::Operation * o) {
                 carrierOf(typeOf(call.getResult())) == carrier::nullableString;
             if (action == "get" && !mixedMapSpelling(element).empty() &&
                 (!proof || !o->hasAttr(kNativeMapPresent) ||
-                 (!nullableRead && !scalarAlternative(element, call.getResult())))) {
+                 (!nullableRead && !typedAlternative(element, call.getResult())))) {
                 return refuse(
                     "mixed native Map read needs independent present payload type evidence");
             }

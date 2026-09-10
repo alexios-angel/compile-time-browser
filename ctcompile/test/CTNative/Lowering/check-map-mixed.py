@@ -15,6 +15,42 @@ spec.loader.exec_module(representation)
 boundary, run = representation.boundary, representation.run
 
 
+def number_object_lifetime(cpp, ordered):
+    factory = re.search(r"\b(ownedNumberObjectKeys_\d+)\(\)", cpp)
+    assert factory
+    changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
+    assert count == 1
+    # Inspect the emitted Map's actual owners after its factory frame is gone.
+    # Weak observations do not keep a deleted key alive themselves.
+    observer = r'''
+int main() {
+    if (ctnative_test_entry() != 0) { return 90; }
+    for (int round = 0; round < 128; ++round) {
+        auto map = FACTORY();
+        std::weak_ptr<ctnative::identity_object> key;
+        for (const auto & entry : ENTRIES) {
+            std::visit([&](const auto & alternative) {
+                if constexpr (std::is_same_v<std::decay_t<decltype(alternative)>,
+                                             std::shared_ptr<ctnative::identity_object>>) {
+                    key = alternative;
+                }
+            }, entry.first);
+        }
+        if (key.expired() || map->size() != 2) { return 91; }
+        auto alias = map;
+        map.reset();
+        if (key.expired()) { return 92; }
+        if (round % 2 == 0) { alias->clear(); }
+        else { alias.reset(); }
+        if (!key.expired()) { return 93; }
+    }
+    return 0;
+}
+'''
+    return changed + observer.replace("FACTORY", factory[1]).replace(
+        "ENTRIES", "map->entries" if ordered else "*map")
+
+
 def forge_map_facts(text, read_type):
     def replace(match):
         attributes = (match[2] or "{}")[1:-1]
@@ -119,6 +155,7 @@ def main():
                     "traceNullableNumbers=41234\ntraceNullableOwned=151515\n"
                     "traceNullablePayloadOwned=111\ntraceNullablePayloadTags=1023\n"
                     "traceNullablePerUse=3131\ntraceNullableTags=4095\n"
+                    "traceNumberObjectKeys=63\ntraceNumberObjectOwned=2\ntraceNumberObjectPayload=1\n"
                     "traceNumbers=1334\ntraceRewrite=1\n"
                     "traceSaved=1\ntraceSavedAlias=82\ntraceSavedBoolean=1\ntraceSavedBranch=11\n"
                     "traceSavedCall=1\ntraceSavedJoinBoolean=12\ntraceSavedJoinNumber=56\n"
@@ -146,9 +183,12 @@ def main():
             assert "map_storage<ctnative::nullable_string, ctnative::nullable_string>" in cpp
             assert "map_storage<std::string, std::variant<bool, ctnative::nullable_string>>" in cpp
             assert "ctnative::map_get_present_nullable_as<ctnative::nullable_string>" in cpp
+            key_carrier = "std::variant<double, std::shared_ptr<ctnative::identity_object>>"
+            assert f"ctnative::number_map<{key_carrier}>" in cpp
+            assert f"ctnative::map_storage<{key_carrier}, ctnative::object_value>" in cpp
             assert ("struct map_storage" in cpp) == ordered
             out = args.work / f"{name}-{label}.cpp"
-            out.write_text(cpp)
+            out.write_text(number_object_lifetime(cpp, ordered))
             for index, compiler in enumerate(compilers):
                 binary = args.work / f"{name}-{label}-{index}"
                 run([compiler, "-std=c++23", "-O2", "-Wall", "-Wextra", "-Werror",
@@ -184,7 +224,10 @@ def main():
                 result = output.read_text()
                 assert not re.search(r"\bemitc.func @main\(", result), name
                 assert len(boundary.FUNCTION.findall(result)) + len(boundary.NATIVE.findall(result)) == count
-                if name in {"saved-missing-refused", "saved-join-missing-refused"}:
+                if name == "number-object-extra-alternative-refused":
+                    assert "native Map needs supported keys" in result, name
+                    assert "!ctnative.variant<" in result, name
+                elif name in {"saved-missing-refused", "saved-join-missing-refused"}:
                     assert "native Map needs supported keys" in result, name
                     assert "!ctnative.opt<!ctnative.variant<" in result, name
                 elif name in {"saved-join-tags-refused", "short-truthy-bool-refused",
@@ -209,11 +252,12 @@ def main():
                     assert stale != result
                     current = args.work / f"{name}-nullable-stale.mlir"
                     current.write_text(stale)
-    print("mixed Maps: 69 associative/ordered observations, owning nullable String and Boolean/String keys/payloads, "
+    print("mixed Maps: 75 associative/ordered observations, owning nullable String and Boolean/String keys/payloads, "
+          "Number/Object identity keys with unchanged object payloads and 128 owner-release rounds; "
           "Node/interpreter, GCC/Clang, plain/deduced and ASan/UBSan; "
           "isolated nullable-key, nullable-payload and mixed nullable-read helpers; "
           "fresh/stale finite nullable read proofs; "
-          "39 storage/read/write-proof refusals with forged key/nullable facts and reruns")
+          "40 storage/read/write-proof refusals with forged key/nullable facts and reruns")
 
 
 if __name__ == "__main__":

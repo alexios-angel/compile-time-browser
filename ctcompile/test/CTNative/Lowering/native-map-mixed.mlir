@@ -483,6 +483,51 @@ var traceMixedNullableBranches = (mixedNullableBranches(true, true)
     + (mixedNullableBranches(false, true) === '' ? 10 : 0)
     + (mixedNullableBranches(false, false) === void 0 ? 1 : 0);
 
+function numberObjectKeys() {
+    const map = new Map();
+    const first = {};
+    const same = first;
+    const second = {};
+    const nan = 0 / 0;
+    map.set(first, 11);
+    map.set(second, 22);
+    map.set(0, 33);
+    map.set(nan, 44);
+    map.set(-0, 55);
+    map.set(0 / 0, 66);
+    map.set(same, 77);
+    const distinct = map.size === 4 && map.get(first) === 77 && map.get(second) === 22;
+    const numeric = map.get(0) === 55 && map.get(nan) === 66;
+    const deleted = map.delete(same) && !map.delete(first);
+    const retained = !map.has(first) && map.has(second) && map.has(0) && map.has(nan);
+    map.set(first, 88);
+    const rewritten = map.get(same) === 88 && map.size === 4;
+    map.clear();
+    return (distinct ? 1 : 0) + (numeric ? 2 : 0) + (deleted ? 4 : 0)
+        + (retained ? 8 : 0) + (rewritten ? 16 : 0) + (map.size === 0 ? 32 : 0);
+}
+function ownedNumberObjectKeys() {
+    const map = new Map();
+    const key = {};
+    map.set(0, 1);
+    map.set(key, 2);
+    return map;
+}
+function numberObjectPayload() {
+    const map = new Map();
+    const key = {};
+    const payload = {};
+    map.set(0, 1);
+    map.set(key, payload);
+    const saved = map.get(key);
+    map.set(key, 2);
+    map.clear();
+    return saved === payload ? 1 : 0;
+}
+var traceNumberObjectKeys = numberObjectKeys();
+var traceNumberObjectOwned = ownedNumberObjectKeys().size;
+var traceNumberObjectPayload = numberObjectPayload();
+
 //--- snapshot.js
 function snapshot() {
     const map = new Map();
@@ -594,6 +639,17 @@ function run(flag) {
     return map.get(false) ? 1 : 0;
 }
 var trace = run(true) * 10 + run(false);
+
+//--- number-object-extra-alternative-refused.js
+function run() {
+    const map = new Map();
+    const key = {};
+    map.set(key, 1);
+    map.set(0, 2);
+    map.set(false, 3);
+    return map.size;
+}
+var trace = run();
 
 //--- mixed-nullable-branch-callee-refused.js
 function mixedNullableBranches(left, flag) {

@@ -75,7 +75,7 @@ carrier carrierOf(mlir::Type type) {
         const bool supportedKey =
             llvm::isa<BottomType, NumType, BoolType, ObjectIdentityType>(key) ||
             (string && string.getEncoding() == StrEncoding::UTF8) ||
-            !mixedMapSpelling(key).empty() || !nullableMapSpelling(key).empty();
+            !mixedMapKeySpelling(key).empty() || !nullableMapSpelling(key).empty();
         const auto value = map.getValueType();
         const bool ownedValue =
             llvm::isa<BottomType, NumType, BoolType>(value) ||
@@ -143,6 +143,20 @@ llvm::StringRef mixedMapSpelling(mlir::Type type) {
     return {};
 }
 
+llvm::StringRef mixedMapKeySpelling(mlir::Type type) {
+    if (auto scalar = mixedMapSpelling(type); !scalar.empty()) { return scalar; }
+    auto variant = llvm::dyn_cast<VariantType>(type);
+    if (!variant || variant.getAlternatives().size() != 2) { return {}; }
+    bool number = false, object = false;
+    for (mlir::Type alternative : variant.getAlternatives()) {
+        number |= llvm::isa<NumType>(alternative);
+        object |= llvm::isa<ObjectIdentityType>(alternative);
+    }
+    // Keys own exact identities; object/scalar payloads retain object_value storage.
+    return number && object ? "std::variant<double, std::shared_ptr<ctnative::identity_object>>"
+                            : llvm::StringRef{};
+}
+
 // Closed owning storage for nullable String, optionally composed with Bool.
 // This does not add a general optional-union scalar/signature or snapshot.
 llvm::StringRef nullableMapSpelling(mlir::Type type) {
@@ -157,7 +171,7 @@ llvm::StringRef nullableMapSpelling(mlir::Type type) {
 
 llvm::StringRef mapKeySpelling(mlir::Type type) {
     if (auto nullable = nullableMapSpelling(type); !nullable.empty()) { return nullable; }
-    if (auto mixed = mixedMapSpelling(type); !mixed.empty()) { return mixed; }
+    if (auto mixed = mixedMapKeySpelling(type); !mixed.empty()) { return mixed; }
     if (llvm::isa<BottomType, NumType>(type)) { return "double"; }
     if (llvm::isa<BoolType>(type)) { return "bool"; }
     if (llvm::isa<StrType>(type)) { return "std::string"; }
