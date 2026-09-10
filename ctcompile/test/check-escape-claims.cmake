@@ -241,6 +241,12 @@ if(STRICT)
   set(_primitive_mixed_div_error_pc_Early "25")
   set(_primitive_mixed_div_error_pc_Retained "29")
   set(_primitive_mixed_div_error_pc_Opaque "18")
+  set(_primitive_mixed_mod_rows "")
+  set(_primitive_mixed_mod_error_rows "")
+  set(_primitive_mixed_mod_literal_pcs "")
+  set(_primitive_mixed_mod_error_pc_Early "25")
+  set(_primitive_mixed_mod_error_pc_Retained "29")
+  set(_primitive_mixed_mod_error_pc_Opaque "18")
   set(_object_bigint_pow_rows "")
   set(_object_bigint_pow_error_rows "")
   set(_object_bigint_pow_literal_pcs "")
@@ -284,6 +290,9 @@ if(STRICT)
   # Every String/BigInt producer, mixed comparison and promoted historical body
   # is pinned independently; retention never authorizes a comparison value.
   foreach(_source_pair IN ITEMS
+      "primitiveMixedModOpaque 26cee5f5791cf093ccb87f32195188d4d7db500a2f1ded5e5ab7c8fd6d04b97a"
+      "primitiveMixedModRetained 8d20b9e09e8a1e7ed6cd7b13a94efdbefc9f2fb5c83bfdf239358f7999c4654c"
+      "primitiveMixedModEarly e9691f03829b6a13b0c5c7ebafa1c6f1178b7c0cbf282cd1dffc88c0e1601931"
       "primitiveMixedDivEarly dda864dd95688fe8e9d137c765aa573efe376db4bf16a7a29bb94a26ae30d4b6"
       "primitiveMixedDivRetained da1ed960e38cdabbfb6dcb53f7500296d5eff6825ac3ec18a6cf64b434f1b8c4"
       "primitiveMixedDivOpaque bb9b6277e0f251adf9a786894c4e5a0b84e04d6bf867bfb06c639d316baa94d5"
@@ -554,15 +563,15 @@ if(STRICT)
         endif()
         list(APPEND _primitive_mixed_sub_rows "${_row} ${CMAKE_MATCH_1} pc${_pc}")
       endif()
-    elseif(_function_name MATCHES "^primitiveMixed(Mul|Div)(Early|Retained|Opaque)$" AND _line MATCHES "^alloc ")
-      string(REGEX REPLACE "^primitiveMixed(Mul|Div).*$" "\\1" _mixed_kind "${_function_name}")
+    elseif(_function_name MATCHES "^primitiveMixed(Mul|Div|Mod)(Early|Retained|Opaque)$" AND _line MATCHES "^alloc ")
+      string(REGEX REPLACE "^primitiveMixed(Mul|Div|Mod).*$" "\\1" _mixed_kind "${_function_name}")
       string(TOLOWER "${_mixed_kind}" _mixed_operation)
       if(NOT _line MATCHES "^alloc ([0-9]+) kind obj$")
         message(FATAL_ERROR "${_function_name}: unexpected mixed BigInt ${_mixed_kind} source allocation: ${_line}")
       endif()
       list(APPEND _primitive_mixed_${_mixed_operation}_literal_pcs "${_function_name} ${CMAKE_MATCH_1}")
-    elseif(_function_name MATCHES "^primitiveMixed(Mul|Div)(Early|Retained|Opaque)$" AND _line MATCHES "^site ")
-      string(REGEX REPLACE "^primitiveMixed(Mul|Div).*$" "\\1" _mixed_kind "${_function_name}")
+    elseif(_function_name MATCHES "^primitiveMixed(Mul|Div|Mod)(Early|Retained|Opaque)$" AND _line MATCHES "^site ")
+      string(REGEX REPLACE "^primitiveMixed(Mul|Div|Mod).*$" "\\1" _mixed_kind "${_function_name}")
       string(TOLOWER "${_mixed_kind}" _mixed_operation)
       string(REGEX REPLACE "^primitiveMixed${_mixed_kind}" "" _mixed_suffix "${_function_name}")
       set(_mixed_error_pc "${_primitive_mixed_${_mixed_operation}_error_pc_${_mixed_suffix}}")
@@ -1735,7 +1744,7 @@ if(STRICT)
       "primitiveMixedMulRetained 1 0 1 0 0 thrown:1 pc29 unclaimed"
       "primitiveMixedMulOpaque 1 0 1 0 0 thrown:1 pc18 unclaimed"
   )
-  foreach(_mixed_kind IN ITEMS Mul Div)
+  foreach(_mixed_kind IN ITEMS Mul Div Mod)
     string(TOLOWER "${_mixed_kind}" _mixed_operation)
     foreach(_table IN ITEMS literal_pcs rows error_rows)
       string(REPLACE "primitiveMixedMul" "primitiveMixed${_mixed_kind}" _expected

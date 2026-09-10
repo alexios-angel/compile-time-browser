@@ -1849,6 +1849,55 @@ if (primitiveMixedDivUnknownError instanceof TypeError && primitiveMixedDivUnkno
     typeof primitiveMixedDivSavedError.stack === "string") primitiveMixedDivTrace += 32;
 if (primitiveMixedDivTrace !== 63) throw "mixed BigInt division independent TypeError witness";
 
+// --- MIXED BIGINT MOD: INDEPENDENT TYPEERROR, ORIGINAL OPERANDS -----------
+function primitiveMixedModEarly(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var input = choice ? 1n : 1;
+    var numeric = input % 1;
+    delete source.held; delete target.held;
+    return { source: source, target: target, numeric: numeric };
+}
+function primitiveMixedModRetained(choice) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source }, saved = target.held;
+    var input = choice ? 1n : 1;
+    var numeric = input % 1;
+    delete source.held; delete target.held;
+    return { source: source, target: target, saved: saved, numeric: numeric };
+}
+function primitiveMixedModOpaque(input) {
+    var child = { id: 1 };
+    var source = { held: child }, target = { ...source };
+    var numeric = input % 1;
+    delete source.held; delete target.held;
+    return { source: source, target: target, numeric: numeric };
+}
+var primitiveMixedModNormal = primitiveMixedModEarly(false);
+var primitiveMixedModSaved = primitiveMixedModRetained(false);
+var primitiveMixedModUnknown = primitiveMixedModOpaque(1);
+H.push(primitiveMixedModNormal); H.push(primitiveMixedModSaved); H.push(primitiveMixedModUnknown);
+function primitiveMixedModCatch(fn, input) {
+    try { return fn(input); }
+    catch (error) { H.push(error); return error; }
+}
+var primitiveMixedModError = primitiveMixedModCatch(primitiveMixedModEarly, true);
+var primitiveMixedModSavedError = primitiveMixedModCatch(primitiveMixedModRetained, true);
+var primitiveMixedModUnknownError = primitiveMixedModCatch(primitiveMixedModOpaque, 1n);
+var primitiveMixedModTrace = 0;
+if (primitiveMixedModNormal.numeric === 0 && primitiveMixedModNormal.source.held === void 0 &&
+    primitiveMixedModNormal.target.held === void 0) primitiveMixedModTrace += 1;
+if (primitiveMixedModError instanceof TypeError && primitiveMixedModError.name === "TypeError") primitiveMixedModTrace += 2;
+if (primitiveMixedModSaved.numeric === 0 && primitiveMixedModSaved.saved.id === 1 &&
+    primitiveMixedModSaved.source.held === void 0 && primitiveMixedModSaved.target.held === void 0) primitiveMixedModTrace += 4;
+if (primitiveMixedModSavedError instanceof TypeError && primitiveMixedModSavedError !== primitiveMixedModError) primitiveMixedModTrace += 8;
+if (primitiveMixedModUnknown.numeric === 0) primitiveMixedModTrace += 16;
+if (primitiveMixedModUnknownError instanceof TypeError && primitiveMixedModUnknownError !== primitiveMixedModError &&
+    primitiveMixedModUnknownError !== primitiveMixedModSavedError &&
+    typeof primitiveMixedModError.message === "string" &&
+    typeof primitiveMixedModSavedError.stack === "string") primitiveMixedModTrace += 32;
+if (primitiveMixedModTrace !== 63) throw "mixed BigInt remainder independent TypeError witness";
+
 // --- RETURNED --------------------------------------------------------------
 function returned() { return { r: 1 }; }
 H.push(returned());
