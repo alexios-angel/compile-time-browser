@@ -108,8 +108,25 @@ public:
     // share one decode and one bitmap.
     [[nodiscard]] std::shared_ptr<const paint::bitmap> load(const asset_registry & assets,
                                                             std::string_view name) {
-        for (const auto & [cached, image] : cache_) {
-            if (cached == name) { return image; }
+        return cache_[slot_for(assets, name)].second;
+    }
+
+    // The script-facing handle: a stable index, because a script holds numbers
+    // and a vector of shared_ptr moves its elements. -1 for a load that failed.
+    [[nodiscard]] int handle_for(const asset_registry & assets, std::string_view name) {
+        const std::size_t slot = slot_for(assets, name);
+        return cache_[slot].second ? static_cast<int>(slot) : -1;
+    }
+    [[nodiscard]] std::shared_ptr<const paint::bitmap> at(int handle) const {
+        if (handle < 0 || static_cast<std::size_t>(handle) >= cache_.size()) { return nullptr; }
+        return cache_[static_cast<std::size_t>(handle)].second;
+    }
+
+private:
+    // The cache only ever appends, so an entry's index is its handle.
+    [[nodiscard]] std::size_t slot_for(const asset_registry & assets, std::string_view name) {
+        for (std::size_t i = 0; i < cache_.size(); ++i) {
+            if (cache_[i].first == name) { return i; }
         }
         const std::vector<std::byte> bytes = assets.load(name);
         std::shared_ptr<const paint::bitmap> image;
@@ -128,29 +145,11 @@ public:
         }
         // A FAILED load is cached too, as a null. Otherwise a page with a
         // missing sprite re-reads the filesystem every frame.
-        cache_.emplace_back(std::string{name}, image);
-        return image;
+        cache_.emplace_back(std::string{name}, std::move(image));
+        return cache_.size() - 1;
     }
 
-    // The script-facing handle: a stable index, because a script holds numbers
-    // and a vector of shared_ptr moves its elements.
-    [[nodiscard]] int handle_for(const asset_registry & assets, std::string_view name) {
-        const std::shared_ptr<const paint::bitmap> image = load(assets, name);
-        if (!image) { return -1; }
-        for (std::size_t i = 0; i < handles_.size(); ++i) {
-            if (handles_[i] == image) { return static_cast<int>(i); }
-        }
-        handles_.push_back(image);
-        return static_cast<int>(handles_.size()) - 1;
-    }
-    [[nodiscard]] std::shared_ptr<const paint::bitmap> at(int handle) const {
-        if (handle < 0 || static_cast<std::size_t>(handle) >= handles_.size()) { return nullptr; }
-        return handles_[static_cast<std::size_t>(handle)];
-    }
-
-private:
     std::vector<std::pair<std::string, std::shared_ptr<const paint::bitmap>>> cache_;
-    std::vector<std::shared_ptr<const paint::bitmap>> handles_;
     decode_fn decoder_;
 };
 
