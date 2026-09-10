@@ -210,6 +210,12 @@ public:
     // Paint Timing: `first-paint` and `first-contentful-paint`, at the page
     // clock's current reading, once. The browser calls it from its first frame.
     void record_first_paint();
+    // A resource the BROWSER loaded for an element - a `<link rel=stylesheet>`,
+    // a `<style>`, a `<script>` - is announced at that element on the next
+    // tick, the way an `<iframe>`'s load is: `load`, or `error` when the bytes
+    // were not found. Queued rather than fired because the page's own script
+    // registers the listener after the element has already been processed.
+    void announce_load(node_id id, bool ok) { frame_loads_.push_back(pending_frame{id, ok}); }
 
     [[nodiscard]] std::size_t pending_timers() const noexcept { return timers_.size(); }
     // When the next callback is due, in milliseconds from now. Infinity when

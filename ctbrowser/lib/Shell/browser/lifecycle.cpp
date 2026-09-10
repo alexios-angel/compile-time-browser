@@ -86,6 +86,8 @@ void browser::load_one_page(std::string_view html, source_kind kind) {
     scroll_y_ = 0;
     author_sheet_loaded_ = false;
     style_error_.clear();
+    resource_loads_.clear();
+    announced_loads_.clear();
     load_author_styles();
     // Images are resolved BEFORE layout, because an <img> with no width
     // attribute takes its size from the decoded bitmap and layout has no
@@ -100,6 +102,9 @@ void browser::load_one_page(std::string_view html, source_kind kind) {
     load_page_fonts();
     mark(dirty::everything);
     run_scripts();
+    // The sheets and scripts above are owed their `load`. Handed over here
+    // because run_scripts has only just built the bindings that queue them.
+    announce_resource_loads();
     // AND THE PAGE HAS LOADED. Announced on the next tick, not here - see
     // browser::load_event_pending_ for why the delay is the point rather than
     // an accident.

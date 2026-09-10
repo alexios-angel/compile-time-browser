@@ -221,6 +221,14 @@ void browser::run_scripts() {
                     }
                     if (is_module) { specifier = url; }
                 }
+                // HTML "execute the script element": `load` at the element
+                // when it came from a file or is a module, `error` when the
+                // file was not there - and nothing at all for an inline
+                // classic script. Announced after run_scripts, so every one
+                // of them has run by the time a listener hears it.
+                if (!src.empty() || is_module) {
+                    note_resource_load(at, src.empty() || !into->empty());
+                }
                 for (const node_id child : txn.children(at)) { *into += txn.text(child); }
                 *into += '\n';
                 if (is_module) {

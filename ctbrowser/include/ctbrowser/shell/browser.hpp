@@ -596,6 +596,13 @@ private:
     // ...and rebuild the author origin from it if it has changed. See the
     // definition for why it does not go through the CSSOM.
     void refresh_author_styles();
+    // A `<link rel=stylesheet>`, `<style>` or `<script>` this browser has
+    // applied, or failed to find the bytes of: its `load`/`error` event is owed.
+    // Recorded once per element - the styles walk repeats on every restyle -
+    // and handed to the bindings by announce_resource_loads, because at page
+    // load the walk runs BEFORE run_scripts has built them.
+    void note_resource_load(node_id id, bool ok);
+    void announce_resource_loads();
 
     // Push the window size and the user's preferences into the style engine, and say
     // whether any media query's truth moved. A resize calls it and only re-resolves the
@@ -1791,6 +1798,10 @@ private:
     bool prefer_angle_webgl_ = false;
     std::string script_error_;
     std::string style_error_;
+    // Elements whose load/error is owed but not yet queued, and every element
+    // already announced this page. See note_resource_load.
+    std::vector<std::pair<node_id, bool>> resource_loads_;
+    std::vector<node_id> announced_loads_;
     std::string title_;
     float scroll_y_ = 0;
     float content_height_ = 0;
