@@ -222,7 +222,7 @@ shape — the one clock, a due time, a `next_wakeup_ms` contribution — because
 pointer held still outside the box produces no events at all, and
 `offset_at_point` clamps to what the value has, so the selection would freeze
 one line short for ever. The rate rises with distance
-(`autoscroll_ms / (1 + d / autoscroll_ramp_px)`, floored). The wakeup is
+(`100 ms / (1 + d / 20 px)`, floored at 16 ms). The wakeup is
 contributed **only while a step can actually happen**: at the scroll's limit it
 reports nothing, or an idle loop with the pointer parked below a fully-scrolled
 field would spin at the step interval. `tick` runs a LOOP, so one long tick

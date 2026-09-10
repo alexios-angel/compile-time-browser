@@ -78,17 +78,9 @@ enum class dirty : std::uint8_t {
 struct browser_options {
     int width = 1024;
     int height = 768;
-    int tile_extent = ctbrowser::raster::default_tile_extent;
     // The page canvas, behind everything the document draws. White by default,
     // because that is what a browser with no page background shows.
     color background = color{ctbrowser::style::ua_canvas};
-    // A page taller than the window scrolls; this is how far one wheel notch
-    // moves it.
-    float wheel_step = 53.0f;
-    // How many VISUAL LINES one notch moves a textarea. Lines rather than
-    // pixels, because a field scrolls by whole lines - a half-line offset would
-    // need the painter to carry a sub-line origin for no gain.
-    int wheel_lines = 3;
     // The overlay scrollbar's width, and the width a tall page gives up to it.
     // 0 hides it - which is what a fixed-size game wants.
     float scrollbar_width = 15.0f;
@@ -96,25 +88,14 @@ struct browser_options {
     // it blinking, which is what a screenshot test wants: a caret that is
     // sometimes there is not byte-comparable.
     double caret_blink_ms = 500;
-    // AUTO-SCROLL WHILE DRAG-SELECTING, when the pointer is held outside the
-    // field. The rate rises with how far outside it is, so a small overshoot
-    // creeps and a big one races:
-    //
-    //   interval = autoscroll_ms / (1 + distance / autoscroll_ramp_px)
-    //
-    // clamped to autoscroll_min_ms. At the defaults: 1px out is ~95ms a step,
-    // 20px is 50ms, 60px is 25ms, and past ~110px it is the floor. 0 for
-    // autoscroll_ms turns the whole thing off.
-    double autoscroll_ms = 100;
-    double autoscroll_min_ms = 16;
-    float autoscroll_ramp_px = 20;
 };
 
 class browser {
 public:
     explicit browser(browser_options options = {})
         : options_(options), recorder_(atoms_),
-          renderer_(renderer::software(options.width, options.height, options.tile_extent)) {
+          renderer_(renderer::software(options.width, options.height,
+                                       ctbrowser::raster::default_tile_extent)) {
         reset_document();
     }
 

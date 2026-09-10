@@ -511,7 +511,7 @@ Chrome at y=60, so one click typed into the field and the other missed entirely.
 
 **What is by design and should not be read as a difference:** ctbrowser's
 `Math.random` is a fixed-seed xorshift and a real browser's is not; its
-`wheel_step` (53), `wheel_lines` (3) and `scrollbar_width` (15) are its own
+wheel step (53), wheel lines (3) and `scrollbar_width` (15) are its own
 numbers; and antialiasing and hinting will never match. Fonts are handled —
 `compare.py` points the reference browser at the repo's own Tinos/Fira
 Sans/Cousine through `FONTCONFIG_FILE`, since otherwise every glyph differs and

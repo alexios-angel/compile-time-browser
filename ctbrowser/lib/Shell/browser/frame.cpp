@@ -200,8 +200,8 @@ std::expected<void, ctbrowser::raster::gpu_error> browser::frame(scheduler * poo
     // has had. Idempotent, and the bindings are rebuilt per document, so a
     // navigation gets its own.
     if (bindings_) { bindings_->record_first_paint(); }
-    auto drawn =
-        ctbrowser::raster::draw(renderer_, layers_, pool, options_.tile_extent, viewport());
+    auto drawn = ctbrowser::raster::draw(renderer_, layers_, pool,
+                                         ctbrowser::raster::default_tile_extent, viewport());
     timing_.raster_ms = ms_since(at);
     return drawn;
 }
