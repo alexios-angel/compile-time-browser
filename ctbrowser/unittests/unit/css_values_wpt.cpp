@@ -57,7 +57,7 @@ void test_infinity_and_nan_are_clamped_when_computed() {
     using ctbrowser::style::css::simplify_math;
     const length_context ctx;
     CHECK_EQ(fold_math("calc(NaN * 1px)", ctx, math_context::length).text, std::string{"0px"});
-    CHECK_EQ(fold_math("calc(NaN * 1%)", ctx, math_context::length).text, std::string{"0px"});
+    CHECK_EQ(fold_math("calc(NaN * 1%)", ctx, math_context::length).text, std::string{"0%"});
     CHECK_EQ(fold_math("calc(infinity * 1px)", ctx, math_context::length).text,
              std::string{"33554432px"});
     CHECK_EQ(fold_math("calc(-infinity * 1%)", ctx, math_context::length).text,
@@ -99,11 +99,24 @@ void test_the_evaluator_at_zero_and_around_a_step() {
     CHECK_EQ(simplify_math("sign(sign(-0em))"), std::string{"sign(sign(-0em))"});
 }
 
+// clamp-partial-serialize.tentative: a clamp() with an absent bound is the
+// comparison that is left.
+void test_a_clamp_with_an_absent_bound_is_a_comparison() {
+    using ctbrowser::style::css::simplify_math;
+    CHECK_EQ(simplify_math("clamp(none, 2px, 3em)"), std::string{"min(2px, 3em)"});
+    CHECK_EQ(simplify_math("calc(clamp(1em, 2px, none))"), std::string{"max(1em, 2px)"});
+    CHECK_EQ(simplify_math("clamp(1px, 2px, clamp(none, 4px, 5em))"),
+             std::string{"clamp(1px, 2px, min(4px, 5em))"});
+    CHECK_EQ(simplify_math("clamp(clamp(none, 2em, none), 4px, clamp(none, 6em, none))"),
+             std::string{"clamp(2em, 4px, 6em)"});
+}
+
 } // namespace
 
 int main() {
     test_a_position_computes_to_percentages();
     test_infinity_and_nan_are_clamped_when_computed();
     test_the_evaluator_at_zero_and_around_a_step();
+    test_a_clamp_with_an_absent_bound_is_a_comparison();
     REPORT("css_values_wpt");
 }
