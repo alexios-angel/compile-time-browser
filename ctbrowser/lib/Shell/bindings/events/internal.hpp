@@ -1,9 +1,5 @@
 #pragma once
-// Private to lib/Shell/bindings/events/. NOT installed and in no file set:
-// include/ctbrowser/shell/bindings.hpp declares dom_bindings whole, and this
-// exists only so its event half can be more than one file - it was 1,647
-// lines in one until 2026-09-08. The includes are events.cpp's, so every
-// file here sees exactly what that one saw.
+// Private to lib/Shell/bindings/events/ - not installed.
 
 #include <algorithm>
 #include <cmath>
@@ -27,9 +23,7 @@ inline constexpr std::string_view cancel_bubble_property = "__cancelBubble";
 // exception. An event that is ALREADY travelling may not be dispatched again,
 // and an event that has never been given a type may not be dispatched at all -
 // `document.createEvent` hands back exactly that kind and `initEvent` is what
-// clears it. Both are InvalidStateError, and both were silent successes here:
-// dom/events/EventTarget-dispatchEvent.html spends 21 of its 25 assertions on
-// the pair.
+// clears it. Both are InvalidStateError.
 inline constexpr std::string_view dispatch_property = "__dispatching";
 inline constexpr std::string_view initialised_property = "__initialised";
 // Where `isTrusted` reads from. It is an accessor rather than a data property
@@ -50,11 +44,7 @@ inline constexpr std::string_view path_property = "__path";
 }
 
 // --- helpers shared by more than one file of bindings/events/ ----------------
-//
-// Both were in an anonymous namespace of events.cpp. They gained external
-// linkage when that file was split, and nothing else: the bodies are in
-// dispatch.cpp beside make_event_object, and interfaces.cpp - where every
-// constructor initialises its receiver - calls them through this.
+// Defined in dispatch.cpp beside make_event_object.
 [[nodiscard]] value is_trusted_getter_of(value event_prototype);
 void initialise_event(context & cx, script::object_object & event, std::string_view type,
                       bool bubbles, bool cancelable, double timestamp, value is_trusted_getter);

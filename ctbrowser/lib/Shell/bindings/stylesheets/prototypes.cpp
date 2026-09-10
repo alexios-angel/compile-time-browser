@@ -1,11 +1,5 @@
 // dom_bindings' CSSOM - install_stylesheet_prototypes: the CSSStyleSheet,
 // CSSRuleList, CSSRule, MediaList and CSSStyleDeclaration interfaces.
-//
-// One of six files carved out of a 2,814-line bindings/stylesheets.cpp on
-// 2026-09-08. The member functions belong to one class declared in
-// include/ctbrowser/shell/bindings.hpp; the helpers more than one of these
-// files needs are declared in internal.hpp beside this and defined in
-// serialize.cpp and source.cpp. Nothing about the public header changed.
 
 #include "internal.hpp"
 

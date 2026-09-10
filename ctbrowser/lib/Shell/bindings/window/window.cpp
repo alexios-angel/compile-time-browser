@@ -1,12 +1,5 @@
 // dom_bindings - install_window: the window object, the globals it carries,
 // and the proxy that makes it the global object.
-//
-// One of two files carved out of a 1,106-line bindings/window.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. Both are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; nothing is shared between them but
-// the includes, which internal.hpp carries. Nothing about the public header
-// changed.
 
 #include "internal.hpp"
 

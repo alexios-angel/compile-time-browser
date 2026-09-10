@@ -18,9 +18,8 @@
 
 // The 2D canvas.
 //
-// A canvas is the one place a page draws pixels directly, and it is what every
-// game, chart and visualisation on the web is built on. the previous engine kept the pixels on
-// the DOM node; here they live in a store keyed by node_id, for the same reason
+// A canvas is the one place a page draws pixels directly. The pixels live in
+// a store keyed by node_id rather than on the DOM node, for the same reason
 // layout results do - the node is document content, and a mutable megapixel
 // buffer is not.
 //

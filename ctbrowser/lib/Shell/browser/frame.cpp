@@ -1,11 +1,5 @@
 // browser - the frame: the page clock and tick(), the four stages a frame
 // re-runs according to what changed, resize, the viewport and scrolling.
-//
-// One of ten files carved out of a 2,871-line Shell/browser.cpp on 2026-09-08.
-// All are member functions of one class declared in
-// include/ctbrowser/shell/browser.hpp; internal.hpp beside this carries the
-// includes browser.cpp had, so every file sees exactly what it saw. Nothing
-// about the public header changed.
 
 #include "internal.hpp"
 
@@ -60,7 +54,7 @@ std::size_t browser::tick(double elapsed_ms) {
         at = autoscroll_now();
     }
     // Only the CARET changed, so only the paint is stale - a blink must not
-    // re-run layout, which is what made the previous engine lay the page out every frame.
+    // re-run layout.
     if (focused_ && caret_visible() != was_visible) { mark(dirty::paint); }
     // `DOMContentLoaded` AND THEN `load`, in that order, once per document.
     // Both go to the window - dispatch() with an empty node is the window and

@@ -1,9 +1,4 @@
 // dom_bindings - the 2D canvas context object and its matrix.
-//
-// One of six files carved out of a 3,926-line bindings.cpp on 2026-08-09.
-// These are all member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp, so they split across translation
-// units with nothing to declare and no linkage to arrange.
 
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/shell/bindings.hpp>

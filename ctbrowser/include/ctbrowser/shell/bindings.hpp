@@ -27,22 +27,16 @@
 #include <ctbrowser/shell/page/forms.hpp>
 #include <ctbrowser/shell/page/webgl.hpp>
 
-// The web platform, bound to the the engine VM.
-//
-// the previous engine had ~179 hand-written set_method calls against a tree-walking interpreter
-// that held raw `node *`. Two things changed and both matter:
+// The web platform, bound to the engine VM. Two invariants:
 //
 //   * SCRIPT HOLDS HANDLES, NOT POINTERS. An element wrapper carries a
 //     node_id, and every native resolves it against the live document. A stale
 //     reference is a failed lookup that returns undefined, not a use-after-free.
-//     the previous engine was only safe because the document owned every node forever and
-//     nothing was concurrent.
 //   * MUTATION IS A CALLBACK. A native that changes the document calls
 //     on_mutation, and the browser decides what that invalidates. Bindings do
 //     not know about layout, and layout does not know script exists.
 //
-// The surface is deliberately the part of the previous engine's that real pages use, and the
-// gaps are named rather than stubbed: a `getContext` that returns an object
+// Gaps are named rather than stubbed: a `getContext` that returns an object
 // with no drawing on it is worse than one that is absent, because a page
 // checking for canvas support gets the wrong answer.
 
@@ -51,9 +45,7 @@ namespace ctbrowser::shell {
 using ctbrowser::script::context;
 using ctbrowser::script::value;
 
-// Argument coercion. the previous engine open-coded these at 150 call sites; the plan's answer
-// was an IDL generator, and this is the part of it that is actually load
-// bearing - the codegen would emit exactly these.
+// Argument coercion.
 [[nodiscard]] inline std::string arg_string(context & cx, std::span<value> args, std::size_t i) {
     return i < args.size() ? cx.to_string(args[i]) : std::string{};
 }
@@ -103,7 +95,7 @@ public:
     // NAVIGATION, as state rather than as an action. `location.reload()` cannot
     // reload the page where it is called: the reload tears down this context and
     // the program still running inside it. So it records the request and the
-    // browser drains it between ticks, which is also how the previous engine did it.
+    // browser drains it between ticks.
     [[nodiscard]] bool reload_requested() const noexcept { return reload_requested_; }
     void clear_reload_request() noexcept { reload_requested_ = false; }
     // What `location` reports. The browser sets it; the page can only read it,
@@ -163,21 +155,12 @@ public:
     // register a keydown listener and never learn which key was pressed.
     bool dispatch_key(std::string_view type, node_id target, const input_event & input);
 
-    // AN UNCAUGHT EXCEPTION, ANNOUNCED. `window.onerror` and
-    // `addEventListener("error", ...)` are how a page learns that one of its
-    // OTHER scripts threw, and this engine reported such a throw only into
-    // `browser::script_error()` - a string an embedder can read and a page
-    // cannot. So a page whose second <script> died had no way to know, and the
-    // only thing that ever noticed was a human reading the terminal.
-    //
-    // WPT is what made it matter. testharness.js registers an `error` listener
-    // and turns it into a harness ERROR, which is the difference between "this
-    // test threw during load" and "this test never finished" - the second being
-    // what every such page reported before, ten seconds later and blaming the
-    // wrong thing. The event carries `message`, `filename`, `lineno`, `colno`
-    // and `error` because those are the five properties that handler reads;
-    // only `message` is real here, and the rest say so by being empty rather
-    // than by being absent.
+    // AN UNCAUGHT EXCEPTION, ANNOUNCED to `window.onerror` and
+    // `addEventListener("error", ...)` - which is how testharness.js tells "this
+    // test threw during load" from "this test never finished". The event carries
+    // `message`, `filename`, `lineno`, `colno` and `error` because those are the
+    // five properties that handler reads; only `message` is real here, and the
+    // rest say so by being empty rather than by being absent.
     bool dispatch_error(std::string_view message);
 
     // A MouseEvent. clientX/clientY are viewport coordinates, which is what
@@ -264,12 +247,9 @@ private:
         bool repeating = false;
         bool cancelled = false;
     };
-    // WHICH EVENT TARGET A LISTENER IS ON. Two of the three are not nodes, and
-    // they used to share one bucket - `target` empty meant "the document or the
-    // window, we cannot tell". That was harmless while an event carried no
-    // `currentTarget`, and wrong the moment it did: a page that listens on both
-    // saw the same object reported for each, and `removeEventListener` on one
-    // could take the other's listener away.
+    // WHICH EVENT TARGET A LISTENER IS ON. The document and the window are not
+    // nodes and must not share a bucket: `currentTarget` reports each, and
+    // `removeEventListener` on one must not take the other's listener away.
     enum class listen_on : std::uint8_t {
         node,     // an element; `target` names it
         document, // document.addEventListener
@@ -300,10 +280,7 @@ private:
         // it removes every listener that carries it - which is how a library
         // takes down a whole sketch's listeners in one call.
         value abort_signal = value::undefined();
-        // `{ once: true }` - fire and remove. Accepted and ignored before, so a
-        // listener a page registered to run exactly once ran on every event: a
-        // one-shot "did the user interact yet" handler kept firing, and a
-        // library counting how often something happened counted wrong.
+        // `{ once: true }` - fire and remove.
         bool once = false;
         // `{ capture: true }` - fired on the way DOWN to the target rather than
         // on the way back up. It is the whole reason to pass it: a capturing
@@ -323,19 +300,10 @@ private:
 
     // --- element wrappers -------------------------------------------------
 
-    // ONE WRAPPER PER ELEMENT, cached. Two reasons, and the second is the one
-    // that showed up as a bug: `getElementById('x') === getElementById('x')` is
-    // true in a browser and was false here, and - far worse - a wrapper's
-    // properties are a SNAPSHOT taken when it was made. A page that does
-    //     const name = document.getElementById('name');
-    //     ... later ... name.value
-    // read whatever `value` was at page load, forever. That is what made the
-    // widget gallery report `color: undefined` and never update.
+    // ONE WRAPPER PER ELEMENT, cached: `getElementById('x') ===
+    // getElementById('x')`, and a wrapper a page holds on to keeps answering
+    // about the live element rather than about a snapshot.
     [[nodiscard]] value wrap(context & cx, node_id id);
-
-    // Bring every live wrapper back in step with the document. Called before a
-    // dispatch and before a frame, which are the two moments a page can observe
-    // the difference.
 
     [[nodiscard]] static std::uint64_t pack(node_id id);
     [[nodiscard]] static node_id unpack(std::uint64_t bits);
@@ -394,9 +362,7 @@ private:
     // the removed one gets skipped, and a listener may dispatch another event.
     void reap_spent_listeners();
     // `innerHTML`. Setting one PARSES: the markup becomes real nodes under the
-    // element, replacing whatever was there. It used to be a plain property on
-    // the wrapper, so assigning markup stored a string, rendered nothing, and
-    // said nothing.
+    // element, replacing whatever was there.
     void set_inner_html(node_id target, std::string_view markup);
     [[nodiscard]] std::string inner_html(node_id target) const;
     // One node and its subtree, copied from another document into this one.
@@ -420,10 +386,6 @@ private:
     // THE "ENSURE PRE-INSERTION VALIDITY" STEPS, DOM 4.2.3, shared by
     // `insertBefore`, `appendChild` and `moveBefore`. Answers false having
     // ALREADY THROWN, so a caller is one `if` rather than an error channel.
-    //
-    // It exists because all three used to succeed at anything: appending a node
-    // to its own descendant built a cycle the tree walkers then hung on, and
-    // `insertBefore(node, notAChild)` silently appended.
     [[nodiscard]] bool pre_insert_valid(context & cx, node_id parent, node_id child, value node_arg,
                                         value ref_arg);
     // One argument of append/prepend/before/after/replaceWith, as a node. A
@@ -456,9 +418,7 @@ private:
     // receiver, so `receiver(cx)` finds no handle.
     void install_element_views(context & cx, script::object_object & obj, node_id id);
 
-    // `getComputedStyle`, on `window` and as a bare global. A SNAPSHOT rather
-    // than the spec's live object: a live one needs an invalidation hook, and
-    // nothing but a diff reads this today.
+    // `getComputedStyle`, on `window` and as a bare global.
     void install_computed_style(context & cx);
     [[nodiscard]] value computed_style_object(context & cx, node_id id);
     // ONE ELEMENT'S WHOLE COMPUTED STYLE, as (CSS name, value) pairs: the
@@ -477,11 +437,8 @@ private:
 
     // --- DOMException, and the CSS interface --------------------------------
     //
-    // Both are scaffolding placed here so two concerns can be worked on in
-    // separate translation units: `bindings/exceptions.cpp` owns the exception
-    // hierarchy every DOM method throws through, `bindings/css.cpp` owns the
-    // `CSS` namespace object the CSS suites ask before every computed-value
-    // test.
+    // `bindings/exceptions.cpp` owns the exception hierarchy every DOM method
+    // throws through, `bindings/css.cpp` the `CSS` namespace object.
     void install_dom_exception(context & cx);
     // A DOMException instance with the right `name`, `code` and `message`, on
     // `DOMException.prototype` - which is what `assert_throws_dom` checks and
@@ -497,9 +454,7 @@ private:
     // `el.style` about whether a value is valid.
     void install_css_interface(context & cx);
 
-    // --- one region per translation unit, so that several concerns can be
-    // --- worked on at once without two of them editing the same lines here.
-    // --- Each block below belongs to exactly one file in bindings/.
+    // --- Each BEGIN/END block below belongs to exactly one file in bindings/.
 
     // BEGIN reflection (bindings/element/reflection.cpp)
     //
@@ -512,12 +467,8 @@ private:
     // and `eventTarget.constructor.name` ask, and it is ALSO where the reflected
     // IDL attributes live: `id`, `href`, `disabled` and the ~270 others are
     // accessors on ONE prototype each rather than on every wrapper, which is
-    // both what the specification says and what makes a table affordable.
-    //
-    // Reflection used to be twelve names installed on every element wrapper, so
-    // `div.href` existed, `input.maxLength` did not, and neither of them parsed
-    // anything: ~6,400 subtests of `html/dom` say so. See element/reflection.cpp for the
-    // table and for what each type does.
+    // both what the specification says and what makes a table affordable. See
+    // element/reflection.cpp for the table and for what each type does.
     void install_dom_interfaces(context & cx);
     // Build them if they are not built and the pieces they chain to exist yet.
     // Cheap after the first success; called from wrap() because the bindings'
@@ -570,14 +521,13 @@ private:
     // page may delete a global, after which a prototype this object still
     // points at could be swept. So every constructor `retains` this one array,
     // and all 70-odd of them would have to be deleted before any prototype
-    // became unreachable. (`register_roots` in bindings/document/entry.cpp marking it
-    // would be stronger still, but that file belongs to another concern.)
+    // became unreachable.
     value interface_keeper_;
     // Set once the chain is built AND linked to `event_target_prototype_`,
     // which install_event_interfaces publishes after the first wrapper exists.
     bool interfaces_linked_ = false;
 
-    // --- CharacterData workstream ---
+    // --- CharacterData ---
     //
     // `CharacterData.prototype` AND `Text.prototype`, filled in once the
     // interface chain exists. On the PROTOTYPES rather than on every wrapper,
@@ -682,11 +632,9 @@ private:
                           std::vector<node_id> & into) const;
     // The observer's index, or npos when the value is not one of ours.
     [[nodiscard]] std::size_t mutation_observer_index(value v) const;
-    // WHAT KEEPS ALL THIS ALIVE. `register_roots` belongs to bindings/
-    // document/entry.cpp and there is one external-roots hook, so these hang off the
-    // `MutationObserver` interface object's `retained` list instead - see
-    // script::native_object::retained. Refilled whenever the set changes,
-    // which is rare and tiny.
+    // WHAT KEEPS ALL THIS ALIVE: the `MutationObserver` interface object's
+    // `retained` list - see script::native_object::retained. Refilled whenever
+    // the set changes, which is rare and tiny.
     void sync_mutation_roots();
 
     std::vector<value> mutation_observers_;
@@ -716,13 +664,9 @@ private:
     // - a percentage against its containing block, an inset's used value - runs
     // on the interpolated text exactly as it would on a declared one.
     //
-    // WHAT THIS DOES NOT DO, named: nothing RENDERS an animation - the overlay
-    // exists for getComputedStyle and paint never sees it; no `finish`/`cancel`
-    // events fire and the finished promise settles when a SEEK reaches the end,
-    // not when the clock does; `composite: add/accumulate` is treated as
-    // replace; colours, transforms and lists interpolate discretely. Lengths,
-    // percentages, calc() and numbers interpolate, which is what the targeted
-    // tests exercise.
+    // Nothing RENDERS an animation: the overlay exists for getComputedStyle and
+    // paint never sees it. Lengths, percentages, calc() and numbers
+    // interpolate; everything else is discrete.
 public:
     // The animated properties of one element as (css name, text) pairs, at the
     // element's animations' CURRENT time. `underlying` answers the cascade's
@@ -1039,7 +983,7 @@ private:
     // The StyleSheetList, the adopted array and the interface prototypes. Held
     // on the DOCUMENT under a non-configurable private key as well as here, so
     // the collector reaches them through `mark(document_)` and this member
-    // needs no line in register_roots - which is a file this rung does not own.
+    // needs no line in register_roots.
     value cssom_internals_;
     std::function<void(std::string)> on_author_styles_;
     // END style sheets
@@ -1117,10 +1061,8 @@ private:
     // seventy-nine methods and a constant table would bury the DOM in this one -
     // and the state machine it drives is in shell/page/webgl.hpp.
     [[nodiscard]] value webgl_context_object(context & cx, node_id id, int version);
-    // ITS THREE HALVES. webgl_context_object was one 1,213-line function until
-    // 2026-09-08; these are the seams it was split at, chosen because no local
-    // crosses them, and called in the order the surface was always installed:
-    // the constant table, then every method. See lib/Shell/bindings/webgl/.
+    // Its three halves, called in this order: the constant table, then every
+    // method. See lib/Shell/bindings/webgl/.
     void install_webgl_constants(script::object_object * obj, bool webgl2);
     void install_webgl_methods(context & cx, script::object_object * obj, webgl_context * gl,
                                canvas_context * surface);
@@ -1129,10 +1071,7 @@ private:
 
     // SETTING canvas.width RESIZES THE DRAWING BUFFER, and for a WebGL canvas
     // that is not cosmetic: canvas_context::resize REALLOCATES the bitmap, so a
-    // context still holding the old pointer is drawing into freed memory. The
-    // size disagreement is the visible half - p5 creates its canvas, asks for a
-    // context, and only then sets the size, so without this every p5 WEBGL
-    // sketch drew into a 300x150 buffer and read back a 20x20 window of nothing.
+    // context still holding the old pointer is drawing into freed memory.
     void resize_webgl_context(node_id id, int width, int height);
     // Copy every live WebGL context's surface into its canvas bitmap. Called
     // once at the end of a frame, never per draw.
@@ -1155,9 +1094,7 @@ private:
     // "bold 16px sans-serif" -> 16.
     [[nodiscard]] static float font_size_from(std::string_view font);
 
-    // ...and -> family "sans-serif", bold, not italic. The family used to be
-    // thrown away, which is how a canvas asking for Arial got the bitmap font's
-    // 8-pixel monospaced cell and a HUD laid out from the right edge ran off it.
+    // ...and -> family "sans-serif", bold, not italic.
     //
     // An honest subset of the CSS `font` shorthand: tokens before the <n>px one
     // supply bold/italic, and the first entry of the family list after it is
@@ -1184,10 +1121,7 @@ private:
 
     void install_document(context & cx);
 
-    // `alert` and `location`, the last two globals the previous engine had and the engine did not.
-    // MDN's breakout calls both the moment the game ends - alert("GAME OVER")
-    // then document.location.reload() - so a page could win or lose and then
-    // die on an undefined identifier.
+    // `alert` and `location`.
     void install_navigation(context & cx);
 
     value make_location(context & cx);
@@ -1207,19 +1141,9 @@ private:
     // Its own file: lib/Shell/bindings/performance.cpp.
     [[nodiscard]] script::object_object * install_performance(context & cx);
 
-    // A FETCH THAT HAS NOT HAPPENED YET.
-    //
-    // fetch() used to do the work and hand back an already-settled promise,
-    // which was the only option while `await` could not suspend: a pending one
-    // would have evaluated to undefined and the rest of the function would have
-    // run with it. `await` suspends now, so a fetch can be what it is - work
-    // that finishes on a later turn.
-    //
-    // That is not pedantry. A page's `await fetch(url)` used to return before
-    // any other timer or listener could run, so nothing a real page does to stay
-    // responsive while loading could be observed at all - and an AbortController
-    // had nothing to abort, because the request was over before the object
-    // existed.
+    // A FETCH THAT HAS NOT HAPPENED YET: the work finishes on a later turn, so
+    // other timers and listeners run meanwhile and an AbortController has
+    // something to abort.
     struct pending_fetch {
         value promise;
         std::string url;
@@ -1310,12 +1234,6 @@ private:
     // hand by the time a Response exists, so there is nothing to wait for. It is
     // the fetch itself that is asynchronous, which is the part a page can
     // observe.
-    //
-    // The surface is what a real caller reads rather than what is easy to
-    // provide. p5.js's own `request()` helper branches on `res.ok` and then
-    // calls one of json/text/arrayBuffer/blob/bytes, and reads `res.headers` -
-    // so `headers` being a bare content-type string meant `headers.get(...)`
-    // threw on a library doing the ordinary thing.
     [[nodiscard]] value make_response(context & cx, const std::string & url, int status,
                                       const std::string & content_type,
                                       std::vector<std::byte> body) {
@@ -1536,26 +1454,17 @@ private:
 
     // --- A SECOND DOCUMENT (bindings/document/second_document.cpp) ---------
     //
-    // `createHTMLDocument` and `createDocument` return one, and the note that
-    // used to sit where they are installed said what a second Document would
-    // cost: a document handle beside the node handle in every key, `doc_`
-    // becoming an argument rather than a member, across ~90 uses in six files.
+    // `createHTMLDocument` and `createDocument` return one: a SECOND
+    // dom_bindings over its own tree, in the same realm. Every per-node key -
+    // `wrappers_`, `namespaces_` - is a member, so a second instance has a
+    // second set of them. What it shares with the primary is the atom table,
+    // the script context, and the INTERFACE OBJECTS, so that
+    // `otherDoc.createElement("div") instanceof HTMLDivElement` is true against
+    // the one `HTMLDivElement` a page can see.
     //
-    // THIS IS THE OTHER ANSWER, and it costs none of that: a second Document is
-    // a SECOND dom_bindings over its own tree, in the same realm. Every key it
-    // uses - `wrappers_`, `namespaces_`, `mirrors_` - is already a member, so a
-    // second instance has a second set of them and the collision the note
-    // describes cannot arise. What it shares with the primary is what a second
-    // document genuinely shares: the atom table, the script context, and the
-    // INTERFACE OBJECTS, so that `otherDoc.createElement("div") instanceof
-    // HTMLDivElement` is true against the one `HTMLDivElement` a page can see.
-    //
-    // WHAT IT DOES NOT DO, said plainly: `importNode` and `adoptNode` still do
-    // not cross between two documents, and a node of one passed to the other is
-    // REFUSED rather than misread - see `handle_of`, which now checks that the
-    // wrapper it was given is one of ours. That is the honest failure; the one
-    // the old note was avoiding was `getElementById` on one document handing
-    // back the other's element.
+    // `importNode` and `adoptNode` do not cross between two documents; a node
+    // of one passed to the other is REFUSED rather than misread - see
+    // `handle_of`, which checks that the wrapper it was given is one of ours.
     [[nodiscard]] value make_html_document(context & cx, const std::string * title);
     // `as_xml_document` picks the interface: `createDocument` returns an
     // XMLDocument and `new Document()` a plain Document, and the two differ in
@@ -1704,7 +1613,7 @@ private:
     // The bindings that made this one, for a secondary; null on the primary.
     // What `owner_of` walks up through to find the other documents.
     dom_bindings * primary_ = nullptr;
-    // --- XML document workstream ---
+    // --- XML documents ---
     // `document.contentType`, WHEN IT IS NOT DERIVABLE. A parsed document
     // answers from `document::xml()` and needs nothing here; `createDocument`
     // does not, because DOM 4.5.1 makes the string depend on the NAMESPACE it
@@ -1712,9 +1621,6 @@ private:
     // "image/svg+xml" - and the namespace is an argument that is gone by the
     // time the property is installed. Empty means "derive it".
     std::string content_type_;
-    // The first fault a timer or animation frame raised, and how many there
-    // were. A page whose draw loop throws every frame has ONE bug, not a
-    // thousand, and the first message is the one that names it.
     // `document.cookie`, in insertion order so reading it back is stable.
     std::vector<std::pair<std::string, std::string>> cookies_;
     // Counts the object URLs handed out, so each is distinct. Counted rather
@@ -1729,10 +1635,8 @@ private:
     //
     // A browser exposes one per interface, and libraries use them two ways that
     // both have to work: feature detection (`!!window.CanvasRenderingContext2D`)
-    // and identity (`el instanceof HTMLCanvasElement`). Defining a bare marker
-    // object satisfies the first and makes the second silently FALSE, which is
-    // the shape of wrong answer this engine keeps being bitten by - Phaser tests
-    // instanceof nine times and p5 four.
+    // and identity (`el instanceof HTMLCanvasElement`). A bare marker object
+    // satisfies the first and makes the second silently FALSE.
     //
     // So each carries a real `prototype`, and the objects that are instances get
     // that prototype linked. See interface_prototype().
@@ -1806,15 +1710,11 @@ private:
     // not a C++ one.
     //
     // `context::throw_error` unwinds to the innermost live `try` ANYWHERE
-    // below it on the stack - `handlers_` is one list for the whole VM - so a
-    // listener that threw did not stop at `dispatchEvent`: it landed in
-    // whatever `try` the page happened to be inside, which for the suite is
-    // testharness's own wrapper around `test(...)`. That is why
-    // Event-dispatch-throwing.html reported the LISTENER's error as the test's
-    // result, why the second of two listeners never ran, and why nothing was
-    // ever reported to `window.onerror`. The DOM says the opposite: "if this
-    // throws an exception, then report the exception" - the dispatch continues
-    // and the page is told through an `error` event.
+    // below it on the stack - `handlers_` is one list for the whole VM - so
+    // without a fence a listener that threw would land in whatever `try` the
+    // page happened to be inside. The DOM says "if this throws an exception,
+    // then report the exception": the dispatch continues and the page is told
+    // through an `error` event.
     //
     // A `try` INSIDE the callee is the only thing the VM's unwinder stops at,
     // so the fence is
@@ -1868,26 +1768,18 @@ private:
     [[nodiscard]] value compile_handler_attribute(context & cx, value self,
                                                   const std::string & name);
 
-    // --- shadow DOM workstream ---
+    // --- shadow DOM ---
     //
-    // A SHADOW ROOT IS A DocumentFragment AND TWO FACTS, and that is why this is
-    // a bindings change rather than a DOM one. `node_kind` already has a
-    // document_fragment - a parentless bag of nodes - which is exactly the shape
-    // DOM 4.8 gives a shadow root; what a fragment does not carry is its HOST
-    // and its MODE, and neither belongs on `node`, which is the most replicated
-    // object in the engine and pays for every field in every document.
+    // A SHADOW ROOT IS A DocumentFragment AND TWO FACTS. `node_kind` already
+    // has a document_fragment - a parentless bag of nodes - which is exactly
+    // the shape DOM 4.8 gives a shadow root; what a fragment does not carry is
+    // its HOST and its MODE, and neither belongs on `node`, which is the most
+    // replicated object in the engine and pays for every field in every
+    // document. So they live here, keyed on pack(node_id) like `wrappers_`.
     //
-    // So they live here, in the two maps every other per-node fact in this class
-    // lives in - `wrappers_`, `namespaces_`, `mirrors_` - keyed on pack(node_id)
-    // the same way.
-    //
-    // WHAT A SHADOW TREE DELIBERATELY DOES NOT DO: it does not RENDER. The
-    // fragment is detached, so style, layout and paint never see it, and a
-    // `<div>` inside a shadow root has no box, no computed style and no pixels.
-    // That is a real gap and it is named here rather than left to be discovered:
-    // flattening the shadow tree into the box tree is the slot-assignment
-    // (flat-tree) problem, and every test this was built for asserts about the
-    // TREE, about events, or about getComputedStyle on a LIGHT-DOM element.
+    // A SHADOW TREE DOES NOT RENDER: the fragment is detached, so style,
+    // layout and paint never see it. Flattening it into the box tree is the
+    // slot-assignment (flat-tree) problem.
     struct shadow_tree {
         node_id host;
         // `mode: "open"` - the only thing that decides whether `host.shadowRoot`

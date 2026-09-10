@@ -13,10 +13,9 @@
 
 // Form control state.
 //
-// Kept in a store keyed by node_id, NOT on the node. the previous engine put value, caret,
-// selection and scroll offset on `node`, which is what made its node struct
-// carry thirty-odd fields that only the shell cared about - and what made a
-// document snapshot mean "including whatever the user had half-typed".
+// Kept in a store keyed by node_id, NOT on the node: value, caret, selection
+// and scroll offset are fields only the shell cares about, and a document
+// snapshot must not mean "including whatever the user had half-typed".
 //
 // The distinction is real: a control's VALUE is document state after the user
 // edits it (the `value` attribute stops being the answer), while its caret and

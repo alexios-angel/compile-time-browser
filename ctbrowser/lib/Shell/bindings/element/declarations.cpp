@@ -1,13 +1,6 @@
 // dom_bindings - the inline-style declaration store behind `element.style`:
 // what counts as a declaration, how one is written through the value grammar,
 // and how the store serialises back to the `style` attribute and to `cssText`.
-//
-// One of twelve files carved out of a 5,442-line bindings/element.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. All are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; the helpers more than one of them
-// needs are declared in internal.hpp beside this, with external linkage in
-// ctbrowser::shell::detail. Nothing about the public header changed.
 
 #include "internal.hpp"
 

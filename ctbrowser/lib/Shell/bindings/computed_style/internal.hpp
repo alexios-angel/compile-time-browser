@@ -1,9 +1,5 @@
 #pragma once
-// Private to lib/Shell/bindings/computed_style/. NOT installed and in no file
-// set: include/ctbrowser/shell/bindings.hpp declares dom_bindings whole, and
-// this exists only so getComputedStyle can be more than one file - it was
-// 1,326 lines in one until 2026-09-08. The includes are computed_style.cpp's,
-// so every file here sees exactly what that one saw.
+// Private to lib/Shell/bindings/computed_style/ - not installed.
 
 #include <algorithm>
 #include <array>
@@ -68,29 +64,19 @@
 //
 // THE OBJECT IS LIVE. CSSOM says `getComputedStyle` returns a live
 // CSSStyleDeclaration, and every property on it is an ACCESSOR that re-derives
-// from the current trees. It was a snapshot, so a test holding
-// `let cs = gcs(el)` across a write read the state from before it -
-// getComputedStyle-display-none-001, -002 and -resolved-min-max-clamping are
-// all written exactly that way and could not pass at all. What outlives the
-// call is the element's node_id and a shared cache; the raw pointers into the
-// box and fragment trees are gathered inside `computed_style_entries` and never
-// escape it, because the next layout - which now happens INSIDE a script turn -
-// frees them.
+// from the current trees - a test holding `let cs = gcs(el)` across a write
+// must read the state after it. What outlives the call is the element's
+// node_id and a shared cache; the raw pointers into the box and fragment trees
+// are gathered inside `computed_style_entries` and never escape it, because
+// the next layout - which happens INSIDE a script turn - frees them.
 //
-// INHERITANCE IS NOT DONE HERE ANY MORE. This file used to walk DOM ancestors for an
-// inherited property, because the cascade produced only the declarations that MATCHED
-// and inheritance happened in four other places downstream. That made this the fifth
-// ad-hoc mechanism for one idea. The cascade inherits now, so an inherited property is
-// a plain `get` on the element's own style, and the walk is gone.
+// INHERITANCE IS THE CASCADE'S: an inherited property is a plain `get` on the
+// element's own style, not a walk of the DOM ancestors.
 
 namespace ctbrowser::shell::detail {
 
 // --- helpers shared by more than one file of bindings/computed_style/ --------
-//
-// Everything here was in an anonymous namespace of computed_style.cpp. It
-// gained external linkage when that file was split, and nothing else: the
-// bodies are in serialize.cpp, which explains each one, and entries.cpp is
-// what calls them.
+// Defined in serialize.cpp.
 [[nodiscard]] float border_width_px(std::string_view text, float font_size);
 [[nodiscard]] std::string number_text(float value);
 [[nodiscard]] std::string px_text(float value);

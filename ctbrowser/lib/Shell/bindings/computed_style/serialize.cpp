@@ -1,13 +1,6 @@
 // dom_bindings - how a computed value is written down: numbers as CSSOM's
 // shortest round-tripping decimal, colours in the one form both engines
 // normalise to, font-family lists with CSSOM's quoting, and keywords folded.
-//
-// One of three files carved out of a 1,326-line bindings/computed_style.cpp
-// on 2026-09-08. The member functions belong to the one class declared in
-// include/ctbrowser/shell/bindings.hpp; the serialisation helpers more than
-// one file needs are declared in internal.hpp beside this, with external
-// linkage in ctbrowser::shell::detail, and internal.hpp carries the note on
-// where a computed value comes from. Nothing about the public header changed.
 
 #include "internal.hpp"
 

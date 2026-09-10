@@ -1,12 +1,5 @@
 // dom_bindings - the views onto an element that are OBJECTS rather than
 // values: `attributes`, `style`, `classList`, `blocking`, `dataset` and the tree accessors.
-//
-// One of twelve files carved out of a 5,442-line bindings/element.cpp on
-// 2026-09-08 - which was itself one of six carved out of bindings.cpp on
-// 2026-08-09. All are member functions of one class declared in
-// include/ctbrowser/shell/bindings.hpp; the helpers more than one of them
-// needs are declared in internal.hpp beside this, with external linkage in
-// ctbrowser::shell::detail. Nothing about the public header changed.
 
 #include "internal.hpp"
 

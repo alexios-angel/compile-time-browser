@@ -1,12 +1,6 @@
 // browser - a page's lifecycle: loading a document (and the navigation a
 // script queues from inside one), the reset between pages, and what an
 // embedder installs on a browser - natives, fonts, hooks, a script to run.
-//
-// One of ten files carved out of a 2,871-line Shell/browser.cpp on 2026-09-08.
-// All are member functions of one class declared in
-// include/ctbrowser/shell/browser.hpp; internal.hpp beside this carries the
-// includes browser.cpp had, so every file sees exactly what it saw. Nothing
-// about the public header changed.
 
 #include "internal.hpp"
 
