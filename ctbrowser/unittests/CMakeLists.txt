@@ -132,6 +132,9 @@ ctbrowser_test(unit/layout_parallel)
 ctbrowser_test(unit/flex_basics)
 # <iframe>: a second document inside the first. See lib/Shell/bindings/frames.cpp.
 ctbrowser_test(unit/frames)
+# Web Animations: element.animate seeked and read back through getComputedStyle.
+# See lib/Shell/bindings/animations.cpp.
+ctbrowser_test(unit/web_animations)
 # Positioning, which is the one part of layout where a box's place is decided
 # by an ancestor rather than by its parent - see layout/position.hpp.
 ctbrowser_test(unit/position_basics)
