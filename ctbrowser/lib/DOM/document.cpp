@@ -332,7 +332,7 @@ std::expected<void, dom_error> document::set_text(node_id id, std::string_view v
 }
 
 node_id document::template_content(node_id element) const {
-    const std::lock_guard lock{stripe_of(element)};
+    const std::lock_guard lock{templates_};
     for (const auto & [held, fragment] : template_contents_) {
         if (held == element) { return fragment; }
     }
@@ -340,7 +340,7 @@ node_id document::template_content(node_id element) const {
 }
 
 void document::set_template_content(node_id element, node_id fragment) {
-    const std::lock_guard lock{stripe_of(element)};
+    const std::lock_guard lock{templates_};
     for (auto & [held, current] : template_contents_) {
         if (held == element) {
             current = fragment;

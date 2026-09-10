@@ -314,8 +314,10 @@ private:
     std::mutex structure_; // serializes tree-SHAPE changes; see the policy note
     // (element, contents fragment) pairs - see template_content. A vector
     // because a page holds a few and a lookup happens once per `.content`
-    // read; guarded by the element's stripe, which is what set_attribute on the
-    // same element takes, so a reader and a writer of one pairing serialize.
+    // read. ONE mutex for the whole vector rather than the element's stripe:
+    // two templates are on two stripes, and an emplace_back under either of
+    // them would race the other's walk.
+    mutable std::mutex templates_;
     std::vector<std::pair<node_id, node_id>> template_contents_;
     node_id root_{};
     std::atomic<std::uint64_t> version_{1};
