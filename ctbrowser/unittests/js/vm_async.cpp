@@ -160,7 +160,15 @@ void test_async_and_promises() {
         "  return t; } return await run();",
         "12");
     expect_result("return await Promise.resolve(7);", "7");
-    expect_result("var p = await Promise.all([Promise.resolve(1), 2]); return p.join(',');", "1,2");
+    // `Promise.all` HANDS BACK A PENDING PROMISE even when every input is
+    // already settled - 27.2.4.1.2 step 4.i attaches with `then`, and a
+    // reaction is a job - so this await suspends and its answer is only there
+    // once the queue has drained. It read `1,2` from a `return` while `all`
+    // settled synchronously, which is the thing that was wrong.
+    expect_after_turn("var result = ''; async function f() {"
+                      "  const p = await Promise.all([Promise.resolve(1), 2]);"
+                      "  result = p.join(','); } f();",
+                      "1,2");
     // Awaiting a rejected promise THROWS, which is what makes try/catch around
     // an await behave the way pages assume.
     expect_result("var r = 0; try { await Promise.reject(9); } catch (e) { r = e; } return r;",
