@@ -49,7 +49,13 @@ namespace ctbrowser::style::css {
 // `invalid` reports a SYNTAX error, which is a different thing from a selector this
 // engine cannot match; `parse_selector_list`'s declaration says which is which and
 // why `querySelector` must tell them apart.
-[[nodiscard]] stylesheet parse_selector_text(std::string_view text, atom_table & atoms,
-                                             bool & invalid);
+//
+// `namespaces` is the `@namespace` rules in force - a CSSOM sheet's, or an EMPTY
+// list for `querySelector`, which has no namespace resolver and so throws on
+// `ns|div`. Null means the caller has none to offer and a prefix is taken on
+// trust rather than refused.
+[[nodiscard]] stylesheet parse_selector_text(
+    std::string_view text, atom_table & atoms, bool & invalid,
+    const std::vector<namespace_declaration> * namespaces = nullptr);
 
 } // namespace ctbrowser::style::css
