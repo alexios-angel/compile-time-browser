@@ -1,11 +1,10 @@
 #pragma once
 #include <algorithm>
+#include <array>
 #include <boost/container/small_vector.hpp>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
-#include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
@@ -215,21 +214,15 @@ public:
                 (part.front() >= '0' && part.front() <= '9'));
     }
 
-    // A property NAME that has to outlive this call. expand_shorthand returns
-    // views, and every other name it returns is a string literal with static
-    // storage; the four per-side border groups are the only ones built at
-    // runtime, so they are interned into a set that lives as long as the process
-    // - twelve strings, once.
-    [[nodiscard]] static std::string_view intern_side(const std::string & name) {
-        static std::vector<std::unique_ptr<const std::string>> kept;
-        static std::mutex guard;
-        const std::lock_guard<std::mutex> hold{guard};
-        for (const auto & had : kept) {
-            if (*had == name) { return *had; }
-        }
-        kept.push_back(std::make_unique<const std::string>(name));
-        return *kept.back();
-    }
+    // The per-side border longhands, spelled out so expand_shorthand can return
+    // views into static storage like it does for every other name.
+    static constexpr std::string_view border_sides[4] = {"top", "right", "bottom", "left"};
+    static constexpr std::string_view border_longhands[4][3] = {
+        {"border-top-width", "border-top-style", "border-top-color"},
+        {"border-right-width", "border-right-style", "border-right-color"},
+        {"border-bottom-width", "border-bottom-style", "border-bottom-color"},
+        {"border-left-width", "border-left-style", "border-left-color"},
+    };
 
     [[nodiscard]] static std::vector<std::pair<std::string_view, std::string_view>>
     expand_shorthand(std::string_view property, std::string_view value) {
@@ -263,11 +256,10 @@ public:
             // them: `border: 1px solid red; border-bottom-color: blue` has to
             // leave three sides red, and it cannot if the first declaration only
             // wrote a uniform value that the second does not overwrite.
-            for (const std::string_view side : {"top", "right", "bottom", "left"}) {
-                const std::string prefix = "border-" + std::string{side} + "-";
-                out.emplace_back(intern_side(prefix + "width"), w);
-                out.emplace_back(intern_side(prefix + "style"), y);
-                out.emplace_back(intern_side(prefix + "color"), c);
+            for (const auto & side : border_longhands) {
+                out.emplace_back(side[0], w);
+                out.emplace_back(side[1], y);
+                out.emplace_back(side[2], c);
             }
             return out;
         }
@@ -275,8 +267,10 @@ public:
         // shorthands over the four sides, with margin's 1-to-4-value syntax:
         // `border-width: 0 var(--bs-border-width)` is no horizontal edges and a
         // vertical one on each side.
-        for (const std::string_view which : {"width", "style", "color"}) {
-            if (property != std::string("border-") + std::string{which}) { continue; }
+        for (std::size_t which = 0; which < 3; ++which) {
+            if (property != std::array{"border-width", "border-style", "border-color"}[which]) {
+                continue;
+            }
             const std::vector<std::string_view> parts = value_parts(value, 4);
             if (parts.empty()) { return {}; }
             const std::string_view top = parts[0];
@@ -286,10 +280,10 @@ public:
             // The uniform property is kept as well, holding the FIRST value, so
             // the many readers that ask for it still get an answer - and every
             // one of them prefers the per-side longhand when there is one.
-            return {{intern_side("border-top-" + std::string{which}), top},
-                    {intern_side("border-right-" + std::string{which}), right},
-                    {intern_side("border-bottom-" + std::string{which}), bottom},
-                    {intern_side("border-left-" + std::string{which}), left},
+            return {{border_longhands[0][which], top},
+                    {border_longhands[1][which], right},
+                    {border_longhands[2][which], bottom},
+                    {border_longhands[3][which], left},
                     {property, top}};
         }
         // THE PER-SIDE FORM, `border-top` and its three siblings, which is the same
@@ -297,8 +291,8 @@ public:
         // and layout and paint both read those in preference to the uniform trio. Do
         // NOT set the uniform ones as well "so it draws": a `border-bottom` then
         // insets the box on all four sides and draws a full ring.
-        for (const std::string_view side : {"top", "right", "bottom", "left"}) {
-            if (property != std::string("border-") + std::string{side}) { continue; }
+        for (std::size_t side = 0; side < 4; ++side) {
+            if (property != std::string("border-") + std::string{border_sides[side]}) { continue; }
             const std::vector<std::string_view> parts = value_parts(value, 3);
             if (parts.empty()) { return {}; }
             std::string_view width, style, colour;
@@ -314,10 +308,9 @@ public:
             if (width.empty()) { width = "medium"; }
             if (style.empty()) { style = "none"; }
             if (colour.empty()) { colour = "currentcolor"; }
-            const std::string prefix = "border-" + std::string{side} + "-";
-            return {{intern_side(prefix + "width"), width},
-                    {intern_side(prefix + "style"), style},
-                    {intern_side(prefix + "color"), colour}};
+            return {{border_longhands[side][0], width},
+                    {border_longhands[side][1], style},
+                    {border_longhands[side][2], colour}};
         }
         // `flex`, WHICH MUST BE EXPANDED RATHER THAN READ: `.col { flex: 1 0 0 }` and
         // a `.flex-grow-0` utility written after it has to win, so the longhands are
