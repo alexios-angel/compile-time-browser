@@ -266,12 +266,27 @@ void dom_bindings::install_node_methods(context & cx, script::object_object & ob
     // had both and an element had neither, so the ordinary "find something
     // inside this" - which is what a library does with a container it owns -
     // threw. p5.js's describe() builds an offscreen tree and queries it.
+    // Text that is not a selector at all is a SyntaxError, exactly as on the
+    // document; an UNSUPPORTED selector still answers null, a missing answer
+    // rather than a wrong one.
     method("querySelector", [this](context & c, std::span<value> args) {
-        const std::vector<node_id> found = query(arg_string(c, args, 0), receiver(c));
+        bool invalid = false;
+        const std::string selector = arg_string(c, args, 0);
+        const std::vector<node_id> found = query(selector, receiver(c), &invalid, true);
+        if (invalid) {
+            throw_dom_exception(c, "SyntaxError", "'" + selector + "' is not a valid selector");
+            return value::undefined();
+        }
         return found.empty() ? value::null() : wrap(c, found.front());
     });
     method("querySelectorAll", [this](context & c, std::span<value> args) {
-        const std::vector<node_id> found = query(arg_string(c, args, 0), receiver(c));
+        bool invalid = false;
+        const std::string selector = arg_string(c, args, 0);
+        const std::vector<node_id> found = query(selector, receiver(c), &invalid);
+        if (invalid) {
+            throw_dom_exception(c, "SyntaxError", "'" + selector + "' is not a valid selector");
+            return value::undefined();
+        }
         value out = c.make_array();
         auto * items = static_cast<script::array_object *>(out.as_heap());
         for (const node_id node : found) { items->items.push_back(wrap(c, node)); }
