@@ -12,7 +12,7 @@
 //               headlessly and byte-for-byte before any GPU code exists
 //   renderer    the movable handle to the software backend that the browser
 //               owns
-//   compositor  draw() for a full frame, recomposite() for a scroll
+//   compositor  draw() for a frame
 //   svg         vector graphics -> a bitmap AT THE SIZE ASKED FOR, through
 //               plutosvg; optional, and the only third-party rasteriser the
 //               engine calls that is not SDL

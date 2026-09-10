@@ -253,7 +253,7 @@ void test_scrolling_recomposites_without_rastering() {
     for (int y = 0; y < 200; ++y) { before.push_back(pixel_at(backend.target(), 10, y)); }
 
     p.layers.scroll_to(0, 20);
-    check(recomposite(backend, p.layers).has_value(), "the scrolled frame composites");
+    check(draw(backend, p.layers, nullptr, 64).has_value(), "the scrolled frame composites");
 
     // THE CLAIM. A scroll is a composite. Tiles were rastered in content space
     // and are still valid; the previous engine re-ran layout and re-emitted every command.
@@ -286,7 +286,7 @@ void test_a_fixed_layer_does_not_move() {
     software_backend backend{128, 128, 128};
     check(draw(backend, tree, nullptr, 128).has_value(), "two layers draw");
     tree.scroll_to(0, 20);
-    check(recomposite(backend, tree).has_value(), "and re-composite after a scroll");
+    check(draw(backend, tree, nullptr, 128).has_value(), "and re-composite after a scroll");
 
     // position:fixed needs no per-command flag here - it is simply a layer the
     // scroll does not move. the previous engine carried a `fixed` bool on every paint command.
