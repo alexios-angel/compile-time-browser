@@ -16,7 +16,7 @@
 #
 # It needs no MLIR: a recording is the INTERPRETER's opinion, and asking the
 # compiler anything here would beg the question.
-add_executable(ctcompile-test-type-oracle TypeOracle.cpp)
+add_executable(ctcompile-test-type-oracle Analysis/Types/TypeOracle.cpp)
 target_link_libraries(ctcompile-test-type-oracle PRIVATE ctbrowser::ctbrowser)
 ctcompile_target(ctcompile-test-type-oracle)
 
@@ -36,7 +36,7 @@ if(Python3_Interpreter_FOUND)
                    -DPYTHON=${Python3_EXECUTABLE}
                    -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/type-oracle.py
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/check-type-oracle.cmake)
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/check-type-oracle.cmake)
 else()
   message(STATUS "ctcompile: no Python3 - the type oracle's checker is not registered")
 endif()
@@ -54,14 +54,14 @@ endif()
 # Behind the MLIR guard, like every other target that names a dialect.
 if(CTCOMPILE_ENABLE_MLIR)
   add_executable(ctcompile-test-type-inference
-    TypeInference/Main.cpp
-    TypeInference/Helpers.cpp
-    TypeInference/IdentityFields.cpp
-    TypeInference/MapPresence.cpp
-    TypeInference/MapDeletePresence.cpp
-    TypeInference/FieldEffects.cpp
-    TypeInference/ComparisonIdentity.cpp
-    TypeInference/ScalarGlobals.cpp)
+    Analysis/Types/TypeInference/Main.cpp
+    Analysis/Types/TypeInference/Helpers.cpp
+    Analysis/Types/TypeInference/IdentityFields.cpp
+    Analysis/Types/TypeInference/MapPresence.cpp
+    Analysis/Types/TypeInference/MapDeletePresence.cpp
+    Analysis/Types/TypeInference/FieldEffects.cpp
+    Analysis/Types/TypeInference/ComparisonIdentity.cpp
+    Analysis/Types/TypeInference/ScalarGlobals.cpp)
   target_link_libraries(ctcompile-test-type-inference
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
             MLIRControlFlowDialect MLIRSCFDialect MLIRUBDialect)
@@ -85,7 +85,7 @@ endif()
 # Phase 54B wrote for it - and its precision is stated against the registers
 # it actually reaches, which is an eighth of the bundle.
 if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
-  add_executable(ctcompile-test-type-claims TypeClaims.cpp)
+  add_executable(ctcompile-test-type-claims Analysis/Types/TypeClaims.cpp)
   target_link_libraries(ctcompile-test-type-claims
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect ctcompile::ctjs-import
             MLIRIR MLIRAnalysis ctbrowser::ctbrowser)
@@ -100,9 +100,9 @@ if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
   foreach(_corpus fixture bootstrap p5 phaser)
     set(_prefix "")
     if(_corpus STREQUAL "fixture")
-      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/type-claims-fixture.js")
+      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/type-claims-fixture.js")
     elseif(_corpus STREQUAL "bootstrap")
-      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/type-oracle-bootstrap.js")
+      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/type-oracle-bootstrap.js")
       set(_prefix "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js")
     else()
       set(_js "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/${_corpus}/${_corpus}.js")
@@ -117,7 +117,7 @@ if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
                      -DPREFIX=${_prefix}
                      -DWORK=${CMAKE_CURRENT_BINARY_DIR}
                      -DNAME=${_corpus}
-                     -P ${CMAKE_CURRENT_SOURCE_DIR}/check-type-claims.cmake)
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/check-type-claims.cmake)
   endforeach()
 endif()
 
@@ -141,7 +141,7 @@ endif()
 # build printed. Gate 4(d) - the recorder over this file - belongs to the
 # escape-oracle work and its check-escape-claims.cmake; 4(g) is deferred by the
 # design itself until 55B emits anything.
-set(_cyc_js "${CMAKE_CURRENT_SOURCE_DIR}/escape-cycle.js")
+set(_cyc_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/escape-cycle.js")
 # THE DRIVER READS THE SAME FILE EVERYTHING ELSE DOES - the recorder, the
 # claims, the printed module - for gc-roots.js's reason: two copies of one
 # fixture are two programs.
@@ -153,7 +153,7 @@ add_custom_command(
   DEPENDS "${_cyc_js}" "${CMAKE_CURRENT_SOURCE_DIR}/embed-js.cmake"
   COMMENT "Embedding escape-cycle.js for the driver"
   VERBATIM)
-set(_cyc_sources EscapeCycle.cpp "${_cyc_inc}")
+set(_cyc_sources Analysis/Escape/EscapeCycle.cpp "${_cyc_inc}")
 set(_cyc_has_module OFF)
 if(TARGET ctjs-translate)
   # THE PRINTED MODULE, embedded the same way. ctjs-translate is an
@@ -208,14 +208,14 @@ add_test(NAME ctcompile_escape_cycle COMMAND ctcompile-test-escape-cycle)
 # the all-write census, loads, provenance) and the array contents/retention
 # tables. Every row is where it was, verbatim; they share EscapeAnalysisHarness.h.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-escape-analysis-sinks EscapeAnalysisSinks.cpp)
+  add_executable(ctcompile-test-escape-analysis-sinks Analysis/Escape/EscapeAnalysisSinks.cpp)
   target_link_libraries(ctcompile-test-escape-analysis-sinks
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
             MLIRControlFlowDialect)
   ctcompile_target(ctcompile-test-escape-analysis-sinks)
   add_test(NAME ctcompile_escape_analysis_sinks COMMAND ctcompile-test-escape-analysis-sinks)
 
-  add_executable(ctcompile-test-escape-analysis-completion EscapeAnalysisCompletion.cpp)
+  add_executable(ctcompile-test-escape-analysis-completion Analysis/Escape/EscapeAnalysisCompletion.cpp)
   target_link_libraries(ctcompile-test-escape-analysis-completion
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
             MLIRControlFlowDialect)
@@ -223,7 +223,7 @@ if(CTCOMPILE_ENABLE_MLIR)
   add_test(NAME ctcompile_escape_analysis_completion
            COMMAND ctcompile-test-escape-analysis-completion)
 
-  add_executable(ctcompile-test-escape-analysis-storage EscapeAnalysisStorage.cpp)
+  add_executable(ctcompile-test-escape-analysis-storage Analysis/Escape/EscapeAnalysisStorage.cpp)
   target_link_libraries(ctcompile-test-escape-analysis-storage
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
             MLIRControlFlowDialect)
@@ -231,16 +231,16 @@ if(CTCOMPILE_ENABLE_MLIR)
   add_test(NAME ctcompile_escape_analysis_storage COMMAND ctcompile-test-escape-analysis-storage)
 
   add_executable(ctcompile-test-escape-analysis-arrays
-    EscapeAnalysisArrays/main.cpp
-    EscapeAnalysisArrays/Harness.cpp
-    EscapeAnalysisArrays/Contents.cpp
-    EscapeAnalysisArrays/Objects.cpp
-    EscapeAnalysisArrays/Selectors.cpp
-    EscapeAnalysisArrays/Primitives.cpp
-    EscapeAnalysisArrays/BigIntErrors.cpp
-    EscapeAnalysisArrays/BigIntProducers.cpp
-    EscapeAnalysisArrays/BigIntStrings.cpp
-    EscapeAnalysisArrays/ControlFlow.cpp)
+    Analysis/Escape/EscapeAnalysisArrays/main.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Harness.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Contents.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Objects.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Selectors.cpp
+    Analysis/Escape/EscapeAnalysisArrays/Primitives.cpp
+    Analysis/Escape/EscapeAnalysisArrays/BigIntErrors.cpp
+    Analysis/Escape/EscapeAnalysisArrays/BigIntProducers.cpp
+    Analysis/Escape/EscapeAnalysisArrays/BigIntStrings.cpp
+    Analysis/Escape/EscapeAnalysisArrays/ControlFlow.cpp)
   target_link_libraries(ctcompile-test-escape-analysis-arrays
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect MLIRIR MLIRAnalysis MLIRParser
             MLIRControlFlowDialect)
@@ -257,7 +257,7 @@ endif()
 # interpreter's recording are registered with the recorder (55O), which they
 # need and which lands separately.
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-escape-claims EscapeClaims.cpp)
+  add_executable(ctcompile-test-escape-claims Analysis/Escape/EscapeClaims.cpp)
   target_link_libraries(ctcompile-test-escape-claims
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect ctcompile::ctjs-import
             MLIRIR MLIRAnalysis ctbrowser::ctbrowser)
@@ -292,7 +292,7 @@ if(Python3_Interpreter_FOUND)
                    -DPYTHON=${Python3_EXECUTABLE}
                    -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/escape-oracle.py
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/check-escape-oracle.cmake)
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/check-escape-oracle.cmake)
 else()
   message(STATUS "ctcompile: no Python3 - the escape oracle's checker is not registered")
 endif()
@@ -320,7 +320,7 @@ if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
   set(_escape_fixture "${CMAKE_CURRENT_BINARY_DIR}/escape-claims-fixture.js")
   set(_escape_fixture_source "")
   foreach(_part contents primitives escapes)
-    set(_path "${CMAKE_CURRENT_SOURCE_DIR}/escape-claims/fixture/${_part}.js")
+    set(_path "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/escape-claims/fixture/${_part}.js")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_path}")
     file(READ "${_path}" _text)
     string(APPEND _escape_fixture_source "${_text}")
@@ -334,7 +334,7 @@ if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
       set(_js "${_escape_fixture}")
       set(_strict ON)
     elseif(_corpus STREQUAL "bootstrap")
-      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/type-oracle-bootstrap.js")
+      set(_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Types/type-oracle-bootstrap.js")
       set(_prefix "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js")
     else()
       set(_js "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/${_corpus}/${_corpus}.js")
@@ -356,14 +356,14 @@ if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
                      -DSTRICT=${_strict}
                      -DWORK=${CMAKE_CURRENT_BINARY_DIR}
                      -DNAME=${_corpus}
-                     -P ${CMAKE_CURRENT_SOURCE_DIR}/escape-claims/check.cmake)
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/escape-claims/check.cmake)
   endforeach()
 endif()
 
 # A compiled frame's ip contains a catch-pad id, never a bytecode coordinate.
 # Real AOT entries cover return, caught throw and mixed AOT/VM unwind without
 # allowing their uninstrumented allocations to join native escape claims.
-add_executable(ctcompile-test-escape-oracle-aot EscapeOracleAOT.cpp)
+add_executable(ctcompile-test-escape-oracle-aot Analysis/Escape/EscapeOracleAOT.cpp)
 target_link_libraries(ctcompile-test-escape-oracle-aot PRIVATE ctbrowser::ctbrowser)
 ctcompile_target(ctcompile-test-escape-oracle-aot)
 add_test(NAME ctcompile_escape_oracle_aot COMMAND ctcompile-test-escape-oracle-aot)
@@ -374,13 +374,13 @@ if(Python3_Interpreter_FOUND)
                    -DPYTHON=${Python3_EXECUTABLE}
                    -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/escape-oracle.py
                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}
-                   -P ${CMAKE_CURRENT_SOURCE_DIR}/check-escape-oracle-aot.cmake)
+                   -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/check-escape-oracle-aot.cmake)
 endif()
 
 # Observe the real boxed emitter's normalized return value, retaining the
 # compiled sentinel coordinate rather than inventing a static source site.
 if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
-  set(_aot_return_js "${CMAKE_CURRENT_SOURCE_DIR}/escape-oracle-aot-return.js")
+  set(_aot_return_js "${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/escape-oracle-aot-return.js")
   set(_aot_return_inc "${CMAKE_CURRENT_BINARY_DIR}/escape-oracle-aot-return.js.inc")
   set(_aot_return_cpp "${CMAKE_CURRENT_BINARY_DIR}/escape-oracle-aot-return.generated.cpp")
   add_custom_command(OUTPUT "${_aot_return_inc}"
@@ -397,7 +397,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
   set_source_files_properties("${_aot_return_cpp}" PROPERTIES
     COMPILE_OPTIONS "${CTCOMPILE_GENERATED_WARNINGS}")
   add_executable(ctcompile-test-escape-oracle-aot-return
-    EscapeOracleAOTReturn.cpp "${_aot_return_cpp}" "${_aot_return_inc}")
+    Analysis/Escape/EscapeOracleAOTReturn.cpp "${_aot_return_cpp}" "${_aot_return_inc}")
   target_include_directories(ctcompile-test-escape-oracle-aot-return PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
   target_link_libraries(ctcompile-test-escape-oracle-aot-return PRIVATE ctbrowser::ctbrowser)
   ctcompile_target(ctcompile-test-escape-oracle-aot-return)
@@ -407,7 +407,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
       COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:ctcompile-test-escape-oracle-aot-return>
         -DPYTHON=${Python3_EXECUTABLE} -DSCRIPT=${CTBROWSER_MONOREPO_ROOT}/tools/check/escape-oracle.py
         -DWORK=${CMAKE_CURRENT_BINARY_DIR} -DNAME=aot-return -DUNCLAIMED=5
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/check-escape-oracle-aot.cmake)
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/Analysis/Escape/check-escape-oracle-aot.cmake)
   endif()
 endif()
 

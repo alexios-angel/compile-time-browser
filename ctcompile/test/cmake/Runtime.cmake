@@ -284,7 +284,7 @@ endif()
 # point - part 24 §A.2, "Every phase's gate is a comparison against the
 # interpreter."
 if(CTCOMPILE_ENABLE_MLIR)
-  add_executable(ctcompile-test-ctnative-lattice CTNativeLattice.cpp)
+  add_executable(ctcompile-test-ctnative-lattice Analysis/Types/CTNativeLattice.cpp)
   # MLIRAsmParser IS NOT OPTIONAL AND ITS ABSENCE LOOKS LIKE NOTHING. The meet
   # table spells its types the way a .mlir file does and calls mlir::parseType,
   # which lives there and not in MLIRIR: without it every line COMPILES and the

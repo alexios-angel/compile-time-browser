@@ -19,7 +19,7 @@
 // Part 23 §1.4's ratio note: this file is a TEST, and tests are not counted
 // against the ODS-first rule - there is no TableGen way to assert that
 // `-0 | 0` is an int32 and `-0` alone is not.
-#include "../OwnedGlobalMethodsFixtures.h"
+#include "../../../OwnedGlobalMethodsFixtures.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
