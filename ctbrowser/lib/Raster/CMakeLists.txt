@@ -24,7 +24,6 @@ target_sources(ctbrowser-raster
     svg.cpp
     # the backends and the machinery that drives a frame through one
     backend/software.cpp
-    backend/renderer.cpp
     # real fonts
     text/ttf.cpp
   PUBLIC
