@@ -38,7 +38,7 @@ were big enough that it stopped being one:
 
 ```
 shell/net/      net.hpp url.hpp                    where bytes come from
-shell/image/    png.hpp jpeg.hpp images.hpp        codecs, none of them SDL
+shell/image/    images.hpp                         codecs, none of them SDL
 shell/page/     canvas composite forms webgl       what a page can do
                 assets svg_cache
 raster/backend/ backend software renderer          an interface, an

@@ -1,8 +1,8 @@
-#include <ctbrowser/shell/image/jpeg.hpp>
+#include <ctbrowser/shell/image/images.hpp>
 
-// THE ONLY TRANSLATION UNIT THAT KNOWS LIBJPEG-TURBO EXISTS. jpeg.hpp declares
-// two functions and includes nothing third-party, which is the rule url.cpp
-// follows for Boost.URL and png.cpp for libpng.
+// THE ONLY TRANSLATION UNIT THAT KNOWS LIBJPEG-TURBO EXISTS. images.hpp
+// declares two functions and includes nothing third-party, which is the rule
+// url.cpp follows for Boost.URL and png.cpp for libpng.
 //
 // LIBJPEG-TURBO, which is libjpeg's API with SIMD underneath and the decoder
 // essentially everything ships: browsers, Android, and every distribution's

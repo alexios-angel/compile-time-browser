@@ -13,25 +13,46 @@
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/paint/paint.hpp>
 
-#include <ctbrowser/shell/image/jpeg.hpp>
-#include <ctbrowser/shell/image/png.hpp>
 #include <ctbrowser/shell/page/assets.hpp>
 
 // Decoding images into the bitmap the display list already carries.
 //
 // BMP is built in - uncompressed 24/32bpp, which every image tool can write and
-// which needs no library at all. PNG goes through libpng (`png.hpp`) and JPEG
-// through libjpeg-turbo (`jpeg.hpp`), both part of the SDL-free engine.
-// Everything else - GIF, WEBP, TIFF - arrives through `decoder`, a hook the
-// application layer fills in from SDL3_image when it was found.
+// which needs no library at all. PNG goes through libpng (`image/png.cpp`) and
+// JPEG through libjpeg-turbo (`image/jpeg.cpp`), both part of the SDL-free
+// engine: a format whose result depended on whether SDL was found is one no
+// golden can compare. Everything else - GIF, WEBP, TIFF - arrives through
+// `decoder`, a hook the application layer fills in from SDL3_image when it was
+// found.
 //
-// PNG MOVED OUT OF THAT HOOK on 2026-08-01. Leaving it there meant `test/` and `unittests/`,
-// which is SDL-free by an invariant `test/lint/api_surface` lints for, saw every
-// PNG as a zero-sized image - and nothing in the suite said so, because the
-// pages in this tree load BMPs. Phaser found it: its texture manager loads
-// three base64 PNGs during boot and will not start until all three settle.
+// NOTHING THIRD-PARTY IS INCLUDED ABOVE, the rule url.hpp states for Boost.URL
+// and net.hpp for curl.h: png.cpp is the only translation unit that has heard
+// of libpng, and jpeg.cpp of libjpeg-turbo.
 
 namespace ctbrowser::shell {
+
+// An empty bitmap for anything that is not a PNG this can read - truncated,
+// corrupt, or not a PNG at all. Every colour type and bit depth the format has
+// arrives as the engine's 8-bit ARGB, interlaced images included, because the
+// alternative is a decoder that is right about most PNGs.
+[[nodiscard]] paint::bitmap decode_png(std::span<const std::byte> data);
+
+// RGBA, 8 bits per channel: the encoding a decoder needs no options for. Empty
+// for an empty bitmap. What `canvas.toDataURL()` and `toBlob()` hand back.
+[[nodiscard]] std::vector<std::byte> encode_png(const paint::bitmap & image);
+
+// An empty bitmap for anything that is not a JPEG this can read. Baseline and
+// progressive, greyscale and colour, and every subsampling mode arrive as the
+// engine's 8-bit ARGB with alpha fully opaque: JPEG has no transparency, and
+// leaving the alpha byte to chance is how an image decodes and then draws as
+// nothing.
+[[nodiscard]] paint::bitmap decode_jpeg(std::span<const std::byte> data);
+
+// The PNG signature and the JPEG SOI marker, checked before decoding is
+// attempted. Cheap enough to ask of every load, which is what lets
+// `image_store` try formats in order without a decode attempt per format.
+[[nodiscard]] bool looks_like_png(std::span<const std::byte> data) noexcept;
+[[nodiscard]] bool looks_like_jpeg(std::span<const std::byte> data) noexcept;
 
 // Decode an uncompressed 24- or 32-bit BMP. An empty bitmap on any problem -
 // truncated, or a flavour this does not read.
@@ -79,19 +100,6 @@ namespace ctbrowser::shell {
     return out;
 }
 
-// Encode a bitmap as a PNG, with NO COMPRESSION LIBRARY.
-//
-// `canvas.toBlob()` and `canvas.toDataURL()` mean PNG - that is what p5's
-// save() asks for and what a page expects to get - so an engine that cannot
-// write one cannot export anything.
-//
-// A PNG's pixel data is a zlib stream, and a zlib stream may be made entirely of
-// STORED blocks: a five-byte header per block and the bytes verbatim. That is
-// valid deflate, so every decoder in the world reads this, and it needs no zlib.
-// The file is bigger than a compressed one - about 1.05x the raw pixels - which
-// is the whole cost, and it buys the engine one fewer dependency in a header
-// that is part of the SDL-free core.
-//
 // What a script's image handle refers to, and what an <img> element resolves
 // to. Bitmaps are shared_ptr because the display list holds them too - a
 // re-record must not copy every sprite in the page.

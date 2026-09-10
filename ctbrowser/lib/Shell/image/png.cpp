@@ -1,7 +1,7 @@
-#include <ctbrowser/shell/image/png.hpp>
+#include <ctbrowser/shell/image/images.hpp>
 
-// THE ONLY TRANSLATION UNIT THAT KNOWS LIBPNG EXISTS. png.hpp declares three
-// functions and includes nothing third-party, which is the rule url.cpp follows
+// THE ONLY TRANSLATION UNIT THAT KNOWS LIBPNG EXISTS. images.hpp declares
+// three functions and includes nothing third-party, which is the rule url.cpp follows
 // for Boost.URL and net_curl.cpp for curl.h.
 //
 // LIBPNG, the reference implementation - the one the format's own maintainers

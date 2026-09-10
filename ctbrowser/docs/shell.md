@@ -555,8 +555,9 @@ found it. `ctbrowser/unittests/unit/data_url.cpp` asserts on the decoded bytes a
 `ctbrowser::base64_decode` (`core/algorithms.hpp`) is shared with `atob`.
 
 `ctbrowser.shell:images` decodes BMP (24/32bpp, either row order) into
-`paint::bitmap` with no library at all, **PNG through libpng** (`png.hpp`) and
-**JPEG through libjpeg-turbo** (`jpeg.hpp`), all three in the SDL-free engine.
+`paint::bitmap` with no library at all, **PNG through libpng** (`image/png.cpp`)
+and **JPEG through libjpeg-turbo** (`image/jpeg.cpp`), all three in the SDL-free
+engine.
 **SDL3_image is optional** and arrives as a decoder hook installed by
 `ctbrowser.app` for what is left — GIF, WEBP, TIFF — the only place SDL and
 images are allowed to meet, since the shell stays SDL-free.
@@ -779,7 +780,7 @@ a tree walk and not a decode.
 ### PNG out
 
 `canvas.toDataURL()` and `canvas.toBlob()` mean PNG. `encode_png`
-(`shell/image/png.hpp`) writes one through libpng's simplified API, the same
+(`shell/image/images.hpp`) writes one through libpng's simplified API, the same
 library that decodes them. `tools/check/check-png.py` decodes what the engine
 wrote with Python's own zlib, independently of it.
 
