@@ -57,8 +57,8 @@ cross-compile; that work is in the history:
   Content-Encoding was going to need.
 
 POCO's mature WebSocket is what curl lacks; if that becomes a requirement it is
-the reason to revisit, and `net.hpp`'s request/response interface is what makes
-revisiting cheap - a transport is one `.cpp` behind one `fetch()`.
+the reason to revisit, and `net.hpp`'s interface is what makes revisiting
+cheap - a transport is one `.cpp` behind one `http_get()`.
 
 **Asio is gone entirely** (2026-07-31), not kept as a fallback. Keeping it meant
 keeping the hand-written HTTP above it compiling and correct for a path nothing
