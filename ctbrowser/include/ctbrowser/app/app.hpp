@@ -51,12 +51,6 @@ struct asset {
     std::vector<std::byte> bytes;
 };
 
-enum class renderer_preference : std::uint8_t {
-    automatic,
-    prefer_gpu,
-    force_software
-};
-
 struct app_options {
     std::string title = "ctbrowser";
 
@@ -160,7 +154,6 @@ struct app_options {
     // On by default - it is a browser - and CTBROWSER_NETWORK=0 turns it off,
     // which is what makes an example's ctest hermetic.
     bool network = true;
-    renderer_preference renderer = renderer_preference::automatic;
 
     // THE ESCAPE HATCH. Called once with the native window handle - an
     // SDL_Window* - for callers who want to drive SDL themselves. Null on the
@@ -221,7 +214,6 @@ struct app_options {
 //
 //   CTBROWSER_TEST_FRAMES  -> max_frames (and therefore a fixed timestep)
 //   CTBROWSER_SCREENSHOT   -> screenshot_path
-//   CTBROWSER_RENDERER     -> software | gpu
 //   CTBROWSER_NETWORK      -> 0 disables fetch()'s network access
 //   CTBROWSER_FONTS        -> font8x8 forces the built-in bitmap font
 //   CTBROWSER_FONT_PATH    -> where the OFL faces are, when it is not `fonts`
@@ -243,14 +235,6 @@ inline void apply_environment(app_options & options) {
         options.max_frames = std::atoi(frames);
     }
     if (const char * shot = std::getenv("CTBROWSER_SCREENSHOT")) { options.screenshot_path = shot; }
-    if (const char * want = std::getenv("CTBROWSER_RENDERER")) {
-        const std::string_view text{want};
-        if (text == "software" || text == "cpu") {
-            options.renderer = renderer_preference::force_software;
-        } else if (text == "gpu" || text == "hardware") {
-            options.renderer = renderer_preference::prefer_gpu;
-        }
-    }
     if (const char * fonts = std::getenv("CTBROWSER_FONTS")) {
         const std::string_view text{fonts};
         options.real_fonts = !(text == "font8x8" || text == "bitmap" || text == "0");

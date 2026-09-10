@@ -2,7 +2,7 @@
 //
 //   ctbrowse page.html                    a window
 //   ctbrowse page.html --frames 30 --shot out.ppm    render and exit
-//   ctbrowse page.html --size 800 600 --software
+//   ctbrowse page.html --size 800 600
 //
 // The whole program is argument parsing plus one call. That is the point: the
 // engine's application API is `run_app_file`, and everything a browser needs to
@@ -32,16 +32,13 @@ int main(int argc, char ** argv) {
             options.max_frames = std::atoi(argv[++i]);
         } else if (arg == "--shot" && i + 1 < argc) {
             options.screenshot_path = argv[++i];
-        } else if (arg == "--software") {
-            options.renderer = ctbrowser::renderer_preference::force_software;
         } else if (!arg.starts_with("--")) {
             path = arg;
         }
     }
 
     if (path.empty()) {
-        std::printf("usage: ctbrowse <page.html> [--size W H] [--frames N] [--shot out.ppm]\n"
-                    "                [--software]\n");
+        std::printf("usage: ctbrowse <page.html> [--size W H] [--frames N] [--shot out.ppm]\n");
         return 2;
     }
     // Report a page's script error rather than rendering a silently broken

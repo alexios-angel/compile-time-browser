@@ -17,9 +17,8 @@ timers and rAF actually fire), vsync, fps pacing, screenshots and teardown.
 `app_options` mirrors the previous engine's: size, `logical_width/height` letterboxing,
 `max_frames`, `max_fps`, `fixed_dt`, `screenshot_path`, `assets`,
 `on_native_window` (the escape hatch — hands you the `SDL_Window*` as `void*`)
-and `on_ready`. Env: `CTBROWSER_TEST_FRAMES`, `CTBROWSER_SCREENSHOT`,
-`CTBROWSER_RENDERER` — which is how an example becomes a ctest with no test
-code in it.
+and `on_ready`. Env: `CTBROWSER_TEST_FRAMES`, `CTBROWSER_SCREENSHOT` — which
+is how an example becomes a ctest with no test code in it.
 
 **SDL3 is OPTIONAL AT BUILD TIME.** `ctbrowser-app` always builds;
 `CTBROWSER_WITH_SDL3` selects an SDL host or a headless one at runtime. Without
