@@ -21,30 +21,16 @@
 #include <ctbrowser/shell/shell.hpp> // metrics_for/font8x8_metrics, the layout<->raster adapter
 #include <ctbrowser/style/style.hpp>
 
-#include <chrono>
+#include "bench_fixture.hpp"
+
 #include <cstdio>
 #include <string>
 #include <string_view>
 #include <vector>
 
-using clock_type = std::chrono::steady_clock;
 using namespace ctbrowser;
 
 namespace {
-
-[[nodiscard]] std::string build_html(int sections, int rows) {
-    std::string out = "<body><div id=root>";
-    for (int s = 0; s < sections; ++s) {
-        out += "<section><h2>Section heading number " + std::to_string(s) + "</h2><ul>";
-        for (int r = 0; r < rows; ++r) {
-            out += "<li>Row " + std::to_string(r) +
-                   " with enough words in it that the line breaker has real work to do</li>";
-        }
-        out += "</ul></section>";
-    }
-    out += "</div></body>";
-    return out;
-}
 
 constexpr std::string_view sheet =
     "body { margin: 0; padding: 0; background-color: #ffffff }"
@@ -53,15 +39,8 @@ constexpr std::string_view sheet =
     "ul { display: block; padding: 8px }"
     "li { display: block; font-size: 8px; margin: 1px; color: #202020 }";
 
-template <typename F> [[nodiscard]] double time_ms(int reps, F && f) {
-    const auto start = clock_type::now();
-    for (int i = 0; i < reps; ++i) { f(); }
-    const auto end = clock_type::now();
-    return std::chrono::duration<double, std::milli>(end - start).count() / reps;
-}
-
 void run_case(int sections, int rows, int viewport_w, int viewport_h, scheduler & pool) {
-    const std::string html = build_html(sections, rows);
+    const std::string html = bench::build_html(sections, rows);
 
     atom_table atoms;
     ::ctbrowser::document doc{atoms};
@@ -76,17 +55,17 @@ void run_case(int sections, int rows, int viewport_w, int viewport_h, scheduler 
     const layout::fragment placed = eng.run(boxes, static_cast<float>(viewport_w));
 
     const paint::recorder rec{atoms};
-    const double record_ms = time_ms(10, [&] { (void)rec.record(placed); });
+    const double record_ms = bench::time_ms(10, [&] { (void)rec.record(placed); });
     paint::layer_tree layers = rec.record_layers(placed);
 
     // The first paint, viewport-culled: only tiles near the visible region get
     // drawn, plus one tile of prefetch margin.
     const rect viewport{0, 0, static_cast<float>(viewport_w), static_cast<float>(viewport_h)};
-    const double first_ms = time_ms(10, [&] {
+    const double first_ms = bench::time_ms(10, [&] {
         raster::software_backend backend{viewport_w, viewport_h};
         (void)raster::draw(backend, layers, nullptr, raster::default_tile_extent, viewport);
     });
-    const double first_par_ms = time_ms(10, [&] {
+    const double first_par_ms = bench::time_ms(10, [&] {
         raster::software_backend backend{viewport_w, viewport_h};
         (void)raster::draw(backend, layers, &pool, raster::default_tile_extent, viewport);
     });
@@ -99,7 +78,7 @@ void run_case(int sections, int rows, int viewport_w, int viewport_h, scheduler 
     const std::size_t after_first = scrolled.raster_calls();
     float at = 0;
     const int scroll_steps = 40;
-    const double scroll_ms = time_ms(scroll_steps, [&] {
+    const double scroll_ms = bench::time_ms(scroll_steps, [&] {
         at += 60;
         layers.scroll_to(0, at);
         (void)raster::draw(scrolled, layers, &pool, raster::default_tile_extent, viewport);

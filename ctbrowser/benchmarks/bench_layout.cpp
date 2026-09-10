@@ -15,44 +15,20 @@
 #include <ctbrowser/layout/layout.hpp>
 #include <ctbrowser/style/style.hpp>
 
-#include <chrono>
+#include "bench_fixture.hpp"
+
 #include <cstdio>
 #include <string>
 #include <string_view>
 #include <vector>
 
-using clock_type = std::chrono::steady_clock;
-
 namespace {
-
-// Realistic shape: nested containers with text, not a flat list. Depth and
-// text are what layout actually spends its time on.
-[[nodiscard]] std::string build_html(int sections, int rows) {
-    std::string out = "<body><div id=root>";
-    for (int s = 0; s < sections; ++s) {
-        out += "<section><h2>Section heading number " + std::to_string(s) + "</h2><ul>";
-        for (int r = 0; r < rows; ++r) {
-            out += "<li>Row " + std::to_string(r) +
-                   " with enough words in it that the line breaker has real work to do</li>";
-        }
-        out += "</ul></section>";
-    }
-    out += "</div></body>";
-    return out;
-}
 
 constexpr std::string_view sheet = "body { margin: 0; padding: 0 }"
                                    "section { display: block; margin: 4px; padding: 2px }"
                                    "h2 { display: block; font-size: 18px; margin: 2px }"
                                    "ul { display: block; padding: 8px }"
                                    "li { display: block; font-size: 14px; margin: 1px }";
-
-template <typename F> [[nodiscard]] double time_ms(int reps, F && f) {
-    const auto start = clock_type::now();
-    for (int i = 0; i < reps; ++i) { f(); }
-    const auto end = clock_type::now();
-    return std::chrono::duration<double, std::milli>(end - start).count() / reps;
-}
 
 // Count ELEMENTS, not fragments. A wrapped paragraph produces one fragment per
 // visual line, all carrying the same source node, so counting fragments counts
@@ -75,7 +51,7 @@ std::size_t count_document_elements(const ctbrowser::layout::fragment & root) {
 
 void run_case(int sections, int rows, std::int32_t viewport, ctbrowser::scheduler & pool) {
     using namespace ctbrowser;
-    const std::string html = build_html(sections, rows);
+    const std::string html = bench::build_html(sections, rows);
 
     atom_table atoms;
     ::ctbrowser::document doc{atoms};
@@ -85,7 +61,7 @@ void run_case(int sections, int rows, std::int32_t viewport, ctbrowser::schedule
     const auto txn = doc.read();
     const style::style_map resolved = styles.resolve_all(txn);
 
-    const double build_ms = time_ms(20, [&] {
+    const double build_ms = bench::time_ms(20, [&] {
         layout::box_builder b{atoms, resolved};
         const layout::box_node t = b.build(txn, txn.root());
         if (t.children.empty()) { std::printf("(empty)"); } // keep the build honest
@@ -97,9 +73,10 @@ void run_case(int sections, int rows, std::int32_t viewport, ctbrowser::schedule
     // stand-in, so the line-breaking work is identical from run to run.
     layout::engine eng{layout::monospace_measure(1.0f)};
     eng.parallel_min_boxes = 0; // measure the parallel path itself, not the threshold
-    const double seq_ms = time_ms(20, [&] { (void)eng.run(tree, static_cast<float>(viewport)); });
-    const double par_ms =
-        time_ms(20, [&] { (void)eng.run_parallel(tree, static_cast<float>(viewport), pool); });
+    const double seq_ms =
+        bench::time_ms(20, [&] { (void)eng.run(tree, static_cast<float>(viewport)); });
+    const double par_ms = bench::time_ms(
+        20, [&] { (void)eng.run_parallel(tree, static_cast<float>(viewport), pool); });
 
     // The style benchmark taught this the hard way: a timing is only worth
     // reading once the run is shown to have processed the whole document.
