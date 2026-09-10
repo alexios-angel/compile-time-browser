@@ -259,6 +259,14 @@ ctbrowser_test(unit/event_handlers)
 # target and window.event as seen from each side of it, a detached tree that
 # reaches neither document nor window, and offsetX measured from the target.
 ctbrowser_test(unit/events_wpt)
+# ACTIVATION BEHAVIOUR in that dispatch, one case per rule: a checkbox toggles
+# before its click listeners run and only for a MouseEvent, a parent is the
+# activation target only when the event bubbles and only the first is run,
+# preventDefault puts the checkedness back, input and change fire only when
+# connected, click() on a disabled control does nothing, a detached form does
+# not submit, a label's activation is a click at its control, and the engine's
+# mouse click takes the same path.
+ctbrowser_test(unit/activation_wpt)
 # CharacterData and the constructible node interfaces. Its own file because
 # every offset in it is a UTF-16 CODE UNIT and this engine stores UTF-8 - a
 # byte offset answers `substringData(39, 2)` wrongly only once the text stops
