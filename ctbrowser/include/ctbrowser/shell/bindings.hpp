@@ -190,6 +190,17 @@ public:
 
     bool dispatch_event(std::string_view type, node_id target, value event);
 
+    // `element.click()`, HTML 3.2.6: nothing for a disabled form control, else
+    // a synthetic, untrusted MouseEvent `click` - bubbles, cancelable, composed
+    // - sent down the one dispatch path an engine click takes, activation
+    // behaviour included. The browser calls it for a <label>, whose activation
+    // behaviour IS a click at the control it labels. Returns whether cancelled.
+    bool click(node_id target);
+    // "Connected", DOM 4.2.1: the shadow-including root is the document. A
+    // checkbox fires `input` and `change` only when it is, and a form submits
+    // only when it is.
+    [[nodiscard]] bool is_connected(node_id target) const;
+
     // Run the timers that are due, then the animation callbacks. Returns how
     // many ran, so an event loop can tell whether it needs another frame.
     std::size_t run_due_callbacks();
@@ -1423,6 +1434,17 @@ private:
     // throw left behind beside its text. `dispatch_error` is this with no value,
     // which is what a fault that was never an exception has to hand a page.
     bool dispatch_error_value(std::string_view message, value error);
+    // The MouseEvent (or PointerEvent) the engine sends for one input event:
+    // the coordinates, the button and the modifiers, on the right prototype so
+    // dispatch can tell it from a plain `new Event("click")`.
+    [[nodiscard]] value make_mouse_event(context & cx, std::string_view type, node_id target,
+                                         const input_event & input, bool pointer);
+    // DOM 2.9 dispatch, the activation half. Which node on the path has
+    // activation behaviour - HTML's list: <a href>, <area href>, <button>,
+    // <input>, <label>, <summary> - and what happens at it after the listeners
+    // ran. See the definitions in events/dispatch.cpp.
+    [[nodiscard]] bool has_activation_behavior(const read_txn & txn, node_id node) const;
+    void run_activation_behavior(context & cx, node_id target);
     // `Event`, `CustomEvent` and `EventTarget` as globals, and the prototype an
     // event object is linked to so `instanceof` and the phase constants work.
     void install_event_interfaces(context & cx);
@@ -1700,6 +1722,11 @@ private:
     // `e.AT_TARGET` rather than as `Event.AT_TARGET`.
     value event_prototype_;
     value custom_event_prototype_;
+    // `MouseEvent.prototype` and `PointerEvent.prototype`: what an engine mouse
+    // event is linked to, and what dispatch checks a `click` against before
+    // running activation behaviour - a `new Event("click")` toggles nothing.
+    value mouse_event_prototype_;
+    value pointer_event_prototype_;
     // `EventTarget.prototype`, where the three methods a standalone target
     // inherits live.
     value event_target_prototype_;

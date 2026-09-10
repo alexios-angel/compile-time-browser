@@ -20,24 +20,10 @@ void dom_bindings::install_element_methods(context & cx, script::object_object &
         obj.set(name, value::object(cx.allocate<script::native_object>(name, std::move(fn))));
     };
 
-    // `element.click()` - CLICKING WITHOUT A MOUSE.
-    //
-    // It was absent, and that is how p5's save() reaches the outside world:
-    // downloadFile makes an <a href download>, calls click() on it, and revokes
-    // the URL on the next line. So the whole export path was one missing method
-    // wide, and the failure was that nothing happened - no error, no file.
-    //
-    // Both halves, in the right order: the event first, through the ordinary
-    // capture-and-bubble dispatch, and the DEFAULT ACTION after it unless a
-    // listener called preventDefault. A click() that only dispatched would leave
-    // `link.click()` doing nothing and `checkbox.click()` not checking anything.
-    method("click", [this](context & c, std::span<value> args) {
-        (void)args;
-        const node_id id = receiver(c);
-        if (!id) { return value::undefined(); }
-        if (!dispatch_event("click", id, make_event(c, "click", id)) && on_activate_) {
-            on_activate_(id);
-        }
+    // `element.click()` - the whole of it is in dom_bindings::click, beside the
+    // engine's own mouse events, because it IS one of those.
+    method("click", [this](context & c, std::span<value>) {
+        (void)click(receiver(c));
         return value::undefined();
     });
 
