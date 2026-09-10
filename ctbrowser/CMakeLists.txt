@@ -156,11 +156,6 @@ option(CTBROWSER_SCRIPT_DEBUG_NAMES "Compile local names and per-instruction sou
 # it is not what is there. What OFF buys is ~15 KB of cold object code.
 option(CTBROWSER_SCRIPT_RECORD_TYPES "Compile the type-oracle hook into the interpreter" ON)
 
-# The strict flags every test and example builds with, kept off the exported
-# interface: a consumer's warnings are their own business.
-set(CTBROWSER_WARNING_OPTIONS
-  -O2 -pedantic -Wall -Wextra -Werror -Wconversion -Wno-overlength-strings)
-
 # Two compile-time bricks are still submodules, for different reasons: ctjs is
 # the script compiler's runtime parser; ctcss is only the comparison oracle for
 # benchmarks/bench_style.cpp. cthtml is NOT one - the DOM has its own WHATWG
