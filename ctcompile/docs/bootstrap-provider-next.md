@@ -1,6 +1,65 @@
 # Next Bootstrap native boundary
 
-## Current continuation: actual Data ownership and object keys, 2026-09-10
+## Current continuation: retaining object keys, 2026-09-10
+
+Resumed the **15:44–15:45 UTC** object-key/Div thread at **183a10c0**, including
+three dirty Div files. The earlier interrupted mutation gate and codex-wip
+recovery were already complete. Three agents handled independent escape,
+owner-test and execution work; root serialized every build and commit. No
+browser or runtime source changed.
+
+**e9802e24** proves a direct empty entry object passed to a captured method as
+an independent object actual/formal edge, with no primitive category. Every
+actual use and every current invocation is checked; each object formal can only
+be borrowed by the captured Map's `has`. Native identity and callable carriers
+are still independently derived. Mixed primitive/object formals, field-bearing
+or named objects, mutations, returns and storing an object key remain refused.
+
+The exact **20d4806e** source advances **0/4 → 4/4 native in both modes**,
+keeping all four calls and Number `trace=0`. **0dfded6a** executes that source,
+a local-alias variant, repeated fresh actuals and two object formals: **four
+programs, sixteen typed Node/interpreter observations and seven distinguishing
+mutations**. Explicit/deduced GCC/Clang output retains actual allocations,
+call arguments and `Map.has`, with no Script symbols. A saved getter survives
+root/table destruction, **128 future object-key rounds**, reentry and final
+Map/key destruction under ASan/UBSan/leak checks. The budget boundary is **1688**,
+with **31 cutoffs** checked. Ten ownership/effect controls and a separate
+complete-owner mixed-key carrier control retain their refusals.
+
+All five owner/host CTests pass **5/5 in 217.69 seconds**. New source/prepared
+owner matrices cover **20/18 rows and all 1348/1295 incomplete budgets**.
+A test-only forged schema attribute initially invalidated its own restoration
+contract; the corrected test removes it before checking the original contract.
+An independent review found no additional production issue.
+
+**c20f43a4** finishes mixed BigInt Div's independent error-retention proof,
+without granting native BigInt or successful-completion permission. It checks
+**57 rows, 43 live states and 3410 cutoffs**. The strict fixture records **721
+claims, 741 observed sites, 21 unclaimed and 100/137 precision**, with zero
+violations/partial/pending. Eight escape CTests pass **8/8 in 9.22 seconds**.
+Historical fixture bytes and Div sources remain intact; Mod controls stay
+conservative. The full build completes **263 steps without warnings**. Stable
+clang-format **22.1.8 passes 745 files**; bundled 23 has the same nine baseline
+differences. The complete monorepo CTest gate is pending at this checkpoint,
+with all **14 code/test inputs committed and frozen**.
+
+**Next: retaining actual object keys through Bootstrap Data.** Exact
+**7381e2fb** adds `t.set(e, 1)` before the same `t.has(e)` and remains unowned
+**0/4** (typed Node/interpreter `trace=1`). It needs an ordinary Map-to-key owner
+and all later set/get/delete uses proved through the existing host seam.
+Field-bearing **698def06** and named **7573e89b** actuals remain separate owner
+obligations. Numeric-seeded **5eba229d** now has complete ownership but stays
+**0/4** at the closed Number/Object key variant's missing native carrier;
+that is distinct from object ownership. Exact Data and full native Bootstrap
+remain unfinished. Recheck browser/CommonJS/AMD and ordinary publication after
+the full gate, preserving their source and all observations.
+
+Artifacts: `/tmp/ctcompile-object-resume-{build-all,escape,owners,execution}.log`,
+`/tmp/ctcompile-object-resume-{probe,execution}/`, and the fourteen-input
+`/tmp/ctcompile-object-resume-frozen.json`. Full gate:
+`/tmp/ctcompile-object-resume-full.log`.
+
+## Previous Data/object-key baseline, 2026-09-10
 
 **58983ccc** finishes the prior mutation-size boundary. The exact insertion
 **56679e2d** and absent-deletion **887e65fc** now admit **5/5 in both modes**

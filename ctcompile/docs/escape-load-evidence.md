@@ -3166,3 +3166,34 @@ Evidence: `/tmp/ctcompile-mul-recovery-audit.json`,
 `/tmp/ctcompile-recovered-gate/Temporary/LastTest.log.tmp`,
 `/tmp/ctcompile-data-resume-full.log` and
 `/tmp/ctcompile-data-resume-full-detail.log`.
+
+
+## Mixed primitive BigInt Div recovery, 2026-09-10
+
+Resumed the three dirty files left by the **15:44:36 UTC** journal at
+**183a10c0**. **c20f43a4** extends the existing Sub/Mul proof to dynamic Div
+with exactly one independently known original BigInt and one non-BigInt
+primitive. Its independent TypeError cannot retain unpublished local objects;
+the proof still checks every structural continuation. It grants no successful
+completion, native BigInt representation, or general effect permission.
+
+The shared Mul/Div matrix checks **57 rows, 43 live states and 3410 Div budget
+cutoffs**, plus a wide snapshot. Ten historical comparison/Div sources retain
+their bytes and now independently prove retention; ten separate Mod controls
+remain refused. The exact **8a20a9a8** witness bodies enter the fixture unchanged.
+All **89,904 preceding fixture bytes and 172 named functions** remain intact.
+Node observes Number **63**, with seven distinguishing mutations checked.
+
+The complete **263-step build is warning-free**. Eight focused escape CTests
+pass **8/8 in 9.22 seconds**. The strict fixture records **721 claims, 741
+observed sites, 21 unclaimed and 100/137 precision**, with zero soundness
+violations, partial or pending claims. Div has twelve literal sites, twenty-one
+instances and ten retained objects; its three independent Errors have no source
+allocation claims. All four corpus checks pass; p5 retains its recorded partial
+observation. Artifacts: `/tmp/ctcompile-object-resume-{build-all,escape}.log` and
+`/tmp/ctcompile-div-local-preservation.json`.
+
+The first targeted run used an old linked claims helper and retained ten stale
+Div refusal expectations. Rebuilding all targets and promoting those exact
+sources resolves both; no runtime behavior or historical source was changed.
+The complete monorepo gate remains pending at this focused checkpoint.
