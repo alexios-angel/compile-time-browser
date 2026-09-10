@@ -94,49 +94,6 @@ target_link_libraries(ctbrowser INTERFACE
   ctbrowser-paint ctbrowser-raster ctbrowser-shell ctbrowser-app)
 add_library(ctbrowser::ctbrowser ALIAS ctbrowser)
 
-# --- ONE ARCHIVE ---------------------------------------------------------
-# The engine is nine libraries because it is nine modules, and every one of
-# them ends up on every link line. `libctbrowser-all.a` is all of them merged,
-# so an application - or a build system that is not CMake - links ONE file.
-#
-# `-all` rather than `libctbrowser.a`, which is the umbrella TARGET's own
-# output: two rules producing one path is a build that refuses to generate.
-#
-# It is a merge, not a rebuild: the same objects, collected with the archiver.
-# CMake users need nothing new; `ctbrowser::ctbrowser` still works and still carries
-# the include paths and module BMIs, which an archive cannot.
-#
-# CTBROWSER_SINGLE_LIB=OFF skips it.
-option(CTBROWSER_SINGLE_LIB "Also produce one merged libctbrowser-all.a" ON)
-if(CTBROWSER_SINGLE_LIB)
-  set(ctbrowser-merged "${CMAKE_CURRENT_BINARY_DIR}/libctbrowser-all.a")
-  set(ctbrowser-parts ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style
-                      ctbrowser-layout ctbrowser-paint ctbrowser-raster ctbrowser-shell
-                      ctbrowser-app ctbrowser)
-  # A header-only subsystem is an INTERFACE library: it has no archive to merge
-  # because it contributes no objects, so asking for its TARGET_FILE is an
-  # error rather than an omission.
-  set(ctbrowser-part-files "")
-  foreach(part IN LISTS ctbrowser-parts)
-    get_target_property(part_type ${part} TYPE)
-    if(NOT part_type STREQUAL "INTERFACE_LIBRARY")
-      list(APPEND ctbrowser-part-files "$<TARGET_FILE:${part}>")
-    endif()
-  endforeach()
-  # The MRI script is how llvm-ar and GNU ar both merge archives; writing it at
-  # build time keeps the generator expressions resolvable.
-  set(ctbrowser-mri "${CMAKE_CURRENT_BINARY_DIR}/ctbrowser-merge.mri")
-  file(GENERATE OUTPUT "${ctbrowser-mri}" CONTENT
-       "create ${ctbrowser-merged}\n$<JOIN:$<LIST:TRANSFORM,${ctbrowser-part-files},PREPEND,addlib >,\n>\nsave\nend\n")
-  add_custom_command(
-    OUTPUT "${ctbrowser-merged}"
-    COMMAND "${CMAKE_AR}" -M < "${ctbrowser-mri}"
-    DEPENDS ${ctbrowser-parts} "${ctbrowser-mri}"
-    COMMENT "merging the engine into one libctbrowser-all.a"
-    VERBATIM)
-  add_custom_target(ctbrowser-single-lib ALL DEPENDS "${ctbrowser-merged}")
-endif()
-
 # --- installing the engine -------------------------------------------------------
 # Headers install to include/, archives to lib/. This was a great deal more
 # involved when the engine was modules: a CXX_MODULES file set, a

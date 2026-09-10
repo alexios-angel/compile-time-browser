@@ -305,12 +305,6 @@ Three things did it:
    net.pcm to 3.7 MB. Put Boost/SDL/FreeType includes in a `.cpp`, never in a
    `.cppm` interface, unless the type is genuinely in the public API.
 
-**One archive:** `libctbrowser.a` merges all nine engine libraries (an `ar`
-merge of the same objects, not a rebuild), so a non-CMake build links ONE file.
-`CTBROWSER_SINGLE_LIB=OFF` skips it; CMake users keep using
-`ctbrowser::ctbrowser`, which also carries the include paths and BMIs an archive
-cannot.
-
 **Inlining across the library boundary** is `-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON`,
 CMake's own knob (the `CTBROWSER_LTO` alias for it was removed 2026-09-10).
 
