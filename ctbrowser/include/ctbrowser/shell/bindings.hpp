@@ -1602,6 +1602,10 @@ private:
     flat_map<std::uint64_t, std::string> namespaces_;
     flat_map<std::uint64_t, script::object_object *> wrappers_;
     flat_map<std::uint64_t, property_mirror> mirrors_;
+    // [[CryptographicNonce]], HTML 2.6.1: what `el.nonce = x` wrote, paired with
+    // the `nonce` attribute's text at the time - see reflection.cpp's
+    // `cryptographic_nonce` for why the pair. Empty until a page assigns one.
+    flat_map<std::uint64_t, std::pair<std::string, std::string>> nonce_slots_;
     bool wrote_to_control_ = false;
     // How many dispatches are on the stack. A listener may dispatch, and the
     // inner dispatch must not compact the listener list the outer one is walking.

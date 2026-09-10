@@ -495,7 +495,10 @@ void dom_bindings::install_element_views(context & cx, script::object_object & o
         const auto txn = doc_->read();
         const std::string_view tag = atoms_->text(txn.tag(id).value_or(atom{}));
         const std::string_view type = txn.attribute_value(id, atoms_->intern("type"));
-        if (control_kind_of(tag, type) != control_kind::none) {
+        // NOT A <button>: its `value` is a plain reflection of the attribute
+        // (HTMLButtonElement, a row in the table), not a control's state, and
+        // an own accessor here would shadow the row on the prototype.
+        if (control_kind_of(tag, type) != control_kind::none && tag != "button") {
             obj.define_accessor("value",
                                 value::object(cx.allocate<script::native_object>(
                                     "value",

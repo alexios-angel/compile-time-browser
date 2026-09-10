@@ -40,6 +40,12 @@ constexpr reflected_attribute text_attr(std::string_view iface, std::string_view
     return {iface, idl, content.empty() ? idl : content, reflect_type::dom_string, 0, 0, 0, {},
             {},    {}};
 }
+// The same row with [LegacyNullToEmptyString] on its setter - see the field.
+constexpr reflected_attribute legacy_text_attr(std::string_view iface, std::string_view idl,
+                                               std::string_view content = {}) {
+    return {iface, idl, content.empty() ? idl : content, reflect_type::dom_string, 0, 0, 0, {}, {},
+            {},    true};
+}
 // The ARIA shape, and the only place a nullable DOMString appears: the content
 // attribute is always the IDL name in another spelling, so it is spelled out
 // rather than derived - `ariaAutoComplete` is `aria-autocomplete` and
@@ -261,7 +267,7 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLElement", "title"),
     text_attr("HTMLElement", "lang"),
     text_attr("HTMLElement", "accessKey", "accesskey"),
-    text_attr("HTMLElement", "nonce"),
+    {"HTMLElement", "nonce", "nonce", reflect_type::cryptographic_nonce, 0, 0, 0, {}, {}, {}},
     enum_attr("HTMLElement", "dir", "ltr rtl auto", "", ""),
     enum_attr("HTMLElement", "enterKeyHint", "enter done go next previous search send", "", "",
               "enterkeyhint"),
@@ -298,6 +304,8 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLHRElement", "align"),
     text_attr("HTMLHRElement", "color"),
     text_attr("HTMLHRElement", "size"),
+    text_attr("HTMLHRElement", "width"),
+    long_attr("HTMLPreElement", "width"),
     bool_attr("HTMLHRElement", "noShade", "noshade"),
     bool_attr("HTMLOListElement", "reversed"),
     bool_attr("HTMLOListElement", "compact"),
@@ -313,11 +321,11 @@ constexpr reflected_attribute reflection_table[] = {
     bool_attr("HTMLMenuElement", "compact"),
 
     // --- sections
-    text_attr("HTMLBodyElement", "text"),
-    text_attr("HTMLBodyElement", "link"),
-    text_attr("HTMLBodyElement", "vLink", "vlink"),
-    text_attr("HTMLBodyElement", "aLink", "alink"),
-    text_attr("HTMLBodyElement", "bgColor", "bgcolor"),
+    legacy_text_attr("HTMLBodyElement", "text"),
+    legacy_text_attr("HTMLBodyElement", "link"),
+    legacy_text_attr("HTMLBodyElement", "vLink", "vlink"),
+    legacy_text_attr("HTMLBodyElement", "aLink", "alink"),
+    legacy_text_attr("HTMLBodyElement", "bgColor", "bgcolor"),
     text_attr("HTMLBodyElement", "background"),
     text_attr("HTMLHtmlElement", "version"),
 
@@ -372,7 +380,7 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLImageElement", "useMap", "usemap"),
     text_attr("HTMLImageElement", "name"),
     text_attr("HTMLImageElement", "align"),
-    text_attr("HTMLImageElement", "border"),
+    legacy_text_attr("HTMLImageElement", "border"),
     bool_attr("HTMLImageElement", "isMap", "ismap"),
     ulong_attr("HTMLImageElement", "hspace"),
     ulong_attr("HTMLImageElement", "vspace"),
@@ -386,8 +394,8 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLIFrameElement", "align"),
     text_attr("HTMLIFrameElement", "scrolling"),
     text_attr("HTMLIFrameElement", "frameBorder", "frameborder"),
-    text_attr("HTMLIFrameElement", "marginHeight", "marginheight"),
-    text_attr("HTMLIFrameElement", "marginWidth", "marginwidth"),
+    legacy_text_attr("HTMLIFrameElement", "marginHeight", "marginheight"),
+    legacy_text_attr("HTMLIFrameElement", "marginWidth", "marginwidth"),
     text_attr("HTMLIFrameElement", "width"),
     text_attr("HTMLIFrameElement", "height"),
     url_attr("HTMLIFrameElement", "longDesc", "longdesc"),
@@ -399,6 +407,7 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLEmbedElement", "name"),
     text_attr("HTMLEmbedElement", "width"),
     text_attr("HTMLEmbedElement", "height"),
+    url_attr("HTMLObjectElement", "data"),
     text_attr("HTMLObjectElement", "type"),
     text_attr("HTMLObjectElement", "name"),
     text_attr("HTMLObjectElement", "useMap", "usemap"),
@@ -407,7 +416,7 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLObjectElement", "code"),
     text_attr("HTMLObjectElement", "standby"),
     text_attr("HTMLObjectElement", "codeType", "codetype"),
-    text_attr("HTMLObjectElement", "border"),
+    legacy_text_attr("HTMLObjectElement", "border"),
     bool_attr("HTMLObjectElement", "declare"),
     ulong_attr("HTMLObjectElement", "hspace"),
     ulong_attr("HTMLObjectElement", "vspace"),
@@ -462,9 +471,9 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLTableElement", "frame"),
     text_attr("HTMLTableElement", "rules"),
     text_attr("HTMLTableElement", "summary"),
-    text_attr("HTMLTableElement", "bgColor", "bgcolor"),
-    text_attr("HTMLTableElement", "cellPadding", "cellpadding"),
-    text_attr("HTMLTableElement", "cellSpacing", "cellspacing"),
+    legacy_text_attr("HTMLTableElement", "bgColor", "bgcolor"),
+    legacy_text_attr("HTMLTableElement", "cellPadding", "cellpadding"),
+    legacy_text_attr("HTMLTableElement", "cellSpacing", "cellspacing"),
     text_attr("HTMLTableElement", "width"),
     text_attr("HTMLTableCaptionElement", "align"),
     text_attr("HTMLTableColElement", "align"),
@@ -481,7 +490,7 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLTableRowElement", "ch", "char"),
     text_attr("HTMLTableRowElement", "chOff", "charoff"),
     text_attr("HTMLTableRowElement", "vAlign", "valign"),
-    text_attr("HTMLTableRowElement", "bgColor", "bgcolor"),
+    legacy_text_attr("HTMLTableRowElement", "bgColor", "bgcolor"),
     text_attr("HTMLTableCellElement", "headers"),
     text_attr("HTMLTableCellElement", "abbr"),
     text_attr("HTMLTableCellElement", "align"),
@@ -489,7 +498,7 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLTableCellElement", "ch", "char"),
     text_attr("HTMLTableCellElement", "chOff", "charoff"),
     text_attr("HTMLTableCellElement", "vAlign", "valign"),
-    text_attr("HTMLTableCellElement", "bgColor", "bgcolor"),
+    legacy_text_attr("HTMLTableCellElement", "bgColor", "bgcolor"),
     bool_attr("HTMLTableCellElement", "noWrap", "nowrap"),
     text_attr("HTMLTableCellElement", "width"),
     text_attr("HTMLTableCellElement", "height"),
@@ -547,6 +556,7 @@ constexpr reflected_attribute reflection_table[] = {
               "number range color checkbox radio file submit image reset button",
               "text", "text"),
     text_attr("HTMLButtonElement", "name"),
+    text_attr("HTMLButtonElement", "value"),
     text_attr("HTMLButtonElement", "formTarget", "formtarget"),
     bool_attr("HTMLButtonElement", "disabled"),
     bool_attr("HTMLButtonElement", "formNoValidate", "formnovalidate"),
@@ -583,13 +593,13 @@ constexpr reflected_attribute reflection_table[] = {
     text_attr("HTMLFrameElement", "name"),
     text_attr("HTMLFrameElement", "scrolling"),
     text_attr("HTMLFrameElement", "frameBorder", "frameborder"),
-    text_attr("HTMLFrameElement", "marginHeight", "marginheight"),
-    text_attr("HTMLFrameElement", "marginWidth", "marginwidth"),
+    legacy_text_attr("HTMLFrameElement", "marginHeight", "marginheight"),
+    legacy_text_attr("HTMLFrameElement", "marginWidth", "marginwidth"),
     bool_attr("HTMLFrameElement", "noResize", "noresize"),
     url_attr("HTMLFrameElement", "src"),
     url_attr("HTMLFrameElement", "longDesc", "longdesc"),
     bool_attr("HTMLDirectoryElement", "compact"),
-    text_attr("HTMLFontElement", "color"),
+    legacy_text_attr("HTMLFontElement", "color"),
     text_attr("HTMLFontElement", "face"),
     text_attr("HTMLFontElement", "size"),
     text_attr("HTMLMarqueeElement", "bgColor", "bgcolor"),
@@ -680,6 +690,21 @@ value dom_bindings::reflected_get(context & cx, const void * row_ptr) {
     const std::string_view raw = present ? txn.attribute_value(id, name) : std::string_view{};
     switch (row.type) {
     case reflect_type::dom_string: return cx.string(std::string{raw});
+    case reflect_type::cryptographic_nonce: {
+        // THE SLOT, WHILE THE ATTRIBUTE IS AS IT WAS. "Set the element's
+        // [[CryptographicNonce]] to value" runs on every content attribute
+        // change, and nothing here is told about one - so the slot remembers
+        // the attribute text it was set beside, and an attribute that reads
+        // differently now has been changed since and reloads it.
+        // ponytail: a setAttribute("nonce", <the same text>) after an IDL set
+        // is not seen; an attribute-change hook in attributes.cpp would be.
+        const auto slot = nonce_slots_.find(pack(id));
+        if (slot != nonce_slots_.end() && slot->second.second == raw) {
+            return cx.string(slot->second.first);
+        }
+        if (slot != nonce_slots_.end()) { nonce_slots_.erase(slot); }
+        return cx.string(std::string{raw});
+    }
     // NULL, NOT "", and the difference is the whole of `testNullable`: an
     // absent `aria-label` has no value rather than an empty one, and a page
     // that branches on `el.ariaLabel === null` is asking whether the author
@@ -796,14 +821,27 @@ value dom_bindings::reflected_set(context & cx, const void * row_ptr, std::span<
         }
         write(arg_string(cx, args, 0));
         return value::undefined();
+    case reflect_type::cryptographic_nonce: {
+        // The slot and NOT the attribute - see the getter. Remembered beside
+        // the attribute's current text so the getter can tell a later change.
+        std::string current;
+        {
+            const auto txn = doc_->read();
+            current = std::string{txn.attribute_value(id, name)};
+        }
+        nonce_slots_[pack(id)] = {arg_string(cx, args, 0), std::move(current)};
+        return value::undefined();
+    }
     case reflect_type::dom_string:
     case reflect_type::url:
     case reflect_type::enumerated:
         // All three write the ToString of the value verbatim. An enumerated
         // attribute does NOT canonicalise on the way in - the getter is where
         // the keyword table applies - and a URL is stored as given and resolved
-        // on the way out.
-        write(arg_string(cx, args, 0));
+        // on the way out. [LegacyNullToEmptyString] is the one exception, and
+        // it is for `null` ALONE: `undefined` still writes nine letters.
+        write(row.null_to_empty && arg(args, 0).is_null() ? std::string{}
+                                                          : arg_string(cx, args, 0));
         return value::undefined();
     default: break;
     }
