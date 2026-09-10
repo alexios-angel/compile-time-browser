@@ -1201,6 +1201,21 @@ ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function, std::size_t wo
                     state.origins[binary.getResult()] = binary.getResult();
                     continue;
                 }
+                if (binary.getKind() == ctjs::BinaryKind::Sub && lhs && rhs &&
+                    ((bigIntOrigin(lhs, state.bigIntOrigins) &&
+                      primitiveNonBigIntOrigin(rhs, state.bigIntOrigins)) ||
+                     (primitiveNonBigIntOrigin(lhs, state.bigIntOrigins) &&
+                      bigIntOrigin(rhs, state.bigIntOrigins)))) {
+                    // bigint_binary rejects these mixed original primitive
+                    // categories before lookup or user conversion. Its TypeError
+                    // has no input/local object edge; its VM result carrier is
+                    // independent Undefined, never a BigInt or a proved Number.
+                    // Calls, handlers and publication remain excluded across
+                    // the whole frame. Check EVERY structural continuation:
+                    // retention proves no successful completion or native effect.
+                    state.origins[binary.getResult()] = binary.getResult();
+                    continue;
+                }
                 if (!lhs || !rhs || !primitiveNonBigIntOrigin(lhs, state.bigIntOrigins) ||
                     !primitiveNonBigIntOrigin(rhs, state.bigIntOrigins)) {
                     return refuse(ArrayContentsFailure::UnsupportedOperation, &op);

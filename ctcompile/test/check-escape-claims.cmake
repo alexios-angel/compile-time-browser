@@ -223,6 +223,12 @@ if(STRICT)
   set(_primitive_plus_error_pc_Early "24")
   set(_primitive_plus_error_pc_Retained "28")
   set(_primitive_plus_error_pc_Opaque "17")
+  set(_primitive_mixed_sub_rows "")
+  set(_primitive_mixed_sub_error_rows "")
+  set(_primitive_mixed_sub_literal_pcs "")
+  set(_primitive_mixed_sub_error_pc_Early "25")
+  set(_primitive_mixed_sub_error_pc_Retained "29")
+  set(_primitive_mixed_sub_error_pc_Opaque "18")
   set(_object_bigint_pow_rows "")
   set(_object_bigint_pow_error_rows "")
   set(_object_bigint_pow_literal_pcs "")
@@ -266,6 +272,9 @@ if(STRICT)
   # Every String/BigInt producer, mixed comparison and promoted historical body
   # is pinned independently; retention never authorizes a comparison value.
   foreach(_source_pair IN ITEMS
+      "primitiveMixedSubEarly 58c83fac64c817cd634dc603024f0c0dc7d33b3552e0f6fa03b34441e7705745"
+      "primitiveMixedSubRetained ebc894848c37d18b829e16231c5281ad96526b9d76eec0c4da09f221dddf8242"
+      "primitiveMixedSubOpaque 192d76fa4ee14b19564e0f3642ca95a71ed500730789d69c2744cc2811c8f90a"
       "primitivePlusEarly 8c223906ec365dd8ab5a06b8168b17a93cdf81c42afa5803fa82fc24d18afaaa"
       "primitivePlusRetained 75e3e72fa61e33182913ec9022bbc84f138f9070cce3712753ebe1e99742398b"
       "primitivePlusOpaque 2dacd3acb40ee8863d417f927b47db976dce0253a6adf5a0eb8b06778573928b"
@@ -494,6 +503,38 @@ if(STRICT)
           message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
         endif()
         list(APPEND _primitive_plus_rows "${_row} ${CMAKE_MATCH_1} pc${_pc}")
+      endif()
+    elseif(_function_name MATCHES "^primitiveMixedSub(Early|Retained|Opaque)$" AND _line MATCHES "^alloc ")
+      if(NOT _line MATCHES "^alloc ([0-9]+) kind obj$")
+        message(FATAL_ERROR "${_function_name}: unexpected mixed BigInt Sub source allocation: ${_line}")
+      endif()
+      list(APPEND _primitive_mixed_sub_literal_pcs "${_function_name} ${CMAKE_MATCH_1}")
+    elseif(_function_name MATCHES "^primitiveMixedSub(Early|Retained|Opaque)$" AND _line MATCHES "^site ")
+      string(REGEX REPLACE "^primitiveMixedSub" "" _mixed_sub_suffix "${_function_name}")
+      set(_mixed_sub_error_pc "${_primitive_mixed_sub_error_pc_${_mixed_sub_suffix}}")
+      if(NOT _line MATCHES "^site ([0-9]+) kind obj made ([0-9]+) confined ([0-9]+) escaped ([0-9]+) unresolved ([0-9]+) unchecked ([0-9]+) routes ([^ ]+)$")
+        message(FATAL_ERROR "${_function_name}: unexpected mixed BigInt Sub observation: ${_line}")
+      endif()
+      set(_pc "${CMAKE_MATCH_1}")
+      set(_row "${_function_name} ${CMAKE_MATCH_2} ${CMAKE_MATCH_3} ${CMAKE_MATCH_4} ${CMAKE_MATCH_5} ${CMAKE_MATCH_6} ${CMAKE_MATCH_7}")
+      if(_pc STREQUAL _mixed_sub_error_pc)
+        if(NOT _line STREQUAL "site ${_mixed_sub_error_pc} kind obj made 1 confined 0 escaped 1 unresolved 0 unchecked 0 routes thrown:1")
+          message(FATAL_ERROR "${_function_name}: the independent mixed Sub Error was not retained through unwinding: ${_line}")
+        endif()
+        if(_claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_mixed_sub_error_pc} [^\n]+")
+          message(FATAL_ERROR "${_function_name}: the implicit mixed Sub Error acquired a source allocation claim")
+        endif()
+        list(APPEND _primitive_mixed_sub_error_rows "${_row} pc${_pc} unclaimed")
+      else()
+        string(REGEX MATCHALL "escape ${_program_hash} ${_function_index} ${_pc} obj [^\n]+" _mixed_sub_claims "${_claim_text}")
+        list(LENGTH _mixed_sub_claims _mixed_sub_claim_count)
+        if(NOT _mixed_sub_claim_count EQUAL 1)
+          message(FATAL_ERROR "${_function_name}: missing or duplicate mixed BigInt Sub claim at pc ${_pc}")
+        endif()
+        if(NOT _claim_text MATCHES "escape ${_program_hash} ${_function_index} ${_pc} obj ([^\n]+)")
+          message(FATAL_ERROR "${_function_name}: no compiler claim for observed object at pc ${_pc}")
+        endif()
+        list(APPEND _primitive_mixed_sub_rows "${_row} ${CMAKE_MATCH_1} pc${_pc}")
       endif()
     elseif(_function_name MATCHES "^objectFrameBigIntMixed(Saved|Primitives|Paths|Numbers|Opaque|Object|Retained|Strings)$" AND _line MATCHES "^alloc ")
       if(NOT _line MATCHES "^alloc ([0-9]+) kind obj$")
@@ -1556,6 +1597,57 @@ if(STRICT)
     message(FATAL_ERROR "BigInt Plus error_rows mismatch:\nexpected: ${_expected_primitive_plus_error_rows}\nobserved: ${_primitive_plus_error_rows}")
   endif()
   message(STATUS "imported BigInt Plus: twelve literal sites, twenty-one instances, ten retained; three independent Errors and live claims agree")
+  # Separate source literals from independent thrown Errors, including the
+  # opaque actuals whose observed TypeError never proves their future category.
+  set(_expected_primitive_mixed_sub_literal_pcs
+      "primitiveMixedSubEarly 5"
+      "primitiveMixedSubEarly 9"
+      "primitiveMixedSubEarly 13"
+      "primitiveMixedSubEarly 33"
+      "primitiveMixedSubRetained 6"
+      "primitiveMixedSubRetained 10"
+      "primitiveMixedSubRetained 14"
+      "primitiveMixedSubRetained 37"
+      "primitiveMixedSubOpaque 4"
+      "primitiveMixedSubOpaque 8"
+      "primitiveMixedSubOpaque 12"
+      "primitiveMixedSubOpaque 26"
+  )
+  list(SORT _expected_primitive_mixed_sub_literal_pcs)
+  list(SORT _primitive_mixed_sub_literal_pcs)
+  if(NOT _primitive_mixed_sub_literal_pcs STREQUAL _expected_primitive_mixed_sub_literal_pcs)
+    message(FATAL_ERROR "mixed BigInt Sub literal_pcs mismatch:\nexpected: ${_expected_primitive_mixed_sub_literal_pcs}\nobserved: ${_primitive_mixed_sub_literal_pcs}")
+  endif()
+  set(_expected_primitive_mixed_sub_rows
+      "primitiveMixedSubEarly 2 2 0 0 0 - confined pc5"
+      "primitiveMixedSubEarly 2 1 1 0 0 temporaries:1 escapes:stored pc9"
+      "primitiveMixedSubEarly 2 1 1 0 0 temporaries:1 escapes:stored pc13"
+      "primitiveMixedSubEarly 1 0 1 0 0 temporaries:1 escapes:returned pc33"
+      "primitiveMixedSubRetained 2 1 1 0 0 temporaries:1 escapes:stored pc6"
+      "primitiveMixedSubRetained 2 1 1 0 0 temporaries:1 escapes:stored pc10"
+      "primitiveMixedSubRetained 2 1 1 0 0 temporaries:1 escapes:stored pc14"
+      "primitiveMixedSubRetained 1 0 1 0 0 temporaries:1 escapes:returned pc37"
+      "primitiveMixedSubOpaque 2 2 0 0 0 - escapes:stored pc4"
+      "primitiveMixedSubOpaque 2 1 1 0 0 temporaries:1 escapes:stored pc8"
+      "primitiveMixedSubOpaque 2 1 1 0 0 temporaries:1 escapes:stored pc12"
+      "primitiveMixedSubOpaque 1 0 1 0 0 temporaries:1 escapes:returned pc26"
+  )
+  list(SORT _expected_primitive_mixed_sub_rows)
+  list(SORT _primitive_mixed_sub_rows)
+  if(NOT _primitive_mixed_sub_rows STREQUAL _expected_primitive_mixed_sub_rows)
+    message(FATAL_ERROR "mixed BigInt Sub rows mismatch:\nexpected: ${_expected_primitive_mixed_sub_rows}\nobserved: ${_primitive_mixed_sub_rows}")
+  endif()
+  set(_expected_primitive_mixed_sub_error_rows
+      "primitiveMixedSubEarly 1 0 1 0 0 thrown:1 pc25 unclaimed"
+      "primitiveMixedSubRetained 1 0 1 0 0 thrown:1 pc29 unclaimed"
+      "primitiveMixedSubOpaque 1 0 1 0 0 thrown:1 pc18 unclaimed"
+  )
+  list(SORT _expected_primitive_mixed_sub_error_rows)
+  list(SORT _primitive_mixed_sub_error_rows)
+  if(NOT _primitive_mixed_sub_error_rows STREQUAL _expected_primitive_mixed_sub_error_rows)
+    message(FATAL_ERROR "mixed BigInt Sub error_rows mismatch:\nexpected: ${_expected_primitive_mixed_sub_error_rows}\nobserved: ${_primitive_mixed_sub_error_rows}")
+  endif()
+  message(STATUS "imported mixed BigInt Sub: twelve literal sites, twenty-one instances, ten retained; three independent Errors and live claims agree")
 endif()
 if(NOT _pyrc EQUAL 0)
   message(FATAL_ERROR "${NAME}: the checker exited ${_pyrc}")
