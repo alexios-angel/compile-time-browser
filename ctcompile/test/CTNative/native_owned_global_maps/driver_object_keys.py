@@ -1,0 +1,170 @@
+from .driver_common import (
+    CONSTANT_GLOBAL_NODE,
+    boundary,
+    check_budgets,
+    check_call_preservation,
+    contract,
+    forge_leaf_evidence,
+    host,
+    methods,
+    object_argument_cases,
+    object_argument_observer_source,
+    object_argument_sources,
+    owned,
+    re,
+    retained_key_observer_source,
+    source_calls,
+    subprocess,
+)
+from .driver_fields import (
+    string_field_method_graph,
+)
+from .driver_object_maps import (
+    check_leaf_object_forgeries,
+)
+
+def check_object_argument_observations(args, node, reference):
+    cases = object_argument_cases()
+
+    def observe(name, source, value):
+        js = args.work / f'{name}-object-observed.js'
+        js.write_text(source)
+        expected = f'trace={value}\n'
+        if host.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout != expected:
+            raise RuntimeError(f'{name}: typed Node object-key observation changed')
+        if reference:
+            result = host.run([str(reference), str(js)])
+            if (result.stdout != expected
+                    or '(1 number, 0 boolean, 0 string, 0 null, 0 undefined)' not in result.stderr):
+                raise RuntimeError(f'{name}: interpreter lost object-key Number observation')
+        return expected
+
+    for name, row in cases.items():
+        observe(name, row['source'], row['expected_trace'])
+    source, value = object_argument_observer_source(cases['object_argument_exact']['source'])
+    expected = observe('object_argument_future', source, value)
+    mutations = (
+        ('return t.has(e) ? 1 : 0;', 't.has(e); return 0;'),
+        ('return t.has(e) ? 1 : 0;', 't.has(e); return 1;'),
+        ('return t.has(e) ? 1 : 0;', 'return t.has({}) ? 1 : 0;'),
+        ('alias = first', 'alias = {}'),
+        ('captured.delete(first);', 'captured.has(first);'),
+        ('captured.clear();', 'captured.has(other);'),
+        ('get({}) !== 0', 'get(key) !== 0'),
+    )
+    for index, (old, replacement) in enumerate(mutations):
+        assert source.count(old) == 1, old
+        js = args.work / f'object-argument-blinded-{index}.js'
+        js.write_text(source.replace(old, replacement))
+        result = subprocess.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]'],
+                                capture_output=True, text=True, timeout=30)
+        if not result.returncode and result.stdout == expected:
+            raise RuntimeError(f'object argument observer cannot distinguish {replacement}')
+    retained, value = retained_key_observer_source(cases['object_argument_siblings']['source'])
+    expected = observe('retained_key_future', retained, value)
+    retained_mutations = (
+        ('t.set(e, value);', 't.has(e);'),
+        ('t.get(e) : 0;', '0 : 0;'),
+        ('t.delete(e)', 't.has(e)'),
+        ('clear() { t.clear();', 'clear() { t.size;'),
+        ('alias = first', 'alias = {}'),
+        ('get(other) === 0', 'get(first) === 0'),
+    )
+    for index, (old, replacement) in enumerate(retained_mutations):
+        assert retained.count(old) == 1, old
+        js = args.work / f'retained-key-blinded-{index}.js'
+        js.write_text(retained.replace(old, replacement))
+        result = subprocess.run([node, '-e', CONSTANT_GLOBAL_NODE, str(js), '["trace"]'],
+                                capture_output=True, text=True, timeout=30)
+        if not result.returncode and result.stdout == expected:
+            raise RuntimeError(f'retained-key observer cannot distinguish {replacement}')
+    return dict(sources=len(cases), observations=len(cases) + 2,
+                mutations=len(mutations) + len(retained_mutations))
+
+
+def check_object_argument_census(args, ir, name):
+    row = object_argument_cases().get(name)
+    if row is None:
+        return
+    raw = (args.work / f'{name}.raw.mlir').read_text()
+    prepared = ir.read_text()
+    if (len(boundary.FUNCTION.findall(raw)) != row['functions']
+            or len(source_calls(raw)) != row['raw_calls']
+            or len(source_calls(prepared)) != row['prepared_calls']):
+        raise RuntimeError(f'{name}: changed exact object actual function/call census')
+    for operation in ('create_object', 'construct', 'get_property', 'set_property'):
+        if raw.count(operation) != prepared.count(operation):
+            raise RuntimeError(f'{name}: preparation changed the live {operation} census')
+    if raw.count('cf.cond_br') != prepared.count('scf.if'):
+        raise RuntimeError(f'{name}: preparation lost an object-key result branch')
+
+
+def check_object_argument_preparation(text, original, name):
+    row = object_argument_cases()[name]
+    if (len(source_calls(text)) != row['prepared_calls']
+            or string_field_method_graph(original, 'fn$3', False)
+            != string_field_method_graph(text, 'fn$3', True)):
+        raise RuntimeError(f'{name}: preparation changed the actual object/Map body')
+    calls = re.findall(r'^\s*(%[-\w.$]+) = ctjs\.call_direct @fn\$3\(([^\n]+)\) '
+                       r'\{ctnative\.stored_call = 1 : i32\}', text, re.M)
+    entry = text.split('\n  }', 1)[0]
+    objects = set(re.findall(r'(%[-\w.$]+) = ctjs\.create_object', entry))
+    receivers = dict(re.findall(r'(%[-\w.$]+) = ctjs\.get_property (%[-\w.$]+)\[', entry))
+    captures = dict(re.findall(r'(%[-\w.$]+) = ctjs\.load_upvalue (%[-\w.$]+)\[0\]', entry))
+    if len(calls) != row['source'].count('host.slot.get('):
+        raise RuntimeError(f'{name}: preparation changed the published call census')
+    for result, operands in calls:
+        actuals = operands.split(', ')
+        if (len(actuals) != 5 or actuals[-1] not in objects
+                or receivers.get(actuals[2]) != actuals[0]
+                or captures.get(actuals[3]) != actuals[2]
+                or f'ctjs.store_global "trace", {result}' not in entry):
+            raise RuntimeError(f'{name}: lost the original Object actual, receiver or capture')
+
+
+def check_object_argument_controls(args, saved):
+    check_leaf_object_forgeries(args, saved, object_argument_sources())
+    for name in object_argument_sources():
+        _, config, output = saved[name]
+        rerun = owned.lower(args, output, name + '-rerun', config, cleanup=False)
+        functions = object_argument_cases()[name]['functions']
+        text = methods.census(rerun, functions, name, admitted=functions)
+        if 'ctnative.host_owner_proved = false' not in text or 'fingerprint mismatch' not in text:
+            raise RuntimeError(f'{name}: emitted object signature reused original source authority')
+    ir, config, _ = saved['object_argument_exact']
+    check_budgets(args, ir, config, 'object_argument_exact', functions=4)
+    ir, config, _ = saved['object_argument_key_write']
+    check_budgets(args, ir, config, 'object_argument_key_write', functions=4)
+    for name, row in object_argument_cases().items():
+        if row['admitted']:
+            continue
+        _, ir, count = boundary.prepare(args, name, row['source'])
+        check_object_argument_census(args, ir, name)
+        if count != row['functions']:
+            raise RuntimeError(f'{name}: changed the exact source function count')
+        config = contract(args, ir, name)
+        for mode, options in (('default', ''), ('disabled', 'optimize=false')):
+            label = name + '-' + mode
+
+            def reject(input_ir, current, current_config):
+                output = owned.lower(args, input_ir, current, current_config,
+                                     options=options, cleanup=False)
+                text = methods.census(output, row['functions'], current, admitted=0)
+                if 'ctnative.host_owner_proved = ' + str(row['owner']).lower() not in text:
+                    raise RuntimeError(f'{current}: changed independent object argument ownership')
+                if row['owner']:
+                    check_object_argument_preparation(text, input_ir.read_text(), name)
+                else:
+                    check_call_preservation(input_ir.read_text(), text, current)
+                return output
+
+            reject(ir, label, config)
+            forged = args.work / f'{label}-forged.mlir'
+            forged.write_text(forge_leaf_evidence(ir.read_text()))
+            stale = methods.refused(args, forged, label + '-stale', config,
+                                    options=options, reason='fingerprint mismatch', admitted=0)
+            check_call_preservation(forged.read_text(), stale.read_text(), label + '-stale')
+            fresh = contract(args, forged, label + '-forged')
+            failed = reject(forged, label + '-fresh', fresh)
+            rerun = methods.refused(args, failed, label + '-rerun', fresh, options=options, admitted=0)
+            check_call_preservation(failed.read_text(), rerun.read_text(), label + '-rerun')
