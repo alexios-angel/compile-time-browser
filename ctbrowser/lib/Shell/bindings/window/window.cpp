@@ -702,10 +702,7 @@ void dom_bindings::install_window(context & cx) {
         cx.define_global("screen", value::object(screen));
     }
 
-    auto * performance = static_cast<script::object_object *>(cx.make_object().as_heap());
-    performance->set(
-        "now", value::object(cx.allocate<script::native_object>(
-                   "now", [this](context &, std::span<value>) { return value::number(now_ms_); })));
+    script::object_object * performance = install_performance(cx);
     window->set("performance", value::object(performance));
     window_ = value::object(window);
 

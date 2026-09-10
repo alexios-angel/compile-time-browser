@@ -68,10 +68,29 @@ void browser::load_author_styles() {
 void browser::refresh_author_styles() {
     if (!author_sheet_loaded_) { return; }
     std::string css = collect_author_styles();
+    // A sheet a script inserted is owed its `load` - queued for the next tick,
+    // and the text below is applied before this call returns, so the listener
+    // sees it applied. BEFORE the early return: an inserted <link> whose href
+    // resolved to nothing changes no text and still owes an `error`.
+    announce_resource_loads();
     if (css == author_css_) { return; }
     author_css_ = std::move(css);
     styles_->clear_origin(ctbrowser::style::author_origin);
     if (!author_css_.empty()) { styles_->add_sheet(author_css_, ctbrowser::style::author_origin); }
+}
+
+void browser::note_resource_load(node_id id, bool ok) {
+    // ponytail: a linear scan. A page has a handful of sheets and scripts, and
+    // the walk that asks is already linear in the document.
+    if (std::ranges::find(announced_loads_, id) != announced_loads_.end()) { return; }
+    announced_loads_.push_back(id);
+    resource_loads_.emplace_back(id, ok);
+}
+
+void browser::announce_resource_loads() {
+    if (!bindings_) { return; } // before run_scripts: kept for the drain after it
+    for (const auto & [id, ok] : resource_loads_) { bindings_->announce_load(id, ok); }
+    resource_loads_.clear();
 }
 
 std::string browser::collect_author_styles() {
@@ -96,6 +115,10 @@ std::string browser::collect_author_styles() {
             if (tag == style_tag) {
                 for (const node_id child : txn.children(at)) { css += txn.text(child); }
                 css += '\n';
+                // HTML "update a style block" ends by firing `load` at the
+                // element; the sheet is applied by the caller straight after
+                // this walk, and the event is queued for the tick after that.
+                note_resource_load(at, true);
             } else if (tag == link_tag &&
                        rel_is_stylesheet(txn.attribute_value(at, rel_attribute))) {
                 // Resolved by the asset registry exactly as <script src> is
@@ -114,6 +137,9 @@ std::string browser::collect_author_styles() {
                     css.append(reinterpret_cast<const char *>(bytes.data()), bytes.size());
                     css += '\n';
                 }
+                // `load` once the sheet applies, `error` when there is nothing
+                // to apply - the page's LoadObserver is written for both.
+                note_resource_load(at, !bytes.empty());
             }
         }
         for (const node_id child : txn.children(at)) { self(self, child); }

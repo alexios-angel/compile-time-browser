@@ -232,6 +232,11 @@ ctbrowser_test(unit/element_attrs)
 # the one ordering the engine has for it: a stylesheet applies before the
 # first frame. See lib/Shell/bindings/element/views.cpp.
 ctbrowser_test(unit/render_blocking)
+# Paint Timing (`performance.getEntriesByType('paint')`, PerformancePaintTiming)
+# and the `load`/`error` events a <link rel=stylesheet>, <style> and <script>
+# owe their element - what html/dom/render-blocking's LoadObserver waits on.
+# See lib/Shell/bindings/performance.cpp and browser/styles.cpp.
+ctbrowser_test(unit/paint_timing)
 # Event handlers: where an exception thrown by a listener goes, and what an
 # `on...` IDL attribute is. Its own file rather than more of event_listeners
 # because every case in it dispatches from inside a `try` ON PURPOSE - a throw
