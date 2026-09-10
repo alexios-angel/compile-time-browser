@@ -1,7 +1,7 @@
 #ifndef CTBROWSER_V2_DOM_ENTITIES_HPP
 #define CTBROWSER_V2_DOM_ENTITIES_HPP
 
-#include <cstddef>
+#include <algorithm>
 #include <string_view>
 
 // Carried forward from the compile-time-html repository (include/cthtml/entities.hpp)
@@ -2153,19 +2153,8 @@ inline constexpr entity_ref entity_table[] = {
 };
 
 constexpr const entity_ref * find_entity(std::string_view name) noexcept {
-    std::size_t lo = 0;
-    std::size_t hi = sizeof(entity_table) / sizeof(entity_table[0]);
-    while (lo < hi) {
-        const std::size_t mid = lo + (hi - lo) / 2;
-        if (entity_table[mid].name < name) {
-            lo = mid + 1;
-        } else if (name < entity_table[mid].name) {
-            hi = mid;
-        } else {
-            return &entity_table[mid];
-        }
-    }
-    return nullptr;
+    const auto it = std::ranges::lower_bound(entity_table, name, {}, &entity_ref::name);
+    return it != std::ranges::end(entity_table) && it->name == name ? it : nullptr;
 }
 
 } // namespace ctbrowser::html_entities
