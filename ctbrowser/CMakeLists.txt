@@ -272,41 +272,24 @@ if(CTBROWSER_BUILD_TESTS)
 endif()
 
 # --- SIBLING PROJECTS ----------------------------------------------------
-# The LLVM model: this project is the configure root and names the siblings to
-# build beside it. `ctcompile` is the compiler, and it depends on ctbrowser's
-# targets in this direction and never the other one.
-#
-# LAST, deliberately. A sibling consumes the engine's targets, so they have to
-# exist before it is added - which also means a sibling cannot influence how the
-# engine is configured, and that is exactly the guarantee Principle 8 wants.
+# The LLVM model: this project is the configure root and CTBROWSER_ENABLE_PROJECTS
+# names the siblings to build beside it (the default preset passes `ctcompile`).
+# LAST, deliberately: a sibling consumes the engine's targets and cannot
+# influence how the engine is configured.
 set(CTBROWSER_ENABLE_PROJECTS "" CACHE STRING
     "Sibling projects to build beside ctbrowser (e.g. ctcompile)")
 foreach(project IN LISTS CTBROWSER_ENABLE_PROJECTS)
-  set(project-dir "${CTBROWSER_MONOREPO_ROOT}/${project}")
-  if(NOT EXISTS "${project-dir}/CMakeLists.txt")
-    message(FATAL_ERROR
-      "CTBROWSER_ENABLE_PROJECTS names '${project}', but ${project-dir}/CMakeLists.txt does not exist")
-  endif()
   message(STATUS "ctbrowser: also building sibling project ${project}")
-  add_subdirectory("${project-dir}" "${CMAKE_BINARY_DIR}/${project}")
+  add_subdirectory("${CTBROWSER_MONOREPO_ROOT}/${project}" "${CMAKE_BINARY_DIR}/${project}")
 endforeach()
 
-# --- PRINCIPLE 8, ENFORCED -----------------------------------------------
-# LLVM and MLIR are compiler-only dependencies. A runtime-only build must not
-# need them installed, and the way that stops being true is gradual: someone
-# adds `find_package(MLIR)` here rather than in ctcompile, everything keeps
-# building on the box that has it, and the small machine silently stops being
-# able to build the engine at all.
-#
-# So it is checked rather than stated. The siblings are added above, in a
-# subdirectory scope of their own, and a find_package there does not define
-# these targets in THIS scope - which is what makes the distinction testable
-# from here at all.
+# LLVM and MLIR are ctcompile's dependencies, not the engine's (Principle 8): a
+# find_package in the sibling's own scope does not define these targets here,
+# so a hit means one crept into the engine's build.
 foreach(forbidden LLVMCore MLIRIR MLIRSupport)
   if(TARGET ${forbidden})
     message(FATAL_ERROR
-      "ctbrowser's own scope defines ${forbidden}: LLVM/MLIR are ctcompile's dependencies, "
-      "not the engine's (Principle 8). Move the find_package into ctcompile.")
+      "ctbrowser's own scope defines ${forbidden}: LLVM/MLIR belong to ctcompile, not the engine")
   endif()
 endforeach()
 
